@@ -28,7 +28,7 @@ const rest = args.filter((a) => a !== platformFlag);
 const out = outputDir();
 if (/onedrive/i.test(out)) console.warn(`warning: building into ${out}, which looks like a synced folder`);
 
-const builderArgs = [platformFlag, ...rest, `-c.directories.output=${out}`];
+const builderArgs = [platformFlag, ...rest, `-c.directories.output=${out}`, '--publish', 'never']; // publishing is the workflow's job
 if (platformFlag === '--win') builderArgs.push('-c.electronDist=node_modules/electron/dist');
 
 console.log(`Building ${platformFlag.slice(2)} into ${out}`);
