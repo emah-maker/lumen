@@ -6,7 +6,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-    branches: ['release'] # TEMPORARY: validate builds from the release branch
   workflow_dispatch:
 
 permissions:
