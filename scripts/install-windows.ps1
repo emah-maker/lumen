@@ -1,9 +1,10 @@
 # Installs the built app for the current user on the local drive: copies the build to
 # %LOCALAPPDATA%\Programs\Lumen and adds Desktop + Start menu shortcuts.
-# Run after `npm run dist`. Uninstall: delete that folder and the two shortcuts.
+# Run after `npm run dist` (which builds into %LOCALAPPDATA%\Lumen\build, off OneDrive). Uninstall: delete that folder and the two shortcuts.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$source = if ($env:LUMEN_BUILD_DIR) { Join-Path $env:LUMEN_BUILD_DIR 'win-unpacked' } else { Join-Path $root 'dist\win-unpacked' }
+$buildDir = if ($env:LUMEN_BUILD_DIR) { $env:LUMEN_BUILD_DIR } else { Join-Path $env:LOCALAPPDATA 'Lumen\build' }
+$source = Join-Path $buildDir 'win-unpacked'
 $target = Join-Path $env:LOCALAPPDATA 'Programs\Lumen'
 if (-not (Test-Path (Join-Path $source 'Lumen.exe'))) { throw "Build first: npm run dist (looked in $source)" }
 

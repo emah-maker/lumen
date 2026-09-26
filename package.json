@@ -6,9 +6,11 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win",
+    "dist": "node scripts/build.js",
     "test": "node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js",
-    "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1"
+    "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
+    "dist:win": "node scripts/build.js --win",
+    "dist:mac": "node scripts/build.js --mac"
   },
   "license": "GPL-3.0",
   "dependencies": {
@@ -28,7 +30,6 @@
     "appId": "com.lumen.browser",
     "productName": "Lumen",
     "directories": {
-      "output": "dist",
       "buildResources": "build"
     },
     "files": [
@@ -39,7 +40,8 @@
       "!build/**",
       "!.impeccable/**",
       "!**/.impeccable/**",
-      "!scripts/**"
+      "!scripts/**",
+      "!.github/**"
     ],
     "win": {
       "icon": "build/icon.png",
@@ -51,20 +53,49 @@
           ]
         }
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Lumen"
+      "shortcutName": "Lumen",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "portable": {
       "artifactName": "Lumen ${version} Portable.exe"
     },
-    "electronDist": "node_modules/electron/dist",
     "asar": false,
-    "afterPack": "scripts/after-pack.js"
+    "afterPack": "scripts/after-pack.js",
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": "-"
+    },
+    "dmg": {
+      "title": "Lumen",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    }
   }
 }

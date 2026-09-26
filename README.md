@@ -15,14 +15,41 @@ npm install
 npm start
 ```
 
-## Install as a Windows app
+## Download
+
+Installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead. The repository is **private**, so only people with access to it can download them.
+
+| Computer | File |
+|---|---|
+| Windows 10/11 (x64) | `Lumen-Setup-<version>.exe` (installer) or `Lumen-<version>-win-x64.zip` (unzip and run `Lumen.exe`) |
+| Mac with Apple silicon (M1 and later) | `Lumen-<version>-mac-arm64.dmg` |
+| Mac with Intel | `Lumen-<version>-mac-x64.dmg` |
+
+**Windows:** the builds aren't code-signed. SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. On PCs with Smart App Control turned on, the zip is the one that runs. Its `Lumen.exe` is the untouched Electron binary, which Windows recognises, while a freshly built installer isn't. Or build and install locally (below).
+
+**Mac:** the app is ad-hoc signed, not signed with an Apple Developer ID, so the first launch is blocked. Right-click **Lumen** in Applications and choose **Open**, then **Open** again. If macOS says the app "is damaged", run:
 
 ```
-npm run dist         # builds distwin-unpacked
-npm run install_app  # copies it to %LOCALAPPDATA%ProgramsLumen, adds Desktop + Start menu shortcuts
+xattr -dr com.apple.quarantine /Applications/Lumen.app
 ```
 
-The app ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, `electronDist` from node_modules). Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity), or an NSIS installer, produces exactly that. The untouched Electron binary is recognised, so it runs. The window and taskbar use the app icon at runtime. To ship a normal installer instead, sign the build with a trusted code-signing certificate.
+## Build and install locally
+
+```
+npm install
+npm run dist          # this computer's platform; or dist:win / dist:mac
+npm run install_app   # Windows: installs to %LOCALAPPDATA%\Programs\Lumen with Desktop + Start menu shortcuts
+```
+
+Builds go to a local folder that isn't synced, even when the project itself lives in OneDrive:
+
+- Windows: `%LOCALAPPDATA%\Lumen\build`
+- macOS: `~/Library/Caches/Lumen/build`
+- Linux: `~/.cache/lumen/build`
+
+Set `LUMEN_BUILD_DIR` to use a different folder. The installed Windows app lives on the local drive at `%LOCALAPPDATA%\Programs\Lumen`.
+
+The Windows build ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, and Electron taken from node_modules), and `scripts/build.js` checks this after every build. Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity) produces one. The untouched Electron binary is recognised, so it runs. The window, taskbar and shortcuts use Lumen's icon at runtime. For a normal signed installer, sign the build with a trusted code-signing certificate.
 
 Add your Anthropic API key with the gear icon in the Claude sidebar (stored encrypted with the OS keychain), or set `ANTHROPIC_API_KEY` before launching.
 

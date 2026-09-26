@@ -839,3 +839,6 @@ body.mcp-active .agent-pill { display: flex; }
 .mcp-snippet-head .hint { flex: 1; margin: 0; }
 .mcp-code { margin: 4px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--field); font: 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
 .step.mcp-step .step-detail { color: var(--text); }
+
+/* macOS: traffic lights sit at the top-left of the tab strip; no Windows controls on the right. */
+.platform-darwin .tabstrip { padding-left: 80px; padding-right: 8px; }

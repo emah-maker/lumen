@@ -6,6 +6,10 @@ injectBrowserAction();
 
 const on = (channel) => (callback) => ipcRenderer.on(channel, (_e, payload) => callback(payload));
 
+// `platform-darwin` / `platform-win32` on <html>: macOS has traffic lights on the left, Windows
+// has window controls on the right.
+window.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add(`platform-${process.platform}`));
+
 contextBridge.exposeInMainWorld('browser', {
   setContentBounds: (bounds) => ipcRenderer.send('content-bounds', bounds),
   freezeView: () => ipcRenderer.invoke('view:freeze'),
