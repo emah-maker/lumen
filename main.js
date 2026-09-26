@@ -1149,6 +1149,9 @@ function handleShortcut(event, input) {
   else if (mod && key === '0') zoomBy(wc, 0);
   else if (mod && key === 'd') toggleBookmark();
   else if (mod && key === 'h') openHistoryPage();
+  else if (process.platform === 'darwin' && input.meta && key === '[') wc?.navigationHistory.goBack();
+  else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
+  else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
   else if (input.alt && key === 'arrowleft') wc?.navigationHistory.goBack();
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
   else if (key === 'f5') reloadActive();
@@ -1241,6 +1244,55 @@ function restoreSession() {
   switchTab(tabs[Math.min(saved.active, tabs.length - 1)].id);
 }
 
+// ---------- macOS ----------
+// macOS needs an application menu: without one, Cmd+C/V/X/A/Z/Q don't work anywhere. Browser
+// shortcuts that handleShortcut() already handles are shown here but not registered twice.
+function macMenu() {
+  const shown = (accelerator) => ({ accelerator, registerAccelerator: false });
+  const wc = () => activeTab()?.webContents;
+  return Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Tab', ...shown('Cmd+T'), click: () => { openTab(); focusAddress(); } },
+        { label: 'Reopen Closed Tab', ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
+        { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
+        { type: 'separator' },
+        { label: 'Close Tab', ...shown('Cmd+W'), click: () => { if (activeId) closeTab(activeId); } },
+      ],
+    },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Reload', ...shown('Cmd+R'), click: reloadActive },
+        { label: 'Find…', ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
+        { type: 'separator' },
+        { label: 'Zoom In', ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
+        { label: 'Zoom Out', ...shown('Cmd+-'), click: () => zoomBy(wc(), -0.5) },
+        { label: 'Actual Size', ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
+        { type: 'separator' },
+        { label: 'Toggle Sidebar', ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
+        { label: 'Developer Tools', accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'History',
+      submenu: [
+        { label: 'Back', ...shown('Cmd+['), click: () => wc()?.navigationHistory.goBack() },
+        { label: 'Forward', ...shown('Cmd+]'), click: () => wc()?.navigationHistory.goForward() },
+        { label: 'Show All History', ...shown('Cmd+Y'), click: openHistoryPage },
+      ],
+    },
+    { label: 'Bookmarks', submenu: [{ label: 'Bookmark This Page', ...shown('Cmd+D'), click: toggleBookmark }] },
+    { role: 'windowMenu' },
+    { role: 'help', submenu: [{ label: 'Lumen on GitHub', click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
+  ]);
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1440,
@@ -1251,7 +1303,7 @@ function createWindow() {
     icon: path.join(__dirname, 'assets', 'icon.png'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' }
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
       : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1260,7 +1312,7 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
   nativeTheme.on('updated', () => {
     if (process.platform !== 'darwin' && ui()) win.setTitleBarOverlay(titleBarOverlay());
   });
@@ -1631,6 +1683,9 @@ app.whenReady().then(async () => {
   // Filter lists load from cache (or download on first run) without holding up the window.
   setupAdblock().catch((err) => console.error('Ad blocker failed to start:', err));
   for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
 });
-app.on('window-all-closed', () => app.quit());
+// On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('activate', () => { if (app.isReady() && singleInstance && (!win || win.isDestroyed())) createWindow(); });

@@ -667,3 +667,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 
 /* Only Claude's spark turns when the sidebar opens; other marks (an X would become "+") stay upright. */
 #toggle-sidebar[aria-pressed="true"]:not([data-assistant="Claude"]) svg { transform: none; }
+
+/* macOS: traffic lights sit at the top-left of the tab strip; no Windows controls on the right. */
+.platform-darwin .tabstrip { padding-left: 80px; padding-right: 8px; }
