@@ -1,0 +1,70 @@
+{
+  "name": "claude-browser",
+  "productName": "Claude Browser",
+  "version": "0.1.0",
+  "description": "A Chromium browser with a Claude assistant that can read and drive web pages",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "test": "node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js",
+    "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1"
+  },
+  "license": "GPL-3.0",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@ghostery/adblocker-electron": "^2.18.2",
+    "electron-chrome-extensions": "^4.9.0",
+    "electron-chrome-web-store": "^0.13.0",
+    "openai": "^7.23.0"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "playwright-core": "^1.63.0"
+  },
+  "author": "Claude Browser",
+  "build": {
+    "appId": "com.claudebrowser.app",
+    "productName": "Claude Browser",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!test/**",
+      "!dist/**",
+      "!*.md",
+      "!build/**",
+      "!.impeccable/**",
+      "!**/.impeccable/**",
+      "!scripts/**"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Claude Browser"
+    },
+    "portable": {
+      "artifactName": "Claude Browser ${version} Portable.exe"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "asar": false,
+    "afterPack": "scripts/after-pack.js"
+  }
+}

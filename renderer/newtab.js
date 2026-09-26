@@ -1,0 +1,165 @@
+// New-tab page. The browser passes everything in the URL hash as JSON:
+//   { favorites: [{ title, url, icon? }], frequent: [{ title, url, icon? }], blocked: number }
+// (an older plain array means favorites only). Icons are favicons the browser cached locally as
+// data: URLs; the page itself never touches the network.
+const DEFAULTS = [
+  ['Google', 'https://www.google.com'], ['YouTube', 'https://www.youtube.com'], ['Gmail', 'https://mail.google.com'],
+  ['Wikipedia', 'https://www.wikipedia.org'], ['GitHub', 'https://github.com'], ['Reddit', 'https://www.reddit.com'],
+  ['Amazon', 'https://www.amazon.com'], ['News', 'https://news.google.com'],
+].map(([title, url]) => ({ title, url }));
+
+const isWeb = (b) => b && typeof b.url === 'string' && /^https?:\/\//i.test(b.url);
+const host = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } };
+const label = (b) => (typeof b.title === 'string' && b.title.trim() ? b.title.trim() : host(b.url));
+
+function data() {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+    if (Array.isArray(parsed)) return { favorites: parsed.filter(isWeb), frequent: [], blocked: null };
+    return {
+      search: parsed.search && typeof parsed.search.url === 'string' && /^https:\/\//.test(parsed.search.url) ? parsed.search : null,
+      favorites: Array.isArray(parsed.favorites) ? parsed.favorites.filter(isWeb) : DEFAULTS,
+      frequent: Array.isArray(parsed.frequent) ? parsed.frequent.filter(isWeb) : [],
+      blocked: Number.isFinite(parsed.blocked) ? parsed.blocked : null,
+    };
+  } catch {
+    return { favorites: DEFAULTS, frequent: [], blocked: null };
+  }
+}
+
+// A stable hue per site for monogram tiles.
+function hueOf(text) {
+  let h = 0;
+  for (const c of text) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return Math.round((h * 137.508) % 360); // golden-angle spread keeps neighbours apart
+}
+
+function tile(b, size) {
+  const el = document.createElement('span');
+  el.className = 'tile';
+  el.setAttribute('aria-hidden', 'true');
+  const letter = label(b)[0]?.toUpperCase() || '?';
+  const mono = () => {
+    el.classList.add('mono');
+    el.style.setProperty('--hue', String(hueOf(host(b.url))));
+    el.textContent = letter;
+  };
+  // A locally cached favicon first, then the icon bundled for default favorites, then a letter.
+  const bundled = (window.BUNDLED_ICONS || {})[host(b.url)];
+  const icon = typeof b.icon === 'string' && b.icon.startsWith('data:image/') ? b.icon : bundled;
+  if (icon) {
+    const img = new Image(size, size);
+    img.alt = '';
+    img.onerror = () => { img.remove(); mono(); };
+    img.src = icon;
+    el.append(img);
+  } else {
+    mono();
+  }
+  return el;
+}
+
+function section(title, content) {
+  const s = document.createElement('section');
+  s.setAttribute('aria-label', title);
+  s.append(Object.assign(document.createElement('h2'), { textContent: title }), content);
+  return s;
+}
+
+function favorites(list) {
+  if (!list.length) {
+    const p = Object.assign(document.createElement('p'), { className: 'empty' });
+    p.append('Bookmark a page with ', Object.assign(document.createElement('kbd'), { textContent: 'Ctrl' }), '+', Object.assign(document.createElement('kbd'), { textContent: 'D' }), ' and it appears here.');
+    return p;
+  }
+  const nav = Object.assign(document.createElement('nav'), { className: 'grid' });
+  nav.setAttribute('aria-label', 'Favorites');
+  for (const b of list.slice(0, 12)) {
+    const a = document.createElement('a');
+    a.href = b.url;
+    a.title = `${label(b)} — ${host(b.url)}`;
+    a.append(tile(b, 28), Object.assign(document.createElement('span'), { className: 'name', textContent: label(b) }));
+    nav.append(a);
+  }
+  return nav;
+}
+
+function frequent(list) {
+  const nav = Object.assign(document.createElement('nav'), { className: 'frequent' });
+  nav.setAttribute('aria-label', 'Frequently visited');
+  for (const b of list.slice(0, 6)) {
+    const a = document.createElement('a');
+    a.href = b.url;
+    a.title = b.url;
+    const text = Object.assign(document.createElement('span'), { className: 'text' });
+    text.append(
+      Object.assign(document.createElement('span'), { className: 'title', textContent: label(b) }),
+      Object.assign(document.createElement('span'), { className: 'host', textContent: host(b.url) }),
+    );
+    a.append(tile(b, 18), text);
+    nav.append(a);
+  }
+  return nav;
+}
+
+const SHIELD = '<svg viewBox="0 0 26 26" aria-hidden="true"><path d="M13 2.5 4.5 5.8v6.4c0 5.4 3.6 9.6 8.5 11.3 4.9-1.7 8.5-5.9 8.5-11.3V5.8Z" fill="var(--green)" opacity="0.16"/><path d="M13 2.5 4.5 5.8v6.4c0 5.4 3.6 9.6 8.5 11.3 4.9-1.7 8.5-5.9 8.5-11.3V5.8Z" fill="none" stroke="var(--green)" stroke-width="1.6" stroke-linejoin="round"/><path d="m9.2 13.2 2.6 2.6 5-5.4" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function privacy(blocked) {
+  const card = Object.assign(document.createElement('div'), { className: 'privacy' });
+  card.innerHTML = SHIELD;
+  const text = document.createElement('div');
+  const strong = document.createElement('strong');
+  const detail = document.createElement('span');
+  if (blocked > 0) {
+    strong.textContent = blocked === 1 ? '1 ad or tracker blocked' : `${blocked.toLocaleString()} ads and trackers blocked`;
+    detail.textContent = 'On the tabs you have open right now.';
+  } else {
+    strong.textContent = 'Ad and tracker blocking is on';
+    detail.textContent = 'Blocked requests on your open tabs are counted here.';
+  }
+  text.append(strong, detail);
+  card.append(text);
+  return card;
+}
+
+function greeting(now) {
+  const h = now.getHours();
+  return h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
+function render() {
+  const { favorites: favs, frequent: freq, blocked } = data();
+  const now = new Date();
+  document.getElementById('date').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  document.getElementById('greeting').textContent = greeting(now);
+  const box = document.getElementById('sections');
+  box.replaceChildren(section('Favorites', favorites(favs)));
+  if (freq.length) box.append(section('Frequently Visited', frequent(freq)));
+  if (blocked !== null) box.append(section('Privacy', privacy(blocked)));
+}
+
+// "/" jumps to the search field, like many sites; typing elsewhere is left alone.
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    document.getElementById('q').focus();
+  }
+});
+
+render();
+window.addEventListener('hashchange', render);
+
+// Search with the engine chosen in settings (the hash carries { label, url with %s }).
+(() => {
+  const engine = data().search;
+  const form = document.querySelector('form[role=search]');
+  const input = document.getElementById('q');
+  if (!engine || !form || !input) return;
+  input.placeholder = `Search ${engine.label}`;
+  input.setAttribute('aria-label', `Search ${engine.label}`);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (q) location.href = engine.url.replace('%s', encodeURIComponent(q));
+  });
+})();

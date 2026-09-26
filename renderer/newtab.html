@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; form-action https:" />
+  <title>New Tab</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff; --card: #f5f5f7; --field: rgba(0, 0, 0, 0.05); --hover: rgba(0, 0, 0, 0.06);
+      --text: #1d1d1f; --muted: #6e6e73; --faint: #aeaeb2; --ring: rgba(0, 122, 255, 0.25);
+      --border: rgba(0, 0, 0, 0.1); --accent: #007aff; --green: #34c759; --shadow: rgba(0, 0, 0, 0.14);
+      --mono-l: 92%; --mono-t: 32%;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1c1e; --card: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.08);
+        --text: #f5f5f7; --muted: #98989d; --faint: #636366; --ring: rgba(10, 132, 255, 0.4);
+        --border: rgba(255, 255, 255, 0.12); --accent: #0a84ff; --green: #30d158; --shadow: rgba(0, 0, 0, 0.55);
+        --mono-l: 26%; --mono-t: 82%;
+      }
+    }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--bg); color: var(--text);
+      font: 13px/1.45 system-ui, -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased; letter-spacing: -0.005em;
+    }
+    ::selection { background: var(--ring); }
+    main { width: min(680px, 88vw); margin: 0 auto; padding: clamp(40px, 10vh, 120px) 0 48px; }
+
+    header { margin-bottom: 18px; }
+    .date { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
+    h1 { margin: 2px 0 0; font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; }
+
+    form { position: relative; margin-bottom: 30px; }
+    form svg { position: absolute; left: 16px; top: 50%; width: 16px; height: 16px; margin-top: -8px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; pointer-events: none; }
+    input {
+      width: 100%; box-sizing: border-box; height: 46px; padding: 0 64px 0 42px; border: none; border-radius: 14px;
+      background: var(--field); color: var(--text); caret-color: var(--accent); font: inherit; font-size: 16px; letter-spacing: -0.01em; outline: none;
+      transition: background-color 200ms ease-out, box-shadow 320ms var(--ease);
+    }
+    input::placeholder { color: var(--muted); }
+    /* Focus: a crisp accent ring plus a neutral elevation shadow (no coloured glow). */
+    input:focus { background: var(--bg); box-shadow: 0 0 0 1px var(--border), 0 0 0 4px var(--ring), 0 10px 28px -16px var(--shadow); }
+    kbd {
+      position: absolute; right: 12px; top: 50%; transform: translateY(-50%); min-width: 20px; padding: 1px 6px; border-radius: 6px;
+      font: 600 11px/18px system-ui, sans-serif; color: var(--muted); text-align: center; box-shadow: inset 0 0 0 1px var(--border); transition: opacity 160ms ease-out;
+    }
+    input:focus ~ kbd, input:not(:placeholder-shown) ~ kbd { opacity: 0; }
+
+    section { margin-top: 26px; }
+    section:first-of-type { margin-top: 0; }
+    h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; letter-spacing: -0.012em; }
+
+    .grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px 10px; }
+    .grid a {
+      display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 8px 2px; min-width: 0;
+      border-radius: 12px; color: var(--muted); text-decoration: none; outline: none; transition: color 150ms ease-out;
+    }
+    .grid a:hover, .grid a:focus-visible { color: var(--text); }
+    .name { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
+    .tile {
+      width: 60px; height: 60px; display: grid; place-items: center; border-radius: 15px; background: var(--card);
+      font-size: 22px; font-weight: 650; letter-spacing: -0.02em; box-shadow: 0 0 0 0.5px var(--border);
+      transition: transform 420ms var(--ease), box-shadow 420ms var(--ease);
+    }
+    /* Monograms tinted per site (like Safari's), so sites that share a letter still look different. */
+    .tile.mono { background: hsl(var(--hue) 70% var(--mono-l)); color: hsl(var(--hue) 55% var(--mono-t)); box-shadow: none; }
+    .tile img { width: 28px; height: 28px; padding: 6px; border-radius: 9px; background: #ffffff; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08); }
+    .grid a:hover .tile { transform: translateY(-3px); box-shadow: 0 0 0 0.5px var(--border), 0 12px 22px -14px var(--shadow); }
+    .grid a:active .tile { transform: scale(0.94); transition-duration: 90ms; }
+    .grid a:focus-visible .tile { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+
+    .frequent { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .frequent a {
+      display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 11px; border-radius: 12px;
+      background: var(--card); color: var(--text); text-decoration: none; outline: none;
+      transition: transform 320ms var(--ease), box-shadow 320ms var(--ease);
+    }
+    .frequent a:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -16px var(--shadow); }
+    .frequent a:active { transform: scale(0.98); transition-duration: 90ms; }
+    .frequent a:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .frequent .tile { width: 32px; height: 32px; border-radius: 9px; font-size: 14px; flex: none; }
+    .frequent .tile img { width: 18px; height: 18px; padding: 3px; border-radius: 6px; }
+    .frequent .text { min-width: 0; display: flex; flex-direction: column; }
+    .frequent .title, .frequent .host { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .frequent .title { font-weight: 550; font-size: 12.5px; }
+    .frequent .host { color: var(--muted); font-size: 11.5px; }
+
+    .privacy { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--card); }
+    .privacy svg { flex: none; width: 26px; height: 26px; }
+    .privacy strong { display: block; font-size: 13px; font-weight: 600; }
+    .privacy span { color: var(--muted); font-size: 12px; }
+
+    .empty { margin: 0; padding: 14px; border-radius: 14px; background: var(--card); color: var(--muted); }
+    .empty kbd { position: static; transform: none; display: inline-block; margin: 0 2px; }
+
+    /* Entrance: sections settle in one after another. */
+    header, form, section { animation: rise 520ms var(--ease) backwards; }
+    form { animation-delay: 40ms; }
+    section:nth-of-type(1) { animation-delay: 90ms; }
+    section:nth-of-type(2) { animation-delay: 140ms; }
+    section:nth-of-type(3) { animation-delay: 190ms; }
+    @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+    @media (prefers-reduced-motion: reduce) {
+      header, form, section { animation: fade 160ms ease-out backwards !important; animation-delay: 0ms !important; }
+      .grid a:hover .tile, .frequent a:hover { transform: none; }
+      @keyframes fade { from { opacity: 0; } }
+    }
+    @media (max-width: 560px) {
+      .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .frequent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="date" id="date"></p>
+      <h1 id="greeting">Hello</h1>
+    </header>
+    <form action="https://www.google.com/search" method="get" role="search">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.75"/><path d="m10.6 10.6 3.4 3.4"/></svg>
+      <input id="q" name="q" autocomplete="off" placeholder="Search Google" aria-label="Search Google" aria-keyshortcuts="/" />
+      <kbd aria-hidden="true">/</kbd>
+    </form>
+    <div id="sections"></div>
+  </main>
+  <script src="favicons.js"></script>
+  <script src="newtab.js"></script>
+</body>
+</html>

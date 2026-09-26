@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:" />
+  <title>History</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #ffffff; --surface: #ffffff; --field: rgba(0, 0, 0, 0.05); --hover: rgba(0, 0, 0, 0.05); --text: #1d1d1f; --muted: #6e6e73; --accent: #007aff; --ring: rgba(0, 122, 255, 0.22); --hairline: rgba(0, 0, 0, 0.1); }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --surface: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.07); --text: #f5f5f7; --muted: #98989d; --accent: #0a84ff; --ring: rgba(10, 132, 255, 0.35); --hairline: rgba(255, 255, 255, 0.12); } }
+    html, body { margin: 0; background: var(--bg); color: var(--text); }
+    body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; letter-spacing: -0.005em; }
+    main { width: min(720px, 90vw); margin: 0 auto; padding: 56px 0 80px; }
+    h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 18px; }
+    input { width: 100%; box-sizing: border-box; height: 40px; padding: 0 14px; border: none; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; font-size: 14px; outline: none; transition: box-shadow 200ms ease-out, background-color 200ms ease-out; }
+    input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), 0 0 0 4px var(--ring); }
+    h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 28px 0 6px; text-transform: none; }
+    a { display: flex; align-items: baseline; gap: 12px; padding: 7px 10px; margin: 0 -10px; border-radius: 8px; color: var(--text); text-decoration: none; transition: background-color 120ms ease-out; }
+    a:hover, a:focus-visible { background: var(--hover); outline: none; }
+    .time { flex: none; width: 52px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .title { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .host { flex: 1 1 0; min-width: 0; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .empty { color: var(--muted); margin-top: 40px; }
+    section { animation: rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+    @media (prefers-reduced-motion: reduce) { section { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>History</h1>
+    <input id="q" type="search" placeholder="Search history" aria-label="Search history" autocomplete="off" />
+    <div id="list"></div>
+  </main>
+  <script src="history.js"></script>
+</body>
+</html>

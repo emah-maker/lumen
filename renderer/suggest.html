@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
+  <style>
+    :root { color-scheme: light dark; --surface: #ffffff; --border: rgba(0, 0, 0, 0.1); --text: #1d1d1f; --muted: #6e6e73; --selected: rgba(0, 122, 255, 0.12); --shadow: rgba(0, 0, 0, 0.2); }
+    @media (prefers-color-scheme: dark) { :root { --surface: #2c2c2e; --border: rgba(255, 255, 255, 0.12); --text: #f5f5f7; --muted: #98989d; --selected: rgba(10, 132, 255, 0.24); --shadow: rgba(0, 0, 0, 0.55); } }
+    html, body { margin: 0; background: transparent; overflow: hidden; }
+    body { font: 13px/1.4 -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text); user-select: none; }
+    /* Margins match SUGGEST_PAD in app.js: room for the shadow inside this view. */
+    ul {
+      list-style: none; margin: 6px 16px 24px; padding: 4px; border-radius: 12px; transform-origin: top center;
+      background: var(--surface);
+      box-shadow: 0 0 0 0.5px var(--border), 0 12px 28px -8px var(--shadow);
+    }
+    ul.entering { animation: drop 360ms cubic-bezier(0.16, 1, 0.3, 1); }
+    ul.entering li { animation: row 380ms cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+    @keyframes drop { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+    @keyframes row { from { opacity: 0; transform: translateY(-4px); } }
+    li { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; cursor: default; transition: background-color 120ms ease-out; }
+    li.selected, li:hover { background: var(--selected); }
+    li.selected svg { stroke: var(--accent); }
+    @media (prefers-reduced-motion: reduce) {
+      ul.entering { animation: fade 140ms ease-out; }
+      ul.entering li { animation: none; }
+      @keyframes fade { from { opacity: 0; } }
+    }
+    svg { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 0 1 auto; }
+    .url { color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1 1 0; min-width: 0; }
+  </style>
+</head>
+<body>
+  <ul id="list" role="listbox" aria-label="Suggestions"></ul>
+  <script src="suggest.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html><html><head><title>Fixture</title></head><body>
+<h1>Test form</h1><p>Some paragraph text for reading.</p>
+<label for="name">Full name</label> <input id="name">
+<label>Color <select id="color"><option>Red</option><option>Green</option><option>Blue</option></select></label>
+<label>Date <input id="when" type="date"></label>
+<label><input type="checkbox" id="news"> Newsletter</label>
+<fieldset><legend>Size</legend><label><input type="radio" name="size" value="s"> Small</label><label><input type="radio" name="size" value="l"> Large</label></fieldset>
+<button id="go" onclick="document.getElementById('out').textContent='clicked:'+document.getElementById('name').value+':'+document.getElementById('color').value+':'+document.getElementById('when').value">Submit</button>
+<div id="out"></div>
+<iframe id="frame" style="width:300px;height:80px" srcdoc="<button onclick=&quot;parent.document.title='iframe-clicked'&quot;>Frame button</button>"></iframe>
+<div id="host"></div>
+<div id="hov" role="button" style="display:inline-block;width:120px;height:32px;background:#ddd" onmouseenter="document.title='hovered'">Hover me</div>
+<canvas id="cv" width="200" height="80" style="background:#eee" onclick="document.getElementById('out').textContent += ' canvas-clicked'"></canvas>
+<script>
+  const root = document.getElementById('host').attachShadow({ mode: 'open' });
+  root.innerHTML = '<button id="sb">Shadow button</button>';
+  root.getElementById('sb').onclick = () => { document.getElementById('out').textContent += ' shadow-clicked'; };
+</script>
+<div style="height:3000px"></div><a href="#bottom" id="bottom">Bottom link</a>
+<form onsubmit="document.title='submitted';return false"><input id="q" placeholder="search box"></form>
+</body></html>

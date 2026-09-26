@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+  <title>Can't open this page</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #ffffff; --field: rgba(0, 0, 0, 0.05); --hover: rgba(0, 0, 0, 0.09); --text: #1d1d1f; --muted: #6e6e73; --accent: #007aff; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.12); --text: #f5f5f7; --muted: #98989d; --accent: #0a84ff; } }
+    html, body { height: 100%; margin: 0; }
+    body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+    main { width: min(480px, 88vw); margin: 0 auto; padding-top: 22vh; animation: rise 560ms cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    @media (prefers-reduced-motion: reduce) { main { animation: none; } }
+    h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 10px; }
+    p { margin: 0 0 6px; color: var(--muted); overflow-wrap: anywhere; }
+    .code { font-size: 12px; }
+    button { margin-top: 20px; height: 32px; padding: 0 16px; border: none; border-radius: 9px; background: var(--field); color: var(--text); font: inherit; font-weight: 500; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05); transition: background-color 150ms ease-out, transform 90ms ease-out; }
+    button:active { transform: scale(0.96); }
+    button:hover { background: var(--hover); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Can't open this page</h1>
+    <p id="message"></p>
+    <p class="code" id="code"></p>
+    <button id="retry" type="button">Try Again</button>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const url = params.get('url') || '';
+    let host = url;
+    try { host = new URL(url).host || url; } catch {}
+    document.getElementById('message').textContent = host
+      ? `The browser can't connect to “${host}”.`
+      : "The browser can't connect to the server.";
+    const desc = params.get('desc');
+    document.getElementById('code').textContent = desc ? `${desc}${params.get('code') ? ` (${params.get('code')})` : ''}` : '';
+    const retry = document.getElementById('retry');
+    if (/^https?:\/\//i.test(url)) retry.onclick = () => location.replace(url);
+    else retry.hidden = true;
+  </script>
+</body>
+</html>
