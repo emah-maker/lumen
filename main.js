@@ -548,6 +548,7 @@ function activeTab() {
 let viewFrozen = false;
 
 function layout() {
+  layoutWebPanels();
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
     tab.view.setVisible(visible && !viewFrozen);
@@ -1077,6 +1078,97 @@ const UA_METADATA = {
   model: '',
   mobile: false,
 };
+// ---------- AI web panels: claude.ai, ChatGPT, Gemini and Grok in the sidebar ----------
+//
+// The user's own accounts (including school or work SSO) on the providers' real websites. They are
+// plain web pages in the default session, like any tab: no preload, no access to Lumen's tools, and
+// Lumen never types into or scripts them. One view per service is kept alive so logins and chats
+// persist; it is docked in the sidebar's content area and hidden while the sidebar animates.
+const WEB_PANELS = {
+  claude: 'https://claude.ai/',
+  chatgpt: 'https://chatgpt.com/',
+  gemini: 'https://gemini.google.com/app',
+  grok: 'https://grok.com/',
+};
+const webPanels = new Map(); // service -> WebContentsView
+let webPanelMode = 'agent';
+let webPanelBounds = null; // the sidebar content area in window coordinates, or null when closed
+
+function webPanelFor(service) {
+  if (webPanels.has(service)) return webPanels.get(service);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  const wc = view.webContents;
+  applyChromeIdentity(wc);
+  wc.setWindowOpenHandler(({ url: target, disposition }) => {
+    if (!(isWebUrl(target) || target === 'about:blank')) return { action: 'deny' };
+    // Sign-in popups (Google, Microsoft, school SSO) keep window.opener so they can hand back.
+    if (disposition === 'new-window') {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
+          icon: path.join(__dirname, 'assets', 'icon.png'),
+          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+        },
+      };
+    }
+    openTab(target); // links in a chat open as normal tabs
+    return { action: 'deny' };
+  });
+  wc.on('did-create-window', (child) => applyChromeIdentity(child.webContents));
+  wc.on('context-menu', (_e, params) => showContextMenu(wc, params));
+  wc.on('before-input-event', (event, input) => handleShortcut(event, input));
+  win.contentView.addChildView(view);
+  view.setVisible(false);
+  wc.loadURL(WEB_PANELS[service]).catch(() => {});
+  webPanels.set(service, view);
+  return view;
+}
+
+function layoutWebPanels() {
+  for (const [service, view] of webPanels) {
+    const show = service === webPanelMode && Boolean(webPanelBounds) && !viewFrozen;
+    view.setVisible(show);
+    if (show) view.setBounds(webPanelBounds);
+  }
+}
+
+ipcMain.handle('webai:mode', (_e, mode) => {
+  webPanelMode = WEB_PANELS[mode] ? mode : 'agent';
+  if (webPanelMode !== 'agent') webPanelFor(webPanelMode);
+  writeSettings({ ...readSettings(), webAiMode: webPanelMode });
+  layoutWebPanels();
+  return webPanelMode;
+});
+ipcMain.on('webai:bounds', (_e, rect) => {
+  webPanelBounds = rect && rect.width > 20 && rect.height > 20
+    ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
+    : null;
+  layoutWebPanels();
+});
+ipcMain.handle('webai:state', () => ({ mode: readSettings().webAiMode || 'agent' }));
+// "Share page": the active tab's title, URL and readable text on the clipboard, for the user to paste.
+ipcMain.handle('webai:share', async () => {
+  const wc = activeTab()?.webContents;
+  if (!wc) return null;
+  const title = wc.getTitle();
+  const url = realUrl(wc);
+  let text = '';
+  if (isWebUrl(url)) {
+    try {
+      const page = await wc.executeJavaScriptInIsolatedWorld(1002, [{ code: require('./page-scripts').readPage(0, 0) }]);
+      text = String(page?.text || '').replace(/\n{3,}/g, '\n\n').trim();
+    } catch {
+      text = '';
+    }
+  }
+  const limit = 8000;
+  const body = text.length > limit ? `${text.slice(0, limit)}\n[… ${(text.length - limit).toLocaleString()} more characters]` : text;
+  clipboard.writeText([title, url, body].filter(Boolean).join('\n\n'));
+  return { title, url, chars: body.length };
+});
+
 function applyChromeIdentity(wc) {
   try {
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
@@ -1135,7 +1227,8 @@ function handleShortcut(event, input) {
   const key = input.key.toLowerCase();
   const wc = activeTab()?.webContents;
   let handled = true;
-  if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
+  if (mod && input.shift && /^Digit[1-5]$/.test(input.code || '')) ui()?.send('webai:switch', Number(input.code.slice(5)) - 1);
+  else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && key === 't') { openTab(); focusAddress(); }
   else if (mod && key === 'w') { if (activeId) closeTab(activeId); }
   else if (mod && key === 'l') focusAddress();
@@ -1296,6 +1389,7 @@ function ungroupTabsFor(ids) {
 const agent = new Agent({ activeTab, listTabs, openTab, switchTab, closeTab, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: readSettings().model || DEFAULT_MODEL }), providerKey);
 if (process.env.CLAUDE_BROWSER_TEST) {
   global.__agent = agent;
+  global.__webPanels = webPanels;
   global.__providers = providers;
   global.__importBrowser = importBrowser;
   global.__tabGroups = tabGroups;

@@ -90,6 +90,13 @@
 
     <aside id="sidebar" class="sidebar" aria-label="AI assistant">
       <div class="sidebar-resize" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
+      <div class="ai-switch" id="ai-switch" role="tablist" aria-label="Assistant">
+        <button type="button" role="tab" data-mode="agent" title="Agent: works in your tabs (Ctrl+Shift+1)">Agent</button>
+        <button type="button" role="tab" data-mode="claude" title="Claude.ai with your account (Ctrl+Shift+2)">Claude</button>
+        <button type="button" role="tab" data-mode="chatgpt" title="ChatGPT with your account (Ctrl+Shift+3)">ChatGPT</button>
+        <button type="button" role="tab" data-mode="gemini" title="Gemini with your account (Ctrl+Shift+4)">Gemini</button>
+        <button type="button" role="tab" data-mode="grok" title="Grok with your account (Ctrl+Shift+5)">Grok</button>
+      </div>
       <div class="sidebar-head">
         <label class="model-picker" title="Model">
           <span class="visually-hidden">Model</span>
@@ -97,6 +104,9 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
         </label>
         <div class="sidebar-actions">
+          <button class="icon-btn" id="share-page" title="Copy this page to paste into the chat" aria-label="Share page" hidden>
+            <svg viewBox="0 0 16 16"><path d="M8 10V2.5M5 5.5l3-3 3 3"/><path d="M3.5 8.5v4a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-4"/></svg>
+          </button>
           <button class="icon-btn" id="new-chat" title="New chat" aria-label="New chat">
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
           </button>
@@ -109,6 +119,7 @@
       <section id="settings" class="settings" hidden>
         <details class="settings-section" open>
           <summary>AI accounts</summary>
+          <p class="hint webai-hint">Use your Claude.ai, ChatGPT, Gemini or Grok account (including school/work sign-in): open the sidebar and pick it at the top. Agent features (clicking and typing for you) need an API key or Anthropic sign-in.</p>
           <label class="field-label" for="api-key">Anthropic (Claude) API key</label>
           <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" />
           <div class="settings-row">
@@ -158,6 +169,8 @@
         </details>
       </section>
 
+      <div id="webai-host" class="webai-host" hidden aria-hidden="true"></div>
+      <div id="webai-toast" class="webai-toast" role="status" hidden></div>
       <div id="messages" class="messages" aria-live="polite">
         <div class="empty" id="empty">
           <p class="empty-title"><span class="glow">Ask anything.</span> Or give Lumen a task on this page.</p>
@@ -181,5 +194,6 @@
 
   <script src="markdown.js"></script>
   <script src="app.js"></script>
+  <script src="webai.js"></script>
 </body>
 </html>

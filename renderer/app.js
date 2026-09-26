@@ -953,6 +953,7 @@ const ASSISTANTS = {
 let assistantIdentity = null;
 
 function setAssistantIdentity(group) {
+  if (window.webAiBrand) group = window.webAiBrand; // a web panel (renderer/webai.js) decides the mark
   const who = ASSISTANTS[group] || ASSISTANTS.Claude;
   if (assistantIdentity === who) return;
   const first = assistantIdentity === null;
