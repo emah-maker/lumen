@@ -1,11 +1,19 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog, nativeTheme, net, safeStorage, session, shell } = require('electron');
+
+// `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
+// only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
+if (process.argv.includes('--mcp')) {
+  if (process.env.CLAUDE_BROWSER_TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
+  require('./mcp').runBridge({ app });
+  return;
+}
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const Anthropic = require('@anthropic-ai/sdk');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
-const { Agent, normalizeUrl, MODELS, DEFAULT_MODEL } = require('./agent');
+const { Agent, normalizeUrl, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, validateInput: validateToolInput } = require('./agent');
 const providers = require('./providers');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor } = require('./search');
 // Optional features load on first use (startup stays lean).
@@ -47,6 +55,7 @@ if (process.platform === 'win32') app.setAppUserModelId(APP_ID); // taskbar grou
 if (process.env.CLAUDE_BROWSER_TEST) {
   app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE || fs.mkdtempSync(path.join(require('os').tmpdir(), 'claude-browser-test-')));
 }
+
 
 let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
@@ -1390,6 +1399,7 @@ const agent = new Agent({ activeTab, listTabs, openTab, switchTab, closeTab, gro
 if (process.env.CLAUDE_BROWSER_TEST) {
   global.__agent = agent;
   global.__webPanels = webPanels;
+  global.__mcp = () => mcpServer;
   global.__providers = providers;
   global.__importBrowser = importBrowser;
   global.__tabGroups = tabGroups;
@@ -1623,6 +1633,76 @@ ipcMain.handle('settings:set-key', (_e, key) => {
   return true;
 });
 
+// ---------- AI agents over MCP (Claude Code, Codex CLI, Gemini CLI, Cursor…) ----------
+
+let mcpServer = null;
+const mcpEvent = (event) => ui()?.send('mcp:event', event);
+const mcpEnabled = () => readSettings().mcpEnabled !== false;
+
+const toMcpContent = (result) => (typeof result === 'string'
+  ? [{ type: 'text', text: result }]
+  : result.map((b) => (b.type === 'image' ? { type: 'image', data: b.source.data, mimeType: b.source.media_type } : { type: 'text', text: b.text ?? '' })));
+
+// Runs one browser tool for an external agent, with the same per-site approval as the sidebar,
+// and shows each call as a step in the sidebar.
+async function mcpCallTool(name, args, session) {
+  const problem = validateToolInput(name, args);
+  if (problem) return { content: [{ type: 'text', text: `Invalid input: ${problem}` }], isError: true };
+  session.approvedHosts ||= new Set();
+  const stepId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const label = await agent.describeStep(name, args).catch(() => null);
+  mcpEvent({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
+  const emit = (event) => mcpEvent({ ...event, clientName: session.clientName });
+  try {
+    await agent.ensureAllowed(name, emit, session.controller.signal, { hosts: session.approvedHosts, who: session.clientName });
+    const result = await agent.execute(name, args);
+    mcpEvent({ type: 'tool_done', id: stepId, ok: true });
+    return { content: toMcpContent(result), isError: false };
+  } catch (err) {
+    const message = session.controller.signal.aborted ? 'Stopped by the user.' : String(err?.message || err);
+    mcpEvent({ type: 'tool_done', id: stepId, ok: false, error: message.split('\n')[0] });
+    return { content: [{ type: 'text', text: message }], isError: true };
+  }
+}
+
+function startMcp() {
+  mcpServer = require('./mcp').startServer({
+    userData: app.getPath('userData'),
+    tools: EXTERNAL_TOOLS,
+    callTool: mcpCallTool,
+    enabled: mcpEnabled,
+    onEvent: mcpEvent,
+  });
+}
+
+// The command an agent should run: Lumen's own executable in Node mode on mcp.js (clean stdio,
+// no window machinery). Works for the installed app and for development alike.
+function mcpCommand() {
+  return { command: process.execPath, args: [path.join(__dirname, 'mcp.js')], env: { ELECTRON_RUN_AS_NODE: '1' } };
+}
+
+ipcMain.handle('mcp:info', () => {
+  const { command, args, env } = mcpCommand();
+  const quoted = [command, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+  const json = JSON.stringify({ mcpServers: { lumen: { command, args, env } } }, null, 2);
+  const tomlArgs = args.map((a) => `'${a}'`).join(', ');
+  return {
+    enabled: mcpEnabled(),
+    snippets: [
+      { id: 'claude', label: 'Claude Code', hint: 'Run in a terminal', text: `claude mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}` },
+      { id: 'codex', label: 'Codex CLI', hint: 'Add to ~/.codex/config.toml', text: `[mcp_servers.lumen]\ncommand = '${command}'\nargs = [${tomlArgs}]\nenv = { ELECTRON_RUN_AS_NODE = "1" }` },
+      { id: 'gemini', label: 'Gemini CLI', hint: 'Add to ~/.gemini/settings.json', text: json },
+      { id: 'json', label: 'Other MCP clients', hint: 'Cursor, Claude Desktop, etc.', text: json },
+    ],
+  };
+});
+ipcMain.handle('mcp:set-enabled', (_e, on) => {
+  writeSettings({ ...readSettings(), mcpEnabled: Boolean(on) });
+  if (!on) mcpServer?.disconnectAll();
+  return true;
+});
+ipcMain.on('mcp:stop', () => mcpServer?.disconnectAll());
+
 // `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
 // Start menu shortcuts carrying the app ID and icon, then exits.
 function installShortcuts() {
@@ -1716,6 +1796,7 @@ app.whenReady().then(async () => {
   }
   if (!singleInstance) return;
   listenForSecondInstances();
+  startMcp();
   setupPermissions();
   setupDownloads();
   loadChat();

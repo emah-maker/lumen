@@ -800,15 +800,16 @@ class Agent {
   }
 
   // First click/type/script on a site in this chat asks the user with a card in the sidebar.
-  async ensureAllowed(name, emit, signal) {
+  // External agents (MCP) pass their own approved-hosts set and name.
+  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude' } = {}) {
     if (!ACTING_TOOLS.has(name)) return;
     const wc = this.browser.activeTab()?.webContents;
     let host = '';
     try { host = new URL(wc?.getURL() || '').host; } catch {}
-    if (!host || this.approvedHosts.has(host)) return;
+    if (!host || hosts.has(host)) return;
     const ok = this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal);
-    if (!ok) throw new Error(`The user did not allow Claude to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
-    this.approvedHosts.add(host);
+    if (!ok) throw new Error(`The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
+    hosts.add(host);
   }
 
   askApproval(host, emit, signal) {
@@ -1107,4 +1108,7 @@ function describeError(err) {
   return { text: String(err.message || err) };
 }
 
-module.exports = { Agent, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL };
+// Tools offered to external agents over MCP: every browser tool plus the client-side web search.
+const EXTERNAL_TOOLS = OTHER_TOOLS;
+
+module.exports = { Agent, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS };

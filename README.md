@@ -66,9 +66,53 @@ No API key? Open the sidebar (`Ctrl+J`) and pick **Claude**, **ChatGPT**, **Gemi
 - **Share page** (the arrow button) copies the current tab's title, address and readable text so you can paste it into the chat.
 - These panels are ordinary web pages: Lumen never types into them or reads them. Agent features (Lumen clicking and typing in your tabs) need an API key or Anthropic sign-in, in the **Agent** mode.
 
+## Use Lumen from Claude Code, Codex, Gemini CLI
+
+Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the
+sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls,
+run_script, web_search, group_tabs…). The exact commands for your install, with the right
+paths, are in **Settings → AI agents (MCP) → Connect an AI agent** (each with a Copy button).
+They run Lumen's own executable in Node mode on `mcp.js`:
+
+```sh
+# Claude Code
+claude mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- "C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe" "C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js"
+```
+
+```toml
+# Codex CLI: ~/.codex/config.toml
+[mcp_servers.lumen]
+command = 'C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe'
+args = ['C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js']
+env = { ELECTRON_RUN_AS_NODE = "1" }
+```
+
+```json
+// Gemini CLI (~/.gemini/settings.json), Cursor, Claude Desktop and other MCP clients
+{ "mcpServers": { "lumen": {
+  "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\Lumen.exe",
+  "args": ["C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\resources\\app\\mcp.js"],
+  "env": { "ELECTRON_RUN_AS_NODE": "1" } } } }
+```
+
+How it works and what keeps it safe:
+
+- The agent starts a small bridge that connects to the running Lumen over a per-user local
+  channel (a named pipe on Windows, a Unix socket elsewhere) with a random token stored in
+  Lumen's profile folder. If Lumen isn't open, the bridge starts it.
+- Every new site still needs your OK: an approval card appears in the sidebar
+  ("An external agent (Claude Code) wants to interact with example.com").
+- While an agent is connected, the toolbar says **Lumen is being driven by …**, each tool call
+  shows as a step in the sidebar, and **Stop** disconnects it.
+- Turn it off in **Settings → AI agents (MCP) → Allow AI agents to connect**.
+- `Lumen --mcp` also works as the command, but on Windows GUI-mode Electron prints one blank
+  line on stdout first, which strict clients may log as a parse error; the Node-mode command
+  above avoids that.
+
 ## Layout
 
 - `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, ad blocker, IPC
+- `mcp.js`: MCP server for external agents (stdio bridge + local authenticated channel)
 - `providers.js`: OpenAI / Grok / Gemini adapter (Chat Completions, history conversion)
 - `importer.js`, `search.js`: browser import and search engines
 - `agent.js`: agent loop (`claude-opus-5`, streaming, adaptive thinking, web search, browser tools, ADHD mode)

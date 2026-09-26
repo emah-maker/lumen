@@ -57,6 +57,11 @@ contextBridge.exposeInMainWorld('assistant', {
   stop: () => ipcRenderer.send('agent:stop'),
   reset: () => ipcRenderer.send('agent:reset'),
   onEvent: on('agent:event'),
+  // AI agents over MCP
+  onMcpEvent: on('mcp:event'),
+  mcpInfo: () => ipcRenderer.invoke('mcp:info'),
+  setMcpEnabled: (on) => ipcRenderer.invoke('mcp:set-enabled', on),
+  stopMcp: () => ipcRenderer.send('mcp:stop'),
   onHistory: on('agent:history'),
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   getSettings: () => ipcRenderer.invoke('settings:get'),

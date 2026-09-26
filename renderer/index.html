@@ -167,6 +167,19 @@
           <p class="hint">Add a key to use OpenAI, Grok or Gemini from the model menu. Keys are encrypted with your OS keychain.</p>
           <div id="provider-keys"></div>
         </details>
+        <!-- AI agents over MCP (session B) -->
+        <details class="settings-section" id="mcp-section">
+          <summary>AI agents (MCP)</summary>
+          <label class="toggle-row" for="mcp-enabled">
+            <span>
+              <span class="toggle-title">Allow AI agents to connect</span>
+              <span class="hint">Lets Claude Code, Codex, Gemini CLI and other MCP tools drive Lumen. They still need your OK for each new site.</span>
+            </span>
+            <input id="mcp-enabled" class="switch" type="checkbox" role="switch" />
+          </label>
+          <p class="field-label">Connect an AI agent</p>
+          <div id="mcp-snippets"></div>
+        </details>
       </section>
 
       <div id="webai-host" class="webai-host" hidden aria-hidden="true"></div>

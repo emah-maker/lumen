@@ -1544,3 +1544,94 @@ $('new-chat').onclick = () => {
 
 // Pause decorative loops (agent glow, pill light) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+
+// ---------- AI agents over MCP (session B) ----------
+// External agents (Claude Code, Codex, Gemini CLI…) drive the browser; their calls show here.
+
+const mcpSteps = new Map(); // step id -> row
+let mcpPillText = null;
+
+function mcpStepRow(event) {
+  const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
+  const step = document.createElement('div');
+  step.className = 'step running mcp-step';
+  step.innerHTML = '<span class="step-detail"></span>';
+  step.firstChild.textContent = `${event.clientName}: ${label}`;
+  step.title = step.firstChild.textContent;
+  mcpSteps.set(event.id, step);
+  append(step);
+}
+
+window.assistant.onMcpEvent?.((event) => {
+  switch (event.type) {
+    case 'session': {
+      document.body.classList.toggle('mcp-active', event.active || event.remaining > 0);
+      const text = document.querySelector('#agent-pill span:not(.agent-dot)');
+      if (text) {
+        if (mcpPillText === null) mcpPillText = text.textContent;
+        text.textContent = event.active || event.remaining > 0 ? `Lumen is being driven by ${event.clientName}` : mcpPillText;
+      }
+      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.active ? `${event.clientName} connected to Lumen.` : `${event.clientName} disconnected.` }));
+      break;
+    }
+    case 'tool':
+      mcpStepRow(event);
+      break;
+    case 'tool_done': {
+      const step = mcpSteps.get(event.id);
+      if (!step) break;
+      step.className = `step mcp-step ${event.ok ? 'done' : 'failed'}`;
+      if (!event.ok && event.error) step.append(Object.assign(document.createElement('span'), { className: 'step-error', textContent: event.error }));
+      mcpSteps.delete(event.id);
+      break;
+    }
+    case 'approval': {
+      showSidebar(true);
+      showApproval(event.approvalId, event.host);
+      const card = approvals.get(event.approvalId)?.card;
+      const title = card?.querySelector('.approval-title');
+      if (title) title.textContent = `An external agent (${event.clientName}) wants to interact with ${event.host}`;
+      card?.setAttribute('aria-label', title?.textContent || '');
+      break;
+    }
+    case 'approval_done':
+      resolveApproval(event.approvalId, event.ok);
+      break;
+  }
+});
+
+// Stop on the pill ends external sessions when the sidebar agent isn't running.
+$('agent-stop')?.addEventListener('click', () => {
+  if (document.body.classList.contains('mcp-active') && !running) window.assistant.stopMcp?.();
+});
+
+async function renderMcpSettings() {
+  const info = await window.assistant.mcpInfo?.();
+  if (!info) return;
+  $('mcp-enabled').checked = info.enabled;
+  const box = $('mcp-snippets');
+  box.replaceChildren();
+  for (const s of info.snippets) {
+    const row = document.createElement('div');
+    row.className = 'mcp-snippet';
+    const head = document.createElement('div');
+    head.className = 'mcp-snippet-head';
+    head.append(
+      Object.assign(document.createElement('span'), { className: 'toggle-title', textContent: s.label }),
+      Object.assign(document.createElement('span'), { className: 'hint', textContent: s.hint }),
+    );
+    const code = Object.assign(document.createElement('pre'), { className: 'mcp-code', textContent: s.text });
+    const copy = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: 'Copy' });
+    copy.onclick = async () => {
+      await navigator.clipboard.writeText(s.text).catch(() => {});
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1400);
+    };
+    head.append(copy);
+    row.append(head, code);
+    box.append(row);
+  }
+}
+$('mcp-enabled')?.addEventListener('change', (e) => window.assistant.setMcpEnabled?.(e.target.checked));
+$('mcp-section')?.addEventListener('toggle', (e) => { if (e.target.open) renderMcpSettings(); });
+renderMcpSettings();

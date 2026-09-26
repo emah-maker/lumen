@@ -831,3 +831,11 @@ body.webai-mode #messages, body.webai-mode #composer, body.webai-mode #model, bo
 .sidebar > .webai-toast.leaving { opacity: 0; }
 body.webai-mode .sidebar-head { justify-content: flex-end; }
 /* ---------- end AI web panels ---------- */
+
+/* ---------- AI agents over MCP (session B) ---------- */
+body.mcp-active .agent-pill { display: flex; }
+.mcp-snippet { margin-top: 8px; }
+.mcp-snippet-head { display: flex; align-items: center; gap: 8px; }
+.mcp-snippet-head .hint { flex: 1; margin: 0; }
+.mcp-code { margin: 4px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--field); font: 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.step.mcp-step .step-detail { color: var(--text); }
