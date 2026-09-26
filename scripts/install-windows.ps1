@@ -1,17 +1,22 @@
-# Installs the built app for the current user: copies dist\win-unpacked to
-# %LOCALAPPDATA%\Programs\Claude Browser and adds Desktop + Start menu shortcuts.
+# Installs the built app for the current user on the local drive: copies the build to
+# %LOCALAPPDATA%\Programs\Lumen and adds Desktop + Start menu shortcuts.
 # Run after `npm run dist`. Uninstall: delete that folder and the two shortcuts.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$source = Join-Path $root 'dist\win-unpacked'
-$target = Join-Path $env:LOCALAPPDATA 'Programs\Claude Browser'
-if (-not (Test-Path (Join-Path $source 'Claude Browser.exe'))) { throw "Build first: npm run dist" }
+$source = if ($env:LUMEN_BUILD_DIR) { Join-Path $env:LUMEN_BUILD_DIR 'win-unpacked' } else { Join-Path $root 'dist\win-unpacked' }
+$target = Join-Path $env:LOCALAPPDATA 'Programs\Lumen'
+if (-not (Test-Path (Join-Path $source 'Lumen.exe'))) { throw "Build first: npm run dist (looked in $source)" }
 
-Get-Process -Name 'Claude Browser' -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name 'Lumen', 'Claude Browser' -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 500
 if (Test-Path $target) { Remove-Item -Recurse -Force $target }
 Copy-Item -Recurse $source $target
 Copy-Item (Join-Path $root 'assets\icon.ico') (Join-Path $target 'icon.ico')
 
+# The pre-rename install ("Claude Browser") is replaced by this one.
+$old = Join-Path $env:LOCALAPPDATA 'Programs\Claude Browser'
+if (Test-Path $old) { Remove-Item -Recurse -Force $old }
+
 # The app writes its own shortcuts so they carry its taskbar identity (AppUserModelID) and icon.
-Start-Process -FilePath (Join-Path $target 'Claude Browser.exe') -ArgumentList '--install-shortcuts' -Wait
+Start-Process -FilePath (Join-Path $target 'Lumen.exe') -ArgumentList '--install-shortcuts' -Wait
 Write-Host "Installed to $target"

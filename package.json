@@ -1,8 +1,8 @@
 {
-  "name": "claude-browser",
-  "productName": "Claude Browser",
+  "name": "lumen",
+  "productName": "Lumen",
   "version": "0.1.0",
-  "description": "A Chromium browser with a Claude assistant that can read and drive web pages",
+  "description": "Lumen: an AI browser that works with Claude, ChatGPT, Grok and Gemini, and with any AI agent through MCP",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -23,10 +23,10 @@
     "electron-builder": "^26.15.3",
     "playwright-core": "^1.63.0"
   },
-  "author": "Claude Browser",
+  "author": "Lumen",
   "build": {
-    "appId": "com.claudebrowser.app",
-    "productName": "Claude Browser",
+    "appId": "com.lumen.browser",
+    "productName": "Lumen",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -58,10 +58,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Claude Browser"
+      "shortcutName": "Lumen"
     },
     "portable": {
-      "artifactName": "Claude Browser ${version} Portable.exe"
+      "artifactName": "Lumen ${version} Portable.exe"
     },
     "electronDist": "node_modules/electron/dist",
     "asar": false,

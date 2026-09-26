@@ -1,4 +1,4 @@
-# Claude Browser
+# Lumen
 
 A Chromium browser (Electron) with a Claude sidebar that can read the current page and act on it: click, type, scroll, open tabs, search the web.
 
@@ -13,7 +13,7 @@ npm start
 
 ```
 npm run dist         # builds distwin-unpacked
-npm run install_app  # copies it to %LOCALAPPDATA%ProgramsClaude Browser, adds Desktop + Start menu shortcuts
+npm run install_app  # copies it to %LOCALAPPDATA%ProgramsLumen, adds Desktop + Start menu shortcuts
 ```
 
 The app ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, `electronDist` from node_modules). Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity), or an NSIS installer, produces exactly that. The untouched Electron binary is recognised, so it runs. The window and taskbar use the app icon at runtime. To ship a normal installer instead, sign the build with a trusted code-signing certificate.
@@ -47,7 +47,7 @@ Sites must ask before using your camera, microphone, location, or notifications.
   - web search
 - **ADHD mode** (on by default, toggle in Claude settings): answers lead with the next action, use short numbered steps, and end with one small next step.
 - **Ad blocker** built into the browser, not an extension. It uses uBlock Origin–compatible lists (Ghostery engine). Toggle it, or allow ads on one site, from **⋯ → Ad Blocker**. Hidden-element rules are applied in a way pages can't read, and uBlock's scripts disarm known anti-adblock checks. Blocked requests are cancelled, so a determined site can still notice that its ad request failed.
-- **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get Extensions…** and click *Add to Claude Browser*. Extension buttons appear in the toolbar. Note: the ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work.
+- **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get Extensions…** and click *Add to Lumen*. Extension buttons appear in the toolbar. Note: the ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work.
 
 - **Other AI models:** add an OpenAI, Grok (xAI) or Gemini key in Claude settings → Other models. Their models appear in the model menu, work with every browser tool, and can take over a chat mid-conversation.
 - **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (settings, or ⋯ → Search Engine).

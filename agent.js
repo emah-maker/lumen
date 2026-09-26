@@ -308,7 +308,7 @@ function systemFor(settings) {
   const onClaude = providers.splitModel(settings.model).provider === 'anthropic';
   const base = onClaude
     ? SYSTEM
-    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', 'You are the AI assistant built into Claude Browser, a web browser.')
+    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', 'You are the AI assistant built into Lumen, a web browser.')
       + '\n\nweb_search returns top results from DuckDuckGo; open results with read_urls or navigate.';
   return settings.adhdMode ? base + ADHD_STYLE : base;
 }

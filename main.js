@@ -27,7 +27,21 @@ const UA_PLATFORM = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; 
 app.userAgentFallback = `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
 
 // Test runs get a throwaway profile so they never touch the real session or key.
-const APP_ID = 'com.claudebrowser.app';
+const APP_ID = 'com.lumen.browser';
+
+// Lumen was "Claude Browser": carry the old profile (settings, history, bookmarks, extensions,
+// saved chat) over to the new name once, before anything opens it.
+if (!process.env.CLAUDE_BROWSER_TEST) {
+  const oldProfile = path.join(app.getPath('appData'), 'Claude Browser');
+  const newProfile = app.getPath('userData');
+  if (!fs.existsSync(newProfile) && fs.existsSync(oldProfile)) {
+    try {
+      fs.renameSync(oldProfile, newProfile);
+    } catch {
+      try { fs.cpSync(oldProfile, newProfile, { recursive: true }); } catch {}
+    }
+  }
+}
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID); // taskbar grouping, notifications
 
 if (process.env.CLAUDE_BROWSER_TEST) {
@@ -321,7 +335,7 @@ async function setupExtensions() {
         await dialog.showMessageBox(win, {
           type: 'info',
           message: `“${localizedName}” can't be added`,
-          detail: 'It filters pages with a Chrome feature (declarativeNetRequest) that Claude Browser does not support yet. For ad and tracker blocking, use the built-in blocker in ⋯ → Ad Blocker.',
+          detail: 'It filters pages with a Chrome feature (declarativeNetRequest) that Lumen does not support yet. For ad and tracker blocking, use the built-in blocker in ⋯ → Ad Blocker.',
         });
         return { action: 'deny' };
       }
@@ -1233,7 +1247,7 @@ function createWindow() {
     height: 920,
     minWidth: 800,
     minHeight: 500,
-    title: 'Claude Browser',
+    title: 'Lumen',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
@@ -1515,14 +1529,17 @@ ipcMain.handle('settings:set-key', (_e, key) => {
   return true;
 });
 
-// `Claude Browser.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
+// `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
 // Start menu shortcuts carrying the app ID and icon, then exits.
 function installShortcuts() {
   const exe = process.execPath;
   const icon = path.join(path.dirname(exe), 'icon.ico');
-  const options = { target: exe, cwd: path.dirname(exe), icon: fs.existsSync(icon) ? icon : exe, iconIndex: 0, appUserModelId: APP_ID, description: 'Claude Browser' };
+  const options = { target: exe, cwd: path.dirname(exe), icon: fs.existsSync(icon) ? icon : exe, iconIndex: 0, appUserModelId: APP_ID, description: 'Lumen, the AI browser' };
   const startMenu = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-  for (const dir of [app.getPath('desktop'), startMenu]) shell.writeShortcutLink(path.join(dir, 'Claude Browser.lnk'), 'create', options);
+  for (const dir of [app.getPath('desktop'), startMenu]) {
+    shell.writeShortcutLink(path.join(dir, 'Lumen.lnk'), 'create', options);
+    fs.rmSync(path.join(dir, 'Claude Browser.lnk'), { force: true }); // the shortcut from before the rename
+  }
 }
 
 // If the lock is held but no main process for this app is alive, it belongs to child processes
@@ -1547,7 +1564,7 @@ function reclaimProfileLock() {
 }
 
 const PIPE = () => (process.platform === 'win32'
-  ? `\\\\.\\pipe\\claude-browser-${require('crypto').createHash('sha1').update(app.getPath('userData')).digest('hex').slice(0, 12)}`
+  ? `\\\\.\\pipe\\lumen-${require('crypto').createHash('sha1').update(app.getPath('userData')).digest('hex').slice(0, 12)}`
   : path.join(app.getPath('userData'), 'instance.sock'));
 
 // Is a live instance listening on this profile's pipe? (It focuses itself when we connect.)

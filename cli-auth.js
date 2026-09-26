@@ -84,7 +84,7 @@ function platformKey() {
 }
 
 async function download(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'claude-browser' } });
+  const res = await fetch(url, { headers: { 'User-Agent': 'lumen-browser' } });
   if (!res.ok) throw new Error(`Download failed (${res.status}): ${url}`);
   return Buffer.from(await res.arrayBuffer());
 }
