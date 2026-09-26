@@ -1,6 +1,12 @@
 # Lumen
 
-A Chromium browser (Electron) with a Claude sidebar that can read the current page and act on it: click, type, scroll, open tabs, search the web.
+**Every AI, one browser.** Lumen is a fast, calm Chromium browser with an AI built into the sidebar. Bring the one you like: **Claude, ChatGPT, Gemini or Grok**. Switch between them mid-conversation, or plug in **any AI agent over MCP**.
+
+- **An AI that does things, not just chats.** It reads the page you're on and acts on it: clicks, types, fills in forms, opens and groups tabs, and researches several pages at once. It asks before acting on a new site, and never submits a half-filled form.
+- **Your choice of model.** Claude (Opus, Sonnet, Haiku, Fable), OpenAI, Grok and Gemini. Add a key, or sign in to Anthropic with its CLI. The toolbar button takes on each company's mark.
+- **A real browser underneath.** Tabs with automatic groups, bookmarks, history, downloads, find, zoom, Chrome Web Store extensions, a built-in ad and tracker blocker, and import from Chrome, Edge, Brave, Vivaldi, Opera or Firefox.
+- **Private by default.** Background reading and search run without your cookies, page scripts are hidden from sites, chats are encrypted at rest, and the start page makes no network requests.
+- **Made to feel alive.** Light and dark themes that follow your system, spring animations, and an aurora start page.
 
 ## Run
 

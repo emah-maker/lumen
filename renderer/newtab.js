@@ -131,7 +131,10 @@ function render() {
   const { favorites: favs, frequent: freq, blocked } = data();
   const now = new Date();
   document.getElementById('date').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  document.getElementById('greeting').textContent = greeting(now);
+  const [first, ...rest] = greeting(now).split(' ');
+  const h1 = document.getElementById('greeting');
+  h1.textContent = `${first} `;
+  h1.append(Object.assign(document.createElement('span'), { className: 'glow', textContent: rest.join(' ') }));
   const box = document.getElementById('sections');
   box.replaceChildren(section('Favorites', favorites(favs)));
   if (freq.length) box.append(section('Frequently Visited', frequent(freq)));

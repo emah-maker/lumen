@@ -82,11 +82,12 @@ function fakeFirefoxProfile() {
   await ui.waitForTimeout(500);
   await ui.evaluate(() => { document.getElementById('open-settings').click(); document.querySelectorAll('.settings-section').forEach((d) => { d.open = true; }); });
   await ui.waitForTimeout(400);
-  const engines = await ui.$$eval('#search-engine option', (os) => os.map((o) => o.value));
+  const engines = await ui.$$eval('#search-engine .engine', (bs) => bs.map((b) => b.dataset.id));
   check('settings list 6 search engines', engines.length === 6 && engines.includes('duckduckgo'), JSON.stringify(engines));
   const importButtons = await ui.$$eval('#import-row button', (bs) => bs.map((b) => b.textContent));
   check('settings list installed browsers to import from', Array.isArray(importButtons), JSON.stringify(importButtons));
-  await ui.selectOption('#search-engine', 'duckduckgo');
+  await ui.click('#search-engine .engine[data-id="duckduckgo"]');
+  check('picker marks the chosen engine', (await ui.getAttribute('#search-engine .engine[data-id="duckduckgo"]', 'aria-checked')) === 'true', 'not checked');
   await ui.waitForTimeout(300);
   await ui.evaluate(() => document.getElementById('settings').hidden = true);
   await ui.fill('#address', 'best pizza near me');

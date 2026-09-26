@@ -803,10 +803,54 @@ function renderProviderKeys(providerKeys = {}) {
   }
 }
 
+// Search engines as a radio grid with a coloured monogram each (arrow keys move the choice).
+const ENGINE_COLORS = { google: '#4285f4', duckduckgo: '#de5833', bing: '#0c8484', brave: '#fb542b', ecosia: '#1f9d55', startpage: '#6573ff' };
+
+function renderEnginePicker(engines, selectedId) {
+  const group = $('search-engine');
+  group.replaceChildren();
+  engines.forEach((e) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'engine';
+    button.dataset.id = e.id;
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-checked', String(e.id === selectedId));
+    button.tabIndex = e.id === selectedId ? 0 : -1;
+    button.style.setProperty('--engine', ENGINE_COLORS[e.id] || 'var(--accent)');
+    const mono = Object.assign(document.createElement('span'), { className: 'mono', textContent: e.label[0] });
+    mono.setAttribute('aria-hidden', 'true');
+    button.append(mono, Object.assign(document.createElement('span'), { className: 'label', textContent: e.label }));
+    button.onclick = () => chooseEngine(e.id, engines);
+    group.append(button);
+  });
+}
+
+function chooseEngine(id, engines) {
+  for (const b of $('search-engine').querySelectorAll('.engine')) {
+    const on = b.dataset.id === id;
+    b.setAttribute('aria-checked', String(on));
+    b.tabIndex = on ? 0 : -1;
+  }
+  const chosen = engines?.find((e) => e.id === id);
+  if (chosen) searchEngine = chosen;
+  window.assistant.setSearchEngine(id);
+}
+
+$('search-engine').addEventListener('keydown', (e) => {
+  const buttons = [...$('search-engine').querySelectorAll('.engine')];
+  const i = buttons.indexOf(document.activeElement);
+  if (i === -1) return;
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+  if (!step) return;
+  e.preventDefault();
+  const next = buttons[(i + step + buttons.length) % buttons.length];
+  next.focus();
+  next.click();
+});
+
 async function renderSearchAndImport(s) {
-  const select = $('search-engine');
-  select.replaceChildren(...s.searchEngines.map((e) => Object.assign(document.createElement('option'), { value: e.id, textContent: e.label })));
-  select.value = s.searchEngine;
+  renderEnginePicker(s.searchEngines, s.searchEngine);
   const current = s.searchEngines.find((e) => e.id === s.searchEngine);
   if (current) searchEngine = current;
   const row = $('import-row');
@@ -823,10 +867,15 @@ async function renderSearchAndImport(s) {
     row.append(button);
   }
 }
-$('search-engine').addEventListener('change', (e) => window.assistant.setSearchEngine(e.target.value));
 window.assistant.onSearchEngine?.((engine) => {
   searchEngine = engine;
-  if ($('search-engine').value !== undefined) window.assistant.getSettings().then((s) => { $('search-engine').value = s.searchEngine; });
+  // Chosen from the ⋯ menu: reflect it in the picker.
+  window.assistant.getSettings().then((s) => {
+    for (const b of $('search-engine').querySelectorAll('.engine')) {
+      b.setAttribute('aria-checked', String(b.dataset.id === s.searchEngine));
+      b.tabIndex = b.dataset.id === s.searchEngine ? 0 : -1;
+    }
+  });
 });
 window.assistant.getSettings().then((s) => {
   const current = s.searchEngines?.find((e) => e.id === s.searchEngine);
@@ -924,7 +973,9 @@ function setAssistantIdentity(group) {
     setTimeout(() => { swap(); button.classList.remove('mark-out'); button.classList.add('mark-in'); setTimeout(() => button.classList.remove('mark-in'), 420); }, 120);
   }
   const empty = document.querySelector('#empty .empty-title');
-  if (empty) empty.textContent = `Ask about this page, or give ${who.name} a task.`;
+  if (empty) empty.innerHTML = `<span class="glow">Ask anything.</span> Or give ${who.name} a task on this page.`;
+  const pill = $('agent-pill-text');
+  if (pill) pill.textContent = `${who.name} is using this tab`;
 }
 
 async function loadModels() {
@@ -1314,11 +1365,12 @@ function showApproval(approvalId, host) {
   card.className = 'approval';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
-  card.setAttribute('aria-label', `Allow Claude to interact with ${host}?`);
+  const agentName = assistantIdentity?.name || 'the AI';
+  card.setAttribute('aria-label', `Allow ${agentName} to interact with ${host}?`);
 
   const title = document.createElement('p');
   title.className = 'approval-title';
-  title.textContent = `Allow Claude to interact with ${host}?`;
+  title.textContent = `Allow ${agentName} to interact with ${host}?`;
   const detail = document.createElement('p');
   detail.className = 'approval-detail';
   detail.textContent = 'It can click, type and fill in forms on this site until you start a new chat.';

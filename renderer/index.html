@@ -47,7 +47,7 @@
       <div class="toolbar-end">
         <div class="agent-pill" id="agent-pill" role="status">
           <span class="agent-dot" aria-hidden="true"></span>
-          <span>Claude is using this tab</span>
+          <span id="agent-pill-text">Lumen is using this tab</span>
           <button type="button" id="agent-stop">Stop</button>
         </div>
         <button class="icon-btn download-btn" id="downloads" type="button" aria-label="Downloads" hidden>
@@ -58,7 +58,7 @@
           <svg viewBox="0 0 16 16" class="download-arrow" aria-hidden="true"><path d="M8 3v7M5 7.5 8 10.5l3-3M4.5 13h7"/></svg>
         </button>
         <browser-action-list id="extension-actions" alignment="bottom right"></browser-action-list>
-        <button class="icon-btn" id="toggle-sidebar" title="Claude (Ctrl+J)" aria-label="Claude" aria-pressed="false">
+        <button class="icon-btn" id="toggle-sidebar" title="AI (Ctrl+J)" aria-label="AI assistant" aria-pressed="false">
           <svg viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8"/></svg>
         </button>
         <button class="icon-btn" id="app-menu" title="Menu" aria-label="Menu">
@@ -88,7 +88,7 @@
   <main class="body">
     <div id="viewport" class="viewport"></div>
 
-    <aside id="sidebar" class="sidebar" aria-label="Claude assistant">
+    <aside id="sidebar" class="sidebar" aria-label="AI assistant">
       <div class="sidebar-resize" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
       <div class="sidebar-head">
         <label class="model-picker" title="Model">
@@ -108,8 +108,8 @@
 
       <section id="settings" class="settings" hidden>
         <details class="settings-section" open>
-          <summary>Claude account</summary>
-          <label class="field-label" for="api-key">Anthropic API key</label>
+          <summary>AI accounts</summary>
+          <label class="field-label" for="api-key">Anthropic (Claude) API key</label>
           <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" />
           <div class="settings-row">
             <button class="btn" id="clear-key">Remove key</button>
@@ -137,8 +137,8 @@
         </details>
         <details class="settings-section">
           <summary>Browsing</summary>
-          <label class="field-label" for="search-engine">Search engine</label>
-          <select id="search-engine" class="settings-select" aria-label="Search engine"></select>
+          <p class="field-label" id="search-engine-label">Search engine</p>
+          <div id="search-engine" class="engine-picker" role="radiogroup" aria-labelledby="search-engine-label"></div>
           <p class="hint">Used by the address bar, the new-tab page and right-click search.</p>
           <label class="toggle-row" for="auto-groups">
             <span>
@@ -152,7 +152,7 @@
           <div class="import-row" id="import-row"></div>
         </details>
         <details class="settings-section">
-          <summary>Other models</summary>
+          <summary>ChatGPT, Gemini &amp; Grok</summary>
           <p class="hint">Add a key to use OpenAI, Grok or Gemini from the model menu. Keys are encrypted with your OS keychain.</p>
           <div id="provider-keys"></div>
         </details>
@@ -160,7 +160,7 @@
 
       <div id="messages" class="messages" aria-live="polite">
         <div class="empty" id="empty">
-          <p class="empty-title">Ask about this page, or give Claude a task.</p>
+          <p class="empty-title"><span class="glow">Ask anything.</span> Or give Lumen a task on this page.</p>
           <div class="chips">
             <button class="chip" data-prompt="Summarize this page.">Summarize this page</button>
             <button class="chip" data-prompt="What are the key takeaways from this page?">Key takeaways</button>
@@ -171,7 +171,7 @@
 
       <form id="composer" class="composer">
         <div class="attachments" id="attachments" hidden></div>
-        <textarea id="prompt" rows="1" placeholder="Ask Claude…" aria-label="Message Claude"></textarea>
+        <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant"></textarea>
         <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" disabled>
           <svg viewBox="0 0 16 16"><path d="M8 12.5v-9M4 7.5 8 3.5l4 4"/></svg>
         </button>
