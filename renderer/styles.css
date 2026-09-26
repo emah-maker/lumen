@@ -667,3 +667,11 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 
 /* Only Claude's spark turns when the sidebar opens; other marks (an X would become "+") stay upright. */
 #toggle-sidebar[aria-pressed="true"]:not([data-assistant="Claude"]) svg { transform: none; }
+
+/* ---------- AI agents over MCP (session B) ---------- */
+body.mcp-active .agent-pill { display: flex; }
+.mcp-snippet { margin-top: 8px; }
+.mcp-snippet-head { display: flex; align-items: center; gap: 8px; }
+.mcp-snippet-head .hint { flex: 1; margin: 0; }
+.mcp-code { margin: 4px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--field); font: 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.step.mcp-step .step-detail { color: var(--text); }
