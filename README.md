@@ -53,6 +53,13 @@ Sites must ask before using your camera, microphone, location, or notifications.
 - **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (settings, or ⋯ → Search Engine).
 - **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (settings, or ⋯ → Import Bookmarks and History). Passwords and cookies are never read.
 
+## Use your own AI account (claude.ai, ChatGPT, Gemini, Grok)
+
+No API key? Open the sidebar (`Ctrl+J`) and pick **Claude**, **ChatGPT**, **Gemini** or **Grok** at the top (or `Ctrl+Shift+2`–`5`; `Ctrl+Shift+1` is the Agent). The real website loads in the sidebar, so you sign in exactly as in any browser, including school or work single sign-on (for example a university Claude for Education account). Logins and chats stay open while you browse.
+
+- **Share page** (the arrow button) copies the current tab's title, address and readable text so you can paste it into the chat.
+- These panels are ordinary web pages: Lumen never types into them or reads them. Agent features (Lumen clicking and typing in your tabs) need an API key or Anthropic sign-in, in the **Agent** mode.
+
 ## Layout
 
 - `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, ad blocker, IPC

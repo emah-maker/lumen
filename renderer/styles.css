@@ -667,3 +667,31 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 
 /* Only Claude's spark turns when the sidebar opens; other marks (an X would become "+") stay upright. */
 #toggle-sidebar[aria-pressed="true"]:not([data-assistant="Claude"]) svg { transform: none; }
+
+/* ---------- AI web panels (renderer/webai.js) ---------- */
+.ai-switch { display: flex; gap: 2px; margin: 8px 12px 0; padding: 2px; border-radius: 9px; background: var(--field); }
+.ai-switch button {
+  flex: 1; min-width: 0; height: 24px; padding: 0 4px; border: none; border-radius: 7px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background-color var(--t-fast, 140ms) ease-out, color var(--t-fast, 140ms) ease-out, box-shadow var(--t-fast, 140ms) ease-out;
+}
+.ai-switch button:hover { color: var(--text); }
+.ai-switch button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 0.5px var(--hairline); }
+.ai-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* In a web mode the docked site replaces the chat; settings can still open above it. */
+body.webai-mode #messages, body.webai-mode #composer, body.webai-mode #model, body.webai-mode .model-picker, body.webai-mode #new-chat { display: none !important; }
+.webai-host { flex: 1; min-height: 0; margin: 6px 0 0; background: var(--surface); }
+.webai-toast {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 5; padding: 7px 12px; border-radius: 10px;
+  background: var(--text); color: var(--surface); font-size: 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  animation: webai-toast-in 260ms var(--spring-snappy, ease-out);
+}
+.webai-toast.leaving { opacity: 0; transition: opacity 200ms ease-out; }
+@keyframes webai-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+@media (prefers-reduced-motion: reduce) { .webai-toast { animation: none; } }
+.sidebar > .ai-switch { width: calc(var(--sidebar-width) - 25px); }
+.sidebar > .webai-host { flex: 1 1 auto; }
+.sidebar > .webai-toast { width: auto; max-width: calc(var(--sidebar-width) - 40px); opacity: 1; }
+.sidebar > .webai-toast.leaving { opacity: 0; }
+body.webai-mode .sidebar-head { justify-content: flex-end; }
+/* ---------- end AI web panels ---------- */
