@@ -3,6 +3,13 @@ const Anthropic = require('@anthropic-ai/sdk');
 const scripts = require('./page-scripts');
 const providers = require('./providers');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
+
+// The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
+// in front when it started, so switching tabs mid-task can't send its clicks and typing to another
+// page; switch_tab and open_tab move the pin on purpose. Outside a task, tools use the active tab.
+const taskScope = new AsyncLocalStorage();
+const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user what to do next.';
 
 // Models the user can pick. Request shapes differ: Haiku 4.5 predates adaptive thinking and the
 // dynamic-filtering web search; Opus 5.5 defaults to medium effort, so ask for high explicitly.
@@ -367,8 +374,41 @@ const PAGE_CONTEXT_CHARS = 7000;
 const PAGE_BLOCK = /<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g;
 // ---- [/page context]
 
+// ---- context budget. Claude's context_management clears old tool results server-side and the other
+// providers get old tool results shrunk (providers.js), but a long chat still outgrew the model's
+// window, and from then on every message failed until New chat. Past this budget the oldest turns
+// are left out of the request (never out of the chat itself), cut at a message the user typed so the
+// history stays valid. Characters, not tokens: close enough, and free to compute.
+const CONTEXT_CHARS = { anthropic: 600_000, other: 320_000 }; // ~150k / ~80k tokens
+const IMAGE_CHARS = 6000; // an image costs about 1.5k tokens, whatever its base64 length
+function blockChars(block) {
+  if (!block || typeof block !== 'object') return String(block ?? '').length;
+  if (block.type === 'image') return IMAGE_CHARS;
+  if (block.type === 'tool_result' && Array.isArray(block.content)) return 40 + block.content.reduce((n, b) => n + blockChars(b), 0);
+  return JSON.stringify(block).length;
+}
+const messageChars = (m) => (Array.isArray(m.content) ? m.content.reduce((n, b) => n + blockChars(b), 0) : String(m.content).length);
+const canStartHistory = (m) => m.role === 'user' && !(Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
+function fitContext(messages, budget) {
+  let total = 0;
+  let start = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    total += messageChars(messages[i]);
+    if (total > budget) break;
+    if (canStartHistory(messages[i])) start = i;
+    if (i === 0) return messages; // everything fits
+  }
+  if (start <= 0) start = messages.findLastIndex(canStartHistory); // even the last message alone is over: send just that turn
+  if (start <= 0) return messages;
+  const first = messages[start];
+  const content = Array.isArray(first.content) ? first.content : [{ type: 'text', text: String(first.content) }];
+  const note = { type: 'text', text: '(Earlier parts of this conversation were left out to fit the model’s context window.)' };
+  return [{ role: 'user', content: [note, ...content] }, ...messages.slice(start + 1)];
+}
+const isContextError = (err) => /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length/i.test(String(err?.message || ''));
+
 // settings = { model, adhdMode }; adhdMode is fixed per conversation, the model can change.
-function requestFor(settings, messages) {
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
   const model = MODELS[settings.model] ? settings.model : DEFAULT_MODEL;
   const cfg = MODELS[model];
   const params = {
@@ -382,7 +422,7 @@ function requestFor(settings, messages) {
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
     tools: cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS,
-    messages: historyFor(messages, model),
+    messages: historyFor(fitContext(messages, budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
   if (cfg.effort) params.output_config = { effort: cfg.effort };
@@ -403,7 +443,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Inputs where at least one of the listed fields must be present (kept out of the JSON schema).
 const ONE_OF = { click: [['element_id', 'text']] };
 // Tools that change a page; the first use per site per chat needs the user's OK.
-const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', ...snapshot.ACTING]);
+const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', ...snapshot.ACTING]);
 
 function validateInput(name, input) {
   const schema = TOOL_SCHEMAS[name];
@@ -474,18 +514,21 @@ function webUrl(raw) {
 
 async function waitForLoad(wc, timeoutMs = 8000) {
   await sleep(150);
-  if (wc.isLoading()) {
+  if (!wc.isDestroyed() && wc.isLoading()) {
     await new Promise((resolve) => {
       const done = () => {
         clearTimeout(timer);
         wc.removeListener('did-stop-loading', done);
+        wc.removeListener('destroyed', done);
         resolve();
       };
       const timer = setTimeout(done, timeoutMs);
       wc.once('did-stop-loading', done);
+      wc.once('destroyed', done); // a tab closed mid-load: don't sit out the whole timeout
     });
   }
   await sleep(400);
+  if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
 }
 
 // Claude's page scripts run in an isolated JavaScript world: same DOM, separate globals, so a
@@ -567,7 +610,9 @@ async function searchWeb(query) {
 }
 
 class Agent {
-  // browser: { activeTab(), noTabReason(), listTabs(), openTab(url), switchTab(id), closeTab(id), groupTabs(name, ids), ungroupTabs(ids) }
+  // browser: { activeTab(), tabById(id), noTabReason(), listTabs(), openTab(url), switchTab(id), closeTab(id),
+  //   requestCloseTab(id), hasUnsavedInput(id), groupTabs(name, ids), ungroupTabs(ids), autoApprove(),
+  //   effectiveModel(id), anthropicAuth() }; everything past closeTab is optional.
   // getOptions() returns { model, adhdMode }; it is read when a conversation starts.
   constructor(browser, getClient, getOptions = () => ({}), getKey = () => null) {
     this.browser = browser;
@@ -580,10 +625,51 @@ class Agent {
     this.approvalSeq = 0;
     this.controller = null;
     this.current = null;
+    this.nextModel = null;
+    this.scopes = new Set(); // live task scopes (see taskScope), for usingTab()
   }
 
   get running() {
     return this.current !== null;
+  }
+
+  // Runs fn with its tools pinned to tab `tabId` (see taskScope). `scope.signal` lets long waits
+  // (wait_for, wait) end as soon as the task is stopped.
+  inTask(tabId, signal, fn) {
+    const scope = { tabId: tabId ?? null, signal };
+    this.scopes.add(scope);
+    return taskScope.run(scope, fn).finally(() => this.scopes.delete(scope));
+  }
+
+  // Is a task working in this tab right now (so tab sleeping must leave it alone)?
+  usingTab(id) {
+    return [...this.scopes].some((s) => s.tabId === id);
+  }
+
+  // The tab this task works in: its pinned tab, or the active tab outside a task (or before a task
+  // has any tab). A pinned tab that has closed ends the task's use of it with a clear message.
+  taskTab() {
+    const scope = taskScope.getStore();
+    if (!scope || scope.tabId === null) return this.browser.activeTab();
+    const tab = this.browser.tabById ? this.browser.tabById(scope.tabId) : this.browser.activeTab();
+    if (!tab) throw new Error(TAB_CLOSED);
+    return tab;
+  }
+
+  // switch_tab / open_tab move the task to another tab on purpose.
+  pinTab(id) {
+    const scope = taskScope.getStore();
+    if (scope) scope.tabId = id;
+  }
+
+  // Is the task's tab the one on screen? A background tab gets DOM clicks instead of mouse events.
+  taskTabInFront() {
+    const scope = taskScope.getStore();
+    return !scope || scope.tabId === null || this.browser.activeTab()?.id === scope.tabId;
+  }
+
+  signalAborted() {
+    return Boolean(taskScope.getStore()?.signal?.aborted);
   }
 
   // Serializable copy of the conversation, for saving between app launches.
@@ -602,6 +688,7 @@ class Agent {
       return message;
     });
     if (snapshot.settings) messages.settings = snapshot.settings;
+    repairHistory(messages); // saved mid-task: answer the tool calls that never got a result
     this.messages = messages;
   }
 
@@ -631,9 +718,18 @@ class Agent {
     return items;
   }
 
-  // Switch the current conversation to another model; takes effect on the next request.
+  // Switch the current conversation to another model. Mid-run it waits for the next message: a
+  // running tool loop can't change hands (another model can't continue a turn it didn't start, and
+  // Claude Code or Grok Build can't pick up an API tool loop at all).
+  // Returns true when the switch waits for the next message.
   setModel(model) {
+    if (this.running) {
+      this.nextModel = model;
+      return true;
+    }
+    this.nextModel = null;
     if (this.messages.settings) this.messages.settings.model = model;
+    return false;
   }
 
   reset() {
@@ -653,24 +749,44 @@ class Agent {
     const next = (async () => {
       if (previous) {
         this.stop();
-        await previous;
+        await previous.catch(() => {});
       }
       await this.runOnce(userText, emit, images);
     })();
     this.current = next;
-    next.finally(() => { if (this.current === next) this.current = null; });
+    const clear = () => { if (this.current === next) this.current = null; };
+    next.then(clear, clear);
     return next;
   }
 
+  // Never throws, and always ends with a 'done' event: anything that goes wrong before the model is
+  // even asked (a tab destroyed mid-read, say) used to leave the sidebar "running" forever.
   async runOnce(userText, emit, images = []) {
     const controller = new AbortController();
     this.controller = controller;
     const messages = this.messages; // reset() swaps in a new array; this run keeps writing to its own
-    // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
-    // thinking-block prefix check on newer models. The model can change at any time (setModel).
-    if (!messages.settings) messages.settings = { model: DEFAULT_MODEL, adhdMode: true, ...this.getOptions() };
+    try {
+      // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
+      // thinking-block prefix check on newer models. The model can change between messages (setModel).
+      if (!messages.settings) messages.settings = { model: DEFAULT_MODEL, adhdMode: true, ...this.getOptions() };
+      if (this.nextModel) { messages.settings.model = this.nextModel; this.nextModel = null; }
+      // The model the picker shows: a saved model that isn't connected anymore falls back the same way.
+      // (Nothing connected at all: keep it, and the request fails with the "set up an AI" message.)
+      if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
 
-    const tab = this.browser.activeTab();
+      const tab = this.browser.activeTab();
+      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit));
+    } catch (err) {
+      if (controller.signal.aborted || err instanceof Anthropic.APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
+      else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
+      repairHistory(messages);
+    } finally {
+      if (this.controller === controller) this.controller = null;
+      emit({ type: 'done', model: messages.settings?.model });
+    }
+  }
+
+  async runTask(messages, tab, userText, images, controller, emit) {
     const state = tab
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${tab.webContents.getURL()}\n</browser_state>\n\n`
       : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`;
@@ -678,7 +794,8 @@ class Agent {
     // ---- [claude code engine] + [grok build engine] + [page context]
     const viaClaudeCode = String(messages.settings.model).startsWith('claudecode:') && Boolean(this.engines?.claudecode);
     const viaGrokBuild = String(messages.settings.model).startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
-    const page = await this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) });
+    // Stop works while the page is being read, too (it can take a few seconds on a heavy page).
+    const page = await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
@@ -690,45 +807,30 @@ class Agent {
     else messages.push({ role: 'user', content: blocks });
 
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
-    if (viaClaudeCode) {
+    // Its tool calls arrive over MCP, outside this async context: engineScope() hands them this pin.
+    if (viaClaudeCode || viaGrokBuild) {
+      this.engineRunScope = taskScope.getStore();
       try {
-        await this.claudeCodeTurn(messages, state + page + note, images, controller.signal, emit);
-      } catch (err) {
-        emit({ type: 'error', text: String(err?.message || err) });
+        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + note, images, controller.signal, emit);
+        else await this.grokBuildTurn(messages, state + page + note, images, controller.signal, emit);
       } finally {
-        if (this.controller === controller) this.controller = null;
-        emit({ type: 'done', model: messages.settings.model });
+        this.engineRunScope = null;
       }
       return;
     }
     // ---- [/claude code engine]
-    // ---- [grok build engine] "Grok · your account": the user's own CLI answers this message.
-    if (viaGrokBuild) {
-      try {
-        await this.grokBuildTurn(messages, state + page + note, images, controller.signal, emit);
-      } catch (err) {
-        emit({ type: 'error', text: String(err?.message || err) });
-      } finally {
-        if (this.controller === controller) this.controller = null;
-        emit({ type: 'done', model: messages.settings.model });
-      }
-      return;
-    }
-    // ---- [/grok build engine]
 
-    try {
-      await this.loop(messages, controller.signal, emit);
-    } catch (err) {
-      if (controller.signal.aborted || err instanceof Anthropic.APIUserAbortError) {
-        emit({ type: 'notice', text: 'Stopped.' });
-      } else {
-        emit({ type: 'error', ...describeError(err) });
-      }
-      repairHistory(messages);
-    } finally {
-      if (this.controller === controller) this.controller = null;
-      emit({ type: 'done', model: messages.settings?.model });
-    }
+    await this.loop(messages, controller.signal, emit);
+  }
+
+  // The task scope of the sidebar's running Claude Code / Grok Build message, for its MCP tool calls.
+  engineScope() {
+    return this.engineRunScope || null;
+  }
+
+  // Runs fn inside an existing scope object (an engine run's), so pins it moves stay with that run.
+  inScope(scope, fn) {
+    return taskScope.run(scope, fn);
   }
 
   // ---- [page context] The active tab's title, URL and first ~7k characters of readable text
@@ -830,8 +932,8 @@ class Agent {
   // ---- [/grok build engine]
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
-  async claudeTurn(messages, signal, emit) {
-    const stream = this.getClient().beta.messages.stream(requestFor(messages.settings, messages), { signal });
+  async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic) {
+    const stream = this.getClient().beta.messages.stream(requestFor(messages.settings, messages, budget), { signal });
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {
         if (event.delta.type === 'text_delta') emit({ type: 'text', text: event.delta.text });
@@ -844,7 +946,7 @@ class Agent {
   }
 
   // One turn on OpenAI, Grok or Gemini (Chat Completions). Same message shape as Claude's.
-  async otherTurn(messages, signal, emit) {
+  async otherTurn(messages, signal, emit, budget = CONTEXT_CHARS.other) {
     const { provider, model } = providers.splitModel(messages.settings.model);
     const apiKey = this.getKey(provider);
     if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
@@ -859,7 +961,7 @@ class Agent {
       model,
       apiKey,
       system: systemFor(messages.settings) + (toolsOk ? '' : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
-      messages: historyFor(messages, messages.settings.model),
+      messages: historyFor(fitContext(messages, budget), messages.settings.model),
       tools: toolsOk ? OTHER_TOOLS : [],
       signal,
       emit,
@@ -868,21 +970,46 @@ class Agent {
 
   async loop(messages, signal, emit) {
     let jsonRetries = 0;
+    let budgetScale = 1; // halved once if the model still says the request is too long (see fitContext)
 
     for (let step = 0; step < 60; step++) {
       emit({ type: 'turn_start' });
-      const onClaude = providers.splitModel(messages.settings.model).provider === 'anthropic';
+      const model = messages.settings.model;
+      // Never sent to the API as a Claude model id (setModel defers switches mid-run, so this is a guard).
+      if (/^(claudecode|grokbuild):/.test(String(model))) throw new Error('This reply can’t switch to Claude Code or Grok Build partway through. Send your message again.');
+      const onClaude = providers.splitModel(model).provider === 'anthropic';
+      // This turn's streamed text, kept in the chat if the stream breaks off (keepPartialReply).
+      let streamed = '';
+      const tee = (event) => {
+        if (event.type === 'text') streamed += event.text;
+        else if (event.type === 'text_block' && streamed) streamed += '\n\n';
+        emit(event);
+      };
 
       let message;
       try {
-        message = onClaude ? await this.claudeTurn(messages, signal, emit) : await this.otherTurn(messages, signal, emit).catch((err) => {
-          err.__provider = providers.splitModel(messages.settings.model).provider;
-          throw err;
-        });
+        message = onClaude
+          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale))
+          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale)).catch((err) => {
+            err.__provider = providers.splitModel(model).provider;
+            throw err;
+          });
         jsonRetries = 0;
       } catch (err) {
-        if (!onClaude || err instanceof Anthropic.APIError || signal.aborted || jsonRetries++ >= 2) throw err;
-        continue; // tool input was not parseable JSON; re-issue the turn
+        if (!signal.aborted && isContextError(err) && budgetScale === 1) {
+          budgetScale = 0.5;
+          emit({ type: 'retry' });
+          emit({ type: 'notice', text: 'This chat is long, so its oldest messages were left out to make room.' });
+          continue;
+        }
+        // Tool input that wasn't parseable JSON (eager input streaming): re-issue the turn. Anything
+        // else (a missing key, a network error) fails at once instead of costing two more requests.
+        if (onClaude && !signal.aborted && isJsonError(err) && jsonRetries++ < 2) {
+          emit({ type: 'retry' });
+          continue;
+        }
+        keepPartialReply(messages, streamed, model);
+        throw err;
       }
 
       for (const block of message.content) {
@@ -899,20 +1026,31 @@ class Agent {
       }
 
       const turn = { role: 'assistant', content: message.content };
-      producedBy.set(turn, message.model || messages.settings.model); // a fallback model may have served it
+      producedBy.set(turn, message.model || model); // a fallback model may have served it
       messages.push(turn);
 
       if (message.stop_reason === 'pause_turn') continue;
 
       const toolUses = message.content.filter((b) => b.type === 'tool_use');
+      if (message.stop_reason === 'max_tokens') {
+        if (!toolUses.length) {
+          emit({ type: 'notice', text: 'The reply was cut off at the length limit.', action: 'continue' });
+          return;
+        }
+        // A tool call cut off mid-way has half its input: answer it with an error so the model
+        // retries with a smaller one, instead of ending the whole task.
+        messages.push({ role: 'user', content: toolUses.map((use) => ({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: 'This tool call was cut off by the output length limit. Try again with less input per call.' })) });
+        continue;
+      }
       if (toolUses.length === 0) return;
 
-      if (message.stop_reason === 'max_tokens') {
-        throw new Error('A tool call was cut off by the output limit. Try a smaller request.');
-      }
-
       const results = [];
+      let tabClosed = false;
       for (const [index, use] of toolUses.entries()) {
+        if (tabClosed) {
+          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `Not run: ${TAB_CLOSED}` });
+          continue;
+        }
         const problem = validateInput(use.name, use.input);
         const label = problem ? null : await this.describeStep(use.name, use.input);
         emit({ type: 'tool', id: use.id, name: use.name, input: use.input, label });
@@ -922,7 +1060,7 @@ class Agent {
           continue;
         }
         try {
-          await this.ensureAllowed(use.name, emit, signal);
+          await this.ensureAllowed(use.name, emit, signal, { input: use.input });
           const content = await abortable(this.execute(use.name, use.input), signal);
           results.push({ type: 'tool_result', tool_use_id: use.id, content });
           emit({ type: 'tool_done', id: use.id, ok: true });
@@ -937,11 +1075,17 @@ class Agent {
             messages.push({ role: 'user', content: results });
             throw err;
           }
-          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: String(err.message || err) });
-          emit({ type: 'tool_done', id: use.id, ok: false, error: String(err.message || err).split('\n')[0] });
+          const text = toolError(err);
+          tabClosed = text === TAB_CLOSED;
+          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: text });
+          emit({ type: 'tool_done', id: use.id, ok: false, error: text.split('\n')[0] });
         }
       }
       messages.push({ role: 'user', content: results });
+      if (tabClosed) {
+        emit({ type: 'notice', text: 'The tab this task was working in was closed, so the task stopped. Send a message to carry on.' });
+        return;
+      }
     }
     emit({ type: 'notice', text: 'Stopped after 60 steps. Send a message to continue.' });
   }
@@ -959,8 +1103,14 @@ class Agent {
       if (name === 'web_search') return `Searching the web for ${quote(input.query || '')}`;
       if (name === 'group_tabs') return `Grouping ${input.tab_ids.length} tabs as ${quote(input.name)}`;
       if (name === 'ungroup_tabs') return `Ungrouping ${input.tab_ids.length} tab${input.tab_ids.length === 1 ? '' : 's'}`;
+      if (name === 'find') return `Looking for ${quote(input.query || '')} on the page`;
+      if (name === 'batch') return `Doing ${input.steps.length} step${input.steps.length === 1 ? '' : 's'} on the page`;
+      if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
+      if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
+      if (name === 'hover') return 'Pointing at an element';
+      if (name === 'click_at') return 'Clicking a spot on the page';
       if (name !== 'click' && name !== 'type_text') return null;
-      const wc = this.browser.activeTab()?.webContents;
+      const wc = this.taskTab()?.webContents;
       const info = wc ? await runScript(wc, scripts.labelOf(input.element_id), 1000) : null;
       const target = info?.label ? quote(info.label) : `element ${input.element_id}`;
       const kind = { a: ' link', button: ' button', select: ' menu' }[info?.tag] || '';
@@ -996,15 +1146,28 @@ class Agent {
   // External agents (MCP) pass their own approved-hosts set and name.
   // Auto-allow (the sidebar's switch) covers the sidebar's own AI only; outside agents (external:
   // true) always ask.
-  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false } = {}) {
+  // The card is tied to the tab and site it names: the action runs in the task's pinned tab (so a tab
+  // switch while it's showing can't move it elsewhere), and if that tab has moved to another site by
+  // the time the user answers, the new site is asked about too. close_tab asks about the tab it closes.
+  // Pages with no host (data:, about:, file:) are asked about as a group, never skipped.
+  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {} } = {}) {
     if (!ACTING_TOOLS.has(name)) return;
-    const wc = this.browser.activeTab()?.webContents;
-    let host = '';
-    try { host = new URL(wc?.getURL() || '').host; } catch {}
-    if (!host || hosts.has(host)) return;
-    const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal);
-    if (!ok) throw new Error(`The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
-    hosts.add(host);
+    const siteOf = () => {
+      const tab = name === 'close_tab' ? this.browser.tabById?.(input.tab_id) : this.taskTab();
+      const url = tab?.webContents.getURL() || '';
+      try {
+        const parsed = new URL(url);
+        return parsed.host || `${parsed.protocol.replace(/:$/, '')} pages`;
+      } catch { return ''; }
+    };
+    for (let asked = 0; asked < 3; asked++) {
+      const host = siteOf();
+      if (!host || hosts.has(host)) return;
+      const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal);
+      if (!ok) throw new Error(`The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
+      hosts.add(host);
+    }
+    if (!hosts.has(siteOf())) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
   }
 
   askApproval(host, emit, signal) {
@@ -1034,7 +1197,7 @@ class Agent {
   }
 
   requireTab() {
-    const tab = this.browser.activeTab();
+    const tab = this.taskTab();
     if (!tab) throw new Error(this.browser.noTabReason?.() || 'No tab is open.');
     return tab.webContents;
   }
@@ -1082,7 +1245,9 @@ class Agent {
         const urlBefore = wc.getURL();
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
-        if (target.covered) await runScript(wc, scripts.domClick(id));
+        // The task's tab is behind another one (the user switched away): mouse events need a tab on
+        // screen, so it gets a DOM click instead.
+        if (target.covered || !this.taskTabInFront()) await runScript(wc, scripts.domClick(id));
         else await this.mouseClick(wc, x, y);
         await waitForLoad(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
@@ -1118,7 +1283,9 @@ class Agent {
         const failed = report.filter((line) => line.includes(': FAILED'));
         if (failed.length) {
           const names = failed.map((line) => line.split(': FAILED')[0]);
-          throw new Error(`${failed.length} of ${input.fields.length} fields failed (${names.join(', ')})${input.submit ? '; the form was NOT submitted' : ''}:\n${report.join('\n')}`);
+          const filled = report.filter((line) => !line.includes(': FAILED')).map((line) => line.split(':')[0]);
+          const kept = filled.length ? ` These fields were filled and still hold their new values: ${filled.join(', ')}.` : '';
+          throw new Error(`${failed.length} of ${input.fields.length} fields failed (${names.join(', ')})${input.submit ? '; the form was NOT submitted' : ''}.${kept}\n${report.join('\n')}`);
         }
         if (input.submit && lastId !== null) {
           const urlBefore = wc.getURL();
@@ -1152,10 +1319,12 @@ class Agent {
         const wc = this.requireTab();
         const deadline = Date.now() + Math.min(Math.max(input.seconds || 10, 1), 30) * 1000;
         const probe = `(document.body ? document.body.innerText : '').toLowerCase().includes(${JSON.stringify(input.text.toLowerCase())})`;
-        while (Date.now() < deadline) {
+        while (Date.now() < deadline && !this.signalAborted()) {
+          if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
           if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;
           await sleep(300);
         }
+        if (this.signalAborted()) throw new Error('Stopped by the user.');
         throw new Error(`${quote(input.text)} did not appear within the timeout.`);
       }
       case 'type_text': {
@@ -1187,6 +1356,7 @@ class Agent {
       }
       case 'click_at': {
         const wc = this.requireTab();
+        if (!this.taskTabInFront()) throw new Error('This tab is not on screen right now (the user switched to another tab), so it can\'t be clicked by position. Use click with an element id instead.');
         if (!this.screenshotScale || this.screenshotScale.wc !== wc) throw new Error('Take a screenshot of this tab first.');
         const { ratio } = this.screenshotScale;
         const urlBefore = wc.getURL();
@@ -1226,9 +1396,18 @@ class Agent {
         return `Removed ${count} tab${count === 1 ? '' : 's'} from their groups.`;
       }
       case 'close_tab': {
-        if (!this.browser.listTabs().some((t) => t.id === input.tab_id)) throw new Error(`No tab with id ${input.tab_id}.`);
-        this.browser.closeTab(input.tab_id);
-        return `Closed tab ${input.tab_id}.`;
+        const id = input.tab_id;
+        if (!this.browser.listTabs().some((t) => t.id === id)) throw new Error(`No tab with id ${id}.`);
+        // Same care as the user's own close: text typed into a form isn't thrown away without asking,
+        // and a page's own "Leave site?" check still runs (requestCloseTab).
+        if (await this.browser.hasUnsavedInput?.(id)) throw new Error(`Tab ${id} has text typed into a form that closing it would lose. Ask the user before closing it.`);
+        if (taskScope.getStore()?.tabId === id) this.pinTab(null); // closing its own tab: carry on in whatever is in front
+        (this.browser.requestCloseTab || this.browser.closeTab)(id);
+        // requestCloseTab finishes once the page lets go: wait for that, so the next step doesn't act
+        // on a tab that is about to disappear.
+        for (let i = 0; i < 30 && this.browser.listTabs().some((t) => t.id === id); i++) await sleep(100);
+        if (this.browser.listTabs().some((t) => t.id === id)) return `Tab ${id} is asking the user whether to leave the page (it may have unsaved changes). Wait for their answer; check list_tabs.`;
+        return `Closed tab ${id}.`;
       }
       case 'scroll': {
         const wc = this.requireTab();
@@ -1248,17 +1427,21 @@ class Agent {
         return JSON.stringify(this.browser.listTabs());
       case 'open_tab': {
         const tab = this.browser.openTab(webUrl(input.url));
+        this.pinTab(tab.id); // it opens in front; the task carries on there
         await waitForLoad(tab.webContents);
         return `Opened tab ${tab.id}: ${tab.webContents.getURL()}`;
       }
       case 'switch_tab': {
         if (!this.browser.switchTab(input.tab_id)) throw new Error(`No tab with id ${input.tab_id}.`);
+        this.pinTab(input.tab_id);
         const wc = this.requireTab();
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${wc.getURL()}`;
       }
-      case 'wait':
-        await sleep(Math.min(Math.max(input.seconds, 1), 10) * 1000);
+      case 'wait': {
+        const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;
+        while (Date.now() < until && !this.signalAborted()) await sleep(Math.min(250, until - Date.now()));
         return 'Done waiting.';
+      }
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1294,15 +1477,38 @@ function repairHistory(messages) {
   });
 }
 
-function describeError(err) {
+// A reply that broke off mid-stream (an error, or Stop) stays in the chat with a marker, so the next
+// message doesn't ask a model that has no idea what it just said on screen.
+function keepPartialReply(messages, text, model) {
+  if (!text.trim() || messages[messages.length - 1]?.role !== 'user') return;
+  const turn = { role: 'assistant', content: [{ type: 'text', text: `${text.trimEnd()}\n\n[This reply was interrupted.]` }] };
+  producedBy.set(turn, model);
+  messages.push(turn);
+}
+
+const isJsonError = (err) => !(err instanceof Anthropic.APIError) && (err instanceof SyntaxError || /\bJSON\b/.test(String(err?.message || '')));
+
+// A tool's error as the model (and the step row) should see it. A tab that closed mid-action gives
+// Electron's "Object has been destroyed"; say what happened instead.
+function toolError(err) {
+  const text = String(err?.message || err);
+  return /object has been destroyed|webcontents.*destroyed/i.test(text) ? TAB_CLOSED : text;
+}
+
+// auth: how Claude is reached ('key' | 'env' | 'cli' | null), from the browser adapter.
+function describeError(err, auth = null) {
   // Errors from OpenAI, Grok or Gemini are tagged with their provider in otherTurn().
   const other = err.__provider ? providers.describeProviderError(err, err.__provider) : null;
   if (other) return other;
+  if (isContextError(err)) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
+  if (err instanceof Anthropic.AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → You and AI.', action: 'settings', signInExpired: true };
   if (err instanceof Anthropic.AuthenticationError) return { text: 'That API key was rejected. Add a valid key to continue.', action: 'settings' };
   if (err instanceof Anthropic.PermissionDeniedError) return { text: 'This API key does not have access to the selected model. Pick another in the model menu.' };
   if (err instanceof Anthropic.RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };
   if (err instanceof Anthropic.APIConnectionError) return { text: 'Could not reach the Claude API. Check your connection.' };
-  if (err instanceof Anthropic.APIError) return { text: `API error ${err.status}: ${err.message}` };
+  if (err instanceof Anthropic.InternalServerError || err?.status === 529) return { text: 'The Claude API is overloaded or having trouble right now. Try again in a minute.' };
+  if (err instanceof Anthropic.APIError) return { text: `The Claude API returned an error${err.status ? ` (${err.status})` : ''}: ${String(err.message || '').replace(/^\d{3}\s*/, '')}` };
+  if (/object has been destroyed/i.test(err?.message || '')) return { text: TAB_CLOSED };
   if (/authentication method|api ?key|credential/i.test(err.message || '')) return { text: 'Set up an AI to start: use your Claude account through Claude Code (pick “Claude Code” in the model menu), or add an API key or sign in with OpenRouter in Settings.', action: 'settings' };
   return { text: String(err.message || err) };
 }
@@ -1310,4 +1516,4 @@ function describeError(err) {
 // Tools offered to external agents over MCP: every browser tool plus the client-side web search.
 const EXTERNAL_TOOLS = OTHER_TOOLS;
 
-module.exports = { Agent, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS };
+module.exports = { Agent, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };

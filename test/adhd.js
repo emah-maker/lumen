@@ -4,7 +4,7 @@ const { openSettingsTab } = require('./settings-tab');
 const path = require('path');
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_API_KEY: 'sk-ant-test' } }); // a (fake) Claude key: the answers come from the fake client below
   const ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   let failures = 0;
@@ -15,7 +15,7 @@ const path = require('path');
     global.__systems = [];
     global.__agent.getClient = () => ({
       beta: { messages: { stream: (params) => {
-        global.__systems.push(params.system);
+        global.__systems.push([].concat(params.system).map((b) => b?.text ?? String(b)).join(' ')); // system is a list of text blocks
         const message = { role: 'assistant', content: [{ type: 'text', text: 'OK' }], stop_reason: 'end_turn' };
         return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => message };
       } } },

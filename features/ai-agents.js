@@ -33,6 +33,14 @@ function prepareAutomation(app, settings) {
   return { port: validPort(settings.automationPort), file };
 }
 
+// Settles as soon as `signal` aborts, so Stop answers the agent at once even mid-tool.
+const abortable = (promise, signal) => new Promise((resolve, reject) => {
+  if (signal.aborted) { reject(new Error('Stopped by the user.')); return; }
+  const onAbort = () => reject(new Error('Stopped by the user.'));
+  signal.addEventListener('abort', onAbort, { once: true });
+  promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+});
+
 const toMcpContent = (result) => (typeof result === 'string'
   ? [{ type: 'text', text: result }]
   : result.map((b) => (b.type === 'image' ? { type: 'image', data: b.source.data, mimeType: b.source.media_type } : { type: 'text', text: b.text ?? '' })));
@@ -47,7 +55,9 @@ function setupAiAgents(deps) {
   let mcpServer = null;
   // Sessions opened by the sidebar's own Claude Code engine (event.engine) are not "external agents".
   const mcpEvent = (event) => { if (!event.engine) ui()?.send('mcp:event', event); };
-  const mcpEnabled = () => readSettings().mcpEnabled !== false;
+  // Off until the user turns it on (Settings, or an "Add to <agent>" button): nothing outside Lumen
+  // can drive the browser by default. Lumen's own engines (ownsSession) work either way.
+  const mcpEnabled = () => readSettings().mcpEnabled === true;
 
   // ---------- Claude Code engine (created on first use) ----------
 
@@ -73,9 +83,11 @@ function setupAiAgents(deps) {
   let grokBuildSignedIn = 'unknown'; // true | false | 'unknown' — mirrors grokBuild.status().signedIn
   let grokBuildDetail = null; // the CLI's reported default model, when known
   const grokBuildModule = () => require('../grok-build');
-  // Grok Build in the sidebar (grok-build.js runs it isolated: only Lumen's tools, no shell). On by
-  // default; LUMEN_GROK_SIDEBAR=0 turns it off.
-  const GROK_SIDEBAR = process.env.LUMEN_GROK_SIDEBAR !== '0';
+  // Grok Build in the sidebar is experimental (see grok-build.js's header: its isolation is weaker
+  // than Claude Code's, and in testing the model often couldn't see Lumen's tools on its first turn).
+  // It is offered only once the user has connected Lumen to Grok Build ("Add to Grok Build" in
+  // Settings, which is also the MCP entry this engine relies on), or with LUMEN_GROK_SIDEBAR=1.
+  const grokSidebar = () => process.env.LUMEN_GROK_SIDEBAR === '1' || (process.env.LUMEN_GROK_SIDEBAR !== '0' && readSettings().grokSidebar === true);
   const grokBuildEngine = () => {
     if (!grokBuild) {
       const { GrokBuildEngine } = grokBuildModule();
@@ -104,12 +116,19 @@ function setupAiAgents(deps) {
     const engineRun = owner ? owner.active : null;
     const toUi = engineRun ? engineRun.emit : mcpEvent;
     const signal = engineRun ? engineRun.signal : session.controller.signal;
-    const allow = engineRun ? { hosts: agent.approvedHosts, who: owner === grokBuild ? 'Grok' : 'Claude' } : { hosts: session.approvedHosts, who: session.clientName, external: true }; // outside agents always ask
+    const allow = engineRun ? { hosts: agent.approvedHosts, who: owner === grokBuild ? 'Grok' : 'Claude', input: args } : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args }; // outside agents always ask
     toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
-    try {
+    // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
+    // an outside agent's call is pinned to the tab in front when it arrives, so the approval card and
+    // the action it allows are about the same tab. Stop ends a long wait at once, either way.
+    const work = async () => {
       await agent.ensureAllowed(name, emit, signal, allow);
-      const result = await agent.execute(name, args);
+      return abortable(agent.execute(name, args), signal);
+    };
+    const scope = engineRun && agent.engineScope();
+    try {
+      const result = await (scope ? agent.inScope(scope, work) : agent.inTask(agent.browser.activeTab()?.id, signal, work));
       toUi({ type: 'tool_done', id: stepId, ok: true });
       return { content: toMcpContent(result), isError: false };
     } catch (err) {
@@ -248,20 +267,29 @@ function setupAiAgents(deps) {
     },
   };
 
+  // Connecting an agent is the user asking for agents to connect, so it also turns on "Allow AI agents
+  // to connect" (off by default). Grok Build connected this way is also offered in the sidebar.
+  function connected(id) {
+    const settings = readSettings();
+    writeSettings({ ...settings, mcpEnabled: true, ...(id === 'grok' ? { grokSidebar: true } : {}) });
+    startMcp();
+    if (id === 'grok') refreshGrokBuildStatus(true).catch(() => {});
+  }
   async function addToAgent(id) {
-    const agent = AGENTS[id] || AGENTS.claude;
+    const key = AGENTS[id] ? id : 'claude';
+    const agent = AGENTS[key];
     const found = await agent.find();
     if (!found) return { ok: false, text: agent.installHint() };
     const run = (argv) => execArgv(found.command, [...found.args, ...argv], found.env);
-    if ((await agent.check(run)).ok) return { ok: true, already: true, text: 'Already connected' };
+    if ((await agent.check(run)).ok) { connected(key); return { ok: true, already: true, text: 'Already connected' }; }
     const { command, args } = mcpCommand();
     const added = await agent.add(run, [command, ...args]);
+    if (added.ok) connected(key);
     return added.ok
       ? { ok: true, text: `Added. Start a new ${agent.label} session to use Lumen.` }
       : { ok: false, text: added.out.split('\n').slice(-2).join(' ') || `${agent.label} could not add Lumen.` };
   }
   ipcMain.handle('mcp:add-to-agent', (_e, id) => addToAgent(id));
-  ipcMain.handle('mcp:add-to-claude', () => addToAgent('claude')); // kept as an alias
 
   // ---------- automation tools over CDP: Playwright / CDP clients see only the user's tabs ----------
 
@@ -321,8 +349,6 @@ function setupAiAgents(deps) {
     });
   }
   ipcMain.handle('claudecode:status', (_e, refresh) => refreshClaudeCodeStatus(Boolean(refresh)));
-  // Nothing dynamic yet, but keeps the "sign in first" copy in one place for the setup card to reuse.
-  ipcMain.handle('claudecode:login-help', () => ({ text: 'Open a terminal, run `claude`, then type /login. Lumen never sees your Claude login.' }));
 
   // Same shape as refreshClaudeCodeStatus, for the Grok Build engine (grok-build.js).
   function refreshGrokBuildStatus(refresh) {
@@ -334,15 +360,26 @@ function setupAiAgents(deps) {
       return s;
     });
   }
-  ipcMain.handle('grokbuild:status', (_e, refresh) => refreshGrokBuildStatus(Boolean(refresh)));
+
+  // Until the first look for the CLIs has finished, a saved "Claude Code" / "Grok Build" pick is kept
+  // as it is (see effectiveModel in main.js) instead of looking like it isn't set up.
+  let detecting = true;
 
   return {
     start() {
-      startMcp();
+      // Always listening (token-authenticated, profile-local), so an agent run while the setting is off
+      // gets "turned off in Lumen settings" instead of its bridge deciding Lumen isn't running and
+      // trying to launch it. Sessions are refused while it's off (enabled() below).
+      startMcp(true);
       startAutomation();
       // Looking for the CLIs (and loading claude-code.js/grok-build.js) waits until the window is up.
-      setTimeout(() => { refreshClaudeCodeStatus(false); if (GROK_SIDEBAR) refreshGrokBuildStatus(false); }, 800);
+      setTimeout(() => {
+        Promise.allSettled([refreshClaudeCodeStatus(false), grokSidebar() ? refreshGrokBuildStatus(false) : null])
+          .then(() => { detecting = false; ui()?.send('models-updated'); });
+      }, 300);
     },
+    // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
+    engineDetecting: (id) => detecting && /^(claudecode|grokbuild):/.test(String(id)),
     mcpServer: () => mcpServer,
     // Local agent engines, once each CLI has been found. Listed even when not signed in
     // (signedIn: false) so the setup card can steer the user to sign in instead of the option just
@@ -357,10 +394,12 @@ function setupAiAgents(deps) {
         signedIn: claudeCodeSignedIn,
         accountDetail: claudeCodeDetail,
       }] : []),
-      ...(GROK_SIDEBAR && grokBuildFound ? [{
+      ...(grokSidebar() && grokBuildFound ? [{
         id: 'grokbuild:default',
-        label: 'Grok Build',
-        detail: grokBuildSignedIn === false ? 'Not signed in: open a terminal, run grok, then run grok login' : GROK_BUILD_NOTE,
+        label: 'Grok Build (experimental)',
+        detail: grokBuildSignedIn === false
+          ? 'Not signed in: open a terminal, run grok, then run grok login'
+          : `${GROK_BUILD_NOTE} · experimental: it may answer without being able to use your tabs, especially on a chat’s first message`,
         group: 'Your Grok account',
         signedIn: grokBuildSignedIn,
         accountDetail: grokBuildDetail,

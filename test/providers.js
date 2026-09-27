@@ -41,7 +41,8 @@ const path = require('path');
   }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}/v1`;
 
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
+  // A (fake) Claude key too: the chat switches back to Claude partway through.
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_API_KEY: 'sk-ant-test' } });
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
@@ -130,6 +131,7 @@ const path = require('path');
         ] }));
       }
       if (req.headers.authorization !== 'Bearer sk-or-test') { res.statusCode = 401; return res.end(JSON.stringify({ error: { message: 'bad key' } })); }
+      if (req.url.endsWith('/key')) { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ data: { label: 'test' } })); } // the key check before saving
       const parsed = JSON.parse(body);
       orRequests.push({ body: parsed, referer: req.headers['http-referer'], title: req.headers['x-title'] });
       if (parsed.model === 'acme/broke') { res.statusCode = 402; res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ error: { message: 'Insufficient credits', code: 402 } })); }
@@ -153,6 +155,8 @@ const path = require('path');
   check('openrouter: models list parse (tools flag, variants dropped)', JSON.stringify(parsedList.map((m) => [m.id, m.tools])) === '[["a/b",true],["c/d",false]]', JSON.stringify(parsedList));
   await app.evaluate(() => global.__agent.reset());
   await ui.evaluate(() => document.getElementById('new-chat').click());
+  const badKey = await ui.evaluate(() => window.assistant.setProviderKey('openrouter', 'sk-or-nope').then(() => 'saved', (e) => e.message));
+  check('a rejected key is refused when saving, not on the first message', /didn't accept that key/.test(badKey), badKey);
   await ui.evaluate(async () => window.assistant.setProviderKey('openrouter', 'sk-or-test'));
   await ui.waitForTimeout(800);
   const orOptions = await ui.$$eval('#model optgroup[label="OpenRouter"] option', (os) => os.map((o) => [o.value, o.textContent]));
