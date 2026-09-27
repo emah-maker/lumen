@@ -14,8 +14,15 @@
     input { width: 100%; box-sizing: border-box; height: 40px; padding: 0 14px; border: none; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; font-size: 14px; outline: none; transition: box-shadow 200ms ease-out, background-color 200ms ease-out; }
     input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), 0 0 0 4px var(--ring); }
     h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 28px 0 6px; text-transform: none; }
-    a { display: flex; align-items: baseline; gap: 12px; padding: 7px 10px; margin: 0 -10px; border-radius: 8px; color: var(--text); text-decoration: none; transition: background-color 120ms ease-out; }
-    a:hover, a:focus-visible { background: var(--hover); outline: none; }
+    .row { position: relative; display: flex; align-items: center; margin: 0 -10px; border-radius: 8px; transition: background-color 120ms ease-out; }
+    .row:hover, .row:focus-within { background: var(--hover); }
+    a { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 7px 10px; border-radius: 8px; color: var(--text); text-decoration: none; }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .remove { flex: none; width: 26px; height: 26px; margin-right: 4px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; transition: opacity 120ms ease-out, background-color 120ms ease-out; }
+    .remove svg { width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; fill: none; }
+    .row:hover .remove, .remove:focus-visible { opacity: 1; }
+    .remove:hover { background: var(--field); color: var(--text); }
+    .remove:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .time { flex: none; width: 52px; color: var(--muted); font-variant-numeric: tabular-nums; }
     .title { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .host { flex: 1 1 0; min-width: 0; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

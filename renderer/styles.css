@@ -143,6 +143,14 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab:hover:not(.active) { background: var(--hover); color: var(--text); }
 .tab.active { min-width: 52px; color: var(--text); }
 .tab.sleeping:not(.active) .tab-inner { opacity: 0.55; } /* asleep: view destroyed, reloads on click */
+/* Pinned: icon only, fixed width, at the left of the strip (main.js keeps them first). */
+.tab.pinned, .tab.pinned.active { width: 40px; min-width: 40px; flex: none; }
+.tab.pinned .tab-inner { justify-content: center; padding: 0; }
+.tab.pinned .tab-title, .tab.pinned .tab-close { display: none; }
+/* More tabs than fit: a fade at the edge that has more (the scrollbar is hidden; the wheel scrolls). */
+.tabs.more-left { mask-image: linear-gradient(90deg, transparent, #000 28px); }
+.tabs.more-right { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+.tabs.more-left.more-right { mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }

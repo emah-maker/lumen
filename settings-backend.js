@@ -277,6 +277,13 @@ function create(deps) {
   function noteUserZoom(wc) {
     try { userZoomed.add(new URL(wc.getURL()).host); } catch {}
   }
+  // "Actual size" means the default zoom from Settings for web pages (100% for Lumen's own pages),
+  // and the site follows that default again from now on.
+  function resetZoom(wc) {
+    try { userZoomed.delete(new URL(wc.getURL()).host); } catch {}
+    if (/^https?:/.test(wc.getURL())) wc.setZoomFactor(prefs().defaultZoom);
+    else wc.setZoomLevel(0);
+  }
 
   // The settings tab: nothing but the settings page may load in it.
   function guardSettingsTab(wc, leave) {
@@ -551,7 +558,7 @@ function create(deps) {
 
   return {
     prefs, set, state, start, attachTab, guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
-    noteUserZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
+    noteUserZoom, resetZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched,
   };
 }

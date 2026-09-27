@@ -1,6 +1,7 @@
 /* Browser-UI preferences from Settings (lumen://settings), set as classes on <html> by app.js.
    Kept out of styles.css so the preferences only add to the base look. */
 .pref-compact-tabs .tab { height: 24px; }
+.pref-compact-tabs .tab-indicator { height: 24px; } /* the active tab's surface matches the shorter tabs */
 .pref-compact-tabs .tab-inner { font-size: 12px; gap: 6px; }
 .pref-no-bookmark-button #bookmark { display: none !important; }
 .pref-reduce-motion *, .pref-reduce-motion *::before, .pref-reduce-motion *::after {

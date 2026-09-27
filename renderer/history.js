@@ -1,10 +1,5 @@
-// Renders the browsing history passed in the URL hash as JSON: [{ url, title, last }].
+// Renders the browsing history, fetched from the browser (history-preload.js): [{ url, title, last }].
 let entries = [];
-try {
-  entries = JSON.parse(decodeURIComponent(location.hash.slice(1)) || '[]').filter((e) => /^https?:/.test(e.url));
-} catch {
-  entries = [];
-}
 
 const list = document.getElementById('list');
 const query = document.getElementById('q');
@@ -17,6 +12,18 @@ const dayLabel = (d) => {
   if (diff === 1) return 'Yesterday';
   return day.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 };
+
+async function remove(entry, row) {
+  const next = row.nextElementSibling || row.previousElementSibling;
+  if (!(await window.lumenHistory?.remove(entry.url))) return;
+  entries = entries.filter((e) => e !== entry);
+  const section = row.parentElement;
+  row.remove();
+  if (!section.querySelector('.row')) section.remove();
+  if (!entries.length) render();
+  // Keyboard users keep their place: focus moves to the neighbouring row's remove button.
+  (next?.isConnected ? next.querySelector('.remove') : null)?.focus();
+}
 
 function render() {
   const q = query.value.trim().toLowerCase();
@@ -36,16 +43,29 @@ function render() {
       section.append(Object.assign(document.createElement('h2'), { textContent: label }));
       list.append(section);
     }
+    const row = Object.assign(document.createElement('div'), { className: 'row' });
     const a = document.createElement('a');
     a.href = e.url;
     const time = Object.assign(document.createElement('span'), { className: 'time', textContent: new Date(e.last).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) });
     const title = Object.assign(document.createElement('span'), { className: 'title', textContent: e.title || host(e.url) });
     const where = Object.assign(document.createElement('span'), { className: 'host', textContent: host(e.url) });
     a.append(time, title, where);
-    section.append(a);
+    const del = Object.assign(document.createElement('button'), { className: 'remove', type: 'button', title: 'Remove from history' });
+    del.setAttribute('aria-label', `Remove ${e.title || host(e.url)} from history`);
+    del.innerHTML = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8"/></svg>';
+    del.onclick = () => remove(e, row);
+    row.append(a, del);
+    section.append(row);
   }
 }
 
 query.addEventListener('input', render);
-render();
 query.focus();
+(async () => {
+  try {
+    entries = ((await window.lumenHistory?.list()) || []).filter((e) => /^https?:/.test(e.url));
+  } catch {
+    entries = [];
+  }
+  render();
+})();

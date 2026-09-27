@@ -22,6 +22,9 @@ window.addEventListener('resize', reportBounds);
 // ---------- motion ----------
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+// The system setting, or Settings → Accessibility → Reduce motion (the pref-reduce-motion class):
+// the springs and FLIP animations run in JS, so the CSS rule alone didn't stop them.
+const motionReduced = () => reduceMotion.matches || document.documentElement.classList.contains('pref-reduce-motion');
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const SPRING_SMOOTH = cssVar('--spring-smooth') || 'cubic-bezier(0.16, 1, 0.3, 1)';
 const SPRING_SNAPPY = cssVar('--spring-snappy') || 'cubic-bezier(0.16, 1, 0.3, 1)';
@@ -189,7 +192,7 @@ new ResizeObserver(() => placeIndicator(false)).observe($('tabs'));
 
 // Tabs are rebuilt on every state change; FLIP makes that read as tabs moving, arriving and leaving.
 function animateTabs(before, container) {
-  const animate = tabsRendered && !reduceMotion.matches;
+  const animate = tabsRendered && !motionReduced();
   const seen = new Set();
   for (const el of container.querySelectorAll('.tab, .group-label')) {
     seen.add(el.dataset.id);
@@ -219,23 +222,127 @@ function animateTabs(before, container) {
 let lastTabState = null;
 let renamingGroup = null; // a group label being renamed holds tab-strip updates until it's done
 
-function groupLabel(group, count, crowded) {
-  const label = document.createElement('button');
-  label.type = 'button';
+// A group's label in the strip: made once per group, then updated in place (`label`).
+function groupLabel(group, count, crowded, label = null) {
+  if (!label) {
+    label = document.createElement('button');
+    label.type = 'button';
+    label.dataset.id = `g${group.id}`;
+    label.dataset.group = String(group.id);
+    const name = Object.assign(document.createElement('span'), { className: 'group-name' });
+    const badge = Object.assign(document.createElement('span'), { className: 'group-count' });
+    label.append(name, badge);
+    label.onclick = () => window.browser.toggleGroup(group.id);
+    label.oncontextmenu = (e) => { e.preventDefault(); window.browser.groupMenu(group.id, { x: e.clientX, y: e.clientY }); };
+  }
   label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '');
-  label.dataset.id = `g${group.id}`;
-  label.dataset.group = String(group.id);
   label.style.setProperty('--group-color', `var(--g-${group.color})`);
   label.setAttribute('aria-expanded', String(!group.collapsed));
   label.setAttribute('aria-label', `Group ${group.name}, ${count} tab${count === 1 ? '' : 's'}`);
   label.title = `${group.name}: click to ${group.collapsed ? 'expand' : 'collapse'}, right-click for options`;
-  const name = Object.assign(document.createElement('span'), { className: 'group-name', textContent: group.name });
-  const badge = Object.assign(document.createElement('span'), { className: 'group-count', textContent: String(count) });
-  label.append(name, badge);
-  label.onclick = () => window.browser.toggleGroup(group.id);
-  label.oncontextmenu = (e) => { e.preventDefault(); window.browser.groupMenu(group.id, { x: e.clientX, y: e.clientY }); };
+  label.querySelector('.group-name').textContent = group.name;
+  label.querySelector('.group-count').textContent = String(count);
   return label;
 }
+
+// A tab in the strip: made once per tab id (handlers only need the id), then updated in place.
+function createTabEl(id) {
+  const el = document.createElement('div');
+  el.dataset.id = String(id);
+  el.setAttribute('role', 'tab');
+  const inner = Object.assign(document.createElement('div'), { className: 'tab-inner' });
+  const title = Object.assign(document.createElement('span'), { className: 'tab-title' });
+  const close = Object.assign(document.createElement('button'), { className: 'tab-close' });
+  close.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2 2 8"/></svg>';
+  close.onclick = (e) => { e.stopPropagation(); window.browser.closeTab(id); };
+  inner.append(globeIcon(), title, close);
+  el.append(inner);
+  el.onclick = () => { if (!suppressClick) window.browser.switchTab(id); };
+  // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
+  el.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
+  el.onauxclick = (e) => { if (e.button === 1) window.browser.closeTab(id); };
+  el.oncontextmenu = (e) => { e.preventDefault(); window.browser.tabMenu(id, { x: e.clientX, y: e.clientY }); };
+  el.addEventListener('pointerdown', (e) => startTabDrag(e, el, id));
+  el.addEventListener('pointermove', moveTabDrag);
+  el.addEventListener('pointerup', endTabDrag);
+  el.addEventListener('pointercancel', endTabDrag);
+  return el;
+}
+
+function updateTabEl(el, tab, group, activeId) {
+  const active = tab.id === activeId;
+  el.className = 'tab' + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '');
+  if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
+  else el.style.removeProperty('--group-color');
+  el.setAttribute('aria-selected', String(active));
+  el.title = tab.title;
+  // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
+  const iconKey = tab.loading ? 'loading' : tab.favicon && !tab.error ? `img:${tab.favicon}` : `page:${tab.page || ''}`;
+  if (el.dataset.icon !== iconKey) {
+    el.dataset.icon = iconKey;
+    let icon;
+    if (tab.loading) {
+      icon = document.createElement('span');
+      icon.className = 'tab-favicon spinner';
+    } else if (tab.favicon && !tab.error) {
+      icon = document.createElement('img');
+      icon.className = 'tab-favicon';
+      icon.src = tab.favicon;
+      icon.onerror = () => icon.replaceWith(globeIcon());
+    } else {
+      icon = globeIcon(tab.page);
+    }
+    el.querySelector('.tab-favicon').replaceWith(icon);
+  }
+  const title = el.querySelector('.tab-title');
+  if (title.textContent !== tab.title) title.textContent = tab.title;
+  el.querySelector('.tab-close').setAttribute('aria-label', `Close ${tab.title}`);
+  return el;
+}
+
+// A press anywhere on the strip (a tab, its ✕, a middle-click, a group label) holds tab updates
+// until it's released and its click has landed, the same way a drag does.
+let stripPressed = false;
+let stripPressTimer = 0;
+function releaseStrip() {
+  if (!stripPressed) return;
+  clearTimeout(stripPressTimer);
+  setTimeout(() => { // after the click that follows pointerup
+    stripPressed = false;
+    if (pendingState && !drag && renamingGroup === null) {
+      const held = pendingState;
+      pendingState = null;
+      renderTabs(held);
+    }
+  }, 0);
+}
+$('tabs').addEventListener('pointerdown', () => {
+  stripPressed = true;
+  clearTimeout(stripPressTimer);
+  stripPressTimer = setTimeout(releaseStrip, 4000); // a release that never arrives can't freeze the strip
+}, true);
+window.addEventListener('pointerup', releaseStrip, true);
+window.addEventListener('pointercancel', releaseStrip, true);
+window.addEventListener('blur', releaseStrip);
+
+// Tabs past the strip's width: its scrollbar is hidden, so a mouse wheel scrolls it sideways, and
+// a fade at either edge shows there is more that way.
+function updateOverflow() {
+  const strip = $('tabs');
+  const max = strip.scrollWidth - strip.clientWidth;
+  strip.classList.toggle('more-left', max > 1 && strip.scrollLeft > 1);
+  strip.classList.toggle('more-right', max > 1 && strip.scrollLeft < max - 1);
+}
+$('tabs').addEventListener('scroll', updateOverflow, { passive: true });
+$('tabs').addEventListener('wheel', (e) => {
+  const strip = $('tabs');
+  if (strip.scrollWidth <= strip.clientWidth) return;
+  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  if (!delta) return;
+  e.preventDefault();
+  strip.scrollLeft += e.deltaMode === 1 ? delta * 40 : delta; // line-based wheels report lines, not pixels
+}, { passive: false });
+new ResizeObserver(updateOverflow).observe($('tabs'));
 
 function startRename(groupId) {
   const label = $('tabs').querySelector(`.group-label[data-group="${groupId}"]`);
@@ -251,7 +358,11 @@ function startRename(groupId) {
     if (done) return;
     done = true;
     renamingGroup = null;
-    window.browser.renameGroup(groupId, save && input.value.trim() ? input.value.trim() : group.name);
+    const name = save && input.value.trim() ? input.value.trim() : group.name;
+    window.browser.renameGroup(groupId, name);
+    // The label is kept across updates now, so it gets its name and click back here.
+    input.replaceWith(Object.assign(document.createElement('span'), { className: 'group-name', textContent: name }));
+    label.onclick = () => window.browser.toggleGroup(groupId);
     if (pendingState) {
       const held = pendingState;
       pendingState = null;
@@ -279,7 +390,7 @@ window.browser.onOrganizing?.((busy) => {
 });
 
 function renderTabs(state) {
-  if (drag || renamingGroup !== null) {
+  if (drag || renamingGroup !== null || stripPressed) {
     pendingState = state;
     return;
   }
@@ -287,7 +398,7 @@ function renderTabs(state) {
   const container = $('tabs');
   const before = new Map();
   for (const el of container.querySelectorAll('.tab, .group-label')) before.set(el.dataset.id, { el, rect: el.getBoundingClientRect() });
-  container.querySelectorAll('.tab, .group-label').forEach((el) => el.remove());
+  const switched = state.activeId !== lastActiveId;
   const groupsById = new Map((state.groups || []).map((g) => [g.id, g]));
   const crowded = state.tabs.length > 12;
   let currentGroup = null;
@@ -298,65 +409,38 @@ function renderTabs(state) {
     tabIndicator.setAttribute('aria-hidden', 'true');
     container.prepend(tabIndicator);
   }
+  // Tabs and group labels are kept and updated in place, keyed by id, rather than rebuilt: a click
+  // (on a tab, its ✕, a group label) that straddled an update used to land on an element that had
+  // just been thrown away, and did nothing.
+  const wanted = [];
   for (const tab of state.tabs) {
     const group = tab.groupId ? groupsById.get(tab.groupId) : null;
     if (group && currentGroup !== group.id) {
-      container.append(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id).length, crowded));
+      wanted.push(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id).length, crowded, before.get(`g${group.id}`)?.el));
     }
     currentGroup = group ? group.id : null;
     if (group?.collapsed && tab.id !== state.activeId) continue; // the active tab stays visible
-    const el = document.createElement('div');
-    el.dataset.id = String(tab.id);
-    el.className = 'tab' + (tab.id === state.activeId ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '');
-    if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
-    el.setAttribute('role', 'tab');
-    el.setAttribute('aria-selected', String(tab.id === state.activeId));
-    el.title = tab.title;
-    const inner = document.createElement('div');
-    inner.className = 'tab-inner';
-
-    let icon;
-    if (tab.loading) {
-      icon = document.createElement('span');
-      icon.className = 'tab-favicon spinner';
-    } else if (tab.favicon && !tab.error) {
-      icon = document.createElement('img');
-      icon.className = 'tab-favicon';
-      icon.src = tab.favicon;
-      icon.onerror = () => icon.replaceWith(globeIcon());
-    } else {
-      icon = globeIcon(tab.page);
-    }
-
-    const title = document.createElement('span');
-    title.className = 'tab-title';
-    title.textContent = tab.title;
-
-    const close = document.createElement('button');
-    close.className = 'tab-close';
-    close.setAttribute('aria-label', `Close ${tab.title}`);
-    close.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2 2 8"/></svg>';
-    close.onclick = (e) => { e.stopPropagation(); window.browser.closeTab(tab.id); };
-
-    inner.append(icon, title, close);
-    el.append(inner);
-    el.onclick = () => { if (!suppressClick) window.browser.switchTab(tab.id); };
-    el.onauxclick = (e) => { if (e.button === 1) window.browser.closeTab(tab.id); };
-    el.oncontextmenu = (e) => { e.preventDefault(); window.browser.tabMenu(tab.id, { x: e.clientX, y: e.clientY }); };
-    el.addEventListener('pointerdown', (e) => startTabDrag(e, el, tab.id));
-    el.addEventListener('pointermove', moveTabDrag);
-    el.addEventListener('pointerup', endTabDrag);
-    el.addEventListener('pointercancel', endTabDrag);
-    container.append(el);
+    wanted.push(updateTabEl(before.get(String(tab.id))?.el || createTabEl(tab.id), tab, group, state.activeId));
+  }
+  const keep = new Set(wanted);
+  for (const { el } of before.values()) if (!keep.has(el)) el.remove();
+  // Only elements out of place move, so the rest aren't detached mid-click.
+  let cursor = tabIndicator.nextSibling;
+  for (const el of wanted) {
+    if (el === cursor) cursor = el.nextSibling;
+    else container.insertBefore(el, cursor);
   }
 
   animateTabs(before, container);
   const activeId = container.querySelector('.tab.active')?.dataset.id;
-  placeIndicator(tabsRendered && !reduceMotion.matches && [...before.keys()].includes(activeId));
+  placeIndicator(tabsRendered && !motionReduced() && [...before.keys()].includes(activeId));
   tabsRendered = true;
+  updateOverflow();
 
+  // Scrolled into view when the active tab changes, not on every update: a page loading in the
+  // active tab kept yanking the strip back while you scrolled it to reach another tab.
   const activeEl = container.querySelector('.tab.active');
-  if (activeEl) activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduceMotion.matches ? 'auto' : 'smooth' });
+  if (activeEl && (switched || !before.has(activeId))) activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: motionReduced() ? 'auto' : 'smooth' });
 
   const active = state.tabs.find((t) => t.id === state.activeId);
   if (state.activeId !== lastActiveId) {
@@ -365,9 +449,10 @@ function renderTabs(state) {
   }
   currentError = Boolean(active?.error);
   const zoom = active?.zoom ?? 100;
-  $('zoom').hidden = zoom === 100;
+  const zoomed = zoom !== (active?.zoomDefault ?? 100); // [settings] the default zoom from Settings isn't "zoomed"
+  $('zoom').hidden = !zoomed;
   $('zoom').textContent = `${zoom}%`;
-  document.body.classList.toggle('zoomed', zoom !== 100);
+  document.body.classList.toggle('zoomed', zoomed);
   const star = $('bookmark');
   star.hidden = !active?.url || currentError;
   star.setAttribute('aria-pressed', String(Boolean(active?.bookmarked)));
@@ -423,9 +508,16 @@ function renderSuggestions() {
       width: r.width + SUGGEST_PAD.x * 2,
       height: suggest.items.length * 36 + 10 + SUGGEST_PAD.top + SUGGEST_PAD.bottom,
     },
-    { items: suggest.items.map(({ kind, title, detail }) => ({ kind, title, detail })), selected: suggest.selected },
+    { items: suggest.items.map(({ kind, title, detail }) => ({ kind, title, detail })), selected: suggest.selected, listId: ++suggestListId },
   );
+  shownSuggestions = { id: suggestListId, items: suggest.items };
 }
+
+// The list on screen, kept after hideSuggestions() clears `suggest`: a click in the dropdown hides
+// it (the address bar loses focus) before the pick's round trip through main arrives, which used
+// to find an empty list and drop the click. The id makes sure the pick is from this very list.
+let suggestListId = 0;
+let shownSuggestions = { id: 0, items: [] };
 
 function hideSuggestions() {
   suggestSeq++;
@@ -471,8 +563,9 @@ function navigate(target) {
   address.blur();
 }
 
-window.browser.onSuggestionPicked((index) => {
-  const item = suggest.items[index];
+window.browser.onSuggestionPicked(({ index, listId }) => {
+  if (listId !== shownSuggestions.id) return; // a pick from a list that has since been replaced
+  const item = shownSuggestions.items[index];
   if (item) navigate(item.go);
 });
 
@@ -528,9 +621,25 @@ address.addEventListener('keydown', (e) => {
     showAddress();
   }
 });
-$('omnibox').addEventListener('submit', (e) => {
+// Rough, on purpose: only decides whether Ask AI mode (below) treats the text as an address.
+const looksLikeAddress = (text) => /^[a-z][a-z\d+.-]*:\/\//i.test(text) || /^localhost(:\d+)?(\/|$)/i.test(text) || /^[^\s/]+\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(text);
+
+$('omnibox').addEventListener('submit', async (e) => {
   e.preventDefault();
   const item = suggest.items[suggest.selected];
+  // What was typed, without an inline completion still selected after it.
+  const completing = address.selectionStart > 0 && address.selectionStart < address.value.length && address.selectionEnd === address.value.length;
+  const typed = (completing ? address.value.slice(0, address.selectionStart) : address.value).trim();
+  // On the new-tab page in Ask AI mode, a question typed in the address bar goes to the assistant,
+  // as it would in the page's own box; an address still opens.
+  if (!item && typed && !looksLikeAddress(typed) && (await window.browser.homeMode?.()) === 'ask') {
+    hideSuggestions();
+    addressDirty = false;
+    address.blur();
+    showSidebar(true);
+    ask(typed);
+    return;
+  }
   navigate(item ? item.go : address.value.trim());
 });
 
@@ -569,7 +678,7 @@ function closeFind() {
   $('find-count').textContent = '';
   window.browser.stopFind();
   clearTimeout(findHideTimer);
-  findHideTimer = setTimeout(() => { if (!findbar.classList.contains('open')) findbar.hidden = true; }, reduceMotion.matches ? 0 : 420);
+  findHideTimer = setTimeout(() => { if (!findbar.classList.contains('open')) findbar.hidden = true; }, motionReduced() ? 0 : 420);
 }
 
 function findStep(forward) {
@@ -705,7 +814,7 @@ async function showSidebar(visible) {
     const pending = earlyFreeze;
     earlyFreeze = null;
     await pending;
-  } else if (!revealAnim && !reduceMotion.matches && !snapshot) {
+  } else if (!revealAnim && !motionReduced() && !snapshot) {
     await freezePage();
     if ($('toggle-sidebar').getAttribute('aria-pressed') !== String(visible)) return; // toggled again while capturing
   }
@@ -733,7 +842,7 @@ async function showSidebar(visible) {
     reveal = target;
     reportBounds();
   };
-  if (reduceMotion.matches) finish();
+  if (motionReduced()) finish();
   else {
     // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
     // motion begins, so any slow frame is a still frame, not a jump.
@@ -747,7 +856,7 @@ $('toggle-sidebar').onclick = () => {
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
-  if (e.button === 0 && !revealAnim && !snapshot && !reduceMotion.matches) earlyFreeze = freezePage();
+  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced()) earlyFreeze = freezePage();
 });
 
 // Resizable from the sidebar's left edge; the width is remembered. Double-click resets it.
@@ -780,7 +889,7 @@ resizer.addEventListener('pointerdown', (e) => {
   document.body.classList.add('resizing');
   // The page is a native view: once the pointer is over it, it takes the mouse moves (the drag
   // stalls and the cursor changes). For the drag it is shown as a snapshot, like during the spring.
-  const frozen = !snapshot && !reduceMotion.matches ? freezePage() : null;
+  const frozen = !snapshot && !motionReduced() ? freezePage() : null;
   let frame = 0;
   const move = (ev) => {
     cancelAnimationFrame(frame);
@@ -980,7 +1089,7 @@ function setAssistantIdentity(group) {
     button.querySelector('svg')?.remove();
     button.insertAdjacentHTML('afterbegin', who.svg);
   };
-  if (first || reduceMotion.matches) swap();
+  if (first || motionReduced()) swap();
   else {
     // Cross-fade: the old mark shrinks away, the new one springs in.
     button.classList.add('mark-out');
@@ -1536,8 +1645,9 @@ let downloadStates = new Map();
 let pulseTimer = null;
 
 window.browser.onDownloads?.((list) => {
-  if (!Array.isArray(list) || !list.length) return;
-  downloadsBtn.hidden = false;
+  if (!Array.isArray(list)) return;
+  downloadsBtn.hidden = !list.length; // an emptied (cleared) list hides the button again
+  if (!list.length) { downloadStates = new Map(); downloadsBtn.classList.remove('progressing', 'finished'); return; }
   const active = list.filter((d) => d.state === 'progressing');
   const sized = active.filter((d) => d.total > 0);
   const total = sized.reduce((s, d) => s + d.total, 0);
