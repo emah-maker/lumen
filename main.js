@@ -73,6 +73,26 @@ process.on('unhandledRejection', (reason) => console.error('[lumen] unhandled re
 
 let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
+
+// Only the settings tab's own top-level settings document may use the prefs:* calls.
+function isSettingsSender(event) {
+  return tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
+    && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url);
+}
+// Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
+// imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
+// could send them; this keeps it that way if a page or extension ever finds a way to.
+const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode):/;
+const trustedSender = (event) => event.sender === ui() || isSettingsSender(event);
+for (const method of ['handle', 'on']) {
+  const register = ipcMain[method].bind(ipcMain);
+  ipcMain[method] = (channel, listener) => register(channel, !PRIVILEGED_IPC.test(channel) ? listener : (event, ...args) => {
+    if (trustedSender(event)) return listener(event, ...args);
+    console.error(`[lumen] refused ${channel} from ${event.sender.getURL?.().slice(0, 80)}`);
+    if (method === 'handle') throw new Error('Not allowed');
+    return undefined;
+  });
+}
 let tabs = []; // { id, view, favicon }
 let activeId = null;
 let nextTabId = 1;
@@ -834,6 +854,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   return { id, webContents: wc };
 }
 
+const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url || '')?.[1] || null;
+
 // Wires a tab's WebContentsView (navigation, zoom, favicon/title tracking, close-on-destroy,
 // extensions, HTTPS-only/zoom defaults) and loads `url`. Split out of openTab() so wakeTab() (tab
 // sleeping, below) can rebuild a woken tab's view identically instead of duplicating all of this.
@@ -842,6 +864,9 @@ function wireView(tab, url) {
   const wc = tab.view.webContents;
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
+    // An extension's pages open only from that same extension: a web page could otherwise open any
+    // extension page it liked (and whatever that page does with its privileges).
+    if (target.startsWith('chrome-extension://') && extensionIdOf(target) !== extensionIdOf(wc.getURL())) return { action: 'deny' };
     if (disposition === 'new-window') {
       // A real popup (sign-in, payment): it keeps window.opener so it can report back to the page.
       return {
@@ -920,8 +945,17 @@ function wireView(tab, url) {
       return;
     }
     recordVisit(url, wc.getTitle());
+    tab.lastVisitUrl = url;
     tab.pageText = ''; // a new page: its text arrives after it loads
     scheduleAutoGroup();
+  });
+  // Single-page sites (YouTube, GitHub, Gmail…) change pages without a full load; those pages
+  // belong in History and address bar suggestions too. A jump to a #section of the same page
+  // isn't a new visit. The title catches up through 'page-title-updated' (updateTitle).
+  wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+    if (!isMainFrame || url.split('#')[0] === (tab.lastVisitUrl || '').split('#')[0]) return;
+    tab.lastVisitUrl = url;
+    recordVisit(url, wc.getTitle());
   });
   wc.on('did-finish-load', () => readPageText(tab));
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
@@ -967,6 +1001,8 @@ function wireView(tab, url) {
   // If the page closes itself, drop the tab instead of keeping a dead one around. sleepTab() (below)
   // removes this exact listener first, so a deliberate sleep is never mistaken for the page closing.
   tab.onViewDestroyed = () => closeTab(id, { destroyed: true });
+  const contentsId = wc.id;
+  wc.once('destroyed', () => adblock.forget(contentsId)); // the new-tab "blocked" total counts open tabs only
   wc.once('destroyed', tab.onViewDestroyed);
 
   if (!settings) { // [settings] no debugger and no extensions on the settings tab
@@ -1118,6 +1154,7 @@ function closeTab(id, { destroyed = false } = {}) {
   // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
   if (url && !isInternal(url)) closedTabs.push(url);
+  if (closedTabs.length > 50) closedTabs.splice(0, closedTabs.length - 50); // Reopen Closed Tab goes back 50
   if (!win || win.isDestroyed()) return; // the app is quitting
   if (tab.view) win.contentView.removeChildView(tab.view); // no view to remove if it was sleeping
   if (!destroyed && alive(tab)) tab.view.webContents.close();
@@ -1941,9 +1978,7 @@ const settingsBackend = settingsPage.create({
   uninstallExtension,
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
   openTab: (url) => openTab(url),
-  // Only the settings tab's own top-level settings document may use the prefs:* calls.
-  isSettingsSender: (event) => tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
-    && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url),
+  isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
 });
 

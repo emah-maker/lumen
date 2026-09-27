@@ -173,6 +173,7 @@ function createAdblock(deps) {
     ready: () => blocker !== null,
     blocked: (id) => blockedCount.get(id) || 0,
     resetCount: (id) => blockedCount.set(id, 0), // a new page starts at zero
+    forget: (id) => blockedCount.delete(id), // the tab closed: its count leaves the total
     total: () => [...blockedCount.values()].reduce((sum, n) => sum + n, 0), // on open tabs
   };
 }

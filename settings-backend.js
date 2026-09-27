@@ -201,7 +201,9 @@ function create(deps) {
   function noteResponseHeaders(details) {
     for (const [name, values] of Object.entries(details.responseHeaders || {})) {
       if (!/^(accept-ch|critical-ch)$/i.test(name)) continue;
-      if ([].concat(values).join(',').toLowerCase().includes('sec-ch-prefers-color-scheme')) hintOrigins.add(originOf(details.url));
+      if (![].concat(values).join(',').toLowerCase().includes('sec-ch-prefers-color-scheme')) continue;
+      hintOrigins.add(originOf(details.url));
+      if (hintOrigins.size > 1000) hintOrigins.delete(hintOrigins.values().next().value); // oldest first
     }
   }
   function setupHeaders() {
@@ -245,12 +247,27 @@ function create(deps) {
       httpAllowed.add(u.host); // "Continue to site" on the warning page
       return false;
     }
+    // A site whose https address sends you back to http (by redirect or script) looped forever:
+    // upgrade, bounce back, upgrade again. The second time round, or after 3 upgrades of one host
+    // within 10 s, the warning page shows instead, with its "Continue to site" choice.
+    const pending = upgraded.get(wc.id);
+    const now = Date.now();
+    const recent = (recentUpgrades.get(u.host) || []).filter((t) => now - t < 10000);
+    if ((pending && new URL(pending.to).host === u.host) || recent.length >= 3) {
+      upgraded.delete(wc.id);
+      recentUpgrades.delete(u.host);
+      setImmediate(() => { if (!wc.isDestroyed()) wc.loadURL(`${HTTPS_ONLY_URL}?${new URLSearchParams({ url })}`).catch(() => {}); });
+      return true;
+    }
+    recentUpgrades.set(u.host, [...recent, now]);
+    if (recentUpgrades.size > 200) recentUpgrades.delete(recentUpgrades.keys().next().value);
     u.protocol = 'https:';
     upgraded.set(wc.id, { from: url, to: u.href });
     // (Calling wc.stop() inside did-start-navigation crashes Electron; the new load replaces it.)
     setImmediate(() => { if (!wc.isDestroyed()) wc.loadURL(u.href).catch(() => {}); });
     return true;
   }
+  const recentUpgrades = new Map(); // host -> times it was upgraded lately (the loop guard above)
   // Called from did-fail-load: true when the failure was an upgraded load (the warning shows instead).
   function onFailLoad(wc, failedUrl) {
     const pending = upgraded.get(wc.id);
@@ -269,7 +286,8 @@ function create(deps) {
       if (isMainFrame && prefs().httpsOnly && /^http:/i.test(url) && upgrade(wc, url)) event.preventDefault();
     });
     wc.on('did-navigate', (_e, url) => {
-      if (upgraded.get(wc.id)?.to === url) upgraded.delete(wc.id);
+      // The upgraded load committed (maybe after an https redirect elsewhere on the site): done.
+      if (upgraded.has(wc.id) && /^https:/i.test(url)) upgraded.delete(wc.id);
       applyDefaultZoom(wc);
     });
     wc.once('destroyed', () => upgraded.delete(wc.id));
@@ -333,7 +351,9 @@ function create(deps) {
       case 'defaultZoom': for (const wc of deps.tabContents()) applyDefaultZoom(wc); break;
       case 'spellcheck': case 'spellcheckLanguages': applySpellcheck(); break;
       case 'proxy': return applyProxy();
-      case 'adblock': case 'adblockAllow': for (const wc of deps.tabContents()) if (/^https?:/.test(wc.getURL())) wc.reload(); break;
+      // The blocker reads these on every request, so the change applies to whatever loads next.
+      // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
+      case 'adblock': case 'adblockAllow': break;
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());

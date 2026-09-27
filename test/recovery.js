@@ -35,6 +35,14 @@ const os = require('os');
   const rawUrl = () => app.evaluate(() => global.__agent.browser.activeTab()?.webContents.getURL() || '');
   const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await sleep(100); } return false; };
 
+  // ---- single-page navigation reaches History
+  await open(`${base}/spa`);
+  await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript("history.pushState({}, '', '/spa/watch?v=1'); history.pushState({}, '', '/spa/watch?v=1#t=30'); 1"));
+  await sleep(300);
+  const visited = await app.evaluate(() => global.__settings.historyUrls());
+  check('a page changed by pushState is recorded in History', visited.includes(`${base}/spa/watch?v=1`), JSON.stringify(visited.filter((u) => u.includes('/spa'))));
+  check('a #fragment jump on the same page is not a new visit', !visited.includes(`${base}/spa/watch?v=1#t=30`), 'fragment recorded');
+
   // ---- a tab crashes
   const crashId = await open(`${base}/crash`);
   await app.evaluate(() => global.__agent.browser.activeTab().webContents.forcefullyCrashRenderer());
