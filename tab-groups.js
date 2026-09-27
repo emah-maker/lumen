@@ -1,5 +1,7 @@
 // Tab groups: the model, automatic grouping rules, and site names. main.js owns the tabs; this
 // module works on the same array through the accessors passed to createTabGroups().
+const { getDomain } = require('tldts-experimental');
+
 const GROUP_COLORS = ['blue', 'purple', 'pink', 'red', 'orange', 'yellow', 'green', 'gray'];
 
 const KNOWN_SITES = {
@@ -16,19 +18,37 @@ function hostname(url) {
 }
 
 // "en.wikipedia.org" -> "wikipedia.org", "news.bbc.co.uk" -> "bbc.co.uk", IPs stay as they are.
+// From the Public Suffix List, private section included: every "*.github.io", "*.vercel.app" or
+// "*.netlify.app" site is someone else's, so "a.github.io" and "b.github.io" are two sites.
 function registrableDomain(url) {
   const host = hostname(url);
   if (!host || /^[\d.]+$/.test(host) || host.includes(':')) return host;
-  const parts = host.split('.');
-  if (parts.length <= 2) return host;
-  const second = parts[parts.length - 2];
-  const secondLevel = parts[parts.length - 1].length === 2 && /^(co|com|org|net|gov|ac|edu|ne|or)$/.test(second);
-  return parts.slice(secondLevel ? -3 : -2).join('.');
+  return getDomain(host, { allowPrivateDomains: true }) || host;
+}
+
+// Apps that share one company domain but are different things to the user: Gmail and Docs are
+// both google.com, and grouping them together as "Google" helped no one.
+const PRODUCT_SITES = {
+  'mail.google.com': 'Gmail', 'docs.google.com': 'Google Docs', 'drive.google.com': 'Google Drive',
+  'calendar.google.com': 'Google Calendar', 'meet.google.com': 'Google Meet', 'maps.google.com': 'Google Maps',
+  'photos.google.com': 'Google Photos', 'keep.google.com': 'Google Keep', 'news.google.com': 'Google News',
+  'translate.google.com': 'Google Translate', 'scholar.google.com': 'Google Scholar', 'classroom.google.com': 'Classroom',
+  'music.youtube.com': 'YouTube Music', 'studio.youtube.com': 'YouTube Studio',
+  'outlook.live.com': 'Outlook', 'outlook.office.com': 'Outlook', 'teams.microsoft.com': 'Teams', 'onedrive.live.com': 'OneDrive',
+};
+
+// What "the same site" means when grouping by site: the registrable domain, except that each app
+// above counts as a site of its own.
+function siteKey(url) {
+  const host = hostname(url);
+  return PRODUCT_SITES[host] ? host : registrableDomain(url);
 }
 
 // A short human name for a site: known names first, then a page-title suffix that matches the
 // domain ("Title - Wikipedia"), then the capitalised domain label.
 function siteName(url, title = '') {
+  const product = PRODUCT_SITES[hostname(url)];
+  if (product) return product;
   const domain = registrableDomain(url);
   const label = domain.split('.')[0] || domain;
   if (KNOWN_SITES[label]) return KNOWN_SITES[label];
@@ -476,7 +496,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     const bySite = new Map();
     for (const tab of getTabs()) {
       if (tab.groupId || tab.userRemoved || tab.userMoved || !isWeb(urlOf(tab))) continue;
-      const domain = registrableDomain(urlOf(tab));
+      const domain = siteKey(urlOf(tab));
       if (!domain || SEARCH_DOMAINS.has(domain)) continue; // result pages from a search engine aren't a topic
       if (!bySite.has(domain)) bySite.set(domain, []);
       bySite.get(domain).push(tab);
@@ -581,4 +601,4 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   };
 }
 
-module.exports = { createTabGroups, siteName, registrableDomain, topicClusters, GROUP_COLORS };
+module.exports = { createTabGroups, siteName, registrableDomain, siteKey, topicClusters, GROUP_COLORS };
