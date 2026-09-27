@@ -91,17 +91,25 @@ const SECTIONS = [
 
 async function buildAi(card) {
   let ai = await S.ai.get();
+  // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
+  const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
+    ai.models.filter((m) => m.group === g && !m.id.endsWith(':__more')).map((m) => h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }))));
   card.append(
     row('Model', 'The model the assistant in the sidebar uses.', h('select', {
       id: 'ai-model',
       'aria-label': 'Model',
-      onchange: (e) => S.ai.setModel(e.target.value),
-    }, [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-      ai.models.filter((m) => m.group === g && !m.id.endsWith(':__more')).map((m) => h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model })))))),
+      onchange: async (e) => { if (!(await S.ai.setModel(e.target.value).catch(() => false))) await refreshModels(); },
+    }, modelOptions())),
   );
   const modelPicker = card.querySelector('#ai-model');
   modelPicker.parentElement.classList.add('picker-host');
   window.lumenPicker(modelPicker, { label: (o) => (o.parentElement.label ? `${o.parentElement.label} · ${o.textContent}` : o.textContent) });
+  const refreshModels = async () => {
+    ai = await S.ai.get();
+    modelPicker.replaceChildren(...modelOptions());
+    if (ai.model) modelPicker.value = ai.model;
+    modelPicker.pickerSync?.();
+  };
   const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role: 'switch', 'aria-label': 'Short, focused answers', checked: ai.adhdMode, onchange: (e) => S.ai.setAdhdMode(e.target.checked) });
   const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
     [['off', 'Off'], ['site', 'By site'], ['topic', 'By topic']].map(([value, text]) => h('option', { value, text, selected: ai.tabGrouping === value })));
@@ -128,7 +136,19 @@ async function buildAi(card) {
         h('button', { text: info.stored ? 'Change' : 'Add', 'aria-label': `${info.stored ? 'Change' : 'Add'} ${info.label} key`, onclick: edit }),
         provider === 'openrouter' && !info.stored ? h('button', {
           class: 'primary', text: 'Sign in', 'aria-label': 'Sign in with OpenRouter',
-          onclick: async (e) => { e.target.disabled = true; const r = await S.ai.openRouterSignIn(); ai = await S.ai.get(); renderKeys(); if (!r.ok) alert(r.message); },
+          // While the sign-in tab is open this is a Cancel button (closing that tab cancels too).
+          onclick: async (e) => {
+            const btn = e.target;
+            if (btn.dataset.pending) { S.ai.cancelOpenRouterSignIn?.(); return; }
+            btn.dataset.pending = '1';
+            btn.textContent = 'Cancel';
+            btn.classList.remove('primary');
+            let r;
+            try { r = await S.ai.openRouterSignIn(); } catch (err) { r = { ok: false, message: `OpenRouter sign-in failed: ${err.message}` }; }
+            await refreshModels();
+            renderKeys();
+            if (!r.ok && !r.cancelled) alert(r.message);
+          },
         }) : null,
       ].filter(Boolean));
       const edit = () => {
@@ -136,11 +156,12 @@ async function buildAi(card) {
         const note = status();
         const put = async (value) => {
           try {
-            if (provider === 'anthropic') await S.ai.setKey(value);
-            else await S.ai.setProviderKey(provider, value);
-            ai = await S.ai.get();
+            flash(note, value ? 'Checking the key…' : '', '');
+            const r = provider === 'anthropic' ? await S.ai.setKey(value) : await S.ai.setProviderKey(provider, value);
+            await refreshModels();
             renderKeys();
-          } catch (err) { flash(note, err.message, 'err'); }
+            if (r?.unverified) alert(`Saved. ${info.label} couldn't be reached to check the key, so it will be checked on your first message.`);
+          } catch (err) { flash(note, String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
         };
         const saveKey = () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); };
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); else if (e.key === 'Escape') view(); });
@@ -166,8 +187,24 @@ async function buildAi(card) {
   const renderCli = (s) => {
     cliNote.textContent = s.signedIn ? `Signed in${s.profile ? ` (profile “${s.profile}”)` : ''}.${s.shadowedBy ? ` Your ${s.shadowedBy} is used first.` : ''}` : s.installed ? 'Not signed in.' : 'The Anthropic CLI installs on first sign-in.';
     cliButtons.replaceChildren(s.signedIn
-      ? h('button', { id: 'ai-cli-button', text: 'Sign out', onclick: async () => renderCli(await S.ai.cliLogout()) })
-      : h('button', { id: 'ai-cli-button', class: 'primary', text: 'Sign in', onclick: async () => { flash(cliNote, 'Starting…', ''); const r = await S.ai.cliLogin(); renderCli(r); if (!r.ok && r.message) flash(cliNote, r.message, 'err'); } }));
+      ? h('button', { id: 'ai-cli-button', text: 'Sign out', onclick: async () => { renderCli(await S.ai.cliLogout()); await refreshModels(); } })
+      : h('button', {
+        id: 'ai-cli-button', class: 'primary', text: 'Sign in',
+        // While the browser sign-in is waiting, this is a Cancel button.
+        onclick: async (e) => {
+          const btn = e.target;
+          if (btn.dataset.pending) { S.ai.cliCancel?.(); return; }
+          btn.dataset.pending = '1';
+          btn.textContent = 'Cancel';
+          btn.classList.remove('primary');
+          flash(cliNote, 'Starting…', '');
+          let r;
+          try { r = await S.ai.cliLogin(); } catch (err) { r = { ok: false, message: err.message, signedIn: false }; }
+          renderCli(r);
+          await refreshModels();
+          if (!r.ok && r.message) flash(cliNote, r.message, r.cancelled ? '' : 'err');
+        },
+      }));
   };
   S.ai.onCliProgress((text) => { cliNote.textContent = text; });
   const cliRow = row('Sign in with your Anthropic account', 'Uses an OAuth profile from the Anthropic CLI instead of an API key.', cliButtons);
@@ -178,7 +215,7 @@ async function buildAi(card) {
   // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
-  card.append(row('Allow AI agents to connect', 'Claude Code, Codex, Gemini CLI and other MCP clients can drive Lumen. They still need your OK for each new site.', mcpToggle));
+  card.append(row('Allow AI agents to connect', 'Off by default. When on, Claude Code, Codex, Gemini CLI and other MCP clients on this computer can drive Lumen. They still need your OK for each new site. The Add buttons below turn this on.', mcpToggle));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
@@ -192,6 +229,7 @@ async function buildAi(card) {
         const r = await S.ai.addToAgent(snip.addButton).catch((err) => ({ ok: false, text: err.message }));
         add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : addLabel;
         add.disabled = Boolean(r.ok);
+        if (r.ok) mcpToggle.checked = true; // connecting an agent turns agent connections on
         if (!r.already) flash(note, r.text, r.ok ? 'ok' : 'err');
       },
     }) : null;
@@ -239,7 +277,7 @@ async function buildAi(card) {
   portRow.hidden = !auto.enabled;
   portRow.classList.add('sub-row');
   describe(auto.enabled, auto.port);
-  card.append(row('Allow automation tools (Chrome DevTools Protocol)', 'For Playwright, Playwright MCP and other CDP tools. They see only your tabs. Takes effect after a restart.', autoToggle), portRow);
+  card.append(row('Allow automation tools (Chrome DevTools Protocol)', 'For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site. While on, other programs on this computer can reach Lumen’s internal debugging port too. Takes effect after a restart.', autoToggle), portRow);
 
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });

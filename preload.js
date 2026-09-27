@@ -60,6 +60,16 @@ contextBridge.exposeInMainWorld('lumenPrefs', {
   onChange: on('prefs:ui'),
 });
 
+// Only what the browser UI itself uses. Keys, MCP, automation and import are set in lumen://settings
+// (settings-preload.js); the tests still reach a few of those calls through here.
+const testOnly = process.env.CLAUDE_BROWSER_TEST ? {
+  mcpInfo: () => ipcRenderer.invoke('mcp:info'),
+  setMcpEnabled: (on) => ipcRenderer.invoke('mcp:set-enabled', on),
+  automationInfo: () => ipcRenderer.invoke('automation:info'),
+  setAutomation: (options) => ipcRenderer.invoke('automation:set', options),
+  setAutoGroup: (on) => ipcRenderer.invoke('settings:set-auto-group', on),
+  setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
+} : {};
 contextBridge.exposeInMainWorld('assistant', {
   ask: (text, runId, images) => ipcRenderer.send('agent:ask', text, runId, images),
   stop: () => ipcRenderer.send('agent:stop'),
@@ -67,44 +77,25 @@ contextBridge.exposeInMainWorld('assistant', {
   onEvent: on('agent:event'),
   // AI agents over MCP
   onMcpEvent: on('mcp:event'),
-  mcpInfo: () => ipcRenderer.invoke('mcp:info'),
-  setMcpEnabled: (on) => ipcRenderer.invoke('mcp:set-enabled', on),
   stopMcp: () => ipcRenderer.send('mcp:stop'),
-  // Automation tools over CDP (automation.js)
-  automationInfo: () => ipcRenderer.invoke('automation:info'),
-  setAutomation: (options) => ipcRenderer.invoke('automation:set', options),
   onHistory: on('agent:history'),
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   getSettings: () => ipcRenderer.invoke('settings:get'),
-  setKey: (key) => ipcRenderer.invoke('settings:set-key', key),
-  setAdhdMode: (on) => ipcRenderer.invoke('settings:set-adhd', on),
-  setAutoGroup: (on) => ipcRenderer.invoke('settings:set-auto-group', on),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
   openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
   openRouterSignIn: () => ipcRenderer.invoke('openrouter:sign-in'),
-  setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
-  setSearchEngine: (id) => ipcRenderer.invoke('settings:set-search-engine', id),
-  cliStatus: () => ipcRenderer.invoke('cli:status'),
-  cliLogin: () => ipcRenderer.invoke('cli:login'),
-  cliLogout: () => ipcRenderer.invoke('cli:logout'),
-  onCliProgress: on('cli:progress'),
+  cancelOpenRouterSignIn: () => ipcRenderer.invoke('openrouter:cancel'),
   onSearchEngine: on('search-engine'),
-  importBrowsers: () => ipcRenderer.invoke('import:browsers'),
-  importFrom: (id) => ipcRenderer.invoke('import:run', id),
   onModelsUpdated: on('models-updated'),
+  ...testOnly,
 });
 
-// ---- [claude code engine] + [page context] + [panel snapshot]
+// ---- [claude code engine] + [page context]
 contextBridge.exposeInMainWorld('lumenExtras', {
-  addToAgent: (id) => ipcRenderer.invoke('mcp:add-to-agent', id),
-  addToClaudeCode: () => ipcRenderer.invoke('mcp:add-to-claude'), // kept as an alias
   getPageContext: () => ipcRenderer.invoke('pagecontext:get'),
   setPageContext: (on) => ipcRenderer.invoke('pagecontext:set', on),
   // { installed, signedIn: true|false|'unknown', accountType: 'subscription'|'apiKey'|null, detail }
   claudeCodeStatus: (refresh) => ipcRenderer.invoke('claudecode:status', refresh),
-  claudeCodeLoginHelp: () => ipcRenderer.invoke('claudecode:login-help'),
-  // { installed, signedIn: true|false|'unknown', detail } -- see grok-build.js
-  grokBuildStatus: (refresh) => ipcRenderer.invoke('grokbuild:status', refresh),
 });
-// ---- [/claude code engine] + [/page context] + [/panel snapshot]
+// ---- [/claude code engine] + [/page context]

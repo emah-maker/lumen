@@ -144,16 +144,36 @@ function profileState() {
   return { profile, signedIn: hasToken, configDir: dir };
 }
 
-// Opens the browser sign-in and waits for it to finish (the CLI waits up to 5 minutes).
+// Opens the browser sign-in and waits for it to finish. The CLI itself waits up to 5 minutes; this
+// gives up a little after that, and cancelLogin() (the Cancel button) ends it at once.
+const LOGIN_TIMEOUT_MS = 6 * 60 * 1000;
+let loginChild = null;
+let loginCancelled = false;
 function login(ant) {
   return new Promise((resolve) => {
     const child = spawn(ant, ['auth', 'login'], { env: cliEnv(), windowsHide: true });
+    loginChild = child;
+    loginCancelled = false;
     let output = '';
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, LOGIN_TIMEOUT_MS);
+    const done = (result) => { clearTimeout(timer); if (loginChild === child) loginChild = null; resolve(result); };
     child.stdout.on('data', (d) => { output += d; });
     child.stderr.on('data', (d) => { output += d; });
-    child.on('error', (err) => resolve({ ok: false, message: err.message }));
-    child.on('close', (code) => resolve({ ok: code === 0 && profileState().signedIn, message: output.trim().split(/\r?\n/).slice(-3).join(' ') }));
+    child.on('error', (err) => done({ ok: false, message: err.message }));
+    child.on('close', (code) => {
+      if (loginCancelled) return done({ ok: false, cancelled: true, message: 'Sign-in was cancelled.' });
+      if (timedOut) return done({ ok: false, message: 'Sign-in timed out. Try again.' });
+      done({ ok: code === 0 && profileState().signedIn, message: output.trim().split(/\r?\n/).slice(-3).join(' ') });
+    });
   });
+}
+
+function cancelLogin() {
+  if (!loginChild) return false;
+  loginCancelled = true;
+  loginChild.kill();
+  return true;
 }
 
 async function logout(ant) {
@@ -161,4 +181,4 @@ async function logout(ant) {
   return { ok: result.ok, message: (result.stdout + result.stderr).trim() };
 }
 
-module.exports = { findAnt, installAnt, profileState, login, logout, verifyLogin, configDir, PINNED_VERSION };
+module.exports = { findAnt, installAnt, profileState, login, cancelLogin, logout, verifyLogin, configDir, PINNED_VERSION };
