@@ -37,7 +37,8 @@ const path = require('path');
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   await ui.waitForTimeout(500);
   const options = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
-  check('picker lists 5 models', options.length === 5, JSON.stringify(options));
+  // Claude API models; 'claudecode:default' is added when the Claude Code CLI is installed (test/claudecode.js).
+  check('picker lists 5 models', options.filter((o) => !o.startsWith('claudecode:')).length === 5, JSON.stringify(options));
   check('Opus 5 is the default', (await ui.inputValue('#model')) === 'claude-opus-5', await ui.inputValue('#model'));
 
   await sendFromUi('hello');

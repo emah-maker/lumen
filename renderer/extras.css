@@ -1,0 +1,76 @@
+/* Sidebar additions (renderer/extras.js): Claude Code note, page context chip, approval badge,
+   web panel snapshot. Kept apart from styles.css so restyles there merge cleanly. */
+
+.cc-note {
+  margin: 0 12px 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-2, var(--muted, #8a8a8e));
+}
+
+.page-context {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px; /* a negative margin here would let the textarea squeeze onto this row */
+  padding: 3px 4px 3px 8px;
+  min-width: 0;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-2, var(--muted, #8a8a8e));
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+.page-context[hidden] { display: none; }
+.page-context .pc-label { flex: none; }
+.page-context .pc-icon { flex: none; width: 14px; height: 14px; border-radius: 3px; }
+.page-context .pc-icon[hidden] { display: none; }
+.page-context .pc-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text, inherit);
+}
+.page-context .pc-toggle {
+  flex: none;
+  border: 0;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.page-context .pc-toggle:hover { background: rgba(127, 127, 127, 0.16); }
+.page-context .pc-toggle:focus-visible { outline: 2px solid var(--accent, #0a84ff); outline-offset: 1px; }
+.page-context.excluded .pc-title { text-decoration: line-through; opacity: 0.7; }
+body.webai-mode .page-context, body.webai-mode .cc-note { display: none; }
+
+/* An approval is waiting and the sidebar is closed. */
+#toggle-sidebar { position: relative; }
+#toggle-sidebar.approval-pending::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #0a84ff);
+  box-shadow: 0 0 0 2px var(--toolbar-bg, var(--surface, #fff));
+}
+
+/* The web panel's picture while the sidebar springs (the native view is hidden meanwhile). */
+.webai-host { position: relative; }
+.webai-snapshot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: left top;
+  pointer-events: none;
+  user-select: none;
+}

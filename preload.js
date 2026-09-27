@@ -84,3 +84,12 @@ contextBridge.exposeInMainWorld('assistant', {
   importFrom: (id) => ipcRenderer.invoke('import:run', id),
   onModelsUpdated: on('models-updated'),
 });
+
+// ---- [claude code engine] + [page context] + [panel snapshot]
+contextBridge.exposeInMainWorld('lumenExtras', {
+  addToClaudeCode: () => ipcRenderer.invoke('mcp:add-to-claude'),
+  getPageContext: () => ipcRenderer.invoke('pagecontext:get'),
+  setPageContext: (on) => ipcRenderer.invoke('pagecontext:set', on),
+  webAiSnapshot: () => ipcRenderer.invoke('webai:snapshot'),
+});
+// ---- [/claude code engine] + [/page context] + [/panel snapshot]
