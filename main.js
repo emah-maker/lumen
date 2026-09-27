@@ -1853,6 +1853,8 @@ if (process.env.CLAUDE_BROWSER_TEST) {
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
+  global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu() };
+  global.__patchSettings = (patch) => writeSettings({ ...readSettings(), ...patch });
 }
 
 // ---------- [settings] lumen://settings ----------
