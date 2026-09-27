@@ -70,6 +70,9 @@
       "artifactName": "Lumen ${version} Portable.exe"
     },
     "asar": false,
+    "electronDownload": {
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
+    },
     "afterPack": "scripts/after-pack.js",
     "protocols": [
       {
