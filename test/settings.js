@@ -71,9 +71,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const closeTab = (id) => app.evaluate((_e, i) => global.__agent.browser.closeTab(i), id);
 
   // ---- opening it ----
-  await ui.evaluate(() => document.getElementById('all-settings').click());
-  let sid = await waitFor(async () => (await settingsTabs()).find((t) => t.settings)?.id);
-  check('“All settings…” in the sidebar opens the settings tab', Boolean(sid), JSON.stringify(await settingsTabs()));
+  await ui.evaluate(() => document.getElementById('open-settings').click());
+  let sid = await waitFor(async () => (await settingsTabs()).find((t) => t.settings && t.url.endsWith('#you-and-ai'))?.id);
+  check('the sidebar gear opens the settings tab at You and AI', Boolean(sid) && (await settingsTabs()).find((t) => t.settings)?.url.endsWith('#you-and-ai'), JSON.stringify(await settingsTabs()));
+  check('the sidebar has no settings panel of its own', await ui.evaluate(() => !document.getElementById('settings') && !document.getElementById('api-key')), 'still there');
   await ui.evaluate(() => window.browser.newTab('lumen://settings/privacy'));
   await waitFor(async () => (await settingsTabs()).find((t) => t.settings)?.url.endsWith('#privacy'));
   const settingsCount = (await settingsTabs()).filter((t) => t.settings).length;
@@ -243,6 +244,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("the settings tab can't navigate away", after.find((t) => t.id === sid)?.url.startsWith(settingsUrl) && !after.some((t) => t.url.endsWith('/away')), brief(after));
   await app.evaluate((_e, i) => global.__agent.browser.switchTab(i), sid);
   check("the agent doesn't get the settings tab as its page", (await app.evaluate(() => global.__agent.browser.activeTab())) === null, 'agent sees it');
+  const why = await app.evaluate(() => global.__agent.execute('read_page', {}).then(() => 'no error', (err) => err.message));
+  check('a tool on the settings tab explains it (not "No tab is open")', /active tab is Lumen Settings/.test(why) && /open_tab/.test(why), why);
   const denied = await app.evaluate(async ({ ipcMain }) => {
     const handler = ipcMain._invokeHandlers?.get?.('prefs:get');
     if (!handler) return 'no-handler-map';

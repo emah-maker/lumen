@@ -1,10 +1,10 @@
 # Lumen
 
-**Every AI, one browser.** Lumen is a fast, calm Chromium browser with an AI built into the sidebar. Bring the one you like: **Claude, ChatGPT, Gemini or Grok**. Switch between them mid-conversation, or plug in **any AI agent over MCP**.
+**Every AI, one browser.** Lumen is a fast, calm Chromium browser with an AI built into the sidebar. Bring the one you like: **Claude (with your own Claude account through Claude Code), ChatGPT, Gemini, Grok, or any model on OpenRouter**. Switch between them mid-conversation, or plug in **any AI agent over MCP**.
 
 - **An AI that does things, not just chats.** It reads the page you're on and acts on it: clicks, types, fills in forms, opens and groups tabs, and researches several pages at once. It asks before acting on a new site, and never submits a half-filled form.
-- **Your choice of model.** Claude (Opus, Sonnet, Haiku, Fable), OpenAI, Grok and Gemini. Add a key, or sign in to Anthropic with its CLI. The toolbar button takes on each company's mark.
-- **A real browser underneath.** Tabs with automatic groups, bookmarks, history, downloads, find, zoom, Chrome Web Store extensions, a built-in ad and tracker blocker, and import from Chrome, Edge, Brave, Vivaldi, Opera or Firefox.
+- **Your choice of model.** Claude (Opus, Sonnet, Haiku, Fable), OpenAI, Grok, Gemini and OpenRouter. Use your Claude account through Claude Code, add a key, sign in to Anthropic with its CLI, or sign in with OpenRouter. The toolbar button takes on each company's mark.
+- **A real browser underneath.** Tabs that group themselves by site or by topic, bookmarks, history, downloads, find, zoom, Chrome Web Store extensions, a built-in ad and tracker blocker, and import from Chrome, Edge, Brave, Vivaldi, Opera or Firefox.
 - **Private by default.** Background reading and search run without your cookies, page scripts are hidden from sites, chats are encrypted at rest, and the start page makes no network requests.
 - **Made to feel alive.** Light and dark themes that follow your system, spring animations, and an aurora start page.
 
@@ -51,7 +51,7 @@ Set `LUMEN_BUILD_DIR` to use a different folder. The installed Windows app lives
 
 The Windows build ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, and Electron taken from node_modules), and `scripts/build.js` checks this after every build. Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity) produces one. The untouched Electron binary is recognised, so it runs. The window, taskbar and shortcuts use Lumen's icon at runtime. For a normal signed installer, sign the build with a trusted code-signing certificate.
 
-Add your Anthropic API key with the gear icon in the Claude sidebar (stored encrypted with the OS keychain), or set `ANTHROPIC_API_KEY` before launching.
+Set up an AI from the sidebar's empty state or **Settings → You and AI** (`Ctrl+,`; the sidebar's gear opens it): your Claude account through Claude Code, an Anthropic, OpenAI, Grok, Gemini or OpenRouter key (stored encrypted with the OS keychain), or **Sign in with OpenRouter**. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY` and `OPENROUTER_API_KEY` work too.
 
 ## Use
 
@@ -78,24 +78,21 @@ Sites must ask before using your camera, microphone, location, or notifications.
   - `run_script` runs JavaScript in the page for bulk extraction or edits
   - `wait_for` waits for text to appear
   - web search
-- **ADHD mode** (on by default, toggle in Claude settings): answers lead with the next action, use short numbered steps, and end with one small next step.
+- **ADHD mode** (on by default, toggle in Settings → You and AI): answers lead with the next action, use short numbered steps, and end with one small next step.
 - **Ad blocker** built into the browser, not an extension. It uses uBlock Origin–compatible lists (Ghostery engine). Toggle it, or allow ads on one site, from **⋯ → Ad Blocker**. Hidden-element rules are applied in a way pages can't read, and uBlock's scripts disarm known anti-adblock checks. Blocked requests are cancelled, so a determined site can still notice that its ad request failed.
 - **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get Extensions…** and click *Add to Lumen*. Extension buttons appear in the toolbar. Note: the ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work.
 
-- **Other AI models:** add an OpenAI, Grok (xAI) or Gemini key in Claude settings → Other models. Their models appear in the model menu, work with every browser tool, and can take over a chat mid-conversation.
-- **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (settings, or ⋯ → Search Engine).
-- **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (settings, or ⋯ → Import Bookmarks and History). Passwords and cookies are never read.
+- **Other AI models:** add an OpenAI, Grok (xAI), Gemini or OpenRouter key in Settings → You and AI → API keys. Their models appear in the model menu, work with every browser tool, and can take over a chat mid-conversation.
+- **OpenRouter:** paste a key or **Sign in with OpenRouter** (OAuth with PKCE through a one-time local address; the key it returns is stored like a pasted one). The menu shows the newest Claude, GPT, Gemini, Llama, DeepSeek and Grok models; **More models…** searches all of them (the list is cached for a day). Models that can't use tools are marked **(chat only)**: they read the page with you but can't click or type in your tabs.
+- **Tab groups:** ⋯ → Tab Groups → Group Automatically **Off / By Site / By Topic**. By topic finds related tabs (recipes, one trip, a library's docs) on your computer from titles and addresses; turn on **Use AI to name and group topics** in Settings to send only titles and addresses to the cheapest model of your chat's provider. **Organize Tabs by Topic** (tab menu or ⋯ → Tab Groups) regroups on demand, with **Undo Organize**. Groups you made and tabs you moved by hand are left alone.
+- **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (Settings, or ⋯ → Search Engine).
+- **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (Settings, or ⋯ → Import Bookmarks and History). Passwords and cookies are never read.
 
-## Use your own AI account (claude.ai, ChatGPT, Gemini, Grok)
+## Use your own Claude account
 
-No API key? Open the sidebar (`Ctrl+J`) and pick **Claude**, **ChatGPT**, **Gemini** or **Grok** at the top (or `Ctrl+Shift+2`–`5`; `Ctrl+Shift+1` is the Agent). The real website loads in the sidebar, so you sign in exactly as in any browser, including school or work single sign-on (for example a university Claude for Education account). Logins and chats stay open while you browse.
+### Through Claude Code
 
-- **Share page** (the arrow button) copies the current tab's title, address and readable text so you can paste it into the chat.
-- These panels are ordinary web pages: Lumen never types into them or reads them. Agent features (Lumen clicking and typing in your tabs) need an API key or Anthropic sign-in, in the **Agent** mode.
-
-### Claude with your own account, as the Agent (Claude Code)
-
-If [Claude Code](https://claude.com/claude-code) is installed, the Agent's model menu has a
+If [Claude Code](https://claude.com/claude-code) is installed, the model menu starts with a
 **Your Claude account** group: **Claude · your account (Claude Code)**. Each message runs your
 own `claude` CLI headless, signed in with your own login (including a school or work plan), and
 it drives Lumen through Lumen's MCP server:
@@ -110,7 +107,7 @@ it drives Lumen through Lumen's MCP server:
 
 ### The page you're on goes with your message
 
-Like Comet, every Agent message includes the current tab's title, address and first ~7,000
+Like Comet, every message, whichever AI answers it (Claude by key or CLI sign-in, Claude Code, OpenAI, Grok, Gemini, OpenRouter), includes the current tab's title, address and first ~7,000
 characters of readable text (not for new-tab or internal pages), marked as untrusted page
 content. The chip above the message box shows **Using: <page>**; click **×** to stop sending the
 page (remembered), **Include** to turn it back on.
@@ -184,7 +181,7 @@ const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 ```
 
 - Lumen listens on 127.0.0.1 only, through a proxy (`automation.js`) that shows only your tabs:
-  Lumen's own UI, AI side panels and hidden reader tabs can't be seen or attached to.
+  Lumen's own UI and hidden reader tabs can't be seen or attached to.
 - `newPage()` opens a Lumen tab, `page.close()` closes it, and `browser.close()` only disconnects.
 - The toolbar says **Lumen is being driven by Playwright (CDP)** while connected; **Stop** disconnects.
 - Any program on your computer can use the port while it's on, including on signed-in sites.
@@ -202,27 +199,34 @@ The sidebar agent, MCP clients and OpenAI/Grok/Gemini get the same cheaper tools
   ending with what changed.
 - `screenshot`: 1024 px JPEG by default, with `max_width`, `quality` and `region` crop.
 
-`node test/measure.js` compares four real tasks (tokens ≈ chars / 4):
+What one call costs on real pages (tokens ≈ characters / 4, measured with Lumen's own tools):
 
-| Task | Before | After |
-|---|---|---|
-| Wikipedia: search, read a fact | 13,743 tokens, 4 calls | 261 tokens, 4 calls |
-| httpbin form | 825, 4 | 572, 3 |
-| DuckDuckGo search | 12,916, 5 | 306, 4 |
-| Long article fact | 74,497, 10 | 141, 2 |
+| Page | `read_page` (full, default) | `mode: "compact"` | `since_last` (unchanged page) | `find` (one word) |
+|---|---|---|---|---|
+| Wikipedia: WebKit | ~6,800 | ~1,500 | ~21 | ~180 |
+| DuckDuckGo results | ~2,700 | ~760 | ~21 | ~360 |
+| Long article: World War II | ~7,600 | ~1,500 | ~21 | ~180 |
+
+Compact is about 4–5× smaller than a full read. The big savings come from not reading again:
+`since_last` after an action, `find` for one thing, and `batch` for several steps in one call.
+`node test/measure.js` runs whole tasks both ways.
 
 ## Layout
 
-- `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, ad blocker, IPC
+- `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, IPC
+- `features/`: parts split out of main.js: `ai-agents.js` (MCP, CDP automation, the Claude Code engine; automation.js and claude-code.js load on first use), `adblock.js`, `downloads.js`, `instance.js` (single instance, shortcuts)
+- `settings-backend.js`, `renderer/settings.*`: lumen://settings, the one place for settings
+- `tab-groups.js`: groups by site and by topic (local TF-IDF clustering), undo
+- `extensions-dnr-preload.js`: `browser` alias and chrome.declarativeNetRequest for extensions (rules kept, not applied; content blockers with static rulesets are refused at install)
 - `mcp.js`: MCP server for external agents (stdio bridge + local authenticated channel)
-- `providers.js`: OpenAI / Grok / Gemini adapter (Chat Completions, history conversion)
+- `providers.js`: OpenAI / Grok / Gemini / OpenRouter adapter (Chat Completions, history conversion, OpenRouter catalog)
 - `importer.js`, `search.js`: browser import and search engines
 - `agent.js`: agent loop (`claude-opus-5`, streaming, adaptive thinking, web search, browser tools, ADHD mode)
 - `page-scripts.js`: scripts injected into pages to read and operate them
 - `snapshot.js`: token-efficient tools (compact outline, diffs, find, batch, screenshot options)
 - `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab and error pages
-- `test/`: Playwright tests: `smoke.js`, `tools.js` (agent actions), `ui.js` (address bar, find), `extensions.js`, `adblock.js`, `adhd.js`, `cdp.js`, `efficiency.js`
+- `test/`: 22 Playwright suites (`node test/<name>.js`): smoke, tools, ui (address bar, find, focus stress, sidebar layout), browser, agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), settings
 
 ## License
 

@@ -1,5 +1,6 @@
 // Tab groups: opener groups, same-site auto groups, user choices respected, collapse, restore,
-// "Organize Tabs with AI" with a fake model, and the group_tabs / ungroup_tabs tools.
+// "Organize Tabs with AI" with a fake model, the group_tabs / ungroup_tabs tools, and topic groups
+// (local clusters, protection of tabs the user grouped or dragged, undo, automatic, and with AI).
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -143,6 +144,62 @@ const os = require('os');
   await sleep(900);
   t = await tabsNow();
   check('with automatic groups off, nothing is grouped', extra.every((id) => !t.find((x) => x.id === id).groupId), JSON.stringify(t));
+
+  // 10. Topic groups: 3 recipe tabs + 2 GitHub tabs + 1 unrelated -> 2 groups and 1 loose tab.
+  const recipes = [];
+  for (const p of ['Easy Banana Bread Recipe', 'Chocolate Chip Cookie Recipes', 'Classic Pancake Recipe']) recipes.push(await open(`${siteA}/${encodeURIComponent(p)}`));
+  const repos = [];
+  for (const p of ['facebook react GitHub', 'microsoft vscode GitHub']) repos.push(await open(`${siteA}/${encodeURIComponent(p)}`));
+  const unrelated = await open(`${siteA}/${encodeURIComponent('Weather forecast Boston')}`);
+  // A recipe tab the user grouped by hand, and one the user dragged: organizing leaves both alone.
+  const mine = await open(`${siteA}/${encodeURIComponent('Lemon Tart Recipe')}`);
+  await app.evaluate((_e, id) => global.__agent.execute('group_tabs', { name: 'Mine', tab_ids: [id] }), mine);
+  const dragged = await open(`${siteA}/${encodeURIComponent('Apple Pie Recipe')}`);
+  await app.evaluate((_e, id) => global.__markDragged(id), dragged);
+  const groupsBefore = await groupsNow();
+  const count = await app.evaluate(() => global.__organizeByTopic());
+  t = await tabsNow();
+  g = await groupsNow();
+  const groupOf = (id) => t.find((x) => x.id === id)?.groupId;
+  const recipeGroup = g.find((x) => x.id === groupOf(recipes[0]));
+  const repoGroup = g.find((x) => x.id === groupOf(repos[0]));
+  check('topic: the 3 recipe tabs form one group', recipeGroup && recipes.every((id) => groupOf(id) === recipeGroup.id) && /recipe/i.test(recipeGroup.name), JSON.stringify({ g, t }));
+  check('topic: the 2 GitHub tabs form another', repoGroup && repoGroup !== recipeGroup && repos.every((id) => groupOf(id) === repoGroup.id) && /github/i.test(repoGroup.name), JSON.stringify(g));
+  check('topic: the unrelated tab stays loose', !groupOf(unrelated), groupOf(unrelated));
+  check('topic: a tab the user grouped keeps its group', g.find((x) => x.id === groupOf(mine))?.name === 'Mine', JSON.stringify(g));
+  check('topic: a tab the user dragged is not regrouped', !groupOf(dragged), groupOf(dragged));
+  check('topic: organize reports the groups it made', count >= 2, count);
+  await app.evaluate(() => global.__undoOrganize());
+  t = await tabsNow();
+  g = await groupsNow();
+  check('undo puts every tab and group back', [...recipes, ...repos].every((id) => !groupOf(id)) && g.length === groupsBefore.length && g.find((x) => x.id === groupOf(mine))?.name === 'Mine', JSON.stringify({ g, groupsBefore }));
+
+  // Automatic "By topic": 4+ loose related tabs group themselves.
+  await app.evaluate(() => global.__setTabGrouping('topic'));
+  await sleep(1000);
+  t = await tabsNow();
+  g = await groupsNow();
+  check('automatic by topic groups the recipe tabs', recipes.every((id) => groupOf(id) && groupOf(id) === groupOf(recipes[0])), JSON.stringify(t));
+  check('automatic by topic leaves the dragged tab alone', !groupOf(dragged), groupOf(dragged));
+
+  // With AI naming on: the cheapest model of the chat's provider (Haiku), only ids, titles and hosts.
+  await app.evaluate(() => {
+    global.__topicRequest = null;
+    global.__agent.getClient = () => ({ messages: { create: async (params) => {
+      global.__topicRequest = JSON.parse(JSON.stringify(params));
+      const list = JSON.parse(params.messages[0].content.split('Tabs:\n')[1]);
+      const ids = list.filter((x) => /Banana|Cookie|Pancake/.test(x.title)).map((x) => x.id);
+      return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ groups: [{ name: 'Weekend Baking', tab_ids: ids }] }) }] };
+    } } });
+  });
+  await app.evaluate(() => global.__setTopicAi(true));
+  await app.evaluate(() => global.__organizeByTopic());
+  t = await tabsNow();
+  g = await groupsNow();
+  const req2 = await app.evaluate(() => global.__topicRequest);
+  check('AI topics use the cheapest model (Haiku) with titles and hosts only', req2?.model === 'claude-haiku-4-5' && !/untrusted_page_content|PAGE TEXT/.test(JSON.stringify(req2)), JSON.stringify(req2)?.slice(0, 200));
+  check('AI topics apply the named group', g.some((x) => x.name === 'Weekend Baking' && recipes.every((id) => groupOf(id) === x.id)), JSON.stringify(g));
+  await app.evaluate(() => global.__setTopicAi(false));
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

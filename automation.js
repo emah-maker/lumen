@@ -3,7 +3,7 @@
 // With the setting on, Chromium's own debugging port is opened on a random localhost port and a
 // filtering proxy listens on 127.0.0.1:<port> (default 9222). Playwright's connectOverCDP,
 // Playwright MCP (--cdp-endpoint) and other CDP tools connect to the proxy, which:
-// - shows only the user's tabs: Lumen's own UI, the AI side panels, hidden reader tabs and
+// - shows only the user's tabs: Lumen's own UI, hidden reader tabs and
 //   extension pages are filtered out of every target list and event, and can't be attached to;
 // - turns Target.createTarget (Playwright's newPage) into a real Lumen tab, Target.closeTarget
 //   into closing that tab, and ignores Browser.close (disconnecting never quits Lumen);
@@ -11,23 +11,11 @@
 
 const fs = require('fs');
 const http = require('http');
-const path = require('path');
 const crypto = require('crypto');
 
-const DEFAULT_PORT = 9222;
 const OWN_ID_BASE = 1e9; // ids for commands the proxy sends itself; clients count up from 1
 
-const validPort = (port) => (Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : DEFAULT_PORT);
-
-// Called at startup, before the app is ready: the debugging switch only works if set this early.
-function prepare(app, settings) {
-  if (!settings.automationEnabled) return null;
-  const file = path.join(app.getPath('userData'), 'DevToolsActivePort');
-  try { fs.rmSync(file, { force: true }); } catch {}
-  app.commandLine.appendSwitch('remote-debugging-port', '0');
-  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
-  return { port: validPort(settings.automationPort), file };
-}
+// The debugging switch itself is set before ready by prepareAutomation (features/ai-agents.js).
 
 // Chromium writes "<port>\n<browser ws path>" once the debugging server is up.
 async function internalEndpoint(file) {
@@ -412,4 +400,4 @@ function start({ port, file, hooks }) {
   };
 }
 
-module.exports = { prepare, start, DEFAULT_PORT, validPort };
+module.exports = { start };

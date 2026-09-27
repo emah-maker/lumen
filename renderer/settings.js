@@ -90,69 +90,152 @@ const SECTIONS = [
 ];
 
 async function buildAi(card) {
-  const ai = await S.ai.get();
+  let ai = await S.ai.get();
   card.append(
     row('Model', 'The model the assistant in the sidebar uses.', h('select', {
       id: 'ai-model',
+      'aria-label': 'Model',
       onchange: (e) => S.ai.setModel(e.target.value),
-    }, ai.models.map((m) => h('option', { value: m.id, text: `${m.group} · ${m.label}`, selected: m.id === ai.model })))),
+    }, [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
+      ai.models.filter((m) => m.group === g && !m.id.endsWith(':__more')).map((m) => h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model })))))),
   );
-  const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role: 'switch', checked: ai.adhdMode, onchange: (e) => S.ai.setAdhdMode(e.target.checked) });
-  const group = h('input', { type: 'checkbox', class: 'switch', id: 'ai-autogroup', role: 'switch', checked: ai.autoGroupTabs, onchange: (e) => S.ai.setAutoGroup(e.target.checked) });
+  const modelPicker = card.querySelector('#ai-model');
+  modelPicker.parentElement.classList.add('picker-host');
+  window.lumenPicker(modelPicker, { label: (o) => (o.parentElement.label ? `${o.parentElement.label} · ${o.textContent}` : o.textContent) });
+  const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role: 'switch', 'aria-label': 'Short, focused answers', checked: ai.adhdMode, onchange: (e) => S.ai.setAdhdMode(e.target.checked) });
+  const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
+    [['off', 'Off'], ['site', 'By site'], ['topic', 'By topic']].map(([value, text]) => h('option', { value, text, selected: ai.tabGrouping === value })));
+  const topicAi = h('input', { type: 'checkbox', class: 'switch', id: 'ai-topic-ai', role: 'switch', 'aria-label': 'Use AI to name and group topics', checked: ai.topicAi, onchange: (e) => S.ai.setTopicAi(e.target.checked) });
+  const topicRow = row('Use AI to name and group topics', 'Sends only tab titles and web addresses to the cheapest model of your chat’s provider. Off: topics are found on this computer.', topicAi);
+  topicRow.classList.add('sub-row');
+  topicRow.hidden = ai.tabGrouping !== 'topic';
   card.append(
-    row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode).', adhd),
-    row('Group tabs automatically', 'Tabs from the same site are grouped as you open them.', group),
+    row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
+    row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, such as recipes or one trip, once 4 or more are loose. Tabs you group or move by hand stay put.', grouping),
+    topicRow,
   );
 
-  // Anthropic key
-  const keyInput = h('input', { type: 'password', id: 'ai-key', class: 'grow', placeholder: ai.hasStoredKey ? 'A key is saved' : 'sk-ant-…', autocomplete: 'off' });
-  const keyNote = status('ai-key-status');
-  keyNote.textContent = ai.hasStoredKey ? 'Saved and encrypted with your OS keychain.' : ai.hasEnvKey ? 'Using ANTHROPIC_API_KEY from the environment.' : '';
-  card.append(stackRow('Anthropic API key', 'Needed for the agent (clicking and typing for you), unless you sign in with the Anthropic CLI below.',
-    h('div', { class: 'controls' }, keyInput,
-      h('button', { class: 'primary', text: 'Save', onclick: async () => { if (!keyInput.value.trim()) return; await S.ai.setKey(keyInput.value.trim()); keyInput.value = ''; flash(keyNote, 'Saved.'); } }),
-      h('button', { text: 'Remove', onclick: async () => { await S.ai.setKey(''); flash(keyNote, 'Removed.'); } })),
-    keyNote));
+  // API keys: one line per provider; Edit opens the field in place.
+  const keys = h('div', { class: 'list', id: 'ai-keys' });
+  const renderKeys = () => {
+    const entries = [['anthropic', { label: 'Anthropic (Claude)', stored: ai.hasStoredKey, env: ai.hasEnvKey }], ...Object.entries(ai.providerKeys)];
+    keys.replaceChildren(...entries.map(([provider, info]) => {
+      const line = h('div', { class: 'item key', 'data-provider': provider });
+      const state = info.stored ? 'Saved' : info.env ? 'From environment' : 'Not set';
+      const view = () => line.replaceChildren(...[
+        h('span', { class: 'grow', text: info.label }),
+        h('span', { class: `note key-state${info.stored || info.env ? ' set' : ''}`, text: state }),
+        h('button', { text: info.stored ? 'Change' : 'Add', 'aria-label': `${info.stored ? 'Change' : 'Add'} ${info.label} key`, onclick: edit }),
+        provider === 'openrouter' && !info.stored ? h('button', {
+          class: 'primary', text: 'Sign in', 'aria-label': 'Sign in with OpenRouter',
+          onclick: async (e) => { e.target.disabled = true; const r = await S.ai.openRouterSignIn(); ai = await S.ai.get(); renderKeys(); if (!r.ok) alert(r.message); },
+        }) : null,
+      ].filter(Boolean));
+      const edit = () => {
+        const input = h('input', { type: 'password', class: 'grow', autocomplete: 'off', placeholder: `${info.label} API key`, 'aria-label': `${info.label} API key` });
+        const note = status();
+        const put = async (value) => {
+          try {
+            if (provider === 'anthropic') await S.ai.setKey(value);
+            else await S.ai.setProviderKey(provider, value);
+            ai = await S.ai.get();
+            renderKeys();
+          } catch (err) { flash(note, err.message, 'err'); }
+        };
+        const saveKey = () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); };
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); else if (e.key === 'Escape') view(); });
+        line.replaceChildren(...[
+          h('span', { class: 'key-name', text: info.label }), input,
+          h('button', { text: 'Save', onclick: saveKey }),
+          info.stored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put('') }) : null,
+          h('button', { class: 'plain', text: 'Cancel', onclick: view }),
+          note,
+        ].filter(Boolean));
+        input.focus();
+      };
+      view();
+      return line;
+    }));
+  };
+  renderKeys();
+  card.append(stackRow('API keys', 'Encrypted with your OS keychain. Anthropic’s key runs the agent (clicking and typing for you); the others add their models to the picker.', keys));
 
-  for (const [provider, info] of Object.entries(ai.providerKeys)) {
-    const input = h('input', { type: 'password', class: 'grow', placeholder: info.stored ? 'A key is saved' : `${info.label} API key`, autocomplete: 'off' });
-    const note = status();
-    if (info.env && !info.stored) note.textContent = 'Using the key from the environment.';
-    card.append(stackRow(`${info.label} API key`, `Adds ${info.label} models to the model picker.`,
-      h('div', { class: 'controls' }, input,
-        h('button', { class: 'primary', text: 'Save', onclick: async () => { if (!input.value.trim()) return; try { await S.ai.setProviderKey(provider, input.value.trim()); input.value = ''; flash(note, 'Saved.'); } catch (err) { flash(note, err.message, 'err'); } } }),
-        h('button', { text: 'Remove', onclick: async () => { await S.ai.setProviderKey(provider, ''); flash(note, 'Removed.'); } })),
-      note));
-  }
-
-  // Anthropic CLI sign-in
+  // Anthropic CLI sign-in: status sits under the description, the button on the right.
   const cliNote = status('ai-cli-status');
   const cliButtons = h('div', { class: 'controls' });
   const renderCli = (s) => {
     cliNote.textContent = s.signedIn ? `Signed in${s.profile ? ` (profile “${s.profile}”)` : ''}.${s.shadowedBy ? ` Your ${s.shadowedBy} is used first.` : ''}` : s.installed ? 'Not signed in.' : 'The Anthropic CLI installs on first sign-in.';
     cliButtons.replaceChildren(s.signedIn
-      ? h('button', { text: 'Sign out', onclick: async () => renderCli(await S.ai.cliLogout()) })
-      : h('button', { class: 'primary', text: 'Sign in', onclick: async () => { flash(cliNote, 'Starting…', ''); const r = await S.ai.cliLogin(); renderCli(r); if (!r.ok && r.message) flash(cliNote, r.message, 'err'); } }));
+      ? h('button', { id: 'ai-cli-button', text: 'Sign out', onclick: async () => renderCli(await S.ai.cliLogout()) })
+      : h('button', { id: 'ai-cli-button', class: 'primary', text: 'Sign in', onclick: async () => { flash(cliNote, 'Starting…', ''); const r = await S.ai.cliLogin(); renderCli(r); if (!r.ok && r.message) flash(cliNote, r.message, 'err'); } }));
   };
   S.ai.onCliProgress((text) => { cliNote.textContent = text; });
-  card.append(stackRow('Sign in with your Anthropic account', 'Uses an OAuth profile from the Anthropic CLI instead of an API key.', cliButtons, cliNote));
+  const cliRow = row('Sign in with your Anthropic account', 'Uses an OAuth profile from the Anthropic CLI instead of an API key.', cliButtons);
+  cliRow.querySelector('.text').append(cliNote);
+  card.append(cliRow);
   S.ai.cliStatus().then(renderCli).catch(() => {});
 
-  // MCP
+  // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
-  const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
+  const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   card.append(row('Allow AI agents to connect', 'Claude Code, Codex, Gemini CLI and other MCP clients can drive Lumen. They still need your OK for each new site.', mcpToggle));
-  for (const snip of mcp.snippets) {
-    const text = h('textarea', { class: 'mono', rows: Math.min(8, snip.text.split('\n').length), readOnly: true, 'aria-label': snip.label });
-    text.value = snip.text;
-    card.append(stackRow(`Connect ${snip.label}`, snip.hint, text));
-  }
+  const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
+    const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
+    const note = status();
+    const add = snip.addButton ? h('button', {
+      text: 'Add to Claude Code',
+      onclick: async () => {
+        add.disabled = true;
+        add.textContent = 'Adding…';
+        const r = await S.ai.addToClaudeCode().catch((err) => ({ ok: false, text: err.message }));
+        add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : 'Add to Claude Code';
+        add.disabled = Boolean(r.ok);
+        if (!r.already) flash(note, r.text, r.ok ? 'ok' : 'err');
+      },
+    }) : null;
+    return h('div', { class: 'snippet', 'data-snippet': snip.id },
+      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), add, copy),
+      h('pre', { class: 'mono code', text: snip.text }), note);
+  }));
+  card.append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+
+  const auto = await S.ai.automationInfo();
+  const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
+  const port = h('input', { type: 'number', id: 'ai-automation-port', min: '1024', max: '65535', placeholder: '9222', 'aria-label': 'Automation port', value: String(auto.port) });
+  const autoNote = status('ai-automation-status');
+  let running = auto.running;
+  const describe = (enabled, p) => {
+    const endpoint = `http://127.0.0.1:${p}`;
+    autoNote.className = 'note';
+    if (!enabled) autoNote.textContent = running ? 'Turned off. The port is closed.' : '';
+    else if (running?.error) flash(autoNote, running.error, 'err');
+    else if (running?.listening && running.port === p) autoNote.textContent = `Listening on ${endpoint}. Playwright: chromium.connectOverCDP('${endpoint}')`;
+    else autoNote.textContent = `Restart Lumen to open ${endpoint}.`;
+  };
+  const portRow = row('Port (localhost only)', 'Any program on this computer can then control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done.', port);
+  portRow.querySelector('.text').append(autoNote);
+  const saveAuto = async () => {
+    const p = Number(port.value) || 9222;
+    await S.ai.setAutomation({ enabled: autoToggle.checked, port: p });
+    portRow.hidden = !autoToggle.checked;
+    if (!autoToggle.checked) running = null;
+    describe(autoToggle.checked, p);
+  };
+  autoToggle.addEventListener('change', saveAuto);
+  port.addEventListener('change', saveAuto);
+  portRow.hidden = !auto.enabled;
+  portRow.classList.add('sub-row');
+  describe(auto.enabled, auto.port);
+  card.append(row('Allow automation tools (Chrome DevTools Protocol)', 'For Playwright, Playwright MCP and other CDP tools. They see only your tabs. Takes effect after a restart.', autoToggle), portRow);
 
   // Import
-  const importRow = h('div', { class: 'controls' });
-  card.append(stackRow('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
+  const importRow = h('div', { class: 'controls', id: 'ai-import' });
+  card.append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
-    importRow.replaceChildren(...(found.length ? found.map((b) => h('button', { text: b.label, onclick: () => S.ai.importFrom(b.id) })) : [h('span', { class: 'note', text: 'No other browsers found.' })]));
+    importRow.replaceChildren(...(found.length ? found.map((b) => h('button', {
+      text: b.label,
+      onclick: async (e) => { e.target.disabled = true; await S.ai.importFrom(b.id); e.target.disabled = false; },
+    })) : [h('span', { class: 'note', text: 'No other browsers found.' })]));
   }).catch(() => {});
 }
 
@@ -525,6 +608,18 @@ async function init() {
   }));
   refreshRestartNotes();
   $('search').addEventListener('input', show);
+  // Ctrl+F or "/" focuses search; Escape clears it.
+  document.addEventListener('keydown', (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
+    if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') || (e.key === '/' && !typing)) {
+      e.preventDefault();
+      $('search').focus();
+      $('search').select();
+    } else if (e.key === 'Escape' && document.activeElement === $('search') && $('search').value) {
+      $('search').value = '';
+      show();
+    }
+  });
   window.addEventListener('hashchange', route);
   route();
   document.body.dataset.ready = '1';

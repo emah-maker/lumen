@@ -1,4 +1,4 @@
-// OpenAI-compatible providers (OpenAI, xAI Grok, Google Gemini) for the agent loop.
+// OpenAI-compatible providers (OpenAI, xAI Grok, Google Gemini, OpenRouter) for the agent loop.
 //
 // The conversation is stored in Anthropic's message format (content blocks). For these providers
 // it is converted to Chat Completions messages on every request, and each reply is converted
@@ -26,9 +26,59 @@ const PROVIDERS = {
     defaults: ['gemini-2.5-pro', 'gemini-2.5-flash'],
     include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live)/.test(id),
   },
+  // One key for many companies' models. Ids look like "anthropic/claude-opus-5.5".
+  openrouter: {
+    label: 'OpenRouter',
+    baseURL: 'https://openrouter.ai/api/v1',
+    headers: { 'HTTP-Referer': 'https://github.com/emah-maker/lumen', 'X-Title': 'Lumen' },
+    defaults: ['anthropic/claude-sonnet-5', 'openai/gpt-5.6', 'google/gemini-2.5-flash'],
+    include: () => true,
+  },
 };
 
-// Model ids for these providers are namespaced: "openai:gpt-5.6", "xai:grok-4", "gemini:gemini-2.5-pro".
+// ---------- OpenRouter's model catalog (GET /models, kept for 24 hours) ----------
+
+const CATALOG_TTL = 24 * 60 * 60 * 1000;
+const CURATED = [/^anthropic\/claude/, /^openai\/gpt/, /^google\/gemini/, /^meta-llama\/llama/, /^deepseek\/deepseek/, /^x-ai\/grok/];
+let catalog = null; // { fetchedAt, models: [{ id, name, tools, created }] }
+
+async function openRouterCatalog({ cacheFile, fetchImpl = fetch } = {}) {
+  const fs = require('fs');
+  if (!catalog && cacheFile) { try { catalog = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch {} }
+  if (catalog && Date.now() - catalog.fetchedAt < CATALOG_TTL) return catalog;
+  const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/models`, { headers: PROVIDERS.openrouter.headers });
+  if (!res.ok) throw new Error(`OpenRouter models: HTTP ${res.status}`);
+  catalog = { fetchedAt: Date.now(), models: parseOpenRouterModels(await res.json()) };
+  if (cacheFile) { try { fs.writeFileSync(cacheFile, JSON.stringify(catalog)); } catch {} }
+  return catalog;
+}
+
+// The API's list -> text models, with whether they can call tools (needed to act in tabs).
+function parseOpenRouterModels(json) {
+  return (json?.data || [])
+    .filter((m) => m?.id && !String(m.id).includes(':') && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
+    .map((m) => ({ id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0 }));
+}
+
+// A short list for the picker: the newest tool-capable model of a few families.
+function curatedOpenRouter(models) {
+  const picks = [];
+  for (const family of CURATED) {
+    const best = models.filter((m) => family.test(m.id) && m.tools).sort((a, b) => b.created - a.created)[0];
+    if (best) picks.push(best.id);
+  }
+  return picks.length ? picks : PROVIDERS.openrouter.defaults;
+}
+
+// Can this model use tools (click, type, read pages)? Unknown models are assumed to.
+function canUseTools(provider, model) {
+  if (provider !== 'openrouter' || !catalog) return true;
+  const entry = catalog.models.find((m) => m.id === model);
+  return entry ? entry.tools : true;
+}
+
+// Model ids for these providers are namespaced: "openai:gpt-5.6", "xai:grok-4", "gemini:gemini-2.5-pro",
+// "openrouter:anthropic/claude-opus-5.5".
 function splitModel(id) {
   const i = id.indexOf(':');
   return i > 0 && PROVIDERS[id.slice(0, i)] ? { provider: id.slice(0, i), model: id.slice(i + 1) } : { provider: 'anthropic', model: id };
@@ -36,12 +86,13 @@ function splitModel(id) {
 
 function clientFor(provider, apiKey) {
   const OpenAI = OpenAISDK();
-  return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, maxRetries: 2 });
+  return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 2 });
 }
 
 // Lists chat models the key can use (newest-looking first); falls back to defaults on error.
-async function listModels(provider, apiKey) {
+async function listModels(provider, apiKey, { cacheFile } = {}) {
   try {
+    if (provider === 'openrouter') return curatedOpenRouter((await openRouterCatalog({ cacheFile })).models);
     const page = await clientFor(provider, apiKey).models.list();
     const ids = [];
     for await (const m of page) ids.push(String(m.id).replace(/^models\//, ''));
@@ -102,7 +153,7 @@ const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Ma
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
 async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit }) {
   const stream = await clientFor(provider, apiKey).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), tools: toolSchema(tools, provider), stream: true },
+    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider) } : {}), stream: true },
     { signal },
   );
   let text = '';
@@ -156,9 +207,10 @@ function describeProviderError(err, provider) {
   if (!OpenAIModule || !(err instanceof OpenAIModule.APIError)) return null;
   const label = PROVIDERS[provider]?.label || provider;
   if (err.status === 401 || err.status === 403) return { text: `That ${label} API key was rejected. Add a valid key to continue.`, action: 'settings' };
+  if (err.status === 402) return { text: provider === 'openrouter' ? 'Your OpenRouter credits have run out. Add credits at openrouter.ai/settings/credits, or pick a free model.' : `${label} says payment is required. Check your ${label} billing.` };
   if (err.status === 404) return { text: `This ${label} model isn't available for your key. Pick another model.` };
-  if (err.status === 429) return { text: `${label} rate limit or quota reached. Wait a moment, or check your ${label} billing.` };
+  if (err.status === 429) return { text: provider === 'openrouter' ? 'OpenRouter is rate limiting this model. Wait a moment, or pick another model.' : `${label} rate limit or quota reached. Wait a moment, or check your ${label} billing.` };
   return { text: `${label} error ${err.status ?? ''}: ${err.message}`.trim() };
 }
 
-module.exports = { PROVIDERS, splitModel, listModels, streamTurn, completeJSON, describeProviderError, toChatMessages };
+module.exports = { PROVIDERS, splitModel, listModels, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

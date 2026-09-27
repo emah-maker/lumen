@@ -1,7 +1,7 @@
 // Sidebar additions kept out of app.js (merge-friendly):
 //  - the Claude Code engine's note under the model picker,
 //  - the "Using: <page>" chip above the composer (the current tab rides along with each message),
-//  - approval cards that arrive while a web panel is showing, and the pending-approval badge.
+//  - the pending-approval badge on the toolbar button while the sidebar is closed.
 (() => {
   const $ = (id) => document.getElementById(id);
   const extras = window.lumenExtras || {};
@@ -67,10 +67,9 @@
   window.browser.onTabs?.((state) => renderChip(state)); // follows tab switches, titles and navigation
   extras.getPageContext?.().then((on) => { include = on !== false; renderChip(); });
 
-  // ---------- approvals while a web panel is showing, and the badge ----------
+  // ---------- the pending-approval badge ----------
 
   const pending = new Set();
-  let restoreMode = null;
   const button = $('toggle-sidebar');
   function syncBadge() {
     const show = pending.size > 0 && document.body.classList.contains('sidebar-hidden');
@@ -82,11 +81,6 @@
 
   const showBase = window.showApproval;
   window.showApproval = function showApproval(approvalId, host) {
-    const mode = window.webAiCurrentMode?.();
-    if (mode && mode !== 'agent') {
-      if (restoreMode === null) restoreMode = mode;
-      window.webAiSetMode('agent'); // the card lives in the Agent chat, which the panel covers
-    }
     pending.add(approvalId);
     const result = showBase(approvalId, host);
     syncBadge();
@@ -97,11 +91,6 @@
     const result = resolveBase(approvalId, ok);
     pending.delete(approvalId);
     syncBadge();
-    if (!pending.size && restoreMode) {
-      const mode = restoreMode;
-      restoreMode = null;
-      setTimeout(() => { if (!pending.size) window.webAiSetMode(mode); }, 700); // let the answered card register
-    }
     return result;
   };
 })();

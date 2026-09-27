@@ -1,5 +1,6 @@
 // Search-engine picker and importing from other browsers (fake Chrome and Firefox profiles).
 const { _electron: electron } = require('playwright-core');
+const { openSettingsTab } = require('./settings-tab');
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 const fs = require('fs');
@@ -78,18 +79,18 @@ function fakeFirefoxProfile() {
   check('file:// bookmarks are never imported', !hash.favorites.some((b) => b.url.startsWith('file:')), 'file bookmark present');
 
   // ---- Search engine
-  await ui.evaluate(() => { document.getElementById('toggle-sidebar').click(); });
-  await ui.waitForTimeout(500);
-  await ui.evaluate(() => { document.getElementById('open-settings').click(); document.querySelectorAll('.settings-section').forEach((d) => { d.open = true; }); });
-  await ui.waitForTimeout(400);
-  const engines = await ui.$$eval('#search-engine .engine', (bs) => bs.map((b) => b.dataset.id));
+  const inSettings = await openSettingsTab(app, 'search');
+  const engines = await inSettings("[...document.querySelectorAll('#pref-searchEngine option')].map((o) => o.value)");
   check('settings list 6 search engines', engines.length === 6 && engines.includes('duckduckgo'), JSON.stringify(engines));
-  const importButtons = await ui.$$eval('#import-row button', (bs) => bs.map((b) => b.textContent));
-  check('settings list installed browsers to import from', Array.isArray(importButtons), JSON.stringify(importButtons));
-  await ui.click('#search-engine .engine[data-id="duckduckgo"]');
-  check('picker marks the chosen engine', (await ui.getAttribute('#search-engine .engine[data-id="duckduckgo"]', 'aria-checked')) === 'true', 'not checked');
+  await inSettings("location.hash = 'you-and-ai'");
+  await ui.waitForTimeout(600);
+  const importButtons = await inSettings("[...document.querySelectorAll('#ai-import button, #ai-import .note')].map((b) => b.textContent)");
+  check('settings list installed browsers to import from', Array.isArray(importButtons) && importButtons.length > 0, JSON.stringify(importButtons));
+  await inSettings("{ const s = document.getElementById('pref-searchEngine'); s.value = 'duckduckgo'; s.dispatchEvent(new Event('change')); }");
   await ui.waitForTimeout(300);
-  await ui.evaluate(() => document.getElementById('settings').hidden = true);
+  check('the chosen engine is saved', (await ui.evaluate(async () => (await window.assistant.getSettings()).searchEngine)) === 'duckduckgo', 'not saved');
+  await app.evaluate((_e, sid) => global.__agent.browser.closeTab(sid), inSettings.id);
+  await ui.waitForTimeout(300);
   await ui.fill('#address', 'best pizza near me');
   await ui.press('#address', 'Enter');
   await ui.waitForTimeout(1500);

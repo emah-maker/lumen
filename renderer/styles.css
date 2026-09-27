@@ -146,6 +146,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.globe { color: var(--faint); stroke-width: 1.25; }
+.tab-favicon.page-icon { color: var(--muted); }
 .tab-favicon.spinner { border: 1.5px solid var(--hairline); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; background: none; }
 .tab-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent); text-overflow: clip; }
@@ -283,9 +284,6 @@ body.agent-active .viewport { background: var(--accent); }
   opacity: calc(0.25 + var(--reveal, 1) * 0.75);
 }
 .sidebar > .messages { flex-shrink: 1; min-height: 0; }
-.sidebar > .settings { width: calc(var(--sidebar-width) - 41px); flex-shrink: 1; min-height: 0; overflow-y: auto; }
-.sidebar:has(> .settings:not([hidden])) .empty { display: none; }
-.sidebar:has(> .settings:not([hidden])) > .messages { overflow: hidden; }
 /* Warm-up: painted once at idle in the real spot, under the live page (the native page view
    covers it), so the first real open has nothing left to build. */
 body.sidebar-hidden .sidebar.prewarm { visibility: visible; position: fixed; top: 82px; bottom: 0; right: 0; width: var(--sidebar-width); }
@@ -301,14 +299,6 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .sidebar-title { font-weight: 500; color: var(--muted); }
 .sidebar-actions { display: flex; gap: 2px; }
 
-.settings { margin: 0 20px 12px; padding: 0 0 16px; border-bottom: 1px solid var(--hairline); animation: drop-in var(--t-smooth) var(--spring-smooth); transform-origin: top;
-  max-height: calc(100% - var(--composer-h, 44px) - 96px); overflow-y: auto; overscroll-behavior: contain; }
-@keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } }
-.settings .field-label { display: block; font-weight: 500; margin-bottom: 8px; }
-.settings input:not(.switch) { width: 100%; height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; transition: background-color var(--t-fast) ease-out, box-shadow var(--t-base) var(--ease-out); }
-.settings input:not(.switch):focus { outline: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), 0 0 0 4px var(--accent-soft); }
-.settings .hint { color: var(--muted); margin: 8px 0 12px; font-size: 12px; }
-.settings-row { display: flex; justify-content: flex-end; gap: 6px; }
 .btn { height: 28px; padding: 0 12px; border: none; border-radius: 8px; background: var(--field); font-weight: 500; transition: background-color var(--t-fast) ease-out, filter var(--t-fast) ease-out, transform var(--t-press) ease-out, opacity var(--t-base) ease-out; }
 .btn:hover { background: var(--hover); }
 .btn.primary { background: var(--accent); color: var(--on-accent); }
@@ -388,6 +378,7 @@ details.thinking summary::before { content: ""; display: inline-block; width: 4p
 details.thinking[open] summary::before { transform: rotate(45deg); }
 details.thinking div { white-space: pre-wrap; padding: 8px 10px; margin-top: 4px; border-radius: 8px; background: var(--field); }
 details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smooth); }
+@keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } }
 
 .notice { color: var(--muted); font-size: 12px; margin: 8px 0; }
 .error { color: var(--danger); font-size: 12px; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--danger-soft); }
@@ -429,24 +420,6 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .send.stop svg { display: none; }
 .send.stop::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--on-accent); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
 
-.settings .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline); cursor: default; }
-.toggle-row .toggle-title { display: block; font-weight: 500; }
-.toggle-row .hint { display: block; margin: 2px 0 0; }
-.switch {
-  appearance: none; flex: none; position: relative; width: 32px; height: 20px; margin: 1px 0 0; border-radius: 10px;
-  background: var(--field); box-shadow: inset 0 0 0 1px var(--hairline); cursor: default; transition: background-color var(--t-base) ease-out, box-shadow var(--t-base) ease-out;
-}
-.switch::before {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--muted); box-shadow: 0 1px 3px rgb(0 0 0 / calc(0.4 * var(--shadow-k)));
-  transition: transform var(--t-snappy) var(--spring-snappy), background-color var(--t-base) ease-out, width var(--t-fast) ease-out;
-}
-.switch:active::before { width: 19px; }
-.switch:checked { background: var(--accent); }
-.switch:checked::before { transform: translateX(12px); background: var(--on-accent); }
-.switch:checked:active::before { transform: translateX(9px); }
-.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
 .attachments { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 6px; }
 .attachment { position: relative; width: 52px; height: 52px; border-radius: 9px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline), 0 4px 10px -4px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
 .attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -460,9 +433,9 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 
 .model-picker { position: relative; display: inline-flex; align-items: center; border-radius: 7px; transition: background-color var(--t-fast) ease-out; }
 .model-picker:hover { background: var(--hover); }
-.model-picker select { field-sizing: content; appearance: none; border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; margin-left: -6px; border-radius: 7px; cursor: default; }
-.model-picker select:focus-visible { outline: 2px solid var(--accent); }
-.model-picker select option { background: var(--surface); color: var(--text); font-weight: 400; }
+.model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; margin-left: -6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker .picker-button:focus-visible { outline: 2px solid var(--accent); }
+.model-picker .picker-menu { left: -6px; top: calc(100% + 4px); }
 .model-picker svg { position: absolute; right: 4px; width: 12px; height: 12px; color: var(--muted); pointer-events: none; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
@@ -507,7 +480,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
-  .msg, .step, details.thinking, .notice, .error, .approval, .empty, .settings, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
+  .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
   .tab-favicon.spinner, .working::before, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
   .loadbar::before { transform: none; left: 0; width: 100%; opacity: 0.6; }
   body.agent-active .viewport, body.agent-active .agent-pill { animation: none !important; }
@@ -540,16 +513,6 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
   .approval:not(.resolved):hover { transform: none; }
 }
 
-/* Keys for other providers */
-.provider-keys { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-.provider-keys .hint { margin: 2px 0 8px; }
-.provider-row { display: grid; grid-template-columns: 64px 1fr auto auto; gap: 6px; align-items: center; margin-top: 6px; }
-.provider-row .provider-name { font-weight: 600; font-size: 12px; }
-.provider-row input { min-width: 0; height: 28px; padding: 0 8px; border: none; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; outline: none; transition: box-shadow 160ms ease-out; }
-.provider-row input:focus { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
-.provider-row .provider-status { grid-column: 2 / -1; margin: 0; font-size: 11px; }
-.provider-row .btn { height: 28px; padding: 0 10px; }
-.model-picker select optgroup { background: var(--surface); color: var(--muted); font-weight: 600; }
 
 /* In the background, decorative loops stop (saves GPU; nothing to look at). */
 body.window-inactive .agent-pill,
@@ -557,12 +520,6 @@ body.window-inactive.agent-active .viewport,
 body.window-inactive .agent-dot,
 body.window-inactive .working *,
 body.window-inactive .loadbar::before { animation-play-state: paused !important; }
-
-.settings-group { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-.settings-group .hint { margin: 4px 0 0; }
-.settings-select { width: 100%; height: 30px; padding: 0 8px; border: none; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; outline: none; }
-.settings-select:focus-visible { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
-.import-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
 /* ---------- tab groups ---------- */
 
@@ -609,11 +566,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .viewport:has(.page-snapshot) { background: var(--snapshot-edge, var(--surface)); }
 .page-snapshot { position: absolute; left: 0; top: 0; max-width: none; pointer-events: none; user-select: none; }
 
-.cli-signin { margin-top: 10px; }
-.cli-signin .cli-or { margin: 0 0 6px; }
-.cli-row { display: flex; gap: 6px; }
-#cli-status { margin-top: 6px; }
-
 /* The AI button shows the selected model's company mark. */
 #toggle-sidebar .mark { transition: transform var(--t-snappy) var(--spring-bouncy), opacity 120ms ease-out; }
 #toggle-sidebar .mark.filled { stroke: none; fill: var(--assistant-tint, currentColor); }
@@ -628,81 +580,39 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
   #toggle-sidebar.mark-out .mark { transform: none; }
 }
 
-/* Settings: collapsible sections; the panel scrolls instead of running under the composer. */
-.settings-section { border-top: 1px solid var(--border); padding: 8px 0 10px; }
-.settings-section:first-child { border-top: none; padding-top: 0; }
-.settings-section > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; cursor: default; font-weight: 600; font-size: 12px; color: var(--muted); padding: 4px 0 8px; border-radius: 6px; }
-.settings-section > summary::-webkit-details-marker { display: none; }
-.settings-section > summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform var(--t-base) var(--spring-smooth); margin-right: 4px; }
-.settings-section[open] > summary::after { transform: rotate(45deg); }
-.settings-section > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.settings-section .toggle-row:first-of-type { margin-top: 4px; }
-.settings-section .provider-keys, .settings-section .settings-group { border-top: none; margin-top: 0; padding-top: 0; }
-.settings-section .field-label + .settings-select { margin-top: 2px; }
-.settings-section .toggle-row { border-top: none; padding-top: 6px; margin-top: 8px; }
-.settings-section .settings-row { margin-top: 8px; }
-
 .reply-model { position: absolute; left: 0; bottom: -20px; font-size: 11px; color: var(--faint); letter-spacing: 0; }
 .msg.assistant:has(.reply-model) { margin-bottom: 26px; }
 
 /* Only Claude's spark turns when the sidebar opens; other marks (an X would become "+") stay upright. */
 #toggle-sidebar[aria-pressed="true"]:not([data-assistant="Claude"]) svg { transform: none; }
 
-/* Search engine picker: a radio grid, not a native dropdown (whose popup ignored the theme). */
-.engine-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 2px; }
-.engine {
-  display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 9px; border: none; border-radius: 10px;
-  background: var(--field); color: var(--text); font: inherit; font-size: 12px; font-weight: 500; text-align: left; cursor: default;
-  transition: background-color var(--t-fast) ease-out, box-shadow var(--t-base) ease-out, transform var(--t-snappy) var(--spring-bouncy);
+/* Themed menus for the model pickers (renderer/picker.js): drawn in the page, so they follow Lumen's theme. */
+.picker-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.picker-menu {
+  position: absolute; z-index: 20; min-width: 220px; max-width: min(320px, calc(var(--sidebar-width, 360px) - 24px)); max-height: min(520px, calc(100vh - 140px)); overflow-y: auto; padding: 4px;
+  border-radius: 10px; background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 12px 32px -8px rgb(0 0 0 / calc(0.6 * var(--shadow-k)));
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent; animation: fade-in 120ms ease-out;
 }
-.engine:hover { background: var(--hover); }
-.engine:active { transform: scale(0.97); }
-.engine .mono {
-  width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 6px;
-  color: #ffffff; font-size: 11px; font-weight: 700; background: var(--engine, var(--accent));
-}
-.engine .label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.engine[aria-checked="true"] { background: var(--surface-raised); box-shadow: 0 0 0 1.5px var(--accent); }
-.engine:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.setup { margin: 14px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.setup-title { margin: 0 0 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.setup-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 12px; border: none; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: default; transition: background-color var(--t-fast) ease-out; }
+.setup-option:hover:not(:disabled) { background: var(--hover); }
+.setup-option:disabled { opacity: 0.7; }
+.setup-name { font-weight: 500; }
+.setup-detail { color: var(--muted); font-size: 12px; }
+.model-search { width: 300px; left: -6px; top: calc(100% + 4px); }
+.model-search-input { width: 100%; height: 28px; margin-bottom: 4px; padding: 0 8px; border: none; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; outline: none; }
+.model-search-list { max-height: 320px; overflow-y: auto; color: var(--muted); }
+.model-search-list .picker-item { color: var(--text); padding-left: 10px; }
+.picker-group { padding: 8px 10px 3px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.picker-item { position: relative; padding: 5px 10px 5px 26px; border-radius: 6px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; outline: none; }
+.picker-item:hover, .picker-item:focus { background: var(--hover); }
+.picker-item[aria-selected="true"] { font-weight: 500; }
+.picker-item[aria-selected="true"]::before { content: ""; position: absolute; left: 10px; top: 50%; width: 8px; height: 4px; margin-top: -4px; border-left: 1.5px solid var(--text); border-bottom: 1.5px solid var(--text); transform: rotate(-45deg); }
 
-/* Native selects that remain (the model menu) get readable popups in both themes. */
-select option, select optgroup { background: var(--surface-raised); color: var(--text); }
-select optgroup { color: var(--muted); }
-
-/* ---------- AI web panels (renderer/webai.js) ---------- */
-.ai-switch { display: flex; gap: 2px; margin: 8px 12px 0; padding: 2px; border-radius: 9px; background: var(--field); }
-.ai-switch button {
-  flex: 1; min-width: 0; height: 24px; padding: 0 4px; border: none; border-radius: 7px; background: transparent;
-  color: var(--muted); font: inherit; font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  transition: background-color var(--t-fast, 140ms) ease-out, color var(--t-fast, 140ms) ease-out, box-shadow var(--t-fast, 140ms) ease-out;
-}
-.ai-switch button:hover { color: var(--text); }
-.ai-switch button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 0 0 0.5px var(--hairline); }
-.ai-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* In a web mode the docked site replaces the chat; settings can still open above it. */
-body.webai-mode #messages, body.webai-mode #composer, body.webai-mode #model, body.webai-mode .model-picker, body.webai-mode #new-chat { display: none !important; }
-.webai-host { flex: 1; min-height: 0; margin: 6px 0 0; background: var(--surface); }
-.webai-toast {
-  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 5; padding: 7px 12px; border-radius: 10px;
-  background: var(--text); color: var(--surface); font-size: 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-  animation: webai-toast-in 260ms var(--spring-snappy, ease-out);
-}
-.webai-toast.leaving { opacity: 0; transition: opacity 200ms ease-out; }
-@keyframes webai-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
-@media (prefers-reduced-motion: reduce) { .webai-toast { animation: none; } }
-.sidebar > .ai-switch { width: calc(var(--sidebar-width) - 25px); }
-.sidebar > .webai-host { flex: 1 1 auto; }
-.sidebar > .webai-toast { width: auto; max-width: calc(var(--sidebar-width) - 40px); opacity: 1; }
-.sidebar > .webai-toast.leaving { opacity: 0; }
-body.webai-mode .sidebar-head { justify-content: flex-end; }
-/* ---------- end AI web panels ---------- */
 
 /* ---------- AI agents over MCP (session B) ---------- */
 body.mcp-active .agent-pill { display: flex; }
-.mcp-snippet { margin-top: 8px; }
-.mcp-snippet-head { display: flex; align-items: center; gap: 8px; }
-.mcp-snippet-head .hint { flex: 1; margin: 0; }
-.mcp-code { margin: 4px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--field); font: 11px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
 .step.mcp-step .step-detail { color: var(--text); }
 
 /* macOS: traffic lights sit at the top-left of the tab strip; no Windows controls on the right. */

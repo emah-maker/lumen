@@ -92,118 +92,35 @@
 
     <aside id="sidebar" class="sidebar" aria-label="AI assistant">
       <div class="sidebar-resize" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
-      <div class="ai-switch" id="ai-switch" role="tablist" aria-label="Assistant">
-        <button type="button" role="tab" data-mode="agent" title="Agent: works in your tabs (Ctrl+Shift+1)">Agent</button>
-        <button type="button" role="tab" data-mode="claude" title="Claude.ai with your account (Ctrl+Shift+2)">Claude</button>
-        <button type="button" role="tab" data-mode="chatgpt" title="ChatGPT with your account (Ctrl+Shift+3)">ChatGPT</button>
-        <button type="button" role="tab" data-mode="gemini" title="Gemini with your account (Ctrl+Shift+4)">Gemini</button>
-        <button type="button" role="tab" data-mode="grok" title="Grok with your account (Ctrl+Shift+5)">Grok</button>
-      </div>
       <div class="sidebar-head">
-        <label class="model-picker" title="Model">
-          <span class="visually-hidden">Model</span>
+        <div class="model-picker">
           <select id="model" aria-label="Model"></select>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
-        </label>
+        </div>
         <div class="sidebar-actions">
-          <button class="icon-btn" id="share-page" title="Copy this page to paste into the chat" aria-label="Share page" hidden>
-            <svg viewBox="0 0 16 16"><path d="M8 10V2.5M5 5.5l3-3 3 3"/><path d="M3.5 8.5v4a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-4"/></svg>
-          </button>
           <button class="icon-btn" id="new-chat" title="New chat" aria-label="New chat">
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
           </button>
-          <button class="icon-btn" id="open-settings" title="Settings" aria-label="Settings">
+          <button class="icon-btn" id="open-settings" title="AI settings (opens Settings)" aria-label="AI settings">
             <svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.75" class="knob"/><circle cx="5.5" cy="11.5" r="1.75" class="knob"/></svg>
           </button>
         </div>
       </div>
 
-      <section id="settings" class="settings" hidden>
-        <button class="btn all-settings" id="all-settings" type="button">All settings…</button><!-- [settings] opens lumen://settings -->
-        <details class="settings-section" open>
-          <summary>AI accounts</summary>
-          <p class="hint webai-hint">Use your Claude.ai, ChatGPT, Gemini or Grok account (including school/work sign-in): open the sidebar and pick it at the top. Agent features (clicking and typing for you) need an API key or Anthropic sign-in.</p>
-          <label class="field-label" for="api-key">Anthropic (Claude) API key</label>
-          <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" />
-          <div class="settings-row">
-            <button class="btn" id="clear-key">Remove key</button>
-            <button class="btn primary" id="save-key">Save</button>
-          </div>
-          <p class="hint" id="key-status"></p>
-          <div class="cli-signin" id="cli-signin">
-            <p class="hint cli-or">No API key? Sign in with your Anthropic account instead.</p>
-            <div class="cli-row">
-              <button class="btn" type="button" id="cli-login">Sign in with Anthropic</button>
-              <button class="btn" type="button" id="cli-logout" hidden>Sign out</button>
-            </div>
-            <p class="hint" id="cli-status"></p>
-          </div>
-        </details>
-        <details class="settings-section" open>
-          <summary>Answers</summary>
-          <label class="toggle-row" for="adhd-mode">
-            <span>
-              <span class="toggle-title">ADHD mode</span>
-              <span class="hint">Answers lead with the next action, use short numbered steps, and end with one small next step. Applies to new chats.</span>
-            </span>
-            <input id="adhd-mode" class="switch" type="checkbox" role="switch" />
-          </label>
-        </details>
-        <details class="settings-section">
-          <summary>Browsing</summary>
-          <p class="field-label" id="search-engine-label">Search engine</p>
-          <div id="search-engine" class="engine-picker" role="radiogroup" aria-labelledby="search-engine-label"></div>
-          <p class="hint">Used by the address bar, the new-tab page and right-click search.</p>
-          <label class="toggle-row" for="auto-groups">
-            <span>
-              <span class="toggle-title">Automatic tab groups</span>
-              <span class="hint">3 or more tabs from one site group themselves, and tabs you open from a grouped tab join it.</span>
-            </span>
-            <input id="auto-groups" class="switch" type="checkbox" role="switch" />
-          </label>
-          <p class="field-label">Import from another browser</p>
-          <p class="hint">Bookmarks and history. Passwords and cookies are never read.</p>
-          <div class="import-row" id="import-row"></div>
-        </details>
-        <details class="settings-section">
-          <summary>ChatGPT, Gemini &amp; Grok</summary>
-          <p class="hint">Add a key to use OpenAI, Grok or Gemini from the model menu. Keys are encrypted with your OS keychain.</p>
-          <div id="provider-keys"></div>
-        </details>
-        <!-- AI agents over MCP (session B) -->
-        <details class="settings-section" id="mcp-section">
-          <summary>AI agents (MCP)</summary>
-          <label class="toggle-row" for="mcp-enabled">
-            <span>
-              <span class="toggle-title">Allow AI agents to connect</span>
-              <span class="hint">Lets Claude Code, Codex, Gemini CLI and other MCP tools drive Lumen. They still need your OK for each new site.</span>
-            </span>
-            <input id="mcp-enabled" class="switch" type="checkbox" role="switch" />
-          </label>
-          <p class="field-label">Connect an AI agent</p>
-          <div id="mcp-snippets"></div>
-          <!-- Automation tools over CDP (automation.js) -->
-          <label class="toggle-row" for="automation-enabled">
-            <span>
-              <span class="toggle-title">Allow automation tools (Chrome DevTools Protocol)</span>
-              <span class="hint">For Playwright, Playwright MCP and other CDP tools. They see only your tabs. Takes effect after a restart.</span>
-            </span>
-            <input id="automation-enabled" class="switch" type="checkbox" role="switch" />
-          </label>
-          <div id="automation-details" hidden>
-            <label class="field-label" for="automation-port">Port (localhost only)</label>
-            <input id="automation-port" type="number" min="1024" max="65535" placeholder="9222" />
-            <p class="hint automation-warning">Any program on this computer can then control your tabs and read what's in them, including sites you're signed in to. Turn it off when you're done.</p>
-            <p class="hint" id="automation-status"></p>
-          </div>
-        </details>
-      </section>
-
-      <div id="webai-host" class="webai-host" hidden aria-hidden="true"></div>
-      <div id="webai-toast" class="webai-toast" role="status" hidden></div>
       <div id="messages" class="messages" aria-live="polite">
         <div class="empty" id="empty">
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>
+          <div class="setup" id="setup" hidden>
+            <p class="setup-title">Set up an AI</p>
+            <button class="setup-option" type="button" id="setup-claude-code">
+              <span class="setup-name">Use your Claude account</span>
+              <span class="setup-detail" id="setup-claude-code-detail">Through Claude Code, with your own login (including school or work).</span>
+            </button>
+            <button class="setup-option" type="button" id="setup-keys">
+              <span class="setup-name">API key or OpenRouter</span>
+              <span class="setup-detail">Anthropic, OpenAI, Grok or Gemini keys, or sign in with OpenRouter.</span>
+            </button>
+          </div>
           <div class="chips">
             <button class="chip" data-prompt="Summarize this page.">Summarize this page</button>
             <button class="chip" data-prompt="What are the key takeaways from this page?">Key takeaways</button>
@@ -223,9 +140,8 @@
   </main>
 
   <script src="markdown.js"></script>
+  <script src="picker.js"></script>
   <script src="app.js"></script>
-  <script src="webai.js"></script>
-  <script src="automation-settings.js"></script>
   <script src="extras.js"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 // AI agents over MCP: start Lumen, then start the bridge exactly as a CLI agent would
 // (`electron . --mcp`) and speak MCP over its stdio.
 const { _electron: electron } = require('playwright-core');
+const { openSettingsTab } = require('./settings-tab');
 const { spawn } = require('child_process');
 const net = require('net');
 const path = require('path');
@@ -61,11 +62,9 @@ const os = require('os');
     // PowerShell's claude.ps1 shim swallows "--"; claude.cmd and quoted paths work in PowerShell and cmd.
     check('Windows command uses claude.cmd with quoted paths', /^claude\.cmd mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- "[^"]+" "[^"]+mcp\.js"$/.test(claudeSnippet), claudeSnippet);
   }
-  check('Settings offer an Add to Claude Code button', await ui.evaluate(async () => {
-    document.getElementById('mcp-section').open = true;
-    await new Promise((r) => setTimeout(r, 300));
-    return [...document.querySelectorAll('#mcp-snippets button')].some((b) => b.textContent === 'Add to Claude Code');
-  }), 'no button');
+  const inSettings = await openSettingsTab(app);
+  check('Settings offer an Add to Claude Code button', await inSettings("[...document.querySelectorAll('#ai-snippets button')].some((b) => b.textContent === 'Add to Claude Code')"), 'no button');
+  await app.evaluate((_e, sid) => global.__agent.browser.closeTab(sid), inSettings.id);
   check('settings give Codex, Gemini and generic configs', ['codex', 'gemini', 'json'].every((id) => info.snippets.some((s) => s.id === id)), JSON.stringify(info.snippets.map((s) => s.id)));
 
   const init = await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude-code', title: 'Claude Code', version: '1.0' } });
@@ -107,19 +106,6 @@ const os = require('os');
   await ui.click('.approval:not(.resolved) .btn:not(.primary)');
   r = await clickPromise;
   check('denying the card returns isError to the agent', r.result.isError === true && /did not allow Claude Code/.test(text(r)), JSON.stringify(r));
-
-  // An approval while a web panel is showing: the sidebar switches to Agent for the card, then back.
-  await ui.evaluate(() => window.webAiSetMode('claude'));
-  await ui.waitForTimeout(400);
-  const panelClick = call('click', { text: 'More information' });
-  await ui.waitForSelector('.approval:not(.answered)', { timeout: 10000 }).catch(() => {});
-  const overPanel = await ui.evaluate(() => ({ web: document.body.classList.contains('webai-mode'), mode: window.webAiCurrentMode(), card: Boolean(document.querySelector('.approval:not(.answered)')?.offsetParent) }));
-  check('approval over a web panel: Agent mode shows the card', !overPanel.web && overPanel.mode === 'agent' && overPanel.card, JSON.stringify(overPanel));
-  await ui.click('.approval:not(.answered) .btn:not(.primary)');
-  await panelClick;
-  await ui.waitForTimeout(1200);
-  check('after the answer the web panel comes back', await ui.evaluate(() => window.webAiCurrentMode()) === 'claude', await ui.evaluate(() => window.webAiCurrentMode()));
-  await ui.evaluate(() => window.webAiSetMode('agent'));
 
   // Badge on the AI button while an approval waits and the sidebar is closed.
   const badge = await ui.evaluate(async () => {

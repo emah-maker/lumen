@@ -527,7 +527,7 @@ async function searchWeb(query) {
 }
 
 class Agent {
-  // browser: { activeTab(), listTabs(), openTab(url), switchTab(id), closeTab(id), groupTabs(name, ids), ungroupTabs(ids) }
+  // browser: { activeTab(), noTabReason(), listTabs(), openTab(url), switchTab(id), closeTab(id), groupTabs(name, ids), ungroupTabs(ids) }
   // getOptions() returns { model, adhdMode }; it is read when a conversation starts.
   constructor(browser, getClient, getOptions = () => ({}), getKey = () => null) {
     this.browser = browser;
@@ -633,7 +633,7 @@ class Agent {
     const tab = this.browser.activeTab();
     const state = tab
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${tab.webContents.getURL()}\n</browser_state>\n\n`
-      : '<browser_state>No tab open.</browser_state>\n\n';
+      : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`;
     const note = images.length && !userText.trim() ? 'The user attached the image(s) above without a message.' : userText;
     // ---- [claude code engine] + [page context]
     const viaClaudeCode = String(messages.settings.model).startsWith('claudecode:') && Boolean(this.engines?.claudecode);
@@ -752,13 +752,19 @@ class Agent {
     const { provider, model } = providers.splitModel(messages.settings.model);
     const apiKey = this.getKey(provider);
     if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
+    // Some OpenRouter models can't call tools: they chat about the page but can't act in tabs.
+    const toolsOk = providers.canUseTools(provider, model);
+    if (!toolsOk && messages.chatOnlyNoted !== model) {
+      messages.chatOnlyNoted = model;
+      emit({ type: 'notice', text: `${model} is chat only: it can read the page you're on but can't click or type in your tabs. Pick a model without "(chat only)" for that.` });
+    }
     return providers.streamTurn({
       provider,
       model,
       apiKey,
-      system: systemFor(messages.settings),
+      system: systemFor(messages.settings) + (toolsOk ? '' : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
       messages: historyFor(messages, messages.settings.model),
-      tools: OTHER_TOOLS,
+      tools: toolsOk ? OTHER_TOOLS : [],
       signal,
       emit,
     });
@@ -931,7 +937,7 @@ class Agent {
 
   requireTab() {
     const tab = this.browser.activeTab();
-    if (!tab) throw new Error('No tab is open.');
+    if (!tab) throw new Error(this.browser.noTabReason?.() || 'No tab is open.');
     return tab.webContents;
   }
 
@@ -1199,7 +1205,7 @@ function describeError(err) {
   if (err instanceof Anthropic.RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };
   if (err instanceof Anthropic.APIConnectionError) return { text: 'Could not reach the Claude API. Check your connection.' };
   if (err instanceof Anthropic.APIError) return { text: `API error ${err.status}: ${err.message}` };
-  if (/authentication method|api ?key|credential/i.test(err.message || '')) return { text: 'Add your Anthropic API key, or sign in with your Anthropic account, to start using Claude.', action: 'settings' };
+  if (/authentication method|api ?key|credential/i.test(err.message || '')) return { text: 'Set up an AI to start: use your Claude account through Claude Code (pick “Claude · your account” in the model menu), or add an API key or sign in with OpenRouter in Settings.', action: 'settings' };
   return { text: String(err.message || err) };
 }
 

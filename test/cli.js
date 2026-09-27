@@ -1,6 +1,7 @@
 // Sign in with the Anthropic CLI: signed-in detection, a real install of `ant` from the official
 // release (checksum-verified), and the settings UI. The browser OAuth step itself needs a person.
 const { _electron: electron } = require('playwright-core');
+const { openSettingsTab } = require('./settings-tab');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -38,22 +39,20 @@ const os = require('os');
   let app = await run(empty);
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
-  await ui.evaluate(() => { document.getElementById('toggle-sidebar').click(); });
-  await ui.waitForTimeout(500);
-  await ui.evaluate(() => document.getElementById('open-settings').click());
-  await ui.waitForTimeout(600);
-  check('signed out: "Sign in with Anthropic" is offered', await ui.isVisible('#cli-login') && !(await ui.isVisible('#cli-logout')), 'buttons wrong');
-  check('signed out: status explains the next step', /sign in/i.test(await ui.textContent('#cli-status')), await ui.textContent('#cli-status'));
+  let inSettings = await openSettingsTab(app);
+  await ui.waitForTimeout(800);
+  let cli = await inSettings("({ button: document.getElementById('ai-cli-button')?.textContent, status: document.getElementById('ai-cli-status')?.textContent })");
+  check('signed out: "Sign in" is offered', cli.button === 'Sign in', JSON.stringify(cli));
+  check('signed out: status explains the next step', /sign-in|not signed in/i.test(cli.status), cli.status);
   await app.close();
 
   app = await run(config);
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
-  await ui.evaluate(() => { document.getElementById('toggle-sidebar').click(); });
-  await ui.waitForTimeout(500);
-  await ui.evaluate(() => document.getElementById('open-settings').click());
-  await ui.waitForTimeout(600);
-  check('signed in: shows the profile and Sign out', (await ui.textContent('#cli-status')).includes('"work"') && await ui.isVisible('#cli-logout'), await ui.textContent('#cli-status'));
+  inSettings = await openSettingsTab(app);
+  await ui.waitForTimeout(800);
+  cli = await inSettings("({ button: document.getElementById('ai-cli-button')?.textContent, status: document.getElementById('ai-cli-status')?.textContent })");
+  check('signed in: shows the profile and Sign out', cli.status.includes('“work”') && cli.button === 'Sign out', JSON.stringify(cli));
   await app.close();
 
   fs.rmSync(bin, { recursive: true, force: true });

@@ -41,19 +41,14 @@ contextBridge.exposeInMainWorld('browser', {
   onTabs: on('tabs'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
-  webAiMode: (mode) => ipcRenderer.invoke('webai:mode', mode),
-  webAiBounds: (rect) => ipcRenderer.send('webai:bounds', rect),
-  webAiState: () => ipcRenderer.invoke('webai:state'),
-  webAiShare: () => ipcRenderer.invoke('webai:share'),
-  onWebAiSwitch: on('webai:switch'),
   onAskSelection: on('ask-selection'),
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
-  onOpenSettings: on('open-settings'),
   suggest: (query) => ipcRenderer.invoke('suggest:query', query),
   showSuggestions: (rect, payload) => ipcRenderer.send('suggest:show', rect, payload),
   hideSuggestions: () => ipcRenderer.send('suggest:hide'),
+  addressTouched: () => ipcRenderer.send('address:touched'),
   onSuggestionPicked: on('suggest:picked'),
 });
 
@@ -84,6 +79,8 @@ contextBridge.exposeInMainWorld('assistant', {
   setAdhdMode: (on) => ipcRenderer.invoke('settings:set-adhd', on),
   setAutoGroup: (on) => ipcRenderer.invoke('settings:set-auto-group', on),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
+  openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
+  openRouterSignIn: () => ipcRenderer.invoke('openrouter:sign-in'),
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
   setSearchEngine: (id) => ipcRenderer.invoke('settings:set-search-engine', id),
   cliStatus: () => ipcRenderer.invoke('cli:status'),
@@ -101,6 +98,5 @@ contextBridge.exposeInMainWorld('lumenExtras', {
   addToClaudeCode: () => ipcRenderer.invoke('mcp:add-to-claude'),
   getPageContext: () => ipcRenderer.invoke('pagecontext:get'),
   setPageContext: (on) => ipcRenderer.invoke('pagecontext:set', on),
-  webAiSnapshot: () => ipcRenderer.invoke('webai:snapshot'),
 });
 // ---- [/claude code engine] + [/page context] + [/panel snapshot]

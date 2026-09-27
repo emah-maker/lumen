@@ -14,7 +14,7 @@ const path = require('path');
   }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', OPENAI_API_KEY: 'x', XAI_API_KEY: 'x', GEMINI_API_KEY: 'x', OPENROUTER_API_KEY: 'x' } });
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
@@ -83,6 +83,30 @@ const path = require('path');
 
   const transcript = await app.evaluate(() => global.__agent.transcript().filter((m) => m.role === 'user').map((m) => m.text));
   check('restored chats show only what the user typed', transcript.includes('what is this?') && transcript.every((t) => !t.includes('untrusted_page_content')), JSON.stringify(transcript));
+
+  // Every engine gets the page: Claude (API key or Anthropic CLI sign-in: the same client), the
+  // Claude Code engine (the user's own login), OpenAI, Grok, Gemini and OpenRouter. Stubs only.
+  await app.evaluate(() => {
+    global.__engineSent = {};
+    global.__agent.engines = { claudecode: { owns: () => false, run: async (args) => { global.__engineSent.claudecode = args.prompt; return { text: 'ok', sessionId: 'x' }; } } };
+    global.__realStreamTurn ||= global.__providers.streamTurn;
+    global.__providers.streamTurn = async (args) => {
+      const last = args.messages[args.messages.length - 1];
+      global.__engineSent[args.provider] = last.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+      return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' };
+    };
+  });
+  const firstRequest = async (model, key) => {
+    await app.evaluate((_e, m) => { global.__agent.reset(); global.__agent.messages.settings = { ...global.__agent.getOptions(), adhdMode: true, model: m }; }, model);
+    await app.evaluate(() => new Promise((resolve) => global.__agent.run('summarize', (e) => { if (e.type === 'done') resolve(); })));
+    return app.evaluate((_e, k) => (k === 'anthropic' ? global.__sent[global.__sent.length - 1] : global.__engineSent[k]), key);
+  };
+  const hasPage = (text) => /title="Alpha page"/.test(text || '') && /url="http:\/\/127\.0\.0\.1:\d+\/a"/.test(text || '') && /rockets/.test(text || '');
+  for (const [model, key] of [['claude-opus-5', 'anthropic'], ['claudecode:default', 'claudecode'], ['openai:gpt-5.6', 'openai'], ['xai:grok-4', 'xai'], ['gemini:gemini-2.5-flash', 'gemini'], ['openrouter:anthropic/claude-opus-5.5', 'openrouter']]) {
+    const text = await firstRequest(model, key);
+    check(`page context reaches ${key}: title, URL and text in the first request`, hasPage(text), String(text).slice(0, 200));
+  }
+  await app.evaluate(() => { global.__providers.streamTurn = global.__realStreamTurn; });
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

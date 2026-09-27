@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "DNR fixture (password helper)",
+  "version": "1.0",
+  "description": "Uses declarativeNetRequest for a small thing, like many password managers.",
+  "permissions": ["declarativeNetRequest"]
+}

@@ -48,6 +48,24 @@ const path = require('path');
   }
   check('extension popup opens visible and sized', popup?.visible && popup.bounds.width > 200 && popup.bounds.height > 200, JSON.stringify(popup));
 
+  // declarativeNetRequest: only content blockers with static rulesets are refused; others install
+  // and get a working (in-memory) chrome.declarativeNetRequest.
+  const gate = await app.evaluate(() => ({
+    helper: global.__isContentBlocker({ name: '1Password', permissions: ['declarativeNetRequest'] }, '1Password – Password Manager'),
+    helperWithRules: global.__isContentBlocker({ name: 'Password helper', description: 'Fills passwords', declarative_net_request: { rule_resources: [{ id: 'r', enabled: true, path: 'r.json' }] } }),
+    blocker: global.__isContentBlocker({ name: 'Super Ad Blocker', description: 'Blocks ads and trackers', declarative_net_request: { rule_resources: [{ id: 'ads', enabled: true, path: 'ads.json' }] } }),
+  }));
+  check('DNR gate: an extension asking for DNR without rulesets installs', gate.helper === false && gate.helperWithRules === false, JSON.stringify(gate));
+  check('DNR gate: a blocker with static rulesets is still refused', gate.blocker === true, JSON.stringify(gate));
+  const fixture = await app.evaluate(async ({ session }, dir) => {
+    const ext = await session.defaultSession.extensions.loadExtension(dir);
+    const t = global.__agent.browser.openTab(`chrome-extension://${ext.id}/page.html`);
+    await new Promise((r) => t.webContents.once('did-finish-load', r));
+    return t.webContents.executeJavaScript('window.dnrResult');
+  }, path.join(__dirname, 'fixtures', 'dnr-ext'));
+  check('chrome.declarativeNetRequest works in extension pages (rules kept, no throw)', fixture.present && JSON.stringify(fixture.added) === '[7]' && fixture.after === 0 && fixture.block === 'block' && fixture.regex === true, JSON.stringify(fixture));
+  check('extension pages get `browser` as chrome, and can still set their own', fixture.alias === true && fixture.ownKept === true, JSON.stringify(fixture));
+
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();

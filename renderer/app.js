@@ -67,11 +67,17 @@ const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1
 const LOCK = '<svg viewBox="0 0 12 12"><rect x="2.5" y="5.25" width="7" height="5" rx="1"/><path d="M4 5.25V4a2 2 0 0 1 4 0v1.25"/></svg>';
 const WARN = '<svg viewBox="0 0 12 12"><path d="M6 1.5 11 10.5H1Z"/><path d="M6 5v2.25M6 8.75v.01"/></svg>';
 
-function globeIcon() {
+// Lumen's own pages: a gear for Settings, a clock for History.
+const PAGE_ICONS = {
+  settings: '<circle cx="8" cy="8" r="2.1"/><path d="M8 1.75v1.6M8 12.65v1.6M1.75 8h1.6M12.65 8h1.6M3.58 3.58l1.13 1.13M11.29 11.29l1.13 1.13M3.58 12.42l1.13-1.13M11.29 4.71l1.13-1.13"/><circle cx="8" cy="8" r="4.4"/>',
+  history: '<circle cx="8" cy="8" r="6.25"/><path d="M8 4.5V8l2.25 1.5"/>',
+};
+
+function globeIcon(page = null) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 16 16');
-  svg.setAttribute('class', 'tab-favicon globe');
-  svg.innerHTML = GLOBE;
+  svg.setAttribute('class', `tab-favicon globe${PAGE_ICONS[page] ? ' page-icon' : ''}`);
+  svg.innerHTML = PAGE_ICONS[page] || GLOBE;
   return svg;
 }
 
@@ -319,7 +325,7 @@ function renderTabs(state) {
       icon.src = tab.favicon;
       icon.onerror = () => icon.replaceWith(globeIcon());
     } else {
-      icon = globeIcon();
+      icon = globeIcon(tab.page);
     }
 
     const title = document.createElement('span');
@@ -384,7 +390,7 @@ function renderTabs(state) {
 }
 
 window.browser.onTabs(renderTabs);
-window.browser.onFocusAddress(() => { address.focus(); address.select(); });
+window.browser.onFocusAddress(() => { window.browser.addressTouched?.(); address.focus(); address.select(); });
 
 // ---------- address bar suggestions (history + inline completion) ----------
 
@@ -470,10 +476,25 @@ address.addEventListener('focus', () => {
   if (!addressDirty) address.value = currentUrl;
   address.select();
 });
+// A click or typing anywhere in the browser UI (not a shortcut like Ctrl+T) is the user working
+// here: a new tab that is still loading must not take the keyboard away (see main.js).
+document.addEventListener('pointerdown', () => window.browser.addressTouched?.(), true);
+document.addEventListener('keydown', (e) => { if (!e.ctrlKey && !e.metaKey && !e.altKey) window.browser.addressTouched?.(); }, true);
+// The first click selects the whole address (as in Chrome and Safari); the mouseup would otherwise
+// drop a caret somewhere in it. A drag still selects part of it.
+let selectOnMouseUp = false;
+address.addEventListener('mousedown', () => { selectOnMouseUp = document.activeElement !== address || !document.hasFocus(); });
+address.addEventListener('mouseup', () => {
+  if (selectOnMouseUp && address.selectionStart === address.selectionEnd) address.select();
+  selectOnMouseUp = false;
+});
 address.addEventListener('blur', () => {
-  setTimeout(() => { if (document.activeElement !== address) hideSuggestions(); }, 150); // let a dropdown pick land first
+  // When the page (another view) takes focus, activeElement stays on the address bar, so check
+  // hasFocus too: otherwise the suggestion view stayed up over the page and swallowed clicks.
+  setTimeout(() => { if (document.activeElement !== address || !document.hasFocus()) hideSuggestions(); }, 150); // let a dropdown pick land first
   if (!addressDirty) showAddress();
 });
+window.addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus()) hideSuggestions(); }, 150));
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.altKey) {
     e.preventDefault();
@@ -507,7 +528,7 @@ $('forward').onclick = () => window.browser.forward();
 $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
-$('new-tab').onclick = () => { window.browser.newTab(); address.focus(); };
+$('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
   window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom) });
@@ -715,10 +736,13 @@ $('toggle-sidebar').addEventListener('pointerdown', (e) => {
   if (e.button === 0 && !revealAnim && !snapshot && !reduceMotion.matches) earlyFreeze = freezePage();
 });
 
-// Resizable from the sidebar's left edge; the width is remembered.
-const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560;
+// Resizable from the sidebar's left edge; the width is remembered. Double-click resets it.
+const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 360;
+let sidebarWish = null; // the width the user chose; a narrow window may hold it smaller for now
 function setSidebarWidth(width) {
-  const w = Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width)));
+  sidebarWish = width;
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420)); // the page keeps 420px
+  const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, width)));
   document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
   reportBounds();
   return w;
@@ -726,23 +750,40 @@ function setSidebarWidth(width) {
 const savedWidth = Number(localStorage.getItem('sidebarWidth'));
 if (savedWidth) setSidebarWidth(savedWidth);
 const resizer = $('sidebar-resize');
+let lastHandlePress = 0;
 resizer.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
-  e.preventDefault();
+  e.preventDefault(); // (this also suppresses mousedown/dblclick, so double-click is detected here)
+  if (e.timeStamp - lastHandlePress < 400) {
+    lastHandlePress = 0;
+    localStorage.setItem('sidebarWidth', String(setSidebarWidth(SIDEBAR_DEFAULT)));
+    return;
+  }
+  lastHandlePress = e.timeStamp;
   const startX = e.clientX;
   const startWidth = $('sidebar').getBoundingClientRect().width;
   resizer.setPointerCapture(e.pointerId);
   document.body.classList.add('resizing');
-  const move = (ev) => setSidebarWidth(startWidth + (startX - ev.clientX));
-  const up = () => {
+  // The page is a native view: once the pointer is over it, it takes the mouse moves (the drag
+  // stalls and the cursor changes). For the drag it is shown as a snapshot, like during the spring.
+  const frozen = !snapshot && !reduceMotion.matches ? freezePage() : null;
+  let frame = 0;
+  const move = (ev) => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => setSidebarWidth(startWidth + (startX - ev.clientX)));
+  };
+  const up = async () => {
     resizer.removeEventListener('pointermove', move);
     document.body.classList.remove('resizing');
     localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)));
+    if (frozen) { await frozen; thawPage(); }
   };
   resizer.addEventListener('pointermove', move);
-  resizer.addEventListener('pointerup', up, { once: true });
-  resizer.addEventListener('pointercancel', up, { once: true });
+  // Fires after pointerup or pointercancel, and if capture is lost any other way: the drag always ends.
+  resizer.addEventListener('lostpointercapture', up, { once: true });
 });
+// A smaller window narrows the sidebar (the page keeps room); a bigger one gives the chosen width back.
+window.addEventListener('resize', () => { if (sidebarWish) setSidebarWidth(sidebarWish); });
 resizer.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
   e.preventDefault();
@@ -750,178 +791,45 @@ resizer.addEventListener('keydown', (e) => {
   localStorage.setItem('sidebarWidth', String(width));
 });
 window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
+// "Ask AI" on the new-tab page.
+window.browser.onAskFromHome?.(({ text }) => {
+  showSidebar(true);
+  ask(text);
+});
 window.browser.onAskSelection((text) => {
   showSidebar(true);
   ask(`About this text from the page:\n\n"${text}"\n\nExplain it in context.`);
 });
 
-// ---------- settings ----------
+// ---------- settings: in lumen://settings; the sidebar keeps the search engine in sync ----------
 
-const KEY_HINTS = {
-  openai: { placeholder: 'sk-…', where: 'platform.openai.com' },
-  xai: { placeholder: 'xai-…', where: 'console.x.ai' },
-  gemini: { placeholder: 'AIza…', where: 'aistudio.google.com' },
-};
-
-function renderProviderKeys(providerKeys = {}) {
-  const box = $('provider-keys');
-  box.replaceChildren();
-  for (const [provider, info] of Object.entries(providerKeys)) {
-    const row = document.createElement('div');
-    row.className = 'provider-row';
-    const label = Object.assign(document.createElement('label'), { className: 'provider-name', textContent: info.label, htmlFor: `key-${provider}` });
-    const input = Object.assign(document.createElement('input'), {
-      id: `key-${provider}`,
-      type: 'password',
-      autocomplete: 'off',
-      placeholder: info.stored ? '•••••••• saved' : info.env ? 'using environment variable' : KEY_HINTS[provider]?.placeholder || 'API key',
-    });
-    input.setAttribute('aria-label', `${info.label} API key`);
-    const save = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Save' });
-    const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: 'Remove', hidden: !info.stored });
-    const status = Object.assign(document.createElement('p'), { className: 'hint provider-status' });
-    status.textContent = info.stored || info.env ? 'Ready. Its models are in the model menu.' : `Get a key at ${KEY_HINTS[provider]?.where || 'the provider'}.`;
-    save.onclick = async () => {
-      const key = input.value.trim();
-      if (!key) return input.focus();
-      save.disabled = true;
-      status.textContent = 'Saving and loading models…';
-      try {
-        await window.assistant.setProviderKey(provider, key);
-        input.value = '';
-        refreshSettings();
-      } catch (err) {
-        status.textContent = err.message;
-      } finally {
-        save.disabled = false;
-      }
-    };
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save.click(); } });
-    remove.onclick = async () => { await window.assistant.setProviderKey(provider, null); refreshSettings(); };
-    row.append(label, input, save, remove, status);
-    box.append(row);
-  }
-}
-
-// Search engines as a radio grid with a coloured monogram each (arrow keys move the choice).
-const ENGINE_COLORS = { google: '#4285f4', duckduckgo: '#de5833', bing: '#0c8484', brave: '#fb542b', ecosia: '#1f9d55', startpage: '#6573ff' };
-
-function renderEnginePicker(engines, selectedId) {
-  const group = $('search-engine');
-  group.replaceChildren();
-  engines.forEach((e) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'engine';
-    button.dataset.id = e.id;
-    button.setAttribute('role', 'radio');
-    button.setAttribute('aria-checked', String(e.id === selectedId));
-    button.tabIndex = e.id === selectedId ? 0 : -1;
-    button.style.setProperty('--engine', ENGINE_COLORS[e.id] || 'var(--accent)');
-    const mono = Object.assign(document.createElement('span'), { className: 'mono', textContent: e.label[0] });
-    mono.setAttribute('aria-hidden', 'true');
-    button.append(mono, Object.assign(document.createElement('span'), { className: 'label', textContent: e.label }));
-    button.onclick = () => chooseEngine(e.id, engines);
-    group.append(button);
-  });
-}
-
-function chooseEngine(id, engines) {
-  for (const b of $('search-engine').querySelectorAll('.engine')) {
-    const on = b.dataset.id === id;
-    b.setAttribute('aria-checked', String(on));
-    b.tabIndex = on ? 0 : -1;
-  }
-  const chosen = engines?.find((e) => e.id === id);
-  if (chosen) searchEngine = chosen;
-  window.assistant.setSearchEngine(id);
-}
-
-$('search-engine').addEventListener('keydown', (e) => {
-  const buttons = [...$('search-engine').querySelectorAll('.engine')];
-  const i = buttons.indexOf(document.activeElement);
-  if (i === -1) return;
-  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-  if (!step) return;
-  e.preventDefault();
-  const next = buttons[(i + step + buttons.length) % buttons.length];
-  next.focus();
-  next.click();
-});
-
-async function renderSearchAndImport(s) {
-  renderEnginePicker(s.searchEngines, s.searchEngine);
-  const current = s.searchEngines.find((e) => e.id === s.searchEngine);
-  if (current) searchEngine = current;
-  const row = $('import-row');
-  const browsers = await window.assistant.importBrowsers();
-  row.replaceChildren();
-  if (!browsers.length) row.append(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'No other browsers found on this computer.' }));
-  for (const b of browsers) {
-    const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: b.label });
-    button.onclick = async () => {
-      button.disabled = true;
-      await window.assistant.importFrom(b.id);
-      button.disabled = false;
-    };
-    row.append(button);
-  }
-}
-window.assistant.onSearchEngine?.((engine) => {
-  searchEngine = engine;
-  // Chosen from the ⋯ menu: reflect it in the picker.
-  window.assistant.getSettings().then((s) => {
-    for (const b of $('search-engine').querySelectorAll('.engine')) {
-      b.setAttribute('aria-checked', String(b.dataset.id === s.searchEngine));
-      b.tabIndex = b.dataset.id === s.searchEngine ? 0 : -1;
-    }
-  });
-});
+window.assistant.onSearchEngine?.((engine) => { searchEngine = engine; });
 window.assistant.getSettings().then((s) => {
   const current = s.searchEngines?.find((e) => e.id === s.searchEngine);
   if (current) searchEngine = current;
 });
+// The gear (and "Set up AI" on errors) open the AI section of Settings.
+const openAiSettings = () => window.lumenPrefs?.openSettingsPage('you-and-ai');
+$('open-settings').onclick = openAiSettings;
 
-async function refreshCli(status) {
-  const s = status || await window.assistant.cliStatus?.();
-  if (!s) return;
-  $('cli-login').hidden = s.signedIn;
-  $('cli-logout').hidden = !s.signedIn;
-  $('cli-status').textContent = s.signedIn
-    ? `Signed in with the Anthropic CLI (profile "${s.profile}").${s.shadowedBy ? ` Your ${s.shadowedBy} is used instead while it's set.` : ''}`
-    : s.installed ? `Opens anthropic.com in your browser to sign in. Uses ${s.path}.` : 'Installs Anthropic\'s official CLI once, then opens anthropic.com to sign in.';
-}
-$('cli-login').onclick = async () => {
-  const button = $('cli-login');
-  button.disabled = true;
-  try {
-    const result = await window.assistant.cliLogin();
-    await refreshCli(result);
-    if (!result.ok && result.message) $('cli-status').textContent = result.message;
-  } finally {
-    button.disabled = false;
-  }
-};
-$('cli-logout').onclick = async () => refreshCli(await window.assistant.cliLogout());
-window.assistant.onCliProgress?.((text) => { $('cli-status').textContent = text; });
-
-async function refreshSettings() {
+// "Set up an AI" in the empty sidebar, while no model can answer: Claude Code first (the user's own
+// Claude login), then keys / OpenRouter.
+async function refreshSetup() {
   const s = await window.assistant.getSettings();
-  refreshCli();
-  renderSearchAndImport(s);
-  renderProviderKeys(s.providerKeys);
-  loadModels();
-  $('adhd-mode').checked = s.adhdMode;
-  $('auto-groups').checked = s.autoGroupTabs !== false;
-  $('clear-key').hidden = !s.hasStoredKey;
-  $('key-status').textContent = s.hasStoredKey
-    ? 'A key is saved (encrypted with your OS keychain).'
-    : s.hasEnvKey
-      ? 'Using ANTHROPIC_API_KEY from the environment.'
-      : 'No key saved. Get one at console.anthropic.com.';
+  const current = s.models.find((m) => m.id === s.model);
+  const ready = s.ready || String(s.model).startsWith('claudecode:') || (current && current.group !== 'Claude');
+  $('setup').hidden = Boolean(ready);
+  $('setup-claude-code-detail').textContent = s.claudeCode
+    ? 'Through Claude Code, with your own login (including school or work). Click to use it.'
+    : 'Install Claude Code, run claude once and type /login, then restart Lumen.';
+  $('setup-claude-code').disabled = !s.claudeCode;
 }
-$('adhd-mode').addEventListener('change', (e) => window.assistant.setAdhdMode(e.target.checked));
-$('auto-groups').addEventListener('change', (e) => window.assistant.setAutoGroup(e.target.checked));
+$('setup-claude-code').onclick = async () => {
+  if (await window.assistant.setModel('claudecode:default')) { await loadModels(); refreshSetup(); }
+};
+$('setup-keys').onclick = openAiSettings;
+window.assistant.onModelsUpdated?.(() => refreshSetup());
+refreshSetup();
 
 // ---------- model picker ----------
 
@@ -944,6 +852,12 @@ const ASSISTANTS = {
     tint: 'currentColor',
     svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M3.2 13.4 12.8 2.6" stroke-width="1.8"/><path d="M3.4 2.6 6.9 6.8"/><path d="M9.1 9.2 12.6 13.4"/></svg>',
   },
+  OpenRouter: {
+    name: 'OpenRouter',
+    tint: 'currentColor',
+    // A neutral routing glyph: one line branching to three.
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M2.5 8h4.5M7 8c2 0 2.5-4 5-4M7 8c2 0 2.5 4 5 4M7 8h5"/><circle cx="13" cy="4" r="1"/><circle cx="13" cy="8" r="1"/><circle cx="13" cy="12" r="1"/></svg>',
+  },
   Gemini: {
     name: 'Gemini',
     tint: 'url(#gemini-grad)',
@@ -953,7 +867,6 @@ const ASSISTANTS = {
 let assistantIdentity = null;
 
 function setAssistantIdentity(group) {
-  if (window.webAiBrand) group = window.webAiBrand; // a web panel (renderer/webai.js) decides the mark
   const who = ASSISTANTS[group] || ASSISTANTS.Claude;
   if (assistantIdentity === who) return;
   const first = assistantIdentity === null;
@@ -979,6 +892,8 @@ function setAssistantIdentity(group) {
   if (pill) pill.textContent = `${who.name} is using this tab`;
 }
 
+window.lumenPicker($('model'));
+
 async function loadModels() {
   const s = await window.assistant.getSettings();
   const select = $('model');
@@ -994,20 +909,68 @@ async function loadModels() {
   // A single group needs no heading.
   select.replaceChildren(...(groups.size > 1 ? groups.values() : [...groups.values()].flatMap((g) => [...g.children])));
   select.value = s.model;
+  select.pickerSync();
   const current = s.models.find((m) => m.id === s.model);
   select.title = current?.detail || '';
   prompt.placeholder = `Ask ${current && current.group !== 'Claude' ? current.label : 'Claude'}…`;
   setAssistantIdentity(current?.group || 'Claude');
 }
 window.assistant.onModelsUpdated?.(() => loadModels());
+// "More models…" (OpenRouter): a searchable list of every model, under the picker.
+async function openModelSearch() {
+  document.querySelector('.model-search')?.remove();
+  const box = Object.assign(document.createElement('div'), { className: 'picker-menu model-search' });
+  const input = Object.assign(document.createElement('input'), { type: 'search', placeholder: 'Search OpenRouter models', className: 'model-search-input' });
+  input.setAttribute('aria-label', 'Search OpenRouter models');
+  const list = Object.assign(document.createElement('div'), { className: 'model-search-list', textContent: 'Loading models…' });
+  list.setAttribute('role', 'listbox');
+  box.append(input, list);
+  document.querySelector('.model-picker').append(box);
+  input.focus();
+  const close = () => { box.remove(); document.removeEventListener('pointerdown', outside, true); };
+  const outside = (e) => { if (!box.contains(e.target)) close(); };
+  document.addEventListener('pointerdown', outside, true);
+  let models = [];
+  try { models = await window.assistant.openRouterModels(); } catch { list.textContent = 'Couldn’t load the model list.'; return; }
+  const render = () => {
+    const words = input.value.toLowerCase().split(/s+/).filter(Boolean);
+    const hits = models.filter((m) => words.every((w) => `${m.id} ${m.name}`.toLowerCase().includes(w))).slice(0, 60);
+    list.replaceChildren(...hits.map((m) => {
+      const item = Object.assign(document.createElement('div'), { className: 'picker-item', tabIndex: -1, textContent: m.tools ? m.name : `${m.name} (chat only)`, title: m.id });
+      item.setAttribute('role', 'option');
+      item.dataset.id = m.id;
+      item.addEventListener('click', async () => {
+        close();
+        if (await window.assistant.setModel(`openrouter:${m.id}`)) await loadModels();
+      });
+      return item;
+    }));
+    if (!hits.length) list.textContent = 'No models match.';
+  };
+  input.addEventListener('input', render);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+    else if (e.key === 'Enter') list.querySelector('.picker-item')?.click();
+  });
+  render();
+}
+
 $('model').addEventListener('change', async (e) => {
   const select = e.target;
+  if (select.value === 'openrouter:__more') {
+    const s = await window.assistant.getSettings();
+    select.value = s.model;
+    select.pickerSync();
+    openModelSearch();
+    return;
+  }
   await window.assistant.setModel(select.value);
   const label = select.selectedOptions[0].textContent;
   select.title = select.selectedOptions[0].title;
   const group = select.selectedOptions[0].parentElement?.label;
   prompt.placeholder = `Ask ${group && group !== 'Claude' ? select.selectedOptions[0].textContent : 'Claude'}…`;
   setAssistantIdentity(group || 'Claude');
+  refreshSetup();
   // The conversation carries over: the next message goes to the new model with the full history.
   if (messages.querySelector('.msg')) {
     append(Object.assign(document.createElement('div'), { className: 'notice', textContent: `Now using ${label}. It can see this whole conversation.` }));
@@ -1015,26 +978,6 @@ $('model').addEventListener('change', async (e) => {
   prompt.focus();
 });
 loadModels();
-function openSettings(visible) {
-  const panel = $('settings');
-  panel.hidden = !visible;
-  if (visible) { refreshSettings(); $('api-key').focus(); }
-}
-$('open-settings').onclick = () => openSettings($('settings').hidden);
-window.browser.onOpenSettings?.(() => { showSidebar(true); openSettings(true); });
-$('save-key').onclick = async () => {
-  const key = $('api-key').value.trim();
-  if (!key) return;
-  try {
-    await window.assistant.setKey(key);
-    $('api-key').value = '';
-    $('settings').hidden = true;
-  } catch (err) {
-    $('key-status').textContent = err.message;
-  }
-};
-$('clear-key').onclick = async () => { await window.assistant.setKey(null); refreshSettings(); };
-
 // ---------- chat ----------
 
 const messages = $('messages');
@@ -1285,8 +1228,8 @@ window.assistant.onEvent((event) => {
     case 'error': {
       const error = append(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
       if (event.action === 'settings') {
-        const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: 'Add API key' });
-        button.onclick = () => openSettings(true);
+        const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: 'Set up AI' });
+        button.onclick = openAiSettings;
         error.append(button);
       }
       break;
@@ -1605,57 +1548,7 @@ $('agent-stop')?.addEventListener('click', () => {
   if (document.body.classList.contains('mcp-active') && !running) window.assistant.stopMcp?.();
 });
 
-async function renderMcpSettings() {
-  const info = await window.assistant.mcpInfo?.();
-  if (!info) return;
-  $('mcp-enabled').checked = info.enabled;
-  const box = $('mcp-snippets');
-  box.replaceChildren();
-  for (const s of info.snippets) {
-    const row = document.createElement('div');
-    row.className = 'mcp-snippet';
-    const head = document.createElement('div');
-    head.className = 'mcp-snippet-head';
-    head.append(
-      Object.assign(document.createElement('span'), { className: 'toggle-title', textContent: s.label }),
-      Object.assign(document.createElement('span'), { className: 'hint', textContent: s.hint }),
-    );
-    const code = Object.assign(document.createElement('pre'), { className: 'mcp-code', textContent: s.text });
-    const copy = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: 'Copy' });
-    copy.onclick = async () => {
-      await navigator.clipboard.writeText(s.text).catch(() => {});
-      copy.textContent = 'Copied';
-      setTimeout(() => { copy.textContent = 'Copy'; }, 1400);
-    };
-    head.append(copy);
-    // ---- [claude code engine] One click: main runs `claude mcp get/add` with an argv array (no shell).
-    let addStatus = null;
-    if (s.addButton && window.lumenExtras?.addToClaudeCode) {
-      const add = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Add to Claude Code' });
-      const status = Object.assign(document.createElement('p'), { className: 'hint mcp-add-status', hidden: true });
-      add.onclick = async () => {
-        add.disabled = true;
-        add.textContent = 'Adding…';
-        const r = await window.lumenExtras.addToClaudeCode().catch((err) => ({ ok: false, text: err.message }));
-        add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : 'Add to Claude Code';
-        add.disabled = Boolean(r.ok);
-        status.hidden = Boolean(r.already);
-        status.textContent = r.already ? '' : r.text;
-      };
-      head.append(add);
-      addStatus = status;
-    }
-    // ---- [/claude code engine]
-    row.append(head, code);
-    if (addStatus) row.append(addStatus); // [claude code engine]
-    box.append(row);
-  }
-}
-$('mcp-enabled')?.addEventListener('change', (e) => window.assistant.setMcpEnabled?.(e.target.checked));
-$('mcp-section')?.addEventListener('toggle', (e) => { if (e.target.open) renderMcpSettings(); });
-renderMcpSettings();
-
-// [settings] lumen://settings: the "All settings…" link, and the UI preferences set there.
+// [settings] UI preferences set in lumen://settings.
 {
   const applyPrefs = (p) => {
     if (!p) return;
@@ -1667,5 +1560,4 @@ renderMcpSettings();
   };
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
-  document.getElementById('all-settings')?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage());
 }

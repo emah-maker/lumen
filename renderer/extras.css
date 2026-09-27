@@ -1,5 +1,5 @@
-/* Sidebar additions (renderer/extras.js): Claude Code note, page context chip, approval badge,
-   web panel snapshot. Kept apart from styles.css so restyles there merge cleanly. */
+/* Sidebar additions (renderer/extras.js): Claude Code note, page context chip, approval badge.
+   Kept apart from styles.css so restyles there merge cleanly. */
 
 .cc-note {
   margin: 0 12px 6px;
@@ -46,7 +46,6 @@
 .page-context .pc-toggle:hover { background: rgba(127, 127, 127, 0.16); }
 .page-context .pc-toggle:focus-visible { outline: 2px solid var(--accent, #0a84ff); outline-offset: 1px; }
 .page-context.excluded .pc-title { text-decoration: line-through; opacity: 0.7; }
-body.webai-mode .page-context, body.webai-mode .cc-note { display: none; }
 
 /* An approval is waiting and the sidebar is closed. */
 #toggle-sidebar { position: relative; }
@@ -60,17 +59,4 @@ body.webai-mode .page-context, body.webai-mode .cc-note { display: none; }
   border-radius: 50%;
   background: var(--accent, #0a84ff);
   box-shadow: 0 0 0 2px var(--toolbar-bg, var(--surface, #fff));
-}
-
-/* The web panel's picture while the sidebar springs (the native view is hidden meanwhile). */
-.webai-host { position: relative; }
-.webai-snapshot {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: left top;
-  pointer-events: none;
-  user-select: none;
 }

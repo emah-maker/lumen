@@ -21,6 +21,9 @@ const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod 
 const importer = lazy(() => require('./importer'));
 const cliAuth = lazy(() => require('./cli-auth'));
 const { createTabGroups, siteName } = require('./tab-groups');
+const { createAdblock, hostOf } = require('./features/adblock');
+const { createDownloads } = require('./features/downloads');
+const instance = require('./features/instance');
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -87,11 +90,10 @@ function writeSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
 }
 
-// --- automation hook (automation.js): opt-in CDP endpoint; the switch must be set before ready ---
-const automation = require('./automation');
-const automationPlan = automation.prepare(app, readSettings());
-let automationProxy = null;
-// --- end automation hook ---
+// Outside AI agents (MCP, CDP automation, Claude Code): features/ai-agents.js. The automation
+// switch must be set before ready.
+const { setupAiAgents, prepareAutomation } = require('./features/ai-agents');
+const automationPlan = prepareAutomation(app, readSettings());
 
 function storedApiKey() {
   const { apiKeyEnc } = readSettings();
@@ -104,7 +106,8 @@ function storedApiKey() {
 }
 
 // Keys for OpenAI, Grok and Gemini: settings.keys[provider], encrypted like the Anthropic key.
-const ENV_KEYS = { openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', gemini: 'GEMINI_API_KEY' };
+const ENV_KEYS = { openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', gemini: 'GEMINI_API_KEY', openrouter: 'OPENROUTER_API_KEY' };
+const OPENROUTER_CACHE = () => path.join(app.getPath('userData'), 'openrouter-models.json');
 
 function providerKey(provider) {
   const enc = readSettings().keys?.[provider];
@@ -125,7 +128,7 @@ async function refreshModels(provider) {
   if (!key) {
     delete providerModels[provider];
   } else {
-    providerModels[provider] = await providers.listModels(provider, key);
+    providerModels[provider] = await providers.listModels(provider, key, { cacheFile: provider === 'openrouter' ? OPENROUTER_CACHE() : undefined });
   }
   ui()?.send('models-updated');
 }
@@ -135,13 +138,17 @@ function modelOptions() {
   const options = Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, detail, group: 'Claude' }));
   for (const [provider, info] of Object.entries(providers.PROVIDERS)) {
     if (!providerKey(provider)) continue;
-    for (const model of providerModels[provider] || info.defaults) {
-      options.push({ id: `${provider}:${model}`, label: model, detail: `${info.label} · ${model}`, group: info.label });
+    const list = [...(providerModels[provider] || info.defaults)];
+    // OpenRouter: a model picked from "More models…" joins the short list.
+    const saved = providers.splitModel(readSettings().model || '');
+    if (provider === 'openrouter' && saved.provider === 'openrouter' && !list.includes(saved.model)) list.push(saved.model);
+    for (const model of list) {
+      const chatOnly = !providers.canUseTools(provider, model);
+      options.push({ id: `${provider}:${model}`, label: chatOnly ? `${model} (chat only)` : model, detail: `${info.label} · ${model}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}`, group: info.label });
     }
+    if (provider === 'openrouter') options.push({ id: 'openrouter:__more', label: 'More models…', detail: 'Search every model on OpenRouter', group: info.label });
   }
-  // ---- [claude code engine] "Your Claude account": the user's own Claude Code CLI, when installed.
-  if (claudeCodeFound) options.push({ id: 'claudecode:default', label: 'Claude · your account (Claude Code)', detail: CLAUDE_CODE_NOTE, group: 'Your Claude account' });
-  // ---- [/claude code engine]
+  options.unshift(...aiAgents.modelOptions()); // "Your Claude account" first: the user's own Claude Code CLI, when installed
   return options;
 }
 
@@ -153,7 +160,7 @@ function getClient() {
     // With no stored key, the SDK falls back to ANTHROPIC_API_KEY or an `ant auth login` profile.
     client = apiKey ? new Anthropic({ apiKey }) : new Anthropic();
   } catch {
-    throw new Error('No API key found. Add your Anthropic API key, or sign in with your Anthropic account in settings.');
+    throw new Error('No API key found. Use your Claude account through Claude Code (pick “Claude · your account” in the model menu), or add an API key or sign in with OpenRouter in Settings.');
   }
   return client;
 }
@@ -216,12 +223,21 @@ const tabGroups = createTabGroups({
   urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : ''),
   titleOf: (t) => (alive(t) ? t.view.webContents.getTitle() : ''),
   isWeb: (url) => isWebUrl(url),
-  isAuto: () => readSettings().autoGroupTabs !== false,
+  mode: () => groupingMode(),
+  aiTopics: () => readSettings().topicAi === true,
 });
+// Automatic grouping: 'off' | 'site' | 'topic'. Before topics it was a switch (autoGroupTabs).
+function groupingMode() {
+  const { tabGrouping, autoGroupTabs } = readSettings();
+  return ['off', 'site', 'topic'].includes(tabGrouping) ? tabGrouping : autoGroupTabs === false ? 'off' : 'site';
+}
 let autoGroupTimer = null;
 function scheduleAutoGroup() {
   clearTimeout(autoGroupTimer);
-  autoGroupTimer = setTimeout(() => { if (tabGroups.autoGroup()) sendTabs(); }, 400); // after the title usually arrives
+  autoGroupTimer = setTimeout(() => {
+    if (tabGroups.autoGroup()) sendTabs();
+    if (groupingMode() === 'topic' && readSettings().topicAi === true) scheduleAiTopics();
+  }, 400); // after the title usually arrives
 }
 
 let ignoreExtensionSelect = false;
@@ -230,89 +246,30 @@ function syncExtensions(fn) {
   try { fn(); } finally { ignoreExtensionSelect = false; }
 }
 
-// ---------- ad blocker (built into the browser, uBlock Origin-compatible lists) ----------
-//
-// Runs in the main process, so there is no extension for sites to fingerprint. Cosmetic rules go
-// in as user-origin CSS (invisible to document.styleSheets), and uBlock's scriptlets neutralize
-// known anti-adblock scripts. Blocked requests are cancelled: Chromium refuses redirects to data:
-// stand-ins, so a determined site can still notice a failed ad request.
+// ---------- ad blocker (features/adblock.js) ----------
 
-let blocker = null;
-const blockedCount = new Map(); // webContents id -> requests blocked on the current page
+const adblock = createAdblock({
+  app, session, readSettings, writeSettings, isWebUrl,
+  activeContents: () => activeTab()?.webContents,
+  realUrl: (wc) => realUrl(wc),
+  onResponseHeaders: (details) => settingsBackend.noteResponseHeaders(details),
+});
 
-const hostOf = (url) => {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
-};
-
-function adblockSettings() {
-  const { adblock = true, adblockAllow = [] } = readSettings();
-  return { enabled: adblock, allow: new Set(adblockAllow) };
-}
-
-function adblockOn(pageUrl) {
-  const { enabled, allow } = adblockSettings();
-  return enabled && !allow.has(hostOf(pageUrl));
-}
-
-async function setupAdblock() {
-  const { ElectronBlocker } = require('@ghostery/adblocker-electron');
-  blocker = await ElectronBlocker.fromPrebuiltFull(fetch, {
-    path: path.join(app.getPath('userData'), 'adblock-engine.bin'),
-    read: fs.promises.readFile,
-    write: fs.promises.writeFile,
-  });
-  const match = blocker.onBeforeRequest;
-  blocker.onBeforeRequest = (details, callback) => {
-    const page = details.webContents?.getURL() || details.referrer || '';
-    if (!adblockOn(page)) return callback({});
-    match(details, (result) => {
-      if (!result.cancel && !result.redirectURL) return callback(result);
-      const id = details.webContents?.id;
-      if (id !== undefined) blockedCount.set(id, (blockedCount.get(id) || 0) + 1);
-      callback(result);
-    });
-  };
-  const cosmetics = blocker.onInjectCosmeticFilters;
-  blocker.onInjectCosmeticFilters = async (event, url, msg) => (adblockOn(url) ? cosmetics(event, url, msg) : undefined);
-  const headers = blocker.onHeadersReceived;
-  blocker.onHeadersReceived = (details, callback) => {
-    settingsBackend.noteResponseHeaders(details); // [settings] sites asking for the color-scheme hint
-    return adblockOn(details.webContents?.getURL() || details.url) ? headers(details, callback) : callback({});
-  };
-  blocker.enableBlockingInSession(session.defaultSession);
-}
-
-function adblockMenu() {
-  const wc = activeTab()?.webContents;
-  const host = wc ? hostOf(realUrl(wc)) : '';
-  const { enabled, allow } = adblockSettings();
-  const save = (patch) => {
-    writeSettings({ ...readSettings(), ...patch });
-    wc?.reload();
-  };
-  const count = wc ? blockedCount.get(wc.id) || 0 : 0;
-  return [
-    { label: blocker ? `${count} blocked on this page` : 'Loading filter lists…', enabled: false },
-    { type: 'separator' },
-    { label: 'Block Ads and Trackers', type: 'checkbox', checked: enabled, click: () => save({ adblock: !enabled }) },
-    ...(host && isWebUrl(realUrl(wc))
-      ? [{
-          label: `Allow Ads on ${host}`,
-          type: 'checkbox',
-          checked: allow.has(host),
-          enabled,
-          click: () => {
-            if (allow.has(host)) allow.delete(host);
-            else allow.add(host);
-            save({ adblockAllow: [...allow] });
-          },
-        }]
-      : []),
-  ];
+// Refused at install: extensions whose core job is filtering requests with static
+// declarativeNetRequest rulesets (Electron can't apply them, so they would silently do nothing).
+// Extensions that only use the API for small things (password managers etc.) install, and get the
+// in-memory chrome.declarativeNetRequest from extensions-dnr-preload.js.
+function isContentBlocker(manifest = {}, name = '') {
+  const rulesets = manifest.declarative_net_request?.rule_resources || [];
+  if (!rulesets.some((r) => r.enabled)) return false;
+  const text = `${name} ${manifest.name || ''} ${manifest.description || ''}`;
+  return /ad ?block|\bads\b|\bblock(er|ing|s)?\b|ublock|tracker|\bfilter|privacy badger|ghostery|content block/i.test(text);
 }
 
 async function setupExtensions() {
   const ses = session.defaultSession;
+  // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
+  for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'extensions-dnr-preload.js') });
   ElectronChromeExtensions.handleCRXProtocol(ses); // extension icons in the toolbar
   extensions = new ElectronChromeExtensions({
     license: 'GPL-3.0',
@@ -355,11 +312,11 @@ async function setupExtensions() {
   await installChromeWebStore({
     session: ses,
     beforeInstall: async ({ localizedName, manifest }) => {
-      if ((manifest.permissions || []).some((p) => String(p).startsWith('declarativeNetRequest'))) {
+      if (isContentBlocker(manifest, localizedName)) {
         await dialog.showMessageBox(win, {
           type: 'info',
           message: `“${localizedName}” can't be added`,
-          detail: 'It filters pages with a Chrome feature (declarativeNetRequest) that Lumen does not support yet. For ad and tracker blocking, use the built-in blocker in ⋯ → Ad Blocker.',
+          detail: 'It blocks content with Chrome filter lists (declarativeNetRequest rulesets) that Lumen cannot apply yet. For ad and tracker blocking, use the built-in blocker in ⋯ → Ad Blocker.',
         });
         return { action: 'deny' };
       }
@@ -369,7 +326,7 @@ async function setupExtensions() {
         defaultId: 1,
         cancelId: 0,
         message: `Add “${localizedName}”?`,
-        detail: 'Extensions can read and change data on the websites you visit.',
+        detail: `Extensions can read and change data on the websites you visit.${(manifest.permissions || []).includes('nativeMessaging') ? '\n\nParts that talk to a desktop app (such as unlocking with the 1Password app) may not work in Lumen. Sign in inside the extension instead.' : ''}`,
       });
       return { action: response === 1 ? 'allow' : 'deny' };
     },
@@ -404,7 +361,7 @@ function extensionsMenu() {
 function showAppMenu({ x, y }) {
   const wc = activeTab()?.webContents;
   Menu.buildFromTemplate([
-    { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => { openTab(); focusAddress(); } },
+    { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => openTab() },
     { label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
     { type: 'separator' },
     { label: 'Find…', accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
@@ -414,15 +371,14 @@ function showAppMenu({ x, y }) {
     { type: 'separator' },
     { label: 'Bookmarks', submenu: bookmarksMenu() },
     { label: 'History', submenu: historyMenu() },
-    { label: 'Downloads', submenu: downloadsMenu() },
+    { label: 'Downloads', submenu: downloads.menu() },
     { type: 'separator' },
     { label: 'Tab Groups', submenu: tabGroupsMenu() },
     { label: 'Search Engine', submenu: searchEngineMenu() },
     { label: 'Import Bookmarks and History', submenu: importMenu() },
-    { label: 'Ad Blocker', submenu: adblockMenu() },
+    { label: 'Ad Blocker', submenu: adblock.menu() },
     { label: 'Extensions', submenu: extensionsMenu() },
     { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }, // [settings]
-    { label: 'Claude Settings…', click: () => ui()?.send('open-settings') },
     { type: 'separator' },
     { label: 'Developer Tools', accelerator: 'F12', click: () => wc?.toggleDevTools() },
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
@@ -544,6 +500,7 @@ function tabState() {
         url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: favicon || null,
+        page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : null, // Lumen's own pages get their own icon
         error: wc.getURL().startsWith(ERROR_URL),
         zoom: Math.round(wc.getZoomFactor() * 100),
         bookmarked: isWebUrl(url) && bookmarks().some((b) => b.url === url),
@@ -573,10 +530,15 @@ function activeTab() {
 let viewFrozen = false;
 
 function layout() {
-  layoutWebPanels();
+  // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
+  // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
+  // the address bar. While the UI has focus, a view shown here gives focus back for half a second.
+  const uiHadFocus = Boolean(ui()?.isFocused());
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
-    tab.view.setVisible(visible && !viewFrozen);
+    const show = visible && !viewFrozen;
+    if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
+    tab.view.setVisible(show);
     if (!visible) continue;
     if (tab.fullscreen) {
       const [width, height] = win.getContentSize();
@@ -637,7 +599,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
   });
   wc.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) blockedCount.set(wc.id, 0);
+    if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
   wc.on('did-navigate', (_e, url) => {
     // The error page replaces the failed entry, so Back skips past it.
@@ -660,6 +622,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     wc.on(event, sendTabs);
   }
   wc.on('before-input-event', (event, input) => handleShortcut(event, input));
+  wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
   // [settings] the settings tab is locked to the settings page; other tabs get default zoom and HTTPS-only
   if (settings) settingsBackend.guardSettingsTab(wc, (target) => replaceTab(id, target));
   else settingsBackend.attachTab(wc);
@@ -681,8 +644,35 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     sendTabs();
   } else {
     switchTab(id);
+    guardFirstLoadFocus(tab);
   }
   return { id, webContents: wc };
+}
+
+// ---- new-tab focus. Chromium focuses a new tab's page by itself on its first navigation, which
+// took the keyboard away from the address bar if the user had clicked it meanwhile (typed keys went
+// to the page). While a new tab first loads, focus goes back to the UI when the address bar was
+// used (or anything else in the UI clicked or typed in) after the tab opened; otherwise a new-tab
+// page puts the cursor in its search box.
+// Events are ordered by a counter, not the clock: a click can land in the same millisecond.
+let uiEventSeq = 0;
+let addressTouchedAt = 0;
+ipcMain.on('address:touched', () => { addressTouchedAt = ++uiEventSeq; });
+function guardFirstLoadFocus(tab) {
+  const openedAt = ++uiEventSeq;
+  const wc = tab.view.webContents;
+  const addressInUse = () => addressTouchedAt > openedAt;
+  const giveBack = () => { if (addressInUse() && tab.id === activeId) ui()?.focus(); };
+  wc.on('focus', giveBack);
+  wc.once('did-finish-load', () => {
+    // The page takes focus when it's created; if the UI has it now, the user clicked back there (the
+    // click's own message can arrive after this event), so leave it.
+    if (alive(tab) && tab.id === activeId && !addressInUse() && !ui()?.isFocused() && isNewTab(wc.getURL())) {
+      wc.focus();
+      wc.executeJavaScript("document.getElementById('q')?.focus()").catch(() => {});
+    }
+    setTimeout(() => { if (!wc.isDestroyed()) wc.off('focus', giveBack); }, 1000);
+  });
 }
 
 function switchTab(id) {
@@ -804,6 +794,52 @@ async function organizeTabs() {
   }
 }
 
+// ---- topic groups: local clusters (tab-groups.js), or named by the cheapest model of the chat's provider
+// when "Use AI to name and group topics" is on. Only ids, titles and hostnames are sent.
+function cheapTopicModel() {
+  const { provider } = providers.splitModel(agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL);
+  if (provider === 'anthropic') return 'claude-haiku-4-5';
+  const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
+  return `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
+}
+const topicList = (entries) => entries.map((e) => ({ id: e.id, title: String(e.title).slice(0, 120), host: hostOf(e.url) }));
+
+let aiTopicsTimer = null;
+let aiTopicsBusy = false;
+let aiTopicsLastKey = '';
+// Automatic, with AI: debounced, only for 4+ loose tabs, and not again for the same set of tabs.
+function scheduleAiTopics() {
+  clearTimeout(aiTopicsTimer);
+  aiTopicsTimer = setTimeout(async () => {
+    const pool = tabGroups.loose();
+    const key = pool.map((e) => `${e.id}:${e.title}`).join('|');
+    if (aiTopicsBusy || pool.length < 4 || key === aiTopicsLastKey) return;
+    aiTopicsBusy = true;
+    aiTopicsLastKey = key;
+    try {
+      if (tabGroups.groupLoose(await proposeGroups(cheapTopicModel(), topicList(pool)))) sendTabs();
+    } catch {
+      if (tabGroups.groupLoose()) sendTabs(); // no key or no network: the local clusters instead
+    } finally {
+      aiTopicsBusy = false;
+    }
+  }, 2500);
+}
+
+// "Organize Tabs by Topic" (tab menu, ⋯ → Tab Groups): regroups loose tabs and automatic groups.
+async function organizeByTopic() {
+  let proposal = null;
+  if (readSettings().topicAi === true) {
+    proposal = await proposeGroups(cheapTopicModel(), topicList(tabGroups.candidates())).catch(() => null); // falls back to local
+  }
+  const count = tabGroups.organizeByTopic(proposal);
+  sendTabs();
+  return count;
+}
+function undoOrganize() {
+  if (tabGroups.undoOrganize()) sendTabs();
+}
+
 const colorLabel = (c) => c.charAt(0).toUpperCase() + c.slice(1);
 
 function tabMenu(id, { x, y }) {
@@ -822,6 +858,8 @@ function tabMenu(id, { x, y }) {
   }];
   if (others.length) items.push({ label: 'Add to Group', submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
   if (tab.groupId) items.push({ label: 'Remove from Group', click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
+  items.push({ type: 'separator' }, { label: 'Organize Tabs by Topic', click: organizeByTopic });
+  if (tabGroups.canUndo()) items.push({ label: 'Undo Organize', click: undoOrganize });
   items.push({ type: 'separator' }, { label: 'Close Tab', click: () => closeTab(id) });
   Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
@@ -832,7 +870,7 @@ function groupMenu(groupId, { x, y }) {
   Menu.buildFromTemplate([
     { label: 'Rename…', click: () => ui()?.send('group:rename-start', groupId) },
     { label: 'Colour', submenu: tabGroups.GROUP_COLORS.map((c) => ({ label: colorLabel(c), type: 'radio', checked: group.color === c, click: () => { group.color = c; sendTabs(); } })) },
-    { label: 'New Tab in Group', click: () => { openTab(undefined, { groupId }); focusAddress(); } },
+    { label: 'New Tab in Group', click: () => openTab(undefined, { groupId }) },
     { type: 'separator' },
     { label: 'Ungroup', click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
     { label: 'Close Group', click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id)) },
@@ -840,17 +878,25 @@ function groupMenu(groupId, { x, y }) {
 }
 
 function tabGroupsMenu() {
+  const mode = groupingMode();
   return [
+    { label: 'Organize Tabs by Topic', click: organizeByTopic },
+    { label: 'Undo Organize', enabled: tabGroups.canUndo(), click: undoOrganize },
     { label: 'Organize Tabs with AI', enabled: !organizing, click: organizeTabs },
-    { label: 'Automatic Tab Groups', type: 'checkbox', checked: readSettings().autoGroupTabs !== false, click: (item) => setAutoGroup(item.checked) },
+    { type: 'separator' },
+    { label: 'Group Automatically', enabled: false },
+    ...[['off', 'Off'], ['site', 'By Site'], ['topic', 'By Topic']].map(([value, label]) => ({ label, type: 'radio', checked: mode === value, click: () => setTabGrouping(value) })),
   ];
 }
 
-function setAutoGroup(on) {
-  writeSettings({ ...readSettings(), autoGroupTabs: Boolean(on) });
-  if (on && tabGroups.autoGroup()) sendTabs();
+function setTabGrouping(mode) {
+  if (!['off', 'site', 'topic'].includes(mode)) return false;
+  writeSettings({ ...readSettings(), tabGrouping: mode, autoGroupTabs: mode !== 'off' });
+  if (mode !== 'off') scheduleAutoGroup();
   return true;
 }
+// The older on/off switch: on means by site unless topics were chosen.
+const setAutoGroup = (on) => setTabGrouping(on ? (groupingMode() === 'topic' ? 'topic' : 'site') : 'off');
 
 // ---------- search engine ----------
 
@@ -973,25 +1019,24 @@ function newTabUrl() {
   const data = {
     favorites: bookmarks().filter((b) => !b.folder).slice(0, 12).map(withIcon),
     frequent: frequentSites().map(withIcon),
-    blocked: [...blockedCount.values()].reduce((sum, n) => sum + n, 0), // ads/trackers blocked on open tabs
+    blocked: adblock.total(), // ads/trackers blocked on open tabs
     search: engineFor(readSettings().searchEngine),
     assistant: homeAssistant(),
   };
   return `${NEW_TAB_URL}#${encodeURIComponent(JSON.stringify(data))}`;
 }
 
-// Who "Ask AI" on the new-tab page talks to, and whether the built-in agent can answer right now
-// (an API key or a CLI sign-in; otherwise the prompt goes to the open web panel via the clipboard).
-const ASSISTANT_NAMES = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok', gemini: 'Gemini', claude: 'Claude', chatgpt: 'ChatGPT', grok: 'Grok' };
+// Who "Ask AI" on the new-tab page talks to, and whether the assistant can answer right now.
+const ASSISTANT_NAMES = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
 function homeAssistant() {
   const settings = readSettings();
-  const mode = WEB_PANELS[settings.webAiMode] ? settings.webAiMode : 'agent';
-  const { provider } = providers.splitModel(settings.model || DEFAULT_MODEL);
+  const model = settings.model || DEFAULT_MODEL;
+  if (String(model).startsWith('claudecode:')) return { name: 'Claude', agentUsable: true };
+  const { provider } = providers.splitModel(model);
   const agentUsable = provider === 'anthropic'
     ? Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY || cliAuth.profileState().signedIn)
     : Boolean(providerKey(provider));
-  const name = mode === 'agent' || agentUsable ? ASSISTANT_NAMES[provider] : ASSISTANT_NAMES[mode];
-  return { name: name || 'Claude', agentUsable };
+  return { name: ASSISTANT_NAMES[provider] || 'Claude', agentUsable };
 }
 
 // The new-tab page asks by loading itself with ?ask=<prompt>: cancel that and hand the prompt to the sidebar.
@@ -1003,12 +1048,7 @@ function askFromHome(event, url) {
   event.preventDefault();
   text = text.trim().slice(0, 20000);
   if (!text) return true;
-  // A web panel without a usable agent: never type into the site; put the prompt on the clipboard.
-  const { name, agentUsable } = homeAssistant();
-  const webMode = WEB_PANELS[readSettings().webAiMode] ? readSettings().webAiMode : null;
-  const copied = Boolean(webMode) && !agentUsable;
-  if (copied) clipboard.writeText(text);
-  ui()?.send('ask-from-home', { text, copied, name });
+  ui()?.send('ask-from-home', { text });
   return true;
 }
 
@@ -1059,82 +1099,14 @@ function bookmarksMenu() {
   ];
 }
 
-// ---------- downloads: saved to the Downloads folder, progress on the taskbar ----------
+// ---------- downloads (features/downloads.js) ----------
 
-const downloads = []; // { id, name, path, state, received, total }
-let downloadSeq = 0;
-const RISKY_TYPES = /^\.(exe|msi|msix|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|hta|jar|dll|lnk|reg|appx)$/i;
-const sendDownloads = () => ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total }) => ({ id, name, state, received, total })));
-
-function setupDownloads() {
-  const approvedUrls = new Set(); // risky downloads the user said yes to
-  session.defaultSession.on('will-download', (event, item, contents) => {
-    const dir = settingsBackend.downloadDir(); // [settings] Downloads folder unless changed in Settings
-    const parsed = path.parse(item.getFilename() || 'download');
-    const url = item.getURL();
-    if (RISKY_TYPES.test(parsed.ext) && !approvedUrls.delete(url)) {
-      // Programs and scripts can run code: nothing is saved until the user agrees.
-      event.preventDefault();
-      if (!win || win.isDestroyed()) return;
-      dialog.showMessageBox(win, {
-        type: 'warning',
-        buttons: ['Cancel', 'Download'],
-        defaultId: 0,
-        cancelId: 0,
-        message: `Download “${parsed.base}”?`,
-        detail: `This type of file can run programs on your computer. Only keep it if you trust ${hostOf(url) || 'the site'}.`,
-      }).then(({ response }) => {
-        if (response !== 1) return;
-        approvedUrls.add(url);
-        (contents && !contents.isDestroyed() ? contents : win.webContents).downloadURL(url);
-      });
-      return;
-    }
-    let target = path.join(dir, parsed.base);
-    for (let n = 1; fs.existsSync(target); n++) target = path.join(dir, `${parsed.name} (${n})${parsed.ext}`);
-    // [settings] "Ask where to save": Electron shows its save dialog when no path is set.
-    const ask = settingsBackend.askWhereToSave();
-    if (ask) item.setSaveDialogOptions({ defaultPath: target });
-    else item.setSavePath(target); // must be set synchronously, or Electron shows its own save dialog
-    const entry = { id: ++downloadSeq, name: path.basename(target), path: target, state: 'progressing', received: 0, total: item.getTotalBytes() };
-    downloads.unshift(entry);
-    sendDownloads();
-    const progress = () => {
-      const active = downloads.filter((d) => d.state === 'progressing' && d.total > 0);
-      const sum = active.reduce((a, d) => [a[0] + d.received, a[1] + d.total], [0, 0]);
-      if (win && !win.isDestroyed()) win.setProgressBar(active.length ? sum[0] / sum[1] : -1);
-    };
-    item.on('updated', () => {
-      entry.received = item.getReceivedBytes();
-      entry.total = item.getTotalBytes();
-      progress();
-      sendDownloads();
-    });
-    item.once('done', (_ev, state) => {
-      if (ask && item.getSavePath()) Object.assign(entry, { path: item.getSavePath(), name: path.basename(item.getSavePath()) }); // [settings]
-      entry.state = state; // completed | cancelled | interrupted
-      progress();
-      sendDownloads();
-      if (state === 'completed' && win && !win.isDestroyed()) win.flashFrame(!win.isFocused());
-    });
-  });
-}
-
-function downloadsMenu() {
-  if (!downloads.length) return [{ label: 'No downloads yet', enabled: false }];
-  const items = downloads.slice(0, 10).map((d) => {
-    const status = d.state === 'progressing'
-      ? (d.total ? `${Math.round((d.received / d.total) * 100)}%` : 'downloading')
-      : d.state === 'completed' ? '' : d.state;
-    return {
-      label: status ? `${d.name} — ${status}` : d.name,
-      enabled: d.state === 'completed',
-      click: () => shell.openPath(d.path),
-    };
-  });
-  items.push({ type: 'separator' }, { label: 'Open Downloads Folder', click: () => shell.openPath(app.getPath('downloads')) });
-  return items;
-}
+const downloads = createDownloads({
+  app, session, dialog, shell, ui,
+  win: () => win,
+  downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
+  askWhereToSave: () => settingsBackend.askWhereToSave(),
+});
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol.
@@ -1149,118 +1121,6 @@ const UA_METADATA = {
   model: '',
   mobile: false,
 };
-// ---------- AI web panels: claude.ai, ChatGPT, Gemini and Grok in the sidebar ----------
-//
-// The user's own accounts (including school or work SSO) on the providers' real websites. They are
-// plain web pages in the default session, like any tab: no preload, no access to Lumen's tools, and
-// Lumen never types into or scripts them. One view per service is kept alive so logins and chats
-// persist; it is docked in the sidebar's content area and hidden while the sidebar animates.
-const WEB_PANELS = {
-  claude: 'https://claude.ai/',
-  chatgpt: 'https://chatgpt.com/',
-  gemini: 'https://gemini.google.com/app',
-  grok: 'https://grok.com/',
-};
-const webPanels = new Map(); // service -> WebContentsView
-let webPanelMode = 'agent';
-let webPanelBounds = null; // the sidebar content area in window coordinates, or null when closed
-
-function webPanelFor(service) {
-  if (webPanels.has(service)) return webPanels.get(service);
-  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-  const wc = view.webContents;
-  applyChromeIdentity(wc);
-  wc.setWindowOpenHandler(({ url: target, disposition }) => {
-    if (!(isWebUrl(target) || target === 'about:blank')) return { action: 'deny' };
-    // Sign-in popups (Google, Microsoft, school SSO) keep window.opener so they can hand back.
-    if (disposition === 'new-window') {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          autoHideMenuBar: true,
-          backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
-          icon: path.join(__dirname, 'assets', 'icon.png'),
-          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-        },
-      };
-    }
-    openTab(target); // links in a chat open as normal tabs
-    return { action: 'deny' };
-  });
-  wc.on('did-create-window', (child) => applyChromeIdentity(child.webContents));
-  wc.on('context-menu', (_e, params) => showContextMenu(wc, params));
-  wc.on('before-input-event', (event, input) => handleShortcut(event, input));
-  win.contentView.addChildView(view);
-  view.setVisible(false);
-  wc.loadURL(WEB_PANELS[service]).catch(() => {});
-  webPanels.set(service, view);
-  return view;
-}
-
-function layoutWebPanels() {
-  if (webPanelMode !== 'agent' && webPanelBounds && !webPanels.has(webPanelMode) && win && !win.isDestroyed()) webPanelFor(webPanelMode); // was unloaded while idle
-  for (const [service, view] of webPanels) {
-    const show = service === webPanelMode && Boolean(webPanelBounds) && !viewFrozen;
-    view.setVisible(show);
-    if (show) view.setBounds(webPanelBounds);
-    if (show || service === webPanelMode) webPanelUsed.set(service, Date.now());
-  }
-}
-
-// ---- [panel idle unload] A panel hidden for over 10 minutes is closed to free memory. It uses the
-// default session, so cookies and the user's login survive; it reloads when shown again.
-const webPanelUsed = new Map(); // service -> last time it was shown or selected
-const WEB_PANEL_IDLE_MS = Number(process.env.LUMEN_PANEL_IDLE_MS) || 10 * 60 * 1000;
-function unloadIdleWebPanels(now = Date.now()) {
-  for (const [service, view] of [...webPanels]) {
-    const shown = service === webPanelMode && Boolean(webPanelBounds);
-    if (shown || now - (webPanelUsed.get(service) || 0) < WEB_PANEL_IDLE_MS) continue;
-    webPanels.delete(service);
-    webPanelUsed.delete(service);
-    delete webPanelShots[service];
-    try { if (win && !win.isDestroyed()) win.contentView.removeChildView(view); } catch {}
-    if (!view.webContents.isDestroyed()) view.webContents.close();
-  }
-}
-setInterval(unloadIdleWebPanels, Math.min(60000, WEB_PANEL_IDLE_MS)).unref();
-if (process.env.CLAUDE_BROWSER_TEST) global.__unloadIdleWebPanels = unloadIdleWebPanels;
-// ---- [/panel idle unload]
-
-ipcMain.handle('webai:mode', (_e, mode) => {
-  webPanelMode = WEB_PANELS[mode] ? mode : 'agent';
-  if (webPanelMode !== 'agent') webPanelFor(webPanelMode);
-  writeSettings({ ...readSettings(), webAiMode: webPanelMode });
-  layoutWebPanels();
-  return webPanelMode;
-});
-ipcMain.on('webai:bounds', (_e, rect) => {
-  webPanelBounds = rect && rect.width > 20 && rect.height > 20
-    ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
-    : null;
-  layoutWebPanels();
-});
-ipcMain.handle('webai:state', () => ({ mode: readSettings().webAiMode || 'agent' }));
-// "Share page": the active tab's title, URL and readable text on the clipboard, for the user to paste.
-ipcMain.handle('webai:share', async () => {
-  const wc = activeTab()?.webContents;
-  if (!wc) return null;
-  const title = wc.getTitle();
-  const url = realUrl(wc);
-  let text = '';
-  if (isWebUrl(url)) {
-    try {
-      const page = await wc.executeJavaScriptInIsolatedWorld(1002, [{ code: require('./page-scripts').readPage(0, 0) }]);
-      text = String(page?.text || '').replace(/\n{3,}/g, '\n\n').trim();
-    } catch {
-      text = '';
-    }
-  }
-  const limit = 8000;
-  const body = text.length > limit ? `${text.slice(0, limit)}\n[… ${(text.length - limit).toLocaleString()} more characters]` : text;
-  clipboard.writeText([title, url, body].filter(Boolean).join('\n\n'));
-  return { title, url, chars: body.length };
-});
-
 function applyChromeIdentity(wc) {
   try {
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
@@ -1319,11 +1179,11 @@ function handleShortcut(event, input) {
   const key = input.key.toLowerCase();
   const wc = activeTab()?.webContents;
   let handled = true;
-  if (mod && input.shift && /^Digit[1-5]$/.test(input.code || '')) ui()?.send('webai:switch', Number(input.code.slice(5)) - 1);
-  else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
-  else if (mod && key === 't') { openTab(); focusAddress(); }
+  if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
+  else if (mod && key === 't') openTab();
   else if (mod && key === 'w') { if (activeId) closeTab(activeId); }
   else if (mod && key === 'l') focusAddress();
+  else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') { ui()?.focus(); ui()?.send('find:open'); }
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
   else if (mod && key === 'r') reloadActive();
@@ -1449,7 +1309,7 @@ function macMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Tab', ...shown('Cmd+T'), click: () => { openTab(); focusAddress(); } },
+        { label: 'New Tab', ...shown('Cmd+T'), click: () => openTab() },
         { label: 'Reopen Closed Tab', ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
         { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
@@ -1541,18 +1401,27 @@ function ungroupTabsFor(ids) {
 
 // [settings] the AI agent (and MCP clients, which use it) never gets the settings tab as its page.
 const agentActiveTab = () => { const t = activeTab(); return t && tabs.find((x) => x.id === t.id)?.settings ? null : t; };
-const agent = new Agent({ activeTab: agentActiveTab, listTabs, openTab, switchTab, closeTab, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: readSettings().model || DEFAULT_MODEL }), providerKey);
+// Why there's no page to work on while the settings tab is in front (instead of "No tab is open").
+const noTabReason = () => (tabs.find((t) => t.id === activeId)?.settings
+  ? 'The active tab is Lumen Settings, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.'
+  : null);
+const agent = new Agent({ activeTab: agentActiveTab, noTabReason, listTabs, openTab, switchTab, closeTab, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: readSettings().model || DEFAULT_MODEL }), providerKey);
 if (process.env.CLAUDE_BROWSER_TEST) {
   global.__agent = agent;
-  global.__webPanels = webPanels;
-  global.__mcp = () => mcpServer;
+  global.__mcp = () => aiAgents.mcpServer();
   global.__providers = providers;
   global.__importBrowser = importBrowser;
   global.__tabGroups = tabGroups;
   global.__organizeTabs = organizeTabs;
+  global.__organizeByTopic = organizeByTopic;
+  global.__setTabGrouping = setTabGrouping;
+  global.__setTopicAi = (on) => writeSettings({ ...readSettings(), topicAi: Boolean(on) });
+  global.__undoOrganize = undoOrganize;
+  global.__markDragged = (id) => { const t = tabs.find((x) => x.id === id); if (t) t.userMoved = true; };
   global.__tabsArray = () => tabs.map((t) => ({ id: t.id, groupId: t.groupId || null, userRemoved: Boolean(t.userRemoved) }));
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
-  global.__adblock = { ready: () => blocker !== null, blocked: (id) => blockedCount.get(id) || 0 };
+  global.__isContentBlocker = isContentBlocker;
+  global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
 }
 
 // ---------- [settings] lumen://settings ----------
@@ -1564,8 +1433,8 @@ const settingsBackend = settingsPage.create({
   tabsInfo: () => tabs.filter(alive).map((t) => ({ id: t.id, title: t.view.webContents.getTitle(), wc: t.view.webContents, settings: Boolean(t.settings) })),
   history: () => history,
   saveHistory: saveHistorySoon,
-  downloads,
-  sendDownloads,
+  downloads: downloads.list,
+  sendDownloads: downloads.send,
   permissionDecisions,
   uninstallExtension,
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
@@ -1621,26 +1490,11 @@ ipcMain.on('content-bounds', (_e, bounds) => {
   layout();
 });
 
-// ---- [panel snapshot] Native views can't move with the sidebar's spring, so the visible web
-// panel is captured too; the sidebar shows the picture (renderer/webai.js) until thaw.
-const webPanelShots = {}; // service -> data URL of its last capture
-function captureWebPanel() {
-  const view = webPanelMode !== 'agent' ? webPanels.get(webPanelMode) : null;
-  const service = webPanelMode;
-  if (!view || view.webContents.isDestroyed() || !view.getVisible()) return Promise.resolve();
-  return view.webContents.capturePage().then((img) => {
-    if (!img.isEmpty()) webPanelShots[service] = `data:image/jpeg;base64,${img.toJPEG(85).toString('base64')}`;
-  }).catch(() => {});
-}
-ipcMain.handle('webai:snapshot', () => (webPanelMode !== 'agent' ? webPanelShots[webPanelMode] || null : null));
-// ---- [/panel snapshot]
-
 ipcMain.handle('view:freeze', async () => {
-  const panelShot = captureWebPanel(); // [panel snapshot]
   const wc = activeTab()?.webContents;
   if (!wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
   try {
-    const [image] = await Promise.all([wc.capturePage(), panelShot]);
+    const image = await wc.capturePage();
     if (image.isEmpty()) return null;
     viewFrozen = true;
     layout();
@@ -1685,6 +1539,7 @@ ipcMain.on('tab:move', (_e, id, toIndex) => {
     tab.groupId = target;
     tab.userRemoved = !target;
   }
+  tab.userMoved = true; // placed by hand: automatic grouping leaves it alone
   tabGroups.cleanup();
   tabGroups.arrange();
   sendTabs();
@@ -1705,7 +1560,7 @@ ipcMain.on('group:rename', (_e, id, name) => {
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);
-ipcMain.on('downloads:menu', (_e, { x, y }) => Menu.buildFromTemplate(downloadsMenu()).popup({ window: win, x: Math.round(x), y: Math.round(y) }));
+ipcMain.on('downloads:menu', (_e, { x, y }) => Menu.buildFromTemplate(downloads.menu()).popup({ window: win, x: Math.round(x), y: Math.round(y) }));
 ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
 ipcMain.on('nav:go', (_e, text) => {
   const wc = activeTab()?.webContents;
@@ -1770,15 +1625,32 @@ ipcMain.handle('settings:get', () => {
       env: Boolean(process.env[ENV_KEYS[p]]),
     }])),
     adhdMode: readSettings().adhdMode !== false,
-    autoGroupTabs: readSettings().autoGroupTabs !== false,
+    autoGroupTabs: groupingMode() !== 'off',
+    tabGrouping: groupingMode(),
+    topicAi: readSettings().topicAi === true,
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),
     model: options.some((o) => o.id === saved) ? saved : DEFAULT_MODEL,
     models: options,
+    // For the empty sidebar's "get started" card.
+    ready: homeAssistant().agentUsable,
+    claudeCode: options.some((o) => o.id === 'claudecode:default'),
   };
 });
 ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
   if (!providers.PROVIDERS[provider]) return false;
+  saveProviderKey(provider, key);
+  await refreshModels(provider);
+  return true;
+});
+// ---- OpenRouter: the full model list for "More models…", and "Sign in with OpenRouter" (OAuth PKCE:
+// openrouter.ai asks the user, then redirects to a one-time loopback address with a code that is
+// exchanged for a key; the key is stored encrypted like a pasted one).
+ipcMain.handle('openrouter:models', async () => {
+  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE() });
+  return models.map(({ id, name, tools }) => ({ id, name, tools }));
+});
+function saveProviderKey(provider, key) {
   const settings = readSettings();
   const keys = { ...(settings.keys || {}) };
   if (key) {
@@ -1788,9 +1660,49 @@ ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
     delete keys[provider];
   }
   writeSettings({ ...settings, keys });
-  await refreshModels(provider);
-  return true;
-});
+}
+ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
+  const crypto = require('crypto');
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  let authTab = null;
+  let done = false;
+  const finish = (result) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    server.close();
+    if (authTab && tabs.some((t) => t.id === authTab)) setTimeout(() => closeTab(authTab), 1200);
+    resolve(result);
+  };
+  const server = require('http').createServer(async (req, res) => {
+    const code = new URL(req.url, 'http://127.0.0.1').searchParams.get('code');
+    if (!code) { res.writeHead(404).end(); return; }
+    try {
+      const r = await net.fetch(`${providers.PROVIDERS.openrouter.baseURL}/auth/keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...providers.PROVIDERS.openrouter.headers },
+        body: JSON.stringify({ code, code_verifier: verifier, code_challenge_method: 'S256' }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.key) throw new Error(body?.error?.message || `HTTP ${r.status}`);
+      saveProviderKey('openrouter', body.key);
+      await refreshModels('openrouter');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end('<title>Signed in</title><body style="font:15px system-ui;padding:40px">Signed in to OpenRouter. You can close this tab.</body>');
+      finish({ ok: true });
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' }).end('<title>Sign-in failed</title><body style="font:15px system-ui;padding:40px">OpenRouter sign-in failed. Close this tab and try again.</body>');
+      finish({ ok: false, message: `OpenRouter sign-in failed: ${err.message}` });
+    }
+  });
+  const timer = setTimeout(() => finish({ ok: false, message: 'OpenRouter sign-in timed out. Try again.' }), 5 * 60 * 1000);
+  server.listen(0, '127.0.0.1', () => {
+    const callback = `http://127.0.0.1:${server.address().port}/callback`;
+    const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
+    authTab = openTab(url).id;
+  });
+}));
+
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)
 const CLI_BIN = () => path.join(app.getPath('userData'), 'bin');
 
@@ -1837,12 +1749,16 @@ ipcMain.handle('settings:set-search-engine', (_e, id) => setSearchEngine(id));
 ipcMain.handle('import:browsers', () => importer.detectBrowsers());
 ipcMain.handle('import:run', (_e, id) => runImport(id));
 ipcMain.handle('settings:set-model', (_e, id) => {
-  if (!modelOptions().some((o) => o.id === id)) return false;
+  // Any OpenRouter model can be picked from "More models…" once there is a key.
+  const pickedFromMore = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(id)) && Boolean(providerKey('openrouter'));
+  if (id === 'openrouter:__more' || (!pickedFromMore && !modelOptions().some((o) => o.id === id))) return false;
   writeSettings({ ...readSettings(), model: id });
   agent.setModel(id);
   return true;
 });
 ipcMain.handle('settings:set-auto-group', (_e, on) => setAutoGroup(on));
+ipcMain.handle('settings:set-tab-grouping', (_e, mode) => setTabGrouping(mode));
+ipcMain.handle('settings:set-topic-ai', (_e, on) => { writeSettings({ ...readSettings(), topicAi: Boolean(on) }); return true; });
 ipcMain.handle('settings:set-adhd', (_e, on) => {
   writeSettings({ ...readSettings(), adhdMode: Boolean(on) });
   return true;
@@ -1860,264 +1776,43 @@ ipcMain.handle('settings:set-key', (_e, key) => {
   return true;
 });
 
-// ---------- AI agents over MCP (Claude Code, Codex CLI, Gemini CLI, Cursor…) ----------
+// ---------- AI agents over MCP and CDP, and the Claude Code engine (features/ai-agents.js) ----------
 
-let mcpServer = null;
-// Sessions opened by the sidebar's own Claude Code engine (event.engine) are not "external agents".
-const mcpEvent = (event) => { if (!event.engine) ui()?.send('mcp:event', event); };
-const mcpEnabled = () => readSettings().mcpEnabled !== false;
-
-const toMcpContent = (result) => (typeof result === 'string'
-  ? [{ type: 'text', text: result }]
-  : result.map((b) => (b.type === 'image' ? { type: 'image', data: b.source.data, mimeType: b.source.media_type } : { type: 'text', text: b.text ?? '' })));
-
-// Runs one browser tool for an external agent, with the same per-site approval as the sidebar,
-// and shows each call as a step in the sidebar.
-async function mcpCallTool(name, args, session) {
-  const problem = validateToolInput(name, args);
-  if (problem) return { content: [{ type: 'text', text: `Invalid input: ${problem}` }], isError: true };
-  session.approvedHosts ||= new Set();
-  const stepId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const label = await agent.describeStep(name, args).catch(() => null);
-  // ---- [claude code engine] A call from the sidebar's own Claude Code run shows as a step of that
-  // reply and uses the chat's approvals; anything else is an external agent.
-  const engineRun = claudeCodeEngine.owns(session.engine) ? claudeCodeEngine.active : null;
-  const toUi = engineRun ? engineRun.emit : mcpEvent;
-  const signal = engineRun ? engineRun.signal : session.controller.signal;
-  const allow = engineRun ? { hosts: agent.approvedHosts, who: 'Claude' } : { hosts: session.approvedHosts, who: session.clientName };
-  // ---- [/claude code engine]
-  toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
-  const emit = (event) => toUi({ ...event, clientName: session.clientName });
-  try {
-    await agent.ensureAllowed(name, emit, signal, allow);
-    const result = await agent.execute(name, args);
-    toUi({ type: 'tool_done', id: stepId, ok: true });
-    return { content: toMcpContent(result), isError: false };
-  } catch (err) {
-    const message = signal.aborted ? 'Stopped by the user.' : String(err?.message || err);
-    toUi({ type: 'tool_done', id: stepId, ok: false, error: message.split('\n')[0] });
-    return { content: [{ type: 'text', text: message }], isError: true };
-  }
-}
-
-// Only listens while "Allow AI agents to connect" is on (it is by default); turning it on later
-// starts the server on demand.
-// The sidebar's Claude Code engine starts it too (force), and its own sessions are always allowed.
-function startMcp(force = false) {
-  if (mcpServer || (!force && !mcpEnabled())) return;
-  mcpServer = require('./mcp').startServer({
-    userData: app.getPath('userData'),
-    tools: EXTERNAL_TOOLS,
-    callTool: mcpCallTool,
-    enabled: (session) => mcpEnabled() || claudeCodeEngine.owns(session?.engine),
-    onEvent: mcpEvent,
-  });
-}
-
-// The command an agent should run: Lumen's own executable in Node mode on mcp.js (clean stdio,
-// no window machinery). Works for the installed app and for development alike.
-function mcpCommand() {
-  return { command: process.execPath, args: [path.join(__dirname, 'mcp.js')], env: { ELECTRON_RUN_AS_NODE: '1' } };
-}
-
-ipcMain.handle('mcp:info', () => {
-  const { command, args, env } = mcpCommand();
-  const quoted = [command, ...args].map((a) => (process.platform === 'win32' || /\s/.test(a) ? `"${a}"` : a)).join(' ');
-  const json = JSON.stringify({ mcpServers: { lumen: { command, args, env } } }, null, 2);
-  const tomlArgs = args.map((a) => `'${a}'`).join(', ');
-  return {
-    enabled: mcpEnabled(),
-    snippets: [
-      { id: 'claude', label: 'Claude Code', hint: 'Run in a terminal, or use Add to Claude Code', text: `${process.platform === 'win32' ? 'claude.cmd' : 'claude'} mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: true },
-      { id: 'codex', label: 'Codex CLI', hint: 'Add to ~/.codex/config.toml', text: `[mcp_servers.lumen]\ncommand = '${command}'\nargs = [${tomlArgs}]\nenv = { ELECTRON_RUN_AS_NODE = "1" }` },
-      { id: 'gemini', label: 'Gemini CLI', hint: 'Add to ~/.gemini/settings.json', text: json },
-      { id: 'json', label: 'Other MCP clients', hint: 'Cursor, Claude Desktop, etc.', text: json },
-    ],
-  };
+const aiAgents = setupAiAgents({
+  app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab,
+  tools: EXTERNAL_TOOLS,
+  validateToolInput,
+  userTabs: () => tabs.filter(alive).map((t) => ({ id: t.id, webContents: t.view.webContents })),
 });
-ipcMain.handle('mcp:set-enabled', (_e, on) => {
-  writeSettings({ ...readSettings(), mcpEnabled: Boolean(on) });
-  if (!on) mcpServer?.disconnectAll();
-  else startMcp();
-  return true;
-});
-ipcMain.on('mcp:stop', () => mcpServer?.disconnectAll());
 
-// --- automation hook (automation.js): Playwright / CDP clients see only the user's tabs ---
-function startAutomation() {
-  if (!automationPlan) return;
-  automationProxy = automation.start({
-    ...automationPlan,
-    hooks: {
-      tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, webContents: t.view.webContents })),
-      openTab: (url, options = {}) => openTab(isWebUrl(url) || url === 'about:blank' ? url : 'about:blank', options),
-      closeTab: (id) => closeTab(id),
-      switchTab: (id) => switchTab(id),
-      onSession: ({ active, remaining }) => mcpEvent({ type: 'session', active: Boolean(active), remaining, clientName: 'Playwright (CDP)' }),
-    },
-  });
-}
-ipcMain.handle('automation:info', () => {
-  const settings = readSettings();
-  return {
-    enabled: Boolean(settings.automationEnabled),
-    port: automation.validPort(settings.automationPort),
-    running: automationProxy ? { port: automationProxy.state.port, listening: automationProxy.state.listening, error: automationProxy.state.error, clients: automationProxy.clients() } : null,
-  };
-});
-ipcMain.handle('automation:set', (_e, { enabled, port } = {}) => {
-  const settings = readSettings();
-  writeSettings({ ...settings, automationEnabled: Boolean(enabled), automationPort: automation.validPort(Number(port)) });
-  if (!enabled && automationProxy) { automationProxy.close(); automationProxy = null; } // off takes effect now; on needs a restart
-  return true;
-});
-ipcMain.on('mcp:stop', () => automationProxy?.disconnectAll());
-// --- end automation hook ---
-
-// ---- [claude code engine] The user's own Claude Code CLI as a sidebar engine (claude-code.js).
-const { ClaudeCodeEngine, INSTALL_HINT: CLAUDE_CODE_INSTALL } = require('./claude-code');
-const CLAUDE_CODE_NOTE = "Uses your Claude Code login. For personal use; apps offered to others need Anthropic's approval to use claude.ai logins.";
-const claudeCodeEngine = new ClaudeCodeEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true) });
-let claudeCodeFound = false;
-agent.engines = { claudecode: claudeCodeEngine };
-claudeCodeEngine.detect().then((bin) => { claudeCodeFound = Boolean(bin); if (bin) ui()?.send('models-updated'); });
-if (process.env.CLAUDE_BROWSER_TEST) global.__claudeCode = claudeCodeEngine;
-
-// One click "Add to Claude Code": runs the CLI with an argv array (no shell, so no PowerShell
-// shim eating `--`). Checks `claude mcp get lumen` first.
-ipcMain.handle('mcp:add-to-claude', async () => {
-  const bin = await claudeCodeEngine.detect(true);
-  if (!bin) return { ok: false, text: `Claude Code isn't installed. ${CLAUDE_CODE_INSTALL}` };
-  const run = (argv) => new Promise((resolve) => {
-    require('child_process').execFile(bin, argv, { shell: false, windowsHide: true, timeout: 60000, cwd: require('os').homedir() }, (err, stdout, stderr) => {
-      resolve({ ok: !err, out: `${stdout || ''}${stderr || ''}`.replace(/\x1b\[[0-9;]*m/g, '').trim() });
-    });
-  });
-  if ((await run(['mcp', 'get', 'lumen'])).ok) return { ok: true, already: true, text: 'Already connected' };
-  const { command, args } = mcpCommand();
-  const added = await run(['mcp', 'add', 'lumen', '--scope', 'user', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', command, ...args]);
-  return added.ok
-    ? { ok: true, text: 'Added. Start a new Claude Code session to use Lumen.' }
-    : { ok: false, text: added.out.split('\n').slice(-2).join(' ') || 'Claude Code could not add Lumen.' };
-});
-// ---- [/claude code engine]
-
-// ---- [page context] "Using: <page>" chip: include the current tab with each message (default on).
-ipcMain.handle('pagecontext:set', (_e, on) => {
-  writeSettings({ ...readSettings(), pageContext: Boolean(on) });
-  return true;
-});
-ipcMain.handle('pagecontext:get', () => readSettings().pageContext !== false);
-{
-  const base = agent.getOptions;
-  agent.getOptions = () => ({ ...base(), pageContext: readSettings().pageContext !== false });
-}
-// ---- [/page context]
-
-// `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
-// Start menu shortcuts carrying the app ID and icon, then exits.
-function installShortcuts() {
-  const exe = process.execPath;
-  const icon = path.join(path.dirname(exe), 'icon.ico');
-  const options = { target: exe, cwd: path.dirname(exe), icon: fs.existsSync(icon) ? icon : exe, iconIndex: 0, appUserModelId: APP_ID, description: 'Lumen, the AI browser' };
-  const startMenu = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-  for (const dir of [app.getPath('desktop'), startMenu]) {
-    shell.writeShortcutLink(path.join(dir, 'Lumen.lnk'), 'create', options);
-    fs.rmSync(path.join(dir, 'Claude Browser.lnk'), { force: true }); // the shortcut from before the rename
-  }
-}
-
-// If the lock is held but no main process for this app is alive, it belongs to child processes
-// of an instance that crashed or was killed. Stop those orphans and try again.
-function reclaimProfileLock() {
-  if (process.platform !== 'win32') return false;
-  const exe = process.execPath.replace(/'/g, "''");
-  const script = [
-    `$exe = '${exe}'`,
-    '$procs = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $exe -and $_.ProcessId -ne ' + process.pid + ' })',
-    "$main = @($procs | Where-Object { $_.CommandLine -notmatch '--type=' })",
-    'if ($main.Count -gt 0) { exit 3 }',
-    "$procs | Where-Object { $_.CommandLine -match '--type=' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-    'exit 0',
-  ].join('; ');
-  try {
-    require('child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 8000, windowsHide: true });
-    return true;
-  } catch {
-    return false; // a live instance exists (exit 3) or cleanup failed
-  }
-}
-
-const PIPE = () => (process.platform === 'win32'
-  ? `\\\\.\\pipe\\lumen-${require('crypto').createHash('sha1').update(app.getPath('userData')).digest('hex').slice(0, 12)}`
-  : path.join(app.getPath('userData'), 'instance.sock'));
-
-// Is a live instance listening on this profile's pipe? (It focuses itself when we connect.)
-function pingRunningInstance() {
-  if (process.platform !== 'win32') return false;
-  const { execFileSync } = require('child_process');
-  try {
-    // A tiny synchronous probe: exit 0 if the pipe accepts a connection within 250 ms.
-    execFileSync(process.execPath, ['-e', `const s=require('net').connect(${JSON.stringify(PIPE())});s.on('connect',()=>{s.end('focus');process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),250)`], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 2000, windowsHide: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function listenForSecondInstances() {
-  if (process.platform !== 'win32') return;
-  require('net').createServer((socket) => {
-    socket.on('data', () => {
-      if (!win || win.isDestroyed()) return;
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    });
-    socket.on('error', () => {});
-  }).on('error', () => {}).listen(PIPE());
-}
-
-function acquireInstanceLock() {
-  if (app.requestSingleInstanceLock()) return true;
-  if (process.env.CLAUDE_BROWSER_TEST && !process.env.CLAUDE_BROWSER_PROFILE) return false;
-  if (pingRunningInstance()) return false; // a live instance answered and brought itself forward
-  if (!reclaimProfileLock()) return false;
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) {
-    if (app.requestSingleInstanceLock()) return true;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
-  }
-  return false;
-}
-
-const singleInstance = process.argv.includes('--install-shortcuts') || acquireInstanceLock();
-if (!singleInstance) app.quit();
-app.on('second-instance', () => {
-  // Opening the shortcut again focuses the running browser (two copies would overwrite each other's files).
+const focusWindow = () => {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.focus();
-});
+};
+const singleInstance = process.argv.includes('--install-shortcuts') || instance.acquireInstanceLock(app);
+if (!singleInstance) app.quit();
+// Opening the shortcut again focuses the running browser (two copies would overwrite each other's files).
+app.on('second-instance', focusWindow);
 
 app.whenReady().then(async () => {
   if (process.argv.includes('--install-shortcuts')) {
-    installShortcuts();
+    instance.installShortcuts(app, shell, APP_ID);
     app.quit();
     return;
   }
   if (!singleInstance) return;
-  listenForSecondInstances();
-  startMcp();
-  startAutomation(); // automation hook
+  instance.listenForSecondInstances(app, focusWindow);
+  aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
-  setupDownloads();
+  downloads.setup();
   loadChat();
   loadHistory();
   // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs.
   await setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   // Filter lists load from cache (or download on first run) without holding up the window.
-  setupAdblock().catch((err) => console.error('Ad blocker failed to start:', err));
+  adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
   for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
@@ -2130,8 +1825,6 @@ function dropDeadWindowViews() {
   for (const tab of tabs) if (alive(tab)) tab.view.webContents.close();
   tabs = [];
   activeId = null;
-  for (const view of webPanels.values()) if (!view.webContents.isDestroyed()) view.webContents.close();
-  webPanels.clear();
 }
 app.on('activate', () => {
   if (app.isReady() && singleInstance && (!win || win.isDestroyed())) {

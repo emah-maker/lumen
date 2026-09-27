@@ -1,4 +1,4 @@
-// New-tab page: the Search | Ask AI switch, and asking the sidebar from the homepage.
+// New-tab page: the Search | Ask AI switch, asking the sidebar from the homepage, and new-tab focus.
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -69,21 +69,38 @@ const path = require('path');
   check('the tab stays on the homepage', /newtab\.html/.test(url) && !/[?&]ask=/.test(url), url);
   await ui.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 }).catch(() => {});
 
-  // A web panel and no key: the prompt goes on the clipboard, nothing is typed into the site.
-  await app.evaluate(({ clipboard }) => { delete process.env.ANTHROPIC_API_KEY; global.__homePrompts = []; clipboard.writeText(''); });
-  await ui.click('#ai-switch [data-mode="claude"]');
-  await sleep(600);
-  await newTab();
-  await submit('Plan a weekend in Boston');
-  let clip = '';
-  for (let i = 0; i < 20 && !clip; i++) { await sleep(250); clip = await app.evaluate(({ clipboard }) => clipboard.readText()); }
-  check('web panel without a key: prompt lands on the clipboard', clip === 'Plan a weekend in Boston', clip);
-  const toast = await ui.evaluate(() => { const t = document.getElementById('webai-toast'); return t.hidden ? '' : t.textContent; });
-  check('toast asks the user to paste it', toast === 'Prompt copied: paste it into Claude', toast);
-  check('nothing was sent to the agent', (await app.evaluate(() => global.__homePrompts)).length === 0, 'agent called');
-  check('web panel stays selected', await ui.evaluate(() => document.body.classList.contains('webai-mode')), 'left web mode');
+  // New-tab focus: Ctrl+T puts the cursor in the page's search box (Search and Ask AI modes alike),
+  // typed with real key events to whichever view has native focus, no click first.
+  const typeNative = (text) => app.evaluate(async ({ webContents }, t) => {
+    for (const ch of t) { webContents.getFocusedWebContents()?.sendInputEvent({ type: 'char', keyCode: ch }); await new Promise((r) => setTimeout(r, 10)); }
+  }, text);
+  const ctrlT = () => app.evaluate(async ({ BrowserWindow }) => {
+    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    wc.focus();
+    const before = global.__agent.browser.activeTab()?.id;
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 't', modifiers: ['control'] });
+    wc.sendInputEvent({ type: 'keyUp', keyCode: 't', modifiers: ['control'] });
+    for (let i = 0; i < 50; i++) {
+      const t = global.__agent.browser.activeTab();
+      if (t && t.id !== before && !t.webContents.isLoading() && t.webContents.getURL()) { global.__homeTab = t; break; }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  });
+  for (const mode of ['search', 'ask']) {
+    await ctrlT();
+    if (mode === 'ask') {
+      await inTab("document.querySelector('[data-mode=ask]')?.click()");
+      await ctrlT();
+    }
+    await typeNative('abc');
+    await sleep(200);
+    const value = await inTab("document.getElementById('q').value");
+    check(`new tab (${mode} mode): typing without a click lands in the search box`, value === 'abc', JSON.stringify(value));
+  }
+  await inTab("document.querySelector('[data-mode=search]')?.click()");
+  // Yielding to the address bar when it is clicked while the tab loads: see the stress test in ui.js.
 
-  await ui.click('#ai-switch [data-mode="agent"]');
   check('no UI errors', errors.length === 0, errors.join('; '));
   await app.close();
   console.log(failures ? `\n${failures} failed` : '\nall passed');
