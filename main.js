@@ -129,11 +129,19 @@ if (readSettings().favicons) {
 const { setupAiAgents, prepareAutomation } = require('./features/ai-agents');
 const automationPlan = prepareAutomation(app, readSettings());
 
+// The picker and every agent step look keys up, and each OS decrypt call costs a system round
+// trip, so decrypted keys are remembered by their encrypted text (a new key is new text).
+const decrypted = new Map();
+function decryptKey(enc) {
+  if (!decrypted.has(enc)) decrypted.set(enc, safeStorage.decryptString(Buffer.from(enc, 'base64')));
+  return decrypted.get(enc);
+}
+
 function storedApiKey() {
   const { apiKeyEnc } = readSettings();
   if (!apiKeyEnc || !safeStorage.isEncryptionAvailable()) return null;
   try {
-    return safeStorage.decryptString(Buffer.from(apiKeyEnc, 'base64'));
+    return decryptKey(apiKeyEnc);
   } catch {
     return null;
   }
@@ -147,7 +155,7 @@ function providerKey(provider) {
   const enc = readSettings().keys?.[provider];
   if (enc && safeStorage.isEncryptionAvailable()) {
     try {
-      return safeStorage.decryptString(Buffer.from(enc, 'base64'));
+      return decryptKey(enc);
     } catch {
       // Unreadable (e.g. copied from another machine): fall through to the environment.
     }
@@ -756,7 +764,9 @@ function tabState() {
     groups: tabGroups.state(),
     // A sleeping tab has no view/webContents to read from; it still gets a row, built from the
     // snapshot sleepTab() took (title/url/favicon/group), with a 'sleeping' flag for the tab strip.
-    tabs: tabs.filter((t) => alive(t) || t.sleeping).map((t) => {
+    // A tab being closed leaves the strip at once, as in Chrome; it comes back only if the page asks
+    // "Leave site?" (requestCloseTab, will-prevent-unload).
+    tabs: tabs.filter((t) => (alive(t) || t.sleeping) && !(t.closing && !t.unloadAsked)).map((t) => {
       if (t.sleeping) {
         const url = t.sleepUrl || '';
         return {
@@ -998,6 +1008,7 @@ function wireView(tab, url, history = null) {
   wc.on('will-prevent-unload', (event) => {
     if (allowNextUnload || !tab.closing) { allowNextUnload = false; event.preventDefault(); return; }
     tab.unloadAsked = true; // requestCloseTab's frozen-page timeout leaves this close to the user
+    sendTabs(); // back in the strip while it asks
     dialogs.showMessageBox(win, {
       type: 'warning',
       buttons: ['Cancel', 'Leave'],
@@ -1009,7 +1020,7 @@ function wireView(tab, url, history = null) {
       bringToFront: true, // the user asked to close this tab, so show it with its question
     }).then(({ response }) => {
       tab.unloadAsked = false;
-      if (response !== 1) { tab.closing = false; return; }
+      if (response !== 1) { tab.closing = false; sendTabs(); return; }
       allowNextUnload = true;
       if (tabs.some((t) => t.id === id)) requestCloseTab(id); // the main case: retry the close, this time it goes through
     });
@@ -1238,6 +1249,14 @@ function requestCloseTab(id) {
   if (!alive(tab)) { closeTab(id); return; }
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
   tab.closing = true;
+  // The page answers the beforeunload check before the close finishes, which can take a moment:
+  // the strip drops the tab now, and the next tab is shown now if this one was in front.
+  if (tab.id === activeId) {
+    const index = tabs.indexOf(tab);
+    const next = [...tabs.slice(index + 1), ...tabs.slice(0, index).reverse()].find((t) => !t.closing);
+    if (next) switchTab(next.id);
+  }
+  sendTabs();
   tab.view.webContents.close({ waitForBeforeUnload: true });
   // A frozen page never answers the beforeunload check, so the close never finished. If the tab is
   // still here after a moment and isn't asking "Leave site?", close it without waiting.

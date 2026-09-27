@@ -254,10 +254,24 @@ function createTabEl(id) {
   const title = Object.assign(document.createElement('span'), { className: 'tab-title' });
   const close = Object.assign(document.createElement('button'), { className: 'tab-close' });
   close.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2 2 8"/></svg>';
-  close.onclick = (e) => { e.stopPropagation(); window.browser.closeTab(id); };
+  // The press decides: a press on ✕ closes the tab when it's released anywhere on the tab. The
+  // strip can slide under a held button (a tab closing or opening next to it), which moved the
+  // release onto the title, and the click then went to the tab instead of the ✕.
+  let closePressed = false;
+  let closedByPress = false;
+  el.addEventListener('pointerdown', (e) => { closePressed = e.button === 0 && Boolean(e.target.closest('.tab-close')); });
+  el.addEventListener('pointerup', (e) => {
+    if (!closePressed || e.button !== 0) return;
+    closePressed = false;
+    closedByPress = true; // the click that follows is this close, not a tab switch
+    setTimeout(() => { closedByPress = false; }, 0);
+    window.browser.closeTab(id);
+  });
+  el.addEventListener('pointerleave', () => { closePressed = false; });
+  close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
   inner.append(globeIcon(), title, close);
   el.append(inner);
-  el.onclick = () => { if (!suppressClick) window.browser.switchTab(id); };
+  el.onclick = () => { if (!suppressClick && !closedByPress) window.browser.switchTab(id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
   el.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
   el.onauxclick = (e) => { if (e.button === 1) window.browser.closeTab(id); };

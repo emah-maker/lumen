@@ -7,7 +7,9 @@ const os = require('os');
 
 const launch = (profile) => electron.launch({
   args: [path.join(__dirname, '..')],
-  env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ...(profile ? { CLAUDE_BROWSER_PROFILE: profile } : {}) },
+  // A Claude key (a fake one is enough: the chat-restore step swaps in a fake client) keeps the
+  // picker, and so the agent, on the Claude API even when this machine has Claude Code installed.
+  env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'sk-ant-test', ...(profile ? { CLAUDE_BROWSER_PROFILE: profile } : {}) },
 });
 
 (async () => {

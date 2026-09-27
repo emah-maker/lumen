@@ -18,7 +18,7 @@ const os = require('os');
   fs.mkdirSync(path.join(config, 'credentials'), { recursive: true });
   fs.writeFileSync(path.join(config, 'active_config'), 'work');
   fs.writeFileSync(path.join(config, 'credentials', 'work.json'), JSON.stringify({ access_token: 'test-access-token-123', refresh_token: 'test-refresh-token-456' }));
-  const state = cliAuth.profileState();
+  const state = cliAuth.freshProfileState(); // profileState() is kept for 2s; a new sign-in shows after that
   check('signed in when the active profile has credentials', state.signedIn === true && state.profile === 'work', JSON.stringify(state));
 
   // 2. A real install into a throwaway folder.

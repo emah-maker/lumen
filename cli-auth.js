@@ -121,8 +121,21 @@ async function installAnt(binDir) {
   }
 }
 
-// Which profile the CLI uses, and whether it has credentials.
+// Which profile the CLI uses, and whether it has credentials. The model picker asks on every
+// settings read, and each answer reads two files, so it's kept for two seconds; sign-in and
+// sign-out here clear it (freshProfileState), so they show at once.
+let profileCache = null;
 function profileState() {
+  if (profileCache && Date.now() - profileCache.at < 2000) return profileCache.state;
+  const state = readProfileState();
+  profileCache = { at: Date.now(), state };
+  return state;
+}
+function freshProfileState() {
+  profileCache = null;
+  return profileState();
+}
+function readProfileState() {
   const dir = configDir();
   let profile = process.env.ANTHROPIC_PROFILE || 'default';
   try {
@@ -164,7 +177,7 @@ function login(ant) {
     child.on('close', (code) => {
       if (loginCancelled) return done({ ok: false, cancelled: true, message: 'Sign-in was cancelled.' });
       if (timedOut) return done({ ok: false, message: 'Sign-in timed out. Try again.' });
-      done({ ok: code === 0 && profileState().signedIn, message: output.trim().split(/\r?\n/).slice(-3).join(' ') });
+      done({ ok: code === 0 && freshProfileState().signedIn, message: output.trim().split(/\r?\n/).slice(-3).join(' ') });
     });
   });
 }
@@ -178,7 +191,8 @@ function cancelLogin() {
 
 async function logout(ant) {
   const result = await run(ant, ['auth', 'logout'], 15000);
+  profileCache = null;
   return { ok: result.ok, message: (result.stdout + result.stderr).trim() };
 }
 
-module.exports = { findAnt, installAnt, profileState, login, cancelLogin, logout, verifyLogin, configDir, PINNED_VERSION };
+module.exports = { findAnt, installAnt, profileState, freshProfileState, login, cancelLogin, logout, verifyLogin, configDir, PINNED_VERSION };
