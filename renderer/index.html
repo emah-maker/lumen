@@ -179,6 +179,20 @@
           </label>
           <p class="field-label">Connect an AI agent</p>
           <div id="mcp-snippets"></div>
+          <!-- Automation tools over CDP (automation.js) -->
+          <label class="toggle-row" for="automation-enabled">
+            <span>
+              <span class="toggle-title">Allow automation tools (Chrome DevTools Protocol)</span>
+              <span class="hint">For Playwright, Playwright MCP and other CDP tools. They see only your tabs. Takes effect after a restart.</span>
+            </span>
+            <input id="automation-enabled" class="switch" type="checkbox" role="switch" />
+          </label>
+          <div id="automation-details" hidden>
+            <label class="field-label" for="automation-port">Port (localhost only)</label>
+            <input id="automation-port" type="number" min="1024" max="65535" placeholder="9222" />
+            <p class="hint automation-warning">Any program on this computer can then control your tabs and read what's in them, including sites you're signed in to. Turn it off when you're done.</p>
+            <p class="hint" id="automation-status"></p>
+          </div>
         </details>
       </section>
 
@@ -208,5 +222,6 @@
   <script src="markdown.js"></script>
   <script src="app.js"></script>
   <script src="webai.js"></script>
+  <script src="automation-settings.js"></script>
 </body>
 </html>

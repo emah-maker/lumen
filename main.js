@@ -86,6 +86,12 @@ function writeSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
 }
 
+// --- automation hook (automation.js): opt-in CDP endpoint; the switch must be set before ready ---
+const automation = require('./automation');
+const automationPlan = automation.prepare(app, readSettings());
+let automationProxy = null;
+// --- end automation hook ---
+
 function storedApiKey() {
   const { apiKeyEnc } = readSettings();
   if (!apiKeyEnc || !safeStorage.isEncryptionAvailable()) return null;
@@ -1755,6 +1761,37 @@ ipcMain.handle('mcp:set-enabled', (_e, on) => {
 });
 ipcMain.on('mcp:stop', () => mcpServer?.disconnectAll());
 
+// --- automation hook (automation.js): Playwright / CDP clients see only the user's tabs ---
+function startAutomation() {
+  if (!automationPlan) return;
+  automationProxy = automation.start({
+    ...automationPlan,
+    hooks: {
+      tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, webContents: t.view.webContents })),
+      openTab: (url, options = {}) => openTab(isWebUrl(url) || url === 'about:blank' ? url : 'about:blank', options),
+      closeTab: (id) => closeTab(id),
+      switchTab: (id) => switchTab(id),
+      onSession: ({ active, remaining }) => mcpEvent({ type: 'session', active: Boolean(active), remaining, clientName: 'Playwright (CDP)' }),
+    },
+  });
+}
+ipcMain.handle('automation:info', () => {
+  const settings = readSettings();
+  return {
+    enabled: Boolean(settings.automationEnabled),
+    port: automation.validPort(settings.automationPort),
+    running: automationProxy ? { port: automationProxy.state.port, listening: automationProxy.state.listening, error: automationProxy.state.error, clients: automationProxy.clients() } : null,
+  };
+});
+ipcMain.handle('automation:set', (_e, { enabled, port } = {}) => {
+  const settings = readSettings();
+  writeSettings({ ...settings, automationEnabled: Boolean(enabled), automationPort: automation.validPort(Number(port)) });
+  if (!enabled && automationProxy) { automationProxy.close(); automationProxy = null; } // off takes effect now; on needs a restart
+  return true;
+});
+ipcMain.on('mcp:stop', () => automationProxy?.disconnectAll());
+// --- end automation hook ---
+
 // `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
 // Start menu shortcuts carrying the app ID and icon, then exits.
 function installShortcuts() {
@@ -1849,6 +1886,7 @@ app.whenReady().then(async () => {
   if (!singleInstance) return;
   listenForSecondInstances();
   startMcp();
+  startAutomation(); // automation hook
   setupPermissions();
   setupDownloads();
   loadChat();

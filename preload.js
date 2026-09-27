@@ -66,6 +66,9 @@ contextBridge.exposeInMainWorld('assistant', {
   mcpInfo: () => ipcRenderer.invoke('mcp:info'),
   setMcpEnabled: (on) => ipcRenderer.invoke('mcp:set-enabled', on),
   stopMcp: () => ipcRenderer.send('mcp:stop'),
+  // Automation tools over CDP (automation.js)
+  automationInfo: () => ipcRenderer.invoke('automation:info'),
+  setAutomation: (options) => ipcRenderer.invoke('automation:set', options),
   onHistory: on('agent:history'),
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   getSettings: () => ipcRenderer.invoke('settings:get'),

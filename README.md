@@ -136,6 +136,51 @@ How it works and what keeps it safe:
   line on stdout first, which strict clients may log as a parse error; the Node-mode command
   above avoids that.
 
+## Drive Lumen with Playwright (Chrome DevTools Protocol)
+
+Off by default. Turn on **Settings → AI agents (MCP) → Allow automation tools (Chrome DevTools
+Protocol)**, pick a port (default 9222) and restart Lumen. Then:
+
+```sh
+# Playwright MCP, from Claude Code
+claude mcp add playwright-lumen -- npx @playwright/mcp@latest --cdp-endpoint http://127.0.0.1:9222
+```
+
+```js
+// Playwright
+const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const page = browser.contexts()[0].pages()[0]; // your open tabs
+const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
+```
+
+- Lumen listens on 127.0.0.1 only, through a proxy (`automation.js`) that shows only your tabs:
+  Lumen's own UI, AI side panels and hidden reader tabs can't be seen or attached to.
+- `newPage()` opens a Lumen tab, `page.close()` closes it, and `browser.close()` only disconnects.
+- The toolbar says **Lumen is being driven by Playwright (CDP)** while connected; **Stop** disconnects.
+- Any program on your computer can use the port while it's on, including on signed-in sites.
+  Turning the setting off closes it immediately.
+
+## Token-efficient tools (all AIs)
+
+The sidebar agent, MCP clients and OpenAI/Grok/Gemini get the same cheaper tools:
+
+- `read_page` with `mode: "compact"`: an outline with `[id]` refs (headings, landmarks, text
+  with inline links, controls with values) instead of JSON plus raw text. `since_last: true`
+  returns only what changed. `mode: "full"` (the default) is unchanged.
+- `find`: matching controls and short text snippets, instead of reading the page.
+- `batch`: several actions (type, click, select, press, wait_for, scroll, hover) in one call,
+  ending with what changed.
+- `screenshot`: 1024 px JPEG by default, with `max_width`, `quality` and `region` crop.
+
+`node test/measure.js` compares four real tasks (tokens ≈ chars / 4):
+
+| Task | Before | After |
+|---|---|---|
+| Wikipedia: search, read a fact | 13,743 tokens, 4 calls | 261 tokens, 4 calls |
+| httpbin form | 825, 4 | 572, 3 |
+| DuckDuckGo search | 12,916, 5 | 306, 4 |
+| Long article fact | 74,497, 10 | 141, 2 |
+
 ## Layout
 
 - `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, ad blocker, IPC
@@ -144,8 +189,10 @@ How it works and what keeps it safe:
 - `importer.js`, `search.js`: browser import and search engines
 - `agent.js`: agent loop (`claude-opus-5`, streaming, adaptive thinking, web search, browser tools, ADHD mode)
 - `page-scripts.js`: scripts injected into pages to read and operate them
+- `snapshot.js`: token-efficient tools (compact outline, diffs, find, batch, screenshot options)
+- `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab and error pages
-- `test/`: Playwright tests: `smoke.js`, `tools.js` (agent actions), `ui.js` (address bar, find), `extensions.js`, `adblock.js`, `adhd.js`
+- `test/`: Playwright tests: `smoke.js`, `tools.js` (agent actions), `ui.js` (address bar, find), `extensions.js`, `adblock.js`, `adhd.js`, `cdp.js`, `efficiency.js`
 
 ## License
 
