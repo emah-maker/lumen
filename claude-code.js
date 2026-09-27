@@ -179,12 +179,14 @@ class ClaudeCodeEngine {
         if (lumen && lumen.status !== 'connected') emit({ type: 'notice', text: `Claude Code could not connect to Lumen (${lumen.status}).` });
       } else if (msg.type === 'stream_event') {
         const e = msg.event || {};
-        if (e.type === 'content_block_start' && e.content_block?.type === 'text') emit({ type: 'text_block' });
+        // Each text block (one per turn around a tool call) starts a new paragraph, on screen and in
+        // the saved reply alike; joined bare they ran together ("I'll check.The price is…").
+        if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; emit({ type: 'text_block' }); }
         else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') { text += e.delta.text; emit({ type: 'text', text: e.delta.text }); }
         else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') emit({ type: 'thinking', text: e.delta.thinking });
         // tool_use blocks are not shown here: Lumen's MCP side emits one step row per call.
       } else if (msg.type === 'assistant') {
-        const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+        const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
       } else if (msg.type === 'result') {
         result = msg;

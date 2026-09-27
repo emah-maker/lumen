@@ -89,6 +89,27 @@ function clientFor(provider, apiKey) {
   return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 2 });
 }
 
+// Does the provider accept this key? { ok: true }, { ok: false, message } when it's rejected, or
+// { ok: null } when it couldn't be checked (offline, or the provider having trouble).
+async function checkKey(provider, apiKey, { fetchImpl = fetch } = {}) {
+  const rejected = { ok: false, message: `${PROVIDERS[provider].label} didn't accept that key. Check it and try again.` };
+  try {
+    if (provider === 'openrouter') {
+      const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/key`, { headers: { Authorization: `Bearer ${apiKey}`, ...PROVIDERS.openrouter.headers }, signal: AbortSignal.timeout(10000) });
+      if (res.status === 401 || res.status === 403) return rejected;
+      return { ok: res.ok ? true : null };
+    }
+    const OpenAI = OpenAISDK();
+    const client = new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 0, timeout: 10000 });
+    await client.models.list();
+    return { ok: true };
+  } catch (err) {
+    // Gemini answers a bad key with 400 (API_KEY_INVALID) rather than 401.
+    if (err?.status === 401 || err?.status === 403 || (provider === 'gemini' && err?.status === 400)) return rejected;
+    return { ok: null };
+  }
+}
+
 // Lists chat models the key can use (newest-looking first); falls back to defaults on error.
 async function listModels(provider, apiKey, { cacheFile } = {}) {
   try {
@@ -222,11 +243,15 @@ async function completeJSON({ provider, model, apiKey, system, user }) {
 function describeProviderError(err, provider) {
   if (!OpenAIModule || !(err instanceof OpenAIModule.APIError)) return null;
   const label = PROVIDERS[provider]?.label || provider;
+  // Offline, DNS, a timeout: there is no HTTP status to report.
+  if (err instanceof OpenAIModule.APIConnectionError) return { text: `Could not reach ${label}. Check your internet connection and try again.` };
+  if (/context length|maximum context|too many tokens|reduce the length/i.test(String(err.message || ''))) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
   if (err.status === 401 || err.status === 403) return { text: `That ${label} API key was rejected. Add a valid key to continue.`, action: 'settings' };
   if (err.status === 402) return { text: provider === 'openrouter' ? 'Your OpenRouter credits have run out. Add credits at openrouter.ai/settings/credits, or pick a free model.' : `${label} says payment is required. Check your ${label} billing.` };
   if (err.status === 404) return { text: `This ${label} model isn't available for your key. Pick another model.` };
   if (err.status === 429) return { text: provider === 'openrouter' ? 'OpenRouter is rate limiting this model. Wait a moment, or pick another model.' : `${label} rate limit or quota reached. Wait a moment, or check your ${label} billing.` };
-  return { text: `${label} error ${err.status ?? ''}: ${err.message}`.trim() };
+  if (err.status >= 500) return { text: `${label} is having trouble right now (error ${err.status}). Try again in a minute, or pick another model.` };
+  return { text: err.status ? `${label} error ${err.status}: ${err.message}` : `${label} error: ${err.message}` };
 }
 
-module.exports = { PROVIDERS, splitModel, listModels, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+module.exports = { PROVIDERS, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

@@ -350,12 +350,13 @@ class GrokBuildEngine {
         // (the way claude-code.js does) would misfire on effectively every run.
       } else if (msg.type === 'stream_event') {
         const e = msg.event || {};
-        if (e.type === 'content_block_start' && e.content_block?.type === 'text') emit({ type: 'text_block' });
+        // A new text block starts a new paragraph in the saved reply too (see claude-code.js).
+        if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; emit({ type: 'text_block' }); }
         else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') { text += e.delta.text; emit({ type: 'text', text: e.delta.text }); }
         else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') emit({ type: 'thinking', text: e.delta.thinking });
         // tool_use blocks are not shown here: Lumen's MCP side emits one step row per call.
       } else if (msg.type === 'assistant') {
-        const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+        const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
       } else if (msg.type === 'result') {
         result = msg;

@@ -72,9 +72,15 @@
 
   // ---------- tables (GitHub style) ----------
 
-  const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line) || (line.includes('|') && !/^\s*$/.test(line));
   const isSeparator = (line) => line.includes('-') && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(line);
   const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  // A body row looks like the header: it starts with | when the header does, and otherwise has the
+  // header's number of cells. A sentence after the table that happens to contain a | stays text.
+  const isTableRow = (line, header) => {
+    if (!line.includes('|')) return false;
+    if (/^\s*\|/.test(header)) return /^\s*\|/.test(line);
+    return cells(line).length === cells(header).length;
+  };
 
   function table(header, separator, rows) {
     const align = cells(separator).map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : ''));
@@ -115,24 +121,32 @@
         flushParagraph(); closeList();
         const rows = [];
         let k = n + 2;
-        while (k < lines.length && lines[k].trim() !== '' && isTableRow(lines[k])) rows.push(lines[k++]);
+        while (k < lines.length && lines[k].trim() !== '' && isTableRow(lines[k], line)) rows.push(lines[k++]);
         out.push(table(line, lines[n + 1], rows));
         n = k - 1;
         continue;
       }
 
-      const heading = line.match(/^(#{1,3})\s+(.*)$/);
+      // Levels 4 to 6 show as the smallest heading (h4) rather than as raw "####".
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
       const bullet = line.match(/^\s*[-*]\s+(.*)$/);
-      const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      const numbered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
 
       if (heading) {
         flushParagraph(); closeList();
-        out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
+        const level = Math.min(heading[1].length, 4);
+        out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
       } else if (bullet || numbered) {
         flushParagraph();
         const type = bullet ? 'ul' : 'ol';
-        if (list !== type) { closeList(); out.push(`<${type}>`); list = type; }
-        out.push(`<li>${inline((bullet || numbered)[1])}</li>`);
+        if (list !== type) {
+          closeList();
+          // A numbered list split by a paragraph or code block keeps counting (3., 4., …) instead of restarting at 1.
+          const start = numbered ? Number(numbered[1]) : 1;
+          out.push(type === 'ol' && start !== 1 ? `<ol start="${start}">` : `<${type}>`);
+          list = type;
+        }
+        out.push(`<li>${inline(bullet ? bullet[1] : numbered[2])}</li>`);
       } else if (line.trim() === '') {
         flushParagraph(); closeList();
       } else {

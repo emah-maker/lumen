@@ -22,6 +22,20 @@ const os = require('os');
   await ui.waitForSelector('.tab');
   await ui.waitForTimeout(500);
 
+  // Off by default: a fresh profile refuses agents until the user turns it on (or adds an agent).
+  const fresh = await ui.evaluate(() => window.assistant.mcpInfo());
+  check('"Allow AI agents to connect" is off by default', fresh.enabled === false, JSON.stringify(fresh.enabled));
+  const offFirst = spawn(require('electron'), [path.join(root, 'mcp.js')], { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const offFirstReply = await new Promise((resolve) => {
+    let out = '';
+    offFirst.stdout.on('data', (d) => { out += d; if (/\{.*\}\s*\n/.test(out)) resolve(out); });
+    offFirst.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x' } } })}\n`);
+    setTimeout(() => resolve(out || 'timeout'), 20000);
+  });
+  check('while off, an agent is told the setting is off (not that Lumen is missing)', /turned off in Lumen settings/.test(offFirstReply), offFirstReply);
+  offFirst.kill();
+  await ui.evaluate(() => window.assistant.setMcpEnabled(true));
+
   // The MCP bridge, launched like `claude mcp add lumen -- electron . --mcp` would.
   const bridge = spawn(require('electron'), [path.join(root, 'mcp.js')], { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   let rawOut = '';

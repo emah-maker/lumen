@@ -57,7 +57,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
     try {
       switch (method) {
         case 'initialize': {
-          if (!enabled(session)) return fail(id, -32001, 'AI agent connections are turned off in Lumen settings (Browsing → Allow AI agents to connect).');
+          if (!enabled(session)) return fail(id, -32001, 'AI agent connections are turned off in Lumen settings (Settings → You and AI → Allow AI agents to connect).');
           const info = params.clientInfo || {};
           session.clientName = String(info.title || info.name || 'An AI agent').slice(0, 60);
           const requested = params.protocolVersion;

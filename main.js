@@ -12,7 +12,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
-const { Agent, normalizeUrl, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, validateInput: validateToolInput } = require('./agent');
+const { Agent, normalizeUrl, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput } = require('./agent');
 const providers = require('./providers');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor } = require('./search');
 // Optional features load on first use (startup stays lean).
@@ -151,8 +151,12 @@ async function refreshModels(provider) {
 // Is the Anthropic API itself usable: a saved key, an env key, or an `ant auth login` profile.
 // (Separate from Claude Code: that's a whole other CLI, gated by aiAgents' own detection.)
 function anthropicUsable() {
-  return Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY || cliAuth.profileState().signedIn);
+  return Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY || (cliAuth.profileState().signedIn && cliLoginValid !== false));
 }
+// An `ant` profile's tokens can expire while its credentials file stays. After a request is refused
+// for that reason (see the agent's describeError), the Claude models leave the picker until the user
+// signs in again (cli:login resets this), instead of failing on every message.
+let cliLoginValid = null;
 
 // The picker: a model appears only if its provider is actually connected. No provider is
 // privileged — connected API providers sort alphabetically by label, then local agent engines
@@ -902,11 +906,11 @@ async function hasUnsavedInput(wc) {
   }
 }
 
-// Never the active tab (also covers "the agent is using it": the agent always acts on activeTab()),
-// never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with typed
-// form input. On any doubt this returns false and the tab is left alone.
+// Never the active tab, never a tab an AI task is working in (it keeps its tab when the user switches
+// away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with
+// typed form input. On any doubt this returns false and the tab is left alone.
 async function canSleep(tab) {
-  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing) return false;
+  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing || agent.usingTab(tab.id)) return false;
   const wc = tab.view.webContents;
   if (!isWebUrl(realUrl(wc)) || wc.isLoading() || wc.isCurrentlyAudible()) return false;
   return !(await hasUnsavedInput(wc));
@@ -1546,21 +1550,38 @@ function reloadActive() {
 
 const CHAT_FILE = () => path.join(app.getPath('userData'), 'chat.json');
 
-// Tool results (page text, screenshots, script output) are not kept on disk; the conversation
-// itself is encrypted with the OS keychain when available.
-function saveChat() {
+// The conversation is encrypted with the OS keychain; with no keychain (common on Linux) it isn't
+// kept at all, rather than as a plain-text file. Tool results (page text, screenshots, script
+// output) and the page text attached to each message (page context) are not kept on disk.
+// New chat bumps chatGeneration: a run it stopped must not write the old chat back afterwards.
+let chatGeneration = 0;
+function saveChat(generation = chatGeneration) {
+  if (generation !== chatGeneration) return;
+  clearTimeout(saveChatTimer);
   try {
+    if (!safeStorage.isEncryptionAvailable()) { fs.rmSync(CHAT_FILE(), { force: true }); return; }
     const snapshot = agent.snapshot();
-    snapshot.messages = snapshot.messages.map((msg) => (Array.isArray(msg.content)
-      ? { ...msg, content: msg.content.map((b) => (b.type === 'tool_result' ? { type: 'tool_result', tool_use_id: b.tool_use_id, is_error: b.is_error, content: '(result not saved between sessions)' } : b)) }
-      : msg));
-    const json = JSON.stringify(snapshot);
-    const data = safeStorage.isEncryptionAvailable() ? { enc: safeStorage.encryptString(json).toString('base64') } : JSON.parse(json);
-    fs.writeFileSync(CHAT_FILE(), JSON.stringify(data));
+    const keep = (msg, b) => {
+      if (b.type === 'tool_result') return { type: 'tool_result', tool_use_id: b.tool_use_id, is_error: b.is_error, content: '(result not saved between sessions)' };
+      if (b.type === 'text' && msg.role === 'user') return { ...b, text: b.text.replace(PAGE_BLOCK, '') };
+      return b;
+    };
+    snapshot.messages = snapshot.messages.map((msg) => (Array.isArray(msg.content) ? { ...msg, content: msg.content.map((b) => keep(msg, b)) } : msg));
+    const data = { enc: safeStorage.encryptString(JSON.stringify(snapshot)).toString('base64') };
+    const tmp = `${CHAT_FILE()}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(data));
+    fs.renameSync(tmp, CHAT_FILE()); // never a half-written chat.json
   } catch (err) {
     console.error('Could not save chat:', err.message);
   }
 }
+// During a long task the chat is saved after each step too, so quitting mid-run keeps what was done.
+let saveChatTimer = null;
+function saveChatSoon(generation) {
+  clearTimeout(saveChatTimer);
+  saveChatTimer = setTimeout(() => saveChat(generation), 1000);
+}
+app.on('before-quit', () => saveChat());
 
 function loadChat() {
   try {
@@ -1727,9 +1748,24 @@ const agentActiveTab = () => { const t = activeTab(); return t && tabs.find((x) 
 const noTabReason = () => (tabs.find((t) => t.id === activeId)?.settings
   ? 'The active tab is Lumen Settings, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.'
   : null);
-const agent = new Agent({ activeTab: agentActiveTab, noTabReason, listTabs, openTab, switchTab, closeTab, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: readSettings().model || DEFAULT_MODEL }), providerKey);
+// A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
+// is woken, since the agent is about to use it.
+const agentTabById = (id) => {
+  const t = tabs.find((x) => x.id === id);
+  if (t?.sleeping) wakeTab(t);
+  return t && alive(t) && !t.settings ? { id: t.id, webContents: t.view.webContents } : null;
+};
+const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
+// How Claude is reached, so an expired sign-in isn't reported as a bad API key.
+const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_KEY ? 'env' : cliAuth.profileState().signedIn ? 'cli' : null);
+const agent = new Agent({
+  activeTab: agentActiveTab, tabById: agentTabById, noTabReason, listTabs, openTab, switchTab, closeTab, requestCloseTab,
+  hasUnsavedInput: agentHasUnsavedInput, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, effectiveModel, anthropicAuth,
+  autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false,
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 if (process.env.CLAUDE_BROWSER_TEST) {
   global.__agent = agent;
+  global.__fitContext = require('./agent').fitContext;
   global.__mcp = () => aiAgents.mcpServer();
   global.__providers = providers;
   global.__importBrowser = importBrowser;
@@ -1930,13 +1966,18 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
   const valid = (Array.isArray(images) ? images : [])
     .filter((img) => IMAGE_TYPES.has(img?.media_type) && typeof img.data === 'string' && img.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(img.data))
     .slice(0, 5);
+  const generation = chatGeneration;
   agent.run(String(text || ''), (msg) => {
     if (!event.sender.isDestroyed()) event.sender.send('agent:event', { ...msg, runId });
-    if (msg.type === 'done') saveChat();
+    if (msg.type === 'done') saveChat(generation);
+    else if (msg.type === 'tool_done') saveChatSoon(generation);
+    else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
   }, valid);
 });
 ipcMain.on('agent:stop', () => agent.stop());
 ipcMain.on('agent:reset', () => {
+  chatGeneration++;
+  clearTimeout(saveChatTimer);
   agent.reset();
   fs.rm(CHAT_FILE(), { force: true }, () => {});
 });
@@ -1948,12 +1989,21 @@ ipcMain.handle('agent:auto-allow', (_e, on) => {
   return readSettings().askBeforeActing === false;
 });
 
+// The model the picker shows and the agent uses: one answer, so they can never disagree. A saved
+// model that isn't connected anymore (key removed, CLI gone) falls back to the first connected
+// option, or none (null) — never a model the user can't use. A saved Claude Code / Grok Build pick
+// is kept while Lumen is still looking for that CLI at startup.
+function effectiveModel(preferred = readSettings().model) {
+  const options = modelOptions().filter((o) => o.id !== 'openrouter:__more');
+  // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
+  const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
+  if (options.some((o) => o.id === preferred) || openRouterPick || aiAgents.engineDetecting(preferred)) return preferred;
+  return options[0]?.id || null;
+}
+
 ipcMain.handle('settings:get', () => {
   const options = modelOptions();
-  const saved = readSettings().model;
-  // A saved model that isn't actually connected anymore (key removed, CLI gone) falls back to the
-  // first connected option, or none — never a model the user can't use.
-  const model = options.some((o) => o.id === saved) ? saved : options[0]?.id || null;
+  const model = effectiveModel();
   return {
     hasStoredKey: Boolean(storedApiKey()),
     hasEnvKey: Boolean(process.env.ANTHROPIC_API_KEY),
@@ -1975,11 +2025,19 @@ ipcMain.handle('settings:get', () => {
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
   };
 });
+// A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
+// the first message. Offline (can't check), it's saved anyway, and the caller is told so.
 ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
   if (!providers.PROVIDERS[provider]) return false;
+  let unverified = false;
+  if (key) {
+    const check = await providers.checkKey(provider, String(key).trim());
+    if (check.ok === false) throw new Error(check.message);
+    unverified = check.ok === null;
+  }
   saveProviderKey(provider, key);
   await refreshModels(provider);
-  return true;
+  return unverified ? { ok: true, unverified: true } : true;
 });
 // ---- OpenRouter: the full model list for "More models…", and "Sign in with OpenRouter" (OAuth PKCE:
 // openrouter.ai asks the user, then redirects to a one-time loopback address with a code that is
@@ -1999,7 +2057,11 @@ function saveProviderKey(provider, key) {
   }
   writeSettings({ ...settings, keys });
 }
+// Ends a sign-in that is waiting, from the Cancel button (or a second click).
+let cancelOpenRouterSignIn = null;
+ipcMain.handle('openrouter:cancel', () => { cancelOpenRouterSignIn?.(); return true; });
 ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
+  cancelOpenRouterSignIn?.(); // one sign-in at a time
   const crypto = require('crypto');
   const verifier = crypto.randomBytes(32).toString('base64url');
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
@@ -2009,10 +2071,16 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     if (done) return;
     done = true;
     clearTimeout(timer);
+    clearInterval(watch);
+    cancelOpenRouterSignIn = null;
     server.close();
-    if (authTab && tabs.some((t) => t.id === authTab)) setTimeout(() => closeTab(authTab), 1200);
+    if (authTab && tabs.some((t) => t.id === authTab)) setTimeout(() => { if (tabs.some((t) => t.id === authTab)) closeTab(authTab); }, 1200);
     resolve(result);
   };
+  cancelOpenRouterSignIn = () => finish({ ok: false, cancelled: true, message: 'OpenRouter sign-in was cancelled.' });
+  // Closing the sign-in tab (or it failing to load, offline, and the user closing it) cancels at
+  // once, instead of leaving the button disabled until the 5-minute timeout.
+  const watch = setInterval(() => { if (authTab && !tabs.some((t) => t.id === authTab)) cancelOpenRouterSignIn?.(); }, 700);
   const server = require('http').createServer(async (req, res) => {
     const code = new URL(req.url, 'http://127.0.0.1').searchParams.get('code');
     if (!code) { res.writeHead(404).end(); return; }
@@ -2034,6 +2102,7 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     }
   });
   const timer = setTimeout(() => finish({ ok: false, message: 'OpenRouter sign-in timed out. Try again.' }), 5 * 60 * 1000);
+  server.on('error', (err) => finish({ ok: false, message: `OpenRouter sign-in couldn't start: ${err.message}` }));
   server.listen(0, '127.0.0.1', () => {
     const callback = `http://127.0.0.1:${server.address().port}/callback`;
     const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
@@ -2071,11 +2140,13 @@ ipcMain.handle('cli:login', async (event) => {
     progress('Finish signing in in your web browser…');
     const result = await cliAuth.login(ant);
     client = null; // the next request picks up the new profile
-    return { ...(await cliStatus()), ok: result.ok, message: result.ok ? '' : result.message || 'Sign-in did not complete.' };
+    if (result.ok) { cliLoginValid = null; ui()?.send('models-updated'); }
+    return { ...(await cliStatus()), ok: result.ok, cancelled: Boolean(result.cancelled), message: result.ok ? '' : result.message || 'Sign-in did not complete.' };
   } catch (err) {
     return { ...(await cliStatus()), ok: false, message: err.message };
   }
 });
+ipcMain.handle('cli:cancel', () => cliAuth.cancelLogin());
 ipcMain.handle('cli:logout', async () => {
   const ant = await cliAuth.findAnt(CLI_BIN());
   if (ant) await cliAuth.logout(ant);
@@ -2091,8 +2162,8 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   const pickedFromMore = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(id)) && Boolean(providerKey('openrouter'));
   if (id === 'openrouter:__more' || (!pickedFromMore && !modelOptions().some((o) => o.id === id))) return false;
   writeSettings({ ...readSettings(), model: id });
-  agent.setModel(id);
-  return true;
+  // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
+  return agent.setModel(id) ? 'next-message' : true;
 });
 ipcMain.handle('settings:set-auto-group', (_e, on) => setAutoGroup(on));
 ipcMain.handle('settings:set-tab-grouping', (_e, mode) => setTabGrouping(mode));
