@@ -295,7 +295,7 @@ app.whenReady().then(() => {
 
 // ---------- permissions: ask like Safari, remember per origin ----------
 
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem']);
+const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']); // display-capture: the screen picker (pickScreenToShare) is the consent
 const PROMPTABLE = {
   media: 'use your camera and microphone',
   geolocation: 'know your location',
@@ -310,6 +310,7 @@ function setupPermissions() {
 
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     if (ALWAYS_ALLOWED.has(permission)) return callback(true);
+    if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
     let origin;
     try {
@@ -338,6 +339,74 @@ function setupPermissions() {
   });
   ses.setPermissionCheckHandler((_wc, permission, origin) =>
     ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
+  ses.setDisplayMediaRequestHandler(pickScreenToShare);
+}
+
+// Links for other apps (mailto:, tel:, zoommtg:, slack:, …) did nothing, because every
+// permission not on the list above was refused. Now they ask first, as Chrome does: "Open the app
+// for mailto: links?", remembered for the site until Lumen quits. Schemes that reach local files,
+// run script, or are known to launch Windows tools with attacker-chosen input are never opened.
+const BLOCKED_SCHEMES = new Set(['file', 'javascript', 'vbscript', 'data', 'blob', 'filesystem', 'about', 'chrome', 'chrome-extension', 'devtools', 'view-source', 'jar', 'res', 'hcp', 'shell', 'search', 'search-ms', 'ms-msdt', 'ms-officecmd', 'ms-appinstaller', 'ms-cxh', 'ms-cxh-full', 'ms-settings', 'lumen']);
+const externalDecisions = new Map(); // `${origin}|${scheme}` -> true (allowed for this session)
+async function askOpenExternal(wc, details) {
+  let scheme;
+  let origin = '';
+  try { scheme = new URL(details.externalURL).protocol.slice(0, -1).toLowerCase(); } catch { return false; }
+  try { origin = new URL(details.requestingUrl || wc.getURL()).origin; } catch {}
+  if (!/^[a-z][a-z0-9+.-]*$/.test(scheme) || BLOCKED_SCHEMES.has(scheme)) return false;
+  const key = `${origin}|${scheme}`;
+  if (externalDecisions.get(key)) return true;
+  let host = '';
+  try { host = new URL(origin).host; } catch {}
+  const label = { mailto: 'your email app', tel: 'your phone app', sms: 'your messages app' }[scheme] || `the app for ${scheme}: links`;
+  const { response, cancelled } = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['Cancel', 'Open'],
+    defaultId: 1,
+    cancelId: 0,
+    message: `Open ${label}?`,
+    detail: host ? `${host} wants to open ${label}.` : `This page wants to open ${label}.`,
+    owner: wc,
+  });
+  if (cancelled || response !== 1) return false;
+  externalDecisions.set(key, true);
+  return true;
+}
+
+// Screen sharing (Meet, Zoom, Teams on the web) failed outright: there was no handler for
+// getDisplayMedia. The user picks an entire screen or one window from a menu of thumbnails;
+// closing the menu shares nothing.
+async function pickScreenToShare(request, callback) {
+  let done = false;
+  const answer = (streams) => { if (!done) { done = true; callback(streams); } };
+  try {
+    const { desktopCapturer, nativeImage } = require('electron');
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 96, height: 60 }, fetchWindowIcons: false });
+    const lumen = win && !win.isDestroyed() ? win.getMediaSourceId() : '';
+    const pickable = sources.filter((s) => s.id !== lumen);
+    if (!pickable.length || !win || win.isDestroyed()) return answer({});
+    let host = '';
+    try { host = new URL(request.securityOrigin || request.frame?.url || '').host; } catch {}
+    let picked = null;
+    const item = (s, label) => ({ label, icon: s.thumbnail.isEmpty() ? undefined : nativeImage.createFromBuffer(s.thumbnail.toPNG()).resize({ width: 48 }), click: () => { picked = s; } });
+    const screens = pickable.filter((s) => s.id.startsWith('screen:'));
+    const windows = pickable.filter((s) => s.id.startsWith('window:'));
+    Menu.buildFromTemplate([
+      { label: host ? `Share with ${host}` : 'Share your screen', enabled: false },
+      ...screens.map((s, i) => item(s, screens.length > 1 ? `Entire screen ${i + 1}` : 'Entire screen')),
+      ...(windows.length ? [{ type: 'separator' }] : []),
+      ...windows.slice(0, 20).map((s) => item(s, s.name.length > 60 ? `${s.name.slice(0, 59)}…` : s.name)),
+      { type: 'separator' },
+      { label: 'Cancel' },
+    ]).popup({
+      window: win,
+      // The click runs just after the menu closes; give it a moment before answering.
+      callback: () => setTimeout(() => answer(picked ? { video: picked, ...(request.audioRequested && process.platform === 'win32' && picked.id.startsWith('screen:') ? { audio: 'loopback' } : {}) } : {}), 50),
+    });
+  } catch (err) {
+    console.error('[lumen] screen sharing picker failed:', err.message);
+    answer({});
+  }
 }
 
 // ---------- Chrome extensions (installed from the Chrome Web Store) ----------

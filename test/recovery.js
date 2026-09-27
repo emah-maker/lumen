@@ -74,6 +74,17 @@ const os = require('os');
   await app.evaluate(({ ipcMain }) => { const d = global.__dialogs; d.respond({ id: d.currentId(), response: 0 }); });
   check('answering it clears the badge', await waitFor(async () => (await ui.evaluate(() => document.querySelectorAll('.tab.alert').length)) === 0, 3000), 'badge stays');
 
+  // ---- links for other apps ask first; dangerous schemes never open
+  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), frontId);
+  await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript("location.href = 'mailto:someone@example.com'"));
+  check('a mailto: link asks to open the email app', await waitFor(async () => (await app.evaluate(() => global.__dialogs.currentId())) !== null, 4000), 'no dialog');
+  const asked = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.find((v) => v.webContents?.getURL().includes('dialog.html'))?.webContents.executeJavaScript('document.body.innerText'));
+  check('the question names the email app', /email app/.test(asked || ''), asked);
+  await app.evaluate(() => global.__dialogs.respond({ id: global.__dialogs.currentId(), response: 0 }));
+  await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript("location.href = 'search-ms:query=x'"));
+  await sleep(1200);
+  check('a search-ms: link is refused without asking', (await app.evaluate(() => global.__dialogs.currentId())) === null, 'asked');
+
   // ---- the browser UI crashes and comes back with its tabs
   const before = await app.evaluate(() => global.__agent.browser.listTabs().length);
   // Playwright can't survive its own page crashing, so the crash is signalled rather than real;
