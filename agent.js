@@ -34,9 +34,9 @@ const SYSTEM = `You are Claude, the assistant built into a web browser. You sit 
 You have full control of the browser: tabs, navigation, clicking, typing, hovering, keyboard shortcuts, and clicking any point on a screenshot.
 
 How to work:
-- Questions about the current page: call read_page first, then answer from its content.
-- Prefer high-level tools: fill_form for forms, click with text for obvious buttons and links, read_urls to research several pages at once without disturbing the user's tabs, run_script to extract tables/lists or repeat an operation, wait_for instead of fixed waits.
-- Tasks ("book", "find", "fill in", "compare"): act step by step. After each action, check the result with read_page (cheap) or screenshot (for visual layout, images, charts, or when read_page is confusing).
+- Questions about the current page: read_page mode:"compact" first (or find for one fact or field), then answer from its content.
+- Prefer high-level tools: batch for several actions in one call, fill_form for forms, click with text for obvious buttons and links, read_urls to research several pages at once without disturbing the user's tabs, run_script to extract tables/lists, wait_for instead of fixed waits.
+- Tasks ("book", "find", "fill in", "compare"): act step by step. Check results with read_page since_last:true (only what changed) or screenshot (for visual layout, images, charts).
 - General questions that do not need the user's page: answer directly, or use web_search for current facts.
 - If a site shows a CAPTCHA or "unusual traffic" page, do not try to solve it: use web_search (or another site) instead and tell the user.
 - Element ids from read_page are only valid until the page changes. Call read_page again after navigation or large page updates.
@@ -266,6 +266,10 @@ const TOOLS = [
     },
   },
 ].map((tool) => ({ ...tool, eager_input_streaming: true }));
+// --- efficiency hook (snapshot.js): compact read_page, find, batch, cheaper screenshots ---
+const snapshot = require('./snapshot');
+snapshot.extendTools(TOOLS);
+// --- end efficiency hook ---
 
 const ALL_TOOLS = [...TOOLS, { type: 'web_search_20260209', name: 'web_search', max_uses: 5 }];
 // Other providers get a client-side search tool (DuckDuckGo's HTML results, read without cookies).
@@ -347,7 +351,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Inputs where at least one of the listed fields must be present (kept out of the JSON schema).
 const ONE_OF = { click: [['element_id', 'text']] };
 // Tools that change a page; the first use per site per chat needs the user's OK.
-const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover']);
+const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', ...snapshot.ACTING]);
 
 function validateInput(name, input) {
   const schema = TOOL_SCHEMAS[name];
@@ -845,6 +849,10 @@ class Agent {
   }
 
   async execute(name, input) {
+    // --- efficiency hook (snapshot.js) ---
+    const efficient = await snapshot.execute(this, name, input, { runScript, scripts });
+    if (efficient !== undefined) return efficient;
+    // --- end efficiency hook ---
     switch (name) {
       case 'read_page': {
         const wc = this.requireTab();
