@@ -55,7 +55,17 @@ const os = require('os');
 
   // The settings panel shows ready-to-paste commands.
   const info = await ui.evaluate(() => window.assistant.mcpInfo());
-  check('settings give a Claude Code command', info.snippets.some((s) => s.id === 'claude' && s.text.startsWith('claude mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ') && s.text.includes('mcp.js')), JSON.stringify(info.snippets[0]));
+  const claudeSnippet = info.snippets.find((s) => s.id === 'claude')?.text || '';
+  check('settings give a Claude Code command (user scope)', claudeSnippet.includes('mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ') && claudeSnippet.includes('mcp.js'), claudeSnippet);
+  if (process.platform === 'win32') {
+    // PowerShell's claude.ps1 shim swallows "--"; claude.cmd and quoted paths work in PowerShell and cmd.
+    check('Windows command uses claude.cmd with quoted paths', /^claude\.cmd mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- "[^"]+" "[^"]+mcp\.js"$/.test(claudeSnippet), claudeSnippet);
+  }
+  check('Settings offer an Add to Claude Code button', await ui.evaluate(async () => {
+    document.getElementById('mcp-section').open = true;
+    await new Promise((r) => setTimeout(r, 300));
+    return [...document.querySelectorAll('#mcp-snippets button')].some((b) => b.textContent === 'Add to Claude Code');
+  }), 'no button');
   check('settings give Codex, Gemini and generic configs', ['codex', 'gemini', 'json'].every((id) => info.snippets.some((s) => s.id === id)), JSON.stringify(info.snippets.map((s) => s.id)));
 
   const init = await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude-code', title: 'Claude Code', version: '1.0' } });
@@ -98,6 +108,36 @@ const os = require('os');
   r = await clickPromise;
   check('denying the card returns isError to the agent', r.result.isError === true && /did not allow Claude Code/.test(text(r)), JSON.stringify(r));
 
+  // An approval while a web panel is showing: the sidebar switches to Agent for the card, then back.
+  await ui.evaluate(() => window.webAiSetMode('claude'));
+  await ui.waitForTimeout(400);
+  const panelClick = call('click', { text: 'More information' });
+  await ui.waitForSelector('.approval:not(.answered)', { timeout: 10000 }).catch(() => {});
+  const overPanel = await ui.evaluate(() => ({ web: document.body.classList.contains('webai-mode'), mode: window.webAiCurrentMode(), card: Boolean(document.querySelector('.approval:not(.answered)')?.offsetParent) }));
+  check('approval over a web panel: Agent mode shows the card', !overPanel.web && overPanel.mode === 'agent' && overPanel.card, JSON.stringify(overPanel));
+  await ui.click('.approval:not(.answered) .btn:not(.primary)');
+  await panelClick;
+  await ui.waitForTimeout(1200);
+  check('after the answer the web panel comes back', await ui.evaluate(() => window.webAiCurrentMode()) === 'claude', await ui.evaluate(() => window.webAiCurrentMode()));
+  await ui.evaluate(() => window.webAiSetMode('agent'));
+
+  // Badge on the AI button while an approval waits and the sidebar is closed.
+  const badge = await ui.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    await showSidebar(false);
+    await wait(700);
+    showApproval(9999, 'badge.example');
+    await wait(50);
+    const on = document.getElementById('toggle-sidebar').classList.contains('approval-pending');
+    resolveApproval(9999, false);
+    await wait(50);
+    const off = !document.getElementById('toggle-sidebar').classList.contains('approval-pending');
+    await showSidebar(true);
+    await wait(700);
+    return { on, off };
+  });
+  check('pending approval badges the AI button while the sidebar is closed', badge.on && badge.off, JSON.stringify(badge));
+
   check('stdout carries only JSON-RPC lines (Node-mode bridge)', rawOut.split('\n').filter(Boolean).every((l) => l.startsWith('{')), JSON.stringify(rawOut.slice(0, 80)));
 
   // The `Lumen --mcp` fallback also answers (GUI Electron prints one blank line first on Windows).
@@ -114,7 +154,18 @@ const os = require('os');
   // A connection without the token is refused.
   const channel = require('../mcp').channelPath(profile);
   const refused = await new Promise((resolve) => {
-    const s = net.connect(channel, () => s.write(`${JSON.stringify({ lumenToken: 'wrong' })}\n`));
+    // Answer the challenge with a proof made from the wrong token.
+    const s = net.connect(channel);
+    let buf = '';
+    s.on('data', (d) => {
+      buf += d;
+      const m = buf.match(/"lumenChallenge":"([0-9a-f]+)"/);
+      if (m && !s.__answered) {
+        s.__answered = true;
+        const bad = require('crypto').createHmac('sha256', 'wrong-token').update(m[1]).digest('hex');
+        s.write(`${JSON.stringify({ lumenProof: bad })}\n`);
+      }
+    });
     let got = '';
     s.on('data', (d) => { got += d; });
     s.on('close', () => resolve(got));
@@ -122,6 +173,25 @@ const os = require('os');
     setTimeout(() => resolve(got || 'timeout'), 5000);
   });
   check('bridge channel refuses a wrong token', /"lumenAuth":"denied"/.test(refused), refused);
+  check('the token is never sent over the channel', !refused.includes(fs.readFileSync(path.join(profile, 'mcp-token'), 'utf8')), 'token leaked');
+  // The right proof (HMAC-SHA256 of the challenge with the token) is accepted.
+  const accepted = await new Promise((resolve) => {
+    const token = fs.readFileSync(path.join(profile, 'mcp-token'), 'utf8').trim();
+    const s = net.connect(channel);
+    let buf = '';
+    s.on('data', (d) => {
+      buf += d;
+      const m = buf.match(/"lumenChallenge":"([0-9a-f]+)"/);
+      if (m && !s.__answered) {
+        s.__answered = true;
+        s.write(`${JSON.stringify({ lumenProof: require('../mcp').proofFor(token, m[1]) })}\n`);
+      }
+      if (/"lumenAuth":"ok"/.test(buf)) { s.destroy(); resolve(buf); }
+    });
+    s.on('error', (e) => resolve(`error ${e.message}`));
+    setTimeout(() => { s.destroy(); resolve(buf || 'timeout'); }, 5000);
+  });
+  check('bridge channel accepts the right HMAC proof', /"lumenAuth":"ok"/.test(accepted), accepted);
   const tokenFile = fs.readFileSync(path.join(profile, 'mcp-token'), 'utf8');
   check('token is random and stored in the profile', /^[0-9a-f]{48}$/.test(tokenFile), tokenFile.length);
 

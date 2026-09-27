@@ -1628,7 +1628,26 @@ async function renderMcpSettings() {
       setTimeout(() => { copy.textContent = 'Copy'; }, 1400);
     };
     head.append(copy);
+    // ---- [claude code engine] One click: main runs `claude mcp get/add` with an argv array (no shell).
+    let addStatus = null;
+    if (s.addButton && window.lumenExtras?.addToClaudeCode) {
+      const add = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Add to Claude Code' });
+      const status = Object.assign(document.createElement('p'), { className: 'hint mcp-add-status', hidden: true });
+      add.onclick = async () => {
+        add.disabled = true;
+        add.textContent = 'Adding…';
+        const r = await window.lumenExtras.addToClaudeCode().catch((err) => ({ ok: false, text: err.message }));
+        add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : 'Add to Claude Code';
+        add.disabled = Boolean(r.ok);
+        status.hidden = Boolean(r.already);
+        status.textContent = r.already ? '' : r.text;
+      };
+      head.append(add);
+      addStatus = status;
+    }
+    // ---- [/claude code engine]
     row.append(head, code);
+    if (addStatus) row.append(addStatus); // [claude code engine]
     box.append(row);
   }
 }

@@ -51,13 +51,27 @@ const path = require('path');
   p = await panel('claude');
   check('panel follows a sidebar resize', near(p.bounds.width, r2.width) && r2.width > r1.width, `${JSON.stringify(p.bounds)} vs ${JSON.stringify(r2)}`);
 
-  // Close and reopen: the same page (no reload), hidden while closed.
+  // Close and reopen: the same page (no reload), hidden while closed. During the spring the host
+  // shows a snapshot of the panel instead of going blank.
   const id = p.id;
-  await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
-  await sleep(1100);
+  const watchSpring = () => ui.evaluate(() => new Promise((resolve) => {
+    let seen = false;
+    const host = document.getElementById('webai-host');
+    const t0 = performance.now();
+    document.getElementById('toggle-sidebar').click();
+    const tick = () => {
+      const img = host.querySelector('.webai-snapshot');
+      if (img && img.naturalWidth > 0) seen = true;
+      if (performance.now() - t0 < 1400) requestAnimationFrame(tick);
+      else resolve({ seen, left: Boolean(host.querySelector('.webai-snapshot')) });
+    };
+    requestAnimationFrame(tick);
+  }));
+  const closing = await watchSpring();
+  check('panel snapshot shows while the sidebar closes', closing.seen && !closing.left, JSON.stringify(closing));
   check('panel hidden while the sidebar is closed', (await panel('claude')).visible === false, 'still visible');
-  await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
-  await sleep(1300);
+  const opening = await watchSpring();
+  check('panel snapshot shows while the sidebar opens, then the live panel', opening.seen && !opening.left, JSON.stringify(opening));
   p = await panel('claude');
   check('panel survives close/open without reloading', p.id === id && p.visible, JSON.stringify(p));
 
@@ -99,6 +113,14 @@ const path = require('path');
   await sleep(500);
   check('Ctrl+Shift+N picks a mode', (await ui.getAttribute('#ai-switch [data-mode="gemini"]', 'aria-selected')) === 'true', 'not selected');
   check('last mode is remembered', (await ui.evaluate(() => window.browser.webAiState())).mode === 'gemini', 'not saved');
+
+  // Panels hidden for over 10 minutes are unloaded (default session: logins stay) and reload on demand.
+  await app.evaluate(() => global.__unloadIdleWebPanels(Date.now() + 11 * 60 * 1000));
+  check('idle panels are unloaded', !(await panel('claude')) && !(await panel('chatgpt')), 'still loaded');
+  await ui.click('#ai-switch [data-mode="claude"]');
+  let back = null;
+  for (let i = 0; i < 30 && !(back && back.visible && back.url); i++) { await sleep(300); back = await panel('claude'); }
+  check('an unloaded panel comes back when picked', back && back.visible && /claude\.ai|anthropic\.com/.test(back.url), JSON.stringify(back));
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

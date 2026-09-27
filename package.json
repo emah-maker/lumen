@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "node scripts/build.js",
-    "test": "node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js",
+    "test": "node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js && node test/pagecontext.js",
     "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
     "dist:win": "node scripts/build.js --win",
     "dist:mac": "node scripts/build.js --mac"

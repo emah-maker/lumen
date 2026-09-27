@@ -84,4 +84,32 @@
   });
 
   window.browser.webAiState?.().then((s) => { if (s?.mode && s.mode !== 'agent') setMode(s.mode); });
+
+  // ---- [approval over panel] renderer/extras.js switches to Agent for an approval card, then back.
+  window.webAiSetMode = (next) => setMode(next);
+  window.webAiCurrentMode = () => mode;
+  // ---- [/approval over panel]
+
+  // ---- [panel snapshot] During the sidebar spring the native panel is hidden (it can't move with
+  // the animation); show main's capture of it in the host instead, until thaw.
+  let panelShot = null;
+  const freezeBase = window.freezePage;
+  const thawBase = window.thawPage;
+  window.freezePage = async (...args) => {
+    await freezeBase(...args);
+    if (mode === 'agent') return;
+    const src = await window.lumenExtras?.webAiSnapshot?.();
+    if (!src || mode === 'agent') return;
+    const img = Object.assign(new Image(), { className: 'webai-snapshot', alt: '', src });
+    panelShot?.remove();
+    panelShot = img;
+    host.append(img);
+  };
+  window.thawPage = (...args) => {
+    thawBase(...args);
+    const img = panelShot;
+    panelShot = null;
+    if (img) setTimeout(() => img.remove(), 160); // after the live panel is back (thaw waits two frames)
+  };
+  // ---- [/panel snapshot]
 })();

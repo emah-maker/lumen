@@ -138,6 +138,9 @@ function modelOptions() {
       options.push({ id: `${provider}:${model}`, label: model, detail: `${info.label} · ${model}`, group: info.label });
     }
   }
+  // ---- [claude code engine] "Your Claude account": the user's own Claude Code CLI, when installed.
+  if (claudeCodeFound) options.push({ id: 'claudecode:default', label: 'Claude · your account (Claude Code)', detail: CLAUDE_CODE_NOTE, group: 'Your Claude account' });
+  // ---- [/claude code engine]
   return options;
 }
 
@@ -1176,12 +1179,33 @@ function webPanelFor(service) {
 }
 
 function layoutWebPanels() {
+  if (webPanelMode !== 'agent' && webPanelBounds && !webPanels.has(webPanelMode) && win && !win.isDestroyed()) webPanelFor(webPanelMode); // was unloaded while idle
   for (const [service, view] of webPanels) {
     const show = service === webPanelMode && Boolean(webPanelBounds) && !viewFrozen;
     view.setVisible(show);
     if (show) view.setBounds(webPanelBounds);
+    if (show || service === webPanelMode) webPanelUsed.set(service, Date.now());
   }
 }
+
+// ---- [panel idle unload] A panel hidden for over 10 minutes is closed to free memory. It uses the
+// default session, so cookies and the user's login survive; it reloads when shown again.
+const webPanelUsed = new Map(); // service -> last time it was shown or selected
+const WEB_PANEL_IDLE_MS = Number(process.env.LUMEN_PANEL_IDLE_MS) || 10 * 60 * 1000;
+function unloadIdleWebPanels(now = Date.now()) {
+  for (const [service, view] of [...webPanels]) {
+    const shown = service === webPanelMode && Boolean(webPanelBounds);
+    if (shown || now - (webPanelUsed.get(service) || 0) < WEB_PANEL_IDLE_MS) continue;
+    webPanels.delete(service);
+    webPanelUsed.delete(service);
+    delete webPanelShots[service];
+    try { if (win && !win.isDestroyed()) win.contentView.removeChildView(view); } catch {}
+    if (!view.webContents.isDestroyed()) view.webContents.close();
+  }
+}
+setInterval(unloadIdleWebPanels, Math.min(60000, WEB_PANEL_IDLE_MS)).unref();
+if (process.env.CLAUDE_BROWSER_TEST) global.__unloadIdleWebPanels = unloadIdleWebPanels;
+// ---- [/panel idle unload]
 
 ipcMain.handle('webai:mode', (_e, mode) => {
   webPanelMode = WEB_PANELS[mode] ? mode : 'agent';
@@ -1511,11 +1535,26 @@ ipcMain.on('content-bounds', (_e, bounds) => {
   layout();
 });
 
+// ---- [panel snapshot] Native views can't move with the sidebar's spring, so the visible web
+// panel is captured too; the sidebar shows the picture (renderer/webai.js) until thaw.
+const webPanelShots = {}; // service -> data URL of its last capture
+function captureWebPanel() {
+  const view = webPanelMode !== 'agent' ? webPanels.get(webPanelMode) : null;
+  const service = webPanelMode;
+  if (!view || view.webContents.isDestroyed() || !view.getVisible()) return Promise.resolve();
+  return view.webContents.capturePage().then((img) => {
+    if (!img.isEmpty()) webPanelShots[service] = `data:image/jpeg;base64,${img.toJPEG(85).toString('base64')}`;
+  }).catch(() => {});
+}
+ipcMain.handle('webai:snapshot', () => (webPanelMode !== 'agent' ? webPanelShots[webPanelMode] || null : null));
+// ---- [/panel snapshot]
+
 ipcMain.handle('view:freeze', async () => {
+  const panelShot = captureWebPanel(); // [panel snapshot]
   const wc = activeTab()?.webContents;
   if (!wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
   try {
-    const image = await wc.capturePage();
+    const [image] = await Promise.all([wc.capturePage(), panelShot]);
     if (image.isEmpty()) return null;
     viewFrozen = true;
     layout();
@@ -1728,7 +1767,8 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 // ---------- AI agents over MCP (Claude Code, Codex CLI, Gemini CLI, Cursor…) ----------
 
 let mcpServer = null;
-const mcpEvent = (event) => ui()?.send('mcp:event', event);
+// Sessions opened by the sidebar's own Claude Code engine (event.engine) are not "external agents".
+const mcpEvent = (event) => { if (!event.engine) ui()?.send('mcp:event', event); };
 const mcpEnabled = () => readSettings().mcpEnabled !== false;
 
 const toMcpContent = (result) => (typeof result === 'string'
@@ -1743,26 +1783,37 @@ async function mcpCallTool(name, args, session) {
   session.approvedHosts ||= new Set();
   const stepId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const label = await agent.describeStep(name, args).catch(() => null);
-  mcpEvent({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
-  const emit = (event) => mcpEvent({ ...event, clientName: session.clientName });
+  // ---- [claude code engine] A call from the sidebar's own Claude Code run shows as a step of that
+  // reply and uses the chat's approvals; anything else is an external agent.
+  const engineRun = claudeCodeEngine.owns(session.engine) ? claudeCodeEngine.active : null;
+  const toUi = engineRun ? engineRun.emit : mcpEvent;
+  const signal = engineRun ? engineRun.signal : session.controller.signal;
+  const allow = engineRun ? { hosts: agent.approvedHosts, who: 'Claude' } : { hosts: session.approvedHosts, who: session.clientName };
+  // ---- [/claude code engine]
+  toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
+  const emit = (event) => toUi({ ...event, clientName: session.clientName });
   try {
-    await agent.ensureAllowed(name, emit, session.controller.signal, { hosts: session.approvedHosts, who: session.clientName });
+    await agent.ensureAllowed(name, emit, signal, allow);
     const result = await agent.execute(name, args);
-    mcpEvent({ type: 'tool_done', id: stepId, ok: true });
+    toUi({ type: 'tool_done', id: stepId, ok: true });
     return { content: toMcpContent(result), isError: false };
   } catch (err) {
-    const message = session.controller.signal.aborted ? 'Stopped by the user.' : String(err?.message || err);
-    mcpEvent({ type: 'tool_done', id: stepId, ok: false, error: message.split('\n')[0] });
+    const message = signal.aborted ? 'Stopped by the user.' : String(err?.message || err);
+    toUi({ type: 'tool_done', id: stepId, ok: false, error: message.split('\n')[0] });
     return { content: [{ type: 'text', text: message }], isError: true };
   }
 }
 
-function startMcp() {
+// Only listens while "Allow AI agents to connect" is on (it is by default); turning it on later
+// starts the server on demand.
+// The sidebar's Claude Code engine starts it too (force), and its own sessions are always allowed.
+function startMcp(force = false) {
+  if (mcpServer || (!force && !mcpEnabled())) return;
   mcpServer = require('./mcp').startServer({
     userData: app.getPath('userData'),
     tools: EXTERNAL_TOOLS,
     callTool: mcpCallTool,
-    enabled: mcpEnabled,
+    enabled: (session) => mcpEnabled() || claudeCodeEngine.owns(session?.engine),
     onEvent: mcpEvent,
   });
 }
@@ -1775,13 +1826,13 @@ function mcpCommand() {
 
 ipcMain.handle('mcp:info', () => {
   const { command, args, env } = mcpCommand();
-  const quoted = [command, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+  const quoted = [command, ...args].map((a) => (process.platform === 'win32' || /\s/.test(a) ? `"${a}"` : a)).join(' ');
   const json = JSON.stringify({ mcpServers: { lumen: { command, args, env } } }, null, 2);
   const tomlArgs = args.map((a) => `'${a}'`).join(', ');
   return {
     enabled: mcpEnabled(),
     snippets: [
-      { id: 'claude', label: 'Claude Code', hint: 'Run in a terminal', text: `claude mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}` },
+      { id: 'claude', label: 'Claude Code', hint: 'Run in a terminal, or use Add to Claude Code', text: `${process.platform === 'win32' ? 'claude.cmd' : 'claude'} mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: true },
       { id: 'codex', label: 'Codex CLI', hint: 'Add to ~/.codex/config.toml', text: `[mcp_servers.lumen]\ncommand = '${command}'\nargs = [${tomlArgs}]\nenv = { ELECTRON_RUN_AS_NODE = "1" }` },
       { id: 'gemini', label: 'Gemini CLI', hint: 'Add to ~/.gemini/settings.json', text: json },
       { id: 'json', label: 'Other MCP clients', hint: 'Cursor, Claude Desktop, etc.', text: json },
@@ -1791,6 +1842,7 @@ ipcMain.handle('mcp:info', () => {
 ipcMain.handle('mcp:set-enabled', (_e, on) => {
   writeSettings({ ...readSettings(), mcpEnabled: Boolean(on) });
   if (!on) mcpServer?.disconnectAll();
+  else startMcp();
   return true;
 });
 ipcMain.on('mcp:stop', () => mcpServer?.disconnectAll());
@@ -1825,6 +1877,46 @@ ipcMain.handle('automation:set', (_e, { enabled, port } = {}) => {
 });
 ipcMain.on('mcp:stop', () => automationProxy?.disconnectAll());
 // --- end automation hook ---
+
+// ---- [claude code engine] The user's own Claude Code CLI as a sidebar engine (claude-code.js).
+const { ClaudeCodeEngine, INSTALL_HINT: CLAUDE_CODE_INSTALL } = require('./claude-code');
+const CLAUDE_CODE_NOTE = "Uses your Claude Code login. For personal use; apps offered to others need Anthropic's approval to use claude.ai logins.";
+const claudeCodeEngine = new ClaudeCodeEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true) });
+let claudeCodeFound = false;
+agent.engines = { claudecode: claudeCodeEngine };
+claudeCodeEngine.detect().then((bin) => { claudeCodeFound = Boolean(bin); if (bin) ui()?.send('models-updated'); });
+if (process.env.CLAUDE_BROWSER_TEST) global.__claudeCode = claudeCodeEngine;
+
+// One click "Add to Claude Code": runs the CLI with an argv array (no shell, so no PowerShell
+// shim eating `--`). Checks `claude mcp get lumen` first.
+ipcMain.handle('mcp:add-to-claude', async () => {
+  const bin = await claudeCodeEngine.detect(true);
+  if (!bin) return { ok: false, text: `Claude Code isn't installed. ${CLAUDE_CODE_INSTALL}` };
+  const run = (argv) => new Promise((resolve) => {
+    require('child_process').execFile(bin, argv, { shell: false, windowsHide: true, timeout: 60000, cwd: require('os').homedir() }, (err, stdout, stderr) => {
+      resolve({ ok: !err, out: `${stdout || ''}${stderr || ''}`.replace(/\x1b\[[0-9;]*m/g, '').trim() });
+    });
+  });
+  if ((await run(['mcp', 'get', 'lumen'])).ok) return { ok: true, already: true, text: 'Already connected' };
+  const { command, args } = mcpCommand();
+  const added = await run(['mcp', 'add', 'lumen', '--scope', 'user', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', command, ...args]);
+  return added.ok
+    ? { ok: true, text: 'Added. Start a new Claude Code session to use Lumen.' }
+    : { ok: false, text: added.out.split('\n').slice(-2).join(' ') || 'Claude Code could not add Lumen.' };
+});
+// ---- [/claude code engine]
+
+// ---- [page context] "Using: <page>" chip: include the current tab with each message (default on).
+ipcMain.handle('pagecontext:set', (_e, on) => {
+  writeSettings({ ...readSettings(), pageContext: Boolean(on) });
+  return true;
+});
+ipcMain.handle('pagecontext:get', () => readSettings().pageContext !== false);
+{
+  const base = agent.getOptions;
+  agent.getOptions = () => ({ ...base(), pageContext: readSettings().pageContext !== false });
+}
+// ---- [/page context]
 
 // `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
 // Start menu shortcuts carrying the app ID and icon, then exits.
@@ -1935,4 +2027,20 @@ app.whenReady().then(async () => {
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('activate', () => { if (app.isReady() && singleInstance && (!win || win.isDestroyed())) createWindow(); });
+// ---- [mac reopen] Clicking the Dock icon after the window closed builds a new window: the old
+// tab and panel views were attached to the dead one, so drop them and restore the saved session.
+function dropDeadWindowViews() {
+  for (const tab of tabs) if (alive(tab)) tab.view.webContents.close();
+  tabs = [];
+  activeId = null;
+  for (const view of webPanels.values()) if (!view.webContents.isDestroyed()) view.webContents.close();
+  webPanels.clear();
+}
+app.on('activate', () => {
+  if (app.isReady() && singleInstance && (!win || win.isDestroyed())) {
+    dropDeadWindowViews();
+    createWindow();
+  }
+});
+if (process.env.CLAUDE_BROWSER_TEST) global.__dropDeadWindowViews = dropDeadWindowViews;
+// ---- [/mac reopen]

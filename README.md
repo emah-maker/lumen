@@ -93,17 +93,46 @@ No API key? Open the sidebar (`Ctrl+J`) and pick **Claude**, **ChatGPT**, **Gemi
 - **Share page** (the arrow button) copies the current tab's title, address and readable text so you can paste it into the chat.
 - These panels are ordinary web pages: Lumen never types into them or reads them. Agent features (Lumen clicking and typing in your tabs) need an API key or Anthropic sign-in, in the **Agent** mode.
 
+### Claude with your own account, as the Agent (Claude Code)
+
+If [Claude Code](https://claude.com/claude-code) is installed, the Agent's model menu has a
+**Your Claude account** group: **Claude · your account (Claude Code)**. Each message runs your
+own `claude` CLI headless, signed in with your own login (including a school or work plan), and
+it drives Lumen through Lumen's MCP server:
+
+- Lumen never sees your claude.ai credentials; the CLI keeps its own login. Not signed in? Run
+  `claude` once in a terminal and type `/login`.
+- The CLI only gets Lumen's browser tools (no shell, no file edits), and Lumen's approval card
+  still asks before it acts on a new site. Follow-ups continue the same Claude Code session;
+  **New chat** starts a fresh one. **Stop** ends the CLI and everything it started.
+- Uses your Claude Code login. For personal use; apps offered to others need Anthropic's
+  approval to use claude.ai logins.
+
+### The page you're on goes with your message
+
+Like Comet, every Agent message includes the current tab's title, address and first ~7,000
+characters of readable text (not for new-tab or internal pages), marked as untrusted page
+content. The chip above the message box shows **Using: <page>**; click **×** to stop sending the
+page (remembered), **Include** to turn it back on.
+
 ## Use Lumen from Claude Code, Codex, Gemini CLI
 
 Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the
 sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls,
 run_script, web_search, group_tabs…). The exact commands for your install, with the right
 paths, are in **Settings → AI agents (MCP) → Connect an AI agent** (each with a Copy button).
-They run Lumen's own executable in Node mode on `mcp.js`:
+For Claude Code there is also a one-click **Add to Claude Code** button (it says **Already
+connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
+
+```powershell
+# Claude Code on Windows (PowerShell or cmd). Use claude.cmd: in PowerShell the npm claude.ps1
+# shim swallows the "--", and the command fails with "missing required argument 'commandOrUrl'".
+claude.cmd mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- "C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe" "C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js"
+```
 
 ```sh
-# Claude Code
-claude mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- "C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe" "C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js"
+# Claude Code on macOS / Linux
+claude mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- /Applications/Lumen.app/Contents/MacOS/Lumen /Applications/Lumen.app/Contents/Resources/app/mcp.js
 ```
 
 ```toml
@@ -125,8 +154,9 @@ env = { ELECTRON_RUN_AS_NODE = "1" }
 How it works and what keeps it safe:
 
 - The agent starts a small bridge that connects to the running Lumen over a per-user local
-  channel (a named pipe on Windows, a Unix socket elsewhere) with a random token stored in
-  Lumen's profile folder. If Lumen isn't open, the bridge starts it.
+  channel (a named pipe on Windows, a Unix socket elsewhere) and proves it can read the random
+  token in Lumen's profile folder (HMAC challenge-response; the token itself never crosses the
+  channel). If Lumen isn't open, the bridge starts it.
 - Every new site still needs your OK: an approval card appears in the sidebar
   ("An external agent (Claude Code) wants to interact with example.com").
 - While an agent is connected, the toolbar says **Lumen is being driven by …**, each tool call
