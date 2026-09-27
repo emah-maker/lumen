@@ -307,7 +307,7 @@ function renderTabs(state) {
     if (group?.collapsed && tab.id !== state.activeId) continue; // the active tab stays visible
     const el = document.createElement('div');
     el.dataset.id = String(tab.id);
-    el.className = 'tab' + (tab.id === state.activeId ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '');
+    el.className = 'tab' + (tab.id === state.activeId ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.alert ? ' alert' : '');
     if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
     el.setAttribute('role', 'tab');
     el.setAttribute('aria-selected', String(tab.id === state.activeId));

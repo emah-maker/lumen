@@ -143,6 +143,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab:hover:not(.active) { background: var(--hover); color: var(--text); }
 .tab.active { min-width: 52px; color: var(--text); }
 .tab.sleeping:not(.active) .tab-inner { opacity: 0.55; } /* asleep: view destroyed, reloads on click */
+.tab.alert:not(.active)::before { content: ''; pointer-events: none; z-index: 1; position: absolute; top: 5px; left: 20px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg, transparent); } /* a dialog is waiting for this tab */
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }

@@ -5,8 +5,14 @@
 // (the same pattern as suggestView in main.js) and renders a calm card in it instead. Only one
 // dialog is shown at a time; more requests queue (FIFO) and are drawn once the current one closes.
 //
+// A dialog owned by a tab is tab-modal, as in Chrome: it shows only while that tab is in front. A
+// background tab's alert waits (its tab gets a badge, see pendingFor) instead of pulling the user
+// over to it; switching to that tab shows it, and switching away puts it back in the queue.
+// `bringToFront: true` (the user's own "close this tab" asking "Leave site?") switches to the tab.
+//
 // deps: { win: () => BrowserWindow|null, paths: { preload, html }, switchToContents(webContents),
-//         restoreFocus() }
+//         isInFront(webContents) -> bool (false only for a tab that isn't the active one),
+//         onPendingChange(), restoreFocus() }
 const { WebContentsView } = require('electron');
 
 function createDialogs(deps) {
@@ -46,18 +52,23 @@ function createDialogs(deps) {
     const onDestroyed = () => cancel(item);
     wc.on('did-start-navigation', onNav);
     wc.once('destroyed', onDestroyed);
-    item._cleanup = () => { if (!wc.isDestroyed()) wc.removeListener('did-start-navigation', onNav); };
+    item._cleanup = () => {
+      if (wc.isDestroyed()) return;
+      wc.removeListener('did-start-navigation', onNav);
+      wc.removeListener('destroyed', onDestroyed);
+    };
   }
 
   function cancel(item) {
     if (item._done) return;
-    finish(item, item.cancelledResult());
+    finish(item, { ...item.cancelledResult(), cancelled: true });
   }
+
+  const inFront = (item) => !item.owner || item.owner.isDestroyed() || deps.isInFront?.(item.owner) !== false;
 
   function present(item) {
     const win = deps.win();
     if (!win || win.isDestroyed()) { finish(item, item.cancelledResult()); return; }
-    if (item.owner && !item.owner.isDestroyed()) deps.switchToContents?.(item.owner);
     const view = ensureOverlay();
     win.contentView.addChildView(view); // re-adding raises it to the top, above the active tab
     layout();
@@ -67,10 +78,13 @@ function createDialogs(deps) {
     else send();
   }
 
-  function presentNext() {
+  // `afterDialog`: a dialog just closed, so the keyboard goes back to the page when nothing follows.
+  // (Not after a tab switch: the user is busy elsewhere, and the switch handles focus itself.)
+  function presentNext({ afterDialog = true } = {}) {
     if (showing) return;
-    const item = queue[0];
-    if (!item) { hide(); deps.restoreFocus?.(); return; }
+    const item = queue.find(inFront);
+    deps.onPendingChange?.();
+    if (!item) { hide(); if (afterDialog) deps.restoreFocus?.(); return; }
     showing = item;
     present(item);
   }
@@ -78,8 +92,19 @@ function createDialogs(deps) {
   function enqueue(item) {
     queue.push(item);
     watchOwner(item);
+    if (item.bringToFront && item.owner && !item.owner.isDestroyed()) deps.switchToContents?.(item.owner);
     presentNext();
   }
+
+  // The active tab changed: a dialog that belongs to the tab just left goes back in the queue, and
+  // one waiting for the new tab comes up.
+  function refresh() {
+    if (showing && !inFront(showing)) showing = null;
+    presentNext({ afterDialog: false });
+  }
+
+  // A tab with a dialog waiting for it (the tab strip shows a badge).
+  const pendingFor = (wc) => queue.some((item) => item.owner === wc && item !== showing);
 
   function finish(item, result) {
     if (item._done) return;
@@ -119,6 +144,7 @@ function createDialogs(deps) {
       const item = {
         kind: 'message',
         owner: opts.owner || null,
+        bringToFront: Boolean(opts.bringToFront),
         resolve,
         payload: {
           id: ++seq,
@@ -153,6 +179,7 @@ function createDialogs(deps) {
       const item = {
         kind: 'ask',
         owner: opts.owner || null,
+        bringToFront: Boolean(opts.bringToFront),
         resolve,
         payload: {
           id: ++seq,
@@ -177,6 +204,9 @@ function createDialogs(deps) {
     showMessageBox,
     ask,
     layout,
+    refresh,
+    pendingFor,
+    currentId: () => showing?.payload.id ?? null, // for tests
     isOwnView: (wc) => Boolean(overlay) && wc === overlay.webContents,
     respond, // called from the ipcMain 'dialog:respond' listener main.js wires up
   };

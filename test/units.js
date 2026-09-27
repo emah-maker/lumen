@@ -1,0 +1,91 @@
+// Plain Node checks (no Electron window): address bar URL-or-search detection and the crash-safe
+// settings file.
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { resolveInput } = require('../search');
+const { loadJson, writeJsonAtomic } = require('../settings-file');
+
+let failures = 0;
+const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
+
+// ---- address bar
+const searched = (text) => resolveInput(text, 'google').startsWith('https://www.google.com/search?q=');
+for (const [input, want] of [
+  ['github.com', 'https://github.com'],
+  ['foo.dev', 'https://foo.dev'],
+  ['sub.example.co.uk/path?q=1', 'https://sub.example.co.uk/path?q=1'],
+  ['example.com:8080/a', 'https://example.com:8080/a'],
+  ['localhost:3000', 'http://localhost:3000'],
+  ['app.localhost:5173/x', 'http://app.localhost:5173/x'],
+  ['192.168.1.1/admin', 'http://192.168.1.1/admin'],
+  ['[::1]:8080', 'http://[::1]:8080'],
+  ['https://node.js', 'https://node.js'],
+  ['about:blank', 'about:blank'],
+]) check(`"${input}" opens ${want}`, resolveInput(input, 'google') === want, resolveInput(input, 'google'));
+for (const input of ['node.js', 'next.js', 'notes.txt', 'a.b', 'hello', 'next.js docs', 'user@example.com', 'javascript:alert(1);a.com', 'JavaScript:void(0)']) {
+  check(`"${input}" is searched`, searched(input), resolveInput(input, 'google'));
+}
+check('the search engine setting is used', resolveInput('node.js', 'duckduckgo').startsWith('https://duckduckgo.com/'), resolveInput('node.js', 'duckduckgo'));
+
+// ---- settings file
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-units-'));
+const file = path.join(dir, 'settings.json');
+const quiet = console.error;
+console.error = () => {};
+try {
+  check('a missing file reads as empty settings', JSON.stringify(loadJson(file)) === '{}', JSON.stringify(loadJson(file)));
+  writeJsonAtomic(file, { bookmarks: [1], v: 1 });
+  writeJsonAtomic(file, { bookmarks: [1, 2], v: 2 });
+  check('writes land', loadJson(file).v === 2, JSON.stringify(loadJson(file)));
+  check('the previous good file is kept as .bak', JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8')).v === 1, fs.readFileSync(`${file}.bak`, 'utf8'));
+  check('no temp file is left behind', !fs.existsSync(`${file}.tmp`), 'tmp exists');
+  // A crash mid-write: the real file is cut off halfway.
+  fs.writeFileSync(file, '{"bookmarks": [1, 2], "v"');
+  check('a half-written file falls back to the backup', loadJson(file).v === 1, JSON.stringify(loadJson(file)));
+  writeJsonAtomic(file, { v: 3 });
+  check('writing after a broken file never replaces the good backup with the broken one', JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8')).v === 1, fs.readFileSync(`${file}.bak`, 'utf8'));
+  // Broken with no usable backup: the file is set aside, not overwritten.
+  fs.writeFileSync(file, '{broken');
+  fs.writeFileSync(`${file}.bak`, 'also broken');
+  check('unreadable file and backup read as empty', JSON.stringify(loadJson(file)) === '{}', JSON.stringify(loadJson(file)));
+  const aside = fs.readdirSync(dir).filter((f) => f.startsWith('settings.json.corrupt-'));
+  check('the unreadable file is kept aside for recovery', aside.length === 1 && fs.readFileSync(path.join(dir, aside[0]), 'utf8') === '{broken', aside.join(','));
+} finally {
+  console.error = quiet;
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ---- Safari import (macOS): Bookmarks.plist as XML (what plutil produces) and History.db
+const { readBrowser } = require('../importer');
+const { DatabaseSync } = require('node:sqlite');
+const safari = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-fake-safari-'));
+try {
+  const leaf = (title, url) => `<dict><key>URIDictionary</key><dict><key>title</key><string>${title}</string></dict><key>URLString</key><string>${url}</string><key>WebBookmarkType</key><string>WebBookmarkTypeLeaf</string></dict>`;
+  fs.writeFileSync(path.join(safari, 'Bookmarks.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Children</key><array>
+    <dict><key>Title</key><string>BookmarksBar</string><key>WebBookmarkType</key><string>WebBookmarkTypeList</string>
+      <key>Children</key><array>${leaf('Swift &amp; Co', 'https://swift.org/')}
+        <dict><key>Title</key><string>Recipes</string><key>WebBookmarkType</key><string>WebBookmarkTypeList</string><key>Children</key><array>${leaf('Soup', 'https://soup.example/')}</array></dict>
+        ${leaf('Local', 'file:///Users/me/notes.txt')}
+      </array></dict>
+    <dict><key>Title</key><string>com.apple.ReadingList</string><key>Children</key><array>${leaf('Later', 'https://later.example/')}</array></dict>
+  </array>
+  <key>WebBookmarkFileVersion</key><integer>1</integer><key>Sync</key><true/>
+</dict></plist>`);
+  const db = new DatabaseSync(path.join(safari, 'History.db'));
+  db.exec('CREATE TABLE history_items (id INTEGER PRIMARY KEY, url TEXT, visit_count INTEGER); CREATE TABLE history_visits (id INTEGER PRIMARY KEY, history_item INTEGER, visit_time REAL, title TEXT)');
+  db.prepare('INSERT INTO history_items VALUES (1, ?, 9)').run('https://www.apple.com/');
+  db.prepare('INSERT INTO history_visits VALUES (1, 1, ?, ?)').run((Date.UTC(2026, 8, 1) / 1000) - 978307200, 'Apple');
+  db.close();
+  const data = readBrowser('safari', safari);
+  check('Safari bookmarks are read (web only, folders kept, Reading List left out)', JSON.stringify(data.bookmarks) === JSON.stringify([{ url: 'https://swift.org/', title: 'Swift & Co' }, { url: 'https://soup.example/', title: 'Soup', folder: 'Recipes' }]), JSON.stringify(data.bookmarks));
+  check('Safari history is read with its dates', data.history.length === 1 && data.history[0].url === 'https://www.apple.com/' && data.history[0].last === Date.UTC(2026, 8, 1) && data.history[0].visits === 9, JSON.stringify(data.history));
+} finally {
+  fs.rmSync(safari, { recursive: true, force: true });
+}
+
+console.log(failures ? `\n${failures} failed` : '\nall passed');
+process.exit(failures ? 1 : 0);

@@ -12,9 +12,9 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
-const { Agent, normalizeUrl, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput } = require('./agent');
+const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput } = require('./agent');
 const providers = require('./providers');
-const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor } = require('./search');
+const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./importer'));
@@ -66,8 +66,33 @@ if (process.env.CLAUDE_BROWSER_TEST) {
 }
 
 
+// A stray error in the main process must not take the browser (and every open tab) down, or
+// pop Electron's raw error box: log it and keep going.
+process.on('uncaughtException', (err) => console.error('[lumen] uncaught exception:', err));
+process.on('unhandledRejection', (reason) => console.error('[lumen] unhandled rejection:', reason));
+
 let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
+
+// Only the settings tab's own top-level settings document may use the prefs:* calls.
+function isSettingsSender(event) {
+  return tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
+    && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url);
+}
+// Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
+// imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
+// could send them; this keeps it that way if a page or extension ever finds a way to.
+const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode):/;
+const trustedSender = (event) => event.sender === ui() || isSettingsSender(event);
+for (const method of ['handle', 'on']) {
+  const register = ipcMain[method].bind(ipcMain);
+  ipcMain[method] = (channel, listener) => register(channel, !PRIVILEGED_IPC.test(channel) ? listener : (event, ...args) => {
+    if (trustedSender(event)) return listener(event, ...args);
+    console.error(`[lumen] refused ${channel} from ${event.sender.getURL?.().slice(0, 80)}`);
+    if (method === 'handle') throw new Error('Not allowed');
+    return undefined;
+  });
+}
 let tabs = []; // { id, view, favicon }
 let activeId = null;
 let nextTabId = 1;
@@ -77,22 +102,16 @@ const closedTabs = []; // URLs, most recent last
 // ---------- settings / API key ----------
 
 let settingsCache = null;
+const settingsFile = require('./settings-file'); // crash-safe read/write (see settings-file.js)
 
 function readSettings() {
-  if (!settingsCache) {
-    try {
-      settingsCache = JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8'));
-    } catch {
-      settingsCache = {};
-    }
-  }
+  if (!settingsCache) settingsCache = settingsFile.loadJson(SETTINGS_FILE());
   return { ...settingsCache };
 }
 
 function writeSettings(settings) {
   settingsCache = { ...settings };
-  fs.mkdirSync(path.dirname(SETTINGS_FILE()), { recursive: true });
-  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
+  settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
 
 // Favicons out of settings.json and into their own debounced/async store (see favicon-store.js) —
@@ -203,12 +222,18 @@ const dialogs = createDialogs({
   win: () => win,
   paths: { preload: path.join(__dirname, 'dialog-preload.js'), html: path.join(__dirname, 'renderer', 'dialog.html') },
   switchToContents: (wc) => { const tab = tabByContents(wc); if (tab) switchTab(tab.id); },
+  isInFront: (wc) => { const tab = tabByContents(wc); return !tab || tab.id === activeId; },
+  onPendingChange: () => { if (tabs.length) sendTabs(); }, // a tab's "dialog waiting" badge
   restoreFocus: () => { const wc = activeTab()?.webContents; if (wc) wc.focus(); else ui()?.focus(); },
 });
 // Every existing `dialog.showMessageBox(...)` call (here, in settings-backend.js, features/downloads.js)
 // now draws Lumen's own card; the native pickers (showOpenDialog etc., used only by settings-backend.js
 // for the download folder) are untouched.
 const dialog = { ...electronDialog, showMessageBox: dialogs.showMessageBox };
+if (process.env.CLAUDE_BROWSER_TEST) {
+  global.__dialogs = dialogs;
+  global.__closeTabInteractive = (id) => requestCloseTab(id);
+}
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
 // HTTP Basic/Digest auth: a styled sign-in sheet instead of the native prompt.
@@ -234,13 +259,18 @@ app.on('login', (event, webContents, details, authInfo, callback) => {
 // Per-page-load state: how many dialogs it has shown, and whether the user muted further ones
 // (like Chrome, offered from the 2nd dialog on). Cleared on navigation or when the tab closes.
 const pageDialogState = new Map(); // webContents id -> { count, muted }
+const pageDialogWired = new WeakSet(); // each webContents gets its reset listeners once, not once per page
 function pageDialogEntry(wc) {
   let entry = pageDialogState.get(wc.id);
   if (!entry) {
     entry = { count: 0, muted: false };
     pageDialogState.set(wc.id, entry);
-    wc.once('destroyed', () => pageDialogState.delete(wc.id));
-    wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) pageDialogState.delete(wc.id); });
+    if (!pageDialogWired.has(wc)) {
+      pageDialogWired.add(wc);
+      const id = wc.id;
+      wc.once('destroyed', () => pageDialogState.delete(id));
+      wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) pageDialogState.delete(id); });
+    }
   }
   return entry;
 }
@@ -253,9 +283,12 @@ ipcMain.on('page-dialog', (event, req) => {
   const entry = pageDialogEntry(wc);
   if (entry.muted) return silence();
   entry.count += 1;
+  // Named after the frame that asked, not the tab: an ad or other embedded frame's alert must not
+  // appear to come from the site itself.
   let host;
-  try { host = new URL(realUrl(wc) || wc.getURL()).host; } catch { host = wc.getURL(); }
-  const title = host ? `${host} says` : '';
+  try { host = new URL(event.senderFrame?.url || realUrl(wc) || wc.getURL()).host; } catch { host = ''; }
+  const embedded = event.senderFrame && event.senderFrame !== wc.mainFrame;
+  const title = host ? (embedded ? `An embedded page at ${host} says` : `${host} says`) : '';
   const checkboxLabel = entry.count > 1 ? "Don't let this page show more dialogs" : '';
   const finish = (value, checkboxChecked) => {
     if (checkboxChecked) entry.muted = true;
@@ -286,7 +319,7 @@ app.whenReady().then(() => {
 
 // ---------- permissions: ask like Safari, remember per origin ----------
 
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem']);
+const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']); // display-capture: the screen picker (pickScreenToShare) is the consent
 const PROMPTABLE = {
   media: 'use your camera and microphone',
   geolocation: 'know your location',
@@ -301,6 +334,7 @@ function setupPermissions() {
 
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     if (ALWAYS_ALLOWED.has(permission)) return callback(true);
+    if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
     let origin;
     try {
@@ -312,19 +346,91 @@ function setupPermissions() {
     const key = `${origin}|${permission}`;
     if (permissionDecisions.has(key)) return callback(permissionDecisions.get(key));
     if (settingsBackend.permissionDefault(permission) === 'block') return callback(false); // [settings] default: Block
-    const { response } = await dialog.showMessageBox(win, {
+    // Tied to the asking tab: it waits while that tab is in the background, and is dropped (not
+    // remembered as a "no") if the tab navigates away or closes first.
+    const { response, cancelled } = await dialog.showMessageBox(win, {
       type: 'question',
       buttons: ["Don't Allow", 'Allow'],
       defaultId: 0,
       cancelId: 0,
       message: `Allow ${new URL(origin).host} to ${reason}?`,
+      owner: wc,
     });
+    if (cancelled) return callback(false);
     permissionDecisions.set(key, response === 1);
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
   });
   ses.setPermissionCheckHandler((_wc, permission, origin) =>
     ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
+  ses.setDisplayMediaRequestHandler(pickScreenToShare);
+}
+
+// Links for other apps (mailto:, tel:, zoommtg:, slack:, …) did nothing, because every
+// permission not on the list above was refused. Now they ask first, as Chrome does: "Open the app
+// for mailto: links?", remembered for the site until Lumen quits. Schemes that reach local files,
+// run script, or are known to launch Windows tools with attacker-chosen input are never opened.
+const BLOCKED_SCHEMES = new Set(['file', 'javascript', 'vbscript', 'data', 'blob', 'filesystem', 'about', 'chrome', 'chrome-extension', 'devtools', 'view-source', 'jar', 'res', 'hcp', 'shell', 'search', 'search-ms', 'ms-msdt', 'ms-officecmd', 'ms-appinstaller', 'ms-cxh', 'ms-cxh-full', 'ms-settings', 'lumen']);
+const externalDecisions = new Map(); // `${origin}|${scheme}` -> true (allowed for this session)
+async function askOpenExternal(wc, details) {
+  let scheme;
+  let origin = '';
+  try { scheme = new URL(details.externalURL).protocol.slice(0, -1).toLowerCase(); } catch { return false; }
+  try { origin = new URL(details.requestingUrl || wc.getURL()).origin; } catch {}
+  if (!/^[a-z][a-z0-9+.-]*$/.test(scheme) || BLOCKED_SCHEMES.has(scheme)) return false;
+  const key = `${origin}|${scheme}`;
+  if (externalDecisions.get(key)) return true;
+  let host = '';
+  try { host = new URL(origin).host; } catch {}
+  const label = { mailto: 'your email app', tel: 'your phone app', sms: 'your messages app' }[scheme] || `the app for ${scheme}: links`;
+  const { response, cancelled } = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['Cancel', 'Open'],
+    defaultId: 1,
+    cancelId: 0,
+    message: `Open ${label}?`,
+    detail: host ? `${host} wants to open ${label}.` : `This page wants to open ${label}.`,
+    owner: wc,
+  });
+  if (cancelled || response !== 1) return false;
+  externalDecisions.set(key, true);
+  return true;
+}
+
+// Screen sharing (Meet, Zoom, Teams on the web) failed outright: there was no handler for
+// getDisplayMedia. The user picks an entire screen or one window from a menu of thumbnails;
+// closing the menu shares nothing.
+async function pickScreenToShare(request, callback) {
+  let done = false;
+  const answer = (streams) => { if (!done) { done = true; callback(streams); } };
+  try {
+    const { desktopCapturer, nativeImage } = require('electron');
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 96, height: 60 }, fetchWindowIcons: false });
+    const lumen = win && !win.isDestroyed() ? win.getMediaSourceId() : '';
+    const pickable = sources.filter((s) => s.id !== lumen);
+    if (!pickable.length || !win || win.isDestroyed()) return answer({});
+    let host = '';
+    try { host = new URL(request.securityOrigin || request.frame?.url || '').host; } catch {}
+    let picked = null;
+    const item = (s, label) => ({ label, icon: s.thumbnail.isEmpty() ? undefined : nativeImage.createFromBuffer(s.thumbnail.toPNG()).resize({ width: 48 }), click: () => { picked = s; } });
+    const screens = pickable.filter((s) => s.id.startsWith('screen:'));
+    const windows = pickable.filter((s) => s.id.startsWith('window:'));
+    Menu.buildFromTemplate([
+      { label: host ? `Share with ${host}` : 'Share your screen', enabled: false },
+      ...screens.map((s, i) => item(s, screens.length > 1 ? `Entire screen ${i + 1}` : 'Entire screen')),
+      ...(windows.length ? [{ type: 'separator' }] : []),
+      ...windows.slice(0, 20).map((s) => item(s, s.name.length > 60 ? `${s.name.slice(0, 59)}…` : s.name)),
+      { type: 'separator' },
+      { label: 'Cancel' },
+    ]).popup({
+      window: win,
+      // The click runs just after the menu closes; give it a moment before answering.
+      callback: () => setTimeout(() => answer(picked ? { video: picked, ...(request.audioRequested && process.platform === 'win32' && picked.id.startsWith('screen:') ? { audio: 'loopback' } : {}) } : {}), 50),
+    });
+  } catch (err) {
+    console.error('[lumen] screen sharing picker failed:', err.message);
+    answer({});
+  }
 }
 
 // ---------- Chrome extensions (installed from the Chrome Web Store) ----------
@@ -514,6 +620,7 @@ function showAppMenu({ x, y }) {
     { label: 'Ad Blocker', submenu: adblock.menu() },
     { label: 'Extensions', submenu: extensionsMenu() },
     { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }, // [settings]
+    ...(isDefaultBrowser() ? [] : [{ label: 'Make Lumen Your Default Browser…', click: makeDefaultBrowser }]),
     { type: 'separator' },
     { label: 'Developer Tools', accelerator: 'F12', click: () => wc?.toggleDevTools() },
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
@@ -674,6 +781,7 @@ function tabState() {
         zoom: Math.round(wc.getZoomFactor() * 100),
         bookmarked: isWebUrl(url) && bookmarked.has(url),
         groupId: t.groupId || null,
+        alert: dialogs.pendingFor(wc), // a dialog is waiting for this background tab
       };
     }),
     activeId,
@@ -750,6 +858,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   return { id, webContents: wc };
 }
 
+const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url || '')?.[1] || null;
+
 // Wires a tab's WebContentsView (navigation, zoom, favicon/title tracking, close-on-destroy,
 // extensions, HTTPS-only/zoom defaults) and loads `url`. Split out of openTab() so wakeTab() (tab
 // sleeping, below) can rebuild a woken tab's view identically instead of duplicating all of this.
@@ -758,6 +868,9 @@ function wireView(tab, url) {
   const wc = tab.view.webContents;
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
+    // An extension's pages open only from that same extension: a web page could otherwise open any
+    // extension page it liked (and whatever that page does with its privileges).
+    if (target.startsWith('chrome-extension://') && extensionIdOf(target) !== extensionIdOf(wc.getURL())) return { action: 'deny' };
     if (disposition === 'new-window') {
       // A real popup (sign-in, payment): it keeps window.opener so it can report back to the page.
       return {
@@ -796,6 +909,36 @@ function wireView(tab, url) {
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
+  // A crashed page (or one out of memory) was left blank with no way back. Show a "This page
+  // crashed" page with Reload instead; the crashed page's own entry stays in history behind it.
+  wc.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit' || tab.closing || !tabs.includes(tab)) return;
+    const failedUrl = tab.lastUrl || '';
+    tab.hungAsked = false;
+    setImmediate(() => {
+      if (wc.isDestroyed() || !tabs.includes(tab)) return;
+      const params = new URLSearchParams({ url: failedUrl, kind: 'crashed', desc: details.reason, code: String(details.exitCode ?? '') });
+      wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
+    });
+  });
+  // A page stuck in a loop: ask once whether to wait or close it (which ends its process and shows
+  // the crashed page above, so the tab itself and its history stay).
+  wc.on('unresponsive', () => {
+    if (tab.hungAsked || tab.closing) return;
+    tab.hungAsked = true;
+    let host = '';
+    try { host = new URL(realUrl(wc)).host; } catch {}
+    dialogs.showMessageBox(win, {
+      type: 'warning', buttons: ['Wait', 'Close Page'], defaultId: 0, cancelId: 0,
+      message: `${host || 'This page'} isn't responding`,
+      detail: 'You can wait for it to respond, or close the page.',
+      owner: wc,
+    }).then(({ response, cancelled }) => {
+      if (response === 1 && !cancelled && !wc.isDestroyed()) wc.forcefullyCrashRenderer();
+    });
+  });
+  wc.on('responsive', () => { tab.hungAsked = false; });
+  wc.on('did-navigate', (_e, url) => { if (!url.startsWith(ERROR_URL)) tab.lastUrl = url; });
   wc.on('did-navigate', (_e, url) => {
     // The error page replaces the failed entry, so Back skips past it.
     if (url.startsWith(ERROR_URL)) {
@@ -806,8 +949,17 @@ function wireView(tab, url) {
       return;
     }
     recordVisit(url, wc.getTitle());
+    tab.lastVisitUrl = url;
     tab.pageText = ''; // a new page: its text arrives after it loads
     scheduleAutoGroup();
+  });
+  // Single-page sites (YouTube, GitHub, Gmail…) change pages without a full load; those pages
+  // belong in History and address bar suggestions too. A jump to a #section of the same page
+  // isn't a new visit. The title catches up through 'page-title-updated' (updateTitle).
+  wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+    if (!isMainFrame || url.split('#')[0] === (tab.lastVisitUrl || '').split('#')[0]) return;
+    tab.lastVisitUrl = url;
+    recordVisit(url, wc.getTitle());
   });
   wc.on('did-finish-load', () => readPageText(tab));
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
@@ -829,6 +981,7 @@ function wireView(tab, url) {
   let allowNextUnload = false;
   wc.on('will-prevent-unload', (event) => {
     if (allowNextUnload || !tab.closing) { allowNextUnload = false; event.preventDefault(); return; }
+    tab.unloadAsked = true; // requestCloseTab's frozen-page timeout leaves this close to the user
     dialogs.showMessageBox(win, {
       type: 'warning',
       buttons: ['Cancel', 'Leave'],
@@ -837,7 +990,9 @@ function wireView(tab, url) {
       message: 'Leave site?',
       detail: 'Changes you made may not be saved.',
       owner: wc,
+      bringToFront: true, // the user asked to close this tab, so show it with its question
     }).then(({ response }) => {
+      tab.unloadAsked = false;
       if (response !== 1) { tab.closing = false; return; }
       allowNextUnload = true;
       if (tabs.some((t) => t.id === id)) requestCloseTab(id); // the main case: retry the close, this time it goes through
@@ -850,6 +1005,8 @@ function wireView(tab, url) {
   // If the page closes itself, drop the tab instead of keeping a dead one around. sleepTab() (below)
   // removes this exact listener first, so a deliberate sleep is never mistaken for the page closing.
   tab.onViewDestroyed = () => closeTab(id, { destroyed: true });
+  const contentsId = wc.id;
+  wc.once('destroyed', () => adblock.forget(contentsId)); // the new-tab "blocked" total counts open tabs only
   wc.once('destroyed', tab.onViewDestroyed);
 
   if (!settings) { // [settings] no debugger and no extensions on the settings tab
@@ -985,6 +1142,7 @@ function switchTab(id) {
   const current = activeTab();
   if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
   layout();
+  dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
   sendTabs();
   return true;
 }
@@ -1000,6 +1158,7 @@ function closeTab(id, { destroyed = false } = {}) {
   // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
   if (url && !isInternal(url)) closedTabs.push(url);
+  if (closedTabs.length > 50) closedTabs.splice(0, closedTabs.length - 50); // Reopen Closed Tab goes back 50
   if (!win || win.isDestroyed()) return; // the app is quitting
   if (tab.view) win.contentView.removeChildView(tab.view); // no view to remove if it was sleeping
   if (!destroyed && alive(tab)) tab.view.webContents.close();
@@ -1023,7 +1182,13 @@ function requestCloseTab(id) {
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
   tab.closing = true;
   tab.view.webContents.close({ waitForBeforeUnload: true });
+  // A frozen page never answers the beforeunload check, so the close never finished. If the tab is
+  // still here after a moment and isn't asking "Leave site?", close it without waiting.
+  setTimeout(() => {
+    if (tabs.includes(tab) && tab.closing && !tab.unloadAsked) closeTab(id);
+  }, CLOSE_TIMEOUT_MS);
 }
+const CLOSE_TIMEOUT_MS = 3000;
 
 function listTabs() {
   // Sleeping tabs stay listed (from their sleep snapshot) so the agent can still see and switch to
@@ -1037,13 +1202,9 @@ function listTabs() {
   }));
 }
 
-// Omnibox input: URLs load directly, everything else becomes a search.
+// Omnibox input: URLs load directly, everything else becomes a search (search.js).
 function resolveInput(text) {
-  const value = text.trim();
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^about:/i.test(value)) return value;
-  if (/^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?(\/|$)/i.test(value)) return normalizeUrl(value);
-  if (!/\s/.test(value) && /^[^\s/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(value)) return normalizeUrl(value);
-  return searchUrlFor(readSettings().searchEngine, value);
+  return resolveAddressInput(text, readSettings().searchEngine);
 }
 
 function zoomBy(wc, step) {
@@ -1709,11 +1870,35 @@ function createWindow() {
     },
   });
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
-  nativeTheme.on('updated', () => {
-    if (process.platform !== 'darwin' && ui()) win.setTitleBarOverlay(titleBarOverlay());
-  });
   win.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
   win.on('close', saveSession);
+  // The window is gone (on macOS the app can keep running): the session was just saved, so end
+  // the tab pages too, or a video or call kept playing with no window to stop it.
+  win.on('closed', () => { uiReady = false; dropDeadWindowViews(); });
+  // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
+  // dead window. The tabs themselves live in their own processes and are unaffected.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit' || !ui()) return;
+    console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
+    ui().reload();
+  });
+  let uiHungAsked = false;
+  win.webContents.on('unresponsive', () => {
+    if (uiHungAsked) return;
+    uiHungAsked = true;
+    dialogs.showMessageBox(win, {
+      type: 'warning', buttons: ['Wait', 'Reload Lumen'], defaultId: 0, cancelId: 0,
+      message: "Lumen's window isn't responding",
+      detail: 'Your tabs are safe. Reloading redraws the toolbar and sidebar.',
+    }).then(({ response }) => { if (response === 1 && ui()) ui().forcefullyCrashRenderer(); });
+  });
+  win.webContents.on('responsive', () => { uiHungAsked = false; });
+  win.webContents.on('did-finish-load', () => {
+    if (!uiReady) return; // the first load: set up below
+    sendTabs(); // a reload after a crash: bring the fresh UI up to date
+    const items = agent.transcript();
+    if (items.length) ui()?.send('agent:history', { items });
+  });
   win.on('focus', () => ui()?.send('window-focus', true));
   win.on('blur', () => ui()?.send('window-focus', false));
   win.on('resize', () => { hideSuggestions(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
@@ -1724,8 +1909,38 @@ function createWindow() {
     restoreSession();
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
+    uiReady = true;
+    openLinksFromOtherApps(pendingLinks.splice(0));
   });
 }
+let uiReady = false; // the window's UI has loaded and its tabs are open
+// The title bar buttons follow the theme (one listener for the app, not one per window reopened).
+nativeTheme.on('updated', () => {
+  if (process.platform !== 'darwin' && ui()) win.setTitleBarOverlay(titleBarOverlay());
+});
+
+// ---------- links from other apps: Lumen as the default browser ----------
+// A link clicked in another app arrives as a command-line argument (at launch, or through
+// 'second-instance' when Lumen is already running) or, on macOS, as 'open-url'.
+const pendingLinks = [];
+const linksIn = (argv) => argv.slice(1).filter((arg) => /^https?:\/\//i.test(arg));
+function openLinksFromOtherApps(urls) {
+  if (!urls.length) return;
+  if (!uiReady) { pendingLinks.push(...urls); return; }
+  urls.forEach((url, i) => openTab(url, { background: i < urls.length - 1 }));
+  focusWindow();
+}
+pendingLinks.push(...linksIn(process.argv));
+app.on('open-url', (event, url) => { event.preventDefault(); openLinksFromOtherApps([url]); });
+// Registering is the user's choice (the ⋯ menu), never done silently. Windows then needs its own
+// Default apps page to confirm; macOS asks by itself.
+function makeDefaultBrowser() {
+  // Run from source (`electron .`), the registered command must include the app folder.
+  const args = process.defaultApp ? [process.execPath, [path.resolve(process.argv[1] || '.')]] : [];
+  for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme, ...args);
+  if (process.platform === 'win32') shell.openExternal('ms-settings:defaultapps').catch(() => {});
+}
+const isDefaultBrowser = () => app.isDefaultProtocolClient('https');
 
 function groupTabsFor(name, ids) {
   const known = ids.filter((id) => tabs.some((t) => t.id === id));
@@ -1780,6 +1995,8 @@ if (process.env.CLAUDE_BROWSER_TEST) {
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
+  global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu() };
+  global.__patchSettings = (patch) => writeSettings({ ...readSettings(), ...patch });
 }
 
 // ---------- [settings] lumen://settings ----------
@@ -1797,9 +2014,7 @@ const settingsBackend = settingsPage.create({
   uninstallExtension,
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
   openTab: (url) => openTab(url),
-  // Only the settings tab's own top-level settings document may use the prefs:* calls.
-  isSettingsSender: (event) => tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
-    && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url),
+  isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
 });
 
@@ -2205,8 +2420,9 @@ const focusWindow = () => {
 };
 const singleInstance = process.argv.includes('--install-shortcuts') || instance.acquireInstanceLock(app);
 if (!singleInstance) app.quit();
-// Opening the shortcut again focuses the running browser (two copies would overwrite each other's files).
-app.on('second-instance', focusWindow);
+// Opening the shortcut again focuses the running browser (two copies would overwrite each other's
+// files); a link opened from another app while Lumen runs comes the same way, and opens in a tab.
+app.on('second-instance', (_e, argv) => { focusWindow(); openLinksFromOtherApps(linksIn(argv)); });
 
 app.whenReady().then(async () => {
   if (process.argv.includes('--install-shortcuts')) {
@@ -2216,8 +2432,11 @@ app.whenReady().then(async () => {
   }
   if (!singleInstance) return;
   // Widevine CDM for DRM video (castlabs ECS build only; `components` is undefined on stock
-  // Electron). Started first so the download overlaps the rest of startup.
-  const widevine = components?.whenReady().catch((err) => console.error('Widevine component install failed (continuing without it):', err));
+  // Electron). It installs in the background: the window no longer waits for it (a first run
+  // showed nothing for up to 10 s). Pages that need DRM before it's ready can simply be reloaded.
+  components?.whenReady()
+    .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
+    .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
@@ -2234,11 +2453,6 @@ app.whenReady().then(async () => {
   if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
   for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
-  // Wait (at most 10 s, so an offline first run never hangs) for the Widevine install started above.
-  if (widevine) {
-    await Promise.race([widevine, new Promise((resolve) => setTimeout(resolve, 10000))]);
-    console.log('Widevine components status:', components.status());
-  }
   createWindow();
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
