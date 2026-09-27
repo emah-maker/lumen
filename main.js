@@ -12,9 +12,9 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
-const { Agent, normalizeUrl, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, validateInput: validateToolInput } = require('./agent');
+const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, validateInput: validateToolInput } = require('./agent');
 const providers = require('./providers');
-const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor } = require('./search');
+const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./importer'));
@@ -77,22 +77,16 @@ const closedTabs = []; // URLs, most recent last
 // ---------- settings / API key ----------
 
 let settingsCache = null;
+const settingsFile = require('./settings-file'); // crash-safe read/write (see settings-file.js)
 
 function readSettings() {
-  if (!settingsCache) {
-    try {
-      settingsCache = JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8'));
-    } catch {
-      settingsCache = {};
-    }
-  }
+  if (!settingsCache) settingsCache = settingsFile.loadJson(SETTINGS_FILE());
   return { ...settingsCache };
 }
 
 function writeSettings(settings) {
   settingsCache = { ...settings };
-  fs.mkdirSync(path.dirname(SETTINGS_FILE()), { recursive: true });
-  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
+  settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
 
 // Favicons out of settings.json and into their own debounced/async store (see favicon-store.js) —
@@ -1033,13 +1027,9 @@ function listTabs() {
   }));
 }
 
-// Omnibox input: URLs load directly, everything else becomes a search.
+// Omnibox input: URLs load directly, everything else becomes a search (search.js).
 function resolveInput(text) {
-  const value = text.trim();
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^about:/i.test(value)) return value;
-  if (/^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?(\/|$)/i.test(value)) return normalizeUrl(value);
-  if (!/\s/.test(value) && /^[^\s/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(value)) return normalizeUrl(value);
-  return searchUrlFor(readSettings().searchEngine, value);
+  return resolveAddressInput(text, readSettings().searchEngine);
 }
 
 function zoomBy(wc, step) {
