@@ -1635,3 +1635,18 @@ async function renderMcpSettings() {
 $('mcp-enabled')?.addEventListener('change', (e) => window.assistant.setMcpEnabled?.(e.target.checked));
 $('mcp-section')?.addEventListener('toggle', (e) => { if (e.target.open) renderMcpSettings(); });
 renderMcpSettings();
+
+// [settings] lumen://settings: the "All settings…" link, and the UI preferences set there.
+{
+  const applyPrefs = (p) => {
+    if (!p) return;
+    const root = document.documentElement;
+    root.classList.toggle('pref-compact-tabs', Boolean(p.compactTabs));
+    root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
+    root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion));
+    root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
+  };
+  window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
+  window.lumenPrefs?.onChange(applyPrefs);
+  document.getElementById('all-settings')?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage());
+}

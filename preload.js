@@ -56,6 +56,13 @@ contextBridge.exposeInMainWorld('browser', {
   onSuggestionPicked: on('suggest:picked'),
 });
 
+// [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).
+contextBridge.exposeInMainWorld('lumenPrefs', {
+  openSettingsPage: (section) => ipcRenderer.send('settings-page:open', section),
+  get: () => ipcRenderer.invoke('prefs:ui'),
+  onChange: on('prefs:ui'),
+});
+
 contextBridge.exposeInMainWorld('assistant', {
   ask: (text, runId, images) => ipcRenderer.send('agent:ask', text, runId, images),
   stop: () => ipcRenderer.send('agent:stop'),
