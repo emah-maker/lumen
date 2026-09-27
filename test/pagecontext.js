@@ -14,7 +14,9 @@ const path = require('path');
   }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_API_KEY: 'x', OPENAI_API_KEY: 'x', XAI_API_KEY: 'x', GEMINI_API_KEY: 'x', OPENROUTER_API_KEY: 'x' } });
+  // Any existing file counts as an installed Claude Code (the engine itself is faked below), so the
+  // claudecode case runs on machines without it, like the release builders.
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_CLAUDE_BIN: process.execPath, ANTHROPIC_API_KEY: 'x', OPENAI_API_KEY: 'x', XAI_API_KEY: 'x', GEMINI_API_KEY: 'x', OPENROUTER_API_KEY: 'x' } });
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
