@@ -224,6 +224,8 @@ const dialogs = createDialogs({
   switchToContents: (wc) => { const tab = tabByContents(wc); if (tab) switchTab(tab.id); },
   isInFront: (wc) => { const tab = tabByContents(wc); return !tab || tab.id === activeId; },
   onPendingChange: () => { if (tabs.length) sendTabs(); }, // a tab's "dialog waiting" badge
+  // A popup window's own page: its dialogs are drawn in the popup (null means the browser window).
+  windowFor: (wc) => { const w = BrowserWindow.fromWebContents(wc); return w && w !== win && !w.isDestroyed() ? w : null; },
   restoreFocus: () => { const wc = activeTab()?.webContents; if (wc) wc.focus(); else ui()?.focus(); },
 });
 // Every existing `dialog.showMessageBox(...)` call (here, in settings-backend.js, features/downloads.js)
@@ -609,6 +611,8 @@ function showAppMenu({ x, y }) {
     { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
     { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
     { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
+    { label: 'Print…', accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
+    ...(process.platform === 'darwin' ? [] : [{ label: 'Full Screen', accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
     { type: 'separator' },
     { label: 'Bookmarks', submenu: bookmarksMenu() },
     { label: 'History', submenu: historyMenu() },
@@ -747,6 +751,7 @@ function tabState() {
   // Hoisted: bookmarks() re-reads settings.json and rebuilds an array; sendTabs() fires on nearly
   // every tab/nav event, so doing this once here instead of per-tab inside map avoids O(tabs) reloads.
   const bookmarked = new Set(bookmarks().map((b) => b.url));
+  const defaultZoomPercent = Math.round((settingsBackend.prefs().defaultZoom || 1) * 100);
   return {
     groups: tabGroups.state(),
     // A sleeping tab has no view/webContents to read from; it still gets a row, built from the
@@ -763,8 +768,10 @@ function tabState() {
           page: null,
           error: false,
           zoom: 100,
+          zoomDefault: 100,
           bookmarked: isWebUrl(url) && bookmarked.has(url),
           groupId: t.groupId || null,
+          pinned: Boolean(t.pinned),
           sleeping: true,
         };
       }
@@ -779,9 +786,11 @@ function tabState() {
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : null, // Lumen's own pages get their own icon
         error: wc.getURL().startsWith(ERROR_URL),
         zoom: Math.round(wc.getZoomFactor() * 100),
+        zoomDefault: isWebUrl(url) ? defaultZoomPercent : 100, // [settings] the zoom pill shows only when a page differs from it
         bookmarked: isWebUrl(url) && bookmarked.has(url),
         groupId: t.groupId || null,
         alert: dialogs.pendingFor(wc), // a dialog is waiting for this background tab
+        pinned: Boolean(t.pinned),
       };
     }),
     activeId,
@@ -792,6 +801,7 @@ function tabState() {
 
 let sessionTimer = null;
 function sendTabs() {
+  keepPinnedFirst();
   ui()?.send('tabs', tabState());
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession(); }, 3000);
@@ -832,10 +842,14 @@ function layout() {
   }
 }
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false } = {}) {
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false } = {}) {
   const view = new WebContentsView({
-    // [settings] font sizes and spell check from Settings; only the settings tab gets its preload
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings) },
+    // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
+    // and only the History page gets history-preload.js
+    webPreferences: {
+      sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings),
+      ...(historyPage ? { preload: path.join(__dirname, 'history-preload.js') } : {}),
+    },
   });
   const id = nextTabId++;
   const tab = { id, view, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now() };
@@ -863,7 +877,7 @@ const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url ||
 // Wires a tab's WebContentsView (navigation, zoom, favicon/title tracking, close-on-destroy,
 // extensions, HTTPS-only/zoom defaults) and loads `url`. Split out of openTab() so wakeTab() (tab
 // sleeping, below) can rebuild a woken tab's view identically instead of duplicating all of this.
-function wireView(tab, url) {
+function wireView(tab, url, history = null) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
@@ -972,6 +986,8 @@ function wireView(tab, url) {
   }
   wc.on('before-input-event', (event, input) => handleShortcut(event, input));
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
+  // A real click in the page is the user choosing it: the guard above must not take focus back.
+  wc.on('before-mouse-event', (_e, mouse) => { if (mouse.type === 'mouseDown') tab.showGuardUntil = 0; });
   // A page with a beforeunload handler: by default Electron blocks the close/navigation (this event
   // fires and, unless we call event.preventDefault() *now*, the unload stays prevented). We can't
   // await the user's answer inside this handler, so instead: let it stay blocked, ask "Leave site?",
@@ -1012,8 +1028,15 @@ function wireView(tab, url) {
   if (!settings) { // [settings] no debugger and no extensions on the settings tab
     applyChromeIdentity(wc);
     syncExtensions(() => extensions?.addTab(wc, win));
+    // A popup (sign-in, payment) presents itself as Chrome like the tab that opened it: Google
+    // sign-in and some payment pages refuse browsers they don't recognise.
+    wc.on('did-create-window', (child) => applyChromeIdentity(child.webContents));
   }
-  wc.loadURL(url).catch(() => {});
+  if (history?.entries?.length) {
+    wc.navigationHistory.restore({ entries: history.entries, index: history.index }).catch(() => wc.loadURL(url).catch(() => {}));
+  } else {
+    wc.loadURL(url).catch(() => {});
+  }
   return wc;
 }
 
@@ -1030,6 +1053,13 @@ function sleepTab(tab) {
   const wc = tab.view.webContents;
   tab.sleepUrl = realUrl(wc) || wc.getURL();
   tab.sleepTitle = wc.getTitle() || 'New Tab';
+  // Back/forward (and each entry's saved scroll position and form fields) come back on wake.
+  try {
+    const nav = wc.navigationHistory;
+    tab.sleepHistory = { entries: nav.getAllEntries(), index: nav.getActiveIndex() };
+  } catch {
+    tab.sleepHistory = null;
+  }
   tab.sleeping = true;
   wc.off('destroyed', tab.onViewDestroyed); // this is a sleep, not a close: don't let that handler drop the tab
   win.contentView.removeChildView(tab.view);
@@ -1046,7 +1076,22 @@ function wakeTab(tab) {
   tab.sleeping = false;
   win.contentView.addChildView(view);
   view.setVisible(false);
-  wireView(tab, tab.sleepUrl || newTabUrl());
+  const history = tab.sleepHistory;
+  tab.sleepHistory = null;
+  wireView(tab, tab.sleepUrl || newTabUrl(), history);
+}
+
+// A tab from the saved session that hasn't been opened yet: a sleeping tab (above) with no view,
+// which switchTab() wakes the first time it's shown. Starting Lumen loads only the active tab
+// instead of every tab of the last session at once.
+function addRestoredTab(url, title) {
+  const tab = {
+    id: nextTabId++, view: null, favicon: faviconStore.get(hostOf(url)) || null, groupId: null,
+    userRemoved: false, settings: false, lastActiveAt: Date.now(),
+    sleeping: true, sleepUrl: url, sleepTitle: title || hostOf(url) || 'New Tab', sleepHistory: null,
+  };
+  tabs.push(tab);
+  return tab;
 }
 
 // A page may have text typed into a form; sleeping can't ask "Leave site?" the way a real close does
@@ -1108,6 +1153,18 @@ ipcMain.on('address:touched', () => {
   const wc = activeTab()?.webContents;
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
 });
+// The new-tab page's Search | Ask AI choice (kept in the page's own localStorage), so Enter in the
+// address bar can follow it while that page is showing.
+ipcMain.handle('home:mode', async () => {
+  const wc = activeTab()?.webContents;
+  if (!wc || !isNewTab(wc.getURL())) return null;
+  try {
+    return (await wc.executeJavaScript("localStorage.getItem('lumen.home.mode')")) === 'ask' ? 'ask' : 'search';
+  } catch {
+    return null;
+  }
+});
+
 function guardFirstLoadFocus(tab, url) {
   const openedAt = ++uiEventSeq;
   const wc = tab.view.webContents;
@@ -1209,8 +1266,13 @@ function resolveInput(text) {
 
 function zoomBy(wc, step) {
   if (!wc) return;
-  settingsBackend.noteUserZoom(wc); // [settings] the default zoom leaves this site alone now
-  wc.setZoomLevel(step === 0 ? 0 : Math.min(Math.max(wc.getZoomLevel() + step, -3), 5));
+  // [settings] Reset (Ctrl+0, the zoom pill) goes back to the default zoom from Settings, and the
+  // site follows that default again; zooming by hand makes the default leave this site alone.
+  if (step === 0) settingsBackend.resetZoom(wc);
+  else {
+    settingsBackend.noteUserZoom(wc);
+    wc.setZoomLevel(Math.min(Math.max(wc.getZoomLevel() + step, -3), 5));
+  }
   sendTabs();
 }
 
@@ -1324,11 +1386,42 @@ function undoOrganize() {
 
 const colorLabel = (c) => c.charAt(0).toUpperCase() + c.slice(1);
 
+// ---------- pinned tabs ----------
+// Pinned tabs sit at the left of the strip, icon only, and are never in a group. Anything that
+// puts a pinned tab into a group (the agent's group_tabs, "Organize") unpins it instead.
+function keepPinnedFirst() {
+  for (const t of tabs) if (t.pinned && t.groupId) t.pinned = false;
+  const firstLoose = tabs.findIndex((t) => !t.pinned);
+  if (firstLoose === -1 || !tabs.slice(firstLoose).some((t) => t.pinned)) return;
+  tabs = [...tabs.filter((t) => t.pinned), ...tabs.filter((t) => !t.pinned)];
+}
+
+function pinTab(id, on) {
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab || Boolean(tab.pinned) === on) return;
+  if (on && tab.groupId) tabGroups.remove(id, { byUser: true });
+  tab.pinned = on;
+  tab.userRemoved = true; // pinned or unpinned by hand: automatic grouping leaves it alone
+  // A newly pinned tab goes after the other pinned tabs; an unpinned one becomes the first loose tab.
+  tabs.splice(tabs.indexOf(tab), 1);
+  tabs.splice(tabs.filter((t) => t.pinned).length, 0, tab);
+  tabGroups.cleanup();
+  sendTabs();
+}
+
 function tabMenu(id, { x, y }) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
+  if (tab.pinned) {
+    Menu.buildFromTemplate([
+      { label: 'Unpin Tab', click: () => pinTab(id, false) },
+      { type: 'separator' },
+      { label: 'Close Tab', click: () => requestCloseTab(id) },
+    ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
+    return;
+  }
   const others = tabGroups.state().filter((g) => g.id !== tab.groupId);
-  const items = [{
+  const items = [{ label: 'Pin Tab', click: () => pinTab(id, true) }, { type: 'separator' }, {
     label: 'Add to New Group',
     click: () => {
       if (tab.groupId) tabGroups.remove(id, { byUser: true });
@@ -1450,16 +1543,27 @@ function importMenu() {
 
 // ---------- history menu ----------
 
+// The History page asks for its entries over IPC (history-preload.js). They used to be packed into
+// the page's URL, which a long history pushed past Chromium's URL length limit (a blank page).
 function openHistoryPage() {
-  const entries = [...history.values()].sort((a, b) => b.last - a.last).slice(0, 2000).map(({ url, title, last }) => ({ url, title, last }));
-  openTab(`${HISTORY_URL}#${encodeURIComponent(JSON.stringify(entries))}`);
+  openTab(HISTORY_URL, { historyPage: true });
 }
+const fromHistoryPage = (event) => event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith(HISTORY_URL);
+ipcMain.handle('history:list', (event) => {
+  if (!fromHistoryPage(event)) return [];
+  return [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000).map(({ url, title, last }) => ({ url, title, last }));
+});
+ipcMain.handle('history:remove', (event, url) => {
+  if (!fromHistoryPage(event) || typeof url !== 'string' || !history.delete(url)) return false;
+  saveHistorySoon();
+  return true;
+});
 
 function historyMenu() {
   const recent = [...history.values()].sort((a, b) => b.last - a.last).slice(0, 15);
   if (!recent.length) return [{ label: 'No history yet', enabled: false }];
   return [
-    { label: 'Show All History', accelerator: 'CmdOrCtrl+H', click: openHistoryPage },
+    { label: 'Show All History', accelerator: process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H', click: openHistoryPage },
     { type: 'separator' },
     ...recent.map((h) => ({ label: (h.title || bareUrl(h.url)).slice(0, 60), click: () => openTab(h.url) })),
     { type: 'separator' },
@@ -1676,7 +1780,9 @@ function handleShortcut(event, input) {
   else if (mod && key === '-') zoomBy(wc, -0.5);
   else if (mod && key === '0') zoomBy(wc, 0);
   else if (mod && key === 'd') toggleBookmark();
+  else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
+  else if (mod && key === 'p') wc?.print({}, () => {});
   else if (mod && key === ',') openSettingsPage(); // [settings]
   else if (process.platform === 'darwin' && input.meta && key === '[') wc?.navigationHistory.goBack();
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
@@ -1684,6 +1790,7 @@ function handleShortcut(event, input) {
   else if (input.alt && key === 'arrowleft') wc?.navigationHistory.goBack();
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
   else if (key === 'f5') reloadActive();
+  else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
   else if (key === 'f12') wc?.toggleDevTools();
   else handled = false;
   if (handled) event.preventDefault();
@@ -1766,10 +1873,13 @@ function saveSession() {
   const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
   const saved = tabs.filter((t) => isWebUrl(urlOf(t)));
   const urls = saved.map(urlOf);
+  const titleOf = (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '');
   writeSettings({ ...readSettings(), session: {
     urls,
+    titles: saved.map(titleOf), // shown on the restored tabs, which don't load until they're opened
     active: Math.max(0, saved.findIndex((t) => t.id === activeId)),
     groupIds: saved.map((t) => t.groupId || null),
+    pinned: saved.map((t) => Boolean(t.pinned)),
     groups: tabGroups.snapshot(),
   } });
 }
@@ -1789,16 +1899,20 @@ function restoreSession() {
     return;
   }
   tabGroups.restore(saved.groups);
+  const active = Math.min(Math.max(0, saved.active || 0), saved.urls.length - 1);
+  let activeTabId = null;
   saved.urls.forEach((url, i) => {
-    const { id } = openTab(url, { background: true });
+    // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
+    if (i === active) activeTabId = openTab(url, { background: true }).id;
+    const tab = i === active ? tabs.find((t) => t.id === activeTabId) : addRestoredTab(url, saved.titles?.[i]);
     const groupId = saved.groupIds?.[i];
-    const tab = tabs.find((t) => t.id === id);
-    if (tab && groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
-    else if (tab) tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
+    if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
+    else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
+    if (saved.pinned?.[i] && !tab.groupId) tab.pinned = true;
   });
   tabGroups.cleanup();
   tabGroups.arrange();
-  switchTab(tabs[Math.min(saved.active, tabs.length - 1)].id);
+  switchTab(activeTabId ?? tabs[0].id);
 }
 
 // ---------- macOS ----------
@@ -1815,6 +1929,8 @@ function macMenu() {
         { label: 'New Tab', ...shown('Cmd+T'), click: () => openTab() },
         { label: 'Reopen Closed Tab', ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
         { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
+        { type: 'separator' },
+        { label: 'Print…', ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
         { type: 'separator' },
         { label: 'Close Tab', ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
       ],
@@ -1991,7 +2107,10 @@ if (process.env.CLAUDE_BROWSER_TEST) {
   global.__setTopicAi = (on) => writeSettings({ ...readSettings(), topicAi: Boolean(on) });
   global.__undoOrganize = undoOrganize;
   global.__markDragged = (id) => { const t = tabs.find((x) => x.id === id); if (t) t.userMoved = true; };
-  global.__tabsArray = () => tabs.map((t) => ({ id: t.id, groupId: t.groupId || null, userRemoved: Boolean(t.userRemoved) }));
+  global.__tabsArray = () => tabs.map((t) => ({ id: t.id, groupId: t.groupId || null, userRemoved: Boolean(t.userRemoved), pinned: Boolean(t.pinned), sleeping: Boolean(t.sleeping) }));
+  global.__pinTab = pinTab;
+  global.__openHistoryPage = openHistoryPage;
+  global.__zoomBy = (step) => zoomBy(activeTab()?.webContents, step);
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
@@ -2105,7 +2224,11 @@ ipcMain.on('tab:move', (_e, id, toIndex) => {
   const from = tabs.findIndex((t) => t.id === id);
   if (from === -1) return;
   const [tab] = tabs.splice(from, 1);
-  tabs.splice(Math.max(0, Math.min(Number(toIndex) || 0, tabs.length)), 0, tab);
+  // Pinned tabs reorder among themselves; a loose tab can't be dropped in among them.
+  const pinnedCount = tabs.filter((t) => t.pinned).length;
+  const [min, max] = tab.pinned ? [0, pinnedCount] : [pinnedCount, tabs.length];
+  tabs.splice(Math.max(min, Math.min(Number(toIndex) || 0, max)), 0, tab);
+  if (tab.pinned) { sendTabs(); return; }
   // Dropped between two tabs of a group: joins it. Dragged out of its own group: leaves it (and
   // stays out of automatic grouping).
   const i = tabs.indexOf(tab);
@@ -2162,7 +2285,7 @@ ipcMain.handle('suggest:query', (_e, query) => suggestions(query));
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));
-ipcMain.on('suggest:pick', (_e, index) => ui()?.send('suggest:picked', index));
+ipcMain.on('suggest:pick', (_e, index, listId) => ui()?.send('suggest:picked', { index, listId }));
 
 ipcMain.on('find:start', (_e, text, options = {}) => {
   const wc = activeTab()?.webContents;

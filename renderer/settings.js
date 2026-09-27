@@ -290,10 +290,20 @@ async function buildAi(card) {
   }).catch(() => {});
 }
 
+// A Relaunch button in the row of a setting that only takes effect at launch; shown while that
+// setting differs from what Lumen was started with (refreshRestartNotes).
+function withRelaunch(row, key, id) {
+  const button = h('button', { class: 'primary relaunch', text: 'Relaunch', hidden: true, onclick: () => S.relaunch() });
+  button.dataset.key = key;
+  if (id) button.id = id;
+  row.querySelector('.controls').prepend(button);
+  return row;
+}
+
 function buildAppearance(card) {
   card.append(
     select('theme', 'Theme', 'Lumen and the websites you visit follow this (websites see it as prefers-color-scheme). Open Google results reload to match.', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]),
-    toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'),
+    withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'),
     select('defaultZoom', 'Page zoom', 'The default for every site. Sites you zoom by hand keep their own level.', st.zooms.map((z) => [z, `${Math.round(z * 100)}%`]), { number: true }),
     select('fontSize', 'Font size', 'The default text size websites start from. Applies to new tabs.', st.fontSizes.map((s) => [s, { 9: 'Very small', 12: 'Small', 16: 'Medium (recommended)', 20: 'Large', 24: 'Very large' }[s]]), { number: true }),
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
@@ -479,10 +489,7 @@ function buildAccessibility(card) {
 }
 
 function buildSystem(card) {
-  const relaunch = h('button', { id: 'relaunch', class: 'primary', text: 'Relaunch', hidden: true, onclick: () => S.relaunch() });
-  const accel = toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.');
-  accel.querySelector('.controls').prepend(relaunch);
-  card.append(accel);
+  card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.'), 'hardwareAcceleration', 'relaunch'));
   card.append(toggle('tabSleep', 'Put unused tabs to sleep', 'Frees up memory from background tabs left untouched for a while; switching back reloads them.'));
   if (st.platform === 'darwin') {
     card.append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
@@ -586,8 +593,7 @@ async function buildInternals(card) {
 // ---------- restart notes, page classes ----------
 
 function refreshRestartNotes() {
-  const relaunch = $('relaunch');
-  if (relaunch) relaunch.hidden = !st.restartNeeded.length;
+  for (const button of document.querySelectorAll('button.relaunch')) button.hidden = !st.restartNeeded.includes(button.dataset.key);
 }
 function applyPageClasses() {
   document.documentElement.classList.toggle('reduce-motion', Boolean(st.prefs.reduceMotion));

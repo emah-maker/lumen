@@ -4,7 +4,7 @@ const CLOCK = '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8
 const list = document.getElementById('list');
 let lastShown = 0;
 
-window.suggest.onItems(({ items, selected }) => {
+window.suggest.onItems(({ items, selected, listId }) => {
   // Animate when the list opens (first use, after the view was hidden, or after a long pause), not per keystroke.
   const opening = lastShown === 0 || performance.now() - lastShown > 1500;
   lastShown = performance.now();
@@ -29,7 +29,7 @@ window.suggest.onItems(({ items, selected }) => {
     // mousedown, not click: the address bar loses focus on mousedown and hides this list.
     li.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      window.suggest.pick(index);
+      window.suggest.pick(index, listId); // listId: the address bar only acts on a pick from the list it last showed
     });
     li.style.animationDelay = `${Math.min(index, 5) * 22}ms`;
     list.append(li);

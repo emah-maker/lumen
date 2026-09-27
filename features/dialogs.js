@@ -21,8 +21,13 @@ function createDialogs(deps) {
   const queue = []; // items waiting to be shown; queue[0] is the one on screen once `showing` is set
   let showing = null;
 
+  // The window the overlay is in: the browser window, or a popup whose own page asked. A popup's
+  // alert() is drawn in the popup, where the user is looking, not behind it in the main window.
+  let host = null;
+  const hostFor = (item) => (item.owner && !item.owner.isDestroyed() && deps.windowFor?.(item.owner)) || deps.win();
+
   function ensureOverlay() {
-    if (overlay) return overlay;
+    if (overlay && !overlay.webContents.isDestroyed()) return overlay;
     overlay = new WebContentsView({
       webPreferences: { preload: deps.paths.preload, sandbox: true, contextIsolation: true },
     });
@@ -33,7 +38,7 @@ function createDialogs(deps) {
 
   function layout() {
     if (!overlay) return;
-    const win = deps.win();
+    const win = host && !host.isDestroyed() ? host : deps.win();
     if (!win || win.isDestroyed()) return;
     const [width, height] = win.getContentSize();
     overlay.setBounds({ x: 0, y: 0, width, height });
@@ -67,9 +72,16 @@ function createDialogs(deps) {
   const inFront = (item) => !item.owner || item.owner.isDestroyed() || deps.isInFront?.(item.owner) !== false;
 
   function present(item) {
-    const win = deps.win();
+    const win = hostFor(item);
     if (!win || win.isDestroyed()) { finish(item, item.cancelledResult()); return; }
+    const popup = win !== deps.win();
     const view = ensureOverlay();
+    if (host && host !== win && !host.isDestroyed()) host.contentView.removeChildView(view);
+    if (popup && host !== win) {
+      // The popup may close with the overlay still in it; take it back out first.
+      win.once('close', () => { if (host === win) { win.contentView.removeChildView(view); host = null; } });
+    }
+    host = win;
     win.contentView.addChildView(view); // re-adding raises it to the top, above the active tab
     layout();
     view.setVisible(true);
@@ -84,7 +96,14 @@ function createDialogs(deps) {
     if (showing) return;
     const item = queue.find(inFront);
     deps.onPendingChange?.();
-    if (!item) { hide(); if (afterDialog) deps.restoreFocus?.(); return; }
+    if (!item) {
+      hide();
+      if (afterDialog) {
+        if (host && host !== deps.win() && !host.isDestroyed()) host.webContents.focus(); // back to the popup
+        else deps.restoreFocus?.();
+      }
+      return;
+    }
     showing = item;
     present(item);
   }
