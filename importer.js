@@ -7,17 +7,51 @@ const os = require('os');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
-const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-const roaming = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+const home = os.homedir();
+const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+const roaming = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+const macSupport = path.join(home, 'Library', 'Application Support');
+const linuxConfig = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
 
-const BROWSERS = [
-  { id: 'chrome', label: 'Google Chrome', kind: 'chromium', root: path.join(local, 'Google', 'Chrome', 'User Data') },
-  { id: 'edge', label: 'Microsoft Edge', kind: 'chromium', root: path.join(local, 'Microsoft', 'Edge', 'User Data') },
-  { id: 'brave', label: 'Brave', kind: 'chromium', root: path.join(local, 'BraveSoftware', 'Brave-Browser', 'User Data') },
-  { id: 'vivaldi', label: 'Vivaldi', kind: 'chromium', root: path.join(local, 'Vivaldi', 'User Data') },
-  { id: 'opera', label: 'Opera', kind: 'chromium', root: path.join(roaming, 'Opera Software'), profileDir: 'Opera Stable' },
-  { id: 'firefox', label: 'Firefox', kind: 'firefox', root: path.join(roaming, 'Mozilla', 'Firefox') },
-];
+// Where each browser keeps its profiles on Windows, macOS and Linux. `roots` are tried in order
+// (Linux Firefox also comes as a Snap or Flatpak). `profileDir` names a fixed profile folder;
+// '' means the root itself is the profile (Opera on macOS and Linux).
+const PLATFORM_BROWSERS = {
+  win32: [
+    { id: 'chrome', label: 'Google Chrome', kind: 'chromium', roots: [path.join(local, 'Google', 'Chrome', 'User Data')] },
+    { id: 'edge', label: 'Microsoft Edge', kind: 'chromium', roots: [path.join(local, 'Microsoft', 'Edge', 'User Data')] },
+    { id: 'brave', label: 'Brave', kind: 'chromium', roots: [path.join(local, 'BraveSoftware', 'Brave-Browser', 'User Data')] },
+    { id: 'vivaldi', label: 'Vivaldi', kind: 'chromium', roots: [path.join(local, 'Vivaldi', 'User Data')] },
+    { id: 'opera', label: 'Opera', kind: 'chromium', roots: [path.join(roaming, 'Opera Software')], profileDir: 'Opera Stable' },
+    { id: 'firefox', label: 'Firefox', kind: 'firefox', roots: [path.join(roaming, 'Mozilla', 'Firefox')] },
+  ],
+  darwin: [
+    { id: 'chrome', label: 'Google Chrome', kind: 'chromium', roots: [path.join(macSupport, 'Google', 'Chrome')] },
+    { id: 'edge', label: 'Microsoft Edge', kind: 'chromium', roots: [path.join(macSupport, 'Microsoft Edge')] },
+    { id: 'brave', label: 'Brave', kind: 'chromium', roots: [path.join(macSupport, 'BraveSoftware', 'Brave-Browser')] },
+    { id: 'vivaldi', label: 'Vivaldi', kind: 'chromium', roots: [path.join(macSupport, 'Vivaldi')] },
+    { id: 'opera', label: 'Opera', kind: 'chromium', roots: [path.join(macSupport, 'com.operasoftware.Opera')], profileDir: '' },
+    { id: 'firefox', label: 'Firefox', kind: 'firefox', roots: [path.join(macSupport, 'Firefox')] },
+    { id: 'safari', label: 'Safari', kind: 'safari', roots: [path.join(home, 'Library', 'Safari')] },
+  ],
+  linux: [
+    { id: 'chrome', label: 'Google Chrome', kind: 'chromium', roots: [path.join(linuxConfig, 'google-chrome')] },
+    { id: 'chromium', label: 'Chromium', kind: 'chromium', roots: [path.join(linuxConfig, 'chromium'), path.join(home, 'snap', 'chromium', 'common', 'chromium')] },
+    { id: 'edge', label: 'Microsoft Edge', kind: 'chromium', roots: [path.join(linuxConfig, 'microsoft-edge')] },
+    { id: 'brave', label: 'Brave', kind: 'chromium', roots: [path.join(linuxConfig, 'BraveSoftware', 'Brave-Browser')] },
+    { id: 'vivaldi', label: 'Vivaldi', kind: 'chromium', roots: [path.join(linuxConfig, 'vivaldi')] },
+    { id: 'opera', label: 'Opera', kind: 'chromium', roots: [path.join(linuxConfig, 'opera')], profileDir: '' },
+    { id: 'firefox', label: 'Firefox', kind: 'firefox', roots: [path.join(home, '.mozilla', 'firefox'), path.join(home, 'snap', 'firefox', 'common', '.mozilla', 'firefox'), path.join(home, '.var', 'app', 'org.mozilla.firefox', '.mozilla', 'firefox')] },
+  ],
+};
+// Each browser's root is the first of its candidates that exists (or the first, when none do).
+const BROWSERS = (PLATFORM_BROWSERS[process.platform] || PLATFORM_BROWSERS.linux).map(({ roots, ...b }) => ({
+  ...b,
+  get root() { return roots.find((r) => fs.existsSync(r)) || roots[0]; },
+}));
+// Every kind, whatever this computer runs: tests read fake profiles of any kind by id.
+const KINDS = { chrome: 'chromium', chromium: 'chromium', edge: 'chromium', brave: 'chromium', vivaldi: 'chromium', opera: 'chromium', firefox: 'firefox', safari: 'safari' };
+const LABELS = { chrome: 'Google Chrome', chromium: 'Chromium', edge: 'Microsoft Edge', brave: 'Brave', vivaldi: 'Vivaldi', opera: 'Opera', firefox: 'Firefox', safari: 'Safari' };
 
 const MAX_BOOKMARKS = 1000;
 const MAX_HISTORY = 5000;
@@ -39,7 +73,7 @@ function isWorthImporting(url) {
 
 // The profile a Chromium browser last used (Local State), falling back to "Default".
 function chromiumProfile(browser) {
-  if (browser.profileDir) return path.join(browser.root, browser.profileDir);
+  if (browser.profileDir !== undefined) return path.join(browser.root, browser.profileDir);
   try {
     const state = JSON.parse(fs.readFileSync(path.join(browser.root, 'Local State'), 'utf8'));
     const last = state.profile?.last_used;
@@ -64,26 +98,32 @@ function firefoxProfile(browser) {
   } catch {
     // No profiles.ini; scan the folder.
   }
-  try {
-    for (const name of fs.readdirSync(profilesDir)) {
-      const p = path.join(profilesDir, name);
-      if (fs.existsSync(path.join(p, 'places.sqlite'))) return p;
+  // Windows and macOS keep profiles in Profiles/; Linux keeps them in the root itself.
+  for (const dir of [profilesDir, browser.root]) {
+    try {
+      for (const name of fs.readdirSync(dir)) {
+        const p = path.join(dir, name);
+        if (fs.existsSync(path.join(p, 'places.sqlite'))) return p;
+      }
+    } catch {
+      // No profiles here.
     }
-  } catch {
-    // No profiles.
   }
   return null;
 }
 
 function profileOf(browser) {
+  if (browser.kind === 'safari') return browser.root;
   return browser.kind === 'firefox' ? firefoxProfile(browser) : chromiumProfile(browser);
 }
 
-// Browsers with a readable profile on this computer.
+// Browsers with a readable profile on this computer. Safari is listed whenever its folder exists:
+// macOS may still refuse to let Lumen read it, and the import then explains how to allow that.
 function detectBrowsers() {
   return BROWSERS.filter((b) => {
     const p = profileOf(b);
     if (!p) return false;
+    if (b.kind === 'safari') return fs.existsSync(p);
     return b.kind === 'firefox'
       ? fs.existsSync(path.join(p, 'places.sqlite'))
       : fs.existsSync(path.join(p, 'Bookmarks')) || fs.existsSync(path.join(p, 'History'));
@@ -147,14 +187,90 @@ function firefoxData(profile) {
   })) || { bookmarks: [], history: [] };
 }
 
+// ---- Safari (macOS): bookmarks in Bookmarks.plist, history in History.db ----
+// Bookmarks.plist is a binary property list; macOS's own `plutil` turns it into XML, which the small
+// reader below understands (dict, array, string, integer, real, true/false, date, data).
+function parsePlistXml(xml) {
+  const tokens = xml.replace(/<\?xml[^>]*\?>|<!DOCTYPE[^>]*>|<!--[\s\S]*?-->/g, '').match(/<[^>]+>|[^<]+/g) || [];
+  let i = 0;
+  const unescape = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_m, n) => String.fromCodePoint(Number(n))).replace(/&amp;/g, '&');
+  const next = () => { while (i < tokens.length && !tokens[i].startsWith('<')) i++; return tokens[i++]; };
+  const text = (tag) => { let out = ''; while (i < tokens.length && tokens[i] !== `</${tag}>`) out += tokens[i++]; i++; return unescape(out); };
+  function value(open = next()) {
+    if (!open) return undefined;
+    const tag = open.replace(/[<>/]/g, '').trim().split(/\s/)[0];
+    if (open.endsWith('/>')) return tag === 'true' ? true : tag === 'false' ? false : tag === 'dict' ? {} : tag === 'array' ? [] : '';
+    if (tag === 'plist') { const v = value(); next(); return v; }
+    if (tag === 'dict') {
+      const out = {};
+      for (let t = next(); t && t !== '</dict>'; t = next()) { const key = text('key'); out[key] = value(); }
+      return out;
+    }
+    if (tag === 'array') {
+      const out = [];
+      for (let t = next(); t && t !== '</array>'; t = next()) out.push(value(t));
+      return out;
+    }
+    const raw = text(tag);
+    return tag === 'integer' || tag === 'real' ? Number(raw) : raw;
+  }
+  return value();
+}
+
+function readSafariPlist(file) {
+  const bytes = fs.readFileSync(file);
+  if (bytes.subarray(0, 6).toString() !== 'bplist') return parsePlistXml(bytes.toString('utf8'));
+  const xml = require('child_process').execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', file], { maxBuffer: 64 * 1024 * 1024 });
+  return parsePlistXml(xml.toString('utf8'));
+}
+
+function safariBookmarks(root) {
+  const out = [];
+  const tree = readSafariPlist(path.join(root, 'Bookmarks.plist'));
+  const walk = (node, folder) => {
+    if (!node || out.length >= MAX_BOOKMARKS) return;
+    if (node.WebBookmarkType === 'WebBookmarkTypeLeaf' && isWeb(node.URLString)) {
+      out.push({ url: node.URLString, title: node.URIDictionary?.title || '', ...(folder ? { folder } : {}) });
+      return;
+    }
+    // Reading List items are pages to read later, not bookmarks.
+    if (node.Title === 'com.apple.ReadingList') return;
+    const name = node.Title && !['BookmarksBar', 'BookmarksMenu', 'Favorites'].includes(node.Title) ? node.Title : folder;
+    for (const child of node.Children || []) walk(child, node === tree ? folder : name);
+  };
+  walk(tree, null);
+  return out;
+}
+
+// Safari stores visit times as seconds since 2001-01-01 (Mac absolute time).
+const safariTime = (t) => Math.round((Number(t) + 978307200) * 1000);
+function safariHistory(root) {
+  return withDatabaseCopy(path.join(root, 'History.db'), (db) => db.prepare(
+    `SELECT i.url AS url, v.title AS title, i.visit_count AS visits, MAX(v.visit_time) AS last
+     FROM history_items i JOIN history_visits v ON v.history_item = i.id GROUP BY i.id ORDER BY last DESC LIMIT ?`,
+  ).all(MAX_HISTORY).filter((r) => isWorthImporting(r.url)).map((r) => ({ url: r.url, title: r.title || '', visits: Number(r.visits) || 1, last: safariTime(r.last) }))) || [];
+}
+
+function safariData(root) {
+  try {
+    return { bookmarks: fs.existsSync(path.join(root, 'Bookmarks.plist')) ? safariBookmarks(root) : [], history: safariHistory(root) };
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EACCES') {
+      throw new Error('macOS doesn’t let Lumen read Safari’s data yet. In System Settings → Privacy & Security → Full Disk Access, turn on Lumen, then import again.');
+    }
+    throw err;
+  }
+}
+
 // Reads a browser's data. profilePath overrides detection (used by tests).
 function readBrowser(id, profilePath) {
-  const browser = BROWSERS.find((b) => b.id === id);
+  const browser = BROWSERS.find((b) => b.id === id) || (profilePath && KINDS[id] ? { id, kind: KINDS[id], label: LABELS[id] } : null);
   if (!browser) throw new Error(`Unknown browser: ${id}`);
   const profile = profilePath || profileOf(browser);
   if (!profile) throw new Error(`No ${browser.label} profile found.`);
+  if (browser.kind === 'safari') return { label: browser.label, ...safariData(profile) };
   if (browser.kind === 'firefox') return { label: browser.label, ...firefoxData(profile) };
   return { label: browser.label, bookmarks: chromiumBookmarks(profile), history: chromiumHistory(profile) };
 }
 
-module.exports = { BROWSERS, detectBrowsers, readBrowser, chromiumTime, isWorthImporting };
+module.exports = { BROWSERS, detectBrowsers, readBrowser, chromiumTime, isWorthImporting, parsePlistXml };

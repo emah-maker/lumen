@@ -56,5 +56,36 @@ try {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ---- Safari import (macOS): Bookmarks.plist as XML (what plutil produces) and History.db
+const { readBrowser } = require('../importer');
+const { DatabaseSync } = require('node:sqlite');
+const safari = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-fake-safari-'));
+try {
+  const leaf = (title, url) => `<dict><key>URIDictionary</key><dict><key>title</key><string>${title}</string></dict><key>URLString</key><string>${url}</string><key>WebBookmarkType</key><string>WebBookmarkTypeLeaf</string></dict>`;
+  fs.writeFileSync(path.join(safari, 'Bookmarks.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Children</key><array>
+    <dict><key>Title</key><string>BookmarksBar</string><key>WebBookmarkType</key><string>WebBookmarkTypeList</string>
+      <key>Children</key><array>${leaf('Swift &amp; Co', 'https://swift.org/')}
+        <dict><key>Title</key><string>Recipes</string><key>WebBookmarkType</key><string>WebBookmarkTypeList</string><key>Children</key><array>${leaf('Soup', 'https://soup.example/')}</array></dict>
+        ${leaf('Local', 'file:///Users/me/notes.txt')}
+      </array></dict>
+    <dict><key>Title</key><string>com.apple.ReadingList</string><key>Children</key><array>${leaf('Later', 'https://later.example/')}</array></dict>
+  </array>
+  <key>WebBookmarkFileVersion</key><integer>1</integer><key>Sync</key><true/>
+</dict></plist>`);
+  const db = new DatabaseSync(path.join(safari, 'History.db'));
+  db.exec('CREATE TABLE history_items (id INTEGER PRIMARY KEY, url TEXT, visit_count INTEGER); CREATE TABLE history_visits (id INTEGER PRIMARY KEY, history_item INTEGER, visit_time REAL, title TEXT)');
+  db.prepare('INSERT INTO history_items VALUES (1, ?, 9)').run('https://www.apple.com/');
+  db.prepare('INSERT INTO history_visits VALUES (1, 1, ?, ?)').run((Date.UTC(2026, 8, 1) / 1000) - 978307200, 'Apple');
+  db.close();
+  const data = readBrowser('safari', safari);
+  check('Safari bookmarks are read (web only, folders kept, Reading List left out)', JSON.stringify(data.bookmarks) === JSON.stringify([{ url: 'https://swift.org/', title: 'Swift & Co' }, { url: 'https://soup.example/', title: 'Soup', folder: 'Recipes' }]), JSON.stringify(data.bookmarks));
+  check('Safari history is read with its dates', data.history.length === 1 && data.history[0].url === 'https://www.apple.com/' && data.history[0].last === Date.UTC(2026, 8, 1) && data.history[0].visits === 9, JSON.stringify(data.history));
+} finally {
+  fs.rmSync(safari, { recursive: true, force: true });
+}
+
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);
