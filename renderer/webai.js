@@ -71,5 +71,17 @@
     showToast(result ? `Page copied — paste it into ${NAME[mode] || 'the chat'}` : 'Nothing to copy from this tab');
   });
 
+  // "Ask AI" on the new-tab page. main.js already copied the prompt when only a web panel can take it.
+  window.browser.onAskFromHome?.(async ({ text, copied, name }) => {
+    if (copied) {
+      await setMode(mode === 'agent' ? 'claude' : mode, { open: true });
+      showToast(`Prompt copied: paste it into ${NAME[mode] || name}`);
+      return;
+    }
+    if (mode !== 'agent') await setMode('agent');
+    showSidebar(true);
+    ask(text);
+  });
+
   window.browser.webAiState?.().then((s) => { if (s?.mode && s.mode !== 'agent') setMode(s.mode); });
 })();

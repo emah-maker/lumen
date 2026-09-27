@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('browser', {
   webAiShare: () => ipcRenderer.invoke('webai:share'),
   onWebAiSwitch: on('webai:switch'),
   onAskSelection: on('ask-selection'),
+  onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
   onOpenSettings: on('open-settings'),

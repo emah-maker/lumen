@@ -18,6 +18,7 @@ function data() {
     if (Array.isArray(parsed)) return { favorites: parsed.filter(isWeb), frequent: [], blocked: null };
     return {
       search: parsed.search && typeof parsed.search.url === 'string' && /^https:\/\//.test(parsed.search.url) ? parsed.search : null,
+      assistant: parsed.assistant && typeof parsed.assistant.name === 'string' ? parsed.assistant : null,
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites.filter(isWeb) : DEFAULTS,
       frequent: Array.isArray(parsed.frequent) ? parsed.frequent.filter(isWeb) : [],
       blocked: Number.isFinite(parsed.blocked) ? parsed.blocked : null,
@@ -131,10 +132,7 @@ function render() {
   const { favorites: favs, frequent: freq, blocked } = data();
   const now = new Date();
   document.getElementById('date').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  const [first, ...rest] = greeting(now).split(' ');
-  const h1 = document.getElementById('greeting');
-  h1.textContent = `${first} `;
-  h1.append(Object.assign(document.createElement('span'), { className: 'glow', textContent: rest.join(' ') }));
+  document.getElementById('greeting').textContent = greeting(now);
   const box = document.getElementById('sections');
   box.replaceChildren(section('Favorites', favorites(favs)));
   if (freq.length) box.append(section('Frequently Visited', frequent(freq)));
@@ -152,17 +150,55 @@ document.addEventListener('keydown', (e) => {
 render();
 window.addEventListener('hashchange', render);
 
-// Search with the engine chosen in settings (the hash carries { label, url with %s }).
+// The field either searches with the engine chosen in settings (the hash carries { label, url
+// with %s }) or asks the assistant. Asking reloads this page with ?ask=…; the browser cancels that
+// navigation and hands the prompt to the sidebar, so the tab stays here.
 (() => {
-  const engine = data().search;
+  const { search: engine, assistant } = data();
   const form = document.querySelector('form[role=search]');
   const input = document.getElementById('q');
-  if (!engine || !form || !input) return;
-  input.placeholder = `Search ${engine.label}`;
-  input.setAttribute('aria-label', `Search ${engine.label}`);
+  const radios = [...document.querySelectorAll('#mode [role=radio]')];
+  const KEY = 'lumen.home.mode';
+  const who = assistant?.name || 'Claude';
+  let mode = 'search';
+  try { if (localStorage.getItem(KEY) === 'ask') mode = 'ask'; } catch {}
+
+  function apply(next, { save = true, focus = false } = {}) {
+    mode = next === 'ask' ? 'ask' : 'search';
+    for (const r of radios) {
+      const on = r.dataset.mode === mode;
+      r.setAttribute('aria-checked', String(on));
+      r.tabIndex = on ? 0 : -1;
+      if (on && focus) r.focus();
+    }
+    const text = mode === 'ask' ? `Ask ${who}…` : `Search ${engine?.label || 'Google'}`;
+    input.placeholder = text;
+    input.setAttribute('aria-label', text);
+    if (save) try { localStorage.setItem(KEY, mode); } catch {}
+  }
+  apply(mode, { save: false });
+
+  for (const r of radios) r.addEventListener('click', () => { apply(r.dataset.mode); input.focus(); });
+  document.getElementById('mode').addEventListener('keydown', (e) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+      apply(mode === 'ask' ? 'search' : 'ask', { focus: true });
+    }
+  });
+  input.addEventListener('keydown', (e) => {
+    const toggle = (e.ctrlKey && e.key === '/') || (e.altKey && !e.ctrlKey && (e.key === 'a' || e.key === 'A'));
+    if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); }
+  });
+
   form.addEventListener('submit', (e) => {
-    e.preventDefault();
     const q = input.value.trim();
+    if (mode === 'ask') {
+      e.preventDefault();
+      if (q) location.href = `${location.pathname}?ask=${encodeURIComponent(q)}${location.hash}`;
+      return;
+    }
+    if (!engine) return; // the form's own action (Google) handles it
+    e.preventDefault();
     if (q) location.href = engine.url.replace('%s', encodeURIComponent(q));
   });
 })();

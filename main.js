@@ -609,6 +609,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     sendTabs();
     if (favicons[0]) cacheFavicon(wc.getURL(), favicons[0]);
   });
+  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url); });
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) tab.favicon = null;
   });
@@ -950,8 +951,41 @@ function newTabUrl() {
     frequent: frequentSites().map(withIcon),
     blocked: [...blockedCount.values()].reduce((sum, n) => sum + n, 0), // ads/trackers blocked on open tabs
     search: engineFor(readSettings().searchEngine),
+    assistant: homeAssistant(),
   };
   return `${NEW_TAB_URL}#${encodeURIComponent(JSON.stringify(data))}`;
+}
+
+// Who "Ask AI" on the new-tab page talks to, and whether the built-in agent can answer right now
+// (an API key or a CLI sign-in; otherwise the prompt goes to the open web panel via the clipboard).
+const ASSISTANT_NAMES = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok', gemini: 'Gemini', claude: 'Claude', chatgpt: 'ChatGPT', grok: 'Grok' };
+function homeAssistant() {
+  const settings = readSettings();
+  const mode = WEB_PANELS[settings.webAiMode] ? settings.webAiMode : 'agent';
+  const { provider } = providers.splitModel(settings.model || DEFAULT_MODEL);
+  const agentUsable = provider === 'anthropic'
+    ? Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY || cliAuth.profileState().signedIn)
+    : Boolean(providerKey(provider));
+  const name = mode === 'agent' || agentUsable ? ASSISTANT_NAMES[provider] : ASSISTANT_NAMES[mode];
+  return { name: name || 'Claude', agentUsable };
+}
+
+// The new-tab page asks by loading itself with ?ask=<prompt>: cancel that and hand the prompt to the sidebar.
+function askFromHome(event, url) {
+  if (!isNewTab(url)) return false;
+  let text;
+  try { text = new URL(url).searchParams.get('ask'); } catch { return false; }
+  if (text === null) return false;
+  event.preventDefault();
+  text = text.trim().slice(0, 20000);
+  if (!text) return true;
+  // A web panel without a usable agent: never type into the site; put the prompt on the clipboard.
+  const { name, agentUsable } = homeAssistant();
+  const webMode = WEB_PANELS[readSettings().webAiMode] ? readSettings().webAiMode : null;
+  const copied = Boolean(webMode) && !agentUsable;
+  if (copied) clipboard.writeText(text);
+  ui()?.send('ask-from-home', { text, copied, name });
+  return true;
 }
 
 // When a favorite or frequently visited site shows its favicon, keep a small copy for the new-tab page.

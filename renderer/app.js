@@ -974,7 +974,7 @@ function setAssistantIdentity(group) {
     setTimeout(() => { swap(); button.classList.remove('mark-out'); button.classList.add('mark-in'); setTimeout(() => button.classList.remove('mark-in'), 420); }, 120);
   }
   const empty = document.querySelector('#empty .empty-title');
-  if (empty) empty.innerHTML = `<span class="glow">Ask anything.</span> Or give ${who.name} a task on this page.`;
+  if (empty) empty.textContent = `Ask anything, or give ${who.name} a task on this page.`;
   const pill = $('agent-pill-text');
   if (pill) pill.textContent = `${who.name} is using this tab`;
 }
@@ -1542,7 +1542,7 @@ $('new-chat').onclick = () => {
   prompt.focus();
 };
 
-// Pause decorative loops (agent glow, pill light) while the window is in the background.
+// Pause looping indicators (the live dot, the working line) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
 
 // ---------- AI agents over MCP (session B) ----------

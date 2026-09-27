@@ -1,37 +1,31 @@
 :root {
   color-scheme: light dark;
-  --bg: #eceefb;
+  --bg: #f5f5f7;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --field: rgba(64, 60, 170, 0.07);
-  --border: rgba(40, 36, 110, 0.13);
-  --hairline: rgba(40, 36, 110, 0.08);
-  --highlight: rgba(255, 255, 255, 0.85); /* the lit top edge of a raised surface */
-  --text: #13132b;
-  --muted: #555878;
-  --faint: #9a9cbd;
-  --hover: rgba(84, 70, 230, 0.08);
-  --accent: #5846ff;
-  --accent-rgb: 88 70 255;
-  --accent-bright: #8a5cff;
-  --accent-deep: #3a2cd8;
-  --accent-soft: rgba(88, 70, 255, 0.16);
+  --field: rgba(0, 0, 0, 0.05);
+  --border: rgba(0, 0, 0, 0.1);
+  --hairline: rgba(0, 0, 0, 0.08);
+  --highlight: rgba(255, 255, 255, 0.7); /* the lit top edge of a raised surface */
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --faint: #a1a1a6;
+  --hover: rgba(0, 0, 0, 0.05);
+  --accent: #007aff;
+  --accent-rgb: 0 122 255;
+  --accent-bright: #409cff;
+  --accent-deep: #0051d5;
+  --accent-soft: rgba(0, 122, 255, 0.14);
   --on-accent: #ffffff;
-  --danger: #d4003c;
-  --danger-soft: rgba(255, 45, 85, 0.1);
-  --success: #0f8a4a;
+  --danger: #d70015;
+  --danger-soft: rgba(255, 59, 48, 0.1);
+  --success: #248a3d;
   --warning: #b25000;
-  --shadow-k: 0.35;
-  --glass: rgba(255, 255, 255, 0.74);
-  /* Lumen's light: electric blue → violet → magenta. Used on purpose: primary actions, the
-     active tab, the AI while it works, focus, and the homepage. */
-  --brand-1: #2f6bff;
-  --brand-2: #7040ff;
-  --brand-3: #e0338f;
-  --brand-4: #ff9f1c;
-  --brand-rgb-1: 47 107 255;
-  --brand-rgb-3: 224 51 143;
-  --brand-gradient: linear-gradient(120deg, var(--brand-1), var(--brand-2) 52%, var(--brand-3));
+  --shadow-k: 0.3; /* Apple keeps elevation shadows soft in light mode */
+  --glass: rgba(255, 255, 255, 0.72);
+  /* Tab-group colours. */
+  --g-blue: #007aff; --g-purple: #af52de; --g-pink: #ff2d55; --g-red: #ff3b30;
+  --g-orange: #ff9500; --g-yellow: #ffcc00; --g-green: #34c759; --g-gray: #8e8e93;
   --radius: 8px;
   --sidebar-width: 360px;
   --composer-h: 44px;
@@ -60,45 +54,38 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b0c1d;
-    --surface: #14162f;
-    --surface-raised: #1c1f40;
-    --field: rgba(160, 168, 255, 0.08);
-    --border: rgba(160, 168, 255, 0.17);
-    --hairline: rgba(160, 168, 255, 0.1);
-    --highlight: rgba(210, 214, 255, 0.07);
-    --text: #f1f2ff;
-    --muted: #a4a8d8;
-    --faint: #6b6f9f;
-    --hover: rgba(150, 140, 255, 0.12);
-    --accent: #8475ff;
-    --accent-rgb: 132 117 255;
-    --accent-bright: #b28cff;
-    --accent-deep: #5a45ff;
-    --accent-soft: rgba(132, 117, 255, 0.26);
+    --bg: #1c1c1e;
+    --surface: #2c2c2e;
+    --surface-raised: #3a3a3c;
+    --field: rgba(255, 255, 255, 0.08);
+    --border: rgba(255, 255, 255, 0.12);
+    --hairline: rgba(255, 255, 255, 0.09);
+    --highlight: rgba(255, 255, 255, 0.06);
+    --text: #f5f5f7;
+    --muted: #98989d;
+    --faint: #636366;
+    --hover: rgba(255, 255, 255, 0.07);
+    --accent: #0a84ff;
+    --accent-rgb: 10 132 255;
+    --accent-bright: #409cff;
+    --accent-deep: #0060df;
+    --accent-soft: rgba(10, 132, 255, 0.2);
     --on-accent: #ffffff;
-    --danger: #ff5c7a;
-    --danger-soft: rgba(255, 92, 122, 0.14);
-    --success: #34d399;
+    --danger: #ff453a;
+    --danger-soft: rgba(255, 69, 58, 0.14);
+    --success: #30d158;
     --warning: #ffb340;
     --shadow-k: 1;
-    --glass: rgba(24, 26, 56, 0.74);
-    --brand-1: #4d8dff;
-    --brand-2: #9466ff;
-    --brand-3: #ff5cb0;
-    --brand-4: #ffb347;
-    --brand-rgb-1: 77 141 255;
-    --brand-rgb-3: 255 92 176;
+    --glass: rgba(44, 44, 46, 0.72);
+    --g-blue: #0a84ff; --g-purple: #bf5af2; --g-pink: #ff375f; --g-red: #ff453a;
+    --g-orange: #ff9f0a; --g-yellow: #ffd60a; --g-green: #30d158; --g-gray: #98989d;
   }
 }
-
-/* Animatable angle for the live light that traces the page frame and the agent pill. */
-@property --glow-angle { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
-button { font: inherit; color: inherit; }
+button { font: inherit; color: inherit; transition: transform var(--t-press) ease-out; }
 svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 svg.dots { fill: currentColor; stroke: none; }
 [hidden] { display: none !important; }
@@ -108,7 +95,6 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 input, textarea { caret-color: var(--accent); }
 
 /* Tactile press: every control answers on pointer-down. */
-button { transition: transform var(--t-press) ease-out; }
 button:active:not(:disabled) { transform: scale(0.94); }
 .chip:active:not(:disabled), .btn:active:not(:disabled) { transform: scale(0.97); }
 
@@ -144,7 +130,6 @@ button:active:not(:disabled) { transform: scale(0.94); }
   border-radius: 8px; background: transparent; color: var(--muted);
   cursor: default; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
 }
-.tab.active { min-width: 52px; }
 .tab-inner { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 4px 0 10px; font-size: 12.5px; }
 .tab.active .tab-inner { font-weight: 500; }
 /* Narrow tabs: icon only, centered; the active tab keeps its close button. */
@@ -156,7 +141,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab.dragging { position: relative; z-index: 3; background: var(--surface-raised); color: var(--text); box-shadow: inset 0 1px 0 var(--highlight), 0 10px 24px -6px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); transition: none; scale: 1.03; }
 .tabs.reordering .tab:not(.dragging) { transition: transform var(--t-smooth) var(--spring-smooth), background-color var(--t-fast) ease-out; }
 .tab:hover:not(.active) { background: var(--hover); color: var(--text); }
-.tab.active { color: var(--text); }
+.tab.active { min-width: 52px; color: var(--text); }
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
@@ -207,7 +192,7 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .omnibox input::placeholder { color: var(--muted); }
 .omnibox:has(input:focus) {
   justify-content: flex-start; padding-left: 12px; padding-right: 12px; background: var(--surface-raised); transform: scale(1.012);
-  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--border), 0 0 0 4px var(--accent-soft), 0 10px 28px -10px rgb(var(--accent-rgb) / 0.28);
+  box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 6px 18px -10px rgb(0 0 0 / calc(0.5 * var(--shadow-k)));
 }
 .omnibox:has(input:focus) input { flex: 1; field-sizing: fixed; animation: fade-in var(--t-base) ease-out; }
 .omnibox:has(input:focus) .security { display: none; }
@@ -237,27 +222,21 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: 100px; padding-right
 .zoom-pill:hover { background: var(--hover); color: var(--text); }
 @keyframes pop-in { from { opacity: 0; transform: scale(0.8); } }
 
-/* Visible sign that Claude is driving the current tab: a pill lit by a slowly travelling edge. */
+/* Visible sign that the AI is driving the current tab: a plain pill with a live dot. */
 .agent-pill {
   display: none; position: relative; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 10px; margin-right: 6px;
-  border-radius: 14px; color: var(--accent-bright); font-size: 12px; font-weight: 500; white-space: nowrap;
-  background:
-    linear-gradient(var(--surface-raised), var(--surface-raised)) padding-box,
-    conic-gradient(from var(--glow-angle), var(--accent-deep), var(--accent-bright), var(--accent-deep) 40%, var(--accent-deep)) border-box;
-  border: 1px solid transparent;
-  box-shadow: 0 4px 16px -6px rgb(var(--accent-rgb) / 0.45);
+  border-radius: 14px; color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
+  background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border);
 }
-body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy) var(--spring-snappy), glow-spin 3.2s linear infinite; }
-@keyframes pill-in { from { opacity: 0; transform: translateX(10px) scale(0.92); filter: blur(4px); } }
-@keyframes glow-spin { to { --glow-angle: 360deg; } }
+body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy) var(--spring-snappy); }
+@keyframes pill-in { from { opacity: 0; transform: translateX(8px); } }
 .agent-dot { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .agent-dot::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1px solid var(--accent); animation: ping 1.6s var(--ease-out) infinite; }
 @keyframes ping { from { opacity: 0.9; transform: scale(0.5); } to { opacity: 0; transform: scale(1.8); } }
 #agent-stop { height: 22px; padding: 0 10px; border: none; border-radius: 11px; background: var(--field); color: var(--text); font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
 #agent-stop:hover { background: var(--hover); }
 
-browser-action-list { display: flex; align-items: center; min-height: 28px; }
-browser-action-list { --browser-action-hover-bg: var(--hover); }
+browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); }
 
 /* Find bar: the row opens by animating its grid track, so the page eases down with it. */
 .findbar {
@@ -286,17 +265,14 @@ browser-action-list { --browser-action-hover-bg: var(--hover); }
 /* ---------- body ---------- */
 
 .body { flex: 1; display: flex; min-height: 0; }
-.viewport { flex: 1; min-width: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--hairline); }
-/* While Claude drives the tab, the page is inset 2px and a light travels around its frame. */
-body.agent-active .viewport {
-  background: conic-gradient(from var(--glow-angle), var(--accent-deep), var(--accent-bright) 12%, var(--accent) 22%, var(--accent-deep) 45%, var(--accent-deep) 55%, var(--accent) 78%, var(--accent-deep));
-  animation: glow-spin 3.2s linear infinite;
-}
+.viewport { position: relative; overflow: hidden; flex: 1; min-width: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--hairline); }
+/* While the AI drives the tab, the page is inset 2px inside a solid accent frame. */
+body.agent-active .viewport { background: var(--accent); }
 
 .sidebar {
   position: relative; overflow: hidden;
   /* --reveal (0–1) is driven by a spring in app.js while the sidebar opens or closes. */
-  width: calc(var(--sidebar-width) * var(--reveal, 1)); flex: none; display: flex; flex-direction: column; align-items: flex-end; min-height: 0;
+  width: calc(var(--sidebar-width) * var(--reveal, 1)); max-width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; align-items: flex-end; min-height: 0;
   /* The divider is a real border inside the sidebar: the page view is a native layer drawn on
      top of the UI, so anything painted outside the sidebar's box would be hidden under it. */
   background: var(--bg); border-left: 1px solid var(--border); box-shadow: 0 -1px 0 var(--hairline);
@@ -306,13 +282,13 @@ body.agent-active .viewport {
   width: calc(var(--sidebar-width) - 1px); flex-shrink: 0;
   opacity: calc(0.25 + var(--reveal, 1) * 0.75);
 }
-.sidebar > .messages { flex-shrink: 1; }
-.sidebar > .settings { width: calc(var(--sidebar-width) - 41px); }
-/* Warm-up: painted once at idle, out of flow and underneath the native page view, so the first
-   real open has nothing left to build. */
-/* Warm-up paint in the real spot, under the live page (the native page view covers it). */
+.sidebar > .messages { flex-shrink: 1; min-height: 0; }
+.sidebar > .settings { width: calc(var(--sidebar-width) - 41px); flex-shrink: 1; min-height: 0; overflow-y: auto; }
+.sidebar:has(> .settings:not([hidden])) .empty { display: none; }
+.sidebar:has(> .settings:not([hidden])) > .messages { overflow: hidden; }
+/* Warm-up: painted once at idle in the real spot, under the live page (the native page view
+   covers it), so the first real open has nothing left to build. */
 body.sidebar-hidden .sidebar.prewarm { visibility: visible; position: fixed; top: 82px; bottom: 0; right: 0; width: var(--sidebar-width); }
-.sidebar { max-width: var(--sidebar-width); }
 /* Hidden, the sidebar stays laid out at zero width so opening it costs only a width change. */
 body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 0; }
 .sidebar-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; z-index: 3; cursor: col-resize; }
@@ -325,7 +301,8 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .sidebar-title { font-weight: 500; color: var(--muted); }
 .sidebar-actions { display: flex; gap: 2px; }
 
-.settings { margin: 0 20px 12px; padding: 0 0 16px; border-bottom: 1px solid var(--hairline); animation: drop-in var(--t-smooth) var(--spring-smooth); transform-origin: top; }
+.settings { margin: 0 20px 12px; padding: 0 0 16px; border-bottom: 1px solid var(--hairline); animation: drop-in var(--t-smooth) var(--spring-smooth); transform-origin: top;
+  max-height: calc(100% - var(--composer-h, 44px) - 96px); overflow-y: auto; overscroll-behavior: contain; }
 @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } }
 .settings .field-label { display: block; font-weight: 500; margin-bottom: 8px; }
 .settings input:not(.switch) { width: 100%; height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; transition: background-color var(--t-fast) ease-out, box-shadow var(--t-base) var(--ease-out); }
@@ -334,8 +311,8 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .settings-row { display: flex; justify-content: flex-end; gap: 6px; }
 .btn { height: 28px; padding: 0 12px; border: none; border-radius: 8px; background: var(--field); font-weight: 500; transition: background-color var(--t-fast) ease-out, filter var(--t-fast) ease-out, transform var(--t-press) ease-out, opacity var(--t-base) ease-out; }
 .btn:hover { background: var(--hover); }
-.btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 4px 12px -4px rgb(var(--accent-rgb) / 0.5); }
-.btn.primary:hover { filter: brightness(1.06); }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-deep); }
 
 /* ---------- messages ---------- */
 
@@ -368,7 +345,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   animation: bubble-in var(--t-snappy) var(--spring-snappy);
 }
 @keyframes bubble-in { from { opacity: 0; transform: translateY(10px) scale(0.96); } }
-.msg.assistant { word-wrap: break-word; line-height: 1.55; }
+.msg.assistant { position: relative; word-wrap: break-word; line-height: 1.55; }
 .msg.assistant p { margin: 0 0 8px; }
 .msg.assistant p:last-child { margin-bottom: 0; }
 .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px; padding-left: 20px; }
@@ -438,15 +415,16 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
   box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
   transition: box-shadow var(--t-smooth) var(--ease-out), transform var(--t-smooth) var(--spring-smooth);
 }
-.composer:focus-within { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--border), 0 0 0 4px var(--accent-soft), 0 14px 36px -12px rgb(var(--accent-rgb) / 0.3); }
+.composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
 .composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; max-height: 160px; padding: 4px 0; }
 .composer textarea::placeholder { color: var(--muted); }
 .send {
   position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
-  background: var(--accent); color: var(--on-accent); box-shadow: 0 4px 12px -4px rgb(var(--accent-rgb) / 0.6);
+  background: var(--accent); color: var(--on-accent);
   transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out, box-shadow var(--t-base) ease-out, transform var(--t-snappy) var(--spring-bouncy);
 }
 .send svg { width: 14px; height: 14px; stroke-width: 1.75; transition: transform var(--t-snappy) var(--spring-snappy), opacity var(--t-fast) ease-out; }
+.send:not(:disabled):hover { background: var(--accent-deep); }
 .send:disabled { background: var(--field); color: var(--faint); box-shadow: none; transform: scale(0.92); }
 .send.stop svg { display: none; }
 .send.stop::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--on-accent); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
@@ -464,7 +442,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
   transition: transform var(--t-snappy) var(--spring-snappy), background-color var(--t-base) ease-out, width var(--t-fast) ease-out;
 }
 .switch:active::before { width: 19px; }
-.switch:checked { background: var(--accent); box-shadow: 0 0 12px -2px rgb(var(--accent-rgb) / 0.5); }
+.switch:checked { background: var(--accent); }
 .switch:checked::before { transform: translateX(12px); background: var(--on-accent); }
 .switch:checked:active::before { transform: translateX(9px); }
 .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -507,8 +485,8 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 
 .approval {
   margin: 12px 0; padding: 12px 14px; border-radius: 12px; outline: none; transform-origin: bottom center;
-  background: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.08), rgb(var(--accent-rgb) / 0.03)), var(--surface-raised);
-  box-shadow: inset 0 1px 0 var(--highlight), inset 0 0 0 1px var(--accent-soft), 0 12px 28px -14px rgb(var(--accent-rgb) / 0.45);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--border), 0 8px 22px -14px rgb(0 0 0 / calc(0.7 * var(--shadow-k)));
   animation: card-in var(--t-snappy) var(--spring-snappy);
 }
 @keyframes card-in { from { opacity: 0; transform: translateY(12px) scale(0.94); } }
@@ -542,7 +520,6 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 }
 
 /* Copy a reply: appears on hover/focus at the reply's corner. */
-.msg.assistant { position: relative; }
 .reply-copy {
   position: absolute; right: -4px; bottom: -22px; width: 24px; height: 22px; display: grid; place-items: center;
   border: none; border-radius: 6px; background: transparent; color: var(--muted);
@@ -589,16 +566,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 
 /* ---------- tab groups ---------- */
 
-:root {
-  --g-blue: #007aff; --g-purple: #af52de; --g-pink: #ff2d55; --g-red: #ff3b30;
-  --g-orange: #ff9500; --g-yellow: #ffcc00; --g-green: #34c759; --g-gray: #8e8e93;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --g-blue: #0a84ff; --g-purple: #bf5af2; --g-pink: #ff375f; --g-red: #ff453a;
-    --g-orange: #ff9f0a; --g-yellow: #ffd60a; --g-green: #30d158; --g-gray: #98989d;
-  }
-}
 .group-label {
   -webkit-app-region: no-drag; position: relative; z-index: 1; flex: none;
   display: inline-flex; align-items: center; gap: 5px; height: 22px; max-width: 150px; margin: 3px 1px 3px 5px; padding: 0 9px;
@@ -639,7 +606,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 
 /* Page snapshot during the sidebar animation: pinned to the page's top-left at its original size,
    so the sidebar slides over it; any uncovered strip takes the page's own edge colour. */
-.viewport { position: relative; overflow: hidden; }
 .viewport:has(.page-snapshot) { background: var(--snapshot-edge, var(--surface)); }
 .page-snapshot { position: absolute; left: 0; top: 0; max-width: none; pointer-events: none; user-select: none; }
 
@@ -663,7 +629,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 }
 
 /* Settings: collapsible sections; the panel scrolls instead of running under the composer. */
-.settings { max-height: calc(100% - var(--composer-h, 44px) - 96px); overflow-y: auto; overscroll-behavior: contain; }
 .settings-section { border-top: 1px solid var(--border); padding: 8px 0 10px; }
 .settings-section:first-child { border-top: none; padding-top: 0; }
 .settings-section > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; cursor: default; font-weight: 600; font-size: 12px; color: var(--muted); padding: 4px 0 8px; border-radius: 6px; }
@@ -683,92 +648,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 /* Only Claude's spark turns when the sidebar opens; other marks (an X would become "+") stay upright. */
 #toggle-sidebar[aria-pressed="true"]:not([data-assistant="Claude"]) svg { transform: none; }
 
-
-/* ================= Lumen: vivid layer ================= */
-
-/* A faint aurora behind the browser chrome so the top of the window glows instead of sitting grey. */
-.chrome { background:
-  radial-gradient(120% 180% at 0% -40%, rgb(var(--brand-rgb-1) / 0.16), transparent 55%),
-  radial-gradient(90% 160% at 100% -60%, rgb(var(--brand-rgb-3) / 0.13), transparent 60%); }
-
-/* Active tab: the raised surface keeps its calm, a short light bar marks it. */
-.tab-indicator::after {
-  content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px;
-  background: var(--brand-gradient); opacity: 0.95;
-}
-
-/* Primary actions carry the brand light. */
-.btn.primary, .send:not(:disabled) {
-  background: var(--brand-gradient); background-size: 160% 100%; background-position: 0% 50%;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 18px -6px rgb(var(--accent-rgb) / 0.65);
-  transition: background-position var(--t-smooth) var(--ease-out), box-shadow var(--t-base) ease-out, transform var(--t-snappy) var(--spring-bouncy), filter var(--t-fast) ease-out;
-}
-.btn.primary:hover, .send:not(:disabled):hover { background-position: 100% 50%; filter: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 8px 22px -6px rgb(var(--brand-rgb-3) / 0.55); }
-.btn:active, .send:active { transform: scale(0.96); }
-
-/* The AI button glows when its panel is open. */
-#toggle-sidebar[aria-pressed="true"] {
-  background: linear-gradient(135deg, rgb(var(--brand-rgb-1) / 0.18), rgb(var(--brand-rgb-3) / 0.18));
-  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.35), 0 4px 14px -6px rgb(var(--accent-rgb) / 0.55);
-}
-#toggle-sidebar:hover:not([aria-pressed="true"]) { background: var(--hover); }
-
-/* Focus: a crisp brand ring. */
-:focus-visible { outline-color: var(--accent); }
-.omnibox:has(input:focus) {
-  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px rgb(var(--accent-rgb) / 0.45), 0 0 0 4px var(--accent-soft), 0 12px 30px -12px rgb(var(--brand-rgb-3) / 0.35);
-}
-.composer:focus-within { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px rgb(var(--accent-rgb) / 0.45), 0 0 0 4px var(--accent-soft), 0 16px 38px -14px rgb(var(--brand-rgb-3) / 0.35); }
-
-/* Loading and "working" use the full light. */
-.loadbar::before { background: linear-gradient(90deg, transparent, var(--brand-1) 30%, var(--brand-2) 55%, var(--brand-3) 75%, transparent); }
-.working { background: var(--field); }
-.working::before { background: linear-gradient(90deg, transparent, var(--brand-1), var(--brand-2), var(--brand-3), transparent); }
-
-/* The agent's live frame and pill trace the brand colours. */
-body.agent-active .viewport {
-  background: conic-gradient(from var(--glow-angle), var(--brand-1), var(--brand-2) 22%, var(--brand-3) 40%, var(--brand-4) 50%, var(--brand-3) 60%, var(--brand-2) 78%, var(--brand-1));
-}
-.agent-pill {
-  color: var(--text);
-  background:
-    linear-gradient(var(--surface-raised), var(--surface-raised)) padding-box,
-    conic-gradient(from var(--glow-angle), var(--brand-1), var(--brand-2), var(--brand-3), var(--brand-2), var(--brand-1)) border-box;
-}
-
-/* Your messages: a bright bubble, like a message you sent. */
-.msg.user {
-  background: var(--brand-gradient); color: #ffffff; box-shadow: 0 8px 20px -12px rgb(var(--accent-rgb) / 0.8);
-}
-.msg.user .msg-images img { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4); }
-
-/* Empty chat: a confident title with the brand light, and suggestions that feel tappable. */
-.empty-title { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
-.empty-title .glow { background: var(--brand-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.chips { gap: 6px; margin-left: 0; }
-.chip {
-  display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px;
-  background: var(--surface-raised); color: var(--text); font-weight: 500;
-  box-shadow: 0 0 0 1px var(--hairline), 0 4px 12px -8px rgb(0 0 0 / calc(0.6 * var(--shadow-k)));
-  transition: transform var(--t-snappy) var(--spring-bouncy), box-shadow var(--t-base) ease-out, background-color var(--t-fast) ease-out;
-}
-.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--brand-1); flex: none; }
-.chip:nth-child(2)::before { background: var(--brand-2); }
-.chip:nth-child(3)::before { background: var(--brand-3); }
-.chip:hover { background: var(--surface-raised); transform: translateY(-1px); box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.35), 0 8px 18px -10px rgb(var(--accent-rgb) / 0.6); }
-.chip:active { transform: scale(0.97); }
-
-/* Settings switches and section headers pick up the accent. */
-.settings-section > summary { color: var(--text); }
-.settings-section > summary::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%; margin-right: 8px; flex: none; background: var(--brand-1);
-}
-.settings-section:nth-of-type(2) > summary::before { background: var(--brand-2); }
-.settings-section:nth-of-type(3) > summary::before { background: var(--brand-3); }
-.settings-section:nth-of-type(4) > summary::before { background: var(--brand-4); }
-.settings-section > summary { justify-content: flex-start; }
-.settings-section > summary::after { margin-left: auto; }
-
 /* Search engine picker: a radio grid, not a native dropdown (whose popup ignored the theme). */
 .engine-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 2px; }
 .engine {
@@ -783,26 +662,12 @@ body.agent-active .viewport {
   color: #ffffff; font-size: 11px; font-weight: 700; background: var(--engine, var(--accent));
 }
 .engine .label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.engine[aria-checked="true"] {
-  background: var(--surface-raised);
-  box-shadow: 0 0 0 1.5px var(--accent), 0 6px 16px -10px rgb(var(--accent-rgb) / 0.7);
-}
+.engine[aria-checked="true"] { background: var(--surface-raised); box-shadow: 0 0 0 1.5px var(--accent); }
 .engine:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-@media (prefers-color-scheme: dark) {
-  .chrome { background:
-    radial-gradient(120% 180% at 0% -40%, rgb(var(--brand-rgb-1) / 0.24), transparent 55%),
-    radial-gradient(90% 160% at 100% -60%, rgb(var(--brand-rgb-3) / 0.2), transparent 60%); }
-}
 
 /* Native selects that remain (the model menu) get readable popups in both themes. */
 select option, select optgroup { background: var(--surface-raised); color: var(--text); }
 select optgroup { color: var(--muted); }
-
-@media (prefers-reduced-motion: reduce) {
-  .chip:hover, .engine:active, .btn:active, .send:active { transform: none; }
-  .btn.primary, .send:not(:disabled) { transition: none; }
-}
 
 /* ---------- AI web panels (renderer/webai.js) ---------- */
 .ai-switch { display: flex; gap: 2px; margin: 8px 12px 0; padding: 2px; border-radius: 9px; background: var(--field); }
