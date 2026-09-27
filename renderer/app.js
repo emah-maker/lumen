@@ -912,13 +912,25 @@ $('setup-claude-code').onclick = async () => {
   refreshSetup();
 };
 $('setup-keys').onclick = openAiSettings;
+// While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
+let openRouterPending = false;
 $('setup-openrouter').onclick = async () => {
   const btn = $('setup-openrouter');
-  btn.disabled = true;
-  const r = await window.assistant.openRouterSignIn();
-  btn.disabled = false;
-  if (r?.ok) { await loadModels(); refreshSetup(); }
-  else if (r?.message) alert(r.message);
+  const title = btn.querySelector('.setup-name') || btn;
+  if (openRouterPending) { window.assistant.cancelOpenRouterSignIn?.(); return; }
+  openRouterPending = true;
+  const label = title.textContent;
+  title.textContent = 'Cancel OpenRouter sign-in';
+  try {
+    const r = await window.assistant.openRouterSignIn();
+    if (r?.ok) { await loadModels(); refreshSetup(); }
+    else if (r?.message && !r.cancelled) alert(r.message);
+  } catch (err) {
+    alert(`OpenRouter sign-in failed: ${err?.message || err}`);
+  } finally {
+    openRouterPending = false;
+    title.textContent = label;
+  }
 };
 window.assistant.onModelsUpdated?.(() => refreshSetup());
 refreshSetup();
@@ -997,9 +1009,11 @@ window.lumenPicker($('model'));
 // Whether there is any model to talk to right now (main's settings:get is the single source of
 // truth); ask() below checks this before sending, instead of letting a request fail with an error.
 let modelReady = false;
+let modelGroups = new Map(); // model id -> its group ("Claude", "OpenAI", "Your Claude account", …)
 
 async function loadModels() {
   const s = await window.assistant.getSettings();
+  modelGroups = new Map(s.models.map((m) => [m.id, m.group]));
   const select = $('model');
   const picker = select.closest('.model-picker');
   modelReady = Boolean(s.model);
@@ -1039,7 +1053,7 @@ async function openModelSearch() {
   let models = [];
   try { models = await window.assistant.openRouterModels(); } catch { list.textContent = 'Couldn’t load the model list.'; return; }
   const render = () => {
-    const words = input.value.toLowerCase().split(/s+/).filter(Boolean);
+    const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
     const hits = models.filter((m) => words.every((w) => `${m.id} ${m.name}`.toLowerCase().includes(w))).slice(0, 60);
     list.replaceChildren(...hits.map((m) => {
       const item = Object.assign(document.createElement('div'), { className: 'picker-item', tabIndex: -1, textContent: m.tools ? m.name : `${m.name} (chat only)`, title: m.id });
@@ -1070,16 +1084,25 @@ $('model').addEventListener('change', async (e) => {
     openModelSearch();
     return;
   }
-  await window.assistant.setModel(select.value);
+  const switched = await window.assistant.setModel(select.value).catch(() => false);
+  if (!switched) {
+    // Not accepted (it disconnected a moment ago, say): show what main actually uses.
+    await loadModels();
+    return;
+  }
   const label = select.selectedOptions[0].textContent;
   select.title = select.selectedOptions[0].title;
-  const group = select.selectedOptions[0].parentElement?.label;
+  // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
+  const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
   prompt.placeholder = group === 'Claude' ? 'Ask Claude…' : `Ask ${select.selectedOptions[0].textContent}…`;
   setAssistantIdentity(group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
   // The conversation carries over: the next message goes to the new model with the full history.
-  if (messages.querySelector('.msg')) {
+  // Mid-reply, the reply in progress finishes on the old model first (main says 'next-message').
+  if (switched === 'next-message') {
+    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: `${label} takes over from your next message. This reply finishes first.` }));
+  } else if (messages.querySelector('.msg')) {
     append(Object.assign(document.createElement('div'), { className: 'notice', textContent: `Now using ${label}. It can see this whole conversation.` }));
   }
   prompt.focus();
@@ -1213,8 +1236,22 @@ sidebarEl.addEventListener('drop', async (e) => {
   prompt.focus();
 });
 
+// Asks that arrive while a reply is running (Alt+Enter in the address bar, "Ask about selection",
+// the new-tab page's Ask AI, a starter chip) wait their turn instead of disappearing.
+const queued = [];
+function sendQueued() {
+  const next = queued.shift();
+  if (!next) return;
+  next.notice.remove();
+  ask(next.text, next.images);
+}
+
 function ask(text, images = []) {
-  if (running) return;
+  if (running) {
+    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: `Sends when this reply finishes: “${text.length > 60 ? `${text.slice(0, 59)}…` : text || 'image'}”` }));
+    queued.push({ text, images, notice });
+    return;
+  }
   // Nothing connected: show the setup card instead of sending a message that can only error.
   if (!modelReady) {
     if (!messages.querySelector('.msg')) { refreshSetup(); return; }
@@ -1262,13 +1299,58 @@ const TOOL_LABELS = {
   switch_tab: (i) => `Switching to tab ${i.tab_id}`,
   wait: (i) => `Waiting ${i.seconds}s`,
   web_search: (i) => `Searching the web: ${i.query ?? ''}`,
+  find: (i) => `Looking for “${i.query ?? ''}” on the page`,
+  batch: (i) => `Doing ${i.steps?.length || 'several'} steps on the page`,
+  fill_form: () => 'Filling in a form',
+  click_at: () => 'Clicking a spot on the page',
+  hover: () => 'Pointing at an element',
+  go_forward: () => 'Going forward',
+  reload: () => 'Reloading the page',
+  close_tab: (i) => `Closing tab ${i.tab_id}`,
+  group_tabs: (i) => `Grouping tabs as “${i.name ?? ''}”`,
+  ungroup_tabs: () => 'Ungrouping tabs',
+  read_urls: () => 'Reading pages in the background',
+  run_script: () => 'Running a script on the page',
+  wait_for: (i) => `Waiting for “${i.text ?? ''}”`,
 };
 
+// Rendering a long reply's whole markdown on every streamed chunk grew slower and slower (the work
+// is quadratic in its length), so a streaming reply redraws at most once per frame, and a very long
+// one every 120 ms.
+// The bubble keeps its own source (el.source), so a draw that lands after the reply moved on to a
+// tool step still shows every character of this bubble.
+function renderStreaming(el, source) {
+  el.source = source;
+  if (el.renderPending) return;
+  el.renderPending = true;
+  const draw = () => {
+    if (!el.renderPending) return; // flushStreaming already drew it
+    el.renderPending = false;
+    el.innerHTML = window.renderMarkdown(settledMarkdown(el.source));
+    moveWorkingToEnd();
+    scrollToBottom();
+  };
+  if (source.length > 12000) setTimeout(draw, 120);
+  else requestAnimationFrame(draw);
+}
+
+// The bubble's final draw, at once and with nothing held back, before a copy button or label goes in.
+function flushStreaming(el) {
+  if (!el || el.source === undefined || el.flushed) return;
+  el.renderPending = false;
+  el.flushed = true;
+  el.innerHTML = window.renderMarkdown(el.source);
+}
+
 function endStream() {
+  flushStreaming(turn?.text);
   turn?.text?.classList.remove('streaming');
 }
 
 window.assistant.onEvent((event) => {
+  // An approval card answered or cancelled from an older run (after Stop or New chat) still has to
+  // clear, or the toolbar's "waiting for approval" badge stayed on.
+  if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
   if (!turn || event.runId !== runId) return;
   switch (event.type) {
     case 'turn_start':
@@ -1292,11 +1374,17 @@ window.assistant.onEvent((event) => {
     case 'text': {
       if (!turn.text) turn.text = append(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' }));
       turn.textSource += event.text;
-      turn.text.innerHTML = window.renderMarkdown(settledMarkdown(turn.textSource));
-      moveWorkingToEnd();
-      scrollToBottom();
+      renderStreaming(turn.text, turn.textSource);
       break;
     }
+    case 'retry':
+      // The turn is being asked again (see agent.js loop): drop what it had streamed so far.
+      turn.text?.remove();
+      turn.thinking?.closest('details')?.remove();
+      turn.text = null;
+      turn.textSource = '';
+      turn.thinking = null;
+      break;
     case 'tool': {
       finishReply(turn.text, turn.textSource);
       const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
@@ -1329,15 +1417,19 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'approval':
+      if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); // a hidden sidebar left the task waiting with only a badge as a hint
       showApproval(event.approvalId, event.host);
       moveWorkingToEnd();
       break;
-    case 'approval_done':
-      resolveApproval(event.approvalId, event.ok);
+    case 'notice': {
+      const notice = append(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.text }));
+      if (event.action === 'continue') {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: 'Continue' });
+        button.onclick = () => { button.remove(); ask('Continue where you left off.'); };
+        notice.append(' ', button);
+      }
       break;
-    case 'notice':
-      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.text }));
-      break;
+    }
     case 'error': {
       const error = append(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
       if (event.action === 'settings') {
@@ -1355,6 +1447,7 @@ window.assistant.onEvent((event) => {
       turn.working.remove();
       turn = null;
       setRunning(false);
+      setTimeout(sendQueued);
       break;
   }
 });
@@ -1371,6 +1464,7 @@ function settledMarkdown(source) {
 
 // Which model wrote a reply: a quiet label, since a chat can move between models.
 function labelReply(bubble, modelId) {
+  flushStreaming(bubble);
   if (!bubble || !modelId || bubble.querySelector('.reply-model')) return;
   const option = [...$('model').options].find((o) => o.value === modelId);
   const group = option?.parentElement?.label;
@@ -1384,6 +1478,7 @@ const COPY_ICON = '<svg viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" heig
 const CHECK_ICON = '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></svg>';
 
 function finishReply(bubble, source) {
+  flushStreaming(bubble);
   if (!bubble || !source || !source.trim() || bubble.querySelector('.reply-copy')) return;
   const button = document.createElement('button');
   button.type = 'button';
@@ -1475,7 +1570,8 @@ function showApproval(approvalId, host) {
   card.append(title, detail, actions);
   append(card);
   approvals.set(approvalId, { card, host });
-  card.focus({ preventScroll: true });
+  // Never focused for the user: Enter on the card means Allow, and a card that grabbed focus while
+  // someone was typing a follow-up turned their Enter into an approval. Keyboard users Tab to it.
   scrollToBottom();
 }
 
@@ -1611,7 +1707,9 @@ document.querySelectorAll('.chip').forEach((chip) => {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   runId++;
+  for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
+  for (const q of queued.splice(0)) q.notice.remove();
   messages.querySelectorAll(':scope > :not(#empty)').forEach((el) => el.remove());
   $('empty').hidden = false;
   turn = null;
@@ -1663,7 +1761,7 @@ window.assistant.onMcpEvent?.((event) => {
       break;
     }
     case 'approval': {
-      showSidebar(true);
+      if (document.body.classList.contains('sidebar-hidden')) showSidebar(true);
       showApproval(event.approvalId, event.host);
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
