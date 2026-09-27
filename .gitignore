@@ -3,3 +3,4 @@ dist/
 .impeccable/
 *.log
 shot-*.png
+.claude/worktrees/
