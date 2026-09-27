@@ -98,6 +98,12 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
         </div>
         <div class="sidebar-actions">
+          <button class="icon-btn" id="dock-to-side" title="Dock to side" aria-label="Dock to side">
+            <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
+          </button>
+          <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false">
+            <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
+          </button>
           <button class="icon-btn" id="new-chat" title="New chat" aria-label="New chat">
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
           </button>
@@ -112,13 +118,17 @@
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>
           <div class="setup" id="setup" hidden>
             <p class="setup-title">Set up an AI</p>
-            <button class="setup-option" type="button" id="setup-claude-code">
-              <span class="setup-name">Use your Claude account</span>
-              <span class="setup-detail" id="setup-claude-code-detail">Through Claude Code, with your own login (including school or work).</span>
-            </button>
             <button class="setup-option" type="button" id="setup-keys">
-              <span class="setup-name">API key or OpenRouter</span>
-              <span class="setup-detail">Anthropic, OpenAI, Grok or Gemini keys, or sign in with OpenRouter.</span>
+              <span class="setup-name">Add an API key</span>
+              <span class="setup-detail">Anthropic, OpenAI, Grok or Gemini.</span>
+            </button>
+            <button class="setup-option" type="button" id="setup-openrouter">
+              <span class="setup-name">Sign in with OpenRouter</span>
+              <span class="setup-detail">One key, many models.</span>
+            </button>
+            <button class="setup-option" type="button" id="setup-claude-code">
+              <span class="setup-name">Use your own Claude Code</span>
+              <span class="setup-detail" id="setup-claude-code-detail">Through Claude Code, with your own login (including school or work).</span>
             </button>
           </div>
           <div class="chips">

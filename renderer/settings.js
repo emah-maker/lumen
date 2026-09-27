@@ -182,20 +182,33 @@ async function buildAi(card) {
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
+    // snip.addButton is the agent id ('claude' | 'codex' | 'grok' | 'gemini'); 'json' (other clients) has none.
+    const addLabel = `Add to ${snip.label}`;
     const add = snip.addButton ? h('button', {
-      text: 'Add to Claude Code',
+      text: addLabel,
       onclick: async () => {
         add.disabled = true;
         add.textContent = 'Adding…';
-        const r = await S.ai.addToClaudeCode().catch((err) => ({ ok: false, text: err.message }));
-        add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : 'Add to Claude Code';
+        const r = await S.ai.addToAgent(snip.addButton).catch((err) => ({ ok: false, text: err.message }));
+        add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : addLabel;
         add.disabled = Boolean(r.ok);
         if (!r.already) flash(note, r.text, r.ok ? 'ok' : 'err');
       },
     }) : null;
+    // Claude Code's own row also shows install/sign-in state, so "not signed in" doesn't look like
+    // a broken Add button (the CLI itself gates sign-in; Lumen only checks, never reads, its status).
+    const ccState = snip.id === 'claude' ? status() : null;
+    if (ccState) {
+      S.ai.claudeCodeStatus().then((s) => {
+        ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
+        ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
+      }).catch(() => {});
+    }
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
-      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), add, copy),
-      h('pre', { class: 'mono code', text: snip.text }), note);
+      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), ccState, add, copy),
+      h('pre', { class: 'mono code', text: snip.text }),
+      snip.secondary ? h('p', { class: 'note', text: snip.secondary }) : null,
+      note);
   }));
   card.append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
 
@@ -432,6 +445,7 @@ function buildSystem(card) {
   const accel = toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.');
   accel.querySelector('.controls').prepend(relaunch);
   card.append(accel);
+  card.append(toggle('tabSleep', 'Put unused tabs to sleep', 'Frees up memory from background tabs left untouched for a while; switching back reloads them.'));
   if (st.platform === 'darwin') {
     card.append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
   }

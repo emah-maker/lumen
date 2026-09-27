@@ -54,6 +54,7 @@ const DEFAULTS = {
   minimumFontSize: 0,
   focusRings: false,
   hardwareAcceleration: true, // restart
+  tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
 };
@@ -297,6 +298,7 @@ function create(deps) {
       defaultMonospaceFontSize: Math.round(p.fontSize * 0.8125),
       ...(p.minimumFontSize ? { minimumFontSize: p.minimumFontSize } : {}),
       spellcheck: p.spellcheck,
+      plugins: true, // Widevine CDM registers as a Pepper plugin; needed for DRM playback (castlabs ECS)
       ...(privileged ? { preload: SETTINGS_PRELOAD } : {}),
     };
   }

@@ -10,7 +10,13 @@ if (-not (Test-Path (Join-Path $source 'Lumen.exe'))) { throw "Build first: npm 
 
 Get-Process -Name 'Lumen', 'Claude Browser' -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
-if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+# A Lumen still exiting (or an AI agent's Lumen MCP bridge restarting) keeps files locked: a failed
+# delete used to leave a half-removed install. Wait for it and retry before giving up.
+for ($i = 0; (Test-Path $target) -and $i -lt 10; $i++) {
+  Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$target\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+  try { Remove-Item -Recurse -Force $target -ErrorAction Stop } catch { Start-Sleep -Milliseconds 700 }
+}
+if (Test-Path $target) { throw "Could not replace $target (files in use). Close Lumen and run this again." }
 Copy-Item -Recurse $source $target
 Copy-Item (Join-Path $root 'assets\icon.ico') (Join-Path $target 'icon.ico')
 

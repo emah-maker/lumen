@@ -1,25 +1,20 @@
 // Sidebar additions kept out of app.js (merge-friendly):
-//  - the Claude Code engine's note under the model picker,
+//  - the Claude Code / Grok Build engines' placeholder,
 //  - the "Using: <page>" chip above the composer (the current tab rides along with each message),
 //  - the pending-approval badge on the toolbar button while the sidebar is closed.
 (() => {
   const $ = (id) => document.getElementById(id);
   const extras = window.lumenExtras || {};
 
-  // ---------- Claude Code engine: the note and the placeholder ----------
+  // ---------- local agent engines: the placeholder ----------
 
   const select = $('model');
-  const note = Object.assign(document.createElement('p'), {
-    id: 'cc-note',
-    className: 'cc-note',
-    hidden: true,
-    textContent: "Uses your Claude Code login. For personal use; apps offered to others need Anthropic's approval to use claude.ai logins.",
-  });
-  document.querySelector('.sidebar-head')?.after(note);
+  const ENGINE_PLACEHOLDERS = { 'claudecode:': 'Ask Claude…', 'grokbuild:': 'Ask Grok…' };
   function syncEngine() {
-    const on = String(select?.value || '').startsWith('claudecode:');
-    note.hidden = !on;
-    if (on && $('prompt').placeholder !== 'Ask Claude…') $('prompt').placeholder = 'Ask Claude…';
+    const value = String(select?.value || '');
+    const prefix = Object.keys(ENGINE_PLACEHOLDERS).find((p) => value.startsWith(p));
+    const placeholder = prefix && ENGINE_PLACEHOLDERS[prefix];
+    if (placeholder && $('prompt').placeholder !== placeholder) $('prompt').placeholder = placeholder;
   }
   new MutationObserver(syncEngine).observe($('prompt'), { attributes: true, attributeFilter: ['placeholder'] }); // app.js sets it after the model switch
   select?.addEventListener('change', () => setTimeout(syncEngine));

@@ -142,6 +142,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tabs.reordering .tab:not(.dragging) { transition: transform var(--t-smooth) var(--spring-smooth), background-color var(--t-fast) ease-out; }
 .tab:hover:not(.active) { background: var(--hover); color: var(--text); }
 .tab.active { min-width: 52px; color: var(--text); }
+.tab.sleeping:not(.active) .tab-inner { opacity: 0.55; } /* asleep: view destroyed, reloads on click */
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
@@ -296,8 +297,26 @@ body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 
 .sidebar-head { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 8px 0 20px; }
-.sidebar-title { font-weight: 500; color: var(--muted); }
 .sidebar-actions { display: flex; gap: 2px; }
+#dock-to-side { display: none; } /* only meaningful, and only shown, while chat-full (below) */
+
+/* ---------- full-page chat: homepage "Ask AI" fills the whole content area ---------- */
+/* The native page view is hidden by main (see 'chat:full' in main.js) rather than resized down to
+   nothing, so there is no page to keep visible beside the chat here — the sidebar just takes over
+   the full width in place, ignoring --reveal and the resize handle entirely. */
+body.chat-full .sidebar { width: 100%; max-width: none; align-items: stretch; border-left: none; animation: chat-full-in var(--t-smooth) var(--spring-smooth) backwards; }
+body.chat-full .sidebar > :not(.sidebar-resize) { width: 100%; opacity: 1; }
+body.chat-full .sidebar-resize { display: none; }
+@keyframes chat-full-in { from { opacity: 0; transform: scale(0.98); } }
+body.chat-full .sidebar-head { max-width: 760px; margin: 0 auto; }
+body.chat-full #dock-to-side { display: grid; }
+body.chat-full .messages { max-width: 760px; margin: 0 auto; width: 100%; }
+body.chat-full .composer { left: 50%; right: auto; transform: translateX(-50%); width: min(760px, calc(100% - 48px)) !important; }
+/* No AI connected: center the setup card instead of the usual empty-state title and chips. */
+body.chat-full .messages:has(#setup:not([hidden])) { display: flex; align-items: center; justify-content: center; }
+body.chat-full .messages:has(#setup:not([hidden])) .empty { margin: 0; width: min(340px, 100%); text-align: center; }
+body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full .messages:has(#setup:not([hidden])) .chips { display: none; }
+body.chat-full .setup { text-align: left; }
 
 .btn { height: 28px; padding: 0 12px; border: none; border-radius: 8px; background: var(--field); font-weight: 500; transition: background-color var(--t-fast) ease-out, filter var(--t-fast) ease-out, transform var(--t-press) ease-out, opacity var(--t-base) ease-out; }
 .btn:hover { background: var(--hover); }
@@ -325,7 +344,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 
 /* Everything that joins the conversation rises into place. */
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
-.msg, .step, details.thinking, .notice, .error, .history-note { animation: rise var(--t-smooth) var(--spring-smooth); }
+.msg, .step, details.thinking, .notice, .error { animation: rise var(--t-smooth) var(--spring-smooth); }
 .messages > .restored { animation: none; }
 
 .msg { margin: 16px 0; }
@@ -437,7 +456,6 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .model-picker .picker-button:focus-visible { outline: 2px solid var(--accent); }
 .model-picker .picker-menu { left: -6px; top: calc(100% + 4px); }
 .model-picker svg { position: absolute; right: 4px; width: 12px; height: 12px; color: var(--muted); pointer-events: none; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---------- downloads indicator ---------- */
 
@@ -474,7 +492,6 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .approval.resolved.denied::before { background: var(--faint); }
 
 /* Restored chats show a quiet divider before new messages. */
-.history-note { color: var(--faint); font-size: 11px; margin: 12px 0 4px; }
 
 /* ---------- reduced motion: cross-fades instead of movement, no loops ---------- */
 

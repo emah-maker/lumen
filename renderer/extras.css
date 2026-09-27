@@ -1,12 +1,5 @@
-/* Sidebar additions (renderer/extras.js): Claude Code note, page context chip, approval badge.
+/* Sidebar additions (renderer/extras.js): page context chip, approval badge.
    Kept apart from styles.css so restyles there merge cleanly. */
-
-.cc-note {
-  margin: 0 12px 6px;
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--text-2, var(--muted, #8a8a8e));
-}
 
 .page-context {
   display: flex;
@@ -60,3 +53,8 @@
   background: var(--accent, #0a84ff);
   box-shadow: 0 0 0 2px var(--toolbar-bg, var(--surface, #fff));
 }
+
+/* Auto-allow actions (sidebar head): the bolt fills in accent while on. */
+.icon-btn.auto-allow svg path { fill: none; }
+.icon-btn.auto-allow[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.icon-btn.auto-allow[aria-pressed="true"] svg path { fill: currentColor; }

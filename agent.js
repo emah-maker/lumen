@@ -322,6 +322,44 @@ function systemFor(settings) {
 const CLAUDE_CODE_NOTE = `
 
 You are running inside Claude Code, connected to the user's Lumen browser over MCP. Your browser tools are named mcp__lumen__<tool> (for example mcp__lumen__read_page, mcp__lumen__navigate, mcp__lumen__click); web_search is mcp__lumen__web_search (DuckDuckGo results). You have no shell or file tools. Your reply appears in Lumen's sidebar chat.`;
+
+// ---- [grok build engine] extra guidance when the user's own Grok Build CLI answers (grok-build.js).
+// Naming convention for Lumen's MCP tools is stated as one of two plausible forms, not asserted as
+// fact: it could not be confirmed against a real Lumen MCP server within this task's run budget (see
+// grok-build.js's file header -- every test run's MCP servers stayed "pending" and the model never
+// got to actually call one). Also tells the model what to do about that: say so, don't improvise
+// with a tool it doesn't have.
+const GROK_BUILD_NOTE = `
+
+You are running inside Grok Build, connected to the user's Lumen browser over MCP. Lumen's browser tools are deferred: find them with search_tool (for example "lumen read page" or "lumen navigate"), then call them with use_tool using the exact names it returns, such as lumen__read_page, lumen__navigate, lumen__click and lumen__web_search. You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error. If search_tool finds no Lumen tools yet, the connection is still starting: search once more, and if they are still missing, say so plainly. Your reply appears in Lumen's sidebar chat.`;
+
+// A transcript() image is a data URL (data:<mime>;base64,<data>); turn it back into the API image
+// block shape claude-code.js's stdin message wants. Null for anything malformed (never happens for
+// our own attachments, but transcript() is also used for rendering, so stay defensive).
+function parseImageDataUrl(url) {
+  const m = /^data:([^;]+);base64,([\s\S]*)$/.exec(url || '');
+  return m ? { media_type: m[1], data: m[2] } : null;
+}
+
+// Claude Code's stdin is one JSONL line; piping more than ~10MB into a child process is unreliable,
+// so images pulled in from earlier turns (the "hand it the conversation so far" branch below) share
+// an ~8MB budget (base64 chars, a close enough proxy for bytes) on top of this turn's own images.
+// Newest history images are kept and oldest are dropped first: a follow-up question is more likely
+// to be about a recent picture than one from many messages ago.
+const CC_IMAGE_BUDGET = 8 * 1024 * 1024;
+function capHistoryImages(historyImages, currentImages, emit) {
+  let used = currentImages.reduce((n, img) => n + img.data.length, 0);
+  const kept = [];
+  let dropped = 0;
+  for (let i = historyImages.length - 1; i >= 0; i--) {
+    const img = historyImages[i];
+    if (used + img.data.length > CC_IMAGE_BUDGET) { dropped++; continue; }
+    used += img.data.length;
+    kept.unshift(img);
+  }
+  if (dropped) emit({ type: 'notice', text: `Claude Code: dropped ${dropped} older image${dropped === 1 ? '' : 's'} from the conversation history to stay under the size limit.` });
+  return kept;
+}
 // ---- [/claude code engine]
 
 // ---- [page context] Comet-style: each sidebar message carries the current tab's readable text.
@@ -338,9 +376,11 @@ function requestFor(settings, messages) {
     max_tokens: 64000,
     betas: ['context-management-2025-06-27', ...(cfg.fallbacks ? ['server-side-fallback-2026-07-01'] : [])],
     thinking: cfg.legacyThinking ? { type: 'enabled', budget_tokens: 8000 } : { type: 'adaptive', display: 'summarized' },
-    cache_control: { type: 'ephemeral' },
+    cache_control: { type: 'ephemeral' }, // auto-places a 2nd breakpoint on the growing message tail
     context_management: { edits: [{ type: 'clear_tool_uses_20250919' }] },
-    system: systemFor(settings),
+    // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
+    // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
+    system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
     tools: cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS,
     messages: historyFor(messages, model),
   };
@@ -635,10 +675,11 @@ class Agent {
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${tab.webContents.getURL()}\n</browser_state>\n\n`
       : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`;
     const note = images.length && !userText.trim() ? 'The user attached the image(s) above without a message.' : userText;
-    // ---- [claude code engine] + [page context]
+    // ---- [claude code engine] + [grok build engine] + [page context]
     const viaClaudeCode = String(messages.settings.model).startsWith('claudecode:') && Boolean(this.engines?.claudecode);
-    const page = await this.pageContextFor(tab, { fresh: viaClaudeCode && !messages.settings.ccSession });
-    // ---- [/claude code engine] + [/page context]
+    const viaGrokBuild = String(messages.settings.model).startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
+    const page = await this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) });
+    // ---- [/claude code engine] + [/grok build engine] + [/page context]
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
       { type: 'text', text: state + page + note },
@@ -661,6 +702,19 @@ class Agent {
       return;
     }
     // ---- [/claude code engine]
+    // ---- [grok build engine] "Grok · your account": the user's own CLI answers this message.
+    if (viaGrokBuild) {
+      try {
+        await this.grokBuildTurn(messages, state + page + note, images, controller.signal, emit);
+      } catch (err) {
+        emit({ type: 'error', text: String(err?.message || err) });
+      } finally {
+        if (this.controller === controller) this.controller = null;
+        emit({ type: 'done', model: messages.settings.model });
+      }
+      return;
+    }
+    // ---- [/grok build engine]
 
     try {
       await this.loop(messages, controller.signal, emit);
@@ -705,17 +759,23 @@ class Agent {
   // in the chat's settings, so follow-ups resume it and New chat (reset) starts a fresh one.
   async claudeCodeTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
-    if (images.length) emit({ type: 'notice', text: 'Claude Code gets your text and the page, not attached images.' });
     const resume = Boolean(settings.ccSession);
     let text = prompt;
+    let historyImages = [];
     if (!resume && messages.length > 1) {
-      // Switched to Claude Code mid-chat: hand it the conversation so far.
-      const earlier = this.transcript().slice(0, -1).map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      // Switched to Claude Code mid-chat: hand it the conversation so far. There's no CLI session
+      // yet to carry earlier pictures (that's what --resume is for on later turns), so any images
+      // from earlier user turns ride along as image blocks on this first message too.
+      const priorItems = this.transcript().slice(0, -1);
+      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
+      const priorImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
+      historyImages = capHistoryImages(priorImages, images, emit);
     }
     emit({ type: 'turn_start' });
     const out = await this.engines.claudecode.run({
       prompt: text,
+      images: [...historyImages, ...images],
       sessionId: settings.ccSession || crypto.randomUUID(),
       resume,
       systemPrompt: systemFor(settings) + CLAUDE_CODE_NOTE,
@@ -732,6 +792,42 @@ class Agent {
     }
   }
   // ---- [/claude code engine]
+
+  // ---- [grok build engine] One message through the user's Grok Build CLI. The session id lives in
+  // the chat's settings (gbSession), so follow-ups resume it and New chat (reset) starts a fresh one.
+  // Images are capped inside grok-build.js's run() (capImages), not here.
+  async grokBuildTurn(messages, prompt, images, signal, emit) {
+    const settings = messages.settings;
+    const resume = Boolean(settings.gbSession);
+    let text = prompt;
+    let historyImages = [];
+    if (!resume && messages.length > 1) {
+      // Switched to Grok Build mid-chat: hand it the conversation so far, same as claudeCodeTurn.
+      const priorItems = this.transcript().slice(0, -1);
+      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
+      historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
+    }
+    emit({ type: 'turn_start' });
+    const out = await this.engines.grokbuild.run({
+      prompt: text,
+      images: [...historyImages, ...images],
+      sessionId: settings.gbSession || crypto.randomUUID(),
+      resume,
+      systemPrompt: systemFor(settings) + GROK_BUILD_NOTE,
+      signal,
+      emit,
+    });
+    if (out.sessionId === null) delete settings.gbSession;
+    else if (!out.failed && (!out.stopped || out.text)) settings.gbSession = out.sessionId;
+    if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
+    if (out.text) {
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
+      producedBy.set(turn, settings.model);
+      messages.push(turn);
+    }
+  }
+  // ---- [/grok build engine]
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit) {
@@ -898,13 +994,15 @@ class Agent {
 
   // First click/type/script on a site in this chat asks the user with a card in the sidebar.
   // External agents (MCP) pass their own approved-hosts set and name.
-  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude' } = {}) {
+  // Auto-allow (the sidebar's switch) covers the sidebar's own AI only; outside agents (external:
+  // true) always ask.
+  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false } = {}) {
     if (!ACTING_TOOLS.has(name)) return;
     const wc = this.browser.activeTab()?.webContents;
     let host = '';
     try { host = new URL(wc?.getURL() || '').host; } catch {}
     if (!host || hosts.has(host)) return;
-    const ok = this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal);
+    const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal);
     if (!ok) throw new Error(`The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
     hosts.add(host);
   }
@@ -1205,7 +1303,7 @@ function describeError(err) {
   if (err instanceof Anthropic.RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };
   if (err instanceof Anthropic.APIConnectionError) return { text: 'Could not reach the Claude API. Check your connection.' };
   if (err instanceof Anthropic.APIError) return { text: `API error ${err.status}: ${err.message}` };
-  if (/authentication method|api ?key|credential/i.test(err.message || '')) return { text: 'Set up an AI to start: use your Claude account through Claude Code (pick “Claude · your account” in the model menu), or add an API key or sign in with OpenRouter in Settings.', action: 'settings' };
+  if (/authentication method|api ?key|credential/i.test(err.message || '')) return { text: 'Set up an AI to start: use your Claude account through Claude Code (pick “Claude Code” in the model menu), or add an API key or sign in with OpenRouter in Settings.', action: 'settings' };
   return { text: String(err.message || err) };
 }
 

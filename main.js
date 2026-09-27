@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog, nativeTheme, net, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, session, shell, components } = require('electron');
 
 // `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
@@ -10,7 +10,6 @@ if (process.argv.includes('--mcp')) {
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const Anthropic = require('@anthropic-ai/sdk');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
 const { Agent, normalizeUrl, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, validateInput: validateToolInput } = require('./agent');
@@ -20,9 +19,15 @@ const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor } = require('./s
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const importer = lazy(() => require('./importer'));
 const cliAuth = lazy(() => require('./cli-auth'));
+// The SDK needs `new`, which the plain get-trap `lazy()` proxy above can't forward, so it gets its
+// own tiny cached accessor instead. Only the Claude API path (getClient, organizeTabsWithAi's catch)
+// touches this; a session that only ever uses Claude Code, Grok, or another provider never loads it.
+let anthropicSdk_ = null;
+const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName } = require('./tab-groups');
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
+const { createDialogs } = require('./features/dialogs');
 const instance = require('./features/instance');
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
@@ -90,6 +95,16 @@ function writeSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
 }
 
+// Favicons out of settings.json and into their own debounced/async store (see favicon-store.js) —
+// settings.json is rewritten fully and synchronously, which a new favicon shouldn't have to pay for.
+// One-time migration: move any favicons an older build saved inline, then drop the key for good.
+const { createFaviconStore } = require('./favicon-store');
+const faviconStore = createFaviconStore(app.getPath('userData'), readSettings().favicons);
+if (readSettings().favicons) {
+  const { favicons, ...rest } = readSettings();
+  writeSettings(rest);
+}
+
 // Outside AI agents (MCP, CDP automation, Claude Code): features/ai-agents.js. The automation
 // switch must be set before ready.
 const { setupAiAgents, prepareAutomation } = require('./features/ai-agents');
@@ -133,22 +148,34 @@ async function refreshModels(provider) {
   ui()?.send('models-updated');
 }
 
-// The picker: Claude models always; other providers once they have a key.
+// Is the Anthropic API itself usable: a saved key, an env key, or an `ant auth login` profile.
+// (Separate from Claude Code: that's a whole other CLI, gated by aiAgents' own detection.)
+function anthropicUsable() {
+  return Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY || cliAuth.profileState().signedIn);
+}
+
+// The picker: a model appears only if its provider is actually connected. No provider is
+// privileged — connected API providers sort alphabetically by label, then local agent engines
+// (Claude Code) last, so the list reads the same regardless of which one the user set up.
 function modelOptions() {
-  const options = Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, detail, group: 'Claude' }));
+  const groups = [];
+  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, detail })) });
   for (const [provider, info] of Object.entries(providers.PROVIDERS)) {
     if (!providerKey(provider)) continue;
     const list = [...(providerModels[provider] || info.defaults)];
     // OpenRouter: a model picked from "More models…" joins the short list.
     const saved = providers.splitModel(readSettings().model || '');
     if (provider === 'openrouter' && saved.provider === 'openrouter' && !list.includes(saved.model)) list.push(saved.model);
-    for (const model of list) {
+    const entries = list.map((model) => {
       const chatOnly = !providers.canUseTools(provider, model);
-      options.push({ id: `${provider}:${model}`, label: chatOnly ? `${model} (chat only)` : model, detail: `${info.label} · ${model}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}`, group: info.label });
-    }
-    if (provider === 'openrouter') options.push({ id: 'openrouter:__more', label: 'More models…', detail: 'Search every model on OpenRouter', group: info.label });
+      return { id: `${provider}:${model}`, label: chatOnly ? `${model} (chat only)` : model, detail: `${info.label} · ${model}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}` };
+    });
+    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: 'More models…', detail: 'Search every model on OpenRouter' });
+    groups.push({ label: info.label, entries });
   }
-  options.unshift(...aiAgents.modelOptions()); // "Your Claude account" first: the user's own Claude Code CLI, when installed
+  groups.sort((a, b) => a.label.localeCompare(b.label));
+  const options = groups.flatMap((g) => g.entries.map((e) => ({ ...e, group: g.label })));
+  options.push(...aiAgents.modelOptions()); // local engine(s) last: the user's own Claude Code CLI, when installed
   return options;
 }
 
@@ -158,16 +185,104 @@ function getClient() {
   const apiKey = storedApiKey();
   try {
     // With no stored key, the SDK falls back to ANTHROPIC_API_KEY or an `ant auth login` profile.
+    const Anthropic = anthropicSdk();
     client = apiKey ? new Anthropic({ apiKey }) : new Anthropic();
   } catch {
-    throw new Error('No API key found. Use your Claude account through Claude Code (pick “Claude · your account” in the model menu), or add an API key or sign in with OpenRouter in Settings.');
+    throw new Error('No API key found. Use your Claude account through Claude Code (pick “Claude Code” in the model menu), or add an API key or sign in with OpenRouter in Settings.');
   }
   return client;
 }
 
+// ---------- dialogs: one Lumen-styled overlay instead of native message boxes (features/dialogs.js) ----------
+
+const dialogs = createDialogs({
+  win: () => win,
+  paths: { preload: path.join(__dirname, 'dialog-preload.js'), html: path.join(__dirname, 'renderer', 'dialog.html') },
+  switchToContents: (wc) => { const tab = tabByContents(wc); if (tab) switchTab(tab.id); },
+  restoreFocus: () => { const wc = activeTab()?.webContents; if (wc) wc.focus(); else ui()?.focus(); },
+});
+// Every existing `dialog.showMessageBox(...)` call (here, in settings-backend.js, features/downloads.js)
+// now draws Lumen's own card; the native pickers (showOpenDialog etc., used only by settings-backend.js
+// for the download folder) are untouched.
+const dialog = { ...electronDialog, showMessageBox: dialogs.showMessageBox };
+ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
+
+// HTTP Basic/Digest auth: a styled sign-in sheet instead of the native prompt.
+app.on('login', (event, webContents, details, authInfo, callback) => {
+  event.preventDefault();
+  const insecure = !authInfo.isProxy && !/^https:/i.test(details.url) ? ' Your connection to this site is not private.' : '';
+  dialogs.ask({
+    message: 'Sign in',
+    detail: `${authInfo.host}${authInfo.realm ? ` (${authInfo.realm})` : ''} requires a username and password.${insecure}`,
+    fields: [{ name: 'username', label: 'Username' }, { name: 'password', label: 'Password', type: 'password' }],
+    buttons: ['Cancel', 'Sign In'],
+    defaultId: 1,
+    cancelId: 0,
+    owner: webContents,
+  }).then(({ response, values }) => {
+    if (response === 1 && values) callback(values.username, values.password);
+    else callback();
+  });
+});
+
+// ---------- page dialogs: window.alert/confirm/prompt (page-dialogs-preload.js) ----------
+
+// Per-page-load state: how many dialogs it has shown, and whether the user muted further ones
+// (like Chrome, offered from the 2nd dialog on). Cleared on navigation or when the tab closes.
+const pageDialogState = new Map(); // webContents id -> { count, muted }
+function pageDialogEntry(wc) {
+  let entry = pageDialogState.get(wc.id);
+  if (!entry) {
+    entry = { count: 0, muted: false };
+    pageDialogState.set(wc.id, entry);
+    wc.once('destroyed', () => pageDialogState.delete(wc.id));
+    wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) pageDialogState.delete(wc.id); });
+  }
+  return entry;
+}
+// `sendSync`: the page stays blocked until `event.returnValue` is set, exactly like the real
+// alert()/confirm()/prompt(). Only tabs and popups (default session) get this preload at all.
+ipcMain.on('page-dialog', (event, req) => {
+  const wc = event.sender;
+  const silence = () => { event.returnValue = req.kind === 'confirm' ? false : req.kind === 'prompt' ? null : undefined; };
+  if (dialogs.isOwnView(wc)) return silence(); // ignore requests from the overlay itself
+  const entry = pageDialogEntry(wc);
+  if (entry.muted) return silence();
+  entry.count += 1;
+  let host;
+  try { host = new URL(realUrl(wc) || wc.getURL()).host; } catch { host = wc.getURL(); }
+  const title = host ? `${host} says` : '';
+  const checkboxLabel = entry.count > 1 ? "Don't let this page show more dialogs" : '';
+  const finish = (value, checkboxChecked) => {
+    if (checkboxChecked) entry.muted = true;
+    event.returnValue = value;
+  };
+  if (req.kind === 'prompt') {
+    dialogs.ask({
+      title, message: req.message, fields: [{ name: 'value', value: req.defaultValue || '' }],
+      buttons: ['Cancel', 'OK'], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
+    }).then(({ response, values, checkboxChecked }) => finish(response === 1 && values ? values.value : null, checkboxChecked));
+  } else if (req.kind === 'confirm') {
+    dialogs.showMessageBox(win, {
+      title, message: req.message, buttons: ['Cancel', 'OK'], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
+    }).then(({ response, checkboxChecked }) => finish(response === 1, checkboxChecked));
+  } else {
+    dialogs.showMessageBox(win, {
+      title, message: req.message, buttons: ['OK'], defaultId: 0, cancelId: 0, owner: wc, checkboxLabel,
+    }).then(({ checkboxChecked }) => finish(undefined, checkboxChecked));
+  }
+});
+// Registered once the app (and so session.defaultSession) exists; a separate whenReady hook so it
+// doesn't touch the app's main startup sequence.
+app.whenReady().then(() => {
+  session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'page-dialogs-preload.js') });
+  // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
+  session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+});
+
 // ---------- permissions: ask like Safari, remember per origin ----------
 
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock']);
+const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem']);
 const PROMPTABLE = {
   media: 'use your camera and microphone',
   geolocation: 'know your location',
@@ -222,6 +337,7 @@ const tabGroups = createTabGroups({
   setTabs: (list) => { tabs = list; },
   urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : ''),
   titleOf: (t) => (alive(t) ? t.view.webContents.getTitle() : ''),
+  textOf: (t) => t.pageText || '', // the page's description / first heading (see readPageText)
   isWeb: (url) => isWebUrl(url),
   mode: () => groupingMode(),
   aiTopics: () => readSettings().topicAi === true,
@@ -232,6 +348,21 @@ function groupingMode() {
   return ['off', 'site', 'topic'].includes(tabGrouping) ? tabGrouping : autoGroupTabs === false ? 'off' : 'site';
 }
 let autoGroupTimer = null;
+// By topic, titles alone are often too short to link one topic across sites (MDN, Stack Overflow
+// and GitHub pages about one library). After a page loads, its meta description and first heading
+// join its words. Read in an isolated world, so the page can't see or tamper with the read.
+const PAGE_TEXT_WORLD = 1001;
+function readPageText(tab) {
+  const wc = tab.view.webContents;
+  if (groupingMode() !== 'topic' || !isWebUrl(realUrl(wc))) return;
+  wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `[document.querySelector('meta[name="description"],meta[property="og:description"]')?.content || '', document.querySelector('h1')?.textContent || ''].join(' ').replace(/\\s+/g, ' ').trim().slice(0, 300)` }])
+    .then((text) => {
+      if (!alive(tab) || typeof text !== 'string' || text === tab.pageText) return;
+      tab.pageText = text;
+      scheduleAutoGroup();
+    })
+    .catch(() => {});
+}
 function scheduleAutoGroup() {
   clearTimeout(autoGroupTimer);
   autoGroupTimer = setTimeout(() => {
@@ -457,14 +588,27 @@ function suggestions(query) {
 // The dropdown is its own view so it can draw over the page.
 let suggestView = null;
 
+// Made once per window, hidden, as soon as the UI has loaded (see createWindow). Chromium gives a
+// new view focus while its first page loads, so a dropdown made on the first keystroke took the
+// keys typed right after it away from the address bar. It is only ever clicked (picks go through
+// 'suggest:pick'), never typed in, so any focus it gets goes straight back to the UI.
+function createSuggestView() {
+  if (suggestView && !suggestView.webContents.isDestroyed()) suggestView.webContents.close();
+  suggestView = new WebContentsView({
+    webPreferences: { preload: path.join(__dirname, 'suggest-preload.js'), sandbox: true, contextIsolation: true },
+  });
+  suggestView.setBackgroundColor('#00000000');
+  suggestView.setVisible(false);
+  win.contentView.addChildView(suggestView);
+  suggestView.webContents.on('focus', () => ui()?.focus());
+  suggestView.webContents.once('did-finish-load', () => {
+    if (!ui()?.isFocused() && !activeTab()?.webContents.isFocused()) ui()?.focus();
+  });
+  suggestView.webContents.loadFile(path.join(__dirname, 'renderer', 'suggest.html'));
+}
+
 function showSuggestions(rect, payload) {
-  if (!suggestView) {
-    suggestView = new WebContentsView({
-      webPreferences: { preload: path.join(__dirname, 'suggest-preload.js'), sandbox: true, contextIsolation: true },
-    });
-    suggestView.setBackgroundColor('#00000000');
-    suggestView.webContents.loadFile(path.join(__dirname, 'renderer', 'suggest.html'));
-  }
+  if (!suggestView) createSuggestView();
   win.contentView.addChildView(suggestView); // re-adding moves it to the top
   suggestView.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) });
   suggestView.setVisible(true);
@@ -489,22 +633,43 @@ function realUrl(wc) {
 function tabState() {
   const active = activeTab();
   const history = active?.webContents.navigationHistory;
+  // Hoisted: bookmarks() re-reads settings.json and rebuilds an array; sendTabs() fires on nearly
+  // every tab/nav event, so doing this once here instead of per-tab inside map avoids O(tabs) reloads.
+  const bookmarked = new Set(bookmarks().map((b) => b.url));
   return {
     groups: tabGroups.state(),
-    tabs: tabs.filter(alive).map(({ id, view, favicon, groupId }) => {
-      const wc = view.webContents;
+    // A sleeping tab has no view/webContents to read from; it still gets a row, built from the
+    // snapshot sleepTab() took (title/url/favicon/group), with a 'sleeping' flag for the tab strip.
+    tabs: tabs.filter((t) => alive(t) || t.sleeping).map((t) => {
+      if (t.sleeping) {
+        const url = t.sleepUrl || '';
+        return {
+          id: t.id,
+          title: t.sleepTitle || 'New Tab',
+          url: isInternal(url) ? '' : url,
+          loading: false,
+          favicon: t.favicon || null,
+          page: null,
+          error: false,
+          zoom: 100,
+          bookmarked: isWebUrl(url) && bookmarked.has(url),
+          groupId: t.groupId || null,
+          sleeping: true,
+        };
+      }
+      const wc = t.view.webContents;
       const url = realUrl(wc);
       return {
-        id,
+        id: t.id,
         title: wc.getTitle() || 'New Tab',
         url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
-        favicon: favicon || null,
+        favicon: t.favicon || null,
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : null, // Lumen's own pages get their own icon
         error: wc.getURL().startsWith(ERROR_URL),
         zoom: Math.round(wc.getZoomFactor() * 100),
-        bookmarked: isWebUrl(url) && bookmarks().some((b) => b.url === url),
-        groupId: groupId || null,
+        bookmarked: isWebUrl(url) && bookmarked.has(url),
+        groupId: t.groupId || null,
       };
     }),
     activeId,
@@ -528,6 +693,12 @@ function activeTab() {
 // While the sidebar animates, the page is shown as a snapshot in the UI and the live view is
 // hidden (and resized once, out of sight), so the site never reflows during the animation.
 let viewFrozen = false;
+// True while the active tab's chat fills the whole content area (homepage "Ask AI" full mode):
+// the UI covers the viewport itself, so the native view underneath is hidden rather than resized.
+// Tied to one tab (its id) and to that tab still showing the new-tab page: switching away shows
+// the other tab's page at once, and switching back hides the page again with no flash while the
+// UI catches up; navigating the tab anywhere ends it.
+let chatFullTab = null;
 
 function layout() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
@@ -536,7 +707,7 @@ function layout() {
   const uiHadFocus = Boolean(ui()?.isFocused());
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
-    const show = visible && !viewFrozen;
+    const show = visible && !viewFrozen && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
     if (!visible) continue;
@@ -555,12 +726,32 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings) },
   });
   const id = nextTabId++;
-  const tab = { id, view, favicon: null, groupId: null, userRemoved: false, settings };
+  const tab = { id, view, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now() };
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
+  const wc = wireView(tab, url);
 
-  const wc = view.webContents;
+  if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
+  else if (groupId) tabGroups.add(id, groupId);
+
+  if (background) {
+    const current = activeTab();
+    if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
+    sendTabs();
+  } else {
+    switchTab(id);
+    guardFirstLoadFocus(tab, url);
+  }
+  return { id, webContents: wc };
+}
+
+// Wires a tab's WebContentsView (navigation, zoom, favicon/title tracking, close-on-destroy,
+// extensions, HTTPS-only/zoom defaults) and loads `url`. Split out of openTab() so wakeTab() (tab
+// sleeping, below) can rebuild a woken tab's view identically instead of duplicating all of this.
+function wireView(tab, url) {
+  const { id, settings } = tab;
+  const wc = tab.view.webContents;
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
     if (disposition === 'new-window') {
@@ -588,7 +779,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     sendTabs();
     if (favicons[0]) cacheFavicon(wc.getURL(), favicons[0]);
   });
-  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url); });
+  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id); });
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) tab.favicon = null;
   });
@@ -611,8 +802,10 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
       return;
     }
     recordVisit(url, wc.getTitle());
+    tab.pageText = ''; // a new page: its text arrives after it loads
     scheduleAutoGroup();
   });
+  wc.on('did-finish-load', () => readPageText(tab));
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
@@ -623,61 +816,167 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   }
   wc.on('before-input-event', (event, input) => handleShortcut(event, input));
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
+  // A page with a beforeunload handler: by default Electron blocks the close/navigation (this event
+  // fires and, unless we call event.preventDefault() *now*, the unload stays prevented). We can't
+  // await the user's answer inside this handler, so instead: let it stay blocked, ask "Leave site?",
+  // and if they choose Leave, redo the close — this time with a flag that lets that retry through.
+  // Only a tab close is asked about (the case where work is lost with no way back); a navigation
+  // or reload the page tries to block just goes ahead instead of silently doing nothing.
+  let allowNextUnload = false;
+  wc.on('will-prevent-unload', (event) => {
+    if (allowNextUnload || !tab.closing) { allowNextUnload = false; event.preventDefault(); return; }
+    dialogs.showMessageBox(win, {
+      type: 'warning',
+      buttons: ['Cancel', 'Leave'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'Leave site?',
+      detail: 'Changes you made may not be saved.',
+      owner: wc,
+    }).then(({ response }) => {
+      if (response !== 1) { tab.closing = false; return; }
+      allowNextUnload = true;
+      if (tabs.some((t) => t.id === id)) requestCloseTab(id); // the main case: retry the close, this time it goes through
+    });
+  });
   // [settings] the settings tab is locked to the settings page; other tabs get default zoom and HTTPS-only
   if (settings) settingsBackend.guardSettingsTab(wc, (target) => replaceTab(id, target));
   else settingsBackend.attachTab(wc);
 
-  // If the page closes itself, drop the tab instead of keeping a dead one around.
-  wc.once('destroyed', () => closeTab(id, { destroyed: true }));
-
-  if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
-  else if (groupId) tabGroups.add(id, groupId);
+  // If the page closes itself, drop the tab instead of keeping a dead one around. sleepTab() (below)
+  // removes this exact listener first, so a deliberate sleep is never mistaken for the page closing.
+  tab.onViewDestroyed = () => closeTab(id, { destroyed: true });
+  wc.once('destroyed', tab.onViewDestroyed);
 
   if (!settings) { // [settings] no debugger and no extensions on the settings tab
     applyChromeIdentity(wc);
     syncExtensions(() => extensions?.addTab(wc, win));
   }
   wc.loadURL(url).catch(() => {});
-  if (background) {
-    const current = activeTab();
-    if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
-    sendTabs();
-  } else {
-    switchTab(id);
-    guardFirstLoadFocus(tab);
-  }
-  return { id, webContents: wc };
+  return wc;
 }
 
-// ---- new-tab focus. Chromium focuses a new tab's page by itself on its first navigation, which
-// took the keyboard away from the address bar if the user had clicked it meanwhile (typed keys went
-// to the page). While a new tab first loads, focus goes back to the UI when the address bar was
-// used (or anything else in the UI clicked or typed in) after the tab opened; otherwise a new-tab
-// page puts the cursor in its search box.
+// ---------- tab sleeping ----------
+// A background tab left untouched for a while has its WebContentsView destroyed — a full renderer
+// process, GPU compositor layers, JS heap, the actual memory cost — while the strip keeps showing
+// its title/url/favicon/group from the snapshot sleepTab() takes below. switchTab() wakes it back
+// up through wireView(), the same path a freshly opened tab takes, reloading the same URL (restoring
+// scroll position isn't attempted). See canSleep() for every case this leaves alone.
+const SLEEP_AFTER_MS = 20 * 60 * 1000;
+const SLEEP_CHECK_MS = 60 * 1000;
+
+function sleepTab(tab) {
+  const wc = tab.view.webContents;
+  tab.sleepUrl = realUrl(wc) || wc.getURL();
+  tab.sleepTitle = wc.getTitle() || 'New Tab';
+  tab.sleeping = true;
+  wc.off('destroyed', tab.onViewDestroyed); // this is a sleep, not a close: don't let that handler drop the tab
+  win.contentView.removeChildView(tab.view);
+  wc.close();
+  tab.view = null;
+}
+
+function wakeTab(tab) {
+  if (!tab.sleeping) return;
+  const view = new WebContentsView({
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) },
+  });
+  tab.view = view;
+  tab.sleeping = false;
+  win.contentView.addChildView(view);
+  view.setVisible(false);
+  wireView(tab, tab.sleepUrl || newTabUrl());
+}
+
+// A page may have text typed into a form; sleeping can't ask "Leave site?" the way a real close does
+// (will-prevent-unload, above, is deliberately bypassed for a silent background sleep), so this
+// substitutes for it. Any doubt (a throw, a page that blocks the read) counts as "yes, has input".
+async function hasUnsavedInput(wc) {
+  try {
+    return await wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `(() => {
+      const dirty = (el) => (el.matches('input,textarea') ? el.value !== (el.defaultValue ?? '') : el.isContentEditable && el.textContent.trim() !== '');
+      return [...document.querySelectorAll('input,textarea,[contenteditable=""],[contenteditable=true]')].some(dirty);
+    })()` }]);
+  } catch {
+    return true;
+  }
+}
+
+// Never the active tab (also covers "the agent is using it": the agent always acts on activeTab()),
+// never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with typed
+// form input. On any doubt this returns false and the tab is left alone.
+async function canSleep(tab) {
+  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing) return false;
+  const wc = tab.view.webContents;
+  if (!isWebUrl(realUrl(wc)) || wc.isLoading() || wc.isCurrentlyAudible()) return false;
+  return !(await hasUnsavedInput(wc));
+}
+
+async function sweepSleep() {
+  if (!win || win.isDestroyed() || readSettings().tabSleep === false) return;
+  const cutoff = Date.now() - SLEEP_AFTER_MS;
+  for (const tab of tabs) {
+    if (!tab.lastActiveAt || tab.lastActiveAt > cutoff) continue;
+    if (!(await canSleep(tab))) continue;
+    // hasUnsavedInput (inside canSleep) is an async round trip to the page: re-check the fast,
+    // synchronous conditions in case the user switched to (or closed) this exact tab meanwhile.
+    if (!alive(tab) || tab.sleeping || tab.id === activeId) continue;
+    sleepTab(tab);
+    sendTabs();
+  }
+}
+setInterval(() => { sweepSleep().catch(() => {}); }, SLEEP_CHECK_MS);
+if (process.env.CLAUDE_BROWSER_TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })) };
+
+// ---- new-tab focus. A blank new tab opens with the cursor in the address bar, as in Chrome.
+// Chromium focuses a tab's page by itself when its view is shown and again on its first navigation,
+// which took the keyboard away (typed keys went to the page). While a tab first loads, focus goes
+// back to the UI unless the user clicked into the page: always for a blank new tab, and for a tab
+// opened on a URL when the address bar was used (or anything else in the UI clicked or typed in)
+// after the tab opened.
 // Events are ordered by a counter, not the clock: a click can land in the same millisecond.
 let uiEventSeq = 0;
 let addressTouchedAt = 0;
-ipcMain.on('address:touched', () => { addressTouchedAt = ++uiEventSeq; });
-function guardFirstLoadFocus(tab) {
+// Sent on every click (and plain key) in the browser UI. The UI takes the keyboard for real here:
+// Chromium doesn't always move native focus between sibling views, so after using the page a click
+// in the address bar or sidebar could leave keys going to the page, and the new-tab search box
+// kept its blinking caret while you typed somewhere else.
+ipcMain.on('address:touched', () => {
+  addressTouchedAt = ++uiEventSeq;
+  if (!ui()?.isFocused()) ui()?.focus();
+  const wc = activeTab()?.webContents;
+  if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
+});
+function guardFirstLoadFocus(tab, url) {
   const openedAt = ++uiEventSeq;
   const wc = tab.view.webContents;
-  const addressInUse = () => addressTouchedAt > openedAt;
-  const giveBack = () => { if (addressInUse() && tab.id === activeId) ui()?.focus(); };
+  const blank = isNewTab(url);
+  let pageClicked = false;
+  const onMouse = (_e, mouse) => { if (mouse.type === 'mouseDown') pageClicked = true; };
+  const keepAddress = () => !pageClicked && (blank || addressTouchedAt > openedAt);
+  const giveBack = () => { if (keepAddress() && tab.id === activeId) ui()?.focus(); };
   wc.on('focus', giveBack);
+  wc.on('before-mouse-event', onMouse);
+  if (blank) focusAddress();
   wc.once('did-finish-load', () => {
-    // The page takes focus when it's created; if the UI has it now, the user clicked back there (the
-    // click's own message can arrive after this event), so leave it.
-    if (alive(tab) && tab.id === activeId && !addressInUse() && !ui()?.isFocused() && isNewTab(wc.getURL())) {
-      wc.focus();
-      wc.executeJavaScript("document.getElementById('q')?.focus()").catch(() => {});
-    }
-    setTimeout(() => { if (!wc.isDestroyed()) wc.off('focus', giveBack); }, 1000);
+    if (alive(tab) && tab.id === activeId && keepAddress() && !ui()?.isFocused()) ui()?.focus();
+    setTimeout(() => {
+      if (wc.isDestroyed()) return;
+      wc.off('focus', giveBack);
+      wc.off('before-mouse-event', onMouse);
+    }, 1000);
   });
 }
 
 function switchTab(id) {
-  if (!tabs.some((t) => t.id === id)) return false;
-  if (id !== activeId) activeTab()?.webContents.stopFindInPage('clearSelection');
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab) return false;
+  if (id !== activeId) {
+    const leaving = tabs.find((t) => t.id === activeId);
+    if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
+    activeTab()?.webContents.stopFindInPage('clearSelection');
+  }
+  if (tab.sleeping) wakeTab(tab);
   activeId = id;
   const current = activeTab();
   if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
@@ -689,14 +988,16 @@ function switchTab(id) {
 function closeTab(id, { destroyed = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
+  if (chatFullTab === id) chatFullTab = null;
   const [tab] = tabs.splice(index, 1);
   tabGroups.cleanup();
-  if (alive(tab)) {
-    const url = realUrl(tab.view.webContents);
-    if (url && !isInternal(url)) closedTabs.push(url);
-  }
+  // `pendingCloseUrl` (set by requestCloseTab) covers the case where this runs from the 'destroyed'
+  // event below: the webContents is already gone by then, so its URL can't be read any more. A
+  // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
+  const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
+  if (url && !isInternal(url)) closedTabs.push(url);
   if (!win || win.isDestroyed()) return; // the app is quitting
-  win.contentView.removeChildView(tab.view);
+  if (tab.view) win.contentView.removeChildView(tab.view); // no view to remove if it was sleeping
   if (!destroyed && alive(tab)) tab.view.webContents.close();
   if (tabs.length === 0) {
     openTab();
@@ -706,13 +1007,29 @@ function closeTab(id, { destroyed = false } = {}) {
   else sendTabs();
 }
 
+// The interactive "close this tab" entry points (the tab strip's ✕, Ctrl/Cmd+W, the tab menu) go
+// through here instead of calling closeTab directly, so a page with a beforeunload handler gets to
+// ask "Leave site?" (will-prevent-unload, wired in openTab) before the tab actually goes away. If
+// the page doesn't object — true for the vast majority of tabs — this closes right away: Electron
+// only fires will-prevent-unload when the page's own handler tries to block the close.
+// closeTab({ destroyed: true }), already wired to every tab's 'destroyed' event, finishes the job.
+function requestCloseTab(id) {
+  const tab = tabs.find((t) => t.id === id);
+  if (!alive(tab)) { closeTab(id); return; }
+  tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
+  tab.closing = true;
+  tab.view.webContents.close({ waitForBeforeUnload: true });
+}
+
 function listTabs() {
-  return tabs.filter(alive).map(({ id, view }) => ({
-    id,
-    title: view.webContents.getTitle(),
-    url: realUrl(view.webContents),
-    active: id === activeId,
-    group: tabs.find((t) => t.id === id)?.groupId ? tabGroups.groups.get(tabs.find((t) => t.id === id).groupId)?.name || null : null,
+  // Sleeping tabs stay listed (from their sleep snapshot) so the agent can still see and switch to
+  // them; switch_tab wakes one up like any other tab click would (see switchTab).
+  return tabs.filter((t) => alive(t) || t.sleeping).map((t) => ({
+    id: t.id,
+    title: t.sleeping ? (t.sleepTitle || 'New Tab') : t.view.webContents.getTitle(),
+    url: t.sleeping ? (t.sleepUrl || '') : realUrl(t.view.webContents),
+    active: t.id === activeId,
+    group: t.groupId ? tabGroups.groups.get(t.groupId)?.name || null : null,
   }));
 }
 
@@ -786,7 +1103,7 @@ async function organizeTabs() {
       await dialog.showMessageBox(win, { type: 'info', message: 'No groups suggested', detail: 'These tabs look unrelated, so they were left as they are.' });
     }
   } catch (err) {
-    const detail = err instanceof Anthropic.AuthenticationError ? 'Your Anthropic API key was rejected. Check it in Claude settings.' : err.message;
+    const detail = err instanceof anthropicSdk().AuthenticationError ? 'Your Anthropic API key was rejected. Check it in Claude settings.' : err.message;
     if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: "Couldn't organize tabs", detail });
   } finally {
     organizing = false;
@@ -850,8 +1167,10 @@ function tabMenu(id, { x, y }) {
     label: 'Add to New Group',
     click: () => {
       if (tab.groupId) tabGroups.remove(id, { byUser: true });
-      const url = alive(tab) ? realUrl(tab.view.webContents) : '';
-      const group = tabGroups.create(isWebUrl(url) ? siteName(url, tab.view.webContents.getTitle()) : 'New Group', [id]);
+      // A sleeping tab has no webContents to read; its sleep snapshot has the same info.
+      const url = alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '';
+      const title = alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '';
+      const group = tabGroups.create(isWebUrl(url) ? siteName(url, title) : 'New Group', [id]);
       sendTabs();
       ui()?.send('group:rename-start', group.id);
     },
@@ -860,7 +1179,7 @@ function tabMenu(id, { x, y }) {
   if (tab.groupId) items.push({ label: 'Remove from Group', click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
   items.push({ type: 'separator' }, { label: 'Organize Tabs by Topic', click: organizeByTopic });
   if (tabGroups.canUndo()) items.push({ label: 'Undo Organize', click: undoOrganize });
-  items.push({ type: 'separator' }, { label: 'Close Tab', click: () => closeTab(id) });
+  items.push({ type: 'separator' }, { label: 'Close Tab', click: () => requestCloseTab(id) });
   Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
 
@@ -1014,8 +1333,7 @@ function frequentSites(limit = 6) {
 }
 
 function newTabUrl() {
-  const icons = readSettings().favicons || {};
-  const withIcon = (b) => ({ ...b, ...(icons[hostOf(b.url)] ? { icon: icons[hostOf(b.url)] } : {}) });
+  const withIcon = (b) => { const icon = faviconStore.get(hostOf(b.url)); return icon ? { ...b, icon } : b; };
   const data = {
     favorites: bookmarks().filter((b) => !b.folder).slice(0, 12).map(withIcon),
     frequent: frequentSites().map(withIcon),
@@ -1027,20 +1345,22 @@ function newTabUrl() {
 }
 
 // Who "Ask AI" on the new-tab page talks to, and whether the assistant can answer right now.
+// Driven by the same connected options as the sidebar's picker, so the two never disagree.
 const ASSISTANT_NAMES = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
 function homeAssistant() {
-  const settings = readSettings();
-  const model = settings.model || DEFAULT_MODEL;
-  if (String(model).startsWith('claudecode:')) return { name: 'Claude', agentUsable: true };
-  const { provider } = providers.splitModel(model);
-  const agentUsable = provider === 'anthropic'
-    ? Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY || cliAuth.profileState().signedIn)
-    : Boolean(providerKey(provider));
-  return { name: ASSISTANT_NAMES[provider] || 'Claude', agentUsable };
+  const options = modelOptions();
+  if (!options.length) return { name: 'AI', agentUsable: false }; // nothing connected: no provider to privilege
+  const saved = readSettings().model;
+  const modelId = options.some((o) => o.id === saved) ? saved : options[0].id;
+  if (String(modelId).startsWith('claudecode:')) return { name: 'Claude', agentUsable: true };
+  if (String(modelId).startsWith('grokbuild:')) return { name: 'Grok', agentUsable: true };
+  const { provider } = providers.splitModel(modelId);
+  return { name: ASSISTANT_NAMES[provider] || 'AI', agentUsable: true };
 }
 
-// The new-tab page asks by loading itself with ?ask=<prompt>: cancel that and hand the prompt to the sidebar.
-function askFromHome(event, url) {
+// The new-tab page asks by loading itself with ?ask=<prompt>: cancel that and hand the prompt to the
+// sidebar, along with the tab id so the UI can put that tab's chat in full-page mode.
+function askFromHome(event, url, tabId) {
   if (!isNewTab(url)) return false;
   let text;
   try { text = new URL(url).searchParams.get('ask'); } catch { return false; }
@@ -1048,15 +1368,14 @@ function askFromHome(event, url) {
   event.preventDefault();
   text = text.trim().slice(0, 20000);
   if (!text) return true;
-  ui()?.send('ask-from-home', { text });
+  ui()?.send('ask-from-home', { text, tabId });
   return true;
 }
 
 // When a favorite or frequently visited site shows its favicon, keep a small copy for the new-tab page.
 async function cacheFavicon(pageUrl, iconUrl) {
   const host = hostOf(pageUrl);
-  const settings = readSettings();
-  if (!host || settings.favicons?.[host] || !/^https?:/.test(iconUrl)) return;
+  if (!host || faviconStore.has(host) || !/^https?:/.test(iconUrl)) return;
   // Only sites the new-tab page shows: favorites and frequently visited ones.
   if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host)) return;
   try {
@@ -1064,8 +1383,7 @@ async function cacheFavicon(pageUrl, iconUrl) {
     const type = res.headers.get('content-type') || '';
     const bytes = Buffer.from(await res.arrayBuffer());
     if (!res.ok || !type.startsWith('image/') || bytes.length > 40000) return;
-    const latest = readSettings();
-    writeSettings({ ...latest, favicons: { ...(latest.favicons || {}), [host]: `data:${type.split(';')[0]};base64,${bytes.toString('base64')}` } });
+    faviconStore.set(host, `data:${type.split(';')[0]};base64,${bytes.toString('base64')}`);
   } catch {
     // Favicon unavailable; the new-tab page shows a letter instead.
   }
@@ -1181,7 +1499,7 @@ function handleShortcut(event, input) {
   let handled = true;
   if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && key === 't') openTab();
-  else if (mod && key === 'w') { if (activeId) closeTab(activeId); }
+  else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
   else if (mod && key === 'l') focusAddress();
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') { ui()?.focus(); ui()?.send('find:open'); }
@@ -1261,8 +1579,11 @@ function titleBarOverlay() {
 }
 
 function saveSession() {
-  const saved = tabs.filter((t) => alive(t) && isWebUrl(realUrl(t.view.webContents)));
-  const urls = saved.map((t) => realUrl(t.view.webContents));
+  // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
+  // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
+  const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
+  const saved = tabs.filter((t) => isWebUrl(urlOf(t)));
+  const urls = saved.map(urlOf);
   writeSettings({ ...readSettings(), session: {
     urls,
     active: Math.max(0, saved.findIndex((t) => t.id === activeId)),
@@ -1313,7 +1634,7 @@ function macMenu() {
         { label: 'Reopen Closed Tab', ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
         { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
-        { label: 'Close Tab', ...shown('Cmd+W'), click: () => { if (activeId) closeTab(activeId); } },
+        { label: 'Close Tab', ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
       ],
     },
     { role: 'editMenu' },
@@ -1374,10 +1695,11 @@ function createWindow() {
   win.on('close', saveSession);
   win.on('focus', () => ui()?.send('window-focus', true));
   win.on('blur', () => ui()?.send('window-focus', false));
-  win.on('resize', () => { hideSuggestions(); if (tabs.some((t) => t.fullscreen)) layout(); });
+  win.on('resize', () => { hideSuggestions(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   win.on('blur', hideSuggestions);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.webContents.once('did-finish-load', () => {
+    createSuggestView();
     restoreSession();
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
@@ -1477,7 +1799,7 @@ function replaceTab(oldId, url) {
 }
 ipcMain.on('settings-page:open', (_e, section) => openSettingsPage(typeof section === 'string' ? section : ''));
 if (process.env.CLAUDE_BROWSER_TEST) {
-  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
+  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
 ipcMain.on('content-bounds', (_e, bounds) => {
@@ -1514,12 +1836,19 @@ ipcMain.on('view:thaw', () => {
   viewFrozen = false;
   layout();
 });
+// Homepage "Ask AI" full-page chat: the UI covers the whole content area, so hide the native view
+// instead of resizing it (see chatFullTab above). content-bounds keeps arriving meanwhile — layout()
+// just ignores it while this is set, so the two never fight over the view's bounds.
+ipcMain.on('chat:full', (_e, on) => {
+  chatFullTab = on ? activeId : null;
+  layout();
+});
 ipcMain.on('tab:new', (_e, url) => {
   const internal = url && settingsPage.parseSettingsInput(url); // [settings] lumen://settings
   if (internal) openSettingsPage(internal.section);
   else openTab(url ? resolveInput(url) : undefined);
 });
-ipcMain.on('tab:close', (_e, id) => closeTab(id));
+ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));
 ipcMain.on('tab:move', (_e, id, toIndex) => {
   const from = tabs.findIndex((t) => t.id === id);
@@ -1612,10 +1941,19 @@ ipcMain.on('agent:reset', () => {
   fs.rm(CHAT_FILE(), { force: true }, () => {});
 });
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
+// Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without
+// the "Allow … to interact" card. Stored as askBeforeActing: false (see autoApprove above).
+ipcMain.handle('agent:auto-allow', (_e, on) => {
+  if (typeof on === 'boolean') writeSettings({ ...readSettings(), askBeforeActing: !on });
+  return readSettings().askBeforeActing === false;
+});
 
 ipcMain.handle('settings:get', () => {
   const options = modelOptions();
   const saved = readSettings().model;
+  // A saved model that isn't actually connected anymore (key removed, CLI gone) falls back to the
+  // first connected option, or none — never a model the user can't use.
+  const model = options.some((o) => o.id === saved) ? saved : options[0]?.id || null;
   return {
     hasStoredKey: Boolean(storedApiKey()),
     hasEnvKey: Boolean(process.env.ANTHROPIC_API_KEY),
@@ -1630,10 +1968,10 @@ ipcMain.handle('settings:get', () => {
     topicAi: readSettings().topicAi === true,
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),
-    model: options.some((o) => o.id === saved) ? saved : DEFAULT_MODEL,
+    model,
     models: options,
-    // For the empty sidebar's "get started" card.
-    ready: homeAssistant().agentUsable,
+    // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
+    ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
   };
 });
@@ -1773,6 +2111,10 @@ ipcMain.handle('settings:set-key', (_e, key) => {
   }
   writeSettings(settings);
   client = null;
+  // Every other provider's key-save calls refreshModels(), which sends this; Anthropic's own key
+  // has no such step (no model list to fetch), so it needs its own nudge — otherwise the picker and
+  // "Set up an AI" card would stay stuck on the old (dis)connected state until something else refreshed them.
+  ui()?.send('models-updated');
   return true;
 });
 
@@ -1802,6 +2144,9 @@ app.whenReady().then(async () => {
     return;
   }
   if (!singleInstance) return;
+  // Widevine CDM for DRM video (castlabs ECS build only; `components` is undefined on stock
+  // Electron). Started first so the download overlaps the rest of startup.
+  const widevine = components?.whenReady().catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
@@ -1811,10 +2156,18 @@ app.whenReady().then(async () => {
   loadHistory();
   // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs.
   await setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
-  // Filter lists load from cache (or download on first run) without holding up the window.
-  adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
+  // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
+  // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
+  // doesn't hold up the window.
+  const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
+  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
   for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
+  // Wait (at most 10 s, so an offline first run never hangs) for the Widevine install started above.
+  if (widevine) {
+    await Promise.race([widevine, new Promise((resolve) => setTimeout(resolve, 10000))]);
+    console.log('Widevine components status:', components.status());
+  }
   createWindow();
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.

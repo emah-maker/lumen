@@ -307,7 +307,7 @@ function renderTabs(state) {
     if (group?.collapsed && tab.id !== state.activeId) continue; // the active tab stays visible
     const el = document.createElement('div');
     el.dataset.id = String(tab.id);
-    el.className = 'tab' + (tab.id === state.activeId ? ' active' : '') + (group ? ' grouped' : '');
+    el.className = 'tab' + (tab.id === state.activeId ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '');
     if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
     el.setAttribute('role', 'tab');
     el.setAttribute('aria-selected', String(tab.id === state.activeId));
@@ -376,8 +376,16 @@ function renderTabs(state) {
   if (active && (!addressDirty || document.activeElement !== address)) {
     currentUrl = active.url;
     addressDirty = false;
-    if (document.activeElement === address) address.value = currentUrl;
-    else showAddress();
+    // Focused: only rewrite a changed URL, and keep a full selection. Assigning .value (even the same
+    // text) drops the selection, so any tab update (a title, a favicon, a page loading) right after a
+    // click in the address bar left nothing selected.
+    if (document.activeElement === address) {
+      if (address.value !== currentUrl) {
+        const all = address.selectionStart === 0 && address.selectionEnd === address.value.length;
+        address.value = currentUrl;
+        if (all) address.select();
+      }
+    } else showAddress();
   }
   $('loadbar').hidden = !active?.loading;
   document.body.classList.toggle('tab-loading', Boolean(active?.loading));
@@ -473,7 +481,10 @@ address.addEventListener('input', (e) => {
   updateSuggestions(address.value, e.inputType?.startsWith('delete'));
 });
 address.addEventListener('focus', () => {
-  if (!addressDirty) address.value = currentUrl;
+  // Focus coming back while you type (a loading page briefly took it) must not select the typed
+  // text, or the next key would replace it.
+  if (addressDirty) return;
+  address.value = currentUrl;
   address.select();
 });
 // A click or typing anywhere in the browser UI (not a shortcut like Ctrl+T) is the user working
@@ -730,7 +741,10 @@ async function showSidebar(visible) {
   }
   if (visible) $('prompt').focus({ preventScroll: true });
 }
-$('toggle-sidebar').onclick = () => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true');
+$('toggle-sidebar').onclick = () => {
+  if (chatFull) { exitFull(); return; } // the toggle docks a full chat back rather than closing it
+  showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true');
+};
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
   if (e.button === 0 && !revealAnim && !snapshot && !reduceMotion.matches) earlyFreeze = freezePage();
@@ -791,9 +805,71 @@ resizer.addEventListener('keydown', (e) => {
   localStorage.setItem('sidebarWidth', String(width));
 });
 window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
-// "Ask AI" on the new-tab page.
-window.browser.onAskFromHome?.(({ text }) => {
-  showSidebar(true);
+
+// ---------- full-page chat ("Ask AI" from the homepage) ----------
+
+// fullChatTabId remembers which tab's chat should fill the whole content area; it survives
+// switching to another tab (so switching back re-enters full mode) but is forgotten for good once
+// that tab leaves the new-tab page or closes. The conversation itself is one shared chat either
+// way — full mode is only ever a layout, never a separate thread.
+let fullChatTabId = null;
+let chatFull = false;
+const isNewTabPage = (tab) => Boolean(tab) && !tab.url && !tab.page && !tab.error;
+
+function enterFull() {
+  if (chatFull) return;
+  chatFull = true;
+  document.body.classList.add('chat-full');
+  window.browser.setChatFull?.(true); // main hides the tab's native view; see layout() in main.js
+  // Full mode has no docked-sidebar spring of its own; don't leave one (or its frozen-page snapshot) running underneath.
+  revealAnim?.stop();
+  revealAnim = null;
+  heldRect = null;
+  if (snapshot) thawPage();
+  // Full mode ignores --reveal (CSS forces width: 100%), but reset it so docking back later — which
+  // does nothing but remove the chat-full class — lands on a fully open sidebar, not a stale partial one.
+  document.body.classList.remove('sidebar-hidden');
+  $('sidebar').style.removeProperty('--reveal');
+  reveal = 1;
+  $('toggle-sidebar').setAttribute('aria-pressed', 'true');
+  $('prompt').focus({ preventScroll: true });
+}
+
+// tell=false: a tab switch. Main keeps the chat tied to that tab (it shows the other tab's page by
+// itself and hides this one again on the way back, with no flash), so it isn't told.
+function exitFull(tell = true) {
+  if (!chatFull) return;
+  chatFull = false;
+  document.body.classList.remove('chat-full');
+  // Bounds before visibility: main should already have the docked size cached by the time it shows
+  // the view again, instead of showing it at whatever (near-zero) size it was hidden at.
+  reportBounds();
+  // Docked on purpose (button, Escape, toggle): forget the tab too, or the next tab update re-enters.
+  if (tell) { fullChatTabId = null; window.browser.setChatFull?.(false); }
+}
+
+// Tab switches and navigation leave (or re-enter) full mode from outside the chat; the toggle
+// button, Escape and the dock icon below cover leaving it from inside the chat.
+function watchFullChatTab(state) {
+  if (fullChatTabId === null) return;
+  const tab = state.tabs.find((t) => t.id === fullChatTabId);
+  if (!tab || !isNewTabPage(tab)) { fullChatTabId = null; exitFull(); return; } // navigated away, or closed
+  if (state.activeId === fullChatTabId) enterFull(); // switched back while still on the new-tab page
+  else exitFull(false); // a different tab is active: dock back, but keep remembering this one
+}
+window.browser.onTabs(watchFullChatTab);
+
+$('dock-to-side').onclick = () => exitFull();
+// Escape anywhere in the chat docks a full-page chat back, except inside the model picker's own
+// search popup, which handles Escape itself (closing the popup, not the chat).
+$('sidebar').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && chatFull && !e.target.closest('.model-picker')) { e.preventDefault(); exitFull(); }
+});
+
+// "Ask AI" on the new-tab page: that tab's chat opens full-page instead of docking to the side.
+window.browser.onAskFromHome?.(({ text, tabId }) => {
+  fullChatTabId = tabId ?? lastTabState?.activeId ?? null;
+  enterFull();
   ask(text);
 });
 window.browser.onAskSelection((text) => {
@@ -812,22 +888,38 @@ window.assistant.getSettings().then((s) => {
 const openAiSettings = () => window.lumenPrefs?.openSettingsPage('you-and-ai');
 $('open-settings').onclick = openAiSettings;
 
-// "Set up an AI" in the empty sidebar, while no model can answer: Claude Code first (the user's own
-// Claude login), then keys / OpenRouter.
+// "Set up an AI" in the empty sidebar, while nothing is connected: three equal ways in. `s.model`
+// is main's single source of truth for "is anything usable right now" — no client-side guessing,
+// so this can never disagree with the picker (see loadModels below).
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
-  const current = s.models.find((m) => m.id === s.model);
-  const ready = s.ready || String(s.model).startsWith('claudecode:') || (current && current.group !== 'Claude');
-  $('setup').hidden = Boolean(ready);
-  $('setup-claude-code-detail').textContent = s.claudeCode
-    ? 'Through Claude Code, with your own login (including school or work). Click to use it.'
-    : 'Install Claude Code, run claude once and type /login, then restart Lumen.';
+  // A local engine (Claude Code, Grok Build) found but signed out can't answer yet: while it's the
+  // pick, the card stays up.
+  const signedOut = s.models.find((m) => m.id === 'claudecode:default')?.signedIn === false;
+  const pickSignedOut = s.models.find((m) => m.id === s.model)?.signedIn === false;
+  $('setup').hidden = Boolean(s.model) && !pickSignedOut;
+  $('setup-claude-code-detail').textContent = !s.claudeCode
+    ? 'Install Claude Code, run claude once and type /login, then restart Lumen.'
+    : signedOut
+      ? 'Not signed in yet: open a terminal, run claude, then type /login. Then click here.'
+      : 'Click to use it.';
   $('setup-claude-code').disabled = !s.claudeCode;
 }
 $('setup-claude-code').onclick = async () => {
-  if (await window.assistant.setModel('claudecode:default')) { await loadModels(); refreshSetup(); }
+  // Signed out a moment ago? Ask the CLI again first (the user may have just run /login).
+  const status = await window.lumenExtras?.claudeCodeStatus?.(true).catch(() => null);
+  if (status?.signedIn !== false && await window.assistant.setModel('claudecode:default')) await loadModels();
+  refreshSetup();
 };
 $('setup-keys').onclick = openAiSettings;
+$('setup-openrouter').onclick = async () => {
+  const btn = $('setup-openrouter');
+  btn.disabled = true;
+  const r = await window.assistant.openRouterSignIn();
+  btn.disabled = false;
+  if (r?.ok) { await loadModels(); refreshSetup(); }
+  else if (r?.message) alert(r.message);
+};
 window.assistant.onModelsUpdated?.(() => refreshSetup());
 refreshSetup();
 
@@ -837,6 +929,12 @@ refreshSetup();
 
 // Simple monochrome marks (drawn here, sized for 16px), tinted per company.
 const ASSISTANTS = {
+  // Nothing connected: no provider to privilege, so a neutral mark instead of defaulting to Claude's.
+  AI: {
+    name: 'AI',
+    tint: 'currentColor',
+    svg: '<svg viewBox="0 0 16 16" class="mark"><circle cx="8" cy="8" r="5.25"/></svg>',
+  },
   Claude: {
     name: 'Claude',
     tint: '#d97757',
@@ -867,7 +965,9 @@ const ASSISTANTS = {
 let assistantIdentity = null;
 
 function setAssistantIdentity(group) {
-  const who = ASSISTANTS[group] || ASSISTANTS.Claude;
+  // Claude Code answers as Claude, Grok Build as Grok. No group (nothing connected) or an unknown
+  // one: the neutral mark.
+  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group] || ASSISTANTS.AI;
   if (assistantIdentity === who) return;
   const first = assistantIdentity === null;
   assistantIdentity = who;
@@ -894,9 +994,16 @@ function setAssistantIdentity(group) {
 
 window.lumenPicker($('model'));
 
+// Whether there is any model to talk to right now (main's settings:get is the single source of
+// truth); ask() below checks this before sending, instead of letting a request fail with an error.
+let modelReady = false;
+
 async function loadModels() {
   const s = await window.assistant.getSettings();
   const select = $('model');
+  const picker = select.closest('.model-picker');
+  modelReady = Boolean(s.model);
+  if (picker) picker.hidden = !modelReady; // nothing connected: no picker, not an empty one
   const groups = new Map();
   for (const m of s.models) {
     if (!groups.has(m.group)) groups.set(m.group, Object.assign(document.createElement('optgroup'), { label: m.group }));
@@ -908,12 +1015,11 @@ async function loadModels() {
   }
   // A single group needs no heading.
   select.replaceChildren(...(groups.size > 1 ? groups.values() : [...groups.values()].flatMap((g) => [...g.children])));
-  select.value = s.model;
-  select.pickerSync();
+  if (modelReady) { select.value = s.model; select.pickerSync(); }
   const current = s.models.find((m) => m.id === s.model);
   select.title = current?.detail || '';
-  prompt.placeholder = `Ask ${current && current.group !== 'Claude' ? current.label : 'Claude'}…`;
-  setAssistantIdentity(current?.group || 'Claude');
+  prompt.placeholder = !current ? 'Set up an AI to start…' : current.group === 'Claude' ? 'Ask Claude…' : `Ask ${current.label}…`;
+  setAssistantIdentity(current?.group);
 }
 window.assistant.onModelsUpdated?.(() => loadModels());
 // "More models…" (OpenRouter): a searchable list of every model, under the picker.
@@ -968,8 +1074,9 @@ $('model').addEventListener('change', async (e) => {
   const label = select.selectedOptions[0].textContent;
   select.title = select.selectedOptions[0].title;
   const group = select.selectedOptions[0].parentElement?.label;
-  prompt.placeholder = `Ask ${group && group !== 'Claude' ? select.selectedOptions[0].textContent : 'Claude'}…`;
-  setAssistantIdentity(group || 'Claude');
+  prompt.placeholder = group === 'Claude' ? 'Ask Claude…' : `Ask ${select.selectedOptions[0].textContent}…`;
+  setAssistantIdentity(group);
+  modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
   // The conversation carries over: the next message goes to the new model with the full history.
   if (messages.querySelector('.msg')) {
@@ -1108,6 +1215,12 @@ sidebarEl.addEventListener('drop', async (e) => {
 
 function ask(text, images = []) {
   if (running) return;
+  // Nothing connected: show the setup card instead of sending a message that can only error.
+  if (!modelReady) {
+    if (!messages.querySelector('.msg')) { refreshSetup(); return; }
+    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: 'Set up an AI in Settings to keep chatting.' }));
+    return;
+  }
   const bubble = document.createElement('div');
   bubble.className = 'msg user';
   if (images.length) {
@@ -1300,6 +1413,23 @@ function finishReply(bubble, source) {
   bubble.append(button);
 }
 
+// ---------- auto-allow actions: the sidebar's AI acts on any site without asking ----------
+
+let autoAllow = false;
+function renderAutoAllow() {
+  const button = $('auto-allow');
+  button.setAttribute('aria-pressed', String(autoAllow));
+  button.title = autoAllow
+    ? 'Auto-allow actions: on. The AI clicks and types on any site without asking. Click to turn off.'
+    : 'Auto-allow actions: off. The AI asks before it first clicks or types on a site. Click to turn on.';
+}
+async function setAutoAllow(on) {
+  autoAllow = Boolean(await window.assistant.autoAllow?.(on));
+  renderAutoAllow();
+}
+$('auto-allow').onclick = () => setAutoAllow(!autoAllow);
+window.assistant.autoAllow?.().then((on) => { autoAllow = Boolean(on); renderAutoAllow(); });
+
 // ---------- inline approval before Claude acts on a new site ----------
 
 const approvals = new Map(); // approvalId -> { card, host }
@@ -1330,14 +1460,18 @@ function showApproval(approvalId, host) {
     allow.disabled = true;
     window.assistant.approve?.(approvalId, ok);
   };
+  // Always allow: this one, and turns on auto-allow for every site (the bolt in the sidebar head).
+  const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: 'Always allow' });
+  always.title = 'Allow this, and stop asking on every site (turn off with the bolt at the top of the sidebar)';
   deny.onclick = () => answer(false);
   allow.onclick = () => answer(true);
+  always.onclick = () => { always.disabled = true; setAutoAllow(true); answer(true); };
   card.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target === card) { e.preventDefault(); answer(true); }
     else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
   });
 
-  actions.append(deny, allow);
+  actions.append(deny, always, allow);
   card.append(title, detail, actions);
   append(card);
   approvals.set(approvalId, { card, host });
@@ -1534,6 +1668,7 @@ window.assistant.onMcpEvent?.((event) => {
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
       if (title) title.textContent = `An external agent (${event.clientName}) wants to interact with ${event.host}`;
+      card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
       card?.setAttribute('aria-label', title?.textContent || '');
       break;
     }

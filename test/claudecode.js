@@ -3,7 +3,8 @@
 // user's plan). Skipped gracefully without the CLI.
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
-const { findClaude, buildArgs, describeFailure } = require('../claude-code');
+const { execFile } = require('child_process');
+const { findClaude, buildArgs, stdinMessage, describeFailure, parseAuthStatus } = require('../claude-code');
 
 (async () => {
   let failures = 0;
@@ -13,10 +14,28 @@ const { findClaude, buildArgs, describeFailure } = require('../claude-code');
   const argv = buildArgs({ mcpConfig: '/tmp/x.json', sessionId: 'abc', resume: false, systemPrompt: 'S' });
   const flag = (f) => argv[argv.indexOf(f) + 1];
   check('argv: headless stream-json with partial messages', argv[0] === '-p' && flag('--output-format') === 'stream-json' && argv.includes('--verbose') && argv.includes('--include-partial-messages'), argv.join(' '));
+  check('argv: input is stream-json (carries image blocks on stdin)', flag('--input-format') === 'stream-json', argv.join(' '));
   check('argv: no built-in tools, only mcp__lumen, no prompts', flag('--tools') === '' && flag('--allowedTools') === 'mcp__lumen' && flag('--permission-mode') === 'dontAsk' && argv.includes('--strict-mcp-config'), argv.join(' '));
   check('argv: new chat uses --session-id, follow-up uses --resume', flag('--session-id') === 'abc' && buildArgs({ mcpConfig: 'x', sessionId: 'abc', resume: true, systemPrompt: 'S' }).includes('--resume'), argv.join(' '));
   check('error: not logged in -> run claude, then /login', /run `claude` once, then type \/login/.test(describeFailure('Invalid API key · Please run /login').text), describeFailure('Invalid API key · Please run /login').text);
   check('error: usage limit is named', /usage limit/.test(describeFailure("Claude AI usage limit reached|1760000000").text), describeFailure('Claude AI usage limit reached').text);
+
+  // Offline: the stdin JSONL line itself — text first, then image blocks in the Anthropic shape.
+  const textOnly = stdinMessage('hello', []);
+  check('stdin message: plain text has no image blocks', textOnly.type === 'user' && textOnly.parent_tool_use_id === null && textOnly.message.content.length === 1 && textOnly.message.content[0].text === 'hello', JSON.stringify(textOnly));
+  const withImage = stdinMessage('what color is this?', [{ media_type: 'image/png', data: 'AAAA' }]);
+  const kinds = withImage.message.content.map((b) => b.type);
+  check('stdin message: [text, image] with the Anthropic base64 image shape', JSON.stringify(kinds) === '["text","image"]' && withImage.message.content[1].source.type === 'base64' && withImage.message.content[1].source.media_type === 'image/png' && withImage.message.content[1].source.data === 'AAAA', JSON.stringify(withImage));
+
+  // Offline: parseAuthStatus (claude-code.js) on sample `claude auth status --json` outputs, so the
+  // sign-in label is tested without needing a real login (or even the CLI) on the machine running tests.
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  check('auth status: subscription (claude.ai)', eq(parseAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'enterprise' })), { signedIn: true, accountType: 'subscription', detail: 'enterprise' }), parseAuthStatus('{}'));
+  check('auth status: subscription with no plan name', eq(parseAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })), { signedIn: true, accountType: 'subscription', detail: null }));
+  check('auth status: API key', eq(parseAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'apiKey' })), { signedIn: true, accountType: 'apiKey', detail: null }));
+  check('auth status: logged out', eq(parseAuthStatus(JSON.stringify({ loggedIn: false })), { signedIn: false, accountType: null, detail: null }));
+  check('auth status: unparseable output -> unknown (older CLI, stray text)', eq(parseAuthStatus('command not found'), { signedIn: 'unknown', accountType: null, detail: null }));
+  check('auth status: JSON missing loggedIn -> unknown', eq(parseAuthStatus(JSON.stringify({ ok: true })), { signedIn: 'unknown', accountType: null, detail: null }));
 
   const bin = await findClaude();
   if (!bin) {
@@ -25,6 +44,22 @@ const { findClaude, buildArgs, describeFailure } = require('../claude-code');
     process.exit(failures ? 1 : 0);
   }
   console.log(`      using ${bin}`);
+
+  // Live: the real `claude auth status --json` shape on this machine, parsed the same way the app
+  // does. Logs only key names and the parsed label, never the raw output (which carries an email).
+  {
+    const stdout = await new Promise((resolve) => execFile(bin, ['auth', 'status', '--json'], { shell: false, windowsHide: true, timeout: 5000 }, (err, out) => resolve(err ? null : out)));
+    if (stdout === null) {
+      console.log('      `claude auth status` unsupported or failed on this CLI build (checkAuthStatus treats that as \'unknown\')');
+    } else {
+      let keys = [];
+      try { keys = Object.keys(JSON.parse(stdout)); } catch {}
+      const parsed = parseAuthStatus(stdout);
+      console.log(`      real output keys: ${JSON.stringify(keys)}`);
+      console.log(`      parsed: signedIn=${parsed.signedIn} accountType=${parsed.accountType} detail=${parsed.detail}`);
+      check('auth status: real CLI output parses to a known signedIn value', [true, false, 'unknown'].includes(parsed.signedIn), JSON.stringify(parsed));
+    }
+  }
 
   const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
   const ui = await app.firstWindow();
@@ -35,16 +70,15 @@ const { findClaude, buildArgs, describeFailure } = require('../claude-code');
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   await sleep(800);
 
-  // Picker: "Your Claude account" group, the note under it when picked.
-  let groups = [];
-  for (let i = 0; i < 20 && !groups.includes('Your Claude account'); i++) {
+  // Picker: the Claude Code option (a lone group has no heading), picked.
+  let ids = [];
+  for (let i = 0; i < 20 && !ids.includes('claudecode:default'); i++) {
     await sleep(300);
-    groups = await ui.$$eval('#model optgroup', (gs) => gs.map((g) => g.label));
+    ids = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
   }
-  check('picker has a "Your Claude account" group', groups.includes('Your Claude account'), JSON.stringify(groups));
+  check('picker offers your own Claude Code', ids.includes('claudecode:default'), JSON.stringify(ids));
   await ui.selectOption('#model', 'claudecode:default');
   await sleep(300);
-  check('the note shows under the picker', await ui.isVisible('#cc-note') && /Uses your Claude Code login/.test(await ui.textContent('#cc-note')), 'hidden');
   check('the toolbar keeps the Claude mark', (await ui.getAttribute('#toggle-sidebar', 'data-assistant')) === 'Claude', await ui.getAttribute('#toggle-sidebar', 'data-assistant'));
 
   await app.evaluate(() => global.__agent.execute('navigate', { url: 'https://example.com' }));

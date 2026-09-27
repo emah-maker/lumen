@@ -53,6 +53,19 @@ The Windows build ships the official Electron `.exe` byte for byte (`signAndEdit
 
 Set up an AI from the sidebar's empty state or **Settings → You and AI** (`Ctrl+,`; the sidebar's gear opens it): your Claude account through Claude Code, an Anthropic, OpenAI, Grok, Gemini or OpenRouter key (stored encrypted with the OS keychain), or **Sign in with OpenRouter**. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY` and `OPENROUTER_API_KEY` work too.
 
+### DRM (Widevine): Netflix, Spotify, Disney+, Prime Video, YouTube Movies
+
+`electron` is castlabs' [ECS build](https://github.com/castlabs/electron-releases) (`electron-releases#v44.1.0+wvcus`), which adds a Widevine CDM that stock Electron doesn't have. On startup Lumen calls `components.whenReady()` (with a 10s timeout so a failed/offline CDM download never blocks the window opening) and logs `components.status()`; the CDM itself downloads on first run.
+
+That's enough for most sites out of the box. Production DRM providers (Netflix, Disney+, Spotify) additionally check that the binary is **VMP-signed** — electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature. One-time setup, then every `npm run dist:win` VMP-signs the build automatically (`scripts/after-pack.js`; it warns and continues the build if any of this isn't set up):
+
+```
+python -m pip install --upgrade castlabs-evs
+python -m castlabs_evs.account signup      # or: python -m castlabs_evs.account reauth
+```
+
+To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
+
 ## Use
 
 | Action | How |

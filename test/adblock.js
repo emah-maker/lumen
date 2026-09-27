@@ -1,9 +1,10 @@
-// Built-in ad blocker: blocks ads on real pages, and pages don't see it.
+// Built-in ad blocker: blocks ads on real pages, and pages don't see it (bait elements, failed ad
+// requests, missing ad libraries, late scriptlets, globals).
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
+  const app = await electron.launch({ args: [path.join(__dirname, '..'), '--host-resolver-rules=MAP probe.lumen-test.org 127.0.0.1'], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
   const ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   let failures = 0;
@@ -39,6 +40,43 @@ const path = require('path');
   check('bait element stays visible (bait-based detection sees no blocker)', !probe.baitHidden, JSON.stringify(probe));
   check('no stylesheets added to the page DOM (example.com has 1 of its own)', probe.sheets === 1, JSON.stringify(probe));
   check('ad script request was actually blocked', (await blocked()) > 0, 'nothing blocked');
+
+  // Network probes: blocked requests get stand-ins, so "did it load?" checks see them load.
+  const net = await js(`(async () => {
+    const load = (tag, src) => new Promise((res) => { const e = document.createElement(tag); e.src = src; e.onload = () => res('load'); e.onerror = () => res('error'); (tag === 'script' ? document.head : document.body).appendChild(e); setTimeout(() => res('timeout'), 5000); });
+    const out = {};
+    out.adsbygoogle = typeof window.adsbygoogle?.push; // loaded above
+    out.gpt = await load('script', 'https://securepubads.g.doubleclick.net/tag/js/gpt.js');
+    out.gptCmd = await new Promise((res) => { window.googletag.cmd.push(() => res('ran')); setTimeout(() => res('never'), 1500); });
+    out.img = await load('img', 'https://ad.doubleclick.net/ddm/ad/pixel.gif');
+    out.fetch = await fetch('https://pagead2.googlesyndication.com/pagead/show_ads.js', { mode: 'no-cors' }).then(() => 'ok', () => 'reject');
+    out.cors = await fetch('https://googleads.g.doubleclick.net/pagead/id', { credentials: 'include' }).then((r) => 'ok', () => 'reject');
+    out.xhr = await new Promise((res) => { const x = new XMLHttpRequest(); x.open('GET', 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'); x.onload = () => res('load'); x.onerror = () => res('error'); x.send(); });
+    out.globals = Object.keys(window).filter((k) => /ghostery|adblock|cliqz/i.test(k));
+    return out;
+  })()`);
+  console.log('      stand-ins:', JSON.stringify(net));
+  check('bait ad script loads (a stand-in) and defines adsbygoogle.push', probe.scriptLoaded && net.adsbygoogle === 'function', JSON.stringify({ probe, net }));
+  check('gpt.js loads and googletag.cmd callbacks run', net.gpt === 'load' && net.gptCmd === 'ran', JSON.stringify(net));
+  check('blocked image, fetch, CORS fetch and XHR succeed quietly', net.img === 'load' && net.fetch === 'ok' && net.cors === 'ok' && net.xhr === 'load', JSON.stringify(net));
+  check('no blocker globals on window', !net.globals.length, JSON.stringify(net.globals));
+
+  // Scriptlets run before the page's first script (anti-adblock code runs early).
+  const http = require('http');
+  const server = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'text/html');
+    // A strict policy that allows the ad host but not the stand-in scheme: the stand-in must still load.
+    if (req.url === '/csp') res.setHeader('Content-Security-Policy', "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com; img-src 'self' https://ad.doubleclick.net");
+    res.end('<!doctype html><head><script>window.__early = String(window.lumenProbe);</script></head><body>hi</body>');
+  }).listen(0);
+  await app.evaluate(() => global.__adblockEngine.updateFromDiff({ added: ['lumen-test.org##+js(set-constant, lumenProbe, 42)'] }));
+  await go(`http://probe.lumen-test.org:${server.address().port}/`);
+  await ui.waitForTimeout(500);
+  check('scriptlets run before the page’s own first script', (await js('window.__early')) === '42', await js('window.__early'));
+  await go(`http://probe.lumen-test.org:${server.address().port}/csp`);
+  const csp = await js(`Promise.all([['script', 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'], ['img', 'https://ad.doubleclick.net/ddm/ad/pixel.gif']].map(([tag, src]) => new Promise((res) => { const e = document.createElement(tag); e.src = src; e.onload = () => res('load'); e.onerror = () => res('error'); document.body.appendChild(e); setTimeout(() => res('timeout'), 5000); })))`);
+  check('stand-ins load on a page with a strict Content-Security-Policy', csp.every((r) => r === 'load'), JSON.stringify(csp));
+  server.close();
 
 
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

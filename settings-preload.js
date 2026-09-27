@@ -39,9 +39,11 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       cliStatus: call('cli:status'),
       cliLogin: call('cli:login'),
       cliLogout: call('cli:logout'),
+      claudeCodeStatus: call('claudecode:status'),
       mcpInfo: call('mcp:info'),
       setMcpEnabled: call('mcp:set-enabled'),
-      addToClaudeCode: call('mcp:add-to-claude'),
+      addToAgent: call('mcp:add-to-agent'),
+      addToClaudeCode: call('mcp:add-to-claude'), // kept as an alias
       automationInfo: call('automation:info'),
       setAutomation: call('automation:set'),
       importBrowsers: call('import:browsers'),

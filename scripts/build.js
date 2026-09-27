@@ -29,7 +29,14 @@ const out = outputDir();
 if (/onedrive/i.test(out)) console.warn(`warning: building into ${out}, which looks like a synced folder`);
 
 const builderArgs = [platformFlag, ...rest, `-c.directories.output=${out}`, '--publish', 'never']; // publishing is the workflow's job
-if (platformFlag === '--win') builderArgs.push('-c.electronDist=node_modules/electron/dist');
+// LUMEN_ELECTRON_DIST: build with another Electron's dist folder (e.g. stock Electron instead of the
+// castlabs DRM build in node_modules), without touching the project's dependencies.
+const electronDist = process.env.LUMEN_ELECTRON_DIST ? path.resolve(process.env.LUMEN_ELECTRON_DIST) : path.join(root, 'node_modules', 'electron', 'dist');
+if (platformFlag === '--win') {
+  builderArgs.push(`-c.electronDist=${electronDist}`);
+  const version = fs.readFileSync(path.join(electronDist, 'version'), 'utf8').trim().replace(/^v/, '');
+  if (process.env.LUMEN_ELECTRON_DIST) builderArgs.push(`-c.electronVersion=${version}`);
+}
 
 console.log(`Building ${platformFlag.slice(2)} into ${out}`);
 const result = spawnSync(process.execPath, [require.resolve('electron-builder/cli.js'), ...builderArgs], { cwd: root, stdio: 'inherit' });
@@ -39,7 +46,7 @@ if (result.status !== 0) process.exit(result.status || 1);
 if (platformFlag === '--win') {
   const sha = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const built = path.join(out, 'win-unpacked', 'Lumen.exe');
-  const stock = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe');
+  const stock = path.join(electronDist, 'electron.exe');
   if (fs.existsSync(built) && fs.existsSync(stock)) {
     const same = sha(built) === sha(stock);
     console.log(`Lumen.exe ${same ? 'matches' : 'DOES NOT match'} the stock Electron binary (${sha(built).slice(0, 12)}…)`);

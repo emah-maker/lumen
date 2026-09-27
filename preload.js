@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('browser', {
   setContentBounds: (bounds) => ipcRenderer.send('content-bounds', bounds),
   freezeView: () => ipcRenderer.invoke('view:freeze'),
   thawView: () => ipcRenderer.send('view:thaw'),
+  setChatFull: (on) => ipcRenderer.send('chat:full', on),
   warmView: () => ipcRenderer.invoke('view:warm'),
   newTab: (url) => ipcRenderer.send('tab:new', url),
   closeTab: (id) => ipcRenderer.send('tab:close', id),
@@ -74,6 +75,7 @@ contextBridge.exposeInMainWorld('assistant', {
   setAutomation: (options) => ipcRenderer.invoke('automation:set', options),
   onHistory: on('agent:history'),
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+  autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setKey: (key) => ipcRenderer.invoke('settings:set-key', key),
   setAdhdMode: (on) => ipcRenderer.invoke('settings:set-adhd', on),
@@ -95,8 +97,14 @@ contextBridge.exposeInMainWorld('assistant', {
 
 // ---- [claude code engine] + [page context] + [panel snapshot]
 contextBridge.exposeInMainWorld('lumenExtras', {
-  addToClaudeCode: () => ipcRenderer.invoke('mcp:add-to-claude'),
+  addToAgent: (id) => ipcRenderer.invoke('mcp:add-to-agent', id),
+  addToClaudeCode: () => ipcRenderer.invoke('mcp:add-to-claude'), // kept as an alias
   getPageContext: () => ipcRenderer.invoke('pagecontext:get'),
   setPageContext: (on) => ipcRenderer.invoke('pagecontext:set', on),
+  // { installed, signedIn: true|false|'unknown', accountType: 'subscription'|'apiKey'|null, detail }
+  claudeCodeStatus: (refresh) => ipcRenderer.invoke('claudecode:status', refresh),
+  claudeCodeLoginHelp: () => ipcRenderer.invoke('claudecode:login-help'),
+  // { installed, signedIn: true|false|'unknown', detail } -- see grok-build.js
+  grokBuildStatus: (refresh) => ipcRenderer.invoke('grokbuild:status', refresh),
 });
 // ---- [/claude code engine] + [/page context] + [/panel snapshot]

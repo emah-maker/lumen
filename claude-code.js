@@ -12,21 +12,11 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { exists, lookup, killTree } = require('./cli-utils');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
   : 'Install it with: curl -fsSL https://claude.ai/install.sh | bash  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.';
-
-const exists = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
-
-// Where on PATH a command lives (`where` on Windows, `which` elsewhere). Never a shell.
-function lookup(name) {
-  return new Promise((resolve) => {
-    execFile(process.platform === 'win32' ? 'where' : 'which', [name], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
-      resolve(err ? [] : String(stdout).split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
-    });
-  });
-}
 
 // The real executable. On Windows the npm shim (claude.cmd / claude.ps1) runs
 // node_modules/@anthropic-ai/claude-code/bin/claude.exe next to it; spawning the .exe directly
@@ -52,16 +42,6 @@ async function findClaude() {
   return null;
 }
 
-// Stop: the CLI starts the MCP bridge as a child, so end the whole tree.
-function killTree(child) {
-  if (!child || child.exitCode !== null || child.killed) return;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => child.kill());
-  } else {
-    try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
-  }
-}
-
 // Turns a CLI failure into what the user should do about it.
 function describeFailure(text, code) {
   const t = String(text || '').trim();
@@ -77,7 +57,7 @@ function describeFailure(text, code) {
 const ARGS_BASE = [
   '-p',
   '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
-  '--input-format', 'text',
+  '--input-format', 'stream-json', // one JSONL user message on stdin, so it can carry image blocks
   '--tools', '', // no built-in tools: no Bash, no file reads or edits
   '--strict-mcp-config',
   '--allowedTools', 'mcp__lumen',
@@ -89,6 +69,49 @@ function buildArgs({ mcpConfig, sessionId, resume, systemPrompt }) {
   return [...ARGS_BASE, '--mcp-config', mcpConfig, '--append-system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId];
 }
 
+// The one stream-json line written to stdin for a turn: text first, then any images, in the same
+// Anthropic image-block shape the API engines use (see agent.js runOnce). The CLI reads exactly one
+// user turn per run (-p), so there's no need for more than one JSONL line before closing stdin.
+function stdinMessage(prompt, images = []) {
+  return {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
+      ],
+    },
+    parent_tool_use_id: null,
+  };
+}
+
+// Maps `claude auth status --json` output to what the picker needs, never anything from
+// credentials/tokens themselves: just whether it's logged in and a coarse account-type label.
+// Anything that doesn't parse as the expected shape (old CLI, a stray warning line before the
+// JSON, a future field rename) comes back 'unknown' so the option stays listed and the existing
+// first-message error ("Claude Code is not signed in...") still covers it.
+function parseAuthStatus(stdout) {
+  let json;
+  try { json = JSON.parse(String(stdout).trim()); } catch { return { signedIn: 'unknown', accountType: null, detail: null }; }
+  if (!json || typeof json.loggedIn !== 'boolean') return { signedIn: 'unknown', accountType: null, detail: null };
+  if (!json.loggedIn) return { signedIn: false, accountType: null, detail: null };
+  // authMethod 'claude.ai' is an OAuth subscription session; anything else (apiKey, bedrock, vertex…) pays per token.
+  const accountType = json.authMethod === 'claude.ai' ? 'subscription' : 'apiKey';
+  return { signedIn: true, accountType, detail: accountType === 'subscription' ? (json.subscriptionType || null) : null };
+}
+
+// `claude auth status --json`: the CLI's own sign-in check, so Lumen itself never reads claude.ai
+// credentials or tokens (Anthropic's terms bar apps from collecting or intermediating those). Old
+// CLIs without `auth status`, and any failure (timeout, non-zero exit, ENOENT), resolve 'unknown'.
+function checkAuthStatus(bin) {
+  return new Promise((resolve) => {
+    execFile(bin, ['auth', 'status', '--json'], { shell: false, windowsHide: true, timeout: 5000 }, (err, stdout) => {
+      resolve(err ? { signedIn: 'unknown', accountType: null, detail: null } : parseAuthStatus(stdout));
+    });
+  });
+}
+
 class ClaudeCodeEngine {
   // mcpCommand(): { command, args, env } for Lumen's bridge. ensureServer(): starts the MCP server.
   constructor({ userData, mcpCommand, ensureServer }) {
@@ -97,11 +120,23 @@ class ClaudeCodeEngine {
     this.ensureServer = ensureServer;
     this.bin = undefined; // undefined: not looked up yet; null: not installed
     this.active = null; // { tag, emit, signal } for the run in progress
+    this.statusCache = null; // { at, value } from checkAuthStatus; a 30s TTL avoids a CLI spawn per render
   }
 
   async detect(refresh = false) {
     if (this.bin === undefined || refresh) this.bin = await findClaude();
     return this.bin;
+  }
+
+  // { installed, signedIn: true|false|'unknown', accountType: 'subscription'|'apiKey'|null, detail }.
+  // refresh: re-detect the binary and re-run the CLI's own auth check instead of the 30s cache.
+  async status(refresh = false) {
+    const bin = await this.detect(refresh);
+    if (!bin) { this.statusCache = null; return { installed: false, signedIn: false, accountType: null, detail: null }; }
+    if (!refresh && this.statusCache && Date.now() - this.statusCache.at < 30000) return { installed: true, ...this.statusCache.value };
+    const value = await checkAuthStatus(bin);
+    this.statusCache = { at: Date.now(), value };
+    return { installed: true, ...value };
   }
 
   // True when an MCP session belongs to the run in progress (its bridge carries our tag).
@@ -110,7 +145,7 @@ class ClaudeCodeEngine {
   }
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
-  async run({ prompt, sessionId, resume, systemPrompt, signal, emit }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, signal, emit }) {
     const bin = await this.detect(true);
     if (!bin) {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
@@ -128,7 +163,7 @@ class ClaudeCodeEngine {
     delete childEnv.ELECTRON_RUN_AS_NODE;
     const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: dir }); // an empty folder: no project settings or files
     this.active = { tag, emit, signal, child };
-    const onAbort = () => killTree(child);
+    const onAbort = () => killTree(child); // the CLI starts the MCP bridge as a child, so end the whole tree
     signal.addEventListener('abort', onAbort, { once: true });
 
     let text = '';
@@ -170,7 +205,7 @@ class ClaudeCodeEngine {
     });
     child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
     child.stdin.on('error', () => {});
-    child.stdin.end(prompt);
+    child.stdin.end(`${JSON.stringify(stdinMessage(prompt, images))}\n`);
 
     const code = await new Promise((resolve) => {
       child.on('error', (err) => { stderr += `\n${err.message}`; resolve(err.code === 'ENOENT' ? 'ENOENT' : -1); });
@@ -195,4 +230,4 @@ class ClaudeCodeEngine {
   }
 }
 
-module.exports = { ClaudeCodeEngine, findClaude, buildArgs, describeFailure, killTree, INSTALL_HINT };
+module.exports = { ClaudeCodeEngine, findClaude, buildArgs, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus };

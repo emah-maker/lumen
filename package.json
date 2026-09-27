@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "node scripts/build.js",
-    "test": "node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js && node test/pagecontext.js",
+    "test": "node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js && node test/pagecontext.js && node test/dialogs.js",
     "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
     "dist:win": "node scripts/build.js --win",
     "dist:mac": "node scripts/build.js --mac"
@@ -18,10 +18,11 @@
     "@ghostery/adblocker-electron": "^2.18.2",
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
-    "openai": "^7.23.0"
+    "openai": "^7.23.0",
+    "tldts-experimental": "^7.4.15"
   },
   "devDependencies": {
-    "electron": "^44.4.5",
+    "electron": "github:castlabs/electron-releases#v44.1.0+wvcus",
     "electron-builder": "^26.15.3",
     "playwright-core": "^1.63.0"
   },
@@ -41,7 +42,8 @@
       "!.impeccable/**",
       "!**/.impeccable/**",
       "!scripts/**",
-      "!.github/**"
+      "!.github/**",
+      "!shot-*.png"
     ],
     "win": {
       "icon": "build/icon.png",

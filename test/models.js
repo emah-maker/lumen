@@ -3,7 +3,9 @@ const { _electron: electron } = require('playwright-core');
 const path = require('path');
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
+  // This test is about each Claude model's request shape, not connectivity, so give Anthropic a
+  // (fake) key: the picker now only lists a provider's models once it's actually connected.
+  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_API_KEY: 'sk-ant-test' } });
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
@@ -37,7 +39,8 @@ const path = require('path');
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   await ui.waitForTimeout(500);
   const options = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
-  // Claude API models; 'claudecode:default' is added when the Claude Code CLI is installed (test/claudecode.js).
+  // Claude API models, connected via ANTHROPIC_API_KEY above; 'claudecode:default' is added
+  // separately when the Claude Code CLI is installed (test/claudecode.js).
   check('picker lists 5 models', options.filter((o) => !o.startsWith('claudecode:')).length === 5, JSON.stringify(options));
   check('Opus 5 is the default', (await ui.inputValue('#model')) === 'claude-opus-5', await ui.inputValue('#model'));
 

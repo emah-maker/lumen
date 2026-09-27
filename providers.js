@@ -115,10 +115,21 @@ const toolSchema = (tools, provider) => tools.map((t) => {
 
 const imageUrl = (source) => (source?.type === 'base64' ? `data:${source.media_type};base64,${source.data}` : source?.url);
 
+// Unlike Claude (context_management's clear_tool_uses_20250919, server-side), these providers get
+// no automatic history trimming: every tool result and every screenshot would otherwise be resent,
+// full size, on every future turn. Cap it here instead: only the most recent user turn (the one
+// just answered) keeps its tool-result text at full size and its screenshots at all; every earlier
+// turn is shrunk once, the first time it stops being "most recent", and then stays shrunk (stable
+// bytes from then on, so OpenAI/Grok/Gemini's own prefix caching still hits on every later turn —
+// only the one transition request pays a cache-miss on that turn).
+const OLD_TOOL_TEXT_CAP = 2000; // chars; generous enough to keep a compact read_page/find result whole
+
 // Anthropic-format history -> Chat Completions messages.
 function toChatMessages(system, messages) {
   const out = [{ role: 'system', content: system }];
-  for (const m of messages) {
+  const lastUserIdx = messages.reduce((last, m, i) => (m.role === 'user' ? i : last), -1);
+  messages.forEach((m, mi) => {
+    const stale = mi < lastUserIdx; // an older turn's tool results/screenshots are no longer actionable
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'assistant') {
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
@@ -126,7 +137,7 @@ function toChatMessages(system, messages) {
         id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
       }));
       out.push({ role: 'assistant', content: text || (calls.length ? null : '(no reply)'), ...(calls.length ? { tool_calls: calls } : {}) });
-      continue;
+      return;
     }
     // User turn: tool results become `tool` messages (text only); images they carried, and
     // any text/images the user sent, follow in one user message.
@@ -134,17 +145,22 @@ function toChatMessages(system, messages) {
     for (const b of blocks) {
       if (b.type === 'tool_result') {
         const content = Array.isArray(b.content) ? b.content : [{ type: 'text', text: String(b.content ?? '') }];
-        const text = content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') || (content.some((c) => c.type === 'image') ? 'Screenshot attached in the next message.' : '(empty)');
+        let text = content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') || (content.some((c) => c.type === 'image') ? 'Screenshot attached in the next message.' : '(empty)');
+        if (stale && text.length > OLD_TOOL_TEXT_CAP) text = `${text.slice(0, OLD_TOOL_TEXT_CAP)}\n[older tool result trimmed to save tokens; call the tool again for the current page]`;
         out.push({ role: 'tool', tool_call_id: b.tool_use_id, content: b.is_error ? `ERROR: ${text}` : text });
-        for (const c of content) if (c.type === 'image') parts.push({ type: 'image_url', image_url: { url: imageUrl(c.source) } });
+        for (const c of content) {
+          if (c.type !== 'image') continue;
+          if (stale) parts.push({ type: 'text', text: '[earlier screenshot omitted to save tokens; take a new one if you need it]' });
+          else parts.push({ type: 'image_url', image_url: { url: imageUrl(c.source) } });
+        }
       } else if (b.type === 'text') {
         parts.push({ type: 'text', text: b.text });
       } else if (b.type === 'image') {
-        parts.push({ type: 'image_url', image_url: { url: imageUrl(b.source) } });
+        parts.push(stale ? { type: 'text', text: '[earlier screenshot omitted to save tokens]' } : { type: 'image_url', image_url: { url: imageUrl(b.source) } });
       }
     }
     if (parts.length) out.push({ role: 'user', content: parts });
-  }
+  });
   return out;
 }
 
