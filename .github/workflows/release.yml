@@ -42,6 +42,11 @@ jobs:
       - name: Download Electron
         run: node node_modules/electron/install.js
 
+      # Offline tests only (no API keys, no live sites): a release never ships with these failing.
+      - name: Test
+        shell: bash
+        run: node test/models.js && node test/adhd.js && node test/pagecontext.js && node test/providers.js && node test/import.js
+
       - name: Build
         shell: bash
         run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
