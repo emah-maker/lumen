@@ -6,6 +6,7 @@
   <title>Lumen</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="extras.css" /><!-- Claude Code engine, page context chip, panel snapshot -->
+  <link rel="stylesheet" href="prefs.css" /><!-- [settings] -->
 </head>
 <body class="sidebar-hidden">
   <header class="chrome">
@@ -118,6 +119,7 @@
       </div>
 
       <section id="settings" class="settings" hidden>
+        <button class="btn all-settings" id="all-settings" type="button">All settings…</button><!-- [settings] opens lumen://settings -->
         <details class="settings-section" open>
           <summary>AI accounts</summary>
           <p class="hint webai-hint">Use your Claude.ai, ChatGPT, Gemini or Grok account (including school/work sign-in): open the sidebar and pick it at the top. Agent features (clicking and typing for you) need an API key or Anthropic sign-in.</p>

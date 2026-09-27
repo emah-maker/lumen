@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'" />
+  <title>Connection is not secure</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body class="interstitial">
+  <main>
+    <h1>This site doesn’t support a secure connection</h1>
+    <p class="note">Lumen tried <span class="mono" id="secure"></span> and couldn’t connect. Anything you send to <strong id="host"></strong> over an insecure connection can be read or changed by others on the network.</p>
+    <p class="note">You turned on “Always use secure connections” in Settings → Privacy and security.</p>
+    <div class="actions">
+      <button class="primary" id="back" type="button">Go back</button>
+      <a id="continue" href="#">Continue to site (not secure)</a>
+    </div>
+  </main>
+  <script src="https-only.js"></script>
+</body>
+</html>

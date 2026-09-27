@@ -25,7 +25,8 @@ const { createTabGroups, siteName } = require('./tab-groups');
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
-const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL);
+const settingsPage = require('./settings-backend'); // [settings] lumen://settings
+const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url);
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const isWebUrl = (url) => /^https?:\/\//i.test(url);
@@ -157,7 +158,7 @@ function getClient() {
   return client;
 }
 
-// ---------- permissions: ask like Safari, remember per origin for the session ----------
+// ---------- permissions: ask like Safari, remember per origin ----------
 
 const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock']);
 const PROMPTABLE = {
@@ -170,6 +171,7 @@ const permissionDecisions = new Map(); // `${origin}|${permission}` -> boolean
 
 function setupPermissions() {
   const ses = session.defaultSession;
+  settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
 
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     if (ALWAYS_ALLOWED.has(permission)) return callback(true);
@@ -183,6 +185,7 @@ function setupPermissions() {
     if (!reason || !isWebUrl(origin)) return callback(false);
     const key = `${origin}|${permission}`;
     if (permissionDecisions.has(key)) return callback(permissionDecisions.get(key));
+    if (settingsBackend.permissionDefault(permission) === 'block') return callback(false); // [settings] default: Block
     const { response } = await dialog.showMessageBox(win, {
       type: 'question',
       buttons: ["Don't Allow", 'Allow'],
@@ -191,6 +194,7 @@ function setupPermissions() {
       message: `Allow ${new URL(origin).host} to ${reason}?`,
     });
     permissionDecisions.set(key, response === 1);
+    settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
   });
   ses.setPermissionCheckHandler((_wc, permission, origin) =>
@@ -271,8 +275,10 @@ async function setupAdblock() {
   const cosmetics = blocker.onInjectCosmeticFilters;
   blocker.onInjectCosmeticFilters = async (event, url, msg) => (adblockOn(url) ? cosmetics(event, url, msg) : undefined);
   const headers = blocker.onHeadersReceived;
-  blocker.onHeadersReceived = (details, callback) =>
-    (adblockOn(details.webContents?.getURL() || details.url) ? headers(details, callback) : callback({}));
+  blocker.onHeadersReceived = (details, callback) => {
+    settingsBackend.noteResponseHeaders(details); // [settings] sites asking for the color-scheme hint
+    return adblockOn(details.webContents?.getURL() || details.url) ? headers(details, callback) : callback({});
+  };
   blocker.enableBlockingInSession(session.defaultSession);
 }
 
@@ -415,6 +421,7 @@ function showAppMenu({ x, y }) {
     { label: 'Import Bookmarks and History', submenu: importMenu() },
     { label: 'Ad Blocker', submenu: adblockMenu() },
     { label: 'Extensions', submenu: extensionsMenu() },
+    { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }, // [settings]
     { label: 'Claude Settings…', click: () => ui()?.send('open-settings') },
     { type: 'separator' },
     { label: 'Developer Tools', accelerator: 'F12', click: () => wc?.toggleDevTools() },
@@ -519,7 +526,7 @@ function hideSuggestions() {
 // The URL a tab is "really" on: error pages report the address that failed.
 function realUrl(wc) {
   const url = wc.getURL();
-  if (url.startsWith(ERROR_URL)) return new URL(url).searchParams.get('url') || '';
+  if (url.startsWith(ERROR_URL) || url.startsWith(settingsPage.HTTPS_ONLY_URL)) return new URL(url).searchParams.get('url') || ''; // [settings] HTTPS-only warning too
   return url;
 }
 
@@ -534,7 +541,7 @@ function tabState() {
       return {
         id,
         title: wc.getTitle() || 'New Tab',
-        url: isInternal(url) ? '' : url,
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: favicon || null,
         error: wc.getURL().startsWith(ERROR_URL),
@@ -580,12 +587,13 @@ function layout() {
   }
 }
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null } = {}) {
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false } = {}) {
   const view = new WebContentsView({
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    // [settings] font sizes and spell check from Settings; only the settings tab gets its preload
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings) },
   });
   const id = nextTabId++;
-  const tab = { id, view, favicon: null, groupId: null, userRemoved: false };
+  const tab = { id, view, favicon: null, groupId: null, userRemoved: false, settings };
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
@@ -624,6 +632,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
+    if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
     const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
     wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
   });
@@ -651,6 +660,9 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     wc.on(event, sendTabs);
   }
   wc.on('before-input-event', (event, input) => handleShortcut(event, input));
+  // [settings] the settings tab is locked to the settings page; other tabs get default zoom and HTTPS-only
+  if (settings) settingsBackend.guardSettingsTab(wc, (target) => replaceTab(id, target));
+  else settingsBackend.attachTab(wc);
 
   // If the page closes itself, drop the tab instead of keeping a dead one around.
   wc.once('destroyed', () => closeTab(id, { destroyed: true }));
@@ -658,8 +670,10 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
 
-  applyChromeIdentity(wc);
-  syncExtensions(() => extensions?.addTab(wc, win));
+  if (!settings) { // [settings] no debugger and no extensions on the settings tab
+    applyChromeIdentity(wc);
+    syncExtensions(() => extensions?.addTab(wc, win));
+  }
   wc.loadURL(url).catch(() => {});
   if (background) {
     const current = activeTab();
@@ -723,6 +737,7 @@ function resolveInput(text) {
 
 function zoomBy(wc, step) {
   if (!wc) return;
+  settingsBackend.noteUserZoom(wc); // [settings] the default zoom leaves this site alone now
   wc.setZoomLevel(step === 0 ? 0 : Math.min(Math.max(wc.getZoomLevel() + step, -3), 5));
   sendTabs();
 }
@@ -1054,7 +1069,7 @@ const sendDownloads = () => ui()?.send('downloads', downloads.slice(0, 10).map((
 function setupDownloads() {
   const approvedUrls = new Set(); // risky downloads the user said yes to
   session.defaultSession.on('will-download', (event, item, contents) => {
-    const dir = app.getPath('downloads');
+    const dir = settingsBackend.downloadDir(); // [settings] Downloads folder unless changed in Settings
     const parsed = path.parse(item.getFilename() || 'download');
     const url = item.getURL();
     if (RISKY_TYPES.test(parsed.ext) && !approvedUrls.delete(url)) {
@@ -1077,7 +1092,10 @@ function setupDownloads() {
     }
     let target = path.join(dir, parsed.base);
     for (let n = 1; fs.existsSync(target); n++) target = path.join(dir, `${parsed.name} (${n})${parsed.ext}`);
-    item.setSavePath(target); // must be set synchronously, or Electron shows its own save dialog
+    // [settings] "Ask where to save": Electron shows its save dialog when no path is set.
+    const ask = settingsBackend.askWhereToSave();
+    if (ask) item.setSaveDialogOptions({ defaultPath: target });
+    else item.setSavePath(target); // must be set synchronously, or Electron shows its own save dialog
     const entry = { id: ++downloadSeq, name: path.basename(target), path: target, state: 'progressing', received: 0, total: item.getTotalBytes() };
     downloads.unshift(entry);
     sendDownloads();
@@ -1093,6 +1111,7 @@ function setupDownloads() {
       sendDownloads();
     });
     item.once('done', (_ev, state) => {
+      if (ask && item.getSavePath()) Object.assign(entry, { path: item.getSavePath(), name: path.basename(item.getSavePath()) }); // [settings]
       entry.state = state; // completed | cancelled | interrupted
       progress();
       sendDownloads();
@@ -1254,7 +1273,7 @@ function applyChromeIdentity(wc) {
 // ---------- context menu ----------
 
 function showContextMenu(wc, p) {
-  const items = [];
+  const items = [...settingsBackend.spellingItems(wc, p)]; // [settings] spelling suggestions first
   const selection = p.selectionText.trim();
   if (p.linkURL && isWebUrl(p.linkURL)) {
     items.push(
@@ -1315,6 +1334,7 @@ function handleShortcut(event, input) {
   else if (mod && key === '0') zoomBy(wc, 0);
   else if (mod && key === 'd') toggleBookmark();
   else if (mod && key === 'h') openHistoryPage();
+  else if (mod && key === ',') openSettingsPage(); // [settings]
   else if (process.platform === 'darwin' && input.meta && key === '[') wc?.navigationHistory.goBack();
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
@@ -1392,6 +1412,14 @@ function saveSession() {
 }
 
 function restoreSession() {
+  // [settings] On startup: continue where you left off (default), a new tab, or chosen pages.
+  const startup = settingsBackend.startupPlan();
+  if (startup.mode === 'newtab') { openTab(); return; }
+  if (startup.mode === 'pages') {
+    startup.pages.forEach((url, i) => openTab(url, { background: i > 0 }));
+    switchTab(tabs[0].id);
+    return;
+  }
   const { session: saved } = readSettings();
   if (!saved?.urls?.length) {
     openTab();
@@ -1511,7 +1539,9 @@ function ungroupTabsFor(ids) {
   return count;
 }
 
-const agent = new Agent({ activeTab, listTabs, openTab, switchTab, closeTab, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: readSettings().model || DEFAULT_MODEL }), providerKey);
+// [settings] the AI agent (and MCP clients, which use it) never gets the settings tab as its page.
+const agentActiveTab = () => { const t = activeTab(); return t && tabs.find((x) => x.id === t.id)?.settings ? null : t; };
+const agent = new Agent({ activeTab: agentActiveTab, listTabs, openTab, switchTab, closeTab, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: readSettings().model || DEFAULT_MODEL }), providerKey);
 if (process.env.CLAUDE_BROWSER_TEST) {
   global.__agent = agent;
   global.__webPanels = webPanels;
@@ -1523,6 +1553,62 @@ if (process.env.CLAUDE_BROWSER_TEST) {
   global.__tabsArray = () => tabs.map((t) => ({ id: t.id, groupId: t.groupId || null, userRemoved: Boolean(t.userRemoved) }));
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__adblock = { ready: () => blocker !== null, blocked: (id) => blockedCount.get(id) || 0 };
+}
+
+// ---------- [settings] lumen://settings ----------
+
+const settingsBackend = settingsPage.create({
+  app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
+  win: () => win,
+  tabContents: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => t.view.webContents),
+  tabsInfo: () => tabs.filter(alive).map((t) => ({ id: t.id, title: t.view.webContents.getTitle(), wc: t.view.webContents, settings: Boolean(t.settings) })),
+  history: () => history,
+  saveHistory: saveHistorySoon,
+  downloads,
+  sendDownloads,
+  permissionDecisions,
+  uninstallExtension,
+  cliPinnedVersion: () => cliAuth.PINNED_VERSION,
+  openTab: (url) => openTab(url),
+  // Only the settings tab's own top-level settings document may use the prefs:* calls.
+  isSettingsSender: (event) => tabs.some((t) => t.settings && alive(t) && t.view.webContents === event.sender)
+    && event.senderFrame === event.sender.mainFrame && settingsPage.isSettingsUrl(event.senderFrame?.url),
+  onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
+});
+
+// One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
+function openSettingsPage(section = '', { replace = null } = {}) {
+  const url = settingsPage.urlFor(section);
+  const existing = tabs.find((t) => t.settings && alive(t));
+  if (existing) {
+    const wc = existing.view.webContents;
+    // A fragment change while the page is still loading crashes its renderer: wait for the load.
+    const go = () => { if (!wc.isDestroyed() && wc.getURL() !== url) wc.loadURL(url).catch(() => {}); };
+    if (section) { if (wc.isLoading()) wc.once('did-stop-loading', go); else go(); }
+    switchTab(existing.id);
+    return existing.id;
+  }
+  const { id } = openTab(url, { settings: true });
+  if (replace) takePlace(id, replace);
+  return id;
+}
+// Move tab `id` to where `oldId` is and close `oldId`.
+function takePlace(id, oldId) {
+  const from = tabs.findIndex((t) => t.id === id);
+  const to = tabs.findIndex((t) => t.id === oldId);
+  if (from === -1 || to === -1 || id === oldId) return;
+  const [tab] = tabs.splice(from, 1);
+  tabs.splice(to, 0, tab);
+  closeTab(oldId);
+}
+// The settings tab can't load other pages: an address typed there opens in a normal tab in its place.
+function replaceTab(oldId, url) {
+  const { id } = openTab(url);
+  takePlace(id, oldId);
+}
+ipcMain.on('settings-page:open', (_e, section) => openSettingsPage(typeof section === 'string' ? section : ''));
+if (process.env.CLAUDE_BROWSER_TEST) {
+  global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
 ipcMain.on('content-bounds', (_e, bounds) => {
@@ -1574,7 +1660,11 @@ ipcMain.on('view:thaw', () => {
   viewFrozen = false;
   layout();
 });
-ipcMain.on('tab:new', (_e, url) => openTab(url ? resolveInput(url) : undefined));
+ipcMain.on('tab:new', (_e, url) => {
+  const internal = url && settingsPage.parseSettingsInput(url); // [settings] lumen://settings
+  if (internal) openSettingsPage(internal.section);
+  else openTab(url ? resolveInput(url) : undefined);
+});
 ipcMain.on('tab:close', (_e, id) => closeTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));
 ipcMain.on('tab:move', (_e, id, toIndex) => {
@@ -1620,6 +1710,12 @@ ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
 ipcMain.on('nav:go', (_e, text) => {
   const wc = activeTab()?.webContents;
   if (!wc) return;
+  // [settings] lumen://settings opens the settings tab (in place of a blank new tab); anything typed
+  // into the settings tab opens in a normal tab in its place.
+  const current = tabs.find((t) => t.id === activeId);
+  const internal = settingsPage.parseSettingsInput(text);
+  if (internal) { openSettingsPage(internal.section, { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); return; }
+  if (current?.settings) { replaceTab(activeId, resolveInput(text)); return; }
   wc.loadURL(resolveInput(text)).catch(() => {});
   wc.focus();
 });
@@ -2013,6 +2109,7 @@ app.whenReady().then(async () => {
   listenForSecondInstances();
   startMcp();
   startAutomation(); // automation hook
+  settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
   setupDownloads();
   loadChat();
@@ -2026,7 +2123,7 @@ app.whenReady().then(async () => {
   createWindow();
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => { if (process.platform !== 'darwin' || !settingsBackend.prefs().keepRunningInBackground) app.quit(); }); // [settings]
 // ---- [mac reopen] Clicking the Dock icon after the window closed builds a new window: the old
 // tab and panel views were attached to the dead one, so drop them and restore the saved session.
 function dropDeadWindowViews() {

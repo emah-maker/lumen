@@ -1,0 +1,10 @@
+/* Browser-UI preferences from Settings (lumen://settings), set as classes on <html> by app.js.
+   Kept out of styles.css so the preferences only add to the base look. */
+.pref-compact-tabs .tab { height: 24px; }
+.pref-compact-tabs .tab-inner { font-size: 12px; gap: 6px; }
+.pref-no-bookmark-button #bookmark { display: none !important; }
+.pref-reduce-motion *, .pref-reduce-motion *::before, .pref-reduce-motion *::after {
+  animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important; scroll-behavior: auto !important;
+}
+.pref-focus-rings :focus { outline: 2px solid var(--accent, #007aff) !important; outline-offset: 2px; }
