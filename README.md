@@ -239,8 +239,12 @@ Compact is about 4–5× smaller than a full read. The big savings come from not
 - `snapshot.js`: token-efficient tools (compact outline, diffs, find, batch, screenshot options)
 - `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab and error pages
-- `test/`: 22 Playwright suites (`node test/<name>.js`): smoke, tools, ui (address bar, find, focus stress, sidebar layout), browser, agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), settings
+- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup
 
 ## License
 
-GPL-3.0, because it uses `electron-chrome-extensions` (GPL-3.0).
+GPL-3.0 (see [LICENSE](LICENSE)), because it uses `electron-chrome-extensions` (GPL-3.0).
+
+## Privacy
+
+No telemetry, no analytics, no crash reports. What leaves your computer, and to whom: [PRIVACY.md](PRIVACY.md).
