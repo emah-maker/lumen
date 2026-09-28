@@ -1738,15 +1738,42 @@ const downloads = createDownloads({
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol.
 const CHROME_MAJOR = process.versions.chrome.split('.')[0];
+// Chrome's brand list, built the way Chromium builds it (GenerateBrandVersionList): the made-up
+// "Not…A…Brand" entry and the order of the three both follow from the major version, so a
+// hard-coded list gives Lumen away as soon as Chromium moves on. Chromium 152 gives
+// Chromium, Not?A_Brand/24, Google Chrome; Chrome 154 gives Chromium, Google Chrome, Not A(Brand/99.
+function chromeBrands(full) {
+  const seed = Number(CHROME_MAJOR);
+  const chars = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'];
+  const greaseVersion = ['8', '99', '24'][seed % 3];
+  const list = [
+    { brand: `Not${chars[seed % chars.length]}A${chars[(seed + 1) % chars.length]}Brand`, version: full ? `${greaseVersion}.0.0.0` : greaseVersion },
+    { brand: 'Chromium', version: full ? process.versions.chrome : CHROME_MAJOR },
+    { brand: 'Google Chrome', version: full ? process.versions.chrome : CHROME_MAJOR },
+  ];
+  const order = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]][seed % 6];
+  const shuffled = [];
+  list.forEach((b, i) => { shuffled[order[i]] = b; });
+  return shuffled;
+}
 const UA_METADATA = {
-  brands: [{ brand: 'Chromium', version: CHROME_MAJOR }, { brand: 'Google Chrome', version: CHROME_MAJOR }, { brand: 'Not_A Brand', version: '24' }],
-  fullVersionList: [{ brand: 'Chromium', version: process.versions.chrome }, { brand: 'Google Chrome', version: process.versions.chrome }, { brand: 'Not_A Brand', version: '24.0.0.0' }],
+  brands: chromeBrands(false),
+  fullVersionList: chromeBrands(true),
   platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux',
-  platformVersion: process.platform === 'win32' ? '15.0.0' : '',
+  // Chrome on a Mac reports the real macOS version (26.0.0), not an empty string.
+  platformVersion: process.platform === 'win32' ? '15.0.0' : process.platform === 'darwin' ? process.getSystemVersion() : '',
   architecture: process.arch === 'arm64' ? 'arm' : 'x86', // Chrome on Apple Silicon says "arm"
   bitness: '64',
   model: '',
   mobile: false,
+};
+// The same identity for the Sec-CH-UA request headers, which Chrome sends on every request to a
+// secure origin. Requests from tabs otherwise go out with none at all (and the browser's own with
+// Electron's Chromium-only list): a Chrome user agent without them is what bot checks look for.
+const UA_HINT_HEADERS = {
+  'Sec-CH-UA': UA_METADATA.brands.map((b) => `"${b.brand}";v="${b.version}"`).join(', '),
+  'Sec-CH-UA-Mobile': '?0',
+  'Sec-CH-UA-Platform': `"${UA_METADATA.platform}"`,
 };
 // The override only covers the tab's own frame. Cross-origin iframes and workers are separate
 // targets that would still say "Chromium", and Cloudflare's checkbox (an iframe from
@@ -2180,6 +2207,7 @@ if (process.env.CLAUDE_BROWSER_TEST) {
 // ---------- [settings] lumen://settings ----------
 
 const settingsBackend = settingsPage.create({
+  chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
   tabContents: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => t.view.webContents),

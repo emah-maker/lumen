@@ -12,6 +12,7 @@ const os = require('os');
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  const seenHints = {}; // Sec-CH-UA as the server received it, by path
   const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'text/html');
     // A page whose title changes every 30 ms: every change is a tab-strip update.
@@ -19,6 +20,7 @@ const os = require('os');
     if (req.url === '/opener') return res.end('<title>opener</title><button id="pop" onclick="window.open(\'/popup\', \'pop\', \'width=420,height=320\')">open</button>');
     if (req.url === '/popup') return res.end('<title>popup</title><script>window.brands = JSON.stringify(navigator.userAgentData?.brands || []); setTimeout(() => { window.answer = alert("from the popup"); window.done = true; }, 400);</script>');
     // A cross-site iframe (localhost vs 127.0.0.1) runs in its own process, as Cloudflare's checkbox does.
+    if (req.url === '/xframe' || req.url === '/frame') seenHints[req.url] = req.headers['sec-ch-ua'];
     if (req.url === '/xframe') return res.end(`<title>xframe</title><iframe src="http://localhost:${server.address().port}/frame"></iframe>`);
     if (req.url === '/frame') return res.end('<script>window.brands = JSON.stringify(navigator.userAgentData?.brands || []);</script>');
     res.end(`<title>Page ${req.url}</title><p>${req.url}</p>`);
@@ -273,6 +275,9 @@ const os = require('os');
   });
   const inner = frames.find((f) => f.url.includes('localhost'));
   check('a cross-site iframe says Google Chrome', inner && inner.brands.includes('Google Chrome'), JSON.stringify(frames));
+  // The Sec-CH-UA header says the same thing as the page's JavaScript, on the page and the iframe.
+  const jsBrands = await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript('navigator.userAgentData.brands.map((b) => `"${b.brand}";v="${b.version}"`).join(", ")'));
+  check('Sec-CH-UA is sent, and matches the page, on the page and a cross-site iframe', seenHints['/xframe'] === jsBrands && seenHints['/frame'] === jsBrands && /Google Chrome/.test(jsBrands), JSON.stringify({ seenHints, jsBrands }));
 
   check('no renderer errors', errors.length === 0, errors.join('; '));
   server.close();
