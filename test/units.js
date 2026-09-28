@@ -769,7 +769,197 @@ async function fuseChecks() {
   check('ai-sites: a damaged setting reads as no sites', sites.list().length === 0 && !sites.isOff('https://x.example/'), 'threw or listed');
 }
 
-fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+// ---- Safe Browsing (features/safe-browsing.js): Google's published vectors, list updates, lookups ----
+async function safeBrowsingRuns() {
+  const sb = require('../features/safe-browsing');
+  // developers.google.com/safe-browsing/v4/urls-hashing: every canonicalization example.
+  const vectors = [
+    ['http://host/%25%32%35', 'http://host/%25'],
+    ['http://host/%25%32%35%25%32%35', 'http://host/%25%25'],
+    ['http://host/%2525252525252525', 'http://host/%25'],
+    ['http://host/asdf%25%32%35asd', 'http://host/asdf%25asd'],
+    ['http://host/%%%25%32%35asd%%', 'http://host/%25%25%25asd%25%25'],
+    ['http://www.google.com/', 'http://www.google.com/'],
+    ['http://%31%36%38%2e%31%38%38%2e%39%39%2e%32%36/%2E%73%65%63%75%72%65/%77%77%77%2E%65%62%61%79%2E%63%6F%6D/', 'http://168.188.99.26/.secure/www.ebay.com/'],
+    ['http://195.127.0.11/uploads/%20%20%20%20/.verify/.eBaysecure=updateuserdataxplimnbqmn-xplmvalidateinfoswqpcmlx=hgplmcx/', 'http://195.127.0.11/uploads/%20%20%20%20/.verify/.eBaysecure=updateuserdataxplimnbqmn-xplmvalidateinfoswqpcmlx=hgplmcx/'],
+    ['http://host%23.com/%257Ea%2521b%2540c%2523d%2524e%25f%255E00%252611%252A22%252833%252944_55%252B', 'http://host%23.com/~a!b@c%23d$e%25f^00&11*22(33)44_55+'],
+    ['http://3279880203/blah', 'http://195.127.0.11/blah'],
+    ['http://www.google.com/blah/..', 'http://www.google.com/'],
+    ['www.google.com/', 'http://www.google.com/'],
+    ['www.google.com', 'http://www.google.com/'],
+    ['http://www.evil.com/blah#frag', 'http://www.evil.com/blah'],
+    ['http://www.GOOgle.com/', 'http://www.google.com/'],
+    ['http://www.google.com.../', 'http://www.google.com/'],
+    ['http://www.google.com/foo\tbar\rbaz\n2', 'http://www.google.com/foobarbaz2'],
+    ['http://www.google.com/q?', 'http://www.google.com/q?'],
+    ['http://www.google.com/q?r?', 'http://www.google.com/q?r?'],
+    ['http://www.google.com/q?r?s', 'http://www.google.com/q?r?s'],
+    ['http://evil.com/foo#bar#baz', 'http://evil.com/foo'],
+    ['http://evil.com/foo;', 'http://evil.com/foo;'],
+    ['http://evil.com/foo?bar;', 'http://evil.com/foo?bar;'],
+    ['http://\x01\x80.com/', 'http://%01%80.com/'],
+    ['http://notrailingslash.com', 'http://notrailingslash.com/'],
+    ['http://www.gotaport.com:1234/', 'http://www.gotaport.com/'],
+    ['  http://www.google.com/  ', 'http://www.google.com/'],
+    ['http:// leadingspace.com/', 'http://%20leadingspace.com/'],
+    ['http://%20leadingspace.com/', 'http://%20leadingspace.com/'],
+    ['%20leadingspace.com/', 'http://%20leadingspace.com/'],
+    ['https://www.securesite.com/', 'https://www.securesite.com/'],
+    ['http://host.com/ab%23cd', 'http://host.com/ab%23cd'],
+    ['http://host.com//twoslashes?more//slashes', 'http://host.com/twoslashes?more//slashes'],
+  ];
+  const wrong = vectors.filter(([i, o]) => sb.canonicalize(i)?.url !== o).map(([i, o]) => `${JSON.stringify(i)} -> ${sb.canonicalize(i)?.url} (want ${o})`);
+  check(`safe browsing: all ${vectors.length} of Google's canonicalization examples`, wrong.length === 0, wrong.join('; '));
+  // reference/URLs.and.Hashing (v5): IPv6 forms.
+  const v6 = ['http://[2001:0db8:0000::1]/', 'http://[::ffff:1.2.3.4]/', 'http://[64:ff9b::1.2.3.4]/'].map((u) => sb.canonicalize(u).url);
+  check('safe browsing: IPv6 hosts are shortened; mapped and NAT64 ones become IPv4', v6.join() === 'http://[2001:db8::1]/,http://1.2.3.4/,http://1.2.3.4/', v6);
+  // reference/URLs.and.Hashing (v5): the host-suffix / path-prefix examples.
+  const same = (a, b) => a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|');
+  const ex = [
+    ['http://a.b.com/1/2.html?param=1', ['a.b.com/1/2.html?param=1', 'a.b.com/1/2.html', 'a.b.com/', 'a.b.com/1/', 'b.com/1/2.html?param=1', 'b.com/1/2.html', 'b.com/', 'b.com/1/']],
+    ['http://a.b.c.d.e.f.com/1.html', ['a.b.c.d.e.f.com/1.html', 'a.b.c.d.e.f.com/', 'c.d.e.f.com/1.html', 'c.d.e.f.com/', 'd.e.f.com/1.html', 'd.e.f.com/', 'e.f.com/1.html', 'e.f.com/', 'f.com/1.html', 'f.com/']],
+    ['http://1.2.3.4/1/', ['1.2.3.4/1/', '1.2.3.4/']],
+    ['http://example.co.uk/1', ['example.co.uk/1', 'example.co.uk/']],
+  ];
+  for (const [u, want] of ex) check(`safe browsing: expressions for ${u}`, same(sb.expressions(u), want), JSON.stringify(sb.expressions(u)));
+  const many = sb.expressions('http://a.b.c.d.e.f.g.example.com/1/2/3/4/5/6.html?q=1');
+  check('safe browsing: at most 5 hosts x 6 paths', many.length === 30, many.length);
+  // reference/Local.Database: the worked hashes and the Rice-delta example.
+  const docHash = sb.sha256('a.example.com/').toString('hex');
+  check('safe browsing: SHA-256 of "a.example.com/" matches the documented hash', docHash === '291bc5421f1cd54d99afcc55d166e2b9fe42447025895bf09dd41b2110a687dc', docHash);
+  const riceData = Buffer.from([0x74, 0x00, 0xd2, 0x97, 0x1b, 0xed, 0x49, 0x74, 0x00]).toString('base64');
+  const rice = sb.riceDecode({ firstValue: 489866504, riceParameter: 30, entriesCount: 2, encodedData: riceData });
+  check('safe browsing: the documented Rice-delta example decodes', rice.join() === [0x1d32c508, 0x291bc542, 0xf7a502e5].join(), rice.map((x) => x.toString(16)));
+  let threw = false;
+  try { sb.riceDecode({ firstValue: 1, riceParameter: 30, entriesCount: 5, encodedData: riceData }); } catch { threw = true; }
+  check('safe browsing: truncated Rice data is an error, not garbage', threw, 'no error');
+
+  // Rice-encodes values (the inverse of riceDecode), for the fake list updates below.
+  const encode = (values, k = 8) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const bits = [];
+    for (let i = 1; i < sorted.length; i++) {
+      const d = sorted[i] - sorted[i - 1];
+      const q = Math.floor(d / 2 ** k); const r = d % 2 ** k;
+      for (let j = 0; j < q; j++) bits.push(1);
+      bits.push(0);
+      for (let j = 0; j < k; j++) bits.push(Math.floor(r / 2 ** j) % 2);
+    }
+    const bytes = Buffer.alloc(Math.ceil(bits.length / 8));
+    bits.forEach((b, i) => { if (b) bytes[i >> 3] |= 1 << (i & 7); });
+    return { firstValue: sorted[0], riceParameter: k, entriesCount: sorted.length - 1, encodedData: bytes.toString('base64') };
+  };
+  const full = sb.applyUpdate(new Uint32Array(0), { partialUpdate: false, additionsFourBytes: encode([30, 10, 20, 40]) });
+  check('safe browsing: a full update gives the sorted prefixes', [...full].join() === '10,20,30,40', [...full]);
+  const partial = sb.applyUpdate(full, { partialUpdate: true, compressedRemovals: encode([1, 3]), additionsFourBytes: encode([25]) });
+  check('safe browsing: a partial update removes by index (before adding), then adds', [...partial].join() === '10,25,30', [...partial]);
+  let outOfRange = false;
+  try { sb.applyUpdate(full, { partialUpdate: true, compressedRemovals: encode([9]) }); } catch { outOfRange = true; }
+  check('safe browsing: a removal index past the end is an error', outOfRange, 'accepted');
+  const sum = sb.checksum(Uint32Array.from([0x1d32c508, 0x291bc542, 0xf7a502e5]));
+  const wantSum = require('crypto').createHash('sha256').update(Buffer.from('1d32c508291bc542f7a502e5', 'hex')).digest('base64');
+  check('safe browsing: the checksum is SHA-256 over the sorted 4-byte prefixes', sum === wantSum, sum);
+  check('safe browsing: durations parse ("1800s", "3.5s", missing)', sb.durationMs('1800s') === 1800e3 && sb.durationMs('3.5s') === 3500 && sb.durationMs(undefined) === 0, [sb.durationMs('1800s'), sb.durationMs('3.5s')]);
+  const min = 60e3;
+  const b = [sb.backoffMs(1, 0), sb.backoffMs(1, 0.999), sb.backoffMs(2, 0), sb.backoffMs(3, 0.5), sb.backoffMs(20, 0.9)];
+  check('safe browsing: backoff is 15-30 min after one error, doubling, never over 24 h',
+    b[0] === 15 * min && b[1] < 30 * min && b[2] === 30 * min && b[3] === 90 * min && b[4] === 24 * 60 * min, b);
+
+  // The service, against a fake Google.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-sb-'));
+  const evil = 'http://evil.example/login.html';
+  const evilHash = sb.sha256('evil.example/login.html');
+  const collide = 'http://safe.example/'; // its prefix is in the list too, but Google has no full hash for it
+  let settings = { safeBrowsing: true };
+  let key = 'test-key';
+  const calls = [];
+  let listBody = null;
+  let searchStatus = 200;
+  const fetch = async (url) => {
+    calls.push(url);
+    const u = new URL(url);
+    if (u.pathname === '/v5/hashLists:batchGet') return { ok: true, status: 200, json: async () => listBody(u) };
+    if (u.pathname === '/v5/hashes:search') {
+      if (searchStatus !== 200) return { ok: false, status: searchStatus, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ fullHashes: [{ fullHash: evilHash.toString('base64'), fullHashDetails: [{ threatType: 'SOCIAL_ENGINEERING' }] }], cacheDuration: '300s' }) };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const prefixes = [evilHash.readUInt32BE(0), sb.sha256('safe.example/').readUInt32BE(0)];
+  const sortedPrefixes = Uint32Array.from([...prefixes].sort((x, y) => x - y));
+  const good = (names) => ({
+    hashLists: names.map((name) => (name === 'se-4b'
+      ? { name, version: 'djE=', partialUpdate: false, additionsFourBytes: encode(prefixes, 28), sha256Checksum: sb.checksum(sortedPrefixes), minimumWaitDuration: '1800s' }
+      : { name, version: 'djE=', partialUpdate: false, minimumWaitDuration: '1800s', sha256Checksum: sb.checksum(new Uint32Array(0)) })),
+  });
+  listBody = (u) => good(u.searchParams.getAll('names'));
+  const services = [];
+  const make = () => {
+    const s = sb.createSafeBrowsing({ readSettings: () => settings, apiKey: () => key, dir: () => dir, fetch, isTab: () => true, warnUrl: 'file:///sb.html', baseUrl: 'https://sb.test' });
+    services.push(s);
+    return s;
+  };
+  const svc = make();
+  await svc.refresh();
+  check('safe browsing: the lists download (one batchGet for all three)', calls.filter((c) => c.includes('batchGet')).length === 1 && svc.status().entries === 2, JSON.stringify(svc.status()));
+  check('safe browsing: the key and alt=json go with every request', calls.length > 0 && calls.every((c) => /[?&]key=test-key/.test(c) && /[?&]alt=json/.test(c)), calls.join(' '));
+  calls.length = 0;
+  check('safe browsing: a page not in the lists needs no request at all', (await svc.check('https://www.wikipedia.org/wiki/Cat')) === null && calls.length === 0, calls);
+  const hit = await svc.check(evil);
+  check('safe browsing: a listed page is flagged with its threat type', hit?.threat === 'SOCIAL_ENGINEERING', JSON.stringify(hit));
+  const sent = calls.filter((c) => c.includes('hashes:search'));
+  const sentPrefixes = sent.length ? new URL(sent[0]).searchParams.getAll('hashPrefixes') : [];
+  check('safe browsing: only 4-byte prefixes are sent, never the address', sent.length === 1 && sentPrefixes.length > 0 && sentPrefixes.every((p) => Buffer.from(p, 'base64').length === 4) && !sent[0].includes('evil'), sent);
+  calls.length = 0;
+  check('safe browsing: the answer is cached (no second request)', (await svc.check(evil))?.threat === 'SOCIAL_ENGINEERING' && calls.length === 0, calls);
+  check('safe browsing: a prefix match whose full hash differs is safe', (await svc.check(collide)) === null, 'flagged');
+  check('safe browsing: localhost and private addresses are never checked', (await svc.check('http://127.0.0.1/evil')) === null && (await svc.check('http://192.168.1.1/')) === null, 'checked');
+  // Stored lists survive a restart; a damaged file is thrown away.
+  check('safe browsing: the lists are kept on disk between runs', make().status().entries === 2, JSON.stringify(make().status()));
+  const binFile = path.join(dir, 'se-4b.bin');
+  const bytes = fs.readFileSync(binFile);
+  bytes[0] ^= 0xff;
+  fs.writeFileSync(binFile, bytes);
+  check('safe browsing: a damaged list file fails its checksum and is dropped', make().status().entries === 0, JSON.stringify(make().status()));
+  // A server checksum that doesn't match: the list is dropped and fetched whole, right away.
+  let round = 0;
+  listBody = (u) => {
+    round++;
+    const body = good(u.searchParams.getAll('names'));
+    if (round === 1) body.hashLists[0].sha256Checksum = Buffer.alloc(32).toString('base64');
+    return body;
+  };
+  const fresh = make();
+  calls.length = 0;
+  await fresh.refresh();
+  const batches = calls.filter((c) => c.includes('batchGet')).map((c) => new URL(c).searchParams.getAll('names'));
+  check('safe browsing: a checksum mismatch resets the list and fetches it again at once',
+    round === 2 && fresh.status().entries === 2 && batches[1]?.join() === 'se-4b', JSON.stringify({ round, batches, status: fresh.status() }));
+  // Google unreachable: pages load, and the next search waits (backoff).
+  searchStatus = 503;
+  const offline = make();
+  calls.length = 0;
+  check('safe browsing: if Google is unreachable, the page loads (fail open)', (await offline.check('http://safe.example/')) === null, 'blocked');
+  const before = calls.length;
+  await offline.check('http://safe.example/');
+  check('safe browsing: after a failed search, the next one backs off', calls.length === before, calls.length - before);
+  searchStatus = 200;
+  // The setting, or the key, off: nothing is checked and nothing is sent.
+  settings = { safeBrowsing: false };
+  calls.length = 0;
+  check('safe browsing: off by default, and switched off it checks and sends nothing',
+    (await make().check(evil)) === null && calls.length === 0 && require('../settings-backend').DEFAULTS.safeBrowsing === false, calls);
+  settings = { safeBrowsing: true };
+  key = null;
+  check('safe browsing: on without a key is inactive and sends nothing', (await make().check(evil)) === null && make().status().active === false && calls.length === 0, JSON.stringify(make().status()));
+  let passed = null;
+  make().gate({ resourceType: 'mainFrame', url: evil, webContents: null }, (r) => { passed = r; });
+  check('safe browsing: the gate lets pages through when inactive', JSON.stringify(passed) === '{}', JSON.stringify(passed));
+  for (const s of services) s.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

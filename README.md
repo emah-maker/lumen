@@ -97,6 +97,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 - **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (Settings, or ⋯ → Search Engine).
 - **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (Settings, or ⋯ → Import Bookmarks and History). Passwords and cookies are never read.
 - **Permissions:** sites must ask before using your camera, microphone, location, or notifications.
+- **Safe Browsing (optional, off by default):** with your own Google API key (Settings → Privacy), pages listed by Google Safe Browsing as suspected phishing or malware show a warning instead of loading. Pages are checked against lists kept on your computer; Google only ever sees partial hashes. Only you can choose to visit a flagged page; the AI can't. Like any list, it can miss unsafe sites and flag safe ones by mistake.
 
 ## Keyboard shortcuts
 

@@ -39,6 +39,7 @@ const { createSiteActivity } = require('./features/site-activity');
 const { createDialogs } = require('./features/dialogs');
 const { createSiteSecurity } = require('./features/site-security');
 const { createAiSites, siteOf: aiSiteOf } = require('./features/ai-sites'); // [ai controls] "Turn off AI on this site"
+const { createSafeBrowsing } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 
@@ -56,7 +57,8 @@ const pageTools = require('./features/page-tools').createPageTools({
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
-const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL);
+const SAFE_BROWSING_URL = pathToFileURL(path.join(__dirname, 'renderer', 'safe-browsing.html')).href; // features/safe-browsing.js
+const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL) || url.startsWith(SAFE_BROWSING_URL);
 // The browser UI's own document and its privileged preload (see the IPC gate and hardenUiView below).
 const UI_HTML = path.join(__dirname, 'renderer', 'index.html');
 const UI_URL = pathToFileURL(UI_HTML).href;
@@ -240,6 +242,15 @@ function storedApiKey() {
 const ENV_KEYS = { openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', gemini: 'GEMINI_API_KEY', openrouter: 'OPENROUTER_API_KEY' };
 const OPENROUTER_CACHE = () => path.join(app.getPath('userData'), 'openrouter-models.json');
 
+// The Google Safe Browsing key: settings.keys.safebrowsing, encrypted like the others.
+function safeBrowsingKey() {
+  const enc = readSettings().keys?.safebrowsing;
+  if (enc && safeStorage.isEncryptionAvailable()) {
+    try { return decryptKey(enc); } catch {}
+  }
+  return process.env.GOOGLE_SAFE_BROWSING_API_KEY || null;
+}
+
 function providerKey(provider) {
   const enc = readSettings().keys?.[provider];
   if (enc && safeStorage.isEncryptionAvailable()) {
@@ -347,6 +358,21 @@ const siteSecurity = createSiteSecurity({
 });
 app.on('certificate-error', siteSecurity.onCertificateError);
 if (TEST) global.__siteSecurity = siteSecurity;
+
+// Google Safe Browsing (features/safe-browsing.js): off unless the user turns it on and adds a key.
+// Its requests go through a separate in-memory session, so Google never gets the user's cookies.
+const safeBrowsing = createSafeBrowsing({
+  readSettings,
+  apiKey: () => safeBrowsingKey(),
+  dir: () => path.join(app.getPath('userData'), 'safe-browsing'),
+  fetch: (url) => session.fromPartition('lumen-safe-browsing').fetch(url, { cache: 'no-store' }),
+  isTab: (wc) => Boolean(tabByContents(wc)),
+  dialogs,
+  win: () => win,
+  warnUrl: SAFE_BROWSING_URL,
+  baseUrl: TEST ? process.env.LUMEN_SAFE_BROWSING_URL || undefined : undefined,
+});
+if (TEST) global.__safeBrowsing = safeBrowsing;
 
 // HTTP Basic/Digest auth: a styled sign-in sheet instead of the native prompt.
 app.on('login', (event, webContents, details, authInfo, callback) => {
@@ -612,6 +638,7 @@ const adblock = createAdblock({
   activeContents: () => activeTab()?.webContents,
   realUrl: (wc) => realUrl(wc),
   onResponseHeaders: (details) => settingsBackend.noteResponseHeaders(details),
+  mainFrameGate: (details, callback) => safeBrowsing.gate(details, callback), // pages, before they load
 });
 
 // ---------- private windows (features/private-window.js) ----------
@@ -1061,6 +1088,8 @@ function wireView(tab, url, history = null) {
   });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
+    const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
+    if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
     if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
     const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
     if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
@@ -1177,6 +1206,7 @@ function wireView(tab, url, history = null) {
   if (!settings) { // [settings] no debugger and no extensions on the settings tab
     applyChromeIdentity(wc);
     siteSecurity.attachTab(wc); // mixed content, on the debugger session applyChromeIdentity opened
+    safeBrowsing.attachTab(wc); // the warning page's "Visit this site" link
     syncExtensions(() => extensions?.addTab(wc, win));
     // A popup (sign-in, payment) presents itself as Chrome like the tab that opened it: Google
     // sign-in and some payment pages refuse browsers they don't recognise.
@@ -2599,6 +2629,7 @@ const settingsBackend = settingsPage.create({
   openTab: (url) => openTab(url),
   isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
+  onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
 });
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
@@ -2887,6 +2918,24 @@ ipcMain.handle('settings:get', () => {
 });
 // A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
 // the first message. Offline (can't check), it's saved anyway, and the caller is told so.
+// Safe Browsing's status and key, for the settings page's Privacy section. The key is kept
+// encrypted like the AI keys, and never logged.
+ipcMain.handle('settings:safe-browsing', () => ({ ...safeBrowsing.status(), keyStored: Boolean(readSettings().keys?.safebrowsing), keyEnv: Boolean(process.env.GOOGLE_SAFE_BROWSING_API_KEY) }));
+ipcMain.handle('settings:set-safe-browsing-key', async (_e, key) => {
+  const settings = readSettings();
+  const keys = { ...(settings.keys || {}) };
+  const value = typeof key === 'string' ? key.trim() : '';
+  if (value) {
+    if (!/^[\w-]{10,200}$/.test(value)) throw new Error("That doesn't look like a Google API key.");
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable; set GOOGLE_SAFE_BROWSING_API_KEY instead.');
+    keys.safebrowsing = safeStorage.encryptString(value).toString('base64');
+  } else {
+    delete keys.safebrowsing;
+  }
+  writeSettings({ ...settings, keys });
+  await safeBrowsing.refresh().catch(() => {});
+  return { ...safeBrowsing.status(), keyStored: Boolean(keys.safebrowsing), keyEnv: Boolean(process.env.GOOGLE_SAFE_BROWSING_API_KEY) };
+});
 ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
   if (!providers.PROVIDERS[provider]) return false;
   let unverified = false;
@@ -3105,6 +3154,10 @@ app.whenReady().then(async () => {
   // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
   // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
   // doesn't hold up the window.
+  // Until the ad blocker takes over onBeforeRequest (it sends pages to the same gate), or if it
+  // fails to start, pages still go through Safe Browsing's check.
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
+  safeBrowsing.refresh().catch(() => {});
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
   if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
   for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);

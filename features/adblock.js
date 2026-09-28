@@ -90,6 +90,7 @@ function createAdblock(deps) {
     });
     if (require('../test-mode').isTest()) global.__adblockEngine = blocker;
     blocker.onBeforeRequest = (details, callback) => {
+      if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
       const page = details.webContents?.getURL() || details.referrer || '';
       if (!on(page) || details.resourceType === 'mainFrame') return callback({});
       const request = fromElectronDetails(details);

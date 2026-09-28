@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'" />
+  <title>Security warning</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body class="interstitial danger">
+  <main>
+    <h1 id="title">This site may be dangerous</h1>
+    <p class="note" id="summary"></p>
+    <p class="note"><a id="learn" target="_blank" rel="noopener" href="https://developers.google.com/search/docs/monitor-debug/security/malware">Learn more about this warning</a></p>
+    <div class="actions">
+      <button class="primary" id="back" type="button">Back to safety</button>
+      <a id="advanced" href="#">Advanced</a>
+    </div>
+    <div id="details" hidden>
+      <p class="note">Google Safe Browsing lists <strong id="host"></strong> as possibly unsafe. Lists like this can be wrong: some safe sites are flagged by mistake, and some unsafe sites aren't listed.</p>
+      <p class="note"><a id="continue" href="#">Visit this site anyway (unsafe)</a></p>
+    </div>
+    <p class="attribution"><a target="_blank" rel="noopener" href="https://developers.google.com/safe-browsing/v4/advisory">Advisory provided by Google</a></p>
+  </main>
+  <script src="safe-browsing.js"></script>
+</body>
+</html>

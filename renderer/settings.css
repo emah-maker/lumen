@@ -190,3 +190,7 @@ body.interstitial { display: block; }
 .mcp-form > div { display: flex; flex-direction: column; gap: 8px; }
 .mcp-form > div[hidden] { display: none; }
 .mcp-tools { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
+
+/* safe-browsing.html */
+.interstitial.danger h1 { color: var(--danger); }
+.interstitial .attribution { font-size: 12px; opacity: 0.75; margin-top: 32px; }
