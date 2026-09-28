@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
+  <title>Source</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #ffffff; --text: #1d1d1f; --muted: #8e8e93; --hairline: rgba(0, 0, 0, 0.1); --field: rgba(0, 0, 0, 0.05); --accent: #007aff; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --text: #f5f5f7; --muted: #7c7c80; --hairline: rgba(255, 255, 255, 0.12); --field: rgba(255, 255, 255, 0.08); --accent: #0a84ff; } }
+    html, body { margin: 0; background: var(--bg); color: var(--text); }
+    body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+    header { position: sticky; top: 0; display: flex; align-items: center; gap: 14px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--hairline); z-index: 1; }
+    #where { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+    label { display: flex; align-items: center; gap: 6px; color: var(--muted); user-select: none; }
+    #note { padding: 8px 16px; color: var(--muted); }
+    #note:empty { display: none; }
+    pre { margin: 0; padding: 8px 0 40px; font: 12px/1.55 ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace; tab-size: 4; counter-reset: line; }
+    pre span { display: block; padding: 0 16px 0 72px; position: relative; white-space: pre; min-height: 1.55em; }
+    pre span::before { counter-increment: line; content: counter(line); position: absolute; left: 0; width: 56px; text-align: right; color: var(--muted); user-select: none; }
+    body.wrap pre span { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <header>
+    <div id="where">Loading source…</div>
+    <label><input type="checkbox" id="wrap" /> Wrap lines</label>
+  </header>
+  <div id="note"></div>
+  <pre id="code"></pre>
+  <script src="source.js"></script>
+</body>
+</html>

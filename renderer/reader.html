@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src https: http: data:; media-src https: http:" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Reader</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fbfaf7; --text: #1d1d1f; --muted: #6e6e73; --hairline: rgba(0, 0, 0, 0.1); --accent: #0066cc; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --text: #e8e8ea; --muted: #98989d; --hairline: rgba(255, 255, 255, 0.12); --accent: #4ea1ff; } }
+    html, body { margin: 0; background: var(--bg); color: var(--text); }
+    body { font: 19px/1.65 Charter, "Iowan Old Style", Georgia, Cambria, "Times New Roman", serif; }
+    main { width: min(680px, 88vw); margin: 0 auto; padding: 56px 0 96px; }
+    .site { font: 13px/1.4 -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--muted); margin-bottom: 10px; overflow-wrap: anywhere; }
+    h1 { font-size: 34px; line-height: 1.2; letter-spacing: -0.015em; margin: 0 0 10px; }
+    .byline { font: 14px/1.4 -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--muted); margin-bottom: 32px; }
+    .byline:empty { display: none; }
+    article { overflow-wrap: break-word; }
+    article img, article video, article figure { max-width: 100%; height: auto; }
+    article figure { margin: 1.5em 0; }
+    article figcaption { font-size: 14px; color: var(--muted); }
+    article pre, article code { font: 14px/1.5 ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace; }
+    article pre { overflow-x: auto; padding: 12px 14px; border-radius: 8px; background: var(--hairline); }
+    article blockquote { margin: 1.2em 0; padding-left: 1em; border-left: 3px solid var(--hairline); color: var(--muted); }
+    article table { border-collapse: collapse; max-width: 100%; display: block; overflow-x: auto; }
+    article td, article th { border: 1px solid var(--hairline); padding: 4px 8px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="site" id="site"></div>
+    <h1 id="title"></h1>
+    <div class="byline" id="byline"></div>
+    <article id="article"></article>
+  </main>
+  <script src="reader.js"></script>
+</body>
+</html>

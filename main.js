@@ -41,7 +41,14 @@ const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html'
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
 const settingsPage = require('./settings-backend'); // [settings] lumen://settings
-const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url);
+// Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
+const pageTools = require('./features/page-tools').createPageTools({
+  openTab: (...args) => openTab(...args),
+  sendTabs: () => sendTabs(),
+  downloadDir: () => settingsBackend.downloadDir(),
+  showSaveDialog: (options) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(win, options)),
+});
+const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url);
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
 const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL);
@@ -107,7 +114,7 @@ const UI_ONLY_IPC = new Set([
   'content-bounds', 'view:freeze', 'view:thaw', 'chat:full', 'view:warm',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize',
-  'bookmark:toggle', 'zoom:reset', 'downloads:menu',
+  'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
   'settings-page:open', 'prefs:ui',
@@ -731,6 +738,9 @@ function showAppMenu({ x, y }) {
     { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
     { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
     { label: 'Print…', accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
+    { label: 'Save Page As…', accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
+    { label: 'View Page Source', accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
+    { label: 'Reader Mode', type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
     ...(process.platform === 'darwin' ? [] : [{ label: 'Full Screen', accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
     { type: 'separator' },
     { label: 'Bookmarks', submenu: bookmarksMenu() },
@@ -903,10 +913,11 @@ function tabState() {
       return {
         id: t.id,
         title: wc.getTitle() || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: t.favicon || null,
-        page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : null, // Lumen's own pages get their own icon
+        page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url), // Lumen's own pages get their own icon
+        readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
@@ -1104,6 +1115,7 @@ function wireView(tab, url, history = null) {
     recordVisit(url, wc.getTitle());
   });
   wc.on('did-finish-load', () => readPageText(tab));
+  pageTools.attach(tab);
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
@@ -1999,6 +2011,7 @@ function showContextMenu(wc, p) {
     if (isWebUrl(p.srcURL)) items.push({ label: 'Open Image in New Tab', click: () => openTab(p.srcURL, { background: true }) });
     items.push({ label: 'Copy Image', click: () => wc.copyImageAt(p.x, p.y) }, { type: 'separator' });
   }
+  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
   } else if (selection) {
@@ -2017,6 +2030,13 @@ function showContextMenu(wc, p) {
       { label: 'Reload', click: () => wc.reload() },
       { type: 'separator' },
     );
+    if (isWebUrl(wc.getURL())) {
+      items.push(
+        { label: 'Save Page As…', click: () => pageTools.savePage(wc).catch(() => {}) },
+        { label: 'View Page Source', click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
+        { type: 'separator' },
+      );
+    }
   }
   const extensionItems = extensions ? extensions.getContextMenuItems(wc, p) : [];
   if (extensionItems.length) items.push(...extensionItems, { type: 'separator' });
@@ -2051,6 +2071,8 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
   else if (mod && key === 'p') wc?.print({}, () => {});
+  else if (mod && key === 's') { if (wc) pageTools.savePage(wc).catch(() => {}); }
+  else if (mod && key === 'u') { if (wc) pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }); }
   else if (mod && key === ',') openSettingsPage(); // [settings]
   else if (process.platform === 'darwin' && input.meta && key === '[') wc?.navigationHistory.goBack();
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
@@ -2200,6 +2222,7 @@ function macMenu() {
         { label: 'Search Tabs…', ...shown('Cmd+Shift+A'), click: openTabSearch },
         { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
+        { label: 'Save Page As…', ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
         { label: 'Print…', ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
         { type: 'separator' },
         { label: 'Close Tab', ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
@@ -2211,6 +2234,8 @@ function macMenu() {
       submenu: [
         { label: 'Reload', ...shown('Cmd+R'), click: reloadActive },
         { label: 'Find…', ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
+        { label: 'Reader Mode', click: () => toggleReaderActive() },
+        { label: 'View Page Source', ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
         { type: 'separator' },
         { label: 'Zoom In', ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
         { label: 'Zoom Out', ...shown('Cmd+-'), click: () => zoomBy(wc(), -0.5) },
@@ -2572,9 +2597,16 @@ ipcMain.on('nav:go', (_e, text) => {
   const internal = settingsPage.parseSettingsInput(text);
   if (internal) { openSettingsPage(internal.section, { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); return; }
   if (current?.settings) { replaceTab(activeId, resolveInput(text)); return; }
+  const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
+  if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }
   wc.loadURL(resolveInput(text)).catch(() => {});
   wc.focus();
 });
+function toggleReaderActive() {
+  return pageTools.toggleReader(tabs.find((t) => t.id === activeId && alive(t)));
+}
+ipcMain.on('page:reader', () => { toggleReaderActive(); });
+if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
 ipcMain.on('nav:back', () => activeTab()?.webContents.navigationHistory.goBack());
 ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());
 ipcMain.on('nav:reload', reloadActive);

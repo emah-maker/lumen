@@ -65,6 +65,7 @@ let addressDirty = false;
 let currentUrl = '';
 let currentError = false;
 let currentSecurity = null; // 'broken' (past a certificate warning) | 'mixed' (http content loaded) | null
+let currentLumenPage = false; // Reader mode / View Source: Lumen's own page for a web address
 let lastActiveId = null;
 
 const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z"/>';
@@ -75,6 +76,8 @@ const WARN = '<svg viewBox="0 0 12 12"><path d="M6 1.5 11 10.5H1Z"/><path d="M6 
 const PAGE_ICONS = {
   settings: '<circle cx="8" cy="8" r="2.1"/><path d="M8 1.75v1.6M8 12.65v1.6M1.75 8h1.6M12.65 8h1.6M3.58 3.58l1.13 1.13M11.29 11.29l1.13 1.13M3.58 12.42l1.13-1.13M11.29 4.71l1.13-1.13"/><circle cx="8" cy="8" r="4.4"/>',
   history: '<circle cx="8" cy="8" r="6.25"/><path d="M8 4.5V8l2.25 1.5"/>',
+  reader: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5Zm11 0H9.25A1.25 1.25 0 0 0 8 4.75v8a1.25 1.25 0 0 1 1.25-1.25h4.25Z"/>',
+  source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
 };
 
 function globeIcon(page = null) {
@@ -94,8 +97,8 @@ function showAddress() {
   const security = $('security');
   if (document.activeElement === address) return;
   address.value = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
-  if (currentError) {
-    security.hidden = true; // an error page has no connection to vouch for
+  if (currentError || currentLumenPage) {
+    security.hidden = true; // an error page (or Lumen's own reader/source page) has no connection to vouch for
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'broken') {
     security.className = 'security danger';
     security.innerHTML = WARN + '<span>Not secure</span>';
@@ -480,8 +483,14 @@ function renderTabs(state) {
   $('zoom').hidden = !zoomed;
   $('zoom').textContent = `${zoom}%`;
   document.body.classList.toggle('zoomed', zoomed);
+  const lumenPage = active?.page === 'reader' || active?.page === 'source'; // shows a web address, but is Lumen's own page
+  currentLumenPage = lumenPage;
+  const reader = $('reader');
+  reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
+  reader.setAttribute('aria-pressed', String(active?.page === 'reader'));
+  reader.title = active?.page === 'reader' ? 'Leave reader mode' : 'Reader mode';
   const star = $('bookmark');
-  star.hidden = !active?.url || currentError;
+  star.hidden = !active?.url || currentError || lumenPage;
   star.setAttribute('aria-pressed', String(Boolean(active?.bookmarked)));
   star.title = active?.bookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
   star.setAttribute('aria-label', active?.bookmarked ? 'Remove bookmark' : 'Bookmark this page');
@@ -675,6 +684,7 @@ $('forward').onclick = () => window.browser.forward();
 $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
+$('reader').onclick = () => window.browser.toggleReader?.();
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
