@@ -5,6 +5,7 @@
 //  - the sidebar's "Grok · your account" engine: the user's own Grok Build CLI (grok-build.js),
 //  - the "Using: <page>" setting.
 // automation.js, claude-code.js and grok-build.js load only when first needed.
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -23,17 +24,35 @@ const CLAUDE_CODE_NOTE = 'Claude Code';
 // to the unmodified `grok` binary; sharing Lumen still means each person brings their own login).
 const GROK_BUILD_NOTE = 'Grok Build';
 
-// Called at startup, before the app is ready: the debugging switch only works if set this early.
+// The secret at the start of every automation proxy URL (automation.js). Kept in the profile so a
+// saved Playwright MCP config keeps working across restarts; turning the setting off deletes it,
+// so turning it back on gives a new address.
+const automationTokenPath = (userData) => path.join(userData, 'automation-token');
+function automationToken(userData) {
+  try {
+    const saved = fs.readFileSync(automationTokenPath(userData), 'utf8').trim();
+    if (/^[0-9a-f]{48}$/.test(saved)) return saved;
+  } catch {}
+  const token = crypto.randomBytes(24).toString('hex');
+  fs.writeFileSync(automationTokenPath(userData), token, { mode: 0o600 });
+  return token;
+}
+
+// Called at startup, before the app is ready: the debugging switches only work if set this early.
 function prepareAutomation(app, settings) {
   if (!settings.automationEnabled) return null;
   const file = path.join(app.getPath('userData'), 'DevToolsActivePort');
   try { fs.rmSync(file, { force: true }); } catch {}
+  // Chromium's port has no authentication; automation.js hides it as well as it can (see there).
+  // --remote-debugging-pipe would avoid a port, but Chromium reads that pipe from CRT fds 3 and 4 of
+  // this process, which by now hold Electron's own .asar archives, and the handle-based
+  // --remote-debugging-io-pipes needs Win32 handle values that JavaScript can't get at.
   app.commandLine.appendSwitch('remote-debugging-port', '0');
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
   // A debugging port makes Chromium set navigator.webdriver = true on every page, which Cloudflare's
   // "Verify you are human" and Google sign-in treat as a bot: the checkbox spins and resets forever.
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-  return { port: validPort(settings.automationPort), file };
+  return { port: validPort(settings.automationPort), file, token: automationToken(app.getPath('userData')) };
 }
 
 // Settles as soon as `signal` aborts, so Stop answers the agent at once even mid-tool.
@@ -320,6 +339,8 @@ function setupAiAgents(deps) {
     return {
       enabled: Boolean(settings.automationEnabled),
       port: validPort(settings.automationPort),
+      // The address is http://127.0.0.1:<port>/<token>; the token of the next launch while it's on.
+      token: automationProxy ? deps.automationPlan.token : settings.automationEnabled ? automationToken(app.getPath('userData')) : null,
       running: automationProxy ? { port: automationProxy.state.port, listening: automationProxy.state.listening, error: automationProxy.state.error, clients: automationProxy.clients() } : null,
     };
   });
@@ -327,6 +348,7 @@ function setupAiAgents(deps) {
     const settings = readSettings();
     writeSettings({ ...settings, automationEnabled: Boolean(enabled), automationPort: validPort(Number(port)) });
     if (!enabled && automationProxy) { automationProxy.close(); automationProxy = null; } // off takes effect now; on needs a restart
+    if (!enabled) try { fs.rmSync(automationTokenPath(app.getPath('userData')), { force: true }); } catch {}
     return true;
   });
 

@@ -1,13 +1,20 @@
 // Automation tools over the Chrome DevTools Protocol (opt-in, off by default).
 //
 // With the setting on, Chromium's own debugging port is opened on a random localhost port and a
-// filtering proxy listens on 127.0.0.1:<port> (default 9222). Playwright's connectOverCDP,
-// Playwright MCP (--cdp-endpoint) and other CDP tools connect to the proxy, which:
+// filtering proxy listens on 127.0.0.1:<port> (default 9222). Every proxy URL starts with a secret
+// token (http://127.0.0.1:<port>/<token>, shown in Settings), so knowing the port isn't enough.
+// Playwright's connectOverCDP, Playwright MCP (--cdp-endpoint) and other CDP tools connect to the
+// proxy, which:
 // - shows only the user's tabs: Lumen's own UI, hidden reader tabs and
 //   extension pages are filtered out of every target list and event, and can't be attached to;
 // - turns Target.createTarget (Playwright's newPage) into a real Lumen tab, Target.closeTarget
 //   into closing that tab, and ignores Browser.close (disconnecting never quits Lumen);
 // - reports connects and disconnects, so the sidebar shows "Lumen is being driven by …".
+//
+// Chromium's port itself can't be locked: it has no authentication, and a local program that finds
+// it gets everything, Lumen's own UI included (why the pipe isn't used instead: prepareAutomation).
+// The proxy reads DevToolsActivePort as soon as Chromium writes it and deletes it, and never hands
+// out the port or the browser endpoint's id, so finding it takes a scan of localhost ports.
 
 const fs = require('fs');
 const http = require('http');
@@ -85,6 +92,7 @@ function serverSocket(socket, { onMessage, onClose }) {
       }
     }
   });
+  socket.on('end', close); // a client that goes away without a close frame
   socket.on('close', () => { if (!closed) { closed = true; onClose(); } });
   socket.on('error', () => {});
   return {
@@ -105,12 +113,21 @@ function upgrade(req, socket) {
 
 // ---------------------------------------------------------------- the proxy
 
+// token: the secret every URL starts with.
 // hooks: { tabs() -> [{ id, webContents }], openTab(url) -> { id, webContents }, closeTab(id),
 //          onSession({ active, remaining }) }
-function start({ port, file, hooks }) {
+function start({ port, file, token, hooks }) {
   const targetIds = new WeakMap(); // webContents -> targetId
   const clients = new Set();
   let internal = null;
+  let finding = null;
+  // Chromium's port, read once (right away), after which the file is taken away from anyone else.
+  const endpoint = async () => internal || (finding ||= internalEndpoint(file).then((found) => {
+    internal = found;
+    try { fs.rmSync(file, { force: true }); } catch {}
+    return found;
+  }, (err) => { finding = null; throw err; }));
+  endpoint().catch(() => {});
 
   async function targetIdOf(wc) {
     if (targetIds.has(wc)) return targetIds.get(wc);
@@ -146,19 +163,30 @@ function start({ port, file, hooks }) {
     return false;
   }
 
-  const hostOf = () => `127.0.0.1:${port}`;
+  const base = `127.0.0.1:${port}/${token}`; // every URL handed out starts with this
+  const BROWSER_PATH = '/devtools/browser'; // not Chromium's own (its id would find the raw port's)
   const localHost = (req) => /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(req.headers.host || '');
-  const fetchJson = async (p) => (await fetch(`http://127.0.0.1:${internal.port}${p}`)).json();
-  const rewrite = (req, t) => ({
+  // { url, route }: the request with /<token> taken off, or null without the right token.
+  const tokenPath = Buffer.from(`/${token}`);
+  const routeOf = (req) => {
+    const url = new URL(req.url, 'http://x');
+    const given = Buffer.from(url.pathname.slice(0, tokenPath.length));
+    const route = url.pathname.slice(tokenPath.length);
+    if (given.length !== tokenPath.length || !crypto.timingSafeEqual(given, tokenPath) || (route && route[0] !== '/')) return null;
+    return { url, route: route.replace(/\/$/, '') };
+  };
+  const NO_TOKEN = 'Wrong or missing token: use the full address from Lumen’s Settings (You and AI → Allow automation tools).';
+  const fetchJson = async (p) => (await fetch(`http://127.0.0.1:${(await endpoint()).port}${p}`)).json();
+  const rewrite = (t) => ({
     ...t,
-    webSocketDebuggerUrl: t.webSocketDebuggerUrl?.replace(/ws:\/\/[^/]+/, `ws://${hostOf(req)}`),
+    webSocketDebuggerUrl: t.webSocketDebuggerUrl?.replace(/ws:\/\/[^/]+/, `ws://${base}`),
     devtoolsFrontendUrl: undefined,
   });
 
-  async function listPages(req) {
+  async function listPages() {
     const users = await userTargets();
     const list = await fetchJson('/json/list');
-    return list.filter((t) => t.type === 'page' && users.has(t.id)).map((t) => rewrite(req, t));
+    return list.filter((t) => t.type === 'page' && users.has(t.id)).map(rewrite);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -169,22 +197,22 @@ function start({ port, file, hooks }) {
     // Only local tools, not web pages: a page fetching localhost sends an Origin header, and a
     // DNS-rebinding page a foreign Host.
     if (req.headers.origin || !localHost(req)) return send(403, { error: 'Only local tools may connect.' });
+    const routed = routeOf(req);
+    if (!routed) return send(401, { error: NO_TOKEN });
     try {
-      if (!internal) internal = await internalEndpoint(file);
-      const url = new URL(req.url, 'http://x');
-      const route = url.pathname.replace(/\/$/, '');
+      const { url, route } = routed;
       if (route === '/json/version') {
         const version = await fetchJson('/json/version');
-        return send(200, { ...version, Browser: `Lumen/${version.Browser?.split('/')[1] || ''}`.replace(/\/$/, ''), webSocketDebuggerUrl: `ws://${hostOf(req)}${internal.wsPath}` });
+        return send(200, { ...version, Browser: `Lumen/${version.Browser?.split('/')[1] || ''}`.replace(/\/$/, ''), webSocketDebuggerUrl: `ws://${base}${BROWSER_PATH}` });
       }
-      if (route === '/json' || route === '/json/list') return send(200, await listPages(req));
+      if (route === '/json' || route === '/json/list') return send(200, await listPages());
       if (route === '/json/protocol') return send(200, await fetchJson('/json/protocol'));
       if (route === '/json/new') {
         if (req.method !== 'PUT') return send(405, { error: 'Use PUT' });
         const target = decodeURIComponent(url.search.slice(1)) || 'about:blank';
         const tab = hooks.openTab(target);
         const id = await targetIdOf(tab.webContents);
-        const page = (await listPages(req)).find((t) => t.id === id);
+        const page = (await listPages()).find((t) => t.id === id);
         return send(200, page || { id });
       }
       const m = /^\/json\/(close|activate)\/(.+)$/.exec(route);
@@ -205,11 +233,12 @@ function start({ port, file, hooks }) {
     socket.on('error', () => {});
     try {
       if ((req.headers.origin && !/^(devtools|chrome-devtools):/.test(req.headers.origin)) || !localHost(req)) throw new Error('origin');
-      if (!internal) internal = await internalEndpoint(file);
-      const pathname = new URL(req.url, 'http://x').pathname;
-      if (pathname === internal.wsPath) return browserClient(req, socket);
-      const page = /^\/devtools\/page\/(.+)$/.exec(pathname);
-      if (page && (await userTargets()).has(page[1])) return pageClient(req, socket, pathname);
+      const routed = routeOf(req);
+      if (!routed) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
+      await endpoint();
+      if (routed.route === BROWSER_PATH) return browserClient(req, socket);
+      const page = /^\/devtools\/page\/(.+)$/.exec(routed.route);
+      if (page && (await userTargets()).has(page[1])) return pageClient(req, socket, routed.route);
       throw new Error('target');
     } catch {
       socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
