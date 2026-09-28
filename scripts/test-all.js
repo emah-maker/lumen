@@ -8,7 +8,7 @@ const path = require('path');
 const SUITES = [
   'units', 'cli-json', 'smoke', 'tools', 'ui', 'images', 'models', 'adhd', 'extensions', 'adblock', 'pagecontext',
   'dialogs', 'recovery', 'tasklock', 'tabstrip', 'tabsearch', 'downloads', 'hardening', 'exfil', 'security-ui', 'updates',
-  'mcp', 'settings', 'groups', 'cdp', 'browser', 'home', 'windows', 'pagetools', 'managers',
+  'mcp', 'settings', 'groups', 'cdp', 'browser', 'home', 'windows', 'pagetools', 'managers', 'chats',
 ];
 
 const picked = process.argv.slice(2);

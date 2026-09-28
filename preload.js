@@ -94,6 +94,15 @@ contextBridge.exposeInMainWorld('assistant', {
   ask: (text, runId, images) => ipcRenderer.send('agent:ask', text, runId, images),
   stop: () => ipcRenderer.send('agent:stop'),
   reset: () => ipcRenderer.send('agent:reset'),
+  // The chat history list (renderer/chats.js)
+  chats: {
+    list: () => ipcRenderer.invoke('chats:list'),
+    open: (id) => ipcRenderer.invoke('chats:open', id),
+    rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
+    remove: (id) => ipcRenderer.invoke('chats:delete', id),
+    exportChat: (id) => ipcRenderer.invoke('chats:export', id),
+    onUsage: on('chats:usage'),
+  },
   onEvent: on('agent:event'),
   // AI agents over MCP
   onMcpEvent: on('mcp:event'),
