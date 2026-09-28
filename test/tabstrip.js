@@ -18,6 +18,9 @@ const os = require('os');
     if (req.url === '/busy') return res.end('<title>busy</title><script>let n = 0; setInterval(() => { document.title = `busy ${++n}`; }, 30);</script>');
     if (req.url === '/opener') return res.end('<title>opener</title><button id="pop" onclick="window.open(\'/popup\', \'pop\', \'width=420,height=320\')">open</button>');
     if (req.url === '/popup') return res.end('<title>popup</title><script>window.brands = JSON.stringify(navigator.userAgentData?.brands || []); setTimeout(() => { window.answer = alert("from the popup"); window.done = true; }, 400);</script>');
+    // A cross-site iframe (localhost vs 127.0.0.1) runs in its own process, as Cloudflare's checkbox does.
+    if (req.url === '/xframe') return res.end(`<title>xframe</title><iframe src="http://localhost:${server.address().port}/frame"></iframe>`);
+    if (req.url === '/frame') return res.end('<script>window.brands = JSON.stringify(navigator.userAgentData?.brands || []);</script>');
     res.end(`<title>Page ${req.url}</title><p>${req.url}</p>`);
   }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -260,6 +263,16 @@ const os = require('os');
   check('memory pressure: a tab idle 3 minutes sleeps', await asleep());
   const level = await app.evaluate(() => global.__tabSleep.memoryPressure());
   check('the real pressure check answers', typeof level === 'boolean', level);
+
+  // ---- 11. a cross-site iframe presents itself as Chrome like its page (Cloudflare checks this) ----
+  await open(`${base}/xframe`);
+  await sleep(500);
+  const frames = await app.evaluate(async () => {
+    const wc = global.__agent.browser.activeTab().webContents;
+    return Promise.all(wc.mainFrame.framesInSubtree.map(async (f) => ({ url: f.url, brands: await f.executeJavaScript('JSON.stringify(navigator.userAgentData?.brands.map((b) => b.brand) || [])') })));
+  });
+  const inner = frames.find((f) => f.url.includes('localhost'));
+  check('a cross-site iframe says Google Chrome', inner && inner.brands.includes('Google Chrome'), JSON.stringify(frames));
 
   check('no renderer errors', errors.length === 0, errors.join('; '));
   server.close();

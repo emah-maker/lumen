@@ -1743,18 +1743,37 @@ const UA_METADATA = {
   fullVersionList: [{ brand: 'Chromium', version: process.versions.chrome }, { brand: 'Google Chrome', version: process.versions.chrome }, { brand: 'Not_A Brand', version: '24.0.0.0' }],
   platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux',
   platformVersion: process.platform === 'win32' ? '15.0.0' : '',
-  architecture: 'x86',
+  architecture: process.arch === 'arm64' ? 'arm' : 'x86', // Chrome on Apple Silicon says "arm"
   bitness: '64',
   model: '',
   mobile: false,
 };
+// The override only covers the tab's own frame. Cross-origin iframes and workers are separate
+// targets that would still say "Chromium", and Cloudflare's checkbox (an iframe from
+// challenges.cloudflare.com) fails a page whose frames disagree. So auto-attach to each one, paused
+// at start, give it the same identity, then let it run.
+const identified = new WeakSet();
 function applyChromeIdentity(wc) {
+  if (identified.has(wc)) return;
   try {
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
-    wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA }).catch(() => {});
   } catch {
-    // Another debugger (e.g. an extension) is attached; keep Electron's defaults.
+    return; // Another debugger (e.g. an extension) is attached; keep Electron's defaults.
   }
+  identified.add(wc);
+  const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
+  // Workers have no Emulation domain; Network sets the same thing there.
+  const identify = (sessionId) => wc.debugger.sendCommand('Emulation.setUserAgentOverride', override, sessionId)
+    .catch(() => wc.debugger.sendCommand('Network.setUserAgentOverride', override, sessionId)).catch(() => {});
+  const autoAttach = (sessionId) => wc.debugger.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
+  wc.debugger.on('message', (_e, method, params) => {
+    if (method !== 'Target.attachedToTarget') return;
+    const { sessionId, targetInfo } = params;
+    Promise.all([identify(sessionId), targetInfo.type === 'iframe' ? autoAttach(sessionId) : null])
+      .finally(() => wc.debugger.sendCommand('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
+  });
+  identify();
+  autoAttach();
 }
 
 // ---------- context menu ----------
