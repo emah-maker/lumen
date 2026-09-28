@@ -58,6 +58,10 @@
         }
       ],
       "signAndEditExecutable": false,
+      "extraFiles": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md"
+      ],
       "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "nsis": {
@@ -76,10 +80,6 @@
       "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
     },
     "afterPack": "scripts/after-pack.js",
-    "extraFiles": [
-      "LICENSE",
-      "THIRD_PARTY_NOTICES.md"
-    ],
     "protocols": [
       {
         "name": "Web page",
@@ -93,6 +93,10 @@
     "mac": {
       "icon": "build/icon.png",
       "category": "public.app-category.productivity",
+      "extraResources": [
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md"
+      ],
       "target": [
         {
           "target": "dmg",
