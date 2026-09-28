@@ -90,7 +90,7 @@ const path = require('path');
   // Claude Code engine (the user's own login), OpenAI, Grok, Gemini and OpenRouter. Stubs only.
   await app.evaluate(() => {
     global.__engineSent = {};
-    global.__agent.engines = { claudecode: { owns: () => false, run: async (args) => { global.__engineSent.claudecode = args.prompt; return { text: 'ok', sessionId: 'x' }; } } };
+    global.__agent.engines = { claudecode: { owns: () => false, run: async (args) => { global.__engineSent.claudecode = args.prompt; global.__engineSent.claudecodeModel = args.model; return { text: 'ok', sessionId: 'x' }; } } };
     global.__realStreamTurn ||= global.__providers.streamTurn;
     global.__providers.streamTurn = async (args) => {
       const last = args.messages[args.messages.length - 1];
@@ -108,6 +108,10 @@ const path = require('path');
     const text = await firstRequest(model, key);
     check(`page context reaches ${key}: title, URL and text in the first request`, hasPage(text), String(text).slice(0, 200));
   }
+  // The picked Claude Code model reaches the engine (claude-code.js turns it into --model).
+  const engineModelFor = async (model) => { await firstRequest(model, 'claudecode'); return app.evaluate(() => global.__engineSent.claudecodeModel); };
+  check('Claude Code default reaches the engine as "default" (no --model)', (await engineModelFor('claudecode:default')) === 'default', await app.evaluate(() => global.__engineSent.claudecodeModel));
+  check('a picked Claude Code model reaches the engine', (await engineModelFor('claudecode:opus')) === 'opus', await app.evaluate(() => global.__engineSent.claudecodeModel));
   await app.evaluate(() => { global.__providers.streamTurn = global.__realStreamTurn; });
 
   check('no UI errors', errors.length === 0, errors.join('; '));

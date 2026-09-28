@@ -17,6 +17,7 @@ const { findClaude, buildArgs, stdinMessage, describeFailure, parseAuthStatus } 
   check('argv: input is stream-json (carries image blocks on stdin)', flag('--input-format') === 'stream-json', argv.join(' '));
   check('argv: no built-in tools, only mcp__lumen, no prompts', flag('--tools') === '' && flag('--allowedTools') === 'mcp__lumen' && flag('--permission-mode') === 'dontAsk' && argv.includes('--strict-mcp-config'), argv.join(' '));
   check('argv: new chat uses --session-id, follow-up uses --resume', flag('--session-id') === 'abc' && buildArgs({ mcpConfig: 'x', sessionId: 'abc', resume: true, systemPrompt: 'S' }).includes('--resume'), argv.join(' '));
+  check('argv: the default pick passes no --model, a picked one passes --model <alias>', !argv.includes('--model') && buildArgs({ mcpConfig: 'x', sessionId: 'abc', resume: false, systemPrompt: 'S', model: 'sonnet' }).join(' ').includes('--model sonnet'), argv.join(' '));
   check('error: not logged in -> run claude, then /login', /run `claude` once, then type \/login/.test(describeFailure('Invalid API key · Please run /login').text), describeFailure('Invalid API key · Please run /login').text);
   check('error: usage limit is named', /usage limit/.test(describeFailure("Claude AI usage limit reached|1760000000").text), describeFailure('Claude AI usage limit reached').text);
 
@@ -77,6 +78,8 @@ const { findClaude, buildArgs, stdinMessage, describeFailure, parseAuthStatus } 
     ids = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
   }
   check('picker offers your own Claude Code', ids.includes('claudecode:default'), JSON.stringify(ids));
+  const ccLabels = await ui.$$eval('#model option', (os) => os.filter((o) => o.value.startsWith('claudecode:')).map((o) => `${o.value}=${o.textContent}`));
+  check('picker offers Claude Code\'s models too', ['claudecode:fable=Claude Code · Fable', 'claudecode:opus=Claude Code · Opus', 'claudecode:sonnet=Claude Code · Sonnet', 'claudecode:haiku=Claude Code · Haiku'].every((l) => ccLabels.includes(l)) && ccLabels[0] === 'claudecode:default=Claude Code', JSON.stringify(ccLabels));
   await ui.selectOption('#model', 'claudecode:default');
   await sleep(300);
   check('the toolbar keeps the Claude mark', (await ui.getAttribute('#toggle-sidebar', 'data-assistant')) === 'Claude', await ui.getAttribute('#toggle-sidebar', 'data-assistant'));

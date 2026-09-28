@@ -27,4 +27,11 @@ function killTree(child) {
   }
 }
 
-module.exports = { exists, lookup, killTree };
+// The model part of a local engine's picker id: 'claudecode:opus' -> 'opus', 'grokbuild:default'
+// (or a bare 'claudecode:') -> 'default', meaning the CLI's own default (no model flag at all).
+const engineModel = (id) => String(id || '').split(':').slice(1).join(':') || 'default';
+// A model name that is safe to put after --model / -m: never empty, never starting with '-' (the
+// argv never goes through a shell, but a leading dash would still read as another flag).
+const validModel = (model) => /^[a-z0-9][\w.[\]-]*$/i.test(String(model || ''));
+
+module.exports = { exists, lookup, killTree, engineModel, validModel };
