@@ -82,14 +82,16 @@ if (mode === 'hang') setInterval(() => {}, 1000);
   process.env.GROK_HOME = path.join(dir, 'user-grok'); // stands in for ~/.grok
   fs.mkdirSync(process.env.GROK_HOME);
   fs.writeFileSync(path.join(process.env.GROK_HOME, 'auth.json'), '{"t":1}');
-  process.env.XAI_API_KEY = 'sk-should-not-leak';
+  process.env.XAI_API_KEY = 'xai-sign-in'; // Grok's own sign-in for API-key users: kept
+  process.env.ANTHROPIC_API_KEY = 'sk-should-not-leak';
   const g = await cj.completeJSON({ engine: 'grokbuild', bin: 'grok.exe', model: 'default', system: 'S', user: 'Tabs:\n[]', schema: SCHEMA, userData: dir, run: fakeRun({ text: '', structuredOutput: groups }) });
   delete process.env.XAI_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
   const r2 = runs.at(-1);
   const home = path.join(dir, 'grok-oneshot');
   check('grok run: answer returned', g.groups[0].name === 'A', JSON.stringify(g));
   check('grok run: its own GROK_HOME, with the sign-in linked and no MCP servers in config', r2.env.GROK_HOME === home && fs.existsSync(path.join(home, 'auth.json')) && !/mcp_servers/.test(fs.readFileSync(path.join(home, 'config.toml'), 'utf8')), r2.env.GROK_HOME);
-  check('grok run: API keys stay out of its environment', !Object.keys(r2.env).some((k) => /API_KEY|TOKEN|SECRET/i.test(k)), Object.keys(r2.env).join(','));
+  check('grok run: other API keys stay out of its environment; only XAI_API_KEY is kept', r2.env.XAI_API_KEY === 'xai-sign-in' && !Object.keys(r2.env).some((k) => k !== 'XAI_API_KEY' && /API_KEY|TOKEN|SECRET/i.test(k)), Object.keys(r2.env).join(','));
   check('grok run: the prompt went in a file that is gone afterwards', r2.files.some((f) => /^prompt-/.test(f)) && !fs.readdirSync(r2.cwd).some((f) => /^prompt-/.test(f)) && !r2.argv.includes('Tabs:\n[]'), JSON.stringify(r2.files));
   check('grok run: the user’s own auth.json is untouched', fs.readFileSync(path.join(process.env.GROK_HOME, 'auth.json'), 'utf8') === '{"t":1}', 'auth');
   if (savedGrokHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedGrokHome;
