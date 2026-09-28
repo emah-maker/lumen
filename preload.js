@@ -5,6 +5,12 @@ const { injectBrowserAction } = require('electron-chrome-extensions/browser-acti
 // holds it to renderer/index.html (it can only make the view more restricted).
 ipcRenderer.sendSync('ui-preload:loaded');
 
+// The UI's strings in the system's language (features/i18n.js; renderer/i18n.js looks them up).
+// Asked only from renderer/index.html: the window's first about:blank runs this preload too, and
+// main's gate (rightly) refuses it there.
+const isUiPage = location.protocol === 'file:' && /\/renderer\/index\.html$/.test(location.pathname);
+contextBridge.exposeInMainWorld('lumenI18n', (isUiPage && ipcRenderer.sendSync('ui:strings')) || { locale: 'en', strings: {} });
+
 // Defines <browser-action-list>, the row of extension buttons in the toolbar.
 injectBrowserAction();
 

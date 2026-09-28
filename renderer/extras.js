@@ -9,7 +9,7 @@
   // ---------- local agent engines: the placeholder ----------
 
   const select = $('model');
-  const ENGINE_PLACEHOLDERS = { 'claudecode:': 'Ask Claude…', 'grokbuild:': 'Ask Grok…' };
+  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }) };
   function syncEngine() {
     const value = String(select?.value || '');
     const prefix = Object.keys(ENGINE_PLACEHOLDERS).find((p) => value.startsWith(p));
@@ -28,7 +28,7 @@
   let lastState = null;
   const chip = Object.assign(document.createElement('div'), { id: 'page-context', className: 'page-context', hidden: true });
   chip.setAttribute('role', 'status');
-  const label = Object.assign(document.createElement('span'), { className: 'pc-label', textContent: 'Using:' });
+  const label = Object.assign(document.createElement('span'), { className: 'pc-label', textContent: window.t('context.using') });
   const icon = Object.assign(document.createElement('img'), { className: 'pc-icon', alt: '' });
   icon.onerror = () => { icon.hidden = true; };
   const title = Object.assign(document.createElement('span'), { className: 'pc-title' });
@@ -61,13 +61,13 @@
       return;
     }
     chip.classList.toggle('excluded', !include);
-    label.textContent = include ? 'Using:' : 'Not using:';
+    label.textContent = include ? window.t('context.using') : window.t('context.notUsing');
     title.textContent = tab.title || tab.url;
-    chip.title = include ? `The AI sees this tab's title, address and text with each message.\n${tab.url}` : 'This tab is not sent with your messages.';
+    chip.title = include ? window.t('context.sent', { url: tab.url }) : window.t('context.notSent');
     icon.hidden = !tab.favicon;
     if (tab.favicon && icon.getAttribute('src') !== tab.favicon) icon.src = tab.favicon;
-    toggle.textContent = include ? '×' : 'Include';
-    toggle.title = include ? 'Stop sending the page with messages' : 'Send the page with messages';
+    toggle.textContent = include ? '×' : window.t('context.include');
+    toggle.title = include ? window.t('context.stop') : window.t('context.send');
     toggle.setAttribute('aria-label', toggle.title);
     toggle.setAttribute('aria-pressed', String(!include));
   }
@@ -108,7 +108,7 @@
   function syncBadge() {
     const show = pending.size > 0 && document.body.classList.contains('sidebar-hidden');
     button?.classList.toggle('approval-pending', show);
-    if (show) button?.setAttribute('aria-description', 'An action is waiting for your approval');
+    if (show) button?.setAttribute('aria-description', window.t('approval.pending'));
     else button?.removeAttribute('aria-description');
   }
   new MutationObserver(syncBadge).observe(document.body, { attributes: true, attributeFilter: ['class'] });

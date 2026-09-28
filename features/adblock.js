@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const electron = require('electron');
+const { t } = require('./i18n');
 
 // Must be registered before the app is ready, and Electron keeps only the last call's list:
 // electron-chrome-extensions registers crx (it loads earlier in main.js), so it is repeated here.
@@ -149,12 +150,12 @@ function createAdblock(deps) {
     };
     const count = wc ? blockedCount.get(wc.id) || 0 : 0;
     return [
-      { label: blocker ? `${count} blocked on this page` : 'Loading filter lists…', enabled: false },
+      { label: blocker ? t('adblock.count', { count }) : t('adblock.loading'), enabled: false },
       { type: 'separator' },
-      { label: 'Block Ads and Trackers', type: 'checkbox', checked: enabled, click: () => save({ adblock: !enabled }) },
+      { label: t('adblock.toggle'), type: 'checkbox', checked: enabled, click: () => save({ adblock: !enabled }) },
       ...(host && deps.isWebUrl(deps.realUrl(wc))
         ? [{
-            label: `Allow Ads on ${host}`,
+            label: t('adblock.allowOn', { host }),
             type: 'checkbox',
             checked: allow.has(host),
             enabled,

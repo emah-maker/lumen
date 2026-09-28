@@ -114,12 +114,13 @@ function showAddress() {
   } else if (currentUrl.startsWith('https:')) {
     security.className = 'security';
     security.innerHTML = LOCK;
-    security.title = 'Secure connection';
+    security.title = t('security.secure');
     security.hidden = false;
   } else if (currentUrl.startsWith('http:')) {
     security.className = 'security insecure';
-    security.innerHTML = WARN + '<span>Not secure</span>';
-    security.title = 'This connection is not encrypted';
+    security.innerHTML = WARN;
+    security.append(Object.assign(document.createElement('span'), { textContent: t('security.notSecure') }));
+    security.title = t('security.notEncrypted');
     security.hidden = false;
   } else {
     security.hidden = true;
@@ -243,6 +244,8 @@ function groupLabel(group, count, crowded, label = null) {
   if (!label) {
     label = document.createElement('button');
     label.type = 'button';
+    label.setAttribute('role', 'tab'); // a tablist holds only tabs; Enter/Space still toggle the group
+    label.setAttribute('aria-selected', 'false');
     label.dataset.id = `g${group.id}`;
     label.dataset.group = String(group.id);
     const name = Object.assign(document.createElement('span'), { className: 'group-name' });
@@ -254,8 +257,8 @@ function groupLabel(group, count, crowded, label = null) {
   label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '');
   label.style.setProperty('--group-color', `var(--g-${group.color})`);
   label.setAttribute('aria-expanded', String(!group.collapsed));
-  label.setAttribute('aria-label', `Group ${group.name}, ${count} tab${count === 1 ? '' : 's'}`);
-  label.title = `${group.name}: click to ${group.collapsed ? 'expand' : 'collapse'}, right-click for options`;
+  label.setAttribute('aria-label', t(count === 1 ? 'tabs.group.label.one' : 'tabs.group.label.other', { name: group.name, count }));
+  label.title = t(group.collapsed ? 'tabs.group.title.expand' : 'tabs.group.title.collapse', { name: group.name });
   label.querySelector('.group-name').textContent = group.name;
   label.querySelector('.group-count').textContent = String(count);
   return label;
@@ -270,6 +273,8 @@ function createTabEl(id) {
   const title = Object.assign(document.createElement('span'), { className: 'tab-title' });
   const close = Object.assign(document.createElement('button'), { className: 'tab-close' });
   close.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2 2 8"/></svg>';
+  close.tabIndex = -1; // a tab's parts aren't separate stops: Delete closes it (see the strip keyboard below)
+  close.setAttribute('aria-hidden', 'true');
   // The press decides: a press on ✕ closes the tab when it's released anywhere on the tab. The
   // strip can slide under a held button (a tab closing or opening next to it), which moved the
   // release onto the title, and the click then went to the tab instead of the ✕.
@@ -306,6 +311,7 @@ function updateTabEl(el, tab, group, activeId) {
   else el.style.removeProperty('--group-color');
   el.setAttribute('aria-selected', String(active));
   el.title = tab.title;
+  el.setAttribute('aria-label', tab.title);
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const iconKey = tab.loading ? 'loading' : tab.favicon && !tab.error ? `img:${tab.favicon}` : `page:${tab.page || ''}`;
   if (el.dataset.icon !== iconKey) {
@@ -326,7 +332,8 @@ function updateTabEl(el, tab, group, activeId) {
   }
   const title = el.querySelector('.tab-title');
   if (title.textContent !== tab.title) title.textContent = tab.title;
-  el.querySelector('.tab-close').setAttribute('aria-label', `Close ${tab.title}`);
+  el.querySelector('.tab-close').setAttribute('aria-label', t('tabs.close', { title: tab.title }));
+  el.querySelector('.tab-close').title = t('tabs.close', { title: tab.title });
   if (typeof updateTabAudio === 'function') updateTabAudio(el, tab); // tab-search.js: the speaker button
   return el;
 }
@@ -381,7 +388,7 @@ function startRename(groupId) {
   if (!label || !group) return;
   renamingGroup = groupId;
   const input = Object.assign(document.createElement('input'), { value: group.name, maxLength: 40 });
-  input.setAttribute('aria-label', 'Group name');
+  input.setAttribute('aria-label', t('tabs.group.name'));
   label.querySelector('.group-name').replaceWith(input);
   label.onclick = null;
   let done = false;
@@ -412,12 +419,73 @@ function startRename(groupId) {
 }
 window.browser.onRenameGroup?.((groupId) => requestAnimationFrame(() => startRename(groupId)));
 
+// ---------- tab strip keyboard (the WAI-ARIA tabs pattern) ----------
+// The strip is one stop in the Tab order: the tab you last moved to there, else the active tab
+// (roving tabindex). Left/Right/Home/End move between tabs and group labels, Enter or Space opens
+// the tab, Delete closes it; Ctrl+Shift+PageUp/PageDown (main.js) moves the active tab. Focus only
+// moves here: opening a tab stays a separate, deliberate key, as the pattern's manual activation.
+
+let stripFocusId = null; // data-id of the tab or group label keyboard focus is on, while it's in the strip
+
+const stripItems = () => [...$('tabs').querySelectorAll('.tab:not(.tab-ghost), .group-label')];
+
+function syncTabStripKeyboard() {
+  const items = stripItems();
+  const current = items.find((el) => el.dataset.id === stripFocusId) || items.find((el) => el.classList.contains('active')) || items[0];
+  for (const el of items) el.tabIndex = el === current ? 0 : -1;
+  for (const close of $('tabs').querySelectorAll('.tab-close')) close.tabIndex = -1; // Delete closes; one stop per tab
+  // A tab moved while focused (Ctrl+Shift+PageUp, a reorder) is re-inserted, which drops focus.
+  if (stripFocusId !== null && current && document.activeElement === document.body) current.focus({ preventScroll: true });
+}
+
+function focusStripItem(el) {
+  if (!el) return;
+  stripFocusId = el.dataset.id;
+  syncTabStripKeyboard();
+  el.focus();
+  el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+$('tabs').addEventListener('focusin', (e) => {
+  const el = e.target.closest('.tab, .group-label');
+  if (!el) return;
+  stripFocusId = el.dataset.id;
+  syncTabStripKeyboard();
+});
+$('tabs').addEventListener('focusout', (e) => {
+  if ($('tabs').contains(e.relatedTarget)) return;
+  // Leaving for good (not a re-insert, which blurs to <body> for a moment): back to the active tab.
+  setTimeout(() => {
+    if ($('tabs').contains(document.activeElement) || document.activeElement === document.body) return;
+    stripFocusId = null;
+    syncTabStripKeyboard();
+  });
+});
+$('tabs').addEventListener('keydown', (e) => {
+  const el = e.target.closest?.('.tab, .group-label');
+  if (!el || e.target.tagName === 'INPUT' || e.altKey || e.ctrlKey || e.metaKey) return;
+  const items = stripItems();
+  const i = items.indexOf(el);
+  const isTab = el.classList.contains('tab');
+  const id = Number(el.dataset.id);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') focusStripItem(items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]);
+  else if (e.key === 'Home') focusStripItem(items[0]);
+  else if (e.key === 'End') focusStripItem(items[items.length - 1]);
+  else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
+  else if (isTab && e.key === 'Delete') {
+    const next = items[i + 1] || items[i - 1];
+    if (next) focusStripItem(next);
+    window.browser.closeTab(id);
+  } else return;
+  e.preventDefault();
+});
+
 const organizeBtn = $('organize-tabs');
 organizeBtn.onclick = () => window.browser.organizeTabs();
 window.browser.onOrganizing?.((busy) => {
   organizeBtn.classList.toggle('busy', busy);
   organizeBtn.disabled = busy;
-  organizeBtn.querySelector('span').textContent = busy ? 'Organizing…' : 'Organize';
+  organizeBtn.querySelector('span').textContent = busy ? t('tabs.organizing') : t('tabs.organize');
 });
 
 function renderTabs(state) {
@@ -467,6 +535,7 @@ function renderTabs(state) {
   placeIndicator(tabsRendered && !motionReduced() && [...before.keys()].includes(activeId));
   tabsRendered = true;
   updateOverflow();
+  syncTabStripKeyboard();
 
   // Scrolled into view when the active tab changes, not on every update: a page loading in the
   // active tab kept yanking the strip back while you scrolled it to reach another tab.
@@ -494,8 +563,8 @@ function renderTabs(state) {
   const star = $('bookmark');
   star.hidden = !active?.url || currentError || lumenPage;
   star.setAttribute('aria-pressed', String(Boolean(active?.bookmarked)));
-  star.title = active?.bookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
-  star.setAttribute('aria-label', active?.bookmarked ? 'Remove bookmark' : 'Bookmark this page');
+  star.title = active?.bookmarked ? t('bookmark.remove.title') : t('bookmark.add.title');
+  star.setAttribute('aria-label', active?.bookmarked ? t('bookmark.remove') : t('bookmark.add'));
   if (active && (!addressDirty || document.activeElement !== address)) {
     currentUrl = active.url;
     addressDirty = false;
@@ -517,7 +586,8 @@ function renderTabs(state) {
   $('reload-icon').innerHTML = active?.loading
     ? '<path d="M4 4l8 8M12 4l-8 8"/>'
     : '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/>';
-  $('reload').title = active?.loading ? 'Stop' : 'Reload (Ctrl+R)';
+  $('reload').title = active?.loading ? t('toolbar.stop') : t('toolbar.reload.title');
+  $('reload').setAttribute('aria-label', active?.loading ? t('toolbar.stop') : t('toolbar.reload'));
 }
 
 window.browser.onTabs(renderTabs);
@@ -579,7 +649,7 @@ async function updateSuggestions(typed, deleting) {
     }
   }
 
-  const search = { kind: 'search', title: text, detail: `${searchEngine.label} Search`, go: searchUrl(text) };
+  const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
   const visited = history.map((h) => ({ kind: 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
   suggest = { items: /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search], selected: -1, typed };
   renderSuggestions();
@@ -726,7 +796,7 @@ function findStep(forward) {
 
 window.browser.onOpenFind(openFind);
 window.browser.onFindResult(({ activeMatchOrdinal, matches }) => {
-  $('find-count').textContent = findInput.value ? (matches ? `${activeMatchOrdinal} of ${matches}` : 'No matches') : '';
+  $('find-count').textContent = findInput.value ? (matches ? t('find.count', { current: activeMatchOrdinal, total: matches }) : t('find.none')) : '';
   findbar.classList.toggle('no-match', Boolean(findInput.value) && !matches);
 });
 findInput.addEventListener('input', () => {
@@ -1022,7 +1092,7 @@ window.browser.onAskFromHome?.(({ text, tabId }) => {
 });
 window.browser.onAskSelection((text) => {
   showSidebar(true);
-  ask(`About this text from the page:\n\n"${text}"\n\nExplain it in context.`);
+  ask(t('ask.selection', { text }));
 });
 
 // ---------- settings: in lumen://settings; the sidebar keeps the search engine in sync ----------
@@ -1047,10 +1117,10 @@ async function refreshSetup() {
   const pickSignedOut = s.models.find((m) => m.id === s.model)?.signedIn === false;
   $('setup').hidden = Boolean(s.model) && !pickSignedOut;
   $('setup-claude-code-detail').textContent = !s.claudeCode
-    ? 'Install Claude Code, run claude once and type /login, then restart Lumen.'
+    ? t('setup.claudeCode.install')
     : signedOut
-      ? 'Not signed in yet: open a terminal, run claude, then type /login. Then click here.'
-      : 'Click to use it.';
+      ? t('setup.claudeCode.signedOut')
+      : t('setup.claudeCode.ready');
   $('setup-claude-code').disabled = !s.claudeCode;
 }
 $('setup-claude-code').onclick = async () => {
@@ -1068,13 +1138,13 @@ $('setup-openrouter').onclick = async () => {
   if (openRouterPending) { window.assistant.cancelOpenRouterSignIn?.(); return; }
   openRouterPending = true;
   const label = title.textContent;
-  title.textContent = 'Cancel OpenRouter sign-in';
+  title.textContent = t('setup.openrouter.cancel');
   try {
     const r = await window.assistant.openRouterSignIn();
     if (r?.ok) { await loadModels(); refreshSetup(); }
     else if (r?.message && !r.cancelled) alert(r.message);
   } catch (err) {
-    alert(`OpenRouter sign-in failed: ${err?.message || err}`);
+    alert(t('setup.openrouter.failed', { error: err?.message || err }));
   } finally {
     openRouterPending = false;
     title.textContent = label;
@@ -1147,9 +1217,9 @@ function setAssistantIdentity(group) {
     setTimeout(() => { swap(); button.classList.remove('mark-out'); button.classList.add('mark-in'); setTimeout(() => button.classList.remove('mark-in'), 420); }, 120);
   }
   const empty = document.querySelector('#empty .empty-title');
-  if (empty) empty.textContent = `Ask anything, or give ${who.name} a task on this page.`;
+  if (empty) empty.textContent = t('sidebar.empty', { name: who.name });
   const pill = $('agent-pill-text');
-  if (pill) pill.textContent = `${who.name} is using this tab`;
+  if (pill) pill.textContent = t('agent.usingTab', { name: who.name });
 }
 
 window.lumenPicker($('model'));
@@ -1180,7 +1250,7 @@ async function loadModels() {
   if (modelReady) { select.value = s.model; select.pickerSync(); }
   const current = s.models.find((m) => m.id === s.model);
   select.title = current?.detail || '';
-  prompt.placeholder = !current ? 'Set up an AI to start…' : current.group === 'Claude' ? 'Ask Claude…' : `Ask ${current.label}…`;
+  prompt.placeholder = !current ? t('composer.setup') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
   setAssistantIdentity(current?.group);
 }
 window.assistant.onModelsUpdated?.(() => loadModels());
@@ -1188,9 +1258,9 @@ window.assistant.onModelsUpdated?.(() => loadModels());
 async function openModelSearch() {
   document.querySelector('.model-search')?.remove();
   const box = Object.assign(document.createElement('div'), { className: 'picker-menu model-search' });
-  const input = Object.assign(document.createElement('input'), { type: 'search', placeholder: 'Search OpenRouter models', className: 'model-search-input' });
-  input.setAttribute('aria-label', 'Search OpenRouter models');
-  const list = Object.assign(document.createElement('div'), { className: 'model-search-list', textContent: 'Loading models…' });
+  const input = Object.assign(document.createElement('input'), { type: 'search', placeholder: t('models.search'), className: 'model-search-input' });
+  input.setAttribute('aria-label', t('models.search'));
+  const list = Object.assign(document.createElement('div'), { className: 'model-search-list', textContent: t('models.loading') });
   list.setAttribute('role', 'listbox');
   box.append(input, list);
   document.querySelector('.model-picker').append(box);
@@ -1199,12 +1269,12 @@ async function openModelSearch() {
   const outside = (e) => { if (!box.contains(e.target)) close(); };
   document.addEventListener('pointerdown', outside, true);
   let models = [];
-  try { models = await window.assistant.openRouterModels(); } catch { list.textContent = 'Couldn’t load the model list.'; return; }
+  try { models = await window.assistant.openRouterModels(); } catch { list.textContent = t('models.loadFailed'); return; }
   const render = () => {
     const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
     const hits = models.filter((m) => words.every((w) => `${m.id} ${m.name}`.toLowerCase().includes(w))).slice(0, 60);
     list.replaceChildren(...hits.map((m) => {
-      const item = Object.assign(document.createElement('div'), { className: 'picker-item', tabIndex: -1, textContent: m.tools ? m.name : `${m.name} (chat only)`, title: m.id });
+      const item = Object.assign(document.createElement('div'), { className: 'picker-item', tabIndex: -1, textContent: m.tools ? m.name : t('models.chatOnly', { name: m.name }), title: m.id });
       item.setAttribute('role', 'option');
       item.dataset.id = m.id;
       item.addEventListener('click', async () => {
@@ -1213,7 +1283,7 @@ async function openModelSearch() {
       });
       return item;
     }));
-    if (!hits.length) list.textContent = 'No models match.';
+    if (!hits.length) list.textContent = t('models.none');
   };
   input.addEventListener('input', render);
   input.addEventListener('keydown', (e) => {
@@ -1242,16 +1312,16 @@ $('model').addEventListener('change', async (e) => {
   select.title = select.selectedOptions[0].title;
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
-  prompt.placeholder = group === 'Claude' ? 'Ask Claude…' : `Ask ${select.selectedOptions[0].textContent}…`;
+  prompt.placeholder = t('composer.ask', { name: group === 'Claude' ? 'Claude' : select.selectedOptions[0].textContent });
   setAssistantIdentity(group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();
   // The conversation carries over: the next message goes to the new model with the full history.
   // Mid-reply, the reply in progress finishes on the old model first (main says 'next-message').
   if (switched === 'next-message') {
-    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: `${label} takes over from your next message. This reply finishes first.` }));
+    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.switchNext', { name: label }) }));
   } else if (messages.querySelector('.msg')) {
-    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: `Now using ${label}. It can see this whole conversation.` }));
+    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.switched', { name: label }) }));
   }
   prompt.focus();
 });
@@ -1282,8 +1352,8 @@ function setRunning(value) {
   document.body.classList.toggle('agent-active', value);
   reportBounds();
   send.classList.toggle('stop', value);
-  send.title = value ? 'Stop' : 'Send (Enter)';
-  send.setAttribute('aria-label', value ? 'Stop' : 'Send');
+  send.title = value ? t('composer.stop') : t('composer.send.title');
+  send.setAttribute('aria-label', value ? t('composer.stop') : t('composer.send'));
   updateSend();
 }
 
@@ -1348,11 +1418,11 @@ function renderAttachments() {
     chip.className = 'attachment';
     const img = document.createElement('img');
     img.src = a.url;
-    img.alt = `Attached image ${i + 1}`;
+    img.alt = t('composer.attachedImage', { n: i + 1 });
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'attachment-remove';
-    remove.setAttribute('aria-label', `Remove image ${i + 1}`);
+    remove.setAttribute('aria-label', t('composer.removeImage', { n: i + 1 }));
     remove.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5"/></svg>';
     remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); prompt.focus(); };
     chip.append(img, remove);
@@ -1414,14 +1484,14 @@ function sendQueued() {
 
 function ask(text, images = []) {
   if (running) {
-    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: `Sends when this reply finishes: “${text.length > 60 ? `${text.slice(0, 59)}…` : text || 'image'}”` }));
+    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t('chat.image') }) }));
     queued.push({ text, images, notice });
     return;
   }
   // Nothing connected: show the setup card instead of sending a message that can only error.
   if (!modelReady) {
     if (!messages.querySelector('.msg')) { refreshSetup(); return; }
-    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: 'Set up an AI in Settings to keep chatting.' }));
+    append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') }));
     return;
   }
   const bubble = document.createElement('div');
@@ -1432,7 +1502,7 @@ function ask(text, images = []) {
     for (const [i, a] of images.entries()) {
       const img = document.createElement('img');
       img.src = a.url;
-      img.alt = `Image ${i + 1}`;
+      img.alt = t('chat.imageN', { n: i + 1 });
       row.append(img);
     }
     bubble.append(row);
@@ -1452,32 +1522,32 @@ function moveWorkingToEnd() {
 }
 
 const TOOL_LABELS = {
-  read_page: () => 'Reading page',
-  screenshot: () => 'Taking screenshot',
-  navigate: (i) => `Opening ${i.url}`,
-  click: () => 'Clicking',
-  type_text: (i) => `Typing “${i.text}”`,
-  press_key: (i) => `Pressing ${i.key}`,
-  scroll: (i) => `Scrolling ${i.direction}`,
-  go_back: () => 'Going back',
-  list_tabs: () => 'Checking tabs',
-  open_tab: (i) => `Opening new tab: ${i.url}`,
-  switch_tab: (i) => `Switching to tab ${i.tab_id}`,
-  wait: (i) => `Waiting ${i.seconds}s`,
-  web_search: (i) => `Searching the web: ${i.query ?? ''}`,
-  find: (i) => `Looking for “${i.query ?? ''}” on the page`,
-  batch: (i) => `Doing ${i.steps?.length || 'several'} steps on the page`,
-  fill_form: () => 'Filling in a form',
-  click_at: () => 'Clicking a spot on the page',
-  hover: () => 'Pointing at an element',
-  go_forward: () => 'Going forward',
-  reload: () => 'Reloading the page',
-  close_tab: (i) => `Closing tab ${i.tab_id}`,
-  group_tabs: (i) => `Grouping tabs as “${i.name ?? ''}”`,
-  ungroup_tabs: () => 'Ungrouping tabs',
-  read_urls: () => 'Reading pages in the background',
-  run_script: () => 'Running a script on the page',
-  wait_for: (i) => `Waiting for “${i.text ?? ''}”`,
+  read_page: () => t('tool.read_page'),
+  screenshot: () => t('tool.screenshot'),
+  navigate: (i) => t('tool.navigate', { url: i.url }),
+  click: () => t('tool.click'),
+  type_text: (i) => t('tool.type_text', { text: i.text }),
+  press_key: (i) => t('tool.press_key', { key: i.key }),
+  scroll: (i) => t('tool.scroll', { direction: i.direction }),
+  go_back: () => t('tool.go_back'),
+  list_tabs: () => t('tool.list_tabs'),
+  open_tab: (i) => t('tool.open_tab', { url: i.url }),
+  switch_tab: (i) => t('tool.switch_tab', { tab: i.tab_id }),
+  wait: (i) => t('tool.wait', { seconds: i.seconds }),
+  web_search: (i) => t('tool.web_search', { query: i.query ?? '' }),
+  find: (i) => t('tool.find', { query: i.query ?? '' }),
+  batch: (i) => t('tool.batch', { count: i.steps?.length || t('tool.batch.several') }),
+  fill_form: () => t('tool.fill_form'),
+  click_at: () => t('tool.click_at'),
+  hover: () => t('tool.hover'),
+  go_forward: () => t('tool.go_forward'),
+  reload: () => t('tool.reload'),
+  close_tab: (i) => t('tool.close_tab', { tab: i.tab_id }),
+  group_tabs: (i) => t('tool.group_tabs', { name: i.name ?? '' }),
+  ungroup_tabs: () => t('tool.ungroup_tabs'),
+  read_urls: () => t('tool.read_urls'),
+  run_script: () => t('tool.run_script'),
+  wait_for: (i) => t('tool.wait_for', { text: i.text ?? '' }),
 };
 
 // Rendering a long reply's whole markdown on every streamed chunk grew slower and slower (the work
@@ -1530,7 +1600,8 @@ window.assistant.onEvent((event) => {
       if (!turn.thinking) {
         const details = document.createElement('details');
         details.className = 'thinking';
-        details.innerHTML = '<summary>Thinking</summary><div></div>';
+        details.innerHTML = '<summary></summary><div></div>';
+        details.firstChild.textContent = t('chat.thinking');
         turn.thinking = append(details).querySelector('div');
       }
       turn.thinking.textContent += event.text;
@@ -1590,8 +1661,8 @@ window.assistant.onEvent((event) => {
     case 'notice': {
       const notice = append(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.text }));
       if (event.action === 'continue') {
-        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: 'Continue' });
-        button.onclick = () => { button.remove(); ask('Continue where you left off.'); };
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
+        button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
         notice.append(' ', button);
       }
       break;
@@ -1599,7 +1670,7 @@ window.assistant.onEvent((event) => {
     case 'error': {
       const error = append(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
       if (event.action === 'settings') {
-        const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: 'Set up AI' });
+        const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: t('chat.setupAi') });
         button.onclick = openAiSettings;
         error.append(button);
       }
@@ -1655,8 +1726,8 @@ function finishReply(bubble, source) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'reply-copy';
-  button.title = 'Copy reply';
-  button.setAttribute('aria-label', 'Copy reply');
+  button.title = t('chat.copy');
+  button.setAttribute('aria-label', t('chat.copy'));
   button.innerHTML = COPY_ICON;
   button.onclick = async () => {
     try {
@@ -1674,7 +1745,7 @@ function finishReply(bubble, source) {
       button.classList.add('copied');
       setTimeout(() => { button.innerHTML = COPY_ICON; button.classList.remove('copied'); }, 1400);
     } catch {
-      button.title = 'Could not copy';
+      button.title = t('chat.copyFailed');
     }
   };
   bubble.append(button);
@@ -1687,8 +1758,8 @@ function renderAutoAllow() {
   const button = $('auto-allow');
   button.setAttribute('aria-pressed', String(autoAllow));
   button.title = autoAllow
-    ? 'Auto-allow actions: on. The AI clicks and types on any site without asking. Click to turn off.'
-    : 'Auto-allow actions: off. The AI asks before it first clicks or types on a site. Click to turn on.';
+    ? t('sidebar.autoAllow.on')
+    : t('sidebar.autoAllow.off');
 }
 async function setAutoAllow(on) {
   autoAllow = Boolean(await window.assistant.autoAllow?.(on));
@@ -1710,13 +1781,13 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   card.className = 'approval';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
-  const agentName = assistantIdentity?.name || 'the AI';
+  const agentName = assistantIdentity?.name || t('approval.theAi');
   const opening = action === 'open';
   const scripting = action === 'script';
   const heading = opening
-    ? openTitle || (host ? `${agentName} wants to open ${host}` : `${agentName} wants to open a new site`)
-    : scripting ? openTitle || `${agentName} wants to run a script on ${host}`
-      : `Allow ${agentName} to interact with ${host}?`;
+    ? openTitle || (host ? t('approval.open', { name: agentName, host }) : t('approval.openNew', { name: agentName }))
+    : scripting ? openTitle || t('approval.script', { name: agentName, host })
+      : t('approval.interact', { name: agentName, host });
   card.setAttribute('aria-label', heading);
 
   const title = document.createElement('p');
@@ -1725,15 +1796,15 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   const detail = document.createElement('p');
   detail.className = 'approval-detail';
   detail.textContent = query !== undefined
-    ? `It has read page content in this chat, and the search sends “${query}” to ${host}.`
-    : opening ? 'It has read page content in this chat. Only allow sites you expect it to visit.'
-      : scripting ? 'It has read page content in this chat. A script can send page content to any site.'
-        : 'It can click, type and fill in forms on this site until you start a new chat.';
+    ? t('approval.detail.search', { query, host })
+    : opening ? t('approval.detail.open')
+      : scripting ? t('approval.detail.script')
+        : t('approval.detail.interact');
 
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
-  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: "Don't allow" });
-  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Allow for this chat' });
+  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
+  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: t('approval.allow') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');
@@ -1742,8 +1813,8 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
     window.assistant.approve?.(approvalId, ok);
   };
   // Always allow: this one, and turns on auto-allow for every site (the bolt in the sidebar head).
-  const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: 'Always allow' });
-  always.title = 'Allow this, and stop asking on every site (turn off with the bolt at the top of the sidebar)';
+  const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: t('approval.always') });
+  always.title = t('approval.always.title');
   deny.onclick = () => answer(false);
   allow.onclick = () => answer(true);
   always.onclick = () => { always.disabled = true; setAutoAllow(true); answer(true); };
@@ -1811,7 +1882,7 @@ function resolveApproval(approvalId, ok) {
   card.removeAttribute('tabindex');
   card.removeAttribute('role');
   card.removeAttribute('aria-label');
-  card.textContent = tool ? `${ok ? 'Allowed' : 'Not allowed'}: ${host}` : ok ? `Allowed on ${host}` : `Not allowed on ${host}`;
+  card.textContent = tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
   if (document.activeElement === document.body) prompt.focus();
 }
 
@@ -1828,7 +1899,7 @@ function showHistory(items) {
       if (images.length) {
         const row = document.createElement('div');
         row.className = 'msg-images';
-        images.forEach((src, i) => row.append(Object.assign(document.createElement('img'), { src, alt: `Image ${i + 1}` })));
+        images.forEach((src, i) => row.append(Object.assign(document.createElement('img'), { src, alt: t('chat.imageN', { n: i + 1 }) })));
         bubble.append(row);
       }
       if (item.text) bubble.append(document.createTextNode(item.text));
@@ -1837,7 +1908,7 @@ function showHistory(items) {
         const summary = document.createElement('div');
         summary.className = 'step done restored';
         summary.innerHTML = '<span class="step-detail"></span>';
-        summary.firstChild.textContent = `Used ${item.steps} browser action${item.steps === 1 ? '' : 's'}`;
+        summary.firstChild.textContent = t(item.steps === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count: item.steps });
         append(summary);
       }
       bubble.className = 'msg assistant';
@@ -1884,8 +1955,8 @@ window.browser.onDownloads?.((list) => {
 
   const latest = list[0];
   const status = latest.state === 'progressing'
-    ? (latest.total ? `${Math.round((latest.received / latest.total) * 100)}%` : 'downloading')
-    : latest.state === 'completed' ? 'done' : latest.state;
+    ? (latest.total ? `${Math.round((latest.received / latest.total) * 100)}%` : t('downloads.downloading'))
+    : latest.state === 'completed' ? t('downloads.done') : ['cancelled', 'interrupted'].includes(latest.state) ? t(`downloads.${latest.state}`) : latest.state;
   downloadsBtn.title = `${latest.name} — ${status}`;
 });
 downloadsBtn.onclick = () => {
@@ -1979,9 +2050,9 @@ window.assistant.onMcpEvent?.((event) => {
       const text = document.querySelector('#agent-pill span:not(.agent-dot)');
       if (text) {
         if (mcpPillText === null) mcpPillText = text.textContent;
-        text.textContent = event.active || event.remaining > 0 ? `Lumen is being driven by ${event.clientName}` : mcpPillText;
+        text.textContent = event.active || event.remaining > 0 ? t('mcp.driving', { client: event.clientName }) : mcpPillText;
       }
-      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.active ? `${event.clientName} connected to Lumen.` : `${event.clientName} disconnected.` }));
+      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t(event.active ? 'mcp.connected' : 'mcp.disconnected', { client: event.clientName }) }));
       break;
     }
     case 'tool':
@@ -2000,10 +2071,10 @@ window.assistant.onMcpEvent?.((event) => {
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
-      const wants = event.query !== undefined ? `search ${event.host} for “${event.query}”` : `${event.action === 'open' ? 'open' : event.action === 'script' ? 'run a script on' : 'interact with'} ${event.host}`;
-      if (title) title.textContent = `An external agent (${event.clientName}) wants to ${wants}`;
+      const vars = { client: event.clientName, host: event.host, query: event.query };
+      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
-      if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = 'Only allow sites you expect it to visit.'; }
+      if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = t('mcp.approval.detail.open'); }
       card?.setAttribute('aria-label', title?.textContent || '');
       break;
     }

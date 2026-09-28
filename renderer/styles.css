@@ -142,6 +142,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tabs.reordering .tab:not(.dragging) { transition: transform var(--t-smooth) var(--spring-smooth), background-color var(--t-fast) ease-out; }
 .tab:hover:not(.active) { background: var(--hover); color: var(--text); }
 .tab.active { min-width: 52px; color: var(--text); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; } /* inset: the strip scrolls, so an outside ring was clipped */
 .tab.sleeping:not(.active) .tab-inner { opacity: 0.55; } /* asleep: view destroyed, reloads on click */
 .tab.alert:not(.active)::before { content: ''; pointer-events: none; z-index: 1; position: absolute; top: 5px; left: 20px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg, transparent); } /* a dialog is waiting for this tab */
 /* Pinned: icon only, fixed width, at the left of the strip (main.js keeps them first). */

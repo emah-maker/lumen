@@ -25,6 +25,19 @@ The suites are Playwright scripts that launch Lumen. Run them one at a time with
 - Close other Lumen or Electron windows first. Some suites (`ui`, `tabstrip`, `downloads`) depend on window focus.
 - Add or update a test with every change. `test/units.js` is the place for logic that doesn't need a window.
 
+## Translations
+
+Lumen's own text (toolbar, sidebar, menus, dialogs, Settings) lives in `locales/en.json`. Lumen follows the system language and falls back to English for any key a locale doesn't have.
+
+To add a language:
+
+1. Copy `locales/en.json` to `locales/<code>.json`, using a code Chromium reports, such as `de`, `fr` or `pt-BR`. `pt-BR` falls back to `pt.json`, then English.
+2. Translate the values. Keep the keys, and keep `{placeholders}` as they are.
+3. Leave out keys you haven't translated, rather than copying the English.
+4. Check it: run `node test/a11y.js`, then start Lumen with `LUMEN_LOCALE=<code>` and `CLAUDE_BROWSER_TEST=1` to see it without changing your system language.
+
+New UI text goes into `locales/en.json`: use `t('key')` in `main.js` and `renderer/*.js`, or `data-i18n` / `data-i18n-title` / `data-i18n-aria-label` / `data-i18n-placeholder` in HTML.
+
 ## Pull requests
 
 - One topic per pull request, branched from `main`.
