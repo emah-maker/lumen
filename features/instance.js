@@ -23,15 +23,36 @@ function installShortcuts(app, shell, appId) {
   }
 }
 
-// The setup installer's shortcuts take their icon from Lumen.exe (Electron's): point any shortcut
-// to this exe that still does at Lumen's icon. Runs at startup; a no-op once they're right.
+// The .lnk files in a folder and in its direct subfolders (Start menu groups such as Programs\Lumen).
+function shortcutsIn(dir) {
+  const found = [];
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return found; }
+  for (const entry of entries) {
+    const file = path.join(dir, entry.name);
+    if (entry.isFile() && /\.lnk$/i.test(entry.name)) found.push(file);
+    else if (entry.isDirectory()) {
+      try {
+        for (const sub of fs.readdirSync(file, { withFileTypes: true })) {
+          if (sub.isFile() && /\.lnk$/i.test(sub.name)) found.push(path.join(file, sub.name));
+        }
+      } catch {}
+    }
+  }
+  return found;
+}
+
+// Shortcuts to Lumen.exe show its own icon (Electron's) unless they name another one: the setup
+// installer's do, and so can one made by hand or left from an old install under another name
+// (a stray Electron.lnk with Lumen's app ID put Electron's icon on the taskbar). Point every
+// shortcut to this exe on the Desktop or in the Start menu at Lumen's icon. Runs at startup; a
+// no-op once they're right.
 function fixShortcutIcons(app, shell) {
   if (process.platform !== 'win32' || !app.isPackaged) return;
   const exe = path.resolve(process.execPath).toLowerCase();
   for (const dir of shortcutDirs(app)) {
-    for (const file of [path.join(dir, 'Lumen.lnk'), path.join(dir, 'Lumen', 'Lumen.lnk')]) {
+    for (const file of shortcutsIn(dir)) {
       try {
-        if (!fs.existsSync(file)) continue;
         const link = shell.readShortcutLink(file);
         if (path.resolve(link.target || '').toLowerCase() !== exe || /\.ico$/i.test(link.icon || '')) continue;
         shell.writeShortcutLink(file, 'update', { icon: appIcon(), iconIndex: 0 });
