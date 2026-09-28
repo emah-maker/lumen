@@ -41,8 +41,8 @@ function automationToken(userData) {
 
 // Called at startup, before the app is ready: the debugging switches only work if set this early.
 // { relaunch: true }: this process should hand over to launcher.js (main.js does). Otherwise the
-// proxy's plan, with Chromium's DevTools on the launcher's pipe (pipeFd) or, on macOS and in test
-// runs under Playwright, on a localhost port (file: where Chromium says which).
+// proxy's plan, with Chromium's DevTools on the launcher's pipe (pipeFd) or, in test runs under
+// Playwright, on a localhost port (file: where Chromium says which).
 function prepareAutomation(app, settings) {
   const launched = launcher.isLaunched();
   if (!settings.automationEnabled) return null;
@@ -360,7 +360,7 @@ function setupAiAgents(deps) {
       // The address is http://127.0.0.1:<port>/<token>; the token of the next launch while it's on.
       token: automationProxy ? deps.automationPlan.token : settings.automationEnabled ? automationToken(app.getPath('userData')) : null,
       running: automationProxy ? { port: automationProxy.state.port, listening: automationProxy.state.listening, error: automationProxy.state.error, clients: automationProxy.clients() } : null,
-      internalPort: !launcher.available(), // Chromium's own port is open too (macOS: see launcher.js)
+      internalPort: !launcher.available(), // Chromium's own port is open too (test runs: see launcher.js)
     };
   });
   ipcMain.handle('automation:set', (_e, { enabled, port } = {}) => {

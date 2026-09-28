@@ -43,8 +43,19 @@ function launchedTree(parentPid) {
   return { launcher, browser, tree };
 }
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-// TCP ports listened on by these processes (Windows: netstat).
+// TCP ports listened on by these processes (Windows: netstat; elsewhere lsof).
 function listeners(pids) {
+  if (process.platform !== 'win32') {
+    let out = '';
+    try { out = execFileSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'], { encoding: 'utf8' }); } catch {} // exits 1 when nothing listens
+    const found = [];
+    let pid = 0;
+    for (const line of out.split('\n')) {
+      if (line[0] === 'p') pid = Number(line.slice(1));
+      else if (line[0] === 'n' && pids.has(pid)) found.push({ address: line.slice(1), port: Number(line.split(':').pop()), pid });
+    }
+    return found;
+  }
   return execFileSync('netstat', ['-ano'], { encoding: 'utf8', windowsHide: true }).split('\n')
     .map((line) => line.trim().split(/\s+/))
     .filter((f) => f[0] === 'TCP' && f[3] === 'LISTENING' && pids.has(Number(f[4])))
@@ -171,9 +182,7 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
   await app.close();
 
   // 3. Started the way a user starts it: through launcher.js, Chromium on a private pipe.
-  if (process.platform === 'darwin') {
-    console.log('SKIP  pipe checks: macOS keeps Chromium\'s port (launcher.js)');
-  } else {
+  {
     const pipeProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cdp-pipe-'));
     fs.writeFileSync(path.join(pipeProfile, 'settings.json'), JSON.stringify({ automationEnabled: true, automationPort: PORT }));
     const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: pipeProfile, LUMEN_TEST_LAUNCHER: '1' };

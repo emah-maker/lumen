@@ -11,9 +11,9 @@
 // - reports connects and disconnects, so the sidebar shows "Lumen is being driven by …".
 //
 // Behind the proxy is one CDP connection to Chromium, shared by every client (multiplexer below):
-// on Windows and Linux a pipe that only launcher.js holds the other end of, so nothing else on the
-// computer can reach Chromium's DevTools. On macOS (why: launcher.js) and in test runs under
-// Playwright it is Chromium's own debugging port on a random localhost port, which can't be locked:
+// a pipe that only launcher.js holds the other end of, so nothing else on the computer can reach
+// Chromium's DevTools. Only in test runs under Playwright (why: launcher.js) is it Chromium's own
+// debugging port on a random localhost port, which can't be locked:
 // it has no authentication, and a local program that finds it gets everything, Lumen's own UI
 // included. There the proxy reads DevToolsActivePort as soon as Chromium writes it and deletes it,
 // and never hands out the port or the browser endpoint's id, so finding it takes a port scan.
@@ -141,7 +141,7 @@ function pipeUpstream(fd) {
   return up;
 }
 
-// Chromium's port (macOS, test runs): its browser endpoint, read once from DevToolsActivePort,
+// Chromium's port (test runs): its browser endpoint, read once from DevToolsActivePort,
 // after which the file is taken away from anyone else.
 function portUpstream(file) {
   const up = { onMessage() {}, onClose() {} };

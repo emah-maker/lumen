@@ -179,7 +179,7 @@ const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 - `newPage()` opens a Lumen tab, `page.close()` closes it, and `browser.close()` only disconnects.
 - The toolbar says **Lumen is being driven by Playwright (CDP)** while connected; **Stop** disconnects.
 - CDP clients don't get approval cards. Any program on your computer that has the address can use the port while it's on, including on signed-in sites. Turning the setting off closes the proxy immediately.
-- On Windows and Linux the proxy is the only way in: Lumen starts through a small launcher (`launcher.js`) that gives Chromium a private pipe instead of a debugging port. On macOS, Chromium's own internal debugging port (on a random localhost port, no key) is open too while the setting is on.
+- The proxy is the only way in: Lumen starts through a small launcher (`launcher.js`) that gives Chromium a private pipe instead of a debugging port.
 
 ## Token-efficient tools (all AIs)
 

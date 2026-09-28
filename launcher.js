@@ -9,17 +9,17 @@
 // ends. Lumen exits → this exits with its code; this is killed → the pipes close and Chromium quits
 // Lumen (an ordinary quit: will-quit runs).
 //
-// Not on macOS: a link that launches Lumen arrives there as an 'open-url' event for the first
-// process, which this relaunch would lose, so macOS keeps Chromium's localhost port (automation.js).
-// Not in test runs either, unless LUMEN_TEST_LAUNCHER is set: Playwright's _electron.launch attaches
-// to the process it starts.
+// On macOS a link that launches Lumen arrives as an 'open-url' event for the first process, after
+// it starts and before 'ready'. So there the first process waits for 'ready', collecting those links,
+// and passes them on as arguments (handOver).
+// Not in test runs, unless LUMEN_TEST_LAUNCHER is set: Playwright's _electron.launch attaches to the
+// process it starts.
 const { spawn } = require('child_process');
 
 const CHILD_ENV = 'LUMEN_AUTOMATION_PIPE'; // set for the browser this starts
 const LUMEN_FD = 5; // Lumen's end of the relay (3 and 4 are Chromium's)
 
-const available = () => process.platform !== 'darwin'
-  && (!require('./test-mode').isTest() || process.env.LUMEN_TEST_LAUNCHER === '1');
+const available = () => !require('./test-mode').isTest() || process.env.LUMEN_TEST_LAUNCHER === '1';
 
 // Is this the browser the launcher started? Asked once: the variable isn't passed on to programs
 // Lumen runs (or to a Lumen restarted with app.relaunch, which goes through the launcher again).
@@ -37,14 +37,33 @@ function isLaunched() {
 // terminal no longer prints there.
 const DETACHED = process.platform === 'win32';
 
-// From the first Lumen process: run this file with the same arguments (the app folder included,
-// in development). The caller exits right after.
-function relaunch() {
-  spawn(process.execPath, [__filename, ...process.argv.slice(1)], {
+// This file, then the first process's arguments (the app folder included, in development), then
+// links it was sent as events (macOS).
+const launcherArgs = (argv, links = []) => [__filename, ...argv.slice(1), ...links];
+
+// From the first Lumen process: run this file with the same arguments. The caller exits right after.
+function relaunch(links = []) {
+  spawn(process.execPath, launcherArgs(process.argv, links), {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     stdio: 'inherit',
     detached: DETACHED,
   });
+}
+
+// From the first Lumen process, at startup: hand over to the launcher if this copy may run
+// (acquireLock), and quit. On macOS only once 'ready': the links that launched Lumen come before it.
+function handOver(app, acquireLock, { platform = process.platform, start = relaunch } = {}) {
+  const go = (links) => {
+    if (acquireLock()) {
+      app.releaseSingleInstanceLock();
+      start(links);
+    }
+    app.exit(0);
+  };
+  if (platform !== 'darwin') { go([]); return; }
+  const links = [];
+  app.on('open-url', (event, url) => { event.preventDefault(); links.push(url); });
+  app.whenReady().then(() => go(links));
 }
 
 // ---------------------------------------------------------------- the launcher itself (Node mode)
@@ -67,4 +86,4 @@ function run() {
 
 if (require.main === module) run();
 
-module.exports = { available, isLaunched, relaunch, LUMEN_FD };
+module.exports = { available, isLaunched, relaunch, handOver, launcherArgs, LUMEN_FD };
