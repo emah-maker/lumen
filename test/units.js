@@ -624,6 +624,49 @@ async function fuseChecks() {
   check('tab-tools: the closed-title list stays bounded', tools.closedEntries(['https://one.example/'])[0].title === 'https://one.example/', 'unbounded');
 }
 
+// ---- Bookmarks page: Netscape bookmark files (features/bookmark-html.js)
+{
+  const { toNetscape, parseNetscape } = require('../features/bookmark-html');
+  const list = [
+    { url: 'https://a.example/', title: 'A & <b>' },
+    { url: 'https://b.example/x?y=1&z=2', title: 'B "quoted"', folder: 'Work' },
+    { url: 'https://c.example/', title: 'C', folder: 'Work' },
+  ];
+  const html = toNetscape(list);
+  check('bookmarks: export is a Netscape bookmark file', /^<!DOCTYPE NETSCAPE-Bookmark-file-1>/.test(html) && /<H3>Work<\/H3>/.test(html), html);
+  check('bookmarks: export escapes titles and addresses', html.includes('A &amp; &lt;b&gt;') && html.includes('x?y=1&amp;z=2') && !html.includes('<b>'), html);
+  check('bookmarks: export then import gives the same bookmarks back', JSON.stringify(parseNetscape(html)) === JSON.stringify(list), JSON.stringify(parseNetscape(html)));
+  const chrome = `<DL><p><DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3><DL><p>
+    <DT><A HREF="https://top.example/" ADD_DATE="1">Top</A>
+    <DT><H3>Recipes</H3><DL><p><DT><H3>Soups</H3><DL><p><DT><A HREF="https://soup.example/">Soup</A></DL><p>
+      <DT><A HREF="https://cake.example/">Cake &#38; tea</A></DL><p>
+    <DT><A HREF="javascript:alert(1)">Bookmarklet</A><DT><A HREF='file:///C:/x'>File</A><DT><A HREF=https://bare.example/>Bare</A>
+  </DL><p></DL><p>`;
+  const got = parseNetscape(chrome);
+  check('bookmarks: import reads nested folders as their innermost name', got.find((b) => b.url === 'https://soup.example/')?.folder === 'Soups' && got.find((b) => b.url === 'https://cake.example/')?.folder === 'Recipes', JSON.stringify(got));
+  check('bookmarks: the browser\'s own bookmarks-bar folder is not kept as a folder', got.find((b) => b.url === 'https://top.example/')?.folder === undefined, JSON.stringify(got));
+  check('bookmarks: import keeps only http(s) links', got.length === 4 && !got.some((b) => /^(javascript|file):/.test(b.url)), JSON.stringify(got));
+  check('bookmarks: import decodes entities and unquoted addresses', got.some((b) => b.title === 'Cake & tea') && got.some((b) => b.url === 'https://bare.example/'), JSON.stringify(got));
+}
+
+// ---- Clear browsing data by time range: site activity (features/site-activity.js)
+{
+  const { createSiteActivity, related } = require('../features/site-activity');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-activity-'));
+  let t = 1_000_000_000_000;
+  const a = createSiteActivity({ userData: dir, now: () => t });
+  a.record('.old.example', t - 3 * 86400e3);
+  a.record('new.example');
+  a.record('new.example', t - 10); // an older time never moves it back
+  check('site activity: a leading dot is dropped from cookie domains', a.get('old.example') === t - 3 * 86400e3, a.get('old.example'));
+  check('site activity: since() lists only domains active in the range', JSON.stringify(a.since(t - 3600e3)) === '["new.example"]', JSON.stringify(a.since(t - 3600e3)));
+  a.forget(['new.example']);
+  check('site activity: forget() drops cleared domains', a.get('new.example') === undefined && a.since(0).length === 1, JSON.stringify(a.since(0)));
+  check('site activity: a cookie domain matches its subdomains and parents', related('example.com', 'www.example.com') && related('www.example.com', 'example.com') && related('a.b', 'a.b'), 'related');
+  check('site activity: unrelated domains don\'t match', !related('example.com', 'badexample.com') && !related('ample.com', 'example.com'), 'unrelated');
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

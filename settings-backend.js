@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { registrableDomain } = require('./tab-groups');
+const { related } = require('./features/site-activity');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
@@ -63,6 +64,8 @@ const RESTART_KEYS = ['hardwareAcceleration', 'forceDarkWebsites'];
 const PERMISSIONS = { geolocation: 'Location', media: 'Camera and microphone', notifications: 'Notifications', 'clipboard-read': 'Clipboard' };
 const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const FONT_SIZES = [9, 12, 16, 20, 24];
+// Site storage cleared along with cookies (Clear browsing data).
+const SITE_STORAGES = ['filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'];
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
@@ -412,6 +415,9 @@ function create(deps) {
     const span = RANGES[range] ?? RANGES.hour;
     const since = span === Infinity ? 0 : Date.now() - span;
     const done = {};
+    // Sites active in the range, read before history is cleared: the origins of pages visited, and
+    // the domains that stored cookies (features/site-activity.js).
+    const recent = span === Infinity ? null : recentSites(since);
     if (history) {
       const map = deps.history();
       let removed = 0;
@@ -419,22 +425,55 @@ function create(deps) {
       deps.saveHistory();
       done.history = removed;
     }
-    if (cookies) {
-      // Electron can't clear cookies or site storage by time: these go for all time.
-      await ses().clearStorageData({ storages: ['cookies', 'filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'] });
+    if (cookies && !recent) {
+      await ses().clearStorageData({ storages: ['cookies', ...SITE_STORAGES] });
+      deps.siteActivity?.clear();
       done.cookies = true;
+    } else if (cookies) {
+      // Cookies have no creation time and Electron clears site storage only for all time or per
+      // origin, so a time range means: everything stored by the sites active in that range.
+      const hosts = recent.hosts;
+      let removed = 0;
+      for (const c of await ses().cookies.get({})) {
+        const d = String(c.domain || '').replace(/^\./, '').toLowerCase();
+        if (!hosts.some((h) => related(d, h))) continue;
+        const url = `${c.secure ? 'https' : 'http'}://${d}${c.path || '/'}`;
+        await ses().cookies.remove(url, c.name).then(() => { removed++; }, () => {});
+      }
+      for (const origin of recent.origins) await ses().clearStorageData({ origin, storages: SITE_STORAGES }).catch(() => {});
+      deps.siteActivity?.forget(hosts);
+      done.cookies = true;
+      done.sites = hosts.length;
+      done.cookieCount = removed;
     }
     if (cache) {
+      // Electron has no time range for the HTTP cache: it is cleared for all time.
       await ses().clearCache();
       done.cache = true;
     }
-    if (downloads) done.downloads = clearDownloads();
+    if (downloads) done.downloads = clearDownloads(since);
     return done;
   }
-  function clearDownloads() {
+  function recentSites(since) {
+    const origins = new Set();
+    const hosts = new Set(deps.siteActivity?.since(since) || []);
+    for (const [url, entry] of deps.history()) {
+      if ((entry.last || 0) < since) continue;
+      try {
+        const u = new URL(url);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') continue;
+        origins.add(u.origin);
+        hosts.add(u.hostname.toLowerCase());
+      } catch { /* not a URL */ }
+    }
+    for (const h of hosts) { origins.add(`https://${h}`); origins.add(`http://${h}`); }
+    return { hosts: [...hosts], origins: [...origins] };
+  }
+  function clearDownloads(since = 0) {
+    if (!Number.isFinite(since)) since = 0; // prefs:clear-downloads: the whole list
     const list = deps.downloads;
     const before = list.length;
-    for (let i = list.length - 1; i >= 0; i--) if (list[i].state !== 'progressing') list.splice(i, 1);
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].state !== 'progressing' && (list[i].started || 0) >= since) list.splice(i, 1);
     deps.sendDownloads();
     return before - list.length;
   }
