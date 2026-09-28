@@ -6,7 +6,7 @@ A few things apply to every tool:
 
 - **The active tab.** Page tools (`read_page`, `click`, `type_text`, `find`, `batch`, `screenshot`, …) work on the tab in front. Use `list_tabs` and `switch_tab` to pick another one.
 - **Element ids.** `read_page` and `find` number the page's links, buttons and fields. `click`, `type_text`, `hover`, `fill_form` and `batch` (`ref`) take those numbers. They stay valid until the page changes; read again after a navigation.
-- **Approvals.** The first time an agent acts on a site, or opens, reads or searches a new one, Lumen asks you in the sidebar. See [Asking before it acts](../README.md#asking-before-it-acts). A refused call returns an error that says so.
+- **Approvals.** The first time an agent acts on a site in a chat, Lumen asks you in the sidebar. Once it has read page content, opening, fetching or searching a site not yet approved asks too. See [Asking before it acts](../README.md#asking-before-it-acts). A refused call returns an error that says so.
 - **Cheaper reads.** `read_page` with `mode: "compact"` or `since_last: true`, `find` and `batch` cost far fewer tokens than a full read. See [Token-efficient tools](../README.md#token-efficient-tools-all-ais).
 
 The sidebar's Claude models use Anthropic's server-side web search instead of `web_search`; every other engine and MCP client gets the tool below.

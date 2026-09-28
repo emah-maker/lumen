@@ -34,7 +34,7 @@ Lumen.exe (main process: main.js)
 - **`agent.js`** runs the agent loop in the main process: it sends the chat to the chosen model, runs the tools it asks for, and streams events to the sidebar.
 - **Engines.** Claude through Anthropic's SDK; OpenAI, Grok, Gemini and OpenRouter through `providers.js`, which converts the conversation to and from Chat Completions. "Your account" engines run the user's own CLI headless and let it call Lumen's tools over MCP: `claude-code.js` (Claude Code) and `grok-build.js` (Grok Build, experimental).
 - **Tools** are defined once in `agent.js` (`TOOLS`) and shared with every engine and with MCP clients. Page scripts live in `page-scripts.js`; the token-efficient tools (`compact` reads, diffs, `find`, `batch`) are in `snapshot.js`. The full list is in the [MCP tool reference](mcp-tools.md).
-- **Approval gate.** Before the AI acts on a site, or opens, reads or searches a new one, the sidebar shows an approval card; the answer is remembered for that chat. Content from pages is treated as untrusted data. What is asked and when: [Asking before it acts](../README.md#asking-before-it-acts).
+- **Approval gate.** The first time the AI acts on a site in a chat, the sidebar shows an approval card. Once the AI has read page content, opening, fetching or searching a site not yet approved in that chat asks too. Approvals last for the chat. Content from pages is treated as untrusted data. What is asked and when: [Asking before it acts](../README.md#asking-before-it-acts).
 - **Background reading** (`read_urls`, `web_search`) uses hidden views in an in-memory session with none of the user's cookies. That session refuses permission requests and downloads.
 
 ## Outside agents
