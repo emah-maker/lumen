@@ -1611,6 +1611,7 @@ window.assistant.onEvent((event) => {
       endStream();
       for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
       turn.working.remove();
+      if (event.undo) window.showRunUndo?.(append, event.undo); // [ai controls] extras.js
       turn = null;
       setRunning(false);
       setTimeout(sendQueued);

@@ -11,6 +11,7 @@ const { addUsage } = require('./features/chat-usage');
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
 // page; switch_tab and open_tab move the pin on purpose. Outside a task, tools use the active tab.
 const taskScope = new AsyncLocalStorage();
+const nestedCall = new AsyncLocalStorage(); // [ai controls] set inside execute(): tools a tool runs
 const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user what to do next.';
 
 // Models the user can pick. Request shapes differ: Haiku 4.5 predates adaptive thinking and the
@@ -460,6 +461,14 @@ const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', '
 // as ACTING_TOOLS).
 const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls', 'web_search']);
 const SEARCH_HOST = 'html.duckduckgo.com';
+// ---- [ai controls] Tools that don't work in the task's tab (they name their tabs or addresses, or
+// none). Every other tool reads or acts on the task's tab, so a tab on a site where the user turned
+// AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
+// "Undo" (the action log, see recordActions) name what they did there.
+const TAB_FREE_TOOLS = new Set(['list_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
+const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps' };
+const { siteOf } = require('./features/ai-sites');
+// ---- [/ai controls]
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
 // URLs are left out: execute() refuses them anyway.
@@ -717,6 +726,8 @@ class Agent {
     this.current = null;
     this.nextModel = null;
     this.scopes = new Set(); // live task scopes (see taskScope), for usingTab()
+    this.actionLogs = new Map(); // [ai controls] run id -> what that sidebar run changed (Undo)
+    this.actionLogSeq = 0;
   }
 
   get running() {
@@ -726,8 +737,9 @@ class Agent {
   // Runs fn with its tools pinned to tab `tabId` (see taskScope). `scope.signal` lets long waits
   // (wait_for, wait) end as soon as the task is stopped.
   // `chat` (the conversation's messages array, for sidebar runs) holds the exfiltration taint.
-  inTask(tabId, signal, fn, chat = null) {
-    const scope = { tabId: tabId ?? null, signal, chat };
+  // `log` (sidebar runs) collects what the run changed, for Undo (see recordActions).
+  inTask(tabId, signal, fn, chat = null, log = null) {
+    const scope = { tabId: tabId ?? null, signal, chat, log };
     this.scopes.add(scope);
     return taskScope.run(scope, fn).finally(() => this.scopes.delete(scope));
   }
@@ -837,6 +849,7 @@ class Agent {
     const controller = new AbortController();
     this.controller = controller;
     const messages = this.messages; // reset() swaps in a new array; this run keeps writing to its own
+    const log = this.newActionLog();
     try {
       // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
       // thinking-block prefix check on newer models. The model can change between messages (setModel).
@@ -847,19 +860,23 @@ class Agent {
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
 
       const tab = this.browser.activeTab();
-      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit), messages);
+      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit), messages, log);
     } catch (err) {
       if (controller.signal.aborted || err instanceof Anthropic.APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
       repairHistory(messages);
     } finally {
       if (this.controller === controller) this.controller = null;
-      emit({ type: 'done', model: messages.settings?.model });
+      const undo = this.undoSummary(log);
+      emit({ type: 'done', model: messages.settings?.model, ...(undo ? { undo } : {}) });
     }
   }
 
   async runTask(messages, tab, userText, images, controller, emit) {
-    const state = tab
+    const aiOff = tab && this.browser.aiOff?.(tab.webContents.getURL()); // [ai controls] no title or address either
+    const state = aiOff
+      ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
+      : tab
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${tab.webContents.getTitle()}\nURL: ${tab.webContents.getURL()}\n</browser_state>\n\n`
       : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`;
     const note = images.length && !userText.trim() ? 'The user attached the image(s) above without a message.' : userText;
@@ -922,6 +939,7 @@ class Agent {
     const wc = tab.webContents;
     const url = wc.getURL();
     if (!/^https?:/i.test(url)) return '';
+    if (this.browser.aiOff?.(url)) return ''; // [ai controls]
     let page;
     try { page = await runScript(wc, scripts.readPage(0, 0), 4000); } catch { return ''; }
     const body = String(page?.text || '').slice(0, PAGE_CONTEXT_CHARS);
@@ -1247,6 +1265,7 @@ class Agent {
   // run_script in a tainted run has its own card per site ("<who> wants to run a script on <host>"):
   // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
   async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
+    this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
     const gate = { emit, signal, hosts, who, external, run };
     const scope = taskScope.getStore();
     if (scope) scope.gate = gate;
@@ -1289,6 +1308,151 @@ class Agent {
     if (!gate) return;
     await this.ensureAllowed(name, gate.emit, gate.signal, { hosts: gate.hosts, who: gate.who, external: gate.external, input, run: gate.run });
   }
+
+  // ---- [ai controls] Per-site AI switch (features/ai-sites.js; browser.aiOff(url)). A tab on such a
+  // site is out of reach for every tool, whoever calls it: the sidebar's AI, its Claude Code / Grok
+  // Build engines and outside agents (MCP) all come through ensureAllowed and execute, and batch
+  // steps through allowStep and execute. Addresses a tool would open there are refused too.
+  aiOffCheck(name, input = {}) {
+    const off = this.browser.aiOff;
+    if (!off) return;
+    const refuse = (url) => {
+      throw new Error(`The user turned off AI on ${siteOf(url)}. Don't read or act on that site; ask the user to do it themselves or to turn AI back on for it.`);
+    };
+    if (name === 'navigate' || name === 'open_tab' || name === 'read_urls') {
+      const urls = name === 'read_urls' ? (Array.isArray(input.urls) ? input.urls.slice(0, 6) : []) : [input.url];
+      for (const raw of urls) {
+        let url = '';
+        try { url = webUrl(String(raw ?? '')); } catch {}
+        if (url && off(url)) refuse(url);
+      }
+    }
+    const urlOf = (id) => this.browser.listTabs().find((t) => t.id === id)?.url || '';
+    const named = name === 'switch_tab' || name === 'close_tab' ? [input.tab_id]
+      : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : []) : [];
+    for (const id of named) if (off(urlOf(id))) refuse(urlOf(id));
+    if (!TAB_FREE_TOOLS.has(name)) {
+      let url = '';
+      try { url = this.taskTab()?.webContents.getURL() || ''; } catch {}
+      if (off(url)) refuse(url);
+    }
+  }
+
+  // After a tool: did it take the task's tab onto such a site (a click, a redirect, switch_tab to a
+  // tab that moved)? Its result could describe that page, so it is dropped.
+  aiOffAfter(name) {
+    if (!this.browser.aiOff || (TAB_FREE_TOOLS.has(name) && name !== 'open_tab' && name !== 'switch_tab')) return;
+    let url = '';
+    try { url = this.taskTab()?.webContents.getURL() || ''; } catch {}
+    if (this.browser.aiOff(url)) throw new Error(`The tab is now on ${siteOf(url)}, where the user turned off AI. Stop working in this tab; ask the user what to do.`);
+  }
+
+  // ---- Undo: what a sidebar run changed, per outermost tool call (execute). Tabs it opened are
+  // closed, tabs it closed reopen (in their group), its navigations go back, group changes and tab
+  // switches are reversed. What it did on a site (clicks, typing, forms, scripts) is listed as
+  // something Undo can't take back.
+  newActionLog() {
+    const log = { id: ++this.actionLogSeq, actions: [], undone: false };
+    this.actionLogs.set(log.id, log);
+    while (this.actionLogs.size > 30) this.actionLogs.delete(this.actionLogs.keys().next().value);
+    return log;
+  }
+
+  actionSnapshot() {
+    const tabs = new Map(this.browser.listTabs().map((t) => [t.id, { url: t.url, title: t.title, active: t.active, group: this.browser.tabGroupOf?.(t.id) || null }]));
+    let task = null;
+    try {
+      const tab = this.taskTab();
+      if (tab) task = { id: tab.id, url: tab.webContents.getURL(), index: tab.webContents.navigationHistory.getActiveIndex() };
+    } catch {}
+    return { tabs, task, active: [...tabs].find(([, t]) => t.active)?.[0] ?? null };
+  }
+
+  recordActions(log, name, input, before) {
+    if (!log || !before) return;
+    let after;
+    try { after = this.actionSnapshot(); } catch { return; }
+    const add = (action) => { if (log.actions.length < 300) log.actions.push(action); };
+    const known = (kind, id) => log.actions.some((a) => a.kind === kind && a.tabId === id);
+    for (const [id, t] of after.tabs) if (!before.tabs.has(id) && !known('opened', id)) add({ kind: 'opened', tabId: id, url: t.url });
+    for (const [id, t] of before.tabs) {
+      if (!after.tabs.has(id) && !known('closed', id) && /^https?:/i.test(t.url)) add({ kind: 'closed', tabId: id, url: t.url, title: t.title, group: t.group });
+    }
+    if (name === 'group_tabs' || name === 'ungroup_tabs') {
+      for (const [id, t] of before.tabs) {
+        const now = after.tabs.get(id);
+        if (now && (now.group?.id ?? null) !== (t.group?.id ?? null)) add({ kind: 'group', tabId: id, group: t.group, title: t.title });
+      }
+    }
+    if (before.task && after.task && before.task.id === after.task.id && before.task.url !== after.task.url && /^https?:/i.test(before.task.url)) {
+      add({ kind: 'navigated', tabId: before.task.id, url: before.task.url, index: before.task.index });
+    }
+    if ((name === 'switch_tab' || name === 'open_tab') && before.active !== null && before.active !== after.active) add({ kind: 'switched', tabId: before.active });
+    if (LASTING_TOOLS[name]) {
+      const what = name === 'fill_form' && input?.submit ? 'filled and submitted a form' : LASTING_TOOLS[name];
+      add({ kind: 'lasting', what, site: siteOf(before.task?.url || '') || 'a page' });
+    }
+  }
+
+  // For the 'done' event: what Undo would do, or null when the run changed nothing.
+  undoSummary(log) {
+    if (!log?.actions.length) return null;
+    const undoable = log.actions.filter((a) => a.kind !== 'lasting').length;
+    const lasting = [...new Set(log.actions.filter((a) => a.kind === 'lasting').map((a) => `${a.what} on ${a.site}`))];
+    return { id: log.id, undoable, lasting };
+  }
+
+  // Takes back a run's changes, newest first. Each step that can't be done anymore (its tab was
+  // closed since) is skipped and named. Once per run.
+  async undoRun(id) {
+    const log = this.actionLogs.get(Number(id));
+    if (!log || log.undone) return { ok: false, done: [], skipped: [], lasting: [], message: 'There is nothing left to undo for that reply.' };
+    log.undone = true;
+    const done = [];
+    const skipped = [];
+    const moved = new Map(); // tab id before a close -> the reopened tab's id
+    const live = (tabId) => {
+      const current = moved.get(tabId) ?? tabId;
+      return this.browser.listTabs().some((t) => t.id === current) ? current : null;
+    };
+    const label = (url) => siteOf(url) || String(url || 'a page').slice(0, 60);
+    for (const action of [...log.actions].reverse()) {
+      try {
+        if (action.kind === 'opened') {
+          const tabId = live(action.tabId);
+          if (tabId === null) continue; // already closed
+          (this.browser.requestCloseTab || this.browser.closeTab)(tabId);
+          done.push(`Closed the tab it opened (${label(action.url)}).`);
+        } else if (action.kind === 'closed') {
+          const tab = this.browser.openTab(action.url, { background: true });
+          moved.set(action.tabId, tab.id);
+          if (action.group) this.browser.setTabGroup?.(tab.id, action.group);
+          done.push(`Reopened ${label(action.url)}.`);
+        } else if (action.kind === 'navigated') {
+          const tabId = live(action.tabId);
+          const tab = tabId === null ? null : this.browser.tabById?.(tabId);
+          if (!tab) { skipped.push(`Couldn't take a tab back to ${label(action.url)}: it was closed.`); continue; }
+          const history = tab.webContents.navigationHistory;
+          if (moved.has(action.tabId) || history.getEntryAtIndex?.(action.index)?.url !== action.url) tab.webContents.loadURL(action.url).catch(() => {});
+          else history.goToIndex(action.index);
+          done.push(`Took a tab back to ${label(action.url)}.`);
+        } else if (action.kind === 'group') {
+          const tabId = live(action.tabId);
+          if (tabId === null) continue;
+          this.browser.setTabGroup?.(tabId, action.group);
+          done.push(action.group ? `Put ${quote(action.title || 'a tab', 40)} back in ${quote(action.group.name, 40)}.` : `Took ${quote(action.title || 'a tab', 40)} out of its new group.`);
+        } else if (action.kind === 'switched') {
+          const tabId = live(action.tabId);
+          if (tabId !== null && this.browser.switchTab(tabId)) done.push('Switched back to the tab you were on.');
+        }
+      } catch (err) {
+        skipped.push(`Couldn't undo a step: ${err.message}`);
+      }
+    }
+    const { lasting } = this.undoSummary(log) || { lasting: [] };
+    return { ok: true, done: [...new Set(done)], skipped, lasting };
+  }
+  // ---- [/ai controls]
 
   // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
   // (auto-allow covers the sidebar's AI only); calls that need the same host at once share one card.
@@ -1422,7 +1586,29 @@ class Agent {
 
   // Runs a tool; in a tainted run, redirects in the task's tab are checked while it runs (and for
   // navigate and run_script, the page's own jumps: a script can set location).
+  // [ai controls] Also checks the per-site AI switch before and after the tool (the page may have
+  // moved to such a site), and records what the outermost call changed in a sidebar run's log.
   async execute(name, input) {
+    this.aiOffCheck(name, input);
+    const log = taskScope.getStore()?.log;
+    if (!log || nestedCall.getStore()) {
+      const result = await this.executeGuarded(name, input);
+      this.aiOffAfter(name);
+      return result;
+    }
+    // Tools that run other tools (fill_form, batch) count as one action.
+    const before = this.actionSnapshot();
+    let result;
+    try {
+      result = await nestedCall.run(true, () => this.executeGuarded(name, input));
+    } finally {
+      this.recordActions(log, name, input, before);
+    }
+    this.aiOffAfter(name);
+    return result;
+  }
+
+  async executeGuarded(name, input) {
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
@@ -1539,7 +1725,9 @@ class Agent {
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
         const pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }))));
-        return pages.map((p) => `<untrusted_page_content url="${p.url}">\nTitle: ${p.title}\n${p.text}\n</untrusted_page_content>`).join('\n\n');
+        return pages.map((p) => (this.browser.aiOff?.(p.url) // [ai controls] it redirected to such a site
+          ? `(${siteOf(p.url)}: the user turned off AI on this site, so its content is not shown.)`
+          : `<untrusted_page_content url="${p.url}">\nTitle: ${p.title}\n${p.text}\n</untrusted_page_content>`)).join('\n\n');
       }
       case 'run_script': {
         const wc = this.requireTab();
@@ -1658,8 +1846,9 @@ class Agent {
         await waitForLoad(wc);
         return `Now at ${wc.getURL()}.`;
       }
-      case 'list_tabs':
-        return JSON.stringify(agentTabList(this.browser.listTabs()));
+      case 'list_tabs': // [ai controls] a tab on a site with AI off shows as its id only
+        return JSON.stringify(agentTabList(this.browser.listTabs())
+          .map((t) => (this.browser.aiOff?.(t.url) ? { id: t.id, active: t.active, ai_off: true } : t)));
       case 'open_tab': {
         const tab = this.browser.openTab(webUrl(input.url));
         this.pinTab(tab.id); // it opens in front; the task carries on there

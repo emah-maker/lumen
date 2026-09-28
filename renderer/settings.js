@@ -123,6 +123,23 @@ async function buildAi(card) {
     topicRow,
   );
 
+  // [ai controls] Sites where the AI (the sidebar's and outside agents) can't read or act.
+  const offList = h('div', { class: 'list', id: 'ai-off-sites' });
+  const offInput = h('input', { type: 'text', class: 'grow', id: 'ai-off-add', placeholder: 'example.com', 'aria-label': 'Site to turn AI off on' });
+  const renderOff = async (sites) => {
+    sites ||= await S.ai.aiSites();
+    offList.replaceChildren(...(sites.length ? sites.map((site) => h('div', { class: 'item', 'data-site': site },
+      h('span', { class: 'grow', text: site }),
+      h('button', { text: 'Turn on AI', onclick: async () => renderOff(await S.ai.setAiSite(site, false)) })))
+      : [h('span', { class: 'note', text: 'None. The AI can work on any site you allow.' })]));
+  };
+  card.append(stackRow('Sites where AI is off', 'The AI can’t read, click or type on these sites, their tabs aren’t sent with your messages or to Organize Tabs, and outside agents are refused too. Also in the sidebar and a tab’s right-click menu.', offList,
+    h('div', { class: 'controls' }, offInput, h('button', {
+      text: 'Turn off AI',
+      onclick: async () => { const site = offInput.value.trim(); if (!site) return; offInput.value = ''; renderOff(await S.ai.setAiSite(site, true)); },
+    }))));
+  renderOff();
+
   // API keys: one line per provider; Edit opens the field in place.
   const keys = h('div', { class: 'list', id: 'ai-keys' });
   const renderKeys = () => {
