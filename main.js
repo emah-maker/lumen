@@ -17,6 +17,8 @@ const { installChromeWebStore, installExtension, uninstallExtension } = require(
 const { extensionPermissionLines } = require('./extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput } = require('./agent');
 const providers = require('./providers');
+const cliJson = require('./cli-json');
+const { engineModel } = require('./cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
@@ -1422,8 +1424,39 @@ const ORGANIZE_SCHEMA = {
 };
 const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Give each group a short name (1-3 words, Title Case). A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
 
+// Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' picks) answer
+// it as a one-shot, tool-less run (cli-json.js), so no API key is needed. An API model without a
+// key goes to Claude Code instead, when it's installed and not known to be signed out.
+const LOCAL_ENGINE = /^(claudecode|grokbuild):/;
+async function groupingRoute(model) {
+  if (LOCAL_ENGINE.test(model)) return { engine: model.split(':')[0], model: engineModel(model) };
+  const { provider } = providers.splitModel(model);
+  if (provider === 'anthropic' ? anthropicUsable() : providerKey(provider)) return { api: model };
+  const status = await agent.engines?.claudecode?.status().catch(() => null);
+  if (status?.installed && status.signedIn !== false) return { engine: 'claudecode', model: 'haiku' };
+  const label = provider === 'anthropic' ? 'Anthropic' : providers.PROVIDERS[provider].label;
+  throw new Error(`Add your ${label} API key in Settings, or install Claude Code and sign in: it uses your own Claude account, no key needed.`);
+}
+
+// One answer from the user's own CLI. Claude Code runs Haiku for speed; if the plan can't use it,
+// the chat's own Claude Code model is tried once.
+async function proposeGroupsLocal({ engine, model }, list) {
+  const bin = await agent.engines[engine].detect();
+  if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+  const ask = (m) => cliJson.completeJSON({ engine, bin, model: m, system: ORGANIZE_PROMPT, user: `Tabs:\n${JSON.stringify(list)}`, schema: ORGANIZE_SCHEMA, userData: app.getPath('userData') });
+  const fast = engine === 'claudecode' ? 'haiku' : model;
+  try {
+    return cliJson.checkGroups(await ask(fast));
+  } catch (err) {
+    if (fast === model || /not signed in|usage limit/i.test(err.message)) throw err;
+    return cliJson.checkGroups(await ask(model));
+  }
+}
+
 // Asks the chat's current model for groups. Only ids, titles and hostnames are sent.
 async function proposeGroups(model, list) {
+  const route = await groupingRoute(String(model));
+  if (route.engine) return proposeGroupsLocal(route, list);
   const { provider, model: id } = providers.splitModel(model);
   if (provider === 'anthropic') {
     const res = await agent.getClient().messages.create({
@@ -1467,7 +1500,9 @@ async function organizeTabs() {
 // ---- topic groups: local clusters (tab-groups.js), or named by the cheapest model of the chat's provider
 // when "Use AI to name and group topics" is on. Only ids, titles and hostnames are sent.
 function cheapTopicModel() {
-  const { provider } = providers.splitModel(agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL);
+  const chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
+  if (LOCAL_ENGINE.test(chosen)) return chosen; // proposeGroupsLocal picks the fast model itself
+  const { provider } = providers.splitModel(chosen);
   if (provider === 'anthropic') return 'claude-haiku-4-5';
   const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
   return `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
@@ -2288,6 +2323,8 @@ if (TEST) {
   global.__importBrowser = importBrowser;
   global.__tabGroups = tabGroups;
   global.__organizeTabs = organizeTabs;
+  global.__cliJson = cliJson;
+  global.__groupingRoute = groupingRoute;
   global.__organizeByTopic = organizeByTopic;
   global.__setTabGrouping = setTabGrouping;
   global.__setTopicAi = (on) => writeSettings({ ...readSettings(), topicAi: Boolean(on) });

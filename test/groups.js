@@ -108,8 +108,10 @@ const os = require('os');
   r = await app.evaluate(async (_e, ids) => global.__agent.execute('ungroup_tabs', { tab_ids: ids }), [opener, fourth]);
   check('ungroup_tabs removes them and drops the empty group', !(await groupsNow()).some((x) => x.name === 'Research'), r);
 
-  // 7. Organize with AI (fake Claude returning structured JSON).
+  // 7. Organize with AI (fake Claude returning structured JSON). A (fake) Anthropic key keeps these
+  // API-path steps on the API: with no key, Organize goes to Claude Code instead (7b).
   await app.evaluate(() => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake';
     global.__organizeRequest = null;
     global.__agent.getClient = () => ({ messages: { create: async (params) => {
       global.__organizeRequest = JSON.parse(JSON.stringify(params));
@@ -123,6 +125,45 @@ const os = require('os');
   const req = await app.evaluate(() => global.__organizeRequest);
   check('organize sends only ids, titles and hosts with a JSON schema', req?.output_config?.format?.type === 'json_schema' && !/untrusted_page_content|PAGE TEXT/.test(JSON.stringify(req)), JSON.stringify(req).slice(0, 200));
   check('organize applies groups; singletons and unknown ids are dropped', g.length === 1 && g[0].name === 'Reading List Stuff', JSON.stringify(g));
+
+  // 7b. Organize through the user's own Claude Code (fake CLI step): no API key involved.
+  const cli = await app.evaluate(async () => {
+    const saved = { settings: global.__agent.messages.settings, run: global.__cliJson.completeJSON, openai: process.env.OPENAI_API_KEY, getClient: global.__agent.getClient };
+    const cc = global.__agent.engines.claudecode;
+    const savedCc = { detect: cc.detect, status: cc.status };
+    const calls = [];
+    global.__agent.getClient = () => { throw new Error('the API must not be used'); };
+    cc.detect = async () => 'claude-fake.exe';
+    cc.status = async () => ({ installed: true, signedIn: true });
+    global.__cliJson.completeJSON = async (opts) => {
+      calls.push({ engine: opts.engine, bin: opts.bin, model: opts.model, user: opts.user, schema: Boolean(opts.schema) });
+      const ids = JSON.parse(opts.user.split('Tabs:\n')[1]).map((x) => x.id);
+      return { groups: [{ name: 'From Claude Code', tab_ids: ids.slice(0, 2) }] };
+    };
+    try {
+      global.__agent.messages.settings = { ...(saved.settings || {}), model: 'claudecode:opus' };
+      await global.__organizeTabs();
+      const picked = global.__tabGroups.state().map((x) => x.name);
+      delete process.env.OPENAI_API_KEY;
+      const noKey = await global.__groupingRoute('openai:gpt-5-mini');
+      const grok = await global.__groupingRoute('grokbuild:grok-4.7');
+      cc.status = async () => ({ installed: false, signedIn: false });
+      const none = await global.__groupingRoute('openai:gpt-5-mini').then(() => null, (e) => e.message);
+      return { calls, picked, noKey, grok, none };
+    } finally {
+      global.__agent.messages.settings = saved.settings;
+      global.__cliJson.completeJSON = saved.run;
+      global.__agent.getClient = saved.getClient;
+      Object.assign(cc, savedCc);
+      if (saved.openai !== undefined) process.env.OPENAI_API_KEY = saved.openai;
+    }
+  });
+  check('organize with Claude Code: runs the CLI (Haiku for speed), never the API', cli.calls.length === 1 && cli.calls[0].engine === 'claudecode' && cli.calls[0].bin === 'claude-fake.exe' && cli.calls[0].model === 'haiku' && cli.calls[0].schema, JSON.stringify(cli.calls));
+  check('organize with Claude Code: only ids, titles and hosts are sent', cli.calls[0] && JSON.parse(cli.calls[0].user.split('Tabs:\n')[1]).every((x) => Object.keys(x).sort().join() === 'host,id,title'), cli.calls[0]?.user);
+  check('organize with Claude Code: its groups are applied', cli.picked.includes('From Claude Code'), JSON.stringify(cli.picked));
+  check('organize: an API model with no key falls back to Claude Code', cli.noKey.engine === 'claudecode' && cli.noKey.model === 'haiku', JSON.stringify(cli.noKey));
+  check('organize: a Grok Build pick runs Grok Build with its model', cli.grok.engine === 'grokbuild' && cli.grok.model === 'grok-4.7', JSON.stringify(cli.grok));
+  check('organize: with no key and no Claude Code, the error says what to do', /API key/.test(cli.none || '') && /Claude Code/.test(cli.none || ''), cli.none);
 
   // 8. Restore after restart.
   const before = { groups: await groupsNow(), tabs: await tabsNow() };
@@ -184,6 +225,7 @@ const os = require('os');
 
   // With AI naming on: the cheapest model of the chat's provider (Haiku), only ids, titles and hosts.
   await app.evaluate(() => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake'; // the API path (see 7); this app was restarted since
     global.__topicRequest = null;
     global.__agent.getClient = () => ({ messages: { create: async (params) => {
       global.__topicRequest = JSON.parse(JSON.stringify(params));
