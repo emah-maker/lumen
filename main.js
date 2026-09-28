@@ -1,9 +1,11 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, session, shell, components } = require('electron');
+// Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
+const TEST = require('./test-mode').isTest();
 
 // `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
 if (process.argv.includes('--mcp')) {
-  if (process.env.CLAUDE_BROWSER_TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
+  if (TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
   require('./mcp').runBridge({ app });
   return;
 }
@@ -57,7 +59,7 @@ const APP_ID = 'com.lumen.browser';
 
 // Lumen was "Claude Browser": carry the old profile (settings, history, bookmarks, extensions,
 // saved chat) over to the new name once, before anything opens it.
-if (!process.env.CLAUDE_BROWSER_TEST) {
+if (!TEST) {
   const oldProfile = path.join(app.getPath('appData'), 'Claude Browser');
   const newProfile = app.getPath('userData');
   if (!fs.existsSync(newProfile) && fs.existsSync(oldProfile)) {
@@ -70,7 +72,7 @@ if (!process.env.CLAUDE_BROWSER_TEST) {
 }
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID); // taskbar grouping, notifications
 
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE || fs.mkdtempSync(path.join(require('os').tmpdir(), 'claude-browser-test-')));
 }
 
@@ -112,12 +114,12 @@ const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
 // Tests drive some handlers with ipcMain.emit and a stand-in event (no real renderer behind it);
 // a real message from a renderer always carries its live webContents.
 const { webContents: webContentsModule } = require('electron');
-const syntheticTestEvent = (event) => Boolean(process.env.CLAUDE_BROWSER_TEST)
+const syntheticTestEvent = (event) => TEST
   && !(event?.sender && typeof event.sender.id === 'number' && webContentsModule.fromId(event.sender.id) === event.sender);
 const trustedSender = (event, channel) => syntheticTestEvent(event) || isUiSender(event)
   || (PRIVILEGED_IPC.test(channel) && isSettingsSender(event));
 const gatedChannel = (channel) => PRIVILEGED_IPC.test(channel) || UI_ONLY_IPC.has(channel);
-if (process.env.CLAUDE_BROWSER_TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: gatedChannel, uiUrl: UI_URL };
+if (TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: gatedChannel, uiUrl: UI_URL };
 
 // Lumen's own views (the UI, the suggestions dropdown, the dialogs overlay) show one local file
 // each and nothing else: a link, drop or script can't navigate them, and window.open never makes a
@@ -303,7 +305,7 @@ const dialogs = createDialogs({
 // now draws Lumen's own card; the native pickers (showOpenDialog etc., used only by settings-backend.js
 // for the download folder) are untouched.
 const dialog = { ...electronDialog, showMessageBox: dialogs.showMessageBox };
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   global.__dialogs = dialogs;
   global.__closeTabInteractive = (id) => requestCloseTab(id);
 }
@@ -1234,7 +1236,7 @@ async function sweepSleep() {
 }
 let pressureCheck = memoryPressure;
 setInterval(() => { sweepSleep().catch(() => {}); }, SLEEP_CHECK_MS);
-if (process.env.CLAUDE_BROWSER_TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve(on); }, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
+if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve(on); }, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
 
 // ---- new-tab focus. A blank new tab opens with the cursor in the address bar, as in Chrome.
 // Chromium focuses a tab's page by itself when its view is shown and again on its first navigation,
@@ -2139,6 +2141,7 @@ function createWindow() {
       contextIsolation: true,
       sandbox: false, // preload loads electron-chrome-extensions' toolbar element; the page is our own local UI
       nodeIntegration: false,
+      additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
     },
   });
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
@@ -2256,9 +2259,9 @@ const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_
 const agent = new Agent({
   activeTab: agentActiveTab, tabById: agentTabById, noTabReason, listTabs, openTab, switchTab, closeTab, requestCloseTab,
   hasUnsavedInput: agentHasUnsavedInput, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, effectiveModel, anthropicAuth,
-  autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false,
+  autoApprove: () => TEST || readSettings().askBeforeActing === false,
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   global.__agent = agent;
   global.__fitContext = require('./agent').fitContext;
   global.__mcp = () => aiAgents.mcpServer();
@@ -2333,7 +2336,7 @@ function replaceTab(oldId, url) {
   takePlace(id, oldId);
 }
 ipcMain.on('settings-page:open', (_e, section) => openSettingsPage(typeof section === 'string' ? section : ''));
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
@@ -2758,5 +2761,5 @@ app.on('activate', () => {
     createWindow();
   }
 });
-if (process.env.CLAUDE_BROWSER_TEST) global.__dropDeadWindowViews = dropDeadWindowViews;
+if (TEST) global.__dropDeadWindowViews = dropDeadWindowViews;
 // ---- [/mac reopen]

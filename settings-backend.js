@@ -568,7 +568,7 @@ function create(deps) {
     handle('prefs:open-url', (url) => { if (/^https:\/\//.test(url)) deps.openTab(url); });
     handle('prefs:reset', reset);
     handle('prefs:relaunch', () => {
-      if (process.env.CLAUDE_BROWSER_TEST) return false; // tests check the saved value instead
+      if (require('./test-mode').isTest()) return false; // tests check the saved value instead
       app.relaunch();
       app.quit();
       return true;

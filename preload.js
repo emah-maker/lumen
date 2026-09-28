@@ -62,8 +62,9 @@ contextBridge.exposeInMainWorld('lumenPrefs', {
 });
 
 // Only what the browser UI itself uses. Keys, MCP, automation and import are set in lumen://settings
-// (settings-preload.js); the tests still reach a few of those calls through here.
-const testOnly = process.env.CLAUDE_BROWSER_TEST ? {
+// (settings-preload.js); the tests still reach a few of those calls through here. main.js adds
+// this switch only in test mode, which a packaged build never is (test-mode.js).
+const testOnly = process.argv.includes('--lumen-test-mode') ? {
   mcpInfo: () => ipcRenderer.invoke('mcp:info'),
   setMcpEnabled: (on) => ipcRenderer.invoke('mcp:set-enabled', on),
   automationInfo: () => ipcRenderer.invoke('automation:info'),

@@ -88,7 +88,7 @@ function createAdblock(deps) {
       read: fs.promises.readFile,
       write: fs.promises.writeFile,
     });
-    if (process.env.CLAUDE_BROWSER_TEST) global.__adblockEngine = blocker;
+    if (require('../test-mode').isTest()) global.__adblockEngine = blocker;
     blocker.onBeforeRequest = (details, callback) => {
       const page = details.webContents?.getURL() || details.referrer || '';
       if (!on(page) || details.resourceType === 'mainFrame') return callback({});

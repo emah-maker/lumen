@@ -199,7 +199,7 @@ async function connectOrLaunch(userData, launch, log) {
 
 // Lumen's profile folder, the same place Electron's app.getPath('userData') points to.
 function defaultUserData() {
-  if (process.env.CLAUDE_BROWSER_TEST && process.env.CLAUDE_BROWSER_PROFILE) return process.env.CLAUDE_BROWSER_PROFILE;
+  if (require('./test-mode').isTest() && process.env.CLAUDE_BROWSER_PROFILE) return process.env.CLAUDE_BROWSER_PROFILE;
   const os = require('os');
   const base = process.platform === 'win32' ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
     : process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support')
@@ -216,7 +216,9 @@ function defaultLaunch() {
 async function relay() {
   const log = (text) => process.stderr.write(`[lumen-mcp] ${text}\n`); // stdout is reserved for MCP
   const userData = process.env.LUMEN_USERDATA || defaultUserData();
-  const launch = process.env.LUMEN_LAUNCH ? JSON.parse(process.env.LUMEN_LAUNCH) : defaultLaunch();
+  // LUMEN_LAUNCH (set by runBridge below) is only a development convenience. A packaged Lumen always
+  // starts itself: an inherited or planted variable must not make the bridge run another program.
+  const launch = process.env.LUMEN_LAUNCH && !require('./test-mode').isPackaged() ? JSON.parse(process.env.LUMEN_LAUNCH) : defaultLaunch();
   const toClient = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 
   // Queue client messages until the app connection is authenticated.
