@@ -114,8 +114,9 @@ function setupAiAgents(deps) {
   let grokBuildDetail = null; // the CLI's reported default model, when known
   let grokBuildModels = []; // the model ids `grok models` lists, when known
   const grokBuildModule = () => require('../grok-build');
-  // Grok Build in the sidebar is experimental and labelled unsafe (see grok-build.js's header: it is
-  // held to Lumen's tools by grok's own permission rules, not a tool allowlist like Claude Code's).
+  // Grok Build in the sidebar is experimental and labelled unsafe (see grok-build.js's header: only
+  // grok's own permission rules keep a non-Lumen tool from running; Lumen's own check on the event
+  // stream can stop the run, but only once such a call has started).
   // It is offered only once the user has connected Lumen to Grok Build ("Add to Grok Build" in
   // Settings), or with LUMEN_GROK_SIDEBAR=1.
   const grokSidebar = () => process.env.LUMEN_GROK_SIDEBAR === '1' || (process.env.LUMEN_GROK_SIDEBAR !== '0' && readSettings().grokSidebar === true);
@@ -457,7 +458,7 @@ function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models =
   const list = models.filter((m) => m !== 'default' && validModel(m));
   const pick = /^grokbuild:(.+)$/.exec(String(saved || ''))?.[1];
   if (pick && pick !== 'default' && validModel(pick) && !list.includes(pick)) list.push(pick);
-  const unsafe = 'unsafe, experimental: held to Lumen’s tools by Grok’s own permission rules, which are weaker than Claude Code’s';
+  const unsafe = 'unsafe, experimental: only Grok’s own permission rules keep it to Lumen’s tools; Lumen stops a run that calls another tool, but only once that call has started';
   return ['default', ...list].map((model) => ({
     id: `grokbuild:${model}`,
     label: model === 'default' ? 'Grok Build (unsafe, experimental)' : `Grok Build · ${model} (unsafe, experimental)`,

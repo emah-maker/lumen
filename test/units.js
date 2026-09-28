@@ -1,6 +1,7 @@
 // Plain Node checks (no Electron window): address bar URL-or-search detection, the crash-safe
-// settings file, Safari import, the Grok Build engine's argv/env/home, and both CLI engines' model
-// choice (--model in the argv, `grok models` parsing, the picker entries).
+// settings file, Safari import, the Grok Build engine's argv/env/home and its own tool check (runs
+// against a fake grok child), and both CLI engines' model choice (--model in the argv, `grok models`
+// parsing, the picker entries).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -101,6 +102,21 @@ try {
   check('Grok Build GROK_HOME is Lumen\'s own folder under userData, not the user\'s', env.GROK_HOME === path.join(gbData, 'grok-home') && env.GROK_HOME === gb.grokHomeFor(gbData), env.GROK_HOME);
   check('Grok Build turns off its Claude/Cursor imports in the env (beats config.toml)', env.GROK_CLAUDE_MCPS_ENABLED === '0' && env.GROK_CURSOR_MCPS_ENABLED === '0' && env.GROK_CLAUDE_HOOKS_ENABLED === '0', JSON.stringify(env));
   check('Grok Build env drops config overlays and ELECTRON_RUN_AS_NODE', !('GROK_CONFIG' in env) && !('ELECTRON_RUN_AS_NODE' in env) && env.PATH === 'x', JSON.stringify(env));
+  const scrubbed = gb.buildEnv({ userData: gbData, base: { Path: 'p', SystemRoot: 'C:\\Windows', TEMP: 't', HTTPS_PROXY: 'http://proxy', LANG: 'en_US.UTF-8', OPENAI_API_KEY: 'sk-1', ANTHROPIC_API_KEY: 'sk-2', XAI_API_KEY: 'xai-1', GITHUB_TOKEN: 'ghp', AWS_SECRET_ACCESS_KEY: 'aws', NPM_CONFIG_USERCONFIG: 'x', GROK_SANDBOX: 'off', LUMEN_GB_DEBUG: 'f' } });
+  check('Grok Build env keeps what a process needs to start and reach the network', scrubbed.Path === 'p' && scrubbed.SystemRoot === 'C:\\Windows' && scrubbed.TEMP === 't' && scrubbed.HTTPS_PROXY === 'http://proxy' && scrubbed.LANG === 'en_US.UTF-8', JSON.stringify(scrubbed));
+  check('Grok Build env drops API keys, tokens and the user\'s own GROK_* settings', !['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'XAI_API_KEY', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'NPM_CONFIG_USERCONFIG', 'GROK_SANDBOX', 'LUMEN_GB_DEBUG'].some((k) => k in scrubbed), JSON.stringify(scrubbed));
+  check('Grok Build env: HOME and USERPROFILE are the empty sidebar folder, GROK_HOME Lumen\'s', scrubbed.HOME === path.join(gbData, 'grok-sidebar') && scrubbed.USERPROFILE === scrubbed.HOME && scrubbed.GROK_HOME === gb.grokHomeFor(gbData), JSON.stringify(scrubbed));
+
+  // Lumen's own check on the tool calls Grok reports.
+  check('tool check: Lumen\'s tools pass (lumen__read_page, search_tool, use_tool -> lumen__x)', gb.isLumenTool('lumen__read_page') && gb.isLumenTool('search_tool', { query: 'page' }) && gb.isLumenTool('use_tool', { tool_name: 'lumen__x', tool_input: {} }), 'rejected a Lumen tool');
+  check('tool check: other tools are refused (use_tool -> other__x, Bash, run_terminal_command, edit_file)', ![['use_tool', { tool_name: 'other__x' }], ['Bash'], ['run_terminal_command', { command: 'echo' }], ['edit_file'], ['use_tool', {}], ['use_tool', null], ['use_tool', { tool_name: 'xlumen__a' }], ['lumen__'], ['web_search']].some(([n, i]) => gb.isLumenTool(n, i)), 'accepted a non-Lumen tool');
+  const streamed = (lines) => { const w = gb.toolWatch(); for (const l of lines) { const bad = w(l); if (bad) return bad; } return null; };
+  const ev = (event) => ({ type: 'stream_event', event });
+  const useTool = (name, index = 1) => [ev({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: 'c', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ tool_name: name, tool_input: {} }) } }), ev({ type: 'content_block_stop', index })];
+  check('tool check (stream): a built-in is caught at content_block_start', streamed([ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } })]) === 'run_terminal_command', 'missed');
+  check('tool check (stream): use_tool is judged by the tool it names', streamed(useTool('lumen__read_page')) === null && streamed(useTool('other__probe')) === 'use_tool other__probe', streamed(useTool('other__probe')));
+  check('tool check (stream): a use_tool whose input never parses is refused', streamed([ev({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"tool_na' } }), ev({ type: 'content_block_stop', index: 2 })]) === 'use_tool (unreadable)', 'accepted');
+  check('tool check (stream): hosted server tools and whole assistant messages are checked too', streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } })]) === 'web_search' && streamed([{ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'edit_file', input: {} }] } }]) === 'edit_file' && streamed([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'use_tool', input: { tool_name: 'lumen__click' } }] } }]) === null, 'missed');
 
   const toml = gb.grokConfig({ command: 'C:\\Lumen\\Lumen.exe', args: ['C:\\Lumen\\mcp.js'], env: { ELECTRON_RUN_AS_NODE: '1', LUMEN_ENGINE: 'tag123' } });
   const servers = [...toml.matchAll(/^\[mcp_servers\.([^\].]+)\]$/gm)].map((m) => m[1]);
@@ -130,6 +146,75 @@ try {
   check('Grok Build signed out: no auth.json is left in its home', !fs.existsSync(path.join(home, 'auth.json')), fs.readdirSync(home).join(','));
 } finally {
   fs.rmSync(gbData, { recursive: true, force: true });
+}
+
+// Grok Build runs against a fake grok child: `script` is the stream it prints (one JSON object per
+// line); a kill ends it (close with no exit code), as taskkill would. Resolves the run's result, the
+// events it emitted, the kills and the spawn call. Nothing touches the user's own ~/.grok.
+const { EventEmitter } = require('events');
+const { PassThrough } = require('stream');
+async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gbrun-'));
+  const savedHome = process.env.GROK_HOME;
+  process.env.GROK_HOME = path.join(data, 'user-grok'); // userGrokHome(): no auth.json there
+  const kills = [];
+  let spawned = null;
+  const spawn = (bin, argv, opts) => {
+    const child = new EventEmitter();
+    Object.assign(child, { pid: 4242, exitCode: null, killed: false, stdout: new PassThrough(), stderr: new PassThrough() });
+    spawned = { bin, argv, opts, child };
+    (async () => {
+      for (const line of script) {
+        if (child.killed) return;
+        child.stdout.write(`${JSON.stringify(line)}\n`);
+        await new Promise((r) => setImmediate(r));
+      }
+      child.exitCode = 0;
+      child.stdout.end();
+      setImmediate(() => child.emit('close', 0));
+    })();
+    return child;
+  };
+  const kill = (child) => {
+    kills.push(child.pid);
+    if (child.killed) return;
+    child.killed = true;
+    child.stdout.end();
+    setImmediate(() => child.emit('close', null));
+  };
+  const engine = new gb.GrokBuildEngine({ userData: data, mcpCommand: () => ({ command: 'lumen', args: ['mcp.js'], env: {} }), ensureServer: () => {}, spawn, kill, ...extra });
+  engine.detect = async () => 'grok.exe';
+  const events = [];
+  try {
+    const out = await engine.run({ prompt: 'hi', sessionId: 'id-1', resume: false, systemPrompt: 'S', signal: new AbortController().signal, emit: (e) => events.push(e), ...run });
+    return { out, events, kills, spawned, data, engine };
+  } finally {
+    if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
+    fs.rmSync(data, { recursive: true, force: true });
+  }
+}
+const gbEv = (event) => ({ type: 'stream_event', event });
+const gbText = (index, text) => [gbEv({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } }), gbEv({ type: 'content_block_delta', index, delta: { type: 'text_delta', text } })];
+const gbUse = (index, name) => [gbEv({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: `c${index}`, name: 'use_tool', input: {} } }), gbEv({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ tool_name: name, tool_input: {} }) } }), gbEv({ type: 'content_block_stop', index })];
+const gbInit = { type: 'system', subtype: 'init', session_id: 'id-1', mcp_servers: [{ name: 'lumen', status: 'pending' }] };
+const gbDone = (text) => ({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: 'id-1', total_cost_usd: 0.01 });
+async function grokRuns() {
+  {
+    const { out, events, kills, spawned } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Let me look.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, 'LEAKED'), gbDone('LEAKED')]);
+    const error = events.find((e) => e.type === 'error');
+    check('Grok Build run: a built-in tool call kills the process tree at once', kills.length === 1 && kills[0] === spawned.child.pid, JSON.stringify(kills));
+    check('Grok Build run: it ends as failed, with an error naming the tool, and drops the session', out.failed === true && out.sessionId === null && /isn't one of Lumen's \(run_terminal_command\)/.test(error?.text || ''), JSON.stringify({ out, error }));
+    check('Grok Build run: nothing after the off-limits call reaches the sidebar', !events.some((e) => /LEAKED/.test(e.text || '')) && !/LEAKED/.test(out.text), JSON.stringify(events));
+    check('Grok Build run: the child gets the scrubbed env and the empty sidebar folder as cwd', spawned.opts.cwd.endsWith('grok-sidebar') && spawned.opts.env.HOME === spawned.opts.cwd && spawned.opts.stdio[0] === 'ignore' && spawned.opts.shell === false && !Object.keys(spawned.opts.env).some((k) => /API_KEY|TOKEN|SECRET/i.test(k)), JSON.stringify(spawned.opts));
+  }
+  {
+    const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'other__probe'), gbDone('probed')]);
+    check('Grok Build run: use_tool on another server is stopped the same way', kills.length === 1 && out.failed && /use_tool other__probe/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, kills }));
+  }
+  {
+    const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'lumen__read_page'), { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'c0', content: 'ok' }] } }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), gbDone('The page says hi.')]);
+    check('Grok Build run: Lumen\'s own tools run to the end untouched', kills.length === 0 && !out.failed && out.text === 'The page says hi.' && out.sessionId === 'id-1' && !events.some((e) => e.type === 'error'), JSON.stringify({ out, kills, events }));
+  }
 }
 
 // ---- CLI engines' model choice: picker ids -> --model, and the picker entries themselves
@@ -211,6 +296,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('updates: a non-https URL in the release info is ignored', manualAsset({ kind: 'zip', version: '0.3.0', files: [{ url: 'http://evil.example/Lumen-0.3.0-win-x64.zip' }] }).url === `${base}Lumen-0.3.0-win-x64.zip`, 'http');
 }
 
+<<<<<<< HEAD
 // ---- Windows icons: Lumen.exe is Electron's binary, so shortcuts must name Lumen's .ico
 {
   const { appIcon, fixShortcutIcons } = require('../features/instance');
@@ -245,3 +331,9 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);
+=======
+grokRuns().catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+  console.log(failures ? `\n${failures} failed` : '\nall passed');
+  process.exit(failures ? 1 : 0);
+});
+>>>>>>> 7cd02af (Stop Grok Build runs that call a non-Lumen tool)

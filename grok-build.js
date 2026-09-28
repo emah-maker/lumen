@@ -46,8 +46,30 @@
 //    takes the same JSON content blocks, images included, so the message goes in a file instead
 //    (see buildArgs / promptBlocks) with the same ~8 MB image budget as claude-code.js.
 //
-// Grok Build is still offered as experimental: these are Grok's own flags and config, not a
-// boundary Lumen enforces, and they have changed between CLI versions.
+// ---------------------------------------------------------------------------------------------
+// WHO ENFORCES WHAT (grok 1.0.41, measured 2026-09-28)
+// ---------------------------------------------------------------------------------------------
+// Enforced by Grok (its own flags and config, which have changed between CLI versions): which MCP
+// servers load (GROK_HOME's config.toml), which built-ins exist (--disallowed-tools, --deny), and
+// whether a call may run (--allow lumen__* / search_tool, [permission], --permission-mode dontAsk).
+// These are the only things that keep a non-Lumen tool from running.
+//
+// Enforced by Lumen, whatever Grok's rules say:
+//  - Tool calls are watched (toolWatch): the first one that isn't Lumen's (isLumenTool: lumen__*,
+//    search_tool, or use_tool naming lumen__*) kills the grok process tree and ends the message
+//    with an error; the chat's Grok session is dropped. This is DETECTION, not prevention: Grok
+//    starts a tool as it reports it. With a second MCP server allowed on purpose, its tools/call
+//    reached that server 1 ms after the use_tool event in one run, and 1 ms BEFORE it in another,
+//    killed at once with child.kill(); a terminal command's file appeared ~490 ms after its
+//    tool_use event (spawning the shell), and taskkill /T took ~300 ms. So Lumen can cut a run
+//    short, not stop a call Grok's own rules let through. That is why the picker still says unsafe.
+//  - The environment (buildEnv / ENV_KEEP): only what a process needs to start and reach the
+//    network; no API keys, tokens or the user's own GROK_* settings.
+//  - The working folder is a Lumen-owned empty folder (also the child's HOME), stdin is closed and
+//    only stdout/stderr pipes are shared. Calls to Lumen's own tools still go through Lumen's
+//    site approvals (features/ai-agents.js mcpCallTool), as for any agent.
+//
+// Grok Build is offered as unsafe and experimental for those reasons.
 //
 // ---------------------------------------------------------------------------------------------
 // VERIFIED EVENT SHAPES (--output-format streaming-messages-json --include-partial-messages, grok
@@ -261,13 +283,69 @@ function grokConfig({ command, args = [], env = {} }) {
   ].join('\n');
 }
 
-// The grok child's environment. Nothing Lumen-specific rides here: the tag goes to the bridge
-// through config.toml's [mcp_servers.lumen.env], as claude-code.js does through its mcp.json.
+// The only variables of Lumen's own environment the grok child gets: what a process needs to start
+// and reach the network on each OS (system folders, temp, locale, proxies and CA files), nothing
+// else. API keys, tokens and the rest of the user's shell environment stay behind, and so do the
+// user's own GROK_* settings (a GROK_SANDBOX=off, say). Grok signs in from auth.json in its home, so
+// it needs no secret here (XAI_API_KEY, which Grok would fall back to, is dropped too). The lumen
+// bridge inherits this environment plus config.toml's [mcp_servers.lumen.env]. Case-insensitive:
+// Windows spells them Path, SystemRoot, etc.
+const ENV_KEEP = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSPEC|TEMP|TMP|TMPDIR|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|COMMONPROGRAMFILES\(X86\)|COMMONPROGRAMW6432|OS|PROCESSOR_ARCHITECTURE|PROCESSOR_IDENTIFIER|NUMBER_OF_PROCESSORS|USERNAME|USERDOMAIN|COMPUTERNAME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|XDG_RUNTIME_DIR|__CF_USER_TEXT_ENCODING|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
+
+// The grok child's environment (see ENV_KEEP). Nothing Lumen-specific rides here: the tag goes to
+// the bridge through config.toml's [mcp_servers.lumen.env], as claude-code.js does through its mcp.json.
 function buildEnv({ userData, base = process.env }) {
   const home = sidebarDirFor(userData);
-  const env = { ...base, ...COMPAT_ENV, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1' };
-  for (const k of ['ELECTRON_RUN_AS_NODE', 'GROK_CONFIG', 'GROK_CONFIG_PATH', 'LUMEN_ENGINE']) delete env[k];
-  return env;
+  const kept = Object.fromEntries(Object.entries(base).filter(([k]) => ENV_KEEP.test(k)));
+  return { ...kept, ...COMPAT_ENV, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1' };
+}
+
+// Lumen's own check on every tool call Grok reports (see the file header): Lumen's tools are
+// lumen__<tool>, search_tool (a search of the tool catalog, which holds only what config.toml
+// connects) and use_tool naming a lumen__ tool. Anything else -- a built-in (run_terminal_command,
+// edit_file, ...), a hosted server tool, another server's tool -- is not.
+const LUMEN_TOOL = /^lumen__[\w-]+$/;
+function isLumenTool(name, input) {
+  const n = String(name || '');
+  if (LUMEN_TOOL.test(n) || n === 'search_tool') return true;
+  if (n === 'use_tool') return LUMEN_TOOL.test(String(input?.tool_name ?? ''));
+  return false;
+}
+// Reads the event stream and returns a label for the first tool call that isn't Lumen's, else null.
+// A plain tool is judged at content_block_start (its name is all it takes); use_tool once its input
+// is known: Grok sends a tool's whole input as one input_json_delta, then content_block_stop, and a
+// use_tool whose input never parses counts as not Lumen's. The finished `assistant` message is
+// checked again, for a block the partial events missed.
+function toolWatch() {
+  const open = new Map(); // content block index -> { json } for a use_tool still being streamed
+  const judge = (name, input) => (isLumenTool(name, input) ? null : name === 'use_tool' ? `use_tool ${String(input?.tool_name || '(unreadable)').slice(0, 80)}` : String(name || 'unnamed tool').slice(0, 80));
+  const parse = (json) => { try { return JSON.parse(json); } catch { return undefined; } };
+  return (msg) => {
+    if (msg.type === 'stream_event') {
+      const e = msg.event || {};
+      const b = e.content_block;
+      if (e.type === 'message_start') open.clear();
+      else if (e.type === 'content_block_start' && /tool_use$/.test(b?.type || '')) {
+        if (b.type !== 'tool_use') return judge(b.name || b.type);
+        if (b.name !== 'use_tool') return judge(b.name);
+        if (b.input?.tool_name) return judge('use_tool', b.input);
+        open.set(e.index, { json: '' });
+      } else if (e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta' && open.has(e.index)) {
+        const block = open.get(e.index);
+        block.json += e.delta.partial_json || '';
+        const input = parse(block.json);
+        if (input !== undefined) { open.delete(e.index); return judge('use_tool', input); }
+      } else if (e.type === 'content_block_stop' && open.has(e.index)) {
+        open.delete(e.index);
+        return judge('use_tool', null);
+      }
+    } else if (msg.type === 'assistant') {
+      for (const b of msg.message?.content || []) {
+        if (/tool_use$/.test(b?.type || '')) { const bad = b.type === 'tool_use' ? judge(b.name, b.input) : judge(b.name || b.type); if (bad) return bad; }
+      }
+    }
+    return null;
+  };
 }
 
 // Shares the user's sign-in, and only that, with Lumen's GROK_HOME (see the file header): a hard
@@ -326,11 +404,14 @@ function capImages(images, emit) {
 
 class GrokBuildEngine {
   // mcpCommand(): { command, args, env } for Lumen's bridge, written into Lumen's own GROK_HOME
-  // config.toml before each message. ensureServer(): starts the MCP server.
-  constructor({ userData, mcpCommand, ensureServer }) {
+  // config.toml before each message. ensureServer(): starts the MCP server. spawn / kill: the
+  // child_process spawn and cli-utils killTree, swappable for tests.
+  constructor({ userData, mcpCommand, ensureServer, spawn: spawnChild = spawn, kill = killTree }) {
     this.userData = userData;
     this.mcpCommand = mcpCommand;
     this.ensureServer = ensureServer;
+    this.spawn = spawnChild;
+    this.kill = kill;
     this.bin = undefined; // undefined: not looked up yet; null: not installed
     this.active = null; // { tag, emit, signal, child } for the run in progress
     this.statusCache = null;
@@ -382,11 +463,13 @@ class GrokBuildEngine {
     const promptFile = path.join(dir, `prompt-${tag}.json`);
     fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
     const argv = buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model });
-    const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData }), cwd: dir });
+    // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
+    // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
+    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData }), cwd: dir });
     this.active = { tag, emit, signal, child };
     // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background
     // "leader" process, `grok leader list/kill`, did not show up in Lumen's GROK_HOME in testing.)
-    const onAbort = () => killTree(child);
+    const onAbort = () => this.kill(child);
     signal.addEventListener('abort', onAbort, { once: true });
 
     let text = '';
@@ -395,7 +478,14 @@ class GrokBuildEngine {
     let newSession = sessionId;
     let stderr = '';
     let buffer = '';
+    // Lumen's own tool check (see the file header): the first tool call that isn't Lumen's ends the
+    // run and the process tree at once, and nothing after it reaches the sidebar.
+    const watch = toolWatch();
+    let offTool = null;
     const handle = (msg) => {
+      if (offTool) return;
+      offTool = watch(msg);
+      if (offTool) { this.kill(child); return; }
       if (msg.type === 'system' && msg.subtype === 'init') {
         newSession = msg.session_id || newSession;
         // No connection-status notice here: see file header -- mcp_servers[].status is "pending"
@@ -439,6 +529,12 @@ class GrokBuildEngine {
     try { fs.rmSync(promptFile, { force: true }); } catch {} // (dir itself is kept: the fixed sidebar folder, see above)
     try { settleAuth(userHome, home, authBefore); } catch {}
 
+    if (offTool) {
+      // The session is dropped (sessionId null) so the next message starts a new one instead of
+      // resuming a conversation that just reached for another tool.
+      emit({ type: 'error', text: `Lumen stopped Grok Build: it called a tool that isn't one of Lumen's (${offTool}). Grok reports a tool call as it starts running it, so that tool may already have run. Grok Build should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
+      return { text, sessionId: null, failed: true };
+    }
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
     if (code === 'ENOENT') {
       this.bin = null;
@@ -456,4 +552,4 @@ class GrokBuildEngine {
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, isLumenTool, toolWatch, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
