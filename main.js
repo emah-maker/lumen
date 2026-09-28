@@ -14,6 +14,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
+const { extensionPermissionLines } = require('./extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput } = require('./agent');
 const providers = require('./providers');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./search');
@@ -41,7 +42,6 @@ const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).
 // The browser UI's own document and its privileged preload (see the IPC gate and hardenUiView below).
 const UI_HTML = path.join(__dirname, 'renderer', 'index.html');
 const UI_URL = pathToFileURL(UI_HTML).href;
-const UI_PRELOAD = path.join(__dirname, 'preload.js');
 const SUGGEST_URL = pathToFileURL(path.join(__dirname, 'renderer', 'suggest.html')).href;
 // `url` is the local file `fileUrl` (query and hash aside). Case-insensitive: Windows paths are.
 const sameFileUrl = (url, fileUrl) => {
@@ -134,17 +134,13 @@ function hardenOwnView(wc, ownUrl) {
 
 // Backstop for every webContents, including ones made later or by libraries: no <webview>, and
 // nothing using the UI's preload may leave renderer/index.html.
+const uiContents = new WeakSet();
+ipcMain.on('ui-preload:loaded', (event) => { uiContents.add(event.sender); event.returnValue = true; });
 app.on('web-contents-created', (_e, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
-  // Electron has no public getter for a view's preload; _getPreloadScript() is what it uses itself.
-  // Failing that, a view showing the UI's own page is treated the same.
-  const usesUiPreload = () => {
-    try {
-      const p = contents._getPreloadScript?.()?.filePath || contents.getLastWebPreferences?.()?.preload;
-      if (p && path.resolve(p).toLowerCase() === UI_PRELOAD.toLowerCase()) return true;
-    } catch {}
-    return isUiUrl(contents.getURL());
-  };
+  // The UI window is registered when it's made, and preload.js registers any other view it runs in
+  // (ui-preload:loaded). Failing both, a view showing the UI's own page is treated the same.
+  const usesUiPreload = () => uiContents.has(contents) || isUiUrl(contents.getURL());
   contents.on('will-navigate', (event) => { if (!isUiUrl(event.url) && usesUiPreload()) event.preventDefault(); });
   contents.on('will-redirect', (event) => { if (!isUiUrl(event.url) && usesUiPreload()) event.preventDefault(); });
 });
@@ -631,6 +627,11 @@ async function setupExtensions() {
       popup.show();
     }, 700));
   });
+  // Lists what it asks for (all sites, history, downloads, …) before anything is installed.
+  const extensionAsks = (manifest) => {
+    const lines = extensionPermissionLines(manifest);
+    return lines.length ? `It can:\n${lines.map((l) => `• ${l}`).join('\n')}` : 'It asks for no special permissions.';
+  };
   await installChromeWebStore({
     session: ses,
     beforeInstall: async ({ localizedName, manifest }) => {
@@ -648,7 +649,7 @@ async function setupExtensions() {
         defaultId: 1,
         cancelId: 0,
         message: `Add “${localizedName}”?`,
-        detail: `Extensions can read and change data on the websites you visit.${(manifest.permissions || []).includes('nativeMessaging') ? '\n\nParts that talk to a desktop app (such as unlocking with the 1Password app) may not work in Lumen. Sign in inside the extension instead.' : ''}`,
+        detail: `${extensionAsks(manifest)}${(manifest.permissions || []).includes('nativeMessaging') ? '\n\nParts that talk to a desktop app (such as unlocking with the 1Password app) may not work in Lumen. Sign in inside the extension instead.' : ''}`,
       });
       return { action: response === 1 ? 'allow' : 'deny' };
     },
@@ -2144,6 +2145,7 @@ function createWindow() {
       additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
     },
   });
+  uiContents.add(win.webContents);
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
   win.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
   hardenOwnView(win.webContents, UI_URL);

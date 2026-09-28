@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
   <title>Can't open this page</title>
   <style>
     :root { color-scheme: light dark; --bg: #ffffff; --field: rgba(0, 0, 0, 0.05); --hover: rgba(0, 0, 0, 0.09); --text: #1d1d1f; --muted: #6e6e73; --accent: #007aff; }
@@ -27,27 +27,6 @@
     <p class="code" id="code"></p>
     <button id="retry" type="button">Try Again</button>
   </main>
-  <script>
-    const params = new URLSearchParams(location.search);
-    const url = params.get('url') || '';
-    let host = url;
-    try { host = new URL(url).host || url; } catch {}
-    // kind=crashed: the page's process died (a crash, out of memory, or you chose to close a page
-    // that stopped responding). Reloading starts it fresh.
-    const crashed = params.get('kind') === 'crashed';
-    if (crashed) {
-      document.title = 'This page crashed';
-      document.querySelector('h1').textContent = 'This page crashed';
-      document.getElementById('retry').textContent = 'Reload';
-    }
-    document.getElementById('message').textContent = crashed
-      ? `Something went wrong while showing ${host ? `“${host}”` : 'this page'}.`
-      : host ? `The browser can't connect to “${host}”.` : "The browser can't connect to the server.";
-    const desc = params.get('desc');
-    document.getElementById('code').textContent = desc ? `${desc}${params.get('code') ? ` (${params.get('code')})` : ''}` : '';
-    const retry = document.getElementById('retry');
-    if (/^https?:\/\//i.test(url)) retry.onclick = () => location.replace(url);
-    else retry.hidden = true;
-  </script>
+  <script src="error.js"></script>
 </body>
 </html>

@@ -1,6 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { injectBrowserAction } = require('electron-chrome-extensions/browser-action');
 
+// Before any page script runs: tells main this view has the UI's preload, so main.js's backstop
+// holds it to renderer/index.html (it can only make the view more restricted).
+ipcRenderer.sendSync('ui-preload:loaded');
+
 // Defines <browser-action-list>, the row of extension buttons in the toolbar.
 injectBrowserAction();
 

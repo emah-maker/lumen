@@ -25,7 +25,8 @@ const path = require('path');
 
   // ---- every channel preload.js sends is gated
   const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
-  const channels = [...preloadSrc.matchAll(/ipcRenderer\.(?:send|invoke|sendSync)\('([^']+)'/g)].map((m) => m[1]);
+  const channels = [...preloadSrc.matchAll(/ipcRenderer\.(?:send|invoke|sendSync)\('([^']+)'/g)].map((m) => m[1])
+    .filter((c) => c !== 'ui-preload:loaded'); // open to every sender on purpose: it only restricts the view that sends it
   const ungated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), channels);
   check(`every preload.js channel (${channels.length}) is gated to the UI`, channels.length > 30 && ungated.length === 0, ungated.join(', '));
 
@@ -121,6 +122,18 @@ const path = require('path');
   await ui.evaluate(() => window.browser.newTab('about:blank'));
   check('test mode: the UI bridge has its test-only calls', await ui.evaluate(() => typeof window.assistant.mcpInfo === 'function'), 'no assistant.mcpInfo');
   check('real UI call still works (browser.newTab)', (await waitFor(async () => ((await tabCount()) > tabsBeforeNew ? 1 : 0))) === 1, await tabCount());
+
+  // ---- the error page runs with no inline script allowed (its script is renderer/error.js)
+  const errorHtml = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'error.html'), 'utf8');
+  check('error.html: CSP allows no inline script', /script-src 'self'(;|")/.test(errorHtml) && !/<script>/.test(errorHtml), errorHtml.match(/Content-Security-Policy" content="([^"]+)/)?.[1]);
+  const errorPage = await app.evaluate(async ({ WebContentsView }, url) => {
+    const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
+    await view.webContents.loadURL(url).catch(() => {});
+    const text = await view.webContents.executeJavaScript("document.getElementById('message').textContent + ' | ' + document.getElementById('code').textContent");
+    view.webContents.close();
+    return text;
+  }, `file:///${path.join(__dirname, '..', 'renderer', 'error.html').replace(/\\/g, '/')}?url=${encodeURIComponent('https://unreachable.test/')}&desc=ERR_NAME_NOT_RESOLVED&code=-105`);
+  check('error.html: its script still fills in the message', errorPage.includes('unreachable.test') && errorPage.includes('ERR_NAME_NOT_RESOLVED (-105)'), errorPage);
 
   // ---- the AI's reader partition: no permissions, no downloads
   const reader = await app.evaluate(async ({ WebContentsView, session }, fixture) => {
