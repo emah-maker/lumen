@@ -4,9 +4,23 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- Windows: the taskbar button and the installer's shortcuts show Lumen's icon instead of Electron's.
-- Adding an extension from the Chrome Web Store no longer closes Lumen.
-- Grok Build: waits for Lumen's tools before the first turn, stops runs that call tools outside Lumen, and reports the default model from Lumen's own settings.
+## 0.2.6 (2026-09-28)
+
+- Private windows (Ctrl+Shift+N): nothing is saved, and closing the window clears its data.
+- Tab search (Ctrl+Shift+A), a speaker button to mute tabs, and Mute Site.
+- Save Page As, View Source, Reader mode, and Picture in Picture from the video menu.
+- Bookmarks page (Ctrl+Shift+O) with HTML import and export, a Downloads page (Ctrl+Shift+J), and clearing browsing data by time range.
+- Chat history in the sidebar, Markdown export, and token and cost counts per chat.
+- Turn AI off for a site, and undo the tab changes an AI reply made.
+- Add your own MCP servers as tools for the sidebar AI; every call asks first.
+- Organize Tabs with AI works through Claude Code or Grok Build, with no API key.
+- Certificate warning page, and the lock shows when a secure page loads insecure content.
+- Optional Google Safe Browsing (off by default; needs your own API key).
+- Keyboard navigation in the tab strip, and UI text moved into `locales/` for translation.
+- Windows: the taskbar and shortcuts show Lumen's icon. Adding an extension from the Chrome Web Store no longer closes Lumen.
+- Grok Build: tool calls are checked by Lumen before they run, Lumen's tools are ready before the first turn, and `XAI_API_KEY` sign-in works.
+- The browser window runs sandboxed.
+- New docs: MCP tools, settings and architecture.
 
 ## 0.2.5 (2026-09-28)
 
