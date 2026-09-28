@@ -25,20 +25,23 @@ const path = require('path');
 
   // Typical anti-adblock probes: a bait element and a bait ad script.
   await go('https://example.com/');
+  // Cosmetic rules go in as user-origin CSS, so no page-visible stylesheet may mention the bait classes.
+  // (Counting sheets doesn't work: example.com's own script adds a <style> of its own.)
   const probe = await js(`new Promise((resolve) => {
+    const cosmetic = () => [...document.styleSheets].some((sh) => { try { return [...sh.cssRules].some((r) => /adsbox|ad-banner|textads|banner-ads/.test(r.cssText)); } catch { return false; } });
     const bait = document.createElement('div');
     bait.className = 'adsbox ad-banner textads banner-ads';
     bait.style.cssText = 'width:1px;height:1px;position:absolute;left:-999px';
     document.body.appendChild(bait);
     const s = document.createElement('script');
     s.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
-    s.onload = () => setTimeout(() => resolve({ scriptLoaded: true, baitHidden: bait.offsetHeight === 0, sheets: [...document.styleSheets].length }), 500);
-    s.onerror = () => resolve({ scriptLoaded: false, baitHidden: bait.offsetHeight === 0, sheets: [...document.styleSheets].length });
+    s.onload = () => setTimeout(() => resolve({ scriptLoaded: true, baitHidden: bait.offsetHeight === 0, sheets: [...document.styleSheets].length, cosmetic: cosmetic() }), 500);
+    s.onerror = () => resolve({ scriptLoaded: false, baitHidden: bait.offsetHeight === 0, sheets: [...document.styleSheets].length, cosmetic: cosmetic() });
     document.head.appendChild(s);
   })`);
   console.log('      probe:', JSON.stringify(probe));
   check('bait element stays visible (bait-based detection sees no blocker)', !probe.baitHidden, JSON.stringify(probe));
-  check('no stylesheets added to the page DOM (example.com has 1 of its own)', probe.sheets === 1, JSON.stringify(probe));
+  check('no ad-hiding stylesheet visible to the page', !probe.cosmetic, JSON.stringify(probe));
   check('ad script request was actually blocked', (await blocked()) > 0, 'nothing blocked');
 
   // Network probes: blocked requests get stand-ins, so "did it load?" checks see them load.
