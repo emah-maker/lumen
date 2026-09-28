@@ -30,6 +30,8 @@ Download the latest build from [Releases](https://github.com/emah-maker/lumen/re
 xattr -dr com.apple.quarantine /Applications/Lumen.app
 ```
 
+**Updates:** Lumen looks for a new release shortly after it starts and every few hours (**Settings → About Lumen → Updates** shows the result and has **Check for updates**). A copy installed with `Lumen-Setup` downloads the update in the background and shows **Restart to update** in the toolbar; if you ignore it, it installs when you quit. Your tabs come back after the restart. Turn off **Download updates automatically** to be asked first. The zip copy and the Mac app can't replace themselves (the Mac app isn't signed with an Apple Developer ID, which macOS requires for that), so they show **Lumen vX is available** with a **Download** button for the right file: unzip it over the old copy, or drag the new app from the dmg to Applications. Downloads are checked against the SHA-512 hash in the release's `latest.yml`; the builds aren't code-signed, so an update is only as trustworthy as the GitHub release it comes from. Lumen 0.2.4 and earlier have no updater: download a newer version by hand once.
+
 Then set up an AI from the sidebar's empty state or **Settings → You and AI** (`Ctrl+,`; the sidebar's gear opens it): your Claude account through Claude Code, an Anthropic, OpenAI, Grok, Gemini or OpenRouter key (stored encrypted with the OS keychain), or **Sign in with OpenRouter**. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY` and `OPENROUTER_API_KEY` work too.
 
 ## The start page
@@ -234,7 +236,7 @@ Set `LUMEN_BUILD_DIR` to use a different folder. The installed Windows app lives
 
 The Windows build ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, and Electron taken from node_modules), and `scripts/build.js` checks this after every build. Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity) produces one. The untouched Electron binary is recognised, so it runs. The window, taskbar and shortcuts use Lumen's icon at runtime. For a normal signed installer, sign the build with a trusted code-signing certificate.
 
-Release installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead.
+Release installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead. To ship an update: bump `version` in package.json (`npm version patch --no-git-tag-version`), commit and push, then tag that commit with the same version and push the tag (`git tag v0.2.5 && git push origin v0.2.5`). The workflow refuses a tag that doesn't match package.json. Next to the installers the release gets `latest.yml`, `latest-mac.yml` and `.blockmap` files, which installed copies read to find and verify the update (`features/updates.js`, electron-updater).
 
 ### DRM (Widevine): Netflix, Spotify, Disney+, Prime Video, YouTube Movies
 
@@ -256,7 +258,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 ## Layout
 
 - `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, IPC
-- `features/`: parts split out of main.js: `ai-agents.js` (MCP, CDP automation, the Claude Code and Grok Build engines; automation.js, claude-code.js and grok-build.js load on first use), `adblock.js`, `dialogs.js`, `downloads.js`, `instance.js` (single instance, shortcuts)
+- `features/`: parts split out of main.js: `ai-agents.js` (MCP, CDP automation, the Claude Code and Grok Build engines; automation.js, claude-code.js and grok-build.js load on first use), `adblock.js`, `dialogs.js`, `downloads.js`, `instance.js` (single instance, shortcuts), `updates.js` (new versions from GitHub Releases)
 - `settings-backend.js`, `renderer/settings.*`: lumen://settings, the one place for settings
 - `tab-groups.js`: groups by site and by topic (local TF-IDF clustering), undo
 - `extensions-dnr-preload.js`: `browser` alias and chrome.declarativeNetRequest for extensions (rules kept, not applied; content blockers with static rulesets are refused at install)
@@ -272,7 +274,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab, settings, history and error pages
 - `scripts/`: build, install and `capture-media.js` (the README's screenshots)
 - `docs/media/`: the README's screenshots and GIFs (not shipped in builds)
-- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup, hardening (UI window and reader session lockdown)
+- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup, hardening (UI window and reader session lockdown), updates (the updater with a stand-in, never the network)
 
 ## License
 

@@ -58,3 +58,23 @@
 .icon-btn.auto-allow svg path { fill: none; }
 .icon-btn.auto-allow[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .icon-btn.auto-allow[aria-pressed="true"] svg path { fill: currentColor; }
+
+/* Update prompt in the toolbar (renderer/updates.js): the same quiet pill as "Lumen is using this tab". */
+.update-pill {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 2px 0 10px; margin-right: 6px;
+  border-radius: 14px; color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
+  background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border);
+  animation: pill-in var(--t-snappy) var(--spring-snappy);
+}
+.update-pill[hidden] { display: none; }
+#update-action {
+  height: 22px; padding: 0 10px; border: none; border-radius: 11px; background: var(--accent-soft); color: var(--accent);
+  font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
+}
+#update-action:hover { box-shadow: inset 0 0 0 1px var(--accent); }
+.update-dismiss {
+  width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 11px;
+  background: transparent; color: var(--muted); font-size: 14px; line-height: 1;
+}
+.update-dismiss:hover { background: var(--hover); color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .update-pill { animation: fade-in 160ms ease-out; } }

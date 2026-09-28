@@ -561,7 +561,7 @@ async function buildAbout(card) {
   card.append(stackRow('Build', null, h('table', {},
     [['App', a.appPath], ['Executable', a.exePath], ['Profile', a.userData], ['Packaged', a.packaged ? 'Yes' : 'No (development)']]
       .map(([k, v]) => h('tr', {}, h('td', { text: k }), h('td', { class: 'mono', text: v }))))));
-  card.append(row('Updates', 'New versions are published on GitHub.', h('button', { text: 'Check for updates', onclick: () => S.openUrl(a.updatesUrl) })));
+  await buildUpdates(card); // renderer/settings-updates.js
 
   // Task manager
   const table = h('table', { id: 'task-manager' });
