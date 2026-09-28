@@ -559,6 +559,71 @@ async function fuseChecks() {
   fs.rmSync(out, { recursive: true, force: true });
 }
 
+// ---- Tab search matching (renderer/tab-search-match.js) and tab audio (features/tab-tools.js)
+{
+  const { rank, itemScore } = require('../renderer/tab-search-match');
+  const items = [
+    { title: 'Inbox - Gmail', url: 'https://mail.google.com/mail/u/0/' },
+    { title: 'Beta Notes', url: 'https://notes.example/beta' },
+    { title: 'Unrelated page', url: 'https://docs.example/zeta-path' },
+    { title: 'Alphabet soup', url: 'https://food.example/soup' },
+  ];
+  check('tabsearch: an empty query keeps every tab in order', rank('', items).length === 4 && rank('  ', items)[0] === items[0], 'order');
+  check('tabsearch: a title word finds its tab first', rank('beta', items)[0] === items[1], JSON.stringify(rank('beta', items)));
+  check('tabsearch: part of the address matches too', rank('zeta', items)[0] === items[2], JSON.stringify(rank('zeta', items)));
+  check('tabsearch: letters in order with gaps match (gml -> Gmail)', rank('gml', items)[0] === items[0], JSON.stringify(rank('gml', items)));
+  check('tabsearch: every word has to match', rank('beta soup', items).length === 0 && rank('gmail inbox', items)[0] === items[0], JSON.stringify(rank('beta soup', items)));
+  check('tabsearch: no match drops the tab', rank('qqq', items).length === 0 && itemScore('qqq', items[0]) === -1, 'matched');
+  check('tabsearch: a word start beats the middle of a word', itemScore('soup', items[3]) > itemScore('bet', { title: 'alphabet', url: '' }), 'ranking');
+  check('tabsearch: case does not matter', rank('BETA', items)[0] === items[1], 'case');
+
+  const { create } = require('../features/tab-tools');
+  const fakeWc = (url) => {
+    const handlers = {};
+    return { url, muted: false, audible: false, getURL() { return this.url; }, isDestroyed: () => false, isAudioMuted() { return this.muted; }, setAudioMuted(m) { this.muted = m; }, isCurrentlyAudible() { return this.audible; }, on(ev, fn) { (handlers[ev] ||= []).push(fn); }, emit(ev) { (handlers[ev] || []).forEach((fn) => fn()); } };
+  };
+  let changes = 0;
+  const tools = create({ onChange: () => { changes++; }, isWebUrl: (u) => /^https?:/.test(u) });
+  const mk = (url) => ({ view: { webContents: fakeWc(url) } });
+  const a = mk('https://music.example/a');
+  const b = mk('https://music.example/b');
+  const c = mk('https://other.example/');
+  [a, b, c].forEach((t) => tools.wire(t));
+  const urlOf = (t) => t.view.webContents.getURL();
+  a.view.webContents.audible = true;
+  a.view.webContents.emit('audio-state-changed');
+  check('tab-tools: a sound starting or stopping refreshes the strip', changes === 1, changes);
+  check('tab-tools: state reports audible and muted', JSON.stringify(tools.state(a, true)) === '{"audible":true,"muted":false}' && JSON.stringify(tools.state({ muted: true }, false)) === '{"audible":false,"muted":true}', JSON.stringify(tools.state(a, true)));
+  tools.setMuted(a, true);
+  check('tab-tools: Mute Tab mutes only that tab', a.view.webContents.muted && !b.view.webContents.muted, 'mute');
+  tools.setMuted(a, false);
+  tools.setSiteMuted('music.example', true, [a, b, c], urlOf);
+  check('tab-tools: Mute Site mutes every tab on the host, not others', a.view.webContents.muted && b.view.webContents.muted && !c.view.webContents.muted && tools.siteMuted('music.example'), 'site');
+  c.view.webContents.url = 'https://music.example/c';
+  c.view.webContents.emit('did-navigate');
+  check('tab-tools: a tab arriving on a muted site is muted', c.view.webContents.muted && c.siteMuted, 'arrive');
+  c.view.webContents.url = 'https://elsewhere.example/';
+  c.view.webContents.emit('did-navigate');
+  check('tab-tools: and unmuted again when it leaves', !c.view.webContents.muted, 'leave');
+  tools.setMuted(b, true); // by hand as well
+  b.view.webContents.url = 'https://elsewhere.example/x';
+  b.view.webContents.emit('did-navigate');
+  check('tab-tools: a tab muted by hand stays muted when it leaves the site', b.view.webContents.muted, 'hand');
+  tools.setSiteMuted('music.example', false, [a, b, c], urlOf);
+  check('tab-tools: Unmute Site unmutes the tabs on that site', !a.view.webContents.muted && !tools.siteMuted('music.example'), 'unmute');
+  const woken = { muted: true, view: { webContents: fakeWc('https://x.example/') } };
+  tools.wire(woken);
+  check('tab-tools: a woken tab keeps its mute', woken.view.webContents.muted, 'sleep');
+  check('tab-tools: only web pages have a site to mute', tools.siteOf('file:///C:/x.html') === '' && tools.siteOf('https://a.example/p') === 'a.example', tools.siteOf('file:///C:/x.html'));
+  const closed = ['https://one.example/', 'https://two.example/'];
+  tools.noteClosed(closed[0], 'One');
+  tools.noteClosed(closed[1], '');
+  const entries = tools.closedEntries(closed);
+  check('tab-tools: recently closed lists newest first with titles and indexes', entries[0].index === 1 && entries[0].title === closed[1] && entries[1].title === 'One' && entries[1].index === 0, JSON.stringify(entries));
+  for (let i = 0; i < 120; i++) tools.noteClosed(`https://n${i}.example/`, `n${i}`);
+  check('tab-tools: the closed-title list stays bounded', tools.closedEntries(['https://one.example/'])[0].title === 'https://one.example/', 'unbounded');
+}
+
 fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

@@ -56,6 +56,11 @@ contextBridge.exposeInMainWorld('browser', {
   addressTouched: () => ipcRenderer.send('address:touched'),
   homeMode: () => ipcRenderer.invoke('home:mode'), // 'ask' | 'search' on the new-tab page, else null
   onSuggestionPicked: on('suggest:picked'),
+  // Tab search (Ctrl+Shift+A) and the tab strip's speaker button (features/tab-tools.js)
+  toggleMute: (id) => ipcRenderer.send('tab:mute', id),
+  closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
+  reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
+  onOpenTabSearch: on('tabsearch:open'),
 });
 
 // [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).

@@ -128,7 +128,7 @@ let pendingState = null; // tab updates that arrive mid-drag are applied on rele
 let suppressClick = false;
 
 function startTabDrag(e, el, id) {
-  if (e.button !== 0 || e.target.closest('.tab-close')) return;
+  if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
   const tabs = [...$('tabs').querySelectorAll('.tab')];
   drag = { el, id, startX: e.clientX, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
@@ -322,6 +322,7 @@ function updateTabEl(el, tab, group, activeId) {
   const title = el.querySelector('.tab-title');
   if (title.textContent !== tab.title) title.textContent = tab.title;
   el.querySelector('.tab-close').setAttribute('aria-label', `Close ${tab.title}`);
+  if (typeof updateTabAudio === 'function') updateTabAudio(el, tab); // tab-search.js: the speaker button
   return el;
 }
 
