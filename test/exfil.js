@@ -1,7 +1,7 @@
 // Exfiltration guard: once a run has read page content, taking the browser to a host the user hasn't
 // approved (navigate / open_tab / read_urls) asks first; approved hosts and runs that read nothing go
 // freely; outside (MCP) agents are always asked; an approved host redirecting to a new one asks too;
-// list_tabs hides query strings and Lumen's own tabs.
+// web_search asks before sending the query; list_tabs hides query strings and Lumen's own tabs.
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -75,7 +75,8 @@ const path = require('path');
       .filter((b) => b.type === 'tool_result')
       .map((b) => ({ error: Boolean(b.is_error), text: typeof b.content === 'string' ? b.content : JSON.stringify(b.content).slice(0, 300) }));
     return {
-      approvals: events.filter((e) => e.type === 'approval').map(({ host, action, title }) => ({ host, action, title })),
+      approvals: events.filter((e) => e.type === 'approval').map(({ host, action, title, query }) => ({ host, action, title, query })),
+      approved: [...agent.approvedHosts],
       results,
       url: agent.browser.activeTab().webContents.getURL(),
       tabs: agent.browser.listTabs().length,
@@ -163,6 +164,25 @@ const path = require('path');
     { name: 'read_urls', input: { urls: [bounce('/hidden-denied')] } },
   ] });
   check('read_urls: a redirect to a new host asks, and denied, the page is not read', r.approvals.length === 1 && r.approvals[0].host === otherHost && /did not allow Claude/.test(r.results[1]?.text) && !/Secret \/hidden-denied/.test(r.results[1]?.text) && !hits.includes(`${otherHost}/hidden-denied`), JSON.stringify(r));
+
+  // 7c. web_search in a tainted run: a card with the query; denied, nothing is searched. Allowed,
+  // DuckDuckGo joins the chat's approved sites. A run that read nothing searches without a card.
+  const secretQuery = 'Secret /inbox private text';
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'web_search', input: { query: secretQuery } },
+  ] });
+  check('read_page then web_search shows a card with the query', r.approvals.length === 1 && r.approvals[0].host === 'html.duckduckgo.com' && r.approvals[0].action === 'open' && r.approvals[0].query === secretQuery && r.approvals[0].title.includes(secretQuery), JSON.stringify(r.approvals));
+  check('denied: the search is not sent', r.results[1]?.error && /did not allow Claude to send this search/.test(r.results[1].text), JSON.stringify(r.results));
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: true, toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'web_search', input: { query: 'lumen browser' } },
+  ] });
+  check('allowed: DuckDuckGo joins the approved sites', r.approvals.length === 1 && r.approved.includes('html.duckduckgo.com') && !/did not allow/.test(r.results[1]?.text), JSON.stringify(r));
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [
+    { name: 'web_search', input: { query: 'lumen browser' } },
+  ] });
+  check('an untainted web_search shows no card', r.approvals.length === 0 && !/did not allow/.test(r.results[0]?.text), JSON.stringify(r));
 
   // 8. Auto-allow covers the sidebar's AI; an outside MCP agent is still asked, taint kept per session.
   const mcp = await app.evaluate(async (_e, { home: h, other: o }) => {

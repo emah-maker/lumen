@@ -447,13 +447,16 @@ const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'pr
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
 const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'list_tabs', 'run_script', 'batch']);
-// Tools that send a request to a host the model picks. In a tainted run, each new destination host
-// needs the user's OK (the same per-chat approved hosts as ACTING_TOOLS).
-const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls']);
+// Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
+// In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
+// as ACTING_TOOLS).
+const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls', 'web_search']);
+const SEARCH_HOST = 'html.duckduckgo.com';
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
 // URLs are left out: execute() refuses them anyway.
 function destinationHosts(name, input) {
+  if (name === 'web_search') return [SEARCH_HOST];
   const urls = name === 'read_urls' ? (Array.isArray(input?.urls) ? input.urls.slice(0, 6) : []) : [input?.url];
   const hosts = [];
   for (const raw of urls) {
@@ -646,7 +649,7 @@ async function searchWeb(query) {
   wc.setAudioMuted(true);
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
   try {
-    await Promise.race([wc.loadURL(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`).catch(() => {}), sleep(12000)]);
+    await Promise.race([wc.loadURL(`https://${SEARCH_HOST}/html/?q=${encodeURIComponent(query)}`).catch(() => {}), sleep(12000)]);
     const rows = await runScript(wc, `[...document.querySelectorAll('.result')].slice(0, 8).map((r) => {
       const a = r.querySelector('a.result__a');
       let url = a ? a.href : '';
@@ -1210,6 +1213,7 @@ class Agent {
   // `run` is the task scope, whose chat holds the taint until New chat, or an MCP session for outside
   // agents), navigate / open_tab / read_urls to a destination host that isn't approved yet ask first
   // ("<who> wants to open <host>"), one card per new host. The answer joins the same approved hosts.
+  // web_search asks the same way about DuckDuckGo, with the query on the card (it is what gets sent).
   // A chat that hasn't read anything goes freely. Redirects the tool then runs into are checked
   // against the same hosts (guardRedirects), so the call's context is kept on the task scope.
   async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
@@ -1217,8 +1221,9 @@ class Agent {
     const scope = taskScope.getStore();
     if (scope) scope.gate = gate;
     if (DESTINATION_TOOLS.has(name) && taintHolder(run)?.tainted) {
+      const search = name === 'web_search' ? { query: String(input.query ?? ''), title: `${who} wants to search DuckDuckGo for ${quote(String(input.query ?? ''), 120)}` } : undefined;
       for (const host of destinationHosts(name, input)) {
-        if (!(await this.askOpen(host, gate))) throw new Error(`The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
+        if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search to DuckDuckGo. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
       }
     }
     if (READING_TOOLS.has(name)) this.markTainted(run);
@@ -1243,11 +1248,17 @@ class Agent {
 
   // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
   // (auto-allow covers the sidebar's AI only); calls that need the same host at once share one card.
-  async askOpen(host, { emit, signal, hosts, who, external }) {
+  // `card` ({ title, query }) says more on the card, for a search; such a card is never shared.
+  async askOpen(host, { emit, signal, hosts, who, external }, card = null) {
     if (hosts.has(host)) return true;
     if (!external && this.browser.autoApprove?.()) {
       hosts.add(host);
       return true;
+    }
+    if (card) {
+      const ok = await this.askApproval(host, emit, signal, { action: 'open', who, ...card });
+      if (ok) hosts.add(host);
+      return ok;
     }
     if (!this.openAsks.has(hosts)) this.openAsks.set(hosts, new Map());
     const asks = this.openAsks.get(hosts);
@@ -1325,11 +1336,14 @@ class Agent {
     if (holder) holder.tainted = true;
   }
 
-  // action 'open' (a tainted run heading to a new host) is shown as "<who> wants to open <host>";
-  // without it, the card is the usual "Allow … to interact with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null } = {}) {
+  // action 'open' (a tainted run heading to a new host) is shown as "<who> wants to open <host>"
+  // (or `title`, with the search `query` for web_search); without it, the card is the usual
+  // "Allow … to interact with <host>?".
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null } = {}) {
     const approvalId = ++this.approvalSeq;
-    emit(action === 'open' ? { type: 'approval', approvalId, host, action, title: `${who || 'Claude'} wants to open ${host}` } : { type: 'approval', approvalId, host });
+    emit(action === 'open'
+      ? { type: 'approval', approvalId, host, action, title: title || `${who || 'Claude'} wants to open ${host}`, ...(query === null ? {} : { query }) }
+      : { type: 'approval', approvalId, host });
     return new Promise((resolve, reject) => {
       const onAbort = () => {
         this.pendingApprovals.delete(approvalId);
