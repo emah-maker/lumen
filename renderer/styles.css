@@ -212,6 +212,7 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: 100px; padding-right
 .security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; }
 .security svg { width: 11px; height: 11px; }
 .security.insecure { color: var(--warning); }
+.security.danger { color: var(--danger); }
 .omnibox-end { position: absolute; right: 3px; top: 3px; bottom: 3px; display: flex; align-items: center; gap: 2px; transition: opacity var(--t-fast) ease-out, transform var(--t-base) var(--spring-smooth); }
 .omnibox-action {
   width: 26px; height: 26px; display: grid; place-items: center;

@@ -33,6 +33,7 @@ const { createTabGroups, siteName } = require('./tab-groups');
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
 const { createDialogs } = require('./features/dialogs');
+const { createSiteSecurity } = require('./features/site-security');
 const instance = require('./features/instance');
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
@@ -41,6 +42,8 @@ const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html
 const settingsPage = require('./settings-backend'); // [settings] lumen://settings
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url);
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
+const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
+const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL);
 // The browser UI's own document and its privileged preload (see the IPC gate and hardenUiView below).
 const UI_HTML = path.join(__dirname, 'renderer', 'index.html');
 const UI_URL = pathToFileURL(UI_HTML).href;
@@ -319,6 +322,18 @@ if (TEST) {
   global.__closeTabInteractive = (id) => requestCloseTab(id);
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
+
+// Certificate errors and mixed content (features/site-security.js). Going past a bad certificate is
+// only ever the user's answer in Lumen's own dialog, never a page's or the AI's.
+const siteSecurity = createSiteSecurity({
+  dialogs,
+  win: () => win,
+  isTab: (wc) => Boolean(tabByContents(wc)),
+  certUrl: CERT_URL,
+  onChange: () => { if (tabs.length) sendTabs(); },
+});
+app.on('certificate-error', siteSecurity.onCertificateError);
+if (TEST) global.__siteSecurity = siteSecurity;
 
 // HTTP Basic/Digest auth: a styled sign-in sheet instead of the native prompt.
 app.on('login', (event, webContents, details, authInfo, callback) => {
@@ -837,7 +852,7 @@ function hideSuggestions() {
 // The URL a tab is "really" on: error pages report the address that failed.
 function realUrl(wc) {
   const url = wc.getURL();
-  if (url.startsWith(ERROR_URL) || url.startsWith(settingsPage.HTTPS_ONLY_URL)) return new URL(url).searchParams.get('url') || ''; // [settings] HTTPS-only warning too
+  if (isErrorPage(url) || url.startsWith(settingsPage.HTTPS_ONLY_URL)) return new URL(url).searchParams.get('url') || ''; // [settings] HTTPS-only warning too
   return url;
 }
 
@@ -882,7 +897,8 @@ function tabState() {
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : null, // Lumen's own pages get their own icon
-        error: wc.getURL().startsWith(ERROR_URL),
+        error: isErrorPage(wc.getURL()),
+        security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
         zoomDefault: isWebUrl(url) ? defaultZoomPercent : 100, // [settings] the zoom pill shows only when a page differs from it
         bookmarked: isWebUrl(url) && bookmarked.has(url),
@@ -1015,6 +1031,8 @@ function wireView(tab, url, history = null) {
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
+    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
+    if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
     const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
     wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
   });
@@ -1050,10 +1068,10 @@ function wireView(tab, url, history = null) {
     });
   });
   wc.on('responsive', () => { tab.hungAsked = false; });
-  wc.on('did-navigate', (_e, url) => { if (!url.startsWith(ERROR_URL)) tab.lastUrl = url; });
+  wc.on('did-navigate', (_e, url) => { if (!isErrorPage(url)) tab.lastUrl = url; });
   wc.on('did-navigate', (_e, url) => {
     // The error page replaces the failed entry, so Back skips past it.
-    if (url.startsWith(ERROR_URL)) {
+    if (isErrorPage(url)) {
       const history = wc.navigationHistory;
       const failed = history.getActiveIndex() - 1;
       if (failed >= 0 && history.getEntryAtIndex(failed)?.url === realUrl(wc)) history.removeEntryAtIndex(failed);
@@ -1126,6 +1144,7 @@ function wireView(tab, url, history = null) {
 
   if (!settings) { // [settings] no debugger and no extensions on the settings tab
     applyChromeIdentity(wc);
+    siteSecurity.attachTab(wc); // mixed content, on the debugger session applyChromeIdentity opened
     syncExtensions(() => extensions?.addTab(wc, win));
     // A popup (sign-in, payment) presents itself as Chrome like the tab that opened it: Google
     // sign-in and some payment pages refuse browsers they don't recognise.
@@ -2017,7 +2036,7 @@ function reloadActive() {
   const wc = activeTab()?.webContents;
   if (!wc) return;
   if (wc.isLoading()) wc.stop();
-  else if (wc.getURL().startsWith(ERROR_URL)) wc.loadURL(realUrl(wc)).catch(() => {});
+  else if (isErrorPage(wc.getURL())) wc.loadURL(realUrl(wc)).catch(() => {});
   else wc.reload();
 }
 

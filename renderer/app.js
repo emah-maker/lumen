@@ -64,6 +64,7 @@ const address = $('address');
 let addressDirty = false;
 let currentUrl = '';
 let currentError = false;
+let currentSecurity = null; // 'broken' (past a certificate warning) | 'mixed' (http content loaded) | null
 let lastActiveId = null;
 
 const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z"/>';
@@ -95,6 +96,16 @@ function showAddress() {
   address.value = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
   if (currentError) {
     security.hidden = true; // an error page has no connection to vouch for
+  } else if (currentUrl.startsWith('https:') && currentSecurity === 'broken') {
+    security.className = 'security danger';
+    security.innerHTML = WARN + '<span>Not secure</span>';
+    security.title = "This site's certificate isn't trusted. You chose to continue anyway.";
+    security.hidden = false;
+  } else if (currentUrl.startsWith('https:') && currentSecurity === 'mixed') {
+    security.className = 'security insecure';
+    security.innerHTML = WARN;
+    security.title = 'Not fully secure: parts of this page (such as images) were loaded over an unencrypted connection';
+    security.hidden = false;
   } else if (currentUrl.startsWith('https:')) {
     security.className = 'security';
     security.innerHTML = LOCK;
@@ -462,6 +473,7 @@ function renderTabs(state) {
     closeFind();
   }
   currentError = Boolean(active?.error);
+  currentSecurity = active?.security || null;
   const zoom = active?.zoom ?? 100;
   const zoomed = zoom !== (active?.zoomDefault ?? 100); // [settings] the default zoom from Settings isn't "zoomed"
   $('zoom').hidden = !zoomed;
