@@ -33,7 +33,8 @@
   icon.onerror = () => { icon.hidden = true; };
   const title = Object.assign(document.createElement('span'), { className: 'pc-title' });
   const toggle = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-toggle' });
-  chip.append(label, icon, title, toggle);
+  const siteToggle = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-toggle pc-site', hidden: true }); // [ai controls]
+  chip.append(label, icon, title, toggle, siteToggle);
   // First row inside the floating composer (it is absolutely positioned, so a sibling would sit under it).
   $('composer')?.prepend(chip);
 
@@ -43,6 +44,22 @@
     const web = Boolean(tab?.url) && /^https?:/i.test(tab.url);
     chip.hidden = !web;
     if (!web) return;
+    const aiOff = siteState.url === tab.url && siteState.off;
+    if (siteState.url !== tab.url || siteStale) { siteStale = false; refreshSite(tab.url); }
+    chip.classList.toggle('ai-off', aiOff);
+    siteToggle.hidden = siteState.url !== tab.url || !siteState.site;
+    siteToggle.textContent = aiOff ? 'Turn on AI' : 'AI off here';
+    siteToggle.title = aiOff ? `Let the AI read and act on ${siteState.site} again` : `Turn off AI on ${siteState.site}: the AI can't see or act on this site's tabs, and they aren't sent with messages`;
+    siteToggle.setAttribute('aria-pressed', String(aiOff));
+    toggle.hidden = aiOff;
+    if (aiOff) {
+      chip.classList.remove('excluded');
+      label.textContent = 'AI is off on:';
+      title.textContent = siteState.site;
+      chip.title = `You turned off AI on ${siteState.site}. The AI can't see or act on its tabs.`;
+      icon.hidden = true;
+      return;
+    }
     chip.classList.toggle('excluded', !include);
     label.textContent = include ? 'Using:' : 'Not using:';
     title.textContent = tab.title || tab.url;
@@ -54,6 +71,28 @@
     toggle.setAttribute('aria-label', toggle.title);
     toggle.setAttribute('aria-pressed', String(!include));
   }
+  // [ai controls] Whether the tab's site has AI turned off (features/ai-sites.js answers: it knows
+  // what counts as one site). Asked again on every tab update, so a change in Settings shows up.
+  let siteState = { url: null, site: '', off: false };
+  let siteStale = false;
+  let asking = null;
+  function refreshSite(url) {
+    asking = url;
+    extras.aiSiteState?.(url).then((state) => {
+      if (asking !== url) return;
+      asking = null;
+      siteState = { url, site: state?.site || '', off: Boolean(state?.off) };
+      renderChip();
+    }).catch(() => { asking = null; });
+  }
+  siteToggle.addEventListener('click', async () => {
+    if (!siteState.site) return;
+    await extras.setAiSite?.(siteState.site, !siteState.off);
+    siteStale = true;
+    renderChip();
+  });
+  window.browser.onTabs?.(() => { siteStale = true; }); // re-ask after each change
+
   toggle.addEventListener('click', async () => {
     include = !include;
     renderChip();
@@ -87,5 +126,31 @@
     pending.delete(approvalId);
     syncBadge();
     return result;
+  };
+
+  // ---------- [ai controls] "Undo" under a reply that changed your tabs ----------
+  // `undo` ({ id, undoable, lasting }) comes with the run's 'done' event (agent.js undoSummary):
+  // the tabs it opened, closed, moved to other pages or regrouped can be put back; what it did on
+  // sites (lasting: clicks, typing, forms) can't, and the button says so.
+  window.showRunUndo = function showRunUndo(append, undo) {
+    if (!undo?.undoable) return;
+    const box = append(Object.assign(document.createElement('div'), { className: 'run-undo' }));
+    const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: 'Undo tab changes' });
+    const lasting = undo.lasting?.length ? `Can't be undone here: ${undo.lasting.join('; ')}.` : '';
+    button.title = `Close the tabs this reply opened, reopen the ones it closed, and take its tabs back to where they were.${lasting ? `
+${lasting}` : ''}`;
+    box.append(button);
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      let result;
+      try { result = await window.assistant.undoRun(undo.id); } catch (err) { result = { ok: false, message: String(err?.message || err) }; }
+      button.remove();
+      const lines = result?.ok ? [...result.done, ...result.skipped] : [result?.message || 'Nothing was undone.'];
+      if (result?.ok && !lines.length) lines.push('Nothing was left to undo.');
+      if (result?.ok && result.lasting?.length) lines.push(`Can't be undone here: ${result.lasting.join('; ')}.`);
+      const list = Object.assign(document.createElement('ul'), { className: 'run-undo-result' });
+      for (const line of lines) list.append(Object.assign(document.createElement('li'), { textContent: line }));
+      box.append(list);
+    });
   };
 })();

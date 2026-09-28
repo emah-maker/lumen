@@ -533,6 +533,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopMcp: () => ipcRenderer.send('mcp:stop'),
   onHistory: on('agent:history'),
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+  undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
@@ -550,6 +551,9 @@ contextBridge.exposeInMainWorld('lumenExtras', {
   setPageContext: (on) => ipcRenderer.invoke('pagecontext:set', on),
   // { installed, signedIn: true|false|'unknown', accountType: 'subscription'|'apiKey'|null, detail }
   claudeCodeStatus: (refresh) => ipcRenderer.invoke('claudecode:status', refresh),
+  // [ai controls] sites where the user turned AI off (features/ai-sites.js)
+  aiSiteState: (url) => ipcRenderer.invoke('settings:ai-site-state', url), // { site, off }
+  setAiSite: (site, off) => ipcRenderer.invoke('settings:set-ai-site', site, off),
 });
 // ---- [/claude code engine] + [/page context]
 })(load);

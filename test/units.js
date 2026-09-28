@@ -750,6 +750,25 @@ async function fuseChecks() {
   fs.rmSync(legacyDir, { recursive: true, force: true });
 }
 
+// ---- [ai controls] "Turn off AI on this site" (features/ai-sites.js): one switch per registrable domain
+{
+  const { createAiSites, siteOf, siteFromInput } = require('../features/ai-sites');
+  check('ai-sites: a subdomain belongs to its site', siteOf('https://mail.example.co.uk/inbox?x=1') === 'example.co.uk', siteOf('https://mail.example.co.uk/inbox'));
+  check('ai-sites: non-web addresses have no site', siteOf('file:///C:/x.html') === '' && siteOf('about:blank') === '' && siteOf('not a url') === '', 'site for non-web');
+  check('ai-sites: typed names and full addresses both work', siteFromInput('www.Example.com') === 'example.com' && siteFromInput('https://a.b.example.com/x') === 'example.com', siteFromInput('www.Example.com'));
+  let saved = {};
+  const changes = [];
+  const sites = createAiSites({ readSettings: () => ({ ...saved }), writeSettings: (v) => { saved = v; }, onChange: (site, off) => changes.push([site, off]) });
+  sites.set('https://login.bank.example/x', true);
+  check('ai-sites: turning one address off covers the whole site', sites.isOff('https://www.bank.example/') && !sites.isOff('https://other.example/'), JSON.stringify(saved));
+  sites.set('bank.example', true);
+  check('ai-sites: the list has no duplicates', sites.list().length === 1, JSON.stringify(sites.list()));
+  sites.set('bank.example', false);
+  check('ai-sites: turning it back on removes it', !sites.isOff('https://www.bank.example/') && sites.list().length === 0 && changes.length === 3, JSON.stringify(changes));
+  saved = { aiOffSites: 'garbage' };
+  check('ai-sites: a damaged setting reads as no sites', sites.list().length === 0 && !sites.isOff('https://x.example/'), 'threw or listed');
+}
+
 fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

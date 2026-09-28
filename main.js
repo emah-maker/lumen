@@ -38,6 +38,7 @@ const { createManagers, pageOf: managerPageOf } = require('./features/managers')
 const { createSiteActivity } = require('./features/site-activity');
 const { createDialogs } = require('./features/dialogs');
 const { createSiteSecurity } = require('./features/site-security');
+const { createAiSites, siteOf: aiSiteOf } = require('./features/ai-sites'); // [ai controls] "Turn off AI on this site"
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 
@@ -122,7 +123,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow',
+  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'pagecontext:get', 'pagecontext:set',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen',
@@ -193,6 +194,7 @@ function writeSettings(settings) {
   settingsCache = { ...settings };
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
+const aiSites = createAiSites({ readSettings, writeSettings });
 
 // Favicons out of settings.json and into their own debounced/async store (see favicon-store.js) —
 // settings.json is rewritten fully and synchronously, which a new favicon shouldn't have to pay for.
@@ -1510,6 +1512,7 @@ async function proposeGroupsLocal({ engine, model }, list) {
 
 // Asks the chat's current model for groups. Only ids, titles and hostnames are sent.
 async function proposeGroups(model, list) {
+  list = list.filter((entry) => !aiOffTab(entry.id)); // [ai controls] those tabs' titles aren't sent
   const route = await groupingRoute(String(model));
   if (route.engine) return proposeGroupsLocal(route, list);
   const { provider, model: id } = providers.splitModel(model);
@@ -1526,6 +1529,12 @@ async function proposeGroups(model, list) {
   const apiKey = providerKey(provider);
   if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key in Claude settings first.`);
   return (await providers.completeJSON({ provider, model: id, apiKey, system: ORGANIZE_PROMPT, user: `Tabs:\n${JSON.stringify(list)}` })).groups;
+}
+
+// [ai controls] Is tab `id` on a site where the user turned AI off?
+function aiOffTab(id) {
+  const tab = tabs.find((t) => t.id === id);
+  return Boolean(tab) && aiSites.isOff(alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
 }
 
 let organizing = false;
@@ -1657,6 +1666,7 @@ function tabMenu(id, { x, y }) {
       { label: 'Unpin Tab', click: () => pinTab(id, false) },
       ...audioMenuItems(tab),
       { type: 'separator' },
+      ...aiSiteMenu(tab),
       { label: 'Close Tab', click: () => requestCloseTab(id) },
     ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
     return;
@@ -1678,8 +1688,17 @@ function tabMenu(id, { x, y }) {
   if (tab.groupId) items.push({ label: 'Remove from Group', click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
   items.push({ type: 'separator' }, { label: 'Organize Tabs by Topic', click: organizeByTopic });
   if (tabGroups.canUndo()) items.push({ label: 'Undo Organize', click: undoOrganize });
-  items.push({ type: 'separator' }, { label: 'Close Tab', click: () => requestCloseTab(id) });
+  items.push({ type: 'separator' }, ...aiSiteMenu(tab), { label: 'Close Tab', click: () => requestCloseTab(id) });
   Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) });
+}
+
+// [ai controls] "Turn off AI on <site>" for a web tab (features/ai-sites.js).
+function aiSiteMenu(tab) {
+  const url = alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '';
+  const site = aiSiteOf(url);
+  if (!site) return [];
+  const off = aiSites.isOff(url);
+  return [{ label: off ? `Turn On AI on ${site}` : `Turn Off AI on ${site}`, click: () => { aiSites.set(site, !off); sendTabs(); } }, { type: 'separator' }];
 }
 
 function groupMenu(groupId, { x, y }) {
@@ -2460,6 +2479,24 @@ function groupTabsFor(name, ids) {
   sendTabs();
   return { group: group.name, tabs: known };
 }
+// [ai controls] A tab's group (a copy), and putting a tab back into one (Undo of an AI run): the
+// group is recreated if it has gone since; null takes the tab out of any group.
+function tabGroupOf(id) {
+  const tab = tabs.find((t) => t.id === id);
+  const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
+  return group ? { ...group } : null;
+}
+function setTabGroup(id, group) {
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab || tab.pinned) return;
+  if (tab.groupId) tabGroups.remove(id);
+  if (group) {
+    if (!tabGroups.groups.has(group.id)) tabGroups.restore([group]);
+    tabGroups.add(id, group.id);
+  }
+  tabGroups.cleanup();
+  sendTabs();
+}
 function ungroupTabsFor(ids) {
   let count = 0;
   for (const id of ids) if (tabGroups.remove(id, { byUser: true })) count++;
@@ -2491,6 +2528,7 @@ const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_
 const agent = new Agent({
   activeTab: agentActiveTab, tabById: agentTabById, noTabReason, listTabs, openTab, switchTab, closeTab, requestCloseTab,
   hasUnsavedInput: agentHasUnsavedInput, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, effectiveModel, anthropicAuth,
+  aiOff: (url) => aiSites.isOff(url), tabGroupOf, setTabGroup, // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 if (TEST) {
@@ -2507,6 +2545,7 @@ if (TEST) {
   global.__setTabGrouping = setTabGrouping;
   global.__setTopicAi = (on) => writeSettings({ ...readSettings(), topicAi: Boolean(on) });
   global.__undoOrganize = undoOrganize;
+  global.__aiSites = aiSites;
   global.__markDragged = (id) => { const t = tabs.find((x) => x.id === id); if (t) t.userMoved = true; };
   global.__tabsArray = () => tabs.map((t) => ({ id: t.id, groupId: t.groupId || null, userRemoved: Boolean(t.userRemoved), pinned: Boolean(t.pinned), sleeping: Boolean(t.sleeping) }));
   global.__pinTab = pinTab;
@@ -2786,6 +2825,9 @@ ipcMain.handle('chats:export', async (_e, id) => {
 });
 if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
+// [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.
+ipcMain.handle('agent:undo', (_e, runId) => agent.undoRun(runId));
+aiSites.register(ipcMain);
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without
 // the "Allow … to interact" card. Stored as askBeforeActing: false (see autoApprove above).
 ipcMain.handle('agent:auto-allow', (_e, on) => {
