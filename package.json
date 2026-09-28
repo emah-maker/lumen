@@ -50,7 +50,7 @@
       "!docs/**"
     ],
     "win": {
-      "icon": "build/icon.png",
+      "icon": "assets/icon.png",
       "target": [
         {
           "target": "dir",
@@ -101,7 +101,7 @@
       }
     ],
     "mac": {
-      "icon": "build/icon.png",
+      "icon": "assets/icon.png",
       "category": "public.app-category.productivity",
       "extraResources": [
         "LICENSE",
