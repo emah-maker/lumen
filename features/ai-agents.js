@@ -111,7 +111,7 @@ function setupAiAgents(deps) {
   let grokBuild = null;
   let grokBuildFound = false;
   let grokBuildSignedIn = 'unknown'; // true | false | 'unknown' — mirrors grokBuild.status().signedIn
-  let grokBuildDetail = null; // the CLI's reported default model, when known
+  let grokBuildDetail = null; // the default model sidebar runs get (asked in Lumen's GROK_HOME), when known
   let grokBuildModels = []; // the model ids `grok models` lists, when known
   const grokBuildModule = () => require('../grok-build');
   // Grok Build in the sidebar is experimental and labelled unsafe (see grok-build.js's header: only

@@ -194,8 +194,8 @@ function describeFailure(text, code) {
 
 // `grok models`: there is no `grok auth status --json` (no `auth`/`whoami` subcommand exists at all
 // in 1.0.41 -- see `grok help`), so this is the least-bad signed-in check available, exactly as a
-// real run showed it: "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\n...". Runs
-// against the user's own GROK_HOME (the login linkAuth shares), and never parses auth.json itself.
+// real run showed it: "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\n...", and
+// signed out "You are not authenticated.\n\nDefault model: grok-4.6". Lumen never parses auth.json.
 // The same output lists the models the account can use, which the picker offers (`-m <id>`):
 // "Available models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.6".
 function parseGrokModels(stdout) {
@@ -206,14 +206,17 @@ function parseGrokModels(stdout) {
     const models = [...new Set([...list.matchAll(/^\s*[*-]\s+(\S+)/gm)].map((x) => x[1]).filter(validModel))];
     return { signedIn: true, detail: m ? m[1] : null, models };
   }
-  if (/not logged in|please (sign|log) in|run `grok login`/i.test(t)) return { signedIn: false, detail: null, models: [] };
+  if (/not logged in|not authenticated|please (sign|log) in|run `grok login`/i.test(t)) return { signedIn: false, detail: null, models: [] };
   return { signedIn: 'unknown', detail: null, models: [] };
 }
-function checkAuthStatus(bin) {
+// Runs `grok models` the way a sidebar run starts grok (GrokBuildEngine.status): Lumen's GROK_HOME
+// with the user's auth.json linked in, buildEnv's environment and the sidebar folder as cwd, so the
+// default model it reports is the one runs get. The user's own ~/.grok (config.toml, GROK_DEFAULT_MODEL
+// in their environment, ...) can name another default, which runs never see. `grok models` doesn't
+// start MCP servers; it writes only to that GROK_HOME (its first-run files, the first time: ~2 s).
+function checkAuthStatus(bin, { env, cwd, exec = execFile }) {
   return new Promise((resolve) => {
-    // cwd: os.tmpdir(), not the app's own folder -- a plain status check shouldn't pick up any
-    // project-scoped .grok/config.toml that might happen to sit above Lumen's own install/dev folder.
-    execFile(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd: os.tmpdir() }, (err, stdout) => {
+    exec(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd, env }, (err, stdout) => {
       resolve(err ? { signedIn: 'unknown', detail: null, models: [] } : parseGrokModels(stdout));
     });
   });
@@ -443,15 +446,16 @@ class GrokBuildEngine {
   // mcpCommand(): { command, args, env } for Lumen's bridge, written into Lumen's own GROK_HOME
   // config.toml before each message. ensureServer(): starts the MCP server. lumenReady(tag): true
   // once Lumen's MCP server has listed its tools to the bridge carrying that run tag (optional:
-  // without it, the first message doesn't wait). spawn / kill: the child_process spawn and
-  // cli-utils killTree, swappable for tests.
-  constructor({ userData, mcpCommand, ensureServer, lumenReady = null, spawn: spawnChild = spawn, kill = killTree }) {
+  // without it, the first message doesn't wait). spawn / kill / exec: the child_process spawn,
+  // cli-utils killTree and child_process execFile (for status), swappable for tests.
+  constructor({ userData, mcpCommand, ensureServer, lumenReady = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile }) {
     this.userData = userData;
     this.mcpCommand = mcpCommand;
     this.ensureServer = ensureServer;
     this.lumenReady = lumenReady;
     this.spawn = spawnChild;
     this.kill = kill;
+    this.exec = exec;
     this.bin = undefined; // undefined: not looked up yet; null: not installed
     this.active = null; // { tag, emit, signal, child } for the run in progress
     this.statusCache = null;
@@ -462,14 +466,26 @@ class GrokBuildEngine {
     return this.bin;
   }
 
-  // { installed, signedIn: true|false|'unknown', detail, models } -- detail is the CLI's reported
-  // default model, when known (there is no account-type distinction to report here, unlike Claude
-  // Code), and models the ids `grok models` lists ([] when unknown).
+  // { installed, signedIn: true|false|'unknown', detail, models } -- detail is the default model a
+  // sidebar run gets (asked in Lumen's own GROK_HOME, see checkAuthStatus), when known (there is no
+  // account-type distinction to report here, unlike Claude Code), and models the ids `grok models`
+  // lists ([] when unknown).
   async status(refresh = false) {
     const bin = await this.detect(refresh);
     if (!bin) { this.statusCache = null; return { installed: false, signedIn: false, detail: null, models: [] }; }
     if (!refresh && this.statusCache && Date.now() - this.statusCache.at < 30000) return { installed: true, ...this.statusCache.value };
-    const value = await checkAuthStatus(bin);
+    const home = grokHomeFor(this.userData);
+    const dir = sidebarDirFor(this.userData);
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(dir, { recursive: true });
+    // The sign-in is shared the way run() shares it, except during a run, whose own link stays put
+    // (re-linking then could drop a token Grok just refreshed, before settleAuth copies it back).
+    const userHome = userGrokHome();
+    const link = !this.active;
+    let authBefore = null;
+    if (link) try { authBefore = linkAuth(userHome, home); } catch {}
+    const value = await checkAuthStatus(bin, { env: buildEnv({ userData: this.userData }), cwd: dir, exec: this.exec });
+    if (link && !this.active) try { settleAuth(userHome, home, authBefore); } catch {}
     this.statusCache = { at: Date.now(), value };
     return { installed: true, ...value };
   }

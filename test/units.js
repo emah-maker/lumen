@@ -263,6 +263,43 @@ async function grokRuns() {
     check('Grok Build later messages (resume) are not held or retried', spawns.length === 1 && out.text === 'Resumed.' && events.some((e) => e.text === 'Resumed.') && flag(spawns[0].argv, '--resume') === 'id-1', JSON.stringify({ out, n: spawns.length }));
   }
   {
+    // status(): `grok models` runs the way sidebar runs start grok, so its default is the runs' default.
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gbstatus-'));
+    const savedHome = process.env.GROK_HOME;
+    const savedDefault = process.env.GROK_DEFAULT_MODEL;
+    const userHome = path.join(data, 'user-grok');
+    fs.mkdirSync(userHome);
+    fs.writeFileSync(path.join(userHome, 'auth.json'), 'token-1');
+    fs.writeFileSync(path.join(userHome, 'config.toml'), '[models]\ndefault = "grok-4.6"\n');
+    process.env.GROK_HOME = userHome;
+    process.env.GROK_DEFAULT_MODEL = 'grok-4.6'; // the user's own default: sidebar runs never see it
+    const calls = [];
+    const exec = (bin, argv, opts, cb) => {
+      calls.push({ argv, opts, auth: fs.existsSync(path.join(opts.env.GROK_HOME, 'auth.json')) ? fs.readFileSync(path.join(opts.env.GROK_HOME, 'auth.json'), 'utf8') : null });
+      setImmediate(() => cb(null, 'You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.6\n', ''));
+    };
+    try {
+      const engine = new gb.GrokBuildEngine({ userData: data, mcpCommand: () => ({}), ensureServer: () => {}, exec });
+      engine.detect = async () => 'grok.exe';
+      const userFiles = fs.readdirSync(userHome).sort().join(',');
+      const s = await engine.status(true);
+      const [call] = calls;
+      check('Grok Build status runs `grok models` in Lumen\'s GROK_HOME, with the runs\' env and cwd', calls.length === 1 && call.argv.join(' ') === 'models' && call.opts.env.GROK_HOME === gb.grokHomeFor(data) && call.opts.cwd === path.join(data, 'grok-sidebar') && call.opts.env.HOME === call.opts.cwd && !('GROK_DEFAULT_MODEL' in call.opts.env) && call.opts.shell === false, JSON.stringify(call && { env: call.opts.env, cwd: call.opts.cwd }));
+      check('Grok Build status: the user\'s sign-in is shared, so signed-in detection still works', call.auth === 'token-1' && s.signedIn === true && s.detail === 'grok-4.7' && JSON.stringify(s.models) === '["grok-4.7","grok-4.6"]', JSON.stringify(s));
+      check('Grok Build status writes nothing to the user\'s own ~/.grok', fs.readdirSync(userHome).sort().join(',') === userFiles && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-1', fs.readdirSync(userHome).join(','));
+      engine.active = { tag: 'x' }; // a run in progress keeps its own link
+      fs.rmSync(path.join(gb.grokHomeFor(data), 'auth.json'));
+      fs.writeFileSync(path.join(gb.grokHomeFor(data), 'auth.json'), 'refreshed-by-grok');
+      await engine.status(true);
+      check('Grok Build status during a run leaves the run\'s auth.json alone', calls[1].auth === 'refreshed-by-grok' && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-1', calls[1].auth);
+      check('grok models: "You are not authenticated." means signed out', gb.parseGrokModels('You are not authenticated.\n\nDefault model: grok-4.6\n').signedIn === false, JSON.stringify(gb.parseGrokModels('You are not authenticated.')));
+    } finally {
+      if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
+      if (savedDefault === undefined) delete process.env.GROK_DEFAULT_MODEL; else process.env.GROK_DEFAULT_MODEL = savedDefault;
+      fs.rmSync(data, { recursive: true, force: true });
+    }
+  }
+  {
     const { createSession } = require('../mcp');
     const s = createSession({ tools: [{ name: 'read_page', description: 'd', input_schema: {} }], callTool: async () => ({}), enabled: () => true, onEvent: () => {}, send: () => {}, engine: 'tag' });
     await s.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
