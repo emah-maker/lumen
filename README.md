@@ -8,8 +8,8 @@
 
 - **An AI that does things, not just chats.** It reads the page you're on and acts on it: clicks, types, fills in forms, opens and groups tabs, and researches several pages at once. It asks before acting on a new site, and a form that doesn't fill completely is never submitted.
 - **Your choice of model.** Claude (Opus, Sonnet, Haiku, Fable), OpenAI, Grok, Gemini and OpenRouter. Use your Claude account through Claude Code, add a key, sign in to Anthropic with its CLI, or sign in with OpenRouter. The toolbar button takes on each company's mark.
-- **A real browser underneath.** Tabs that group themselves by site or by topic, bookmarks, history, downloads, find, zoom, Chrome Web Store extensions, a built-in ad and tracker blocker, and import from Chrome, Edge, Brave, Vivaldi, Opera or Firefox.
-- **Private by default.** No telemetry. Background reading and search run without your cookies, the scripts the AI uses to read pages run where sites can't see them, chats are encrypted at rest, and the start page makes no network requests.
+- **A real browser underneath.** Tabs that group themselves by site or by topic, a bookmarks menu, a searchable history page, a downloads menu (with a list in Settings), find, zoom, Chrome Web Store extensions, a built-in ad and tracker blocker, and import from Chrome, Edge, Brave, Vivaldi, Opera or Firefox.
+- **Private by default.** No telemetry. Background reading and search run without your cookies, the scripts the AI uses to read pages run where sites can't see them, the current chat is encrypted at rest, and the start page makes no network requests.
 - **Calm to look at.** Light and dark themes that follow your system, and spring animations.
 
 ## Install
@@ -206,7 +206,7 @@ Compact is about 4–5× smaller than a full read. The big savings come from not
 ## Privacy and security
 
 - **No telemetry, no analytics, no crash reports.** Lumen has no servers of its own. What leaves your computer, and to whom: [PRIVACY.md](PRIVACY.md).
-- **Keys and chats** are encrypted with the OS keychain. Without a keychain, keys aren't saved (use the environment variables) and the chat isn't kept between sessions.
+- **Keys and the chat** are encrypted with the OS keychain. Lumen keeps one chat; **New chat** replaces it. Without a keychain, keys aren't saved (use the environment variables) and the chat isn't kept between sessions.
 - **Background reading and web search** run in a separate in-memory session with none of your cookies or logins. That session denies every permission request and cancels downloads.
 - **Lumen's own UI is locked down.** The browser UI, the address-bar suggestions and the dialog overlay can't be navigated away or open popups (links open as tabs), web pages in tabs can't send the UI's privileged messages, and a link dropped on the window opens as a tab.
 - **Approvals** for the AI and for MCP agents are described in [Asking before it acts](#asking-before-it-acts).
@@ -224,7 +224,7 @@ npm test -- tabstrip  # just the named suites
 ### Build and install locally
 
 ```
-npm run dist          # this computer's platform; or dist:win / dist:mac
+npm run dist          # this computer's platform (Windows or macOS); or dist:win / dist:mac
 npm run install_app   # Windows: installs to %LOCALAPPDATA%\Programs\Lumen with Desktop + Start menu shortcuts
 ```
 
@@ -232,7 +232,6 @@ Builds go to a local folder that isn't synced, even when the project itself live
 
 - Windows: `%LOCALAPPDATA%\Lumen\build`
 - macOS: `~/Library/Caches/Lumen/build`
-- Linux: `~/.cache/lumen/build`
 
 Set `LUMEN_BUILD_DIR` to use a different folder. The installed Windows app lives on the local drive at `%LOCALAPPDATA%\Programs\Lumen`.
 
@@ -240,11 +239,11 @@ The Windows build ships the official Electron `.exe` byte for byte (`signAndEdit
 
 Release installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead. To ship an update: bump `version` in package.json (`npm version patch --no-git-tag-version`), commit and push, then tag that commit with the same version and push the tag (`git tag v0.2.5 && git push origin v0.2.5`). The workflow refuses a tag that doesn't match package.json. Next to the installers the release gets `latest.yml`, `latest-mac.yml` and `.blockmap` files, which installed copies read to find and verify the update (`features/updates.js`, electron-updater).
 
-### DRM (Widevine): Netflix, Spotify, Disney+, Prime Video, YouTube Movies
+### DRM (Widevine)
 
 `electron` is castlabs' [ECS build](https://github.com/castlabs/electron-releases) (`electron-releases#v44.1.0+wvcus`), which adds a Widevine CDM that stock Electron doesn't have. On startup Lumen calls `components.whenReady()` (with a 10s timeout so a failed/offline CDM download never blocks the window opening) and logs `components.status()`; the CDM itself downloads on first run.
 
-That's enough for most sites out of the box. Production DRM providers (Netflix, Disney+, Spotify) additionally check that the binary is **VMP-signed**: electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature. One-time setup, then every `npm run dist:win` VMP-signs the build automatically (`scripts/after-pack.js`; it warns and continues the build if any of this isn't set up):
+That's enough for sites that accept the plain Widevine CDM. Production DRM providers (Netflix, Disney+, Spotify and others) also check that the binary is **VMP-signed**. The release builds on GitHub are not VMP-signed (the workflow has no castlabs account), so those services may refuse to play in them; a build you make yourself with the setup below is signed. Why it's needed: electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature. One-time setup, then every `npm run dist:win` VMP-signs the build automatically (`scripts/after-pack.js`; it warns and continues the build if any of this isn't set up):
 
 ```
 python -m pip install --upgrade castlabs-evs
@@ -266,7 +265,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 ## Layout
 
 - `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, IPC
-- `features/`: parts split out of main.js: `ai-agents.js` (MCP, CDP automation, the Claude Code and Grok Build engines; automation.js, claude-code.js and grok-build.js load on first use), `adblock.js`, `dialogs.js`, `downloads.js`, `instance.js` (single instance, shortcuts), `updates.js` (new versions from GitHub Releases)
+- `features/`: parts split out of main.js: `ai-agents.js` (MCP, CDP automation, the Claude Code and Grok Build engines; automation.js, claude-code.js and grok-build.js load on first use), `adblock.js`, `dialogs.js`, `downloads.js`, `instance.js` (single instance, shortcuts), `updates.js` (new versions from GitHub Releases), and page preloads: `adblock-preload.js` (the ad blocker's scriptlets at document start), `select-contrast-preload.js` (readable `<select>` menus on dark-styled sites), `webstore-preload.js` (keeps the Chrome Web Store's install API working after an extension loads)
 - `settings-backend.js`, `renderer/settings.*`: lumen://settings, the one place for settings
 - `tab-groups.js`: groups by site and by topic (local TF-IDF clustering), undo
 - `extensions-dnr-preload.js`: `browser` alias and chrome.declarativeNetRequest for extensions (rules kept, not applied; content blockers with static rulesets are refused at install)
@@ -283,7 +282,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab, settings, history and error pages
 - `scripts/`: build, install and `capture-media.js` (the README's screenshots)
 - `docs/media/`: the README's screenshots and GIFs (not shipped in builds)
-- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup, hardening (UI window and reader session lockdown), updates (the updater with a stand-in, never the network)
+- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup, hardening (UI window and reader session lockdown), exfil (the AI's approval gate: redirects, searches, batch steps and scripts), updates (the updater with a stand-in, never the network)
 
 ## License
 
