@@ -122,7 +122,7 @@ function setupAiAgents(deps) {
   const engineForSession = (session) => (claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : null);
   const ownsSession = (session) => Boolean(engineForSession(session));
   agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); } };
-  if (process.env.CLAUDE_BROWSER_TEST) Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
+  if (require('../test-mode').isTest()) Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
 
   // Runs one browser tool for an external agent, with the same per-site approval as the sidebar,
   // and shows each call as a step in the sidebar.
