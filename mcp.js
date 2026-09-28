@@ -76,6 +76,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
         case 'ping':
           return reply(id, {});
         case 'tools/list':
+          session.listed = true; // the agent now has Lumen's tools (grok-build.js waits for this)
           return reply(id, {
             tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema })),
           });
