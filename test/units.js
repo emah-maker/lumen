@@ -457,6 +457,44 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('preload bundle: needs nothing a sandboxed preload can\'t load', requires.length === 0, requires.join(', '));
 }
 
+// ---- launcher.js: the first process hands over to the launcher (macOS: with the links it was sent)
+{
+  const { handOver, launcherArgs } = require('../launcher');
+  const fakeApp = () => {
+    const app = new (require('events'))();
+    app.calls = [];
+    app.whenReady = () => ({ then: (fn) => { app.ready = fn; } });
+    app.releaseSingleInstanceLock = () => app.calls.push('release');
+    app.exit = (code) => app.calls.push(`exit ${code}`);
+    return app;
+  };
+  const started = [];
+  const start = (links) => started.push(links);
+
+  const win = fakeApp();
+  handOver(win, () => true, { platform: 'win32', start });
+  check('launcher: Windows/Linux hand over at once, with no extra links', started.length === 1 && started[0].length === 0 && win.calls.join() === 'release,exit 0', JSON.stringify({ started, calls: win.calls }));
+
+  started.length = 0;
+  const mac = fakeApp();
+  handOver(mac, () => true, { platform: 'darwin', start });
+  let prevented = 0;
+  mac.emit('open-url', { preventDefault: () => prevented++ }, 'https://example.com/a');
+  mac.emit('open-url', { preventDefault: () => prevented++ }, 'https://example.com/b');
+  check('launcher: macOS waits for ready before handing over', started.length === 0 && mac.calls.length === 0, JSON.stringify(mac.calls));
+  mac.ready();
+  check('launcher: macOS passes the links that launched Lumen on to the browser', started.length === 1 && started[0].join() === 'https://example.com/a,https://example.com/b' && prevented === 2 && mac.calls.join() === 'release,exit 0', JSON.stringify({ started, calls: mac.calls }));
+
+  started.length = 0;
+  const other = fakeApp();
+  handOver(other, () => false, { platform: 'darwin', start });
+  other.ready();
+  check('launcher: a copy that can\'t take the lock just quits', started.length === 0 && other.calls.join() === 'exit 0', JSON.stringify(other.calls));
+
+  const args = launcherArgs(['Lumen', 'C:\\app', '--flag'], ['https://example.com/a']);
+  check('launcher: its arguments are launcher.js, the original ones, then the links', /launcher\.js$/.test(args[0]) && args.slice(1).join(' ') === 'C:\\app --flag https://example.com/a', JSON.stringify(args));
+}
+
 // ---- Windows icons: Lumen.exe is Electron's binary, so shortcuts must name Lumen's .ico
 {
   const { appIcon, fixShortcutIcons } = require('../features/instance');

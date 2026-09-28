@@ -197,11 +197,7 @@ const automationPlan = prepareAutomation(app, readSettings());
 // Chromium a private pipe instead of a debugging port) and leaves, before it opens anything. A copy
 // started while Lumen runs passes its links on and quits, the same as without automation.
 if (automationPlan?.relaunch && !process.argv.includes('--install-shortcuts')) {
-  if (instance.acquireInstanceLock(app)) {
-    app.releaseSingleInstanceLock();
-    require('./launcher').relaunch();
-  }
-  app.exit(0);
+  require('./launcher').handOver(app, () => instance.acquireInstanceLock(app));
   return;
 }
 
