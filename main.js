@@ -2157,6 +2157,10 @@ function createWindow() {
     },
   });
   uiContents.add(win.webContents);
+  // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
+  if (process.platform === 'win32' && app.isPackaged) {
+    win.setAppDetails({ appId: APP_ID, appIconPath: instance.appIcon(), appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: 'Lumen' });
+  }
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
   win.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
   hardenOwnView(win.webContents, UI_URL);
@@ -2751,6 +2755,7 @@ app.whenReady().then(async () => {
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
+  instance.fixShortcutIcons(app, shell);
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
