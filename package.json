@@ -13,7 +13,7 @@
     "dist:win": "node scripts/build.js --win",
     "dist:mac": "node scripts/build.js --mac"
   },
-  "license": "GPL-3.0",
+  "license": "GPL-3.0-or-later",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "@ghostery/adblocker-electron": "^2.18.2",
@@ -76,6 +76,10 @@
       "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
     },
     "afterPack": "scripts/after-pack.js",
+    "extraFiles": [
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
     "protocols": [
       {
         "name": "Web page",

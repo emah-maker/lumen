@@ -25,7 +25,8 @@ const path = require('path');
 
   // ---- every channel preload.js sends is gated
   const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
-  const channels = [...preloadSrc.matchAll(/ipcRenderer\.(?:send|invoke|sendSync)\('([^']+)'/g)].map((m) => m[1]);
+  const channels = [...preloadSrc.matchAll(/ipcRenderer\.(?:send|invoke|sendSync)\('([^']+)'/g)].map((m) => m[1])
+    .filter((c) => c !== 'ui-preload:loaded'); // open to every sender on purpose: it only restricts the view that sends it
   const ungated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), channels);
   check(`every preload.js channel (${channels.length}) is gated to the UI`, channels.length > 30 && ungated.length === 0, ungated.join(', '));
 
@@ -119,7 +120,20 @@ const path = require('path');
   check('real UI call still works (assistant.autoAllow)', realUi === 'boolean', realUi);
   const tabsBeforeNew = await tabCount();
   await ui.evaluate(() => window.browser.newTab('about:blank'));
+  check('test mode: the UI bridge has its test-only calls', await ui.evaluate(() => typeof window.assistant.mcpInfo === 'function'), 'no assistant.mcpInfo');
   check('real UI call still works (browser.newTab)', (await waitFor(async () => ((await tabCount()) > tabsBeforeNew ? 1 : 0))) === 1, await tabCount());
+
+  // ---- the error page runs with no inline script allowed (its script is renderer/error.js)
+  const errorHtml = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'error.html'), 'utf8');
+  check('error.html: CSP allows no inline script', /script-src 'self'(;|")/.test(errorHtml) && !/<script>/.test(errorHtml), errorHtml.match(/Content-Security-Policy" content="([^"]+)/)?.[1]);
+  const errorPage = await app.evaluate(async ({ WebContentsView }, url) => {
+    const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
+    await view.webContents.loadURL(url).catch(() => {});
+    const text = await view.webContents.executeJavaScript("document.getElementById('message').textContent + ' | ' + document.getElementById('code').textContent");
+    view.webContents.close();
+    return text;
+  }, `file:///${path.join(__dirname, '..', 'renderer', 'error.html').replace(/\\/g, '/')}?url=${encodeURIComponent('https://unreachable.test/')}&desc=ERR_NAME_NOT_RESOLVED&code=-105`);
+  check('error.html: its script still fills in the message', errorPage.includes('unreachable.test') && errorPage.includes('ERR_NAME_NOT_RESOLVED (-105)'), errorPage);
 
   // ---- the AI's reader partition: no permissions, no downloads
   const reader = await app.evaluate(async ({ WebContentsView, session }, fixture) => {
@@ -152,6 +166,48 @@ const path = require('path');
   check('no UI errors', errors.length === 0, errors.join('; '));
   await app.close();
   fs.rmSync(profile, { recursive: true, force: true });
+
+  // ---- a packaged build ignores CLAUDE_BROWSER_TEST / CLAUDE_BROWSER_PROFILE
+  // A stand-in entry makes app.isPackaged true, gives Lumen its own throwaway profile (as a packaged
+  // build would have its real one) and keeps a handle on the Agent's autoApprove, then loads main.js.
+  const root = path.join(__dirname, '..');
+  const packedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-packaged-'));
+  const packedProfile = path.join(packedDir, 'profile');
+  const plantedProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-planted-'));
+  fs.mkdirSync(packedProfile);
+  fs.writeFileSync(path.join(packedDir, 'entry.js'), `
+    const { app } = require('electron');
+    Object.defineProperty(app, 'isPackaged', { get: () => true, configurable: true });
+    app.setPath('userData', ${JSON.stringify(packedProfile)});
+    const agentModule = require(${JSON.stringify(path.join(root, 'agent.js'))});
+    const { Agent } = agentModule;
+    agentModule.Agent = class extends Agent { constructor(host, ...rest) { super(host, ...rest); globalThis.lumenProbe = { autoApprove: host.autoApprove }; } };
+    require(${JSON.stringify(path.join(root, 'main.js'))});
+  `);
+  const packed = await electron.launch({ args: [path.join(packedDir, 'entry.js')], env: { ...env, CLAUDE_BROWSER_PROFILE: plantedProfile } });
+  const packedUi = await packed.firstWindow();
+  await packedUi.waitForSelector('.tab');
+  const state = await packed.evaluate(({ app, ipcMain, webContents }) => {
+    const before = webContents.getAllWebContents().length;
+    ipcMain.emit('tab:new', { sender: {} }, 'about:blank'); // a synthetic event, as the tests send
+    return new Promise((r) => setTimeout(() => r({
+      packaged: app.isPackaged,
+      userData: app.getPath('userData'),
+      hooks: Object.keys(globalThis).filter((k) => k.startsWith('__') && !/playwright/i.test(k)),
+      autoApprove: globalThis.lumenProbe?.autoApprove(),
+      synthetic: webContents.getAllWebContents().length - before,
+    }), 1000));
+  });
+  check('packaged: app.isPackaged is faked true', state.packaged === true, state.packaged);
+  check('packaged: AI auto-approve stays off despite CLAUDE_BROWSER_TEST', state.autoApprove === false, state.autoApprove);
+  check('packaged: no global.__* test hooks', state.hooks.length === 0, state.hooks.join(', '));
+  check('packaged: CLAUDE_BROWSER_PROFILE is ignored', path.resolve(state.userData) === path.resolve(packedProfile), state.userData);
+  check('packaged: a synthetic IPC event is refused', state.synthetic === 0, state.synthetic);
+  const testCalls = await packedUi.evaluate(() => Object.keys(window.assistant).filter((k) => ['mcpInfo', 'setMcpEnabled', 'automationInfo', 'setAutomation', 'setAutoGroup', 'setProviderKey'].includes(k)));
+  check('packaged: the UI bridge has no test-only calls', testCalls.length === 0, testCalls.join(', '));
+  await packed.close();
+  fs.rmSync(packedDir, { recursive: true, force: true });
+  fs.rmSync(plantedProfile, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

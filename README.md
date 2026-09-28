@@ -158,16 +158,16 @@ How it works and what keeps it safe:
 
 ## Drive Lumen with Playwright (Chrome DevTools Protocol)
 
-Off by default. Turn on **Settings → You and AI → Allow automation tools (Chrome DevTools Protocol)**, pick a port (default 9222) and restart Lumen. Then:
+Off by default. Turn on **Settings → You and AI → Allow automation tools (Chrome DevTools Protocol)**, pick a port (default 9222) and restart Lumen. Then click **Copy address**: the address includes a secret key (`http://127.0.0.1:9222/<token>`), and the port refuses requests without it.
 
 ```sh
 # Playwright MCP, from Claude Code
-claude mcp add playwright-lumen -- npx @playwright/mcp@latest --cdp-endpoint http://127.0.0.1:9222
+claude mcp add playwright-lumen -- npx @playwright/mcp@latest --cdp-endpoint http://127.0.0.1:9222/<token>
 ```
 
 ```js
 // Playwright
-const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const browser = await chromium.connectOverCDP('http://127.0.0.1:9222/<token>');
 const page = browser.contexts()[0].pages()[0]; // your open tabs
 const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 ```

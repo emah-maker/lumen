@@ -1,9 +1,11 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, session, shell, components } = require('electron');
+// Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
+const TEST = require('./test-mode').isTest();
 
 // `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
 if (process.argv.includes('--mcp')) {
-  if (process.env.CLAUDE_BROWSER_TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
+  if (TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
   require('./mcp').runBridge({ app });
   return;
 }
@@ -12,6 +14,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
+const { extensionPermissionLines } = require('./extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput } = require('./agent');
 const providers = require('./providers');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./search');
@@ -39,7 +42,6 @@ const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).
 // The browser UI's own document and its privileged preload (see the IPC gate and hardenUiView below).
 const UI_HTML = path.join(__dirname, 'renderer', 'index.html');
 const UI_URL = pathToFileURL(UI_HTML).href;
-const UI_PRELOAD = path.join(__dirname, 'preload.js');
 const SUGGEST_URL = pathToFileURL(path.join(__dirname, 'renderer', 'suggest.html')).href;
 // `url` is the local file `fileUrl` (query and hash aside). Case-insensitive: Windows paths are.
 const sameFileUrl = (url, fileUrl) => {
@@ -57,7 +59,7 @@ const APP_ID = 'com.lumen.browser';
 
 // Lumen was "Claude Browser": carry the old profile (settings, history, bookmarks, extensions,
 // saved chat) over to the new name once, before anything opens it.
-if (!process.env.CLAUDE_BROWSER_TEST) {
+if (!TEST) {
   const oldProfile = path.join(app.getPath('appData'), 'Claude Browser');
   const newProfile = app.getPath('userData');
   if (!fs.existsSync(newProfile) && fs.existsSync(oldProfile)) {
@@ -70,7 +72,7 @@ if (!process.env.CLAUDE_BROWSER_TEST) {
 }
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID); // taskbar grouping, notifications
 
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE || fs.mkdtempSync(path.join(require('os').tmpdir(), 'claude-browser-test-')));
 }
 
@@ -112,12 +114,12 @@ const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
 // Tests drive some handlers with ipcMain.emit and a stand-in event (no real renderer behind it);
 // a real message from a renderer always carries its live webContents.
 const { webContents: webContentsModule } = require('electron');
-const syntheticTestEvent = (event) => Boolean(process.env.CLAUDE_BROWSER_TEST)
+const syntheticTestEvent = (event) => TEST
   && !(event?.sender && typeof event.sender.id === 'number' && webContentsModule.fromId(event.sender.id) === event.sender);
 const trustedSender = (event, channel) => syntheticTestEvent(event) || isUiSender(event)
   || (PRIVILEGED_IPC.test(channel) && isSettingsSender(event));
 const gatedChannel = (channel) => PRIVILEGED_IPC.test(channel) || UI_ONLY_IPC.has(channel);
-if (process.env.CLAUDE_BROWSER_TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: gatedChannel, uiUrl: UI_URL };
+if (TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: gatedChannel, uiUrl: UI_URL };
 
 // Lumen's own views (the UI, the suggestions dropdown, the dialogs overlay) show one local file
 // each and nothing else: a link, drop or script can't navigate them, and window.open never makes a
@@ -132,17 +134,13 @@ function hardenOwnView(wc, ownUrl) {
 
 // Backstop for every webContents, including ones made later or by libraries: no <webview>, and
 // nothing using the UI's preload may leave renderer/index.html.
+const uiContents = new WeakSet();
+ipcMain.on('ui-preload:loaded', (event) => { uiContents.add(event.sender); event.returnValue = true; });
 app.on('web-contents-created', (_e, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
-  // Electron has no public getter for a view's preload; _getPreloadScript() is what it uses itself.
-  // Failing that, a view showing the UI's own page is treated the same.
-  const usesUiPreload = () => {
-    try {
-      const p = contents._getPreloadScript?.()?.filePath || contents.getLastWebPreferences?.()?.preload;
-      if (p && path.resolve(p).toLowerCase() === UI_PRELOAD.toLowerCase()) return true;
-    } catch {}
-    return isUiUrl(contents.getURL());
-  };
+  // The UI window is registered when it's made, and preload.js registers any other view it runs in
+  // (ui-preload:loaded). Failing both, a view showing the UI's own page is treated the same.
+  const usesUiPreload = () => uiContents.has(contents) || isUiUrl(contents.getURL());
   contents.on('will-navigate', (event) => { if (!isUiUrl(event.url) && usesUiPreload()) event.preventDefault(); });
   contents.on('will-redirect', (event) => { if (!isUiUrl(event.url) && usesUiPreload()) event.preventDefault(); });
 });
@@ -303,7 +301,7 @@ const dialogs = createDialogs({
 // now draws Lumen's own card; the native pickers (showOpenDialog etc., used only by settings-backend.js
 // for the download folder) are untouched.
 const dialog = { ...electronDialog, showMessageBox: dialogs.showMessageBox };
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   global.__dialogs = dialogs;
   global.__closeTabInteractive = (id) => requestCloseTab(id);
 }
@@ -629,6 +627,11 @@ async function setupExtensions() {
       popup.show();
     }, 700));
   });
+  // Lists what it asks for (all sites, history, downloads, …) before anything is installed.
+  const extensionAsks = (manifest) => {
+    const lines = extensionPermissionLines(manifest);
+    return lines.length ? `It can:\n${lines.map((l) => `• ${l}`).join('\n')}` : 'It asks for no special permissions.';
+  };
   await installChromeWebStore({
     session: ses,
     beforeInstall: async ({ localizedName, manifest }) => {
@@ -646,7 +649,7 @@ async function setupExtensions() {
         defaultId: 1,
         cancelId: 0,
         message: `Add “${localizedName}”?`,
-        detail: `Extensions can read and change data on the websites you visit.${(manifest.permissions || []).includes('nativeMessaging') ? '\n\nParts that talk to a desktop app (such as unlocking with the 1Password app) may not work in Lumen. Sign in inside the extension instead.' : ''}`,
+        detail: `${extensionAsks(manifest)}${(manifest.permissions || []).includes('nativeMessaging') ? '\n\nParts that talk to a desktop app (such as unlocking with the 1Password app) may not work in Lumen. Sign in inside the extension instead.' : ''}`,
       });
       return { action: response === 1 ? 'allow' : 'deny' };
     },
@@ -1234,7 +1237,7 @@ async function sweepSleep() {
 }
 let pressureCheck = memoryPressure;
 setInterval(() => { sweepSleep().catch(() => {}); }, SLEEP_CHECK_MS);
-if (process.env.CLAUDE_BROWSER_TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve(on); }, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
+if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve(on); }, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
 
 // ---- new-tab focus. A blank new tab opens with the cursor in the address bar, as in Chrome.
 // Chromium focuses a tab's page by itself when its view is shown and again on its first navigation,
@@ -2139,8 +2142,10 @@ function createWindow() {
       contextIsolation: true,
       sandbox: false, // preload loads electron-chrome-extensions' toolbar element; the page is our own local UI
       nodeIntegration: false,
+      additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
     },
   });
+  uiContents.add(win.webContents);
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
   win.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
   hardenOwnView(win.webContents, UI_URL);
@@ -2256,9 +2261,9 @@ const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_
 const agent = new Agent({
   activeTab: agentActiveTab, tabById: agentTabById, noTabReason, listTabs, openTab, switchTab, closeTab, requestCloseTab,
   hasUnsavedInput: agentHasUnsavedInput, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, effectiveModel, anthropicAuth,
-  autoApprove: () => Boolean(process.env.CLAUDE_BROWSER_TEST) || readSettings().askBeforeActing === false,
+  autoApprove: () => TEST || readSettings().askBeforeActing === false,
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   global.__agent = agent;
   global.__fitContext = require('./agent').fitContext;
   global.__mcp = () => aiAgents.mcpServer();
@@ -2333,7 +2338,7 @@ function replaceTab(oldId, url) {
   takePlace(id, oldId);
 }
 ipcMain.on('settings-page:open', (_e, section) => openSettingsPage(typeof section === 'string' ? section : ''));
-if (process.env.CLAUDE_BROWSER_TEST) {
+if (TEST) {
   global.__settings = { backend: settingsBackend, page: settingsPage, open: openSettingsPage, tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, settings: Boolean(t.settings), url: t.view.webContents.getURL() })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, historyUrls: () => [...history.keys()], permissions: permissionDecisions };
 }
 
@@ -2758,5 +2763,5 @@ app.on('activate', () => {
     createWindow();
   }
 });
-if (process.env.CLAUDE_BROWSER_TEST) global.__dropDeadWindowViews = dropDeadWindowViews;
+if (TEST) global.__dropDeadWindowViews = dropDeadWindowViews;
 // ---- [/mac reopen]

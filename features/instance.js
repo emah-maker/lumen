@@ -64,7 +64,7 @@ function listenForSecondInstances(app, focus) {
 
 function acquireInstanceLock(app) {
   if (app.requestSingleInstanceLock()) return true;
-  if (process.env.CLAUDE_BROWSER_TEST && !process.env.CLAUDE_BROWSER_PROFILE) return false;
+  if (require('../test-mode').isTest() && !process.env.CLAUDE_BROWSER_PROFILE) return false;
   if (pingRunningInstance(app)) return false; // a live instance answered and brought itself forward
   if (!reclaimProfileLock()) return false;
   const deadline = Date.now() + 3000;

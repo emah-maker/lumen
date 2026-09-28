@@ -11,6 +11,16 @@ const path = require('path');
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };
 
+  // ---- the "Add extension?" dialog lists what it asks for
+  const { extensionPermissionLines } = require('../extension-permissions');
+  const broad = extensionPermissionLines({ permissions: ['tabs', 'storage', 'cookies'], host_permissions: ['<all_urls>'] });
+  check('install prompt: all-sites access is listed first', broad[0] === 'Read and change all your data on all websites', JSON.stringify(broad));
+  check('install prompt: tabs and cookies are listed, storage is not', broad.includes('Read your browsing history') && broad.some((l) => /cookies/.test(l)) && broad.length === 3, JSON.stringify(broad));
+  const narrow = extensionPermissionLines({ content_scripts: [{ matches: ['https://*.github.com/*', 'https://example.com/*'] }] });
+  check('install prompt: specific sites are named', narrow.length === 1 && narrow[0].includes('github.com') && narrow[0].includes('example.com'), JSON.stringify(narrow));
+  check('install prompt: nothing special says so', extensionPermissionLines({ permissions: ['storage'] }).length === 0, 'expected no lines');
+  check('main.js uses no private Electron preload getter', !/_getPreloadScript/.test(require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8')), '_getPreloadScript found');
+
   const installed = await app.evaluate(async () => {
     try {
       const ext = await global.__installExtension('eimadpbcbfnmbkopoojfekhnkhdbieeh');

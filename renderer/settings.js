@@ -255,21 +255,26 @@ async function buildAi(card) {
   const port = h('input', { type: 'number', id: 'ai-automation-port', min: '1024', max: '65535', placeholder: '9222', 'aria-label': 'Automation port', value: String(auto.port) });
   const autoNote = status('ai-automation-status');
   let running = auto.running;
+  let token = auto.token;
+  // The address includes the proxy's secret token: without it every request is refused.
+  const endpointFor = (p) => `http://127.0.0.1:${p}/${token}`;
+  const copyUrl = h('button', { id: 'ai-automation-copy', text: 'Copy address', onclick: async () => { await navigator.clipboard.writeText(endpointFor(Number(port.value) || 9222)).catch(() => {}); copyUrl.textContent = 'Copied'; setTimeout(() => { copyUrl.textContent = 'Copy address'; }, 1400); } });
   const describe = (enabled, p) => {
-    const endpoint = `http://127.0.0.1:${p}`;
+    const endpoint = endpointFor(p);
     autoNote.className = 'note';
     if (!enabled) autoNote.textContent = running ? 'Turned off. The port is closed.' : '';
     else if (running?.error) flash(autoNote, running.error, 'err');
     else if (running?.listening && running.port === p) autoNote.textContent = `Listening on ${endpoint}. Playwright: chromium.connectOverCDP('${endpoint}')`;
     else autoNote.textContent = `Restart Lumen to open ${endpoint}.`;
   };
-  const portRow = row('Port (localhost only)', 'Any program on this computer can then control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done.', port);
+  const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl);
   portRow.querySelector('.text').append(autoNote);
   const saveAuto = async () => {
     const p = Number(port.value) || 9222;
     await S.ai.setAutomation({ enabled: autoToggle.checked, port: p });
     portRow.hidden = !autoToggle.checked;
     if (!autoToggle.checked) running = null;
+    token = (await S.ai.automationInfo()).token; // turning it off and on again makes a new one
     describe(autoToggle.checked, p);
   };
   autoToggle.addEventListener('change', saveAuto);

@@ -1559,7 +1559,7 @@ window.assistant.onEvent((event) => {
     }
     case 'approval':
       if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); // a hidden sidebar left the task waiting with only a badge as a hint
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
       moveWorkingToEnd();
       break;
     case 'notice': {
@@ -1676,17 +1676,20 @@ window.assistant.autoAllow?.().then((on) => { autoAllow = Boolean(on); renderAut
 const approvals = new Map(); // approvalId -> { card, host }
 
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
-// could carry that content there); anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle } = {}) {
+// could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
+// script on a site after reading page content; anything else is the usual "interact with this site" card.
+function showApproval(approvalId, host, { action, title: openTitle, query } = {}) {
   const card = document.createElement('div');
   card.className = 'approval';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   const agentName = assistantIdentity?.name || 'the AI';
   const opening = action === 'open';
+  const scripting = action === 'script';
   const heading = opening
-    ? (host ? `${agentName} wants to open ${host}` : openTitle || `${agentName} wants to open a new site`)
-    : `Allow ${agentName} to interact with ${host}?`;
+    ? openTitle || (host ? `${agentName} wants to open ${host}` : `${agentName} wants to open a new site`)
+    : scripting ? openTitle || `${agentName} wants to run a script on ${host}`
+      : `Allow ${agentName} to interact with ${host}?`;
   card.setAttribute('aria-label', heading);
 
   const title = document.createElement('p');
@@ -1694,9 +1697,11 @@ function showApproval(approvalId, host, { action, title: openTitle } = {}) {
   title.textContent = heading;
   const detail = document.createElement('p');
   detail.className = 'approval-detail';
-  detail.textContent = opening
-    ? 'It has read page content in this chat. Only allow sites you expect it to visit.'
-    : 'It can click, type and fill in forms on this site until you start a new chat.';
+  detail.textContent = query !== undefined
+    ? `It has read page content in this chat, and the search sends “${query}” to ${host}.`
+    : opening ? 'It has read page content in this chat. Only allow sites you expect it to visit.'
+      : scripting ? 'It has read page content in this chat. A script can send page content to any site.'
+        : 'It can click, type and fill in forms on this site until you start a new chat.';
 
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
@@ -1917,12 +1922,13 @@ window.assistant.onMcpEvent?.((event) => {
     }
     case 'approval': {
       if (document.body.classList.contains('sidebar-hidden')) showSidebar(true);
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
-      if (title) title.textContent = `An external agent (${event.clientName}) wants to ${event.action === 'open' ? 'open' : 'interact with'} ${event.host}`;
+      const wants = event.query !== undefined ? `search ${event.host} for “${event.query}”` : `${event.action === 'open' ? 'open' : event.action === 'script' ? 'run a script on' : 'interact with'} ${event.host}`;
+      if (title) title.textContent = `An external agent (${event.clientName}) wants to ${wants}`;
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
-      if (event.action === 'open') { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = 'Only allow sites you expect it to visit.'; }
+      if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = 'Only allow sites you expect it to visit.'; }
       card?.setAttribute('aria-label', title?.textContent || '');
       break;
     }

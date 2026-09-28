@@ -331,11 +331,9 @@ const CLAUDE_CODE_NOTE = `
 You are running inside Claude Code, connected to the user's Lumen browser over MCP. Your browser tools are named mcp__lumen__<tool> (for example mcp__lumen__read_page, mcp__lumen__navigate, mcp__lumen__click); web_search is mcp__lumen__web_search (DuckDuckGo results). You have no shell or file tools. Your reply appears in Lumen's sidebar chat.`;
 
 // ---- [grok build engine] extra guidance when the user's own Grok Build CLI answers (grok-build.js).
-// Naming convention for Lumen's MCP tools is stated as one of two plausible forms, not asserted as
-// fact: it could not be confirmed against a real Lumen MCP server within this task's run budget (see
-// grok-build.js's file header -- every test run's MCP servers stayed "pending" and the model never
-// got to actually call one). Also tells the model what to do about that: say so, don't improvise
-// with a tool it doesn't have.
+// Lumen's tools reach Grok as deferred lumen__<tool> names behind search_tool/use_tool (confirmed
+// against the real CLI; see grok-build.js's header). If they haven't loaded yet, the model should say
+// so rather than improvise with a tool it doesn't have.
 const GROK_BUILD_NOTE = `
 
 You are running inside Grok Build, connected to the user's Lumen browser over MCP. Lumen's browser tools are deferred: find them with search_tool (for example "lumen read page" or "lumen navigate"), then call them with use_tool using the exact names it returns, such as lumen__read_page, lumen__navigate, lumen__click and lumen__web_search. You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error. If search_tool finds no Lumen tools yet, the connection is still starting: search once more, and if they are still missing, say so plainly. Your reply appears in Lumen's sidebar chat.`;
@@ -447,13 +445,16 @@ const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'pr
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
 const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'list_tabs', 'run_script', 'batch']);
-// Tools that send a request to a host the model picks. In a tainted run, each new destination host
-// needs the user's OK (the same per-chat approved hosts as ACTING_TOOLS).
-const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls']);
+// Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
+// In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
+// as ACTING_TOOLS).
+const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls', 'web_search']);
+const SEARCH_HOST = 'html.duckduckgo.com';
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
 // URLs are left out: execute() refuses them anyway.
 function destinationHosts(name, input) {
+  if (name === 'web_search') return [SEARCH_HOST];
   const urls = name === 'read_urls' ? (Array.isArray(input?.urls) ? input.urls.slice(0, 6) : []) : [input?.url];
   const hosts = [];
   for (const raw of urls) {
@@ -614,15 +615,18 @@ const hostOf = (url) => {
 const quote = (s, max = 40) => `“${s.length > max ? `${s.slice(0, max - 1)}…` : s}”`;
 
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
-async function readInBackground(url) {
+// `guard(wc)` (Agent.guardRedirects) checks where the page redirects to before it is read.
+async function readInBackground(url, guard = () => null) {
   // In-memory partition: no cookies or logins from the user's browsing.
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
   view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
   const wc = view.webContents;
   wc.setAudioMuted(true);
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const redirects = guard(wc);
   try {
     await Promise.race([wc.loadURL(url).catch(() => {}), sleep(15000)]);
+    await redirects?.settle();
     await sleep(500);
     const page = await runScript(wc, scripts.readPage(0, 0), 8000);
     const more = page.totalTextChars > 8000 ? `
@@ -631,6 +635,7 @@ async function readInBackground(url) {
   } catch (err) {
     return { url, title: '', text: `Could not read this page: ${err.message}` };
   } finally {
+    redirects?.release();
     wc.close();
   }
 }
@@ -642,7 +647,7 @@ async function searchWeb(query) {
   wc.setAudioMuted(true);
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
   try {
-    await Promise.race([wc.loadURL(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`).catch(() => {}), sleep(12000)]);
+    await Promise.race([wc.loadURL(`https://${SEARCH_HOST}/html/?q=${encodeURIComponent(query)}`).catch(() => {}), sleep(12000)]);
     const rows = await runScript(wc, `[...document.querySelectorAll('.result')].slice(0, 8).map((r) => {
       const a = r.querySelector('a.result__a');
       let url = a ? a.href : '';
@@ -669,6 +674,8 @@ class Agent {
     this.approvedHosts = new Set();
     this.pendingApprovals = new Map();
     this.approvalSeq = 0;
+    this.redirectGuards = new Map(); // webContents -> its redirect check while a tool runs (guardRedirects)
+    this.openAsks = new WeakMap(); // approved-hosts set -> host -> the "wants to open" card showing for it
     this.controller = null;
     this.current = null;
     this.nextModel = null;
@@ -1204,16 +1211,22 @@ class Agent {
   // `run` is the task scope, whose chat holds the taint until New chat, or an MCP session for outside
   // agents), navigate / open_tab / read_urls to a destination host that isn't approved yet ask first
   // ("<who> wants to open <host>"), one card per new host. The answer joins the same approved hosts.
-  // A chat that hasn't read anything goes freely.
+  // web_search asks the same way about DuckDuckGo, with the query on the card (it is what gets sent).
+  // A chat that hasn't read anything goes freely. Redirects the tool then runs into are checked
+  // against the same hosts (guardRedirects), so the call's context is kept on the task scope.
+  // run_script in a tainted run has its own card per site ("<who> wants to run a script on <host>"):
+  // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
   async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
+    const gate = { emit, signal, hosts, who, external, run };
+    const scope = taskScope.getStore();
+    if (scope) scope.gate = gate;
     if (DESTINATION_TOOLS.has(name) && taintHolder(run)?.tainted) {
+      const search = name === 'web_search' ? { query: String(input.query ?? ''), title: `${who} wants to search DuckDuckGo for ${quote(String(input.query ?? ''), 120)}` } : undefined;
       for (const host of destinationHosts(name, input)) {
-        if (hosts.has(host)) continue;
-        const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal, { action: 'open', who });
-        if (!ok) throw new Error(`The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
-        hosts.add(host);
+        if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search to DuckDuckGo. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
       }
     }
+    const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
     if (READING_TOOLS.has(name)) this.markTainted(run);
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
@@ -1224,14 +1237,111 @@ class Agent {
         return parsed.host || `${parsed.protocol.replace(/:$/, '')} pages`;
       } catch { return ''; }
     };
+    // A script OK is kept as "script:<host>" next to the host itself (it covers interacting too).
+    const keyOf = (host) => (scripted ? `script:${host}` : host);
     for (let asked = 0; asked < 3; asked++) {
       const host = siteOf();
-      if (!host || hosts.has(host)) return;
-      const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal);
-      if (!ok) throw new Error(`The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
+      if (!host || hosts.has(keyOf(host))) return;
+      const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal, scripted ? { action: 'script', who } : undefined);
+      if (!ok) throw new Error(scripted
+        ? `The user did not allow ${who} to run scripts on ${host} (a script can send page content to any site). Use read_page, find or click instead, or ask them.`
+        : `The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
       hosts.add(host);
+      hosts.add(keyOf(host));
     }
-    if (!hosts.has(siteOf())) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
+    if (!hosts.has(keyOf(siteOf()))) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
+  }
+
+  // ensureAllowed for a tool another tool runs (each batch step), with the outer call's context.
+  // Outside a gated call (no ensureAllowed ran in this scope) there is nothing to check against.
+  async allowStep(name, input) {
+    const gate = taskScope.getStore()?.gate;
+    if (!gate) return;
+    await this.ensureAllowed(name, gate.emit, gate.signal, { hosts: gate.hosts, who: gate.who, external: gate.external, input, run: gate.run });
+  }
+
+  // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
+  // (auto-allow covers the sidebar's AI only); calls that need the same host at once share one card.
+  // `card` ({ title, query }) says more on the card, for a search; such a card is never shared.
+  async askOpen(host, { emit, signal, hosts, who, external }, card = null) {
+    if (hosts.has(host)) return true;
+    if (!external && this.browser.autoApprove?.()) {
+      hosts.add(host);
+      return true;
+    }
+    if (card) {
+      const ok = await this.askApproval(host, emit, signal, { action: 'open', who, ...card });
+      if (ok) hosts.add(host);
+      return ok;
+    }
+    if (!this.openAsks.has(hosts)) this.openAsks.set(hosts, new Map());
+    const asks = this.openAsks.get(hosts);
+    if (!asks.has(host)) {
+      asks.set(host, this.askApproval(host, emit, signal, { action: 'open', who }).then((ok) => {
+        if (ok) hosts.add(host);
+        return ok;
+      }).finally(() => asks.delete(host)));
+    }
+    return asks.get(host);
+  }
+
+  // Redirect check (exfiltration guard): an approved host could send the tab on to one that isn't.
+  // While a tool runs in a tainted run (the gate ensureAllowed left on the task scope), a server
+  // redirect in `wc` to an unapproved host is stopped; with `clientSide` (tools that load an address
+  // the model gave), so is the page's own jump elsewhere (script or meta refresh). settle() then asks
+  // about that host: allowed, the load goes on there; denied, the tab stays off it and the tool fails.
+  // Returns null outside a gated run; a nested call on a watched webContents shares its check.
+  guardRedirects(wc, { clientSide = false } = {}) {
+    const gate = taskScope.getStore()?.gate;
+    if (!gate || !wc || wc.isDestroyed()) return null;
+    const watching = this.redirectGuards.get(wc);
+    if (watching) return { settle: watching.settle, release() {} };
+    let blocked = null;
+    const check = (event, url, isMainFrame) => {
+      if (isMainFrame === false || !taintHolder(gate.run)?.tainted) return;
+      let host;
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+        host = parsed.host;
+      } catch { return; }
+      if (gate.hosts.has(host) || (!gate.external && this.browser.autoApprove?.())) return;
+      event.preventDefault();
+      blocked ||= { url, host };
+    };
+    const onRedirect = (event, url, _inPlace, isMainFrame) => check(event, event.url || url, event.isMainFrame ?? isMainFrame);
+    const onNavigate = (event, url) => check(event, event.url || url, event.isMainFrame ?? true);
+    wc.on('will-redirect', onRedirect);
+    if (clientSide) wc.on('will-navigate', onNavigate);
+    const settle = async () => {
+      let moved = false;
+      for (let hops = 0; blocked; hops++) {
+        const { url, host } = blocked;
+        blocked = null;
+        if (hops >= 5) throw new Error('The page kept redirecting to other sites. Check the page and try again.');
+        if (!(await this.askOpen(host, gate))) {
+          const stayed = wc.isDestroyed() ? '' : ` The tab stayed on ${agentUrl(wc.getURL()) || 'the page it was on'}.`;
+          throw new Error(`The page redirected to ${host}, and the user did not allow ${gate.who} to open it.${stayed} Ask them what to do instead.`);
+        }
+        await wc.loadURL(url).catch(() => {});
+        await waitForLoad(wc);
+        moved = true;
+      }
+      return moved;
+    };
+    const release = () => {
+      this.redirectGuards.delete(wc);
+      if (wc.isDestroyed()) return;
+      wc.removeListener('will-redirect', onRedirect);
+      wc.removeListener('will-navigate', onNavigate);
+    };
+    this.redirectGuards.set(wc, { settle });
+    return { settle, release };
+  }
+
+  // Asks about a redirect guardRedirects stopped in `wc`, if any; true if the tab went on there.
+  settleRedirects(wc) {
+    return this.redirectGuards.get(wc)?.settle() ?? Promise.resolve(false);
   }
 
   // A chat (via its task scope) or an MCP session has seen page content; see ensureAllowed.
@@ -1240,11 +1350,17 @@ class Agent {
     if (holder) holder.tainted = true;
   }
 
-  // action 'open' (a tainted run heading to a new host) is shown as "<who> wants to open <host>";
-  // without it, the card is the usual "Allow … to interact with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null } = {}) {
+  // action 'open' (a tainted run heading to a new host) is shown as "<who> wants to open <host>"
+  // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
+  // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
+  // with <host>?".
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null } = {}) {
     const approvalId = ++this.approvalSeq;
-    emit(action === 'open' ? { type: 'approval', approvalId, host, action, title: `${who || 'Claude'} wants to open ${host}` } : { type: 'approval', approvalId, host });
+    emit(action === 'open'
+      ? { type: 'approval', approvalId, host, action, title: title || `${who || 'Claude'} wants to open ${host}`, ...(query === null ? {} : { query }) }
+      : action === 'script'
+        ? { type: 'approval', approvalId, host, action, title: `${who || 'Claude'} wants to run a script on ${host}` }
+        : { type: 'approval', approvalId, host });
     return new Promise((resolve, reject) => {
       const onAbort = () => {
         this.pendingApprovals.delete(approvalId);
@@ -1274,7 +1390,23 @@ class Agent {
     return tab.webContents;
   }
 
+  // Runs a tool; in a tainted run, redirects in the task's tab are checked while it runs (and for
+  // navigate and run_script, the page's own jumps: a script can set location).
   async execute(name, input) {
+    let wc = null;
+    try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
+    const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
+    if (!guard) return this.runTool(name, input);
+    try {
+      const result = await this.runTool(name, input);
+      const moved = await guard.settle();
+      return moved && typeof result === 'string' ? `${result}\nThe page then redirected; it is now ${agentUrl(wc.getURL()) || wc.getURL()}.` : result;
+    } finally {
+      guard.release();
+    }
+  }
+
+  async runTool(name, input) {
     // --- efficiency hook (snapshot.js) ---
     const efficient = await snapshot.execute(this, name, input, { runScript, scripts });
     if (efficient !== undefined) return efficient;
@@ -1307,6 +1439,7 @@ class Agent {
         if (wc.isLoading()) await waitForLoad(wc);
         await wc.loadURL(url).catch(() => {}); // redirects reject with ERR_ABORTED; the load still happens
         await waitForLoad(wc);
+        await this.settleRedirects(wc);
         return `Loaded ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
       }
       case 'click': {
@@ -1375,7 +1508,7 @@ class Agent {
       }
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const pages = await Promise.all(urls.map((url) => readInBackground(url)));
+        const pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }))));
         return pages.map((p) => `<untrusted_page_content url="${p.url}">\nTitle: ${p.title}\n${p.text}\n</untrusted_page_content>`).join('\n\n');
       }
       case 'run_script': {
@@ -1500,7 +1633,13 @@ class Agent {
       case 'open_tab': {
         const tab = this.browser.openTab(webUrl(input.url));
         this.pinTab(tab.id); // it opens in front; the task carries on there
-        await waitForLoad(tab.webContents);
+        const redirects = this.guardRedirects(tab.webContents, { clientSide: true });
+        try {
+          await waitForLoad(tab.webContents);
+          await redirects?.settle();
+        } finally {
+          redirects?.release();
+        }
         return `Opened tab ${tab.id}: ${tab.webContents.getURL()}`;
       }
       case 'switch_tab': {

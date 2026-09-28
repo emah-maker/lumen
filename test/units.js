@@ -1,5 +1,5 @@
-// Plain Node checks (no Electron window): address bar URL-or-search detection and the crash-safe
-// settings file.
+// Plain Node checks (no Electron window): address bar URL-or-search detection, the crash-safe
+// settings file, Safari import and the Grok Build engine's argv/env/home.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -85,6 +85,50 @@ try {
   check('Safari history is read with its dates', data.history.length === 1 && data.history[0].url === 'https://www.apple.com/' && data.history[0].last === Date.UTC(2026, 8, 1) && data.history[0].visits === 9, JSON.stringify(data.history));
 } finally {
   fs.rmSync(safari, { recursive: true, force: true });
+}
+
+// ---- Grok Build engine: argv, env and its own GROK_HOME (grok-build.js)
+const gb = require('../grok-build');
+const gbData = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gb-'));
+try {
+  const argv = gb.buildArgs({ promptFile: 'p.json', sessionId: 'id', resume: false, systemPrompt: 'sys', cwd: 'cwd' });
+  const allows = argv.flatMap((a, i) => (argv[i - 1] === '--allow' ? [a] : []));
+  check('Grok Build allows only Lumen MCP tools and search_tool, not use_tool itself', JSON.stringify(allows) === JSON.stringify(['lumen__*', 'search_tool']) && !argv.includes('use_tool'), JSON.stringify(allows));
+  check('Grok Build denies the terminal and runs under dontAsk', argv.includes('run_terminal_command') && argv[argv.indexOf('--permission-mode') + 1] === 'dontAsk', argv.join(' '));
+
+  const env = gb.buildEnv({ userData: gbData, base: { PATH: 'x', GROK_HOME: '/users/real/.grok', GROK_CLAUDE_MCPS_ENABLED: '1', GROK_CONFIG: '{}', ELECTRON_RUN_AS_NODE: '1' } });
+  check('Grok Build GROK_HOME is Lumen\'s own folder under userData, not the user\'s', env.GROK_HOME === path.join(gbData, 'grok-home') && env.GROK_HOME === gb.grokHomeFor(gbData), env.GROK_HOME);
+  check('Grok Build turns off its Claude/Cursor imports in the env (beats config.toml)', env.GROK_CLAUDE_MCPS_ENABLED === '0' && env.GROK_CURSOR_MCPS_ENABLED === '0' && env.GROK_CLAUDE_HOOKS_ENABLED === '0', JSON.stringify(env));
+  check('Grok Build env drops config overlays and ELECTRON_RUN_AS_NODE', !('GROK_CONFIG' in env) && !('ELECTRON_RUN_AS_NODE' in env) && env.PATH === 'x', JSON.stringify(env));
+
+  const toml = gb.grokConfig({ command: 'C:\\Lumen\\Lumen.exe', args: ['C:\\Lumen\\mcp.js'], env: { ELECTRON_RUN_AS_NODE: '1', LUMEN_ENGINE: 'tag123' } });
+  const servers = [...toml.matchAll(/^\[mcp_servers\.([^\].]+)\]$/gm)].map((m) => m[1]);
+  check('Grok Build config.toml has only the lumen MCP server', JSON.stringify(servers) === '["lumen"]', JSON.stringify(servers));
+  check('Grok Build config.toml carries the run tag and escapes Windows paths', toml.includes('"LUMEN_ENGINE" = "tag123"') && toml.includes('command = "C:\\\\Lumen\\\\Lumen.exe"'), toml);
+  check('Grok Build config.toml turns off Claude and Cursor MCP imports', /\[compat\.claude\][^[]*mcps = false/.test(toml) && /\[compat\.cursor\][^[]*mcps = false/.test(toml), toml);
+
+  // Sign-in: only auth.json is shared, and a refreshed token goes back to the user's file.
+  const userHome = path.join(gbData, 'user-grok');
+  const home = gb.grokHomeFor(gbData);
+  fs.mkdirSync(userHome); fs.mkdirSync(home);
+  fs.writeFileSync(path.join(userHome, 'auth.json'), 'token-1');
+  fs.writeFileSync(path.join(userHome, 'config.toml'), '[mcp_servers.other]');
+  const before = gb.linkAuth(userHome, home);
+  check('Grok Build shares the user\'s auth.json with its own home', fs.readFileSync(path.join(home, 'auth.json'), 'utf8') === 'token-1', fs.readdirSync(home).join(','));
+  check('Grok Build does not copy the user\'s config.toml', !fs.existsSync(path.join(home, 'config.toml')), fs.readdirSync(home).join(','));
+  fs.rmSync(path.join(home, 'auth.json')); // Grok replacing the file on a token refresh
+  fs.writeFileSync(path.join(home, 'auth.json'), 'token-2');
+  check('Grok Build copies a refreshed token back when the user\'s file is unchanged', gb.settleAuth(userHome, home, before) && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-2', fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8'));
+  const again = gb.linkAuth(userHome, home);
+  fs.rmSync(path.join(home, 'auth.json'));
+  fs.writeFileSync(path.join(home, 'auth.json'), 'token-3');
+  fs.writeFileSync(path.join(userHome, 'auth.json'), 'token-new-login-longer'); // the user signed in again meanwhile
+  check('Grok Build never overwrites a newer sign-in of the user\'s', !gb.settleAuth(userHome, home, again) && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-new-login-longer', fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8'));
+  fs.rmSync(path.join(userHome, 'auth.json'));
+  gb.linkAuth(userHome, home);
+  check('Grok Build signed out: no auth.json is left in its home', !fs.existsSync(path.join(home, 'auth.json')), fs.readdirSync(home).join(','));
+} finally {
+  fs.rmSync(gbData, { recursive: true, force: true });
 }
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');

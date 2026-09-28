@@ -1,5 +1,6 @@
 // Automation over CDP: Playwright's connectOverCDP sees only the user's tabs, newPage opens a real
-// Lumen tab, disconnecting never quits Lumen, and with the setting off no port listens.
+// Lumen tab, disconnecting never quits Lumen, and with the setting off no port listens. Every proxy
+// URL needs the token Settings shows, and Chromium's DevToolsActivePort file doesn't stay around.
 const { _electron: electron, chromium } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -49,20 +50,41 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
   const lumenTabs = () => app.evaluate(() => global.__agent.browser.listTabs().length);
   await app.evaluate((_e, url) => global.__agent.execute('navigate', { url }), `${site}/first`);
 
-  const version = await fetch(`http://127.0.0.1:${PORT}/json/version`).then((r) => r.json());
-  check('/json/version points at the proxy', version.webSocketDebuggerUrl?.startsWith(`ws://127.0.0.1:${PORT}/devtools/browser/`), JSON.stringify(version));
-  const list = await fetch(`http://127.0.0.1:${PORT}/json/list`).then((r) => r.json());
-  check('/json/list: only user tabs', list.length === await lumenTabs() && list.every((t) => !t.url.includes('renderer/index.html')), JSON.stringify(list.map((t) => t.url)));
-  const blocked = await fetch(`http://127.0.0.1:${PORT}/json/list`, { headers: { Origin: 'https://evil.example' } }).then((r) => r.status);
+  // The address Settings shows: http://127.0.0.1:<port>/<token>, the token kept in the profile.
+  const info = await ui.evaluate(() => window.assistant.automationInfo());
+  const { token } = info;
+  const root = `http://127.0.0.1:${PORT}/${token}`;
+  check('Lumen reports the token it listens with', /^[0-9a-f]{48}$/.test(token) && fs.readFileSync(path.join(profile, 'automation-token'), 'utf8').trim() === token && info.running?.listening, JSON.stringify(info));
+  const statusOf = (url) => fetch(url).then((r) => r.status, () => 0);
+  const bare = await statusOf(`http://127.0.0.1:${PORT}/json/version`);
+  check('proxy without the token is refused', bare === 401 && (await statusOf(`http://127.0.0.1:${PORT}/json/list`)) === 401, bare);
+  check('proxy with a wrong token is refused', (await statusOf(`http://127.0.0.1:${PORT}/${'0'.repeat(48)}/json/version`)) === 401 && (await statusOf(`${root}x/json/version`)) === 401, 'accepted');
+  const bareWs = await wsStatus(`ws://127.0.0.1:${PORT}/devtools/browser`);
+  check('WebSocket without the token is refused', bareWs === 401, bareWs);
+  const noToken = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`).then((b) => { b.close(); return 'connected'; }, (err) => err.message);
+  check('connectOverCDP without the token fails', /401/.test(noToken), noToken);
+  check('DevToolsActivePort is gone once read', !fs.existsSync(path.join(profile, 'DevToolsActivePort')), 'still there');
+
+  const version = await fetch(`${root}/json/version`).then((r) => r.json());
+  check('/json/version points at the proxy, token included', version.webSocketDebuggerUrl === `ws://127.0.0.1:${PORT}/${token}/devtools/browser`, JSON.stringify(version));
+  const list = await fetch(`${root}/json/list`).then((r) => r.json());
+  check('/json/list: only user tabs', list.length === await lumenTabs() && list.every((t) => !t.url.includes('renderer/index.html') && t.webSocketDebuggerUrl.startsWith(`ws://127.0.0.1:${PORT}/${token}/devtools/page/`)), JSON.stringify(list.map((t) => t.url)));
+  const blocked = await fetch(`${root}/json/list`, { headers: { Origin: 'https://evil.example' } }).then((r) => r.status);
   check('web pages (Origin header) are refused', blocked === 403, blocked);
 
   // The UI's own target is not reachable through the proxy.
-  const [internalPort] = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n');
-  const all = await fetch(`http://127.0.0.1:${internalPort}/json/list`).then((r) => r.json());
-  const uiTarget = all.find((t) => t.url.includes('renderer/index.html'));
-  check('UI target cannot be attached', uiTarget && (await wsStatus(`ws://127.0.0.1:${PORT}/devtools/page/${uiTarget.id}`)) === 404, uiTarget?.id);
+  const uiTarget = await app.evaluate(async ({ BrowserWindow }) => {
+    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    wc.debugger.attach('1.3');
+    const { targetInfo } = await wc.debugger.sendCommand('Target.getTargetInfo');
+    wc.debugger.detach();
+    return targetInfo.targetId;
+  });
+  check('UI target cannot be attached', uiTarget && (await wsStatus(`ws://127.0.0.1:${PORT}/${token}/devtools/page/${uiTarget}`)) === 404, uiTarget);
+  check('a tab with the token can be attached', (await wsStatus(list[0].webSocketDebuggerUrl)) === 101, list[0]?.webSocketDebuggerUrl);
+  check('a tab without the token is refused',(await wsStatus(list[0].webSocketDebuggerUrl.replace(`/${token}`, ''))) === 401, list[0]?.webSocketDebuggerUrl);
 
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+  const browser = await chromium.connectOverCDP(root);
   const context = browser.contexts()[0];
   const pages = context.pages();
   check('connectOverCDP sees the user tabs only', pages.length === await lumenTabs() && pages.some((p) => p.url().includes('/first')) && !pages.some((p) => p.url().startsWith('file:')), pages.map((p) => p.url()).join(', '));
@@ -95,6 +117,9 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
   await ui.evaluate(() => window.assistant.setAutomation({ enabled: false, port: 9339 }));
   await ui.waitForTimeout(200);
   check('turning off closes the port', !(await portOpen(PORT)), 'still open');
+  check('turning off forgets the token', !fs.existsSync(path.join(profile, 'automation-token')), 'still there');
+  const again = await ui.evaluate(() => window.assistant.setAutomation({ enabled: true, port: 9339 }).then(() => window.assistant.automationInfo()));
+  check('turning it back on makes a new address', /^[0-9a-f]{48}$/.test(again.token) && again.token !== token, again.token);
 
   await app.close();
   server.close();
