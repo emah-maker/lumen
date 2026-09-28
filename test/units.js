@@ -434,7 +434,32 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-grokRuns().catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+// ---- Electron fuses: packaged macOS builds turn off NODE_OPTIONS and --inspect; Windows is untouched
+async function fuseChecks() {
+  const afterPack = require('../scripts/after-pack');
+  const { FuseV1Options, getCurrentFuseWire } = require('@electron/fuses');
+  const mac = afterPack.fuses('darwin');
+  check('fuses: macOS turns off NODE_OPTIONS and --inspect', mac && mac[FuseV1Options.EnableNodeOptionsEnvironmentVariable] === false && mac[FuseV1Options.EnableNodeCliInspectArguments] === false, JSON.stringify(mac));
+  check('fuses: macOS leaves RunAsNode alone (the MCP bridge needs it)', mac && !(FuseV1Options.RunAsNode in mac), JSON.stringify(mac));
+  check('fuses: Windows and Linux binaries are not touched', afterPack.fuses('win32') === null && afterPack.fuses('linux') === null, 'not null');
+
+  // Run the hook on a fake mac app: a framework binary that carries Electron's fuse wire.
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-fuses-'));
+  const framework = path.join(out, 'Lumen.app', 'Contents', 'Frameworks', 'Electron Framework.framework');
+  fs.mkdirSync(framework, { recursive: true });
+  fs.writeFileSync(path.join(framework, 'Electron Framework'), Buffer.concat([Buffer.alloc(64), Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'), Buffer.from([1, 9]), Buffer.from('101100011'), Buffer.alloc(64)]));
+  const calls = [];
+  const packager = { addElectronFuses: (ctx, cfg) => { calls.push(ctx.electronPlatformName); return require('@electron/fuses').flipFuses(path.join(ctx.appOutDir, 'Lumen.app'), cfg); } };
+  await afterPack.default({ appOutDir: out, electronPlatformName: 'darwin', packager });
+  const wire = await getCurrentFuseWire(path.join(out, 'Lumen.app'));
+  const on = (fuse) => String.fromCharCode(wire[fuse]); // the wire holds ASCII '0' / '1'
+  check('fuses: the hook flips the mac binary', calls.length === 1 && on(FuseV1Options.EnableNodeOptionsEnvironmentVariable) === '0' && on(FuseV1Options.EnableNodeCliInspectArguments) === '0' && on(FuseV1Options.RunAsNode) === '1', JSON.stringify(wire));
+  await afterPack.default({ appOutDir: out, electronPlatformName: 'linux', packager });
+  check('fuses: the hook never flips a non-mac build', calls.length === 1, JSON.stringify(calls));
+  fs.rmSync(out, { recursive: true, force: true });
+}
+
+fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
