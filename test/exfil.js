@@ -1,6 +1,7 @@
 // Exfiltration guard: once a run has read page content, taking the browser to a host the user hasn't
 // approved (navigate / open_tab / read_urls) asks first; approved hosts and runs that read nothing go
-// freely; outside (MCP) agents are always asked; list_tabs hides query strings and Lumen's own tabs.
+// freely; outside (MCP) agents are always asked; an approved host redirecting to a new one asks too;
+// list_tabs hides query strings and Lumen's own tabs.
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -10,7 +11,16 @@ const path = require('path');
 (async () => {
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 600)}`}`); };
+  const hits = []; // "<host><path>" of every request, to see what reached the second host
   const server = http.createServer((req, res) => {
+    hits.push(`${req.headers.host}${req.url}`);
+    // /redirect?to=<url>: a 302 to wherever `to` says (an open redirect on an approved site).
+    const to = new URL(req.url, 'http://x').searchParams.get('to');
+    if (req.url.startsWith('/redirect') && to) {
+      res.writeHead(302, { Location: to });
+      res.end();
+      return;
+    }
     res.setHeader('Content-Type', 'text/html');
     res.end(`<title>Page ${req.url}</title><h1>Secret ${req.url}</h1><p>Private text on this page.</p>`);
   }).listen(0, '127.0.0.1');
@@ -129,6 +139,30 @@ const path = require('path');
     { name: 'read_urls', input: { urls: [`${other}/a`, `${home}/b`, `${other}/c`] } },
   ] });
   check('read_urls asks once per new host', r.approvals.length === 2 && r.approvals.map((a) => a.host).sort().join() === [homeHost, otherHost].sort().join() && !r.results[1]?.error, JSON.stringify(r));
+
+  // 7b. An approved host that redirects to a new one: the redirect is stopped and asked about.
+  // Denied, the tab stays off the second host and nothing reaches it; allowed, the tab goes there.
+  const bounce = (path) => `${home}/redirect?to=${encodeURIComponent(`${other}${path}`)}`;
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'navigate', input: { url: bounce('/landing-denied') } },
+  ] });
+  check('a redirect from an approved host to a new one shows an approval card', r.approvals.length === 1 && r.approvals[0].host === otherHost && r.approvals[0].action === 'open', JSON.stringify(r.approvals));
+  check('denied: the tab stays off the second host and the request never reaches it', r.url.startsWith(home) && r.results[1]?.error && /redirected to .* did not allow Claude/.test(r.results[1].text) && !hits.includes(`${otherHost}/landing-denied`), JSON.stringify({ r, hits: hits.slice(-4) }));
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: true, approve: [homeHost], toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'navigate', input: { url: bounce('/landing-allowed') } },
+  ] });
+  check('allowed: the redirect goes on to the second host', r.approvals.length === 1 && r.url === `${other}/landing-allowed` && !r.results[1]?.error, JSON.stringify(r));
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
+    { name: 'navigate', input: { url: bounce('/landing-untainted') } },
+  ] });
+  check('an untainted run follows the redirect without a card', r.approvals.length === 0 && r.url === `${other}/landing-untainted`, JSON.stringify(r));
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'read_urls', input: { urls: [bounce('/hidden-denied')] } },
+  ] });
+  check('read_urls: a redirect to a new host asks, and denied, the page is not read', r.approvals.length === 1 && r.approvals[0].host === otherHost && /did not allow Claude/.test(r.results[1]?.text) && !/Secret \/hidden-denied/.test(r.results[1]?.text) && !hits.includes(`${otherHost}/hidden-denied`), JSON.stringify(r));
 
   // 8. Auto-allow covers the sidebar's AI; an outside MCP agent is still asked, taint kept per session.
   const mcp = await app.evaluate(async (_e, { home: h, other: o }) => {
