@@ -30,6 +30,9 @@ function prepareAutomation(app, settings) {
   try { fs.rmSync(file, { force: true }); } catch {}
   app.commandLine.appendSwitch('remote-debugging-port', '0');
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+  // A debugging port makes Chromium set navigator.webdriver = true on every page, which Cloudflare's
+  // "Verify you are human" and Google sign-in treat as a bot: the checkbox spins and resets forever.
+  app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
   return { port: validPort(settings.automationPort), file };
 }
 
