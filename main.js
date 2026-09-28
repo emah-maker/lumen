@@ -35,6 +35,7 @@ const { createDownloads } = require('./features/downloads');
 const { createDialogs } = require('./features/dialogs');
 const { createSiteSecurity } = require('./features/site-security');
 const instance = require('./features/instance');
+const { createPrivateWindows } = require('./features/private-window');
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -597,6 +598,14 @@ const adblock = createAdblock({
   onResponseHeaders: (details) => settingsBackend.noteResponseHeaders(details),
 });
 
+// ---------- private windows (features/private-window.js) ----------
+// Native dialogs there: Lumen's in-window dialogs (features/dialogs.js) draw over the main window.
+const privateWindows = createPrivateWindows({
+  BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
+  resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
+});
+if (TEST) global.__private = privateWindows;
+
 // Refused at install: extensions whose core job is filtering requests with static
 // declarativeNetRequest rulesets (Electron can't apply them, so they would silently do nothing).
 // Extensions that only use the API for small things (password managers etc.) install, and get the
@@ -711,6 +720,7 @@ function showAppMenu({ x, y }) {
   const wc = activeTab()?.webContents;
   Menu.buildFromTemplate([
     { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => openTab() },
+    { label: 'New Private Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
     { label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
     { type: 'separator' },
     { label: 'Find…', accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
@@ -1988,7 +1998,8 @@ function handleShortcut(event, input) {
   const key = input.key.toLowerCase();
   const wc = activeTab()?.webContents;
   let handled = true;
-  if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
+  if (mod && input.shift && key === 'n') privateWindows.open();
+  else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && key === 't') openTab();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
   else if (mod && key === 'l') focusAddress();
@@ -2149,6 +2160,7 @@ function macMenu() {
       label: 'File',
       submenu: [
         { label: 'New Tab', ...shown('Cmd+T'), click: () => openTab() },
+        { label: 'New Private Window', ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
         { label: 'Reopen Closed Tab', ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
         { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },

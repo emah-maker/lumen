@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <title>Lumen (Private)</title>
+  <link rel="stylesheet" href="private.css">
+</head>
+<body>
+  <div id="strip">
+    <span id="badge" title="Private window: nothing is saved after you close it">Private</span>
+    <div id="tabs" role="tablist"></div>
+    <button id="new-tab" title="New private tab (Ctrl+T)" aria-label="New private tab">+</button>
+  </div>
+  <div id="toolbar">
+    <button id="back" title="Back (Alt+Left)" aria-label="Back">&#8592;</button>
+    <button id="forward" title="Forward (Alt+Right)" aria-label="Forward">&#8594;</button>
+    <button id="reload" title="Reload (Ctrl+R)" aria-label="Reload">&#8635;</button>
+    <form id="address-form"><input id="address" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address (private)" aria-label="Address"></form>
+  </div>
+  <script src="private.js"></script>
+</body>
+</html>
