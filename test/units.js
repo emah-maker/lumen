@@ -104,7 +104,8 @@ try {
   check('Grok Build env drops config overlays and ELECTRON_RUN_AS_NODE', !('GROK_CONFIG' in env) && !('ELECTRON_RUN_AS_NODE' in env) && env.PATH === 'x', JSON.stringify(env));
   const scrubbed = gb.buildEnv({ userData: gbData, base: { Path: 'p', SystemRoot: 'C:\\Windows', TEMP: 't', HTTPS_PROXY: 'http://proxy', LANG: 'en_US.UTF-8', OPENAI_API_KEY: 'sk-1', ANTHROPIC_API_KEY: 'sk-2', XAI_API_KEY: 'xai-1', GITHUB_TOKEN: 'ghp', AWS_SECRET_ACCESS_KEY: 'aws', NPM_CONFIG_USERCONFIG: 'x', GROK_SANDBOX: 'off', LUMEN_GB_DEBUG: 'f' } });
   check('Grok Build env keeps what a process needs to start and reach the network', scrubbed.Path === 'p' && scrubbed.SystemRoot === 'C:\\Windows' && scrubbed.TEMP === 't' && scrubbed.HTTPS_PROXY === 'http://proxy' && scrubbed.LANG === 'en_US.UTF-8', JSON.stringify(scrubbed));
-  check('Grok Build env drops API keys, tokens and the user\'s own GROK_* settings', !['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'XAI_API_KEY', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'NPM_CONFIG_USERCONFIG', 'GROK_SANDBOX', 'LUMEN_GB_DEBUG'].some((k) => k in scrubbed), JSON.stringify(scrubbed));
+  check('Grok Build env keeps XAI_API_KEY (Grok\'s own API-key sign-in)', scrubbed.XAI_API_KEY === 'xai-1', JSON.stringify(scrubbed));
+  check('Grok Build env drops other API keys, tokens and the user\'s own GROK_* settings', !['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'NPM_CONFIG_USERCONFIG', 'GROK_SANDBOX', 'LUMEN_GB_DEBUG'].some((k) => k in scrubbed), JSON.stringify(scrubbed));
   check('Grok Build env: HOME and USERPROFILE are the empty sidebar folder, GROK_HOME Lumen\'s', scrubbed.HOME === path.join(gbData, 'grok-sidebar') && scrubbed.USERPROFILE === scrubbed.HOME && scrubbed.GROK_HOME === gb.grokHomeFor(gbData), JSON.stringify(scrubbed));
 
   // Lumen's own check on the tool calls Grok reports.
@@ -118,10 +119,17 @@ try {
   check('tool check (stream): a use_tool whose input never parses is refused', streamed([ev({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"tool_na' } }), ev({ type: 'content_block_stop', index: 2 })]) === 'use_tool (unreadable)', 'accepted');
   check('tool check (stream): hosted server tools and whole assistant messages are checked too', streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } })]) === 'web_search' && streamed([{ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'edit_file', input: {} }] } }]) === 'edit_file' && streamed([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'use_tool', input: { tool_name: 'lumen__click' } }] } }]) === null, 'missed');
 
-  const toml = gb.grokConfig({ command: 'C:\\Lumen\\Lumen.exe', args: ['C:\\Lumen\\mcp.js'], env: { ELECTRON_RUN_AS_NODE: '1', LUMEN_ENGINE: 'tag123' } });
+  const toml = gb.grokConfig({ gate: 'C:\\Lumen\\grok-home\\lumen-gate.cmd' });
   const servers = [...toml.matchAll(/^\[mcp_servers\.([^\].]+)\]$/gm)].map((m) => m[1]);
   check('Grok Build config.toml has only the lumen MCP server', JSON.stringify(servers) === '["lumen"]', JSON.stringify(servers));
-  check('Grok Build config.toml carries the run tag and escapes Windows paths', toml.includes('"LUMEN_ENGINE" = "tag123"') && toml.includes('command = "C:\\\\Lumen\\\\Lumen.exe"'), toml);
+  check('Grok Build config.toml reaches Lumen over HTTP with the token from the env, no secret on disk', toml.includes('url = "${LUMEN_MCP_URL}"') && toml.includes('"Bearer ${LUMEN_MCP_TOKEN}"') && !/Lumen\.exe/.test(toml) && !/[a-f0-9]{40}/.test(toml), toml);
+  check('Grok Build config.toml runs Lumen\'s gate on every prompt and every tool call (no matcher)', toml.includes('[[hooks.UserPromptSubmit]]\nhooks = [{ type = "command", command = "C:\\\\Lumen\\\\grok-home\\\\lumen-gate.cmd", timeout = 30 }]') && toml.includes('[[hooks.PreToolUse]]\nhooks = [{ type = "command", command = "C:\\\\Lumen\\\\grok-home\\\\lumen-gate.cmd", timeout = 30 }]') && !/matcher/.test(toml), toml);
+  check('Grok Build gate script: a gate it can\'t reach is a deny (exit 2), on Windows and elsewhere', /curl\.exe" -s -f .*"%LUMEN_HOOK_URL%" \|\| exit \/b 2\r\n$/.test(gb.gateScript('win32')) && /^#!\/bin\/sh\ncurl -s -f .*"\$LUMEN_HOOK_URL" \|\| exit 2\n$/.test(gb.gateScript('darwin')), gb.gateScript('win32') + gb.gateScript('linux'));
+  const gd = require('../mcp-http').gateDecision;
+  const names = ['navigate', 'read_page'];
+  check('Grok gate allows search_tool and Lumen\'s own tools', gd('search_tool', names) === null && gd('lumen__navigate', names) === null && gd('lumen__read_page', names) === null, 'denied');
+  check('Grok gate denies built-ins, other servers, unknown lumen__ names and use_tool itself', ['run_terminal_command', 'read_file', 'Bash', 'other__ping', 'lumen__nope', 'lumen__', 'lumen__navigate/x', 'xlumen__navigate', 'use_tool', '', undefined].every((n) => gd(n, names)?.hookSpecificOutput?.permissionDecision === 'deny'), 'allowed one');
+  check('Grok Build status: an XAI_API_KEY sign-in counts as signed in', JSON.stringify(gb.parseGrokModels('You are using XAI_API_KEY.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n')) === JSON.stringify({ signedIn: true, detail: 'grok-4.6', models: ['grok-4.6', 'grok-4.5'] }), JSON.stringify(gb.parseGrokModels('You are using XAI_API_KEY.\n\nDefault model: grok-4.6\n')));
   check('Grok Build config.toml turns off Claude and Cursor MCP imports', /\[compat\.claude\][^[]*mcps = false/.test(toml) && /\[compat\.cursor\][^[]*mcps = false/.test(toml), toml);
 
   // Sign-in: only auth.json is shared, and a refreshed token goes back to the user's file.
@@ -189,12 +197,13 @@ async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
     child.stdout.end();
     setImmediate(() => child.emit('close', null));
   };
-  const engine = new gb.GrokBuildEngine({ userData: data, mcpCommand: () => ({ command: 'lumen', args: ['mcp.js'], env: {} }), ensureServer: () => {}, spawn, kill, ...extra });
+  const gate = { opened: [], closed: [], armed: () => extra.armed !== false, listed: () => true, open(tag) { this.opened.push(tag); return { mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: 'm'.repeat(48), hookUrl: `http://127.0.0.1:1/hook/${'h'.repeat(48)}` }; }, close(tag) { this.closed.push(tag); } };
+  const engine = new gb.GrokBuildEngine({ userData: data, gate: async () => gate, spawn, kill, ...extra });
   engine.detect = async () => 'grok.exe';
   const events = [];
   try {
     const out = await engine.run({ prompt: 'hi', sessionId: 'id-1', resume: false, systemPrompt: 'S', signal: new AbortController().signal, emit: (e) => events.push(e), ...run });
-    return { out, events, kills, spawned, spawns, data, engine };
+    return { out, events, kills, spawned, spawns, data, engine, gate };
   } finally {
     if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
     fs.rmSync(data, { recursive: true, force: true });
@@ -205,6 +214,37 @@ const gbText = (index, text) => [gbEv({ type: 'content_block_start', index, cont
 const gbUse = (index, name) => [gbEv({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: `c${index}`, name: 'use_tool', input: {} } }), gbEv({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ tool_name: name, tool_input: {} }) } }), gbEv({ type: 'content_block_stop', index })];
 const gbInit = { type: 'system', subtype: 'init', session_id: 'id-1', mcp_servers: [{ name: 'lumen', status: 'pending' }] };
 const gbDone = (text) => ({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: 'id-1', total_cost_usd: 0.01 });
+// Lumen's HTTP MCP server and gate for Grok Build (mcp-http.js), on a real localhost port.
+async function grokGateServer() {
+  const calls = [];
+  const gate = await require('../mcp-http').startHttp({ tools: [{ name: 'ping', description: 'p', input_schema: { type: 'object' } }], callTool: async (name, args, session) => { calls.push([name, session.engine]); return { content: [{ type: 'text', text: 'pong' }], isError: false }; }, holdMs: 300 });
+  const http = require('http');
+  const post = (url, body, headers = {}) => new Promise((resolve) => {
+    const u = new URL(url);
+    const req = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'content-type': 'application/json', ...headers } }, (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve({ status: res.statusCode, body: b ? JSON.parse(b) : null })); });
+    req.end(JSON.stringify(body));
+  });
+  try {
+    const run = gate.open('tag-1');
+    const auth = { authorization: `Bearer ${run.mcpToken}` };
+    check('Grok gate server: MCP without the run token is refused (401)', (await post(run.mcpUrl, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).status === 401 && (await post(run.mcpUrl, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { authorization: `Bearer ${'0'.repeat(48)}` })).status === 401, 'accepted');
+    check('Grok gate server: a request from a web page (Origin) or another Host is refused (403)', (await post(run.mcpUrl, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { ...auth, origin: 'https://evil.test' })).status === 403 && (await post(run.mcpUrl, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { ...auth, host: `evil.test:${gate.port}` })).status === 403, 'accepted');
+    const armedRes = post(run.hookUrl, { hook_event_name: 'UserPromptSubmit' });
+    const init = await post(run.mcpUrl, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo: { name: 'grok' } } }, auth);
+    const list = await post(run.mcpUrl, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, auth);
+    const call = await post(run.mcpUrl, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ping', arguments: {} } }, auth);
+    check('Grok gate server: initialize, tools/list and tools/call work with the token, tagged with the run', init.body?.result?.serverInfo?.name === 'lumen' && list.body?.result?.tools?.[0]?.name === 'ping' && call.body?.result?.content?.[0]?.text === 'pong' && JSON.stringify(calls) === '[["ping","tag-1"]]' && gate.listed('tag-1'), JSON.stringify({ init: init.body, list: list.body, call: call.body, calls }));
+    check('Grok gate server: UserPromptSubmit arms the run', (await armedRes).status === 200 && gate.armed('tag-1'), 'not armed');
+    const pre = (name) => post(run.hookUrl, { hook_event_name: 'PreToolUse', tool_name: name, tool_input: {} }).then((r) => r.body?.hookSpecificOutput?.permissionDecision || 'allow');
+    check('Grok gate server: PreToolUse allows lumen__ping and search_tool, denies the rest', await pre('lumen__ping') === 'allow' && await pre('search_tool') === 'allow' && await pre('run_terminal_command') === 'deny' && await pre('other__ping') === 'deny' && JSON.stringify(gate.allowed('tag-1')) === '["lumen__ping","search_tool"]', JSON.stringify(gate.allowed('tag-1')));
+    gate.close('tag-1');
+    const late = await post(run.hookUrl, { hook_event_name: 'PreToolUse', tool_name: 'lumen__ping' });
+    check('Grok gate server: after the run, its hook URL denies and its MCP token is refused', late.body?.hookSpecificOutput?.permissionDecision === 'deny' && (await post(run.mcpUrl, { jsonrpc: '2.0', id: 4, method: 'tools/list' }, auth)).status === 401 && !gate.armed('tag-1'), JSON.stringify(late.body));
+  } finally {
+    gate.stop();
+  }
+}
+
 async function grokRuns() {
   {
     const { out, events, kills, spawned } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Let me look.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, 'LEAKED'), gbDone('LEAKED')]);
@@ -212,8 +252,21 @@ async function grokRuns() {
     check('Grok Build run: a built-in tool call kills the process tree at once', kills.length === 1 && kills[0] === spawned.child.pid, JSON.stringify(kills));
     check('Grok Build run: it ends as failed, with an error naming the tool, and drops the session', out.failed === true && out.sessionId === null && /isn't one of Lumen's \(run_terminal_command\)/.test(error?.text || ''), JSON.stringify({ out, error }));
     check('Grok Build run: nothing after the off-limits call reaches the sidebar', !events.some((e) => /LEAKED/.test(e.text || '')) && !/LEAKED/.test(out.text), JSON.stringify(events));
-    check('Grok Build run: the child gets the scrubbed env and the empty sidebar folder as cwd', spawned.opts.cwd.endsWith('grok-sidebar') && spawned.opts.env.HOME === spawned.opts.cwd && spawned.opts.stdio[0] === 'ignore' && spawned.opts.shell === false && !Object.keys(spawned.opts.env).some((k) => /API_KEY|TOKEN|SECRET/i.test(k)), JSON.stringify(spawned.opts));
+    check('Grok Build run: the child gets the scrubbed env and the empty sidebar folder as cwd', spawned.opts.cwd.endsWith('grok-sidebar') && spawned.opts.env.HOME === spawned.opts.cwd && spawned.opts.stdio[0] === 'ignore' && spawned.opts.shell === false && !Object.keys(spawned.opts.env).some((k) => /API_KEY|TOKEN|SECRET/i.test(k) && !['LUMEN_MCP_TOKEN', 'XAI_API_KEY'].includes(k)), JSON.stringify(spawned.opts));
   }
+  {
+    const { out, spawned, gate } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')]);
+    const env = spawned.opts.env;
+    check('Grok Build run: the child gets this run\'s MCP URL, token and gate URL in its env only', env.LUMEN_MCP_URL === 'http://127.0.0.1:1/mcp' && env.LUMEN_MCP_TOKEN === 'm'.repeat(48) && env.LUMEN_HOOK_URL.endsWith('h'.repeat(48)) && out.text === 'Hi.', JSON.stringify(env));
+    check('Grok Build run: the gate is opened for the run and closed after it', gate.opened.length === 1 && JSON.stringify(gate.closed) === JSON.stringify(gate.opened), JSON.stringify(gate));
+  }
+  {
+    // Grok answering before Lumen's gate saw the turn's UserPromptSubmit: hooks not loaded.
+    const { out, events, kills } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'LEAKED'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), gbDone('LEAKED')], { engine: { armed: false } });
+    check('Grok Build run: model output before Lumen\'s gate is armed stops the run at once', kills.length === 1 && out.failed === true && out.sessionId === null && /couldn't confirm its check/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, events, kills }));
+    check('Grok Build run: nothing of an unguarded run reaches the sidebar', !events.some((e) => /LEAKED/.test(e.text || '')) && !/LEAKED/.test(out.text), JSON.stringify(events));
+  }
+  await grokGateServer();
   {
     const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'other__probe'), gbDone('probed')]);
     check('Grok Build run: use_tool on another server is stopped the same way', kills.length === 1 && out.failed && /use_tool other__probe/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, kills }));
@@ -279,7 +332,7 @@ async function grokRuns() {
       setImmediate(() => cb(null, 'You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.6\n', ''));
     };
     try {
-      const engine = new gb.GrokBuildEngine({ userData: data, mcpCommand: () => ({}), ensureServer: () => {}, exec });
+      const engine = new gb.GrokBuildEngine({ userData: data, gate: async () => null, exec });
       engine.detect = async () => 'grok.exe';
       const userFiles = fs.readdirSync(userHome).sort().join(',');
       const s = await engine.status(true);
@@ -354,7 +407,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('picker: signed-out Claude Code says how to sign in on every entry', claudeCodeOptions({ signedIn: false }).every((o) => o.signedIn === false && /\/login/.test(o.detail)), 'detail');
   const gbOpts = grokBuildOptions({ signedIn: true, accountDetail: 'grok-4.7', models: parsed.models });
   check('picker: Grok Build default first, then each listed model', JSON.stringify(gbOpts.map((o) => o.id)) === '["grokbuild:default","grokbuild:grok-4.7","grokbuild:grok-4.7-build-fast","grokbuild:grok-4.6","grokbuild:grok-4.5"]', JSON.stringify(gbOpts.map((o) => o.id)));
-  check('picker: every Grok Build entry is labelled unsafe and experimental', gbOpts.every((o) => /\(unsafe, experimental\)$/.test(o.label) && /unsafe, experimental/.test(o.detail) && o.group === 'Your Grok account') && gbOpts[0].label === 'Grok Build (unsafe, experimental)' && gbOpts[3].label === 'Grok Build · grok-4.6 (unsafe, experimental)', JSON.stringify(gbOpts.map((o) => o.label)));
+  check('picker: every Grok Build entry is labelled experimental and names Lumen\'s tool check', gbOpts.every((o) => /\(experimental\)$/.test(o.label) && /experimental: Grok asks Lumen before every tool call/.test(o.detail) && o.group === 'Your Grok account') && gbOpts[0].label === 'Grok Build (experimental)' && gbOpts[3].label === 'Grok Build · grok-4.6 (experimental)', JSON.stringify(gbOpts.map((o) => o.label)));
   const kept = grokBuildOptions({ signedIn: 'unknown', models: [], saved: 'grokbuild:grok-4.6' });
   check('picker: a saved Grok Build model stays offered when grok models gave no list', JSON.stringify(kept.map((o) => o.id)) === '["grokbuild:default","grokbuild:grok-4.6"]', JSON.stringify(kept.map((o) => o.id)));
   check('picker: only the default when nothing is listed or saved (old settings keep working)', JSON.stringify(grokBuildOptions({ saved: 'grokbuild:default' }).map((o) => o.id)) === '["grokbuild:default"]' && grokBuildOptions({ saved: 'grokbuild:--x' }).length === 1 && grokBuildOptions({ saved: 'claude-opus-5' }).length === 1, 'options');

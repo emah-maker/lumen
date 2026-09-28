@@ -114,21 +114,27 @@ function setupAiAgents(deps) {
   let grokBuildDetail = null; // the default model sidebar runs get (asked in Lumen's GROK_HOME), when known
   let grokBuildModels = []; // the model ids `grok models` lists, when known
   const grokBuildModule = () => require('../grok-build');
-  // Grok Build in the sidebar is experimental and labelled unsafe (see grok-build.js's header: only
-  // grok's own permission rules keep a non-Lumen tool from running; Lumen's own check on the event
-  // stream can stop the run, but only once such a call has started).
+  // Grok Build in the sidebar is experimental (see grok-build.js's header: Grok asks Lumen's gate
+  // before every tool call and only Lumen's tools are allowed, on top of Grok's own rules).
   // It is offered only once the user has connected Lumen to Grok Build ("Add to Grok Build" in
   // Settings), or with LUMEN_GROK_SIDEBAR=1.
   const grokSidebar = () => process.env.LUMEN_GROK_SIDEBAR === '1' || (process.env.LUMEN_GROK_SIDEBAR !== '0' && readSettings().grokSidebar === true);
   const grokBuildEngine = () => {
     if (!grokBuild) {
       const { GrokBuildEngine } = grokBuildModule();
-      // lumenReady: has this run's bridge (its LUMEN_ENGINE tag) been given Lumen's tool list yet?
-      const lumenReady = (tag) => [...(mcpServer?.sessions || [])].some((s) => s.session.engine === tag && s.session.listed);
-      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), lumenReady });
+      // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
+      // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
+      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate });
     }
     return grokBuild;
   };
+
+  let grokGate = null;
+  function startGrokGate() {
+    grokGate ||= require('../mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent })
+      .catch((err) => { grokGate = null; throw err; });
+    return grokGate;
+  }
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const engineForSession = (session) => (claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : null);
@@ -460,13 +466,13 @@ function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models =
   const list = models.filter((m) => m !== 'default' && validModel(m));
   const pick = /^grokbuild:(.+)$/.exec(String(saved || ''))?.[1];
   if (pick && pick !== 'default' && validModel(pick) && !list.includes(pick)) list.push(pick);
-  const unsafe = 'unsafe, experimental: only Grok’s own permission rules keep it to Lumen’s tools; Lumen stops a run that calls another tool, but only once that call has started';
+  const note = 'experimental: Grok asks Lumen before every tool call, and only Lumen’s browser tools are allowed';
   return ['default', ...list].map((model) => ({
     id: `grokbuild:${model}`,
-    label: model === 'default' ? 'Grok Build (unsafe, experimental)' : `Grok Build · ${model} (unsafe, experimental)`,
+    label: model === 'default' ? 'Grok Build (experimental)' : `Grok Build · ${model} (experimental)`,
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run grok, then run grok login'
-      : `${GROK_BUILD_NOTE} · ${model === 'default' ? `Grok’s default model${accountDetail ? ` (${accountDetail})` : ''}` : model} · ${unsafe}`,
+      : `${GROK_BUILD_NOTE} · ${model === 'default' ? `Grok’s default model${accountDetail ? ` (${accountDetail})` : ''}` : model} · ${note}`,
     group: 'Your Grok account',
     signedIn,
     accountDetail,
