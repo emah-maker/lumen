@@ -331,11 +331,9 @@ const CLAUDE_CODE_NOTE = `
 You are running inside Claude Code, connected to the user's Lumen browser over MCP. Your browser tools are named mcp__lumen__<tool> (for example mcp__lumen__read_page, mcp__lumen__navigate, mcp__lumen__click); web_search is mcp__lumen__web_search (DuckDuckGo results). You have no shell or file tools. Your reply appears in Lumen's sidebar chat.`;
 
 // ---- [grok build engine] extra guidance when the user's own Grok Build CLI answers (grok-build.js).
-// Naming convention for Lumen's MCP tools is stated as one of two plausible forms, not asserted as
-// fact: it could not be confirmed against a real Lumen MCP server within this task's run budget (see
-// grok-build.js's file header -- every test run's MCP servers stayed "pending" and the model never
-// got to actually call one). Also tells the model what to do about that: say so, don't improvise
-// with a tool it doesn't have.
+// Lumen's tools reach Grok as deferred lumen__<tool> names behind search_tool/use_tool (confirmed
+// against the real CLI; see grok-build.js's header). If they haven't loaded yet, the model should say
+// so rather than improvise with a tool it doesn't have.
 const GROK_BUILD_NOTE = `
 
 You are running inside Grok Build, connected to the user's Lumen browser over MCP. Lumen's browser tools are deferred: find them with search_tool (for example "lumen read page" or "lumen navigate"), then call them with use_tool using the exact names it returns, such as lumen__read_page, lumen__navigate, lumen__click and lumen__web_search. You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error. If search_tool finds no Lumen tools yet, the connection is still starting: search once more, and if they are still missing, say so plainly. Your reply appears in Lumen's sidebar chat.`;
