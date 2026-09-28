@@ -54,6 +54,15 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       setMcpEnabled: call('mcp:set-enabled'),
       addToAgent: call('mcp:add-to-agent'),
       automationInfo: call('automation:info'),
+      // Tools from MCP servers the user adds (features/mcp-client.js)
+      mcpServers: {
+        list: call('mcp:servers'),
+        save: call('mcp:server-save'),
+        remove: call('mcp:server-remove'),
+        setEnabled: call('mcp:server-enable'),
+        refresh: call('mcp:server-refresh'),
+        setAlwaysAllow: call('mcp:tool-always'),
+      },
       setAutomation: call('automation:set'),
       importBrowsers: call('import:browsers'),
       importFrom: call('import:run'),

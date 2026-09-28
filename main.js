@@ -2525,7 +2525,20 @@ const agentTabById = (id) => {
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
 const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_KEY ? 'env' : cliAuth.profileState().signedIn ? 'cli' : null);
+// [mcp client] MCP servers the user added, for the sidebar's AI (features/mcp-client.js)
+const mcpClient = require('./features/mcp-client').create({
+  userData: app.getPath('userData'),
+  version: app.getVersion(),
+  secrets: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
+  },
+});
+require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
+app.on('will-quit', () => mcpClient.stopAll());
 const agent = new Agent({
+  externalTools: mcpClient, // [mcp client]
   activeTab: agentActiveTab, tabById: agentTabById, noTabReason, listTabs, openTab, switchTab, closeTab, requestCloseTab,
   hasUnsavedInput: agentHasUnsavedInput, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf, setTabGroup, // [ai controls]
@@ -2564,6 +2577,7 @@ if (TEST) {
     return items.map((i) => i.label);
   };
   global.__closedTabs = () => closedTabs.slice();
+  global.__mcpClient = mcpClient;
 }
 
 // ---------- [settings] lumen://settings ----------

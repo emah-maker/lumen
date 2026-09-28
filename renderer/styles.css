@@ -496,6 +496,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .approval:focus-visible { box-shadow: inset 0 1px 0 var(--highlight), inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
 .approval-title { margin: 0; color: var(--text); font-weight: 600; letter-spacing: -0.008em; overflow-wrap: anywhere; }
 .approval-detail { margin: 4px 0 12px; color: var(--muted); font-size: 12px; }
+.approval-args { margin: -4px 0 12px; padding: 8px; max-height: 180px; overflow: auto; border-radius: 6px; background: var(--hover, rgba(127,127,127,.12)); font: 11px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 .approval-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .approval-actions .btn { height: 28px; font-size: 12px; }
 .approval-actions .btn:disabled { opacity: 0.5; }

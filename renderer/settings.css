@@ -184,3 +184,9 @@ body.interstitial { display: block; }
 .interstitial h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 12px; }
 .interstitial .note { font-size: 13px; line-height: 1.55; }
 .interstitial .actions { display: flex; align-items: center; gap: 20px; margin-top: 24px; }
+
+/* Tools from MCP servers (settings-mcp-servers.js) */
+.mcp-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.mcp-form > div { display: flex; flex-direction: column; gap: 8px; }
+.mcp-form > div[hidden] { display: none; }
+.mcp-tools { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }

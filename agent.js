@@ -1036,7 +1036,10 @@ class Agent {
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic) {
-    const stream = this.getClient().beta.messages.stream(requestFor(messages.settings, messages, budget), { signal });
+    const params = requestFor(messages.settings, messages, budget);
+    const extra = await this.externalToolDefs(emit); // [mcp client]
+    if (extra.length) params.tools = [...params.tools, ...extra];
+    const stream = this.getClient().beta.messages.stream(params, { signal });
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {
         if (event.delta.type === 'text_delta') emit({ type: 'text', text: event.delta.text });
@@ -1065,7 +1068,7 @@ class Agent {
       apiKey,
       system: systemFor(messages.settings) + (toolsOk ? '' : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
       messages: historyFor(fitContext(messages, budget), messages.settings.model),
-      tools: toolsOk ? OTHER_TOOLS : [],
+      tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
     });
@@ -1156,7 +1159,9 @@ class Agent {
           results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `Not run: ${TAB_CLOSED}` });
           continue;
         }
-        const problem = validateInput(use.name, use.input);
+        const problem = this.isExternalTool(use.name) // [mcp client] the server checks its own input
+          ? (use.input && typeof use.input === 'object' && !Array.isArray(use.input) ? null : 'Input must be an object')
+          : validateInput(use.name, use.input);
         const label = problem ? null : await this.describeStep(use.name, use.input);
         emit({ type: 'tool', id: use.id, name: use.name, input: use.input, label });
         if (problem) {
@@ -1198,6 +1203,7 @@ class Agent {
   // Human-readable step text for the sidebar, e.g. Clicking “Sign in” button.
   async describeStep(name, input) {
     try {
+      if (this.isExternalTool(name)) { const f = this.browser.externalTools.lookupTool(name); return `Using ${f.tool} from ${f.server}`; } // [mcp client]
       if (name === 'navigate') return `Opening ${hostOf(input.url)}`;
       if (name === 'open_tab') return `Opening ${hostOf(input.url)} in a new tab`;
       if (name === 'click' && input.text) return `Clicking ${quote(input.text)}`;
@@ -1267,6 +1273,7 @@ class Agent {
   async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
     const gate = { emit, signal, hosts, who, external, run };
+    if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
     const scope = taskScope.getStore();
     if (scope) scope.gate = gate;
     if (DESTINATION_TOOLS.has(name) && taintHolder(run)?.tainted) {
@@ -1538,19 +1545,78 @@ class Agent {
     return this.redirectGuards.get(wc)?.settle() ?? Promise.resolve(false);
   }
 
+  // ---- [mcp client] tools from MCP servers the user added (features/mcp-client.js). They reach
+  // only the sidebar's API engines: outside agents (Lumen's own MCP server) never see them, and
+  // validateInput still refuses their names there.
+  isExternalTool(name) {
+    return Boolean(this.browser.externalTools?.isExternal(name));
+  }
+
+  // The servers' tools for this turn; a server that won't start is mentioned once per error.
+  async externalToolDefs(emit) {
+    const ext = this.browser.externalTools;
+    if (!ext) return [];
+    const { defs, failed } = await ext.tools();
+    this.mcpNoted ||= new Set();
+    for (const f of failed) {
+      const key = `${f.name}\n${f.error}`;
+      if (this.mcpNoted.has(key)) continue;
+      this.mcpNoted.add(key);
+      emit({ type: 'notice', text: `The MCP server “${f.name}” didn’t start, so its tools aren’t available: ${f.error}` });
+    }
+    return defs;
+  }
+
+  // Every call asks, with its arguments on the card: an outside server gets whatever the arguments
+  // hold. "Always allow" (per tool) skips the card only while the chat holds no untrusted content
+  // other than that same server's own results; after a page (or another server) has been read,
+  // each call asks again, since that content could be steering what gets sent. Auto-allow (the
+  // sidebar's bolt) doesn't cover these. Whatever the tool returns is untrusted, so the chat counts
+  // as having read page content from then on (new sites ask, and so on).
+  async allowExternal(name, input, { emit, signal, who, external, run }) {
+    const ext = this.browser.externalTools;
+    const found = ext.lookupTool(name);
+    if (external || !found) throw new Error(`Unknown tool: ${name}`);
+    const holder = taintHolder(run);
+    const tainted = Boolean(holder?.tainted) && holder.onlyFrom !== found.server;
+    if (tainted || !ext.isAlwaysAllowed(name)) {
+      let args = JSON.stringify(input ?? {}, null, 2);
+      if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
+      const answer = await this.askApproval(`${found.server} › ${found.tool}`, emit, signal, { action: 'tool', who, title: `${who} wants to use ${found.tool} from ${found.server}`, args, tainted });
+      if (!answer) throw new Error(`The user did not allow ${who} to use ${found.tool} from ${found.server}. Ask them what to do instead.`);
+      if (answer === 'always' && !tainted) ext.setAlwaysAllowed(name, true);
+    }
+    if (holder) {
+      holder.onlyFrom = holder.tainted ? (holder.onlyFrom === found.server ? found.server : null) : found.server;
+      holder.tainted = true;
+    }
+    this.externalGrant = name; // execute() runs an outside tool only right after this
+  }
+
+  async runExternal(name, input) {
+    if (this.externalGrant !== name) throw new Error(`Unknown tool: ${name}`);
+    this.externalGrant = null;
+    return this.browser.externalTools.call(name, input);
+  }
+  // ---- [/mcp client]
+
   // A chat (via its task scope) or an MCP session has seen page content; see ensureAllowed.
   markTainted(run = taskScope.getStore()) {
     const holder = taintHolder(run);
-    if (holder) holder.tainted = true;
+    if (!holder) return;
+    holder.tainted = true;
+    holder.onlyFrom = null; // [mcp client] not only one server's output any more (see allowExternal)
   }
 
   // action 'open' (a tainted run heading to a new host) is shown as "<who> wants to open <host>"
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false } = {}) {
     const approvalId = ++this.approvalSeq;
-    emit(action === 'open'
+    emit(action === 'tool' // [mcp client] a tool from an MCP server the user added
+      ? { type: 'approval', approvalId, host, action, title, args, tainted }
+      : action === 'open'
       ? { type: 'approval', approvalId, host, action, title: title || `${who || 'Claude'} wants to open ${host}`, ...(query === null ? {} : { query }) }
       : action === 'script'
         ? { type: 'approval', approvalId, host, action, title: `${who || 'Claude'} wants to run a script on ${host}` }
@@ -1575,7 +1641,7 @@ class Agent {
     const resolve = this.pendingApprovals.get(approvalId);
     if (!resolve) return;
     this.pendingApprovals.delete(approvalId);
-    resolve(Boolean(ok));
+    resolve(ok === 'always' ? 'always' : Boolean(ok)); // 'always': an MCP tool card's "Always allow"
   }
 
   requireTab() {
@@ -1589,6 +1655,7 @@ class Agent {
   // [ai controls] Also checks the per-site AI switch before and after the tool (the page may have
   // moved to such a site), and records what the outermost call changed in a sidebar run's log.
   async execute(name, input) {
+    if (this.isExternalTool(name)) return this.runExternal(name, input); // [mcp client] no tab involved
     this.aiOffCheck(name, input);
     const log = taskScope.getStore()?.log;
     if (!log || nestedCall.getStore()) {
