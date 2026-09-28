@@ -1584,7 +1584,7 @@ window.assistant.onEvent((event) => {
     }
     case 'approval':
       if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); // a hidden sidebar left the task waiting with only a badge as a hint
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted });
       moveWorkingToEnd();
       break;
     case 'notice': {
@@ -1704,7 +1704,8 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted } = {}) {
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
   const card = document.createElement('div');
   card.className = 'approval';
   card.tabIndex = 0;
@@ -1760,16 +1761,57 @@ function showApproval(approvalId, host, { action, title: openTitle, query } = {}
   scrollToBottom();
 }
 
+// A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
+// would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
+function showToolApproval(approvalId, host, { title: heading, args, tainted }) {
+  const card = document.createElement('div');
+  card.className = 'approval approval-tool';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'group');
+  card.setAttribute('aria-label', heading || `Use ${host}?`);
+  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || `Use ${host}?` });
+  const detail = Object.assign(document.createElement('p'), {
+    className: 'approval-detail',
+    textContent: tainted
+      ? 'It has read page content in this chat. Check that these details are what you want to send to this server:'
+      : 'This server gets these details:',
+  });
+  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: "Don't allow" });
+  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Allow once' });
+  const always = tainted ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: 'Always allow this tool', title: 'Stop asking for this tool (it still asks after the AI reads a page). Change it in Settings → You and AI.' });
+  const answer = (ok) => {
+    if (card.classList.contains('answered')) return;
+    card.classList.add('answered');
+    for (const b of [deny, allow, always]) if (b) b.disabled = true;
+    window.assistant.approve?.(approvalId, ok);
+  };
+  deny.onclick = () => answer(false);
+  allow.onclick = () => answer(true);
+  if (always) always.onclick = () => answer('always');
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target === card) { e.preventDefault(); answer(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
+  });
+  actions.append(...[deny, always, allow].filter(Boolean));
+  card.append(title, detail, pre, actions);
+  append(card);
+  approvals.set(approvalId, { card, host, tool: true });
+  scrollToBottom();
+}
+
 function resolveApproval(approvalId, ok) {
   const entry = approvals.get(approvalId);
   if (!entry) return;
   approvals.delete(approvalId);
-  const { card, host } = entry;
+  const { card, host, tool } = entry;
   card.className = ok ? 'approval resolved' : 'approval resolved denied';
   card.removeAttribute('tabindex');
   card.removeAttribute('role');
   card.removeAttribute('aria-label');
-  card.textContent = ok ? `Allowed on ${host}` : `Not allowed on ${host}`;
+  card.textContent = tool ? `${ok ? 'Allowed' : 'Not allowed'}: ${host}` : ok ? `Allowed on ${host}` : `Not allowed on ${host}`;
   if (document.activeElement === document.body) prompt.focus();
 }
 

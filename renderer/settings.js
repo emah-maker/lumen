@@ -266,6 +266,7 @@ async function buildAi(card) {
       note);
   }));
   card.append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+  card.append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
