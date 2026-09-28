@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="extras.css" /><!-- Claude Code engine, page context chip -->
   <link rel="stylesheet" href="prefs.css" /><!-- [settings] -->
   <link rel="stylesheet" href="tab-search.css" />
+  <link rel="stylesheet" href="chats.css" /><!-- chat history list -->
 </head>
 <body class="sidebar-hidden">
   <header class="chrome">
@@ -111,6 +112,9 @@
           <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
           </button>
+          <button class="icon-btn" id="chat-history" title="Chats" aria-label="Chats" aria-expanded="false" aria-controls="chat-list">
+            <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>
+          </button>
           <button class="icon-btn" id="new-chat" title="New chat" aria-label="New chat">
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
           </button>
@@ -120,6 +124,8 @@
         </div>
       </div>
 
+      <div id="chat-usage" class="chat-usage" hidden></div>
+      <div id="chat-list" class="chat-list" role="dialog" aria-label="Chats" hidden></div>
       <div id="messages" class="messages" aria-live="polite">
         <div class="empty" id="empty">
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>
@@ -159,6 +165,7 @@
   <script src="markdown.js"></script>
   <script src="picker.js"></script>
   <script src="app.js"></script>
+  <script src="chats.js"></script>
   <script src="extras.js"></script>
   <script src="tab-search-match.js"></script>
   <script src="tab-search.js"></script>

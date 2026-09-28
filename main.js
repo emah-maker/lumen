@@ -15,7 +15,9 @@ const { pathToFileURL } = require('url');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
 const { extensionPermissionLines } = require('./extension-permissions');
-const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput } = require('./agent');
+const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./agent');
+const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
+const { describeUsage } = require('./features/chat-usage');
 const providers = require('./providers');
 const cliJson = require('./cli-json');
 const { engineModel } = require('./cli-utils');
@@ -121,6 +123,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow',
+  'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'pagecontext:get', 'pagecontext:set',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen',
 ]);
@@ -2137,31 +2140,51 @@ function reloadActive() {
   else wc.reload();
 }
 
-// ---------- saved chat (survives restarts) ----------
+// ---------- saved chats (survive restarts; the sidebar's history list) ----------
 
-const CHAT_FILE = () => path.join(app.getPath('userData'), 'chat.json');
+const CHAT_FILE = () => path.join(app.getPath('userData'), 'chat.json'); // the single chat kept before the list
 
-// The conversation is encrypted with the OS keychain; with no keychain (common on Linux) it isn't
-// kept at all, rather than as a plain-text file. Tool results (page text, screenshots, script
-// output) and the page text attached to each message (page context) are not kept on disk.
-// New chat bumps chatGeneration: a run it stopped must not write the old chat back afterwards.
+// Chats are encrypted with the OS keychain; with no keychain (common on Linux) they aren't kept at
+// all, rather than as plain-text files. Tool results (page text, screenshots, script output) and
+// the page text attached to each message (page context) are not kept on disk.
+// New chat and switching chats bump chatGeneration: a run that was stopped must not write its old
+// chat back afterwards.
+let chatStore = null;
+const chats = () => (chatStore ||= createChatStore({
+  dir: path.join(app.getPath('userData'), 'chats'),
+  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+  available: () => safeStorage.isEncryptionAvailable(),
+  legacyFile: CHAT_FILE(),
+}));
+let chatId = null; // the open chat
+// Sites approved in each chat stay with that chat while Lumen runs (not saved: a chat restored
+// after a restart starts with none, as before).
+const approvedByChat = new Map();
 let chatGeneration = 0;
+
+// The open chat as it goes on disk.
+function chatSnapshot() {
+  const snapshot = agent.snapshot();
+  const keep = (msg, b) => {
+    if (b.type === 'tool_result') return { type: 'tool_result', tool_use_id: b.tool_use_id, is_error: b.is_error, content: '(result not saved between sessions)' };
+    if (b.type === 'text' && msg.role === 'user') return { ...b, text: b.text.replace(PAGE_BLOCK, '') };
+    return b;
+  };
+  snapshot.messages = snapshot.messages.map((msg) => (Array.isArray(msg.content) ? { ...msg, content: msg.content.map((b) => keep(msg, b)) } : msg));
+  return snapshot;
+}
+
 function saveChat(generation = chatGeneration) {
   if (generation !== chatGeneration) return;
   clearTimeout(saveChatTimer);
   try {
-    if (!safeStorage.isEncryptionAvailable()) { fs.rmSync(CHAT_FILE(), { force: true }); return; }
-    const snapshot = agent.snapshot();
-    const keep = (msg, b) => {
-      if (b.type === 'tool_result') return { type: 'tool_result', tool_use_id: b.tool_use_id, is_error: b.is_error, content: '(result not saved between sessions)' };
-      if (b.type === 'text' && msg.role === 'user') return { ...b, text: b.text.replace(PAGE_BLOCK, '') };
-      return b;
-    };
-    snapshot.messages = snapshot.messages.map((msg) => (Array.isArray(msg.content) ? { ...msg, content: msg.content.map((b) => keep(msg, b)) } : msg));
-    const data = { enc: safeStorage.encryptString(JSON.stringify(snapshot)).toString('base64') };
-    const tmp = `${CHAT_FILE()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data));
-    fs.renameSync(tmp, CHAT_FILE()); // never a half-written chat.json
+    if (!safeStorage.isEncryptionAvailable()) { chats().clearAll(); fs.rmSync(CHAT_FILE(), { force: true }); return; }
+    if (!chatId) chatId = chats().newId();
+    const snapshot = chatSnapshot();
+    if (!snapshot.messages.length) return;
+    chats().save(chatId, snapshot);
+    if (chats().current() !== chatId) chats().setCurrent(chatId);
   } catch (err) {
     console.error('Could not save chat:', err.message);
   }
@@ -2176,11 +2199,39 @@ app.on('before-quit', () => saveChat());
 
 function loadChat() {
   try {
-    const data = JSON.parse(fs.readFileSync(CHAT_FILE(), 'utf8'));
-    agent.restore(data.enc ? JSON.parse(safeStorage.decryptString(Buffer.from(data.enc, 'base64'))) : data);
+    chats().migrate();
+    const id = chats().current();
+    const snapshot = id && chats().load(id);
+    if (snapshot) {
+      agent.restore(snapshot);
+      chatId = id;
+    }
   } catch {
     // No saved chat yet (or it can't be decrypted on this machine).
   }
+  if (!chatId) chatId = chats().newId();
+}
+
+// Leaves the open chat (it stays in the list) for another one, or for a fresh one (id null).
+// A running reply is stopped first. Returns what the sidebar needs to show the chat.
+function switchChat(id) {
+  if (id && id === chatId) return chatView();
+  const snapshot = id ? chats().load(id) : null;
+  if (id && !snapshot) return null;
+  saveChat();
+  chatGeneration++;
+  clearTimeout(saveChatTimer);
+  if (chatId) approvedByChat.set(chatId, agent.approvedHosts);
+  agent.reset();
+  if (snapshot) agent.restore(snapshot);
+  chatId = id || chats().newId();
+  agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
+  chats().setCurrent(id || null);
+  return chatView();
+}
+
+function chatView() {
+  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage) };
 }
 
 // ---------- window & session ----------
@@ -2679,16 +2730,61 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
     if (!event.sender.isDestroyed()) event.sender.send('agent:event', { ...msg, runId });
     if (msg.type === 'done') saveChat(generation);
     else if (msg.type === 'tool_done') saveChatSoon(generation);
+    else if (msg.type === 'usage' && generation === chatGeneration) ui()?.send('chats:usage', describeUsage(msg.usage));
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
   }, valid);
 });
 ipcMain.on('agent:stop', () => agent.stop());
-ipcMain.on('agent:reset', () => {
-  chatGeneration++;
-  clearTimeout(saveChatTimer);
-  agent.reset();
-  fs.rm(CHAT_FILE(), { force: true }, () => {});
+// New chat: the open chat stays in the history list.
+ipcMain.on('agent:reset', () => { switchChat(null); });
+
+// ---- the sidebar's chat history list (features/chat-store.js)
+ipcMain.handle('chats:list', () => ({
+  current: chatId,
+  currentUsage: describeUsage(agent.messages.settings?.usage),
+  chats: chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage) })),
+}));
+ipcMain.handle('chats:open', (_e, id) => switchChat(String(id)));
+ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
+// Deleting the open chat leaves an empty one in its place.
+ipcMain.handle('chats:delete', (_e, id) => {
+  id = String(id);
+  approvedByChat.delete(id);
+  if (id === chatId) {
+    chatGeneration++;
+    clearTimeout(saveChatTimer);
+    agent.reset();
+    chatId = chats().newId();
+    chats().remove(id);
+    return { cleared: true, view: chatView() };
+  }
+  return { cleared: false, removed: chats().remove(id) };
 });
+// The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
+function chatMarkdown(id) {
+  const snapshot = id === chatId ? chatSnapshot() : chats().load(id);
+  if (!snapshot?.messages?.length) return null;
+  const entry = chats().list().find((c) => c.id === id);
+  const title = entry?.title || autoTitle(snapshot);
+  const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages));
+  return { title, markdown };
+}
+// Export: always the user's own click in the sidebar (a UI-only channel), and always through a
+// save dialog, so nothing is written anywhere the user didn't pick.
+ipcMain.handle('chats:export', async (_e, id) => {
+  const out = chatMarkdown(String(id));
+  if (!out) return { ok: false, reason: 'empty' };
+  const fileName = `${cleanTitle(out.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 60).trim() || 'Chat'}.md`;
+  const { canceled, filePath } = await electronDialog.showSaveDialog(win, {
+    title: 'Export chat',
+    defaultPath: path.join(app.getPath('documents'), fileName),
+    filters: [{ name: 'Markdown', extensions: ['md'] }],
+  });
+  if (canceled || !filePath) return { ok: false, reason: 'canceled' };
+  await fs.promises.writeFile(filePath, out.markdown, 'utf8');
+  return { ok: true, filePath };
+});
+if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without
 // the "Allow … to interact" card. Stored as askBeforeActing: false (see autoApprove above).

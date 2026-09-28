@@ -667,6 +667,89 @@ async function fuseChecks() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ---- AI chat usage totals (features/chat-usage.js)
+{
+  const { addUsage, describeUsage } = require('../features/chat-usage');
+  let u = addUsage(null, { model: 'claude-opus-5', usage: { input_tokens: 1000, output_tokens: 200 } });
+  check('usage: a Claude turn is priced from the table', u.input === 1000 && u.output === 200 && Math.abs(u.cost - 0.01) < 1e-9 && u.unpriced === 0 && u.turns === 1, JSON.stringify(u));
+  u = addUsage(u, { model: 'claude-opus-5', usage: { input_tokens: 10, output_tokens: 0, cache_read_input_tokens: 1000000, cache_creation_input_tokens: 0 } });
+  check('usage: cache reads are priced at the cache rate and totals add up', Math.abs(u.cost - (0.01 + 0.5 + 0.00005)) < 1e-9 && u.cacheRead === 1000000 && u.turns === 2, u.cost);
+  const oa = addUsage(null, { model: 'openai:gpt-5.6', usage: { prompt_tokens: 500, completion_tokens: 50, prompt_tokens_details: { cached_tokens: 100 } } });
+  check('usage: a model without a price counts tokens and shows the cost as unknown', oa.input === 400 && oa.cacheRead === 100 && oa.output === 50 && oa.cost === 0 && oa.unpriced === 1 && describeUsage(oa) === '550 tokens · cost n/a', `${JSON.stringify(oa)} ${describeUsage(oa)}`);
+  const or = addUsage(null, { model: 'openrouter:x/y', usage: { prompt_tokens: 100, completion_tokens: 10, cost: 0.0042 } });
+  check('usage: OpenRouter\'s own reported cost is used', or.cost === 0.0042 && or.unpriced === 0 && describeUsage(or) === '110 tokens · ~$0.0042', describeUsage(or));
+  const cc = addUsage(addUsage(null, { model: 'claudecode:default', cost: 0.02 }), { model: 'claudecode:default' });
+  check('usage: a CLI engine\'s reported cost is used; a turn without one marks the total partial', Math.abs(cc.cost - 0.02) < 1e-9 && cc.unpriced === 1 && describeUsage(cc) === '~$0.02+', describeUsage(cc));
+  const grok = addUsage(null, { model: 'xai:grok-4', usage: { prompt_tokens: 1000000, completion_tokens: 0 } });
+  check('usage: Grok is priced under its provider id', Math.abs(grok.cost - 3) < 1e-9, grok.cost);
+  check('usage: a chat with no turns shows no usage line', describeUsage(null) === '' && describeUsage({}) === '', describeUsage(null));
+  check('usage: nonsense numbers count as zero', addUsage(null, { usage: { input_tokens: -5, output_tokens: 'x' } }).input === 0, 'negative');
+}
+
+// ---- AI chat history (features/chat-store.js)
+{
+  const { createChatStore, autoTitle, toMarkdown } = require('../features/chat-store');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-chats-'));
+  const enc = (s) => Buffer.from(s).toString('base64').split('').reverse().join(''); // stand-in for the OS keychain
+  const dec = (s) => Buffer.from(s.split('').reverse().join(''), 'base64').toString();
+  let clock = 1000;
+  const chat = (text) => ({ settings: { model: 'claude-opus-5' }, messages: [{ role: 'user', content: [{ type: 'text', text }] }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }] });
+  const store = createChatStore({ dir, encrypt: enc, decrypt: dec, limit: 3, now: () => clock++ });
+
+  check('chats: the title is the first message without Lumen\'s additions', autoTitle(chat('<browser_state>\nx\n</browser_state>\n\n<untrusted_page_content title="t">page</untrusted_page_content>\n\nWhat is up?')) === 'What is up?', autoTitle(chat('<browser_state>x</browser_state> What is up?')));
+  const long = autoTitle(chat('word '.repeat(40)));
+  check('chats: a long first message is cut to a short title', long.length === 60 && long.endsWith('…'), long);
+  check('chats: an image-only first message is titled "Image"', autoTitle({ messages: [{ role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'The user attached the image(s) above without a message.' }] }] }) === 'Image', 'image');
+
+  const ids = [0, 1, 2, 3].map(() => store.newId());
+  check('chats: ids are random hex', new Set(ids).size === 4 && ids.every((id) => /^[a-f0-9]{16}$/.test(id)), ids.join());
+  store.setCurrent(ids[0]);
+  ids.forEach((id, i) => store.save(id, chat(`chat ${i}`)));
+  check('chats: the newest `limit` chats are kept, plus the open one', store.list().map((c) => c.title).join() === 'chat 3,chat 2,chat 1,chat 0', store.list().map((c) => c.title).join());
+  store.setCurrent(ids[3]);
+  store.save(ids[3], chat('chat 3'));
+  check('chats: past the limit, the oldest chat and its file go', store.list().length === 3 && !store.list().some((c) => c.id === ids[0]) && !fs.existsSync(path.join(dir, `${ids[0]}.json`)), store.list().map((c) => c.title).join());
+  const disk = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+  check('chats: the index and chats are written encrypted', disk.includes('"enc"') && !/chat 1|claude-opus-5/.test(disk), disk.slice(0, 120));
+  check('chats: an empty chat is not saved', store.save(store.newId(), { messages: [] }) === true && store.list().length === 3, store.list().length);
+  check('chats: a chat loads back', store.load(ids[2])?.messages?.[0]?.content?.[0]?.text === 'chat 2', JSON.stringify(store.load(ids[2])).slice(0, 100));
+  check('chats: an id that is not in the list does not load', store.load('../index') === null && store.load(ids[0]) === null, 'loaded');
+
+  check('chats: rename cleans the title', store.rename(ids[2], '  My\n  trip\u0007 ') && store.list().find((c) => c.id === ids[2]).title === 'My trip', store.list().find((c) => c.id === ids[2])?.title);
+  store.save(ids[2], chat('chat 2 again'));
+  check('chats: a renamed title stays after more messages', store.list().find((c) => c.id === ids[2]).title === 'My trip', store.list().find((c) => c.id === ids[2])?.title);
+  check('chats: a blank rename is refused', store.rename(ids[2], '   ') === false && store.rename('nope', 'x') === false, 'renamed');
+
+  const reopened = createChatStore({ dir, encrypt: enc, decrypt: dec, limit: 3 });
+  check('chats: the list and open chat survive a restart', reopened.list().length === 3 && reopened.current() === ids[3] && reopened.list()[0].id === ids[2], JSON.stringify(reopened.list().map((c) => c.title)));
+  check('chats: delete removes the entry and its file', reopened.remove(ids[1]) && !reopened.list().some((c) => c.id === ids[1]) && !fs.existsSync(path.join(dir, `${ids[1]}.json`)), 'still there');
+  check('chats: deleting the open chat clears which one is open', reopened.remove(ids[3]) && reopened.current() === null, reopened.current());
+  check('chats: deleting an unknown chat does nothing', reopened.remove('0000000000000000') === false, 'removed');
+
+  // The single chat.json of older versions moves into the list, once.
+  const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-legacy-'));
+  const legacyFile = path.join(legacyDir, 'chat.json');
+  fs.writeFileSync(legacyFile, JSON.stringify({ enc: enc(JSON.stringify(chat('from before'))) }));
+  const migrating = createChatStore({ dir: path.join(legacyDir, 'chats'), encrypt: enc, decrypt: dec, legacyFile });
+  const migratedId = migrating.migrate();
+  check('chats: the old chat.json becomes the open chat in the list', migratedId && migrating.current() === migratedId && migrating.list()[0]?.title === 'from before' && !fs.existsSync(legacyFile), JSON.stringify(migrating.list()));
+  check('chats: migrating twice does nothing', migrating.migrate() === null && migrating.list().length === 1, migrating.list().length);
+  fs.writeFileSync(legacyFile, JSON.stringify({ enc: 'not-decryptable' }));
+  check('chats: an old chat.json that can\'t be decrypted is dropped', migrating.migrate() === null && !fs.existsSync(legacyFile) && migrating.list().length === 1, 'kept');
+
+  const noKeychainDir = path.join(legacyDir, 'none');
+  const noKeychain = createChatStore({ dir: noKeychainDir, encrypt: enc, decrypt: dec, available: () => false });
+  check('chats: with no keychain nothing is written', noKeychain.save(noKeychain.newId(), chat('secret')) === false && !fs.existsSync(noKeychainDir), 'wrote');
+
+  const md = toMarkdown({ title: 'Trip\nplan', created: Date.UTC(2026, 8, 28, 14, 5), model: 'claude-opus-5', usageLine: '1.2k tokens · ~$0.01' }, [
+    { role: 'user', text: 'Find flights', images: ['data:image/png;base64,AAAA'] },
+    { role: 'assistant', text: 'Here are **three**.', images: [], steps: 2 },
+  ]);
+  check('chats: export Markdown has the title, date, model, usage and each turn', md.startsWith('# Trip plan\n\n_2026-09-28 14:05 · Model: claude-opus-5 · Usage: 1.2k tokens · ~$0.01_') && md.includes('## You\n\n_1 image attached (not included)_\n\nFind flights') && md.includes('## Assistant\n\n_Used 2 browser actions_\n\nHere are **three**.') && !md.includes('base64'), md);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(legacyDir, { recursive: true, force: true });
+}
+
 fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

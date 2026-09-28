@@ -1774,7 +1774,8 @@ function resolveApproval(approvalId, ok) {
 
 // ---------- chat restored from the last session ----------
 
-window.assistant.onHistory?.(({ items } = {}) => {
+// Also used by renderer/chats.js to show a chat picked from the history list.
+function showHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
   for (const item of items) {
     const bubble = document.createElement('div');
@@ -1806,7 +1807,8 @@ window.assistant.onHistory?.(({ items } = {}) => {
     append(bubble);
   }
   messages.scrollTop = messages.scrollHeight;
-});
+}
+window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
 
 // ---------- downloads indicator ----------
 
@@ -1889,8 +1891,8 @@ document.querySelectorAll('.chip').forEach((chip) => {
   chip.onclick = () => ask(chip.dataset.prompt);
 });
 
-$('new-chat').onclick = () => {
-  window.assistant.reset();
+// Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
+function clearChatView() {
   runId++;
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
@@ -1899,6 +1901,11 @@ $('new-chat').onclick = () => {
   $('empty').hidden = false;
   turn = null;
   setRunning(false);
+}
+$('new-chat').onclick = () => {
+  window.assistant.reset();
+  clearChatView();
+  window.chatList?.refreshUsage('');
   prompt.focus();
 };
 

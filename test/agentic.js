@@ -94,7 +94,8 @@ const launch = (profile) => electron.launch({
   check('previous chat is shown after restart', restored.user.some((t) => t.includes('remember this')) && restored.assistant.some((h) => h.includes('<strong>reply</strong>')), JSON.stringify(restored).slice(0, 300));
   const history = await app.evaluate(() => global.__agent.messages.length);
   check('Claude still has the chat history after restart', history === 2, history);
-  const saved = fs.readFileSync(path.join(profile, 'chat.json'), 'utf8');
+  const chatsDir = path.join(profile, 'chats');
+  const saved = fs.readdirSync(chatsDir).map((f) => fs.readFileSync(path.join(chatsDir, f), 'utf8')).join('\n');
   check('saved chat is encrypted on disk', saved.includes('"enc"') && !saved.includes('remember this'), saved.slice(0, 80));
   await app.close();
 
