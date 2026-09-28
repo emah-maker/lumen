@@ -4,11 +4,16 @@ const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
 
 (async () => {
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // A local page stands in for "the web": the checks are about where Lumen lets a load go, not the network.
+  const server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<title>web</title>'); }).listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const web = `http://127.0.0.1:${server.address().port}/`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-hardening-'));
   const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile };
   delete env.ANTHROPIC_API_KEY;
@@ -43,17 +48,17 @@ const path = require('path');
   check('UI: the bridge and the extensions toolbar element work under the sandbox', bridge.browser === 'function' && bridge.toolbar && bridge.node === 'undefined', JSON.stringify(bridge));
 
   // ---- the UI can't be navigated away from index.html
-  await ui.evaluate(() => { location.href = 'https://example.com/'; }).catch(() => {});
+  await ui.evaluate((web) => { location.href = web; }, web).catch(() => {});
   await sleep(1500);
   check('UI: a renderer-side navigation is refused', /renderer\/index\.html$/.test(await uiUrl()), await uiUrl());
-  await ui.evaluate(() => { const a = document.createElement('a'); a.href = 'https://example.com/'; document.body.append(a); a.click(); a.remove(); }).catch(() => {});
+  await ui.evaluate((web) => { const a = document.createElement('a'); a.href = web; document.body.append(a); a.click(); a.remove(); }, web).catch(() => {});
   await sleep(1000);
   check('UI: a link click inside the UI is refused', /renderer\/index\.html$/.test(await uiUrl()), await uiUrl());
 
   // ---- window.open from the UI never makes a window; a web URL becomes an ordinary tab
   const tabsBefore = await tabCount();
   const winsBefore = await windowCount();
-  const opened = await ui.evaluate(() => window.open('https://example.com/') === null);
+  const opened = await ui.evaluate((web) => window.open(web) === null, web);
   check('UI: window.open returns null (denied)', opened, opened);
   const tabsAfter = await waitFor(async () => ((await tabCount()) > tabsBefore ? tabCount() : 0));
   check('UI: window.open of a web URL opens a tab instead', tabsAfter === tabsBefore + 1, `${tabsBefore} -> ${tabsAfter}`);
@@ -64,46 +69,46 @@ const path = require('path');
   check('UI: window.open of a file: URL is dropped', (await tabCount()) === tabsNow && (await windowCount()) === winsBefore, `${await tabCount()} tabs`);
 
   // ---- the suggestions dropdown can't be navigated or open windows
-  const suggest = await app.evaluate(async ({ webContents }) => {
+  const suggest = await app.evaluate(async ({ webContents }, web) => {
     const wc = webContents.getAllWebContents().find((w) => /renderer\/suggest\.html$/.test(w.getURL()));
     if (!wc) return 'no suggest view';
-    await wc.executeJavaScript("window.open('https://example.com/'); location.href = 'https://example.com/'; 1");
+    await wc.executeJavaScript(`window.open('${web}'); location.href = '${web}'; 1`);
     await new Promise((r) => setTimeout(r, 1500));
     return wc.getURL();
-  });
+  }, web);
   check('suggest view stays on suggest.html', /renderer\/suggest\.html$/.test(suggest), suggest);
 
   // ---- the dialogs overlay likewise
-  const overlay = await app.evaluate(async ({ webContents }) => {
+  const overlay = await app.evaluate(async ({ webContents }, web) => {
     const pending = global.__dialogs.showMessageBox(null, { message: 'hardening', buttons: ['OK'] });
     let wc;
     for (let i = 0; i < 40 && !wc; i++) { await new Promise((r) => setTimeout(r, 100)); wc = webContents.getAllWebContents().find((w) => /renderer\/dialog\.html$/.test(w.getURL())); }
     if (!wc) return 'no overlay';
     await new Promise((r) => (wc.isLoading() ? wc.once('did-finish-load', r) : r()));
-    await wc.executeJavaScript("location.href = 'https://example.com/'; 1");
+    await wc.executeJavaScript(`location.href = '${web}'; 1`);
     await new Promise((r) => setTimeout(r, 1500));
     const url = wc.getURL();
     global.__dialogs.respond({ id: global.__dialogs.currentId(), response: 0 });
     await pending;
     return url;
-  });
+  }, web);
   check('dialog overlay stays on dialog.html', /renderer\/dialog\.html$/.test(overlay), overlay);
 
   // ---- backstop: any other webContents with the UI preload can't leave index.html either
-  const backstop = await app.evaluate(async ({ BrowserWindow }, preload) => {
+  const backstop = await app.evaluate(async ({ BrowserWindow }, { preload, web }) => {
     const w = new BrowserWindow({ show: false, webPreferences: { preload, contextIsolation: true, sandbox: true } });
     await w.loadURL('about:blank#probe').catch(() => {});
     // about:blank is where it started; a renderer-side navigation to the web must be refused.
-    await w.webContents.executeJavaScript("location.href = 'https://example.com/'; 1");
+    await w.webContents.executeJavaScript(`location.href = '${web}'; 1`);
     await new Promise((r) => setTimeout(r, 1500));
     const url = w.webContents.getURL();
     w.destroy();
     return { url };
-  }, path.join(__dirname, '..', 'preload.bundle.js'));
-  check('backstop: a view with the UI preload can\'t navigate to the web', !/example\.com/.test(backstop.url), backstop.url);
+  }, { preload: path.join(__dirname, '..', 'preload.bundle.js'), web });
+  check('backstop: a view with the UI preload can\'t navigate to the web', !backstop.url.startsWith(web), backstop.url);
 
   // ---- privileged / UI-only IPC from a tab (or a subframe) is refused
-  const ipc = await app.evaluate(async ({ ipcMain, BrowserWindow }) => {
+  const ipc = await app.evaluate(async ({ ipcMain, BrowserWindow }, web) => {
     const tab = global.__agent.browser.openTab('about:blank');
     await new Promise((r) => setTimeout(r, 500));
     const twc = tab.webContents;
@@ -112,8 +117,8 @@ const path = require('path');
       try { await ipcMain._invokeHandlers.get(channel)(event, ...args); return 'allowed'; } catch (err) { return err.message; }
     };
     const before = global.__settings.tabs().length;
-    ipcMain.emit('tab:new', { sender: twc, senderFrame: twc.mainFrame }, 'https://example.com/');
-    ipcMain.emit('tab:new', { sender: uiWc, senderFrame: { url: 'https://evil.example/' } }, 'https://example.com/');
+    ipcMain.emit('tab:new', { sender: twc, senderFrame: twc.mainFrame }, web);
+    ipcMain.emit('tab:new', { sender: uiWc, senderFrame: { url: 'https://evil.example/' } }, web);
     await new Promise((r) => setTimeout(r, 500));
     return {
       autoAllow: await invoke('agent:auto-allow', { sender: twc, senderFrame: twc.mainFrame }, true),
@@ -122,7 +127,7 @@ const path = require('path');
       uiAllowed: await invoke('agent:auto-allow', { sender: uiWc, senderFrame: uiWc.mainFrame }),
       tabsOpened: global.__settings.tabs().length - before,
     };
-  });
+  }, web);
   check('tab: agent:auto-allow refused', ipc.autoAllow === 'Not allowed', ipc.autoAllow);
   check('tab: settings:set-key refused', ipc.setKey === 'Not allowed', ipc.setKey);
   check('UI webContents but not its main frame: refused', ipc.subframe === 'Not allowed', ipc.subframe);
@@ -168,9 +173,9 @@ const path = require('path');
   check('reader: downloads are cancelled', reader.downloads.length > 0 && reader.downloads.every((d) => d.prevented), JSON.stringify(reader.downloads));
 
   // ---- a main-process load of the web in the UI window is put back (last: it reloads the UI)
-  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].webContents.loadURL('https://example.com/').catch(() => {}); });
+  await app.evaluate(({ BrowserWindow }, web) => { BrowserWindow.getAllWindows()[0].webContents.loadURL(web).catch(() => {}); }, web);
   const back = await waitFor(async () => { const u = await uiUrl(); return /renderer\/index\.html$/.test(u) ? u : ''; }, 8000);
-  check('UI: loadURL(https://example.com) ends up back on index.html', /renderer\/index\.html$/.test(back || ''), back || await uiUrl());
+  check('UI: a main-process loadURL of a web page ends up back on index.html', /renderer\/index\.html$/.test(back || ''), back || await uiUrl());
   const ui2 = (await app.windows()).find((p) => /index\.html$/.test(p.url())) || ui;
   await ui2.waitForSelector('.tab', { timeout: 10000 }).then(() => true, () => false);
   check('…and the UI comes back with its tabs', (await ui2.locator('.tab').count()) > 0, await ui2.locator('.tab').count());
@@ -220,6 +225,7 @@ const path = require('path');
   await packed.close();
   fs.rmSync(packedDir, { recursive: true, force: true });
   fs.rmSync(plantedProfile, { recursive: true, force: true });
+  server.close();
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

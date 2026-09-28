@@ -29,14 +29,18 @@ const os = require('os');
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Polls until fn() is truthy (returns true) or the time runs out (returns false).
+  const waitFor = async (fn, ms = 4000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await sleep(50); } return false; };
   const tabsNow = () => app.evaluate(() => global.__tabsArray());
   const groupsNow = () => app.evaluate(() => global.__tabGroups.state());
   const open = (url) => app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((r) => t.webContents.once('did-stop-loading', r)); return t.id; }, url);
 
   // 1. Opener: one link opened in a new tab does not create a group; from a grouped tab it joins.
   const opener = await open(`${siteB}/opener`);
+  const tabsAtStart = (await tabsNow()).length;
   await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript("document.getElementById('blank').click()"));
-  await sleep(1500);
+  await waitFor(async () => (await tabsNow()).length > tabsAtStart);
+  await sleep(300); // grouping (which must not happen) runs just after the tab opens
   let t = await tabsNow();
   const openerTab = t.find((x) => x.id === opener);
   const child = t[t.findIndex((x) => x.id === opener) + 1];
@@ -47,7 +51,7 @@ const os = require('os');
   await app.evaluate((_e, ids) => global.__agent.execute('group_tabs', { name: 'Reading', tab_ids: ids }), [opener]);
   await app.evaluate((_e, id) => global.__agent.execute('switch_tab', { tab_id: id }), opener);
   await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript("document.getElementById('blank').click()"));
-  await sleep(1500);
+  await waitFor(async () => { const id = (await groupsNow()).find((x) => x.name === 'Reading')?.id; return id && (await tabsNow()).filter((x) => x.groupId === id).length === 2; });
   t = await tabsNow();
   const readingGroup = (await groupsNow()).find((x) => x.name === 'Reading');
   check('a link opened from a grouped tab joins its group', t.filter((x) => x.groupId === readingGroup?.id).length === 2, JSON.stringify(t));
@@ -59,7 +63,8 @@ const os = require('os');
 
   // 2. Three tabs from one site group themselves.
   for (const p of ['alpha', 'beta', 'gamma']) await open(`${siteA}/${p}`);
-  await sleep(900);
+  await waitFor(async () => { const id = (await groupsNow()).find((x) => x.name === '127.0.0.1')?.id; return id && (await tabsNow()).filter((x) => x.groupId === id).length === 3; });
+  await ui.waitForSelector('.group-label', { timeout: 3000 }).catch(() => {});
   t = await tabsNow();
   g = await groupsNow();
   const siteGroup = g.find((x) => x.name === '127.0.0.1');
@@ -72,7 +77,7 @@ const os = require('os');
 
   // 3. A 4th tab from the site joins the existing group.
   const fourth = await open(`${siteA}/delta`);
-  await sleep(900);
+  await waitFor(async () => (await tabsNow()).find((x) => x.id === fourth)?.groupId === siteGroup.id);
   t = await tabsNow();
   check('later tabs from that site join its group', t.find((x) => x.id === fourth).groupId === siteGroup.id, JSON.stringify(t));
 
@@ -86,15 +91,16 @@ const os = require('os');
 
   // 5. Collapse hides the group's tabs (the active tab stays).
   await app.evaluate(() => global.__agent.execute('switch_tab', { tab_id: 1 }));
-  await sleep(300);
+  await waitFor(async () => (await app.evaluate(() => global.__agent.browser.activeTab().id)) === 1);
+  await sleep(200); // let the strip redraw for the new active tab
   const visibleBefore = await ui.locator('.tab').count();
   await ui.click(`.group-label[data-group="${siteGroup.id}"]`);
-  await sleep(600);
+  await waitFor(async () => (await ui.locator('.tab').count()) === visibleBefore - 3);
   const visibleAfter = await ui.locator('.tab').count();
   const collapsedLabel = await ui.getAttribute(`.group-label[data-group="${siteGroup.id}"]`, 'aria-expanded');
   check('collapsing a group hides its tabs', visibleAfter === visibleBefore - 3 && collapsedLabel === 'false', `${visibleBefore} -> ${visibleAfter}, expanded=${collapsedLabel}`);
   await ui.click(`.group-label[data-group="${siteGroup.id}"]`);
-  await sleep(600);
+  await waitFor(async () => (await ui.locator('.tab').count()) === visibleBefore);
   check('expanding shows them again', (await ui.locator('.tab').count()) === visibleBefore, await ui.locator('.tab').count());
 
   // 6. Agent tools.
@@ -172,7 +178,7 @@ const os = require('os');
   app = await launch();
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
-  await sleep(1500);
+  await waitFor(async () => (await groupsNow()).length === before.groups.length, 5000);
   const after = await groupsNow();
   check('groups come back after a restart', after.length === before.groups.length && after[0]?.name === before.groups[0]?.name, JSON.stringify({ before: before.groups, after }));
   const restoredMembers = (await tabsNow()).filter((x) => x.groupId === after[0]?.id).length;
@@ -217,7 +223,7 @@ const os = require('os');
 
   // Automatic "By topic": 4+ loose related tabs group themselves.
   await app.evaluate(() => global.__setTabGrouping('topic'));
-  await sleep(1000);
+  await waitFor(async () => { const all = await tabsNow(); const first = all.find((x) => x.id === recipes[0])?.groupId; return first && recipes.every((id) => all.find((x) => x.id === id)?.groupId === first); });
   t = await tabsNow();
   g = await groupsNow();
   check('automatic by topic groups the recipe tabs', recipes.every((id) => groupOf(id) && groupOf(id) === groupOf(recipes[0])), JSON.stringify(t));

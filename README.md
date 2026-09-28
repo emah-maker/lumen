@@ -217,7 +217,8 @@ Compact is about 4–5× smaller than a full read. The big savings come from not
 ```
 npm install
 npm start             # run from source
-npm test              # the core Playwright suites
+npm test              # the core Playwright suites, one at a time, with a pass/fail summary
+npm test -- tabstrip  # just the named suites
 ```
 
 ### Build and install locally
