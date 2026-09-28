@@ -75,9 +75,9 @@
   new MutationObserver(syncBadge).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   const showBase = window.showApproval;
-  window.showApproval = function showApproval(approvalId, host) {
+  window.showApproval = function showApproval(approvalId, host, options) {
     pending.add(approvalId);
-    const result = showBase(approvalId, host);
+    const result = showBase(approvalId, host, options);
     syncBadge();
     return result;
   };

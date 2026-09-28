@@ -274,6 +274,16 @@ const path = require('path');
   check('switch_tab reports the URL without its query or fragment', tabs.switched.endsWith(`${home}/search`), tabs.switched);
   check('switch_tab refuses Lumen pages and file:// tabs', /^ERR No tab with id/.test(tabs.refused), tabs.refused);
 
+  // ---- the sidebar shows what a search or script card is asking for
+  const cards = await ui.evaluate(() => {
+    const text = (id) => { const card = approvals.get(id).card; const out = `${card.querySelector('.approval-title').textContent} | ${card.querySelector('.approval-detail').textContent}`; card.remove(); approvals.delete(id); return out; };
+    showApproval(9001, 'html.duckduckgo.com', { action: 'open', title: 'Claude wants to search DuckDuckGo for “secret plans”', query: 'secret plans' });
+    showApproval(9002, 'example.com', { action: 'script', title: 'Claude wants to run a script on example.com' });
+    return { search: text(9001), script: text(9002) };
+  });
+  check('sidebar: a search card shows its title and the query', cards.search.startsWith('Claude wants to search DuckDuckGo for “secret plans”') && cards.search.includes('sends “secret plans” to html.duckduckgo.com'), cards.search);
+  check('sidebar: a script card says it runs a script', cards.script.startsWith('Claude wants to run a script on example.com') && /script can send page content/.test(cards.script), cards.script);
+
   check('no UI errors', errors.length === 0, errors.join('; '));
   server.close();
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
