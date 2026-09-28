@@ -395,7 +395,6 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('updates: a non-https URL in the release info is ignored', manualAsset({ kind: 'zip', version: '0.3.0', files: [{ url: 'http://evil.example/Lumen-0.3.0-win-x64.zip' }] }).url === `${base}Lumen-0.3.0-win-x64.zip`, 'http');
 }
 
-<<<<<<< HEAD
 // ---- Windows icons: Lumen.exe is Electron's binary, so shortcuts must name Lumen's .ico
 {
   const { appIcon, fixShortcutIcons } = require('../features/instance');
@@ -428,11 +427,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-console.log(failures ? `\n${failures} failed` : '\nall passed');
-process.exit(failures ? 1 : 0);
-=======
 grokRuns().catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
->>>>>>> 7cd02af (Stop Grok Build runs that call a non-Lumen tool)
