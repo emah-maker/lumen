@@ -123,7 +123,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ## Use Lumen from Claude Code, Codex, Gemini CLI
 
-Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…). It's off until you turn on **Settings → You and AI → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
+Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 26 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → You and AI → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
 
 ```powershell
 # Claude Code on Windows (PowerShell or cmd). Use claude.cmd: in PowerShell the npm claude.ps1
@@ -256,6 +256,12 @@ To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
 ### Screenshots and GIFs
 
 The images in this README are captured from a throwaway profile by `node scripts/capture-media.js` (needs `ffmpeg` on PATH for the GIFs and the MP4; Windows only for the screen recording).
+
+## Documentation
+
+- [Architecture](docs/architecture.md): processes, the UI and tabs, the AI and its approvals, outside agents, updates
+- [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
+- [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 
 ## Layout
 
