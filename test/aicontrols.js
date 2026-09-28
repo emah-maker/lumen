@@ -175,6 +175,8 @@ const { openSettingsTab } = require('./settings-tab');
   for (const page of ['first', 'second']) await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((res) => (t.webContents.isLoading() ? t.webContents.once('did-stop-loading', res) : res())); }, `${on}/${page}`);
   const organized = await app.evaluate(async () => {
     const agent = global.__agent;
+    const keyBefore = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake'; // keeps Organize on the API path (the fake client below)
     agent.messages.settings = { model: 'claude-opus-5', adhdMode: true };
     let sentList = null;
     const baseClient = agent.getClient;
@@ -185,6 +187,7 @@ const { openSettingsTab } = require('./settings-tab');
     } } });
     await global.__organizeTabs();
     agent.getClient = baseClient;
+    if (keyBefore === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keyBefore;
     for (const t of agent.browser.listTabs()) if (t.group) agent.browser.ungroupTabs([t.id]);
     return sentList;
   });
