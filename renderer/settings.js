@@ -282,7 +282,7 @@ async function buildAi(card) {
   portRow.hidden = !auto.enabled;
   portRow.classList.add('sub-row');
   describe(auto.enabled, auto.port);
-  card.append(row('Allow automation tools (Chrome DevTools Protocol)', 'For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site. While on, other programs on this computer can reach Lumen’s internal debugging port too. Takes effect after a restart.', autoToggle), portRow);
+  card.append(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), portRow);
 
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });

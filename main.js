@@ -188,6 +188,17 @@ if (readSettings().favicons) {
 // switch must be set before ready.
 const { setupAiAgents, prepareAutomation } = require('./features/ai-agents');
 const automationPlan = prepareAutomation(app, readSettings());
+// With automation on, this first process only starts Lumen again through launcher.js (which gives
+// Chromium a private pipe instead of a debugging port) and leaves, before it opens anything. A copy
+// started while Lumen runs passes its links on and quits, the same as without automation.
+if (automationPlan?.relaunch && !process.argv.includes('--install-shortcuts')) {
+  if (instance.acquireInstanceLock(app)) {
+    app.releaseSingleInstanceLock();
+    require('./launcher').relaunch();
+  }
+  app.exit(0);
+  return;
+}
 
 // The picker and every agent step look keys up, and each OS decrypt call costs a system round
 // trip, so decrypted keys are remembered by their encrypted text (a new key is new text).

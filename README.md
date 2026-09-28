@@ -178,7 +178,8 @@ const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 - Lumen listens on 127.0.0.1 only, through a proxy (`automation.js`) that shows only your tabs: Lumen's own UI, hidden reader tabs and extension pages can't be seen or attached to.
 - `newPage()` opens a Lumen tab, `page.close()` closes it, and `browser.close()` only disconnects.
 - The toolbar says **Lumen is being driven by Playwright (CDP)** while connected; **Stop** disconnects.
-- CDP clients don't get approval cards. Any program on your computer can use the port while it's on, including on signed-in sites, and Chromium's own internal debugging port (on a random localhost port) is open too. Turning the setting off closes the proxy immediately.
+- CDP clients don't get approval cards. Any program on your computer that has the address can use the port while it's on, including on signed-in sites. Turning the setting off closes the proxy immediately.
+- On Windows and Linux the proxy is the only way in: Lumen starts through a small launcher (`launcher.js`) that gives Chromium a private pipe instead of a debugging port. On macOS, Chromium's own internal debugging port (on a random localhost port, no key) is open too while the setting is on.
 
 ## Token-efficient tools (all AIs)
 
@@ -270,7 +271,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - `agent.js`: agent loop (`claude-opus-5`, streaming, adaptive thinking, web search, browser tools, approvals, ADHD mode)
 - `page-scripts.js`: scripts injected into pages to read and operate them
 - `snapshot.js`: token-efficient tools (compact outline, diffs, find, batch, screenshot options)
-- `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs
+- `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs; `launcher.js` starts Lumen with Chromium's DevTools on a private pipe while it's on
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab, settings, history and error pages
 - `scripts/`: build, install and `capture-media.js` (the README's screenshots)
 - `docs/media/`: the README's screenshots and GIFs (not shipped in builds)
