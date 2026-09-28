@@ -1,11 +1,15 @@
 // Pasting and dropping images into the Claude sidebar, through to the request Claude receives.
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
-const { execFileSync } = require('child_process');
-// Puts a solid-colour PNG on the real Windows clipboard.
-function clipboardImage(size, color) {
-  const ps = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = New-Object System.Drawing.Bitmap ${size},${size}; $g = [System.Drawing.Graphics]::FromImage($b); $g.Clear([System.Drawing.Color]::${color}); [System.Windows.Forms.Clipboard]::SetImage($b)`;
-  execFileSync('powershell.exe', ['-NoProfile', '-STA', '-Command', ps]);
+// Puts a solid-colour image on the real OS clipboard (through Electron, so it works on every platform).
+const BGRA = { Red: [0, 0, 255, 255], White: [255, 255, 255, 255] };
+function clipboardImage(app, size, color) {
+  return app.evaluate(({ clipboard, ClipboardItem, nativeImage }, { size, pixel }) => {
+    const buf = Buffer.alloc(size * size * 4);
+    for (let i = 0; i < buf.length; i += 4) buf.set(pixel, i);
+    const png = nativeImage.createFromBitmap(buf, { width: size, height: size }).toPNG();
+    return clipboard.write([new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })]);
+  }, { size, pixel: BGRA[color] });
 }
 
 (async () => {
@@ -39,14 +43,14 @@ function clipboardImage(size, color) {
   await ui.waitForTimeout(300);
 
   // 1. Real clipboard paste: put an image on the OS clipboard, then paste into the prompt.
-  clipboardImage(40, 'Red');
+  await clipboardImage(app, 40, 'Red');
   await ui.focus('#prompt');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.paste());
   await ui.waitForSelector('.attachment img', { timeout: 5000 }).catch(() => {});
   check('pasting an image shows a preview', (await ui.locator('.attachment').count()) === 1, await ui.locator('.attachment').count());
 
   // 2. Text paste still pastes text.
-  execFileSync('powershell.exe', ['-NoProfile', '-Command', "Set-Clipboard -Value 'what is this?'"]);
+  await app.evaluate(({ clipboard }) => clipboard.writeText('what is this?'));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.paste());
   await ui.waitForTimeout(200);
   check('text paste still inserts text', (await ui.inputValue('#prompt')) === 'what is this?', await ui.inputValue('#prompt'));
@@ -96,7 +100,7 @@ function clipboardImage(size, color) {
   check('reply renders', (await ui.locator('.msg.assistant').count()) === 1, 'no reply');
 
   // 6. Image-only message is allowed.
-  clipboardImage(16, 'White');
+  await clipboardImage(app, 16, 'White');
   await ui.focus('#prompt');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.paste());
   await ui.waitForSelector('.attachment img', { timeout: 5000 }).catch(() => {});

@@ -4,3 +4,6 @@ dist/
 *.log
 shot-*.png
 .claude/worktrees/
+.env
+.env.*
+!.env.example
