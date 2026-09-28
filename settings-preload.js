@@ -24,6 +24,12 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     taskManager: call('prefs:task-manager'),
     restartTab: call('prefs:restart-tab'),
     internals: call('prefs:internals'),
+    // About → Updates (features/updates.js)
+    updates: {
+      state: call('settings:updates-state'),
+      check: call('settings:updates-check'),
+      apply: call('settings:updates-apply'),
+    },
     // "You and AI" reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),

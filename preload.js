@@ -65,6 +65,14 @@ contextBridge.exposeInMainWorld('lumenPrefs', {
   onChange: on('prefs:ui'),
 });
 
+// The toolbar's update prompt (renderer/updates.js, features/updates.js).
+contextBridge.exposeInMainWorld('lumenUpdates', {
+  state: () => ipcRenderer.invoke('settings:updates-state'),
+  apply: () => ipcRenderer.invoke('settings:updates-apply'),
+  dismiss: () => ipcRenderer.invoke('settings:updates-dismiss'),
+  onState: on('updates:state'),
+});
+
 // Only what the browser UI itself uses. Keys, MCP, automation and import are set in lumen://settings
 // (settings-preload.js); the tests still reach a few of those calls through here. main.js adds
 // this switch only in test mode, which a packaged build never is (test-mode.js).

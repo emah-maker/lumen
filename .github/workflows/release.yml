@@ -1,5 +1,7 @@
 # Builds Lumen for Windows and macOS.
-# - Push a tag like v0.2.0 to publish a GitHub Release with the installers.
+# - Push a tag like v0.2.0 to publish a GitHub Release with the installers. Installed copies of Lumen
+#   find it through latest.yml / latest-mac.yml (features/updates.js). The tag must match
+#   package.json's version: electron-builder names the files and writes the update info from it.
 # - Run manually (Actions -> Release -> Run workflow) to get the builds as workflow artifacts only.
 name: Release
 
@@ -38,6 +40,17 @@ jobs:
           node-version: 24
           cache: npm
 
+      # The update info inside the release says package.json's version: a v0.3.0 tag on a 0.2.4
+      # package.json would publish files that installed copies never see as newer.
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$version" ]; then echo "::error::tag $TAG does not match package.json version $version"; exit 1; fi
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -62,10 +75,13 @@ jobs:
         with:
           name: lumen-${{ matrix.platform }}
           if-no-files-found: error
+          # latest*.yml and the blockmaps are what installed copies read to find and verify updates.
           path: |
             dist/*.exe
             dist/*.zip
             dist/*.dmg
+            dist/latest*.yml
+            dist/*.blockmap
 
   # Tags only: attaches every platform's build to one GitHub Release.
   publish:
@@ -87,3 +103,6 @@ jobs:
             dist/*.exe
             dist/*.zip
             dist/*.dmg
+            dist/latest.yml
+            dist/latest-mac.yml
+            dist/*.blockmap

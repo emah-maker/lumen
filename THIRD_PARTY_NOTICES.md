@@ -21,6 +21,7 @@ full license texts are in the linked projects and, for npm packages, in each pac
 | @ghostery/adblocker, adblocker-electron, adblocker-electron-preload, adblocker-content, adblocker-extended-selectors, url-parser | MPL-2.0 | https://github.com/ghostery/adblocker |
 | @remusao/guess-url-type, small, smaz, smaz-compress, smaz-decompress, trie | MPL-2.0 | https://github.com/remusao/mono |
 | @anthropic-ai/sdk | MIT | https://github.com/anthropics/anthropic-sdk-typescript |
+| electron-updater, builder-util-runtime (electron-builder's updater and its runtime) | MIT | https://github.com/electron-userland/electron-builder |
 | openai | Apache-2.0 | https://github.com/openai/openai-node |
 | tldts-experimental (includes data from the Public Suffix List, MPL-2.0) | MIT | https://github.com/remusao/tldts |
 | Other transitive dependencies | MIT, ISC, BSD-2-Clause, BSD-3-Clause, Apache-2.0, Unlicense | run `npx license-checker --production` for the full list |

@@ -57,6 +57,7 @@ const DEFAULTS = {
   tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
+  autoDownloadUpdates: true, // Windows setup installs: fetch new versions in the background (features/updates.js)
 };
 const RESTART_KEYS = ['hardwareAcceleration', 'forceDarkWebsites'];
 const PERMISSIONS = { geolocation: 'Location', media: 'Camera and microphone', notifications: 'Notifications', 'clipboard-read': 'Clipboard' };

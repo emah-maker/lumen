@@ -8,7 +8,7 @@
     "postinstall": "node node_modules/electron/install.js",
     "start": "electron .",
     "dist": "node scripts/build.js",
-    "test": "node test/units.js && node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js && node test/pagecontext.js && node test/dialogs.js && node test/recovery.js && node test/tasklock.js && node test/tabstrip.js && node test/downloads.js && node test/hardening.js && node test/exfil.js",
+    "test": "node test/units.js && node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js && node test/pagecontext.js && node test/dialogs.js && node test/recovery.js && node test/tasklock.js && node test/tabstrip.js && node test/downloads.js && node test/hardening.js && node test/exfil.js && node test/updates.js",
     "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
     "dist:win": "node scripts/build.js --win",
     "dist:mac": "node scripts/build.js --mac"
@@ -19,6 +19,7 @@
     "@ghostery/adblocker-electron": "^2.18.2",
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
+    "electron-updater": "^6.8.10",
     "openai": "^7.23.0",
     "tldts-experimental": "^7.4.15"
   },
@@ -75,6 +76,14 @@
     "portable": {
       "artifactName": "Lumen ${version} Portable.exe"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "emah-maker",
+        "repo": "lumen",
+        "releaseType": "release"
+      }
+    ],
     "asar": false,
     "electronDownload": {
       "mirror": "https://github.com/castlabs/electron-releases/releases/download/"

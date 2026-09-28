@@ -2706,6 +2706,15 @@ const aiAgents = setupAiAgents({
   userTabs: () => tabs.filter(alive).map((t) => ({ id: t.id, webContents: t.view.webContents })),
 });
 
+// ---------- updates from GitHub Releases (features/updates.js) ----------
+
+const updates = require('./features/updates').createUpdates({
+  app, ipcMain, session, ui, readSettings, writeSettings, test: TEST,
+  prefs: () => settingsBackend.prefs(),
+  beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
+});
+if (TEST) global.__updates = updates;
+
 const focusWindow = () => {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
@@ -2747,6 +2756,7 @@ app.whenReady().then(async () => {
   for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
+  updates.start(); // first check after a short delay, then every few hours
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || !settingsBackend.prefs().keepRunningInBackground) app.quit(); }); // [settings]
