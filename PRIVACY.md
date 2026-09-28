@@ -5,20 +5,31 @@ Lumen has no account, no servers of its own, no telemetry, no analytics and no c
 ## What stays on your computer
 
 - **Browsing data:** history, bookmarks, open tabs, downloads, cookies and site data are stored in Lumen's profile folder on your computer.
-- **API keys:** stored encrypted with your operating system's keychain (Windows DPAPI, macOS Keychain, or the Linux secret service).
-- **Chats with the AI:** stored encrypted the same way. If your system has no keychain, which happens on some Linux setups, they're stored unencrypted in the profile folder. **New chat** deletes the saved conversation.
+- **API keys:** stored encrypted with your operating system's keychain (Windows DPAPI, macOS Keychain, or the Linux secret service). If your system has no keychain, which happens on some Linux setups, Lumen doesn't save keys at all; set them as environment variables instead.
+- **Chats with the AI:** stored encrypted the same way, without the page text and tool results that went with them. If your system has no keychain, the chat isn't kept between sessions. **New chat** deletes the saved conversation.
 
 ## What leaves your computer, and to whom
 
-- **The AI you choose.** When you send a message, Lumen sends it to the provider you picked, with the page context it needs to answer: the text of the page you're on, and a screenshot when the AI asks for one. The provider can be Anthropic (directly or through Claude Code), OpenAI, xAI, Google or OpenRouter. Each provider's own privacy policy applies to what it receives. Nothing is sent to an AI until you ask it something or start a task.
-- **The websites you visit,** as with any browser. The AI's background reading and research run without your cookies.
+- **The AI you choose.** When you send a message, Lumen sends it to the provider you picked, with the page context it needs to answer: the text of the page you're on, and a screenshot when the AI asks for one. The provider can be Anthropic (directly or through Claude Code), OpenAI, xAI, Google or OpenRouter. Each provider's own privacy policy applies to what it receives. Nothing is sent to an AI until you ask it something or start a task. With a key saved, Lumen also asks that provider which models the key can use, to fill the model menu.
+- **The websites you visit,** as with any browser. The AI's background reading (`read_urls`) runs without your cookies.
 - **Your search engine,** when you search from the address bar or the start page.
+- **DuckDuckGo, for the AI's web search.** When the AI searches the web through Lumen's own search tool (OpenAI, Grok, Gemini and OpenRouter models, Claude Code and other MCP agents), Lumen loads DuckDuckGo's results page for the query without your cookies. Claude by API key or Anthropic sign-in uses Anthropic's own web search instead.
 - **Component downloads.** Lumen downloads ad and tracker block lists (Ghostery's published lists) and Google's Widevine component, which lets DRM video play. Extensions you install come from the Chrome Web Store.
 - **Sign-in.** "Sign in with OpenRouter" opens OpenRouter's own sign-in page, and the key it returns is stored as described above.
 
+### Smaller requests, and what triggers them
+
+- **Site icons for the start page.** When a site that's in your favorites or most-visited list shows its icon, Lumen downloads a copy of that icon once (from the address the site names, often the site itself or its CDN) and keeps it on your computer, so the start page never has to load anything.
+- **OpenRouter's model list.** With OpenRouter connected, Lumen downloads OpenRouter's public model catalog (`openrouter.ai/api/v1/models`) to fill the model menu and **More models…**. It's cached on your computer for a day.
+- **The Anthropic CLI.** Clicking **Sign in with your Anthropic account** in Settings → You and AI, when the `ant` CLI isn't already installed, downloads a pinned version from Anthropic's GitHub releases (`github.com/anthropics/anthropic-cli`) and checks it against a built-in SHA-256 checksum before installing it in Lumen's profile folder. Signing in then happens on Anthropic's own site.
+- **Extension updates.** If you've installed Chrome Web Store extensions, Lumen checks Google's update service (`update.googleapis.com`) for newer versions: at startup, when the window gets focus (at most once every 3 hours), and every 5 hours. The check sends the installed extensions' ids, your operating system and processor type, and the Chromium version. With no extensions installed, no check is made.
+- **AI topic grouping.** If you turn on **Use AI to name and group topics**, Lumen sends the titles and site names (hostnames, not full addresses) of the tabs being grouped to the cheapest model of your chat's AI provider. This happens when you choose **Organize Tabs by Topic**, and, with **Group Automatically → By Topic** on, a few seconds after you have four or more ungrouped tabs. It's off by default.
+
 ## AI agents over MCP
 
-If you turn on **Allow AI agents to connect**, AI apps on your computer (such as Claude Code, Codex, Gemini CLI or Cursor) can read and control your tabs through Lumen. They're asked before acting on a new site. This setting is off by default.
+If you turn on **Allow AI agents to connect**, AI apps on your computer (such as Claude Code, Codex, Gemini CLI or Cursor) can read and control your tabs through Lumen. They're asked before acting on a new site. This setting is off by default. Whatever those apps read is then sent to their own AI provider, under that app's privacy policy.
+
+The same goes for **Allow automation tools (Chrome DevTools Protocol)**, also off by default: while it's on, programs on your computer can read and control your tabs without asking.
 
 ## Removing your data
 
@@ -30,4 +41,4 @@ Settings → Privacy and security → Clear browsing data clears history, cookie
 
 ## Contact
 
-Questions about this policy: open an issue on Lumen's GitHub repository.
+Questions about this policy: open an issue on Lumen's GitHub repository. Security problems: see [SECURITY.md](SECURITY.md).

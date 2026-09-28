@@ -1359,6 +1359,24 @@ sidebarEl.addEventListener('drop', async (e) => {
   prompt.focus();
 });
 
+// Anything else dropped on the window must never navigate the UI itself (main.js refuses that too):
+// a dropped web link opens as a new tab; text dropped into a text field still lands there.
+const editableTarget = (el) => Boolean(el?.closest?.('input, textarea, [contenteditable=""], [contenteditable="true"]'));
+const hasFiles = (dt) => [...(dt?.types || [])].includes('Files');
+document.addEventListener('dragover', (e) => {
+  if (e.defaultPrevented) return; // the sidebar is taking an image
+  if (editableTarget(e.target) && !hasFiles(e.dataTransfer)) return;
+  e.preventDefault();
+});
+document.addEventListener('drop', (e) => {
+  if (e.defaultPrevented) return;
+  if (editableTarget(e.target) && !hasFiles(e.dataTransfer)) return;
+  e.preventDefault();
+  const dropped = (e.dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).find((l) => l && !l.startsWith('#'))
+    || e.dataTransfer.getData('text/plain').trim();
+  if (/^https?:\/\/\S+$/i.test(dropped || '')) window.browser.newTab(dropped);
+});
+
 // Asks that arrive while a reply is running (Alt+Enter in the address bar, "Ask about selection",
 // the new-tab page's Ask AI, a starter chip) wait their turn instead of disappearing.
 const queued = [];
@@ -1541,7 +1559,7 @@ window.assistant.onEvent((event) => {
     }
     case 'approval':
       if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); // a hidden sidebar left the task waiting with only a badge as a hint
-      showApproval(event.approvalId, event.host);
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title });
       moveWorkingToEnd();
       break;
     case 'notice': {
@@ -1652,20 +1670,28 @@ window.assistant.autoAllow?.().then((on) => { autoAllow = Boolean(on); renderAut
 
 const approvals = new Map(); // approvalId -> { card, host }
 
-function showApproval(approvalId, host) {
+// `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
+// could carry that content there); anything else is the usual "interact with this site" card.
+function showApproval(approvalId, host, { action, title: openTitle } = {}) {
   const card = document.createElement('div');
   card.className = 'approval';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   const agentName = assistantIdentity?.name || 'the AI';
-  card.setAttribute('aria-label', `Allow ${agentName} to interact with ${host}?`);
+  const opening = action === 'open';
+  const heading = opening
+    ? (host ? `${agentName} wants to open ${host}` : openTitle || `${agentName} wants to open a new site`)
+    : `Allow ${agentName} to interact with ${host}?`;
+  card.setAttribute('aria-label', heading);
 
   const title = document.createElement('p');
   title.className = 'approval-title';
-  title.textContent = `Allow ${agentName} to interact with ${host}?`;
+  title.textContent = heading;
   const detail = document.createElement('p');
   detail.className = 'approval-detail';
-  detail.textContent = 'It can click, type and fill in forms on this site until you start a new chat.';
+  detail.textContent = opening
+    ? 'It has read page content in this chat. Only allow sites you expect it to visit.'
+    : 'It can click, type and fill in forms on this site until you start a new chat.';
 
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
@@ -1886,11 +1912,12 @@ window.assistant.onMcpEvent?.((event) => {
     }
     case 'approval': {
       if (document.body.classList.contains('sidebar-hidden')) showSidebar(true);
-      showApproval(event.approvalId, event.host);
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
-      if (title) title.textContent = `An external agent (${event.clientName}) wants to interact with ${event.host}`;
+      if (title) title.textContent = `An external agent (${event.clientName}) wants to ${event.action === 'open' ? 'open' : 'interact with'} ${event.host}`;
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
+      if (event.action === 'open') { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = 'Only allow sites you expect it to visit.'; }
       card?.setAttribute('aria-label', title?.textContent || '');
       break;
     }

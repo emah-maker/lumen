@@ -444,6 +444,51 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ONE_OF = { click: [['element_id', 'text']] };
 // Tools that change a page; the first use per site per chat needs the user's OK.
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', ...snapshot.ACTING]);
+// Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
+// "tainted": whatever the page said could have told the model to carry data off in a URL.
+const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'list_tabs', 'run_script', 'batch']);
+// Tools that send a request to a host the model picks. In a tainted run, each new destination host
+// needs the user's OK (the same per-chat approved hosts as ACTING_TOOLS).
+const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls']);
+
+// The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
+// URLs are left out: execute() refuses them anyway.
+function destinationHosts(name, input) {
+  const urls = name === 'read_urls' ? (Array.isArray(input?.urls) ? input.urls.slice(0, 6) : []) : [input?.url];
+  const hosts = [];
+  for (const raw of urls) {
+    try {
+      const host = new URL(webUrl(String(raw))).host;
+      if (host && !hosts.includes(host)) hosts.push(host);
+    } catch {}
+  }
+  return hosts;
+}
+
+// Where the "has read page content" taint lives: the chat (a sidebar task scope's messages array, so
+// it lasts until New chat, since the content stays in the history), else the scope or MCP session.
+const taintHolder = (run) => run?.chat || run || null;
+
+// A tab URL as the agent may see it: origin + path of a web page, '' for a blank new tab (nothing on
+// it, and the agent may want to open a page there), or null (history, settings, file://, anything
+// else). Query strings and fragments can hold tokens, search terms, session ids.
+const NEW_TAB_URL = require('url').pathToFileURL(require('path').join(__dirname, 'renderer', 'newtab.html')).href;
+function agentUrl(url) {
+  if (!url || url === 'about:blank' || String(url).split(/[?#]/)[0] === NEW_TAB_URL) return '';
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
+// list_tabs as the agent sees it: web pages and blank new tabs only (no history, settings or file://
+// tabs), with agentUrl's origin + path.
+function agentTabList(tabs) {
+  return tabs.flatMap((t) => {
+    const url = agentUrl(t.url);
+    return url === null ? [] : [{ ...t, url }];
+  });
+}
 
 function validateInput(name, input) {
   const schema = TOOL_SCHEMAS[name];
@@ -595,6 +640,7 @@ async function searchWeb(query) {
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
   const wc = view.webContents;
   wc.setAudioMuted(true);
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
   try {
     await Promise.race([wc.loadURL(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`).catch(() => {}), sleep(12000)]);
     const rows = await runScript(wc, `[...document.querySelectorAll('.result')].slice(0, 8).map((r) => {
@@ -635,8 +681,9 @@ class Agent {
 
   // Runs fn with its tools pinned to tab `tabId` (see taskScope). `scope.signal` lets long waits
   // (wait_for, wait) end as soon as the task is stopped.
-  inTask(tabId, signal, fn) {
-    const scope = { tabId: tabId ?? null, signal };
+  // `chat` (the conversation's messages array, for sidebar runs) holds the exfiltration taint.
+  inTask(tabId, signal, fn, chat = null) {
+    const scope = { tabId: tabId ?? null, signal, chat };
     this.scopes.add(scope);
     return taskScope.run(scope, fn).finally(() => this.scopes.delete(scope));
   }
@@ -689,6 +736,8 @@ class Agent {
     });
     if (snapshot.settings) messages.settings = snapshot.settings;
     repairHistory(messages); // saved mid-task: answer the tool calls that never got a result
+    // A saved chat may hold page content from before the restart: treat it as having read some.
+    if (messages.length) messages.tainted = true;
     this.messages = messages;
   }
 
@@ -775,7 +824,7 @@ class Agent {
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
 
       const tab = this.browser.activeTab();
-      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit));
+      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit), messages);
     } catch (err) {
       if (controller.signal.aborted || err instanceof Anthropic.APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
@@ -796,6 +845,7 @@ class Agent {
     const viaGrokBuild = String(messages.settings.model).startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
     // Stop works while the page is being read, too (it can take a few seconds on a heavy page).
     const page = await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+    if (page) this.markTainted(); // the attached page text counts as reading the page (see ensureAllowed)
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
@@ -1060,7 +1110,7 @@ class Agent {
           continue;
         }
         try {
-          await this.ensureAllowed(use.name, emit, signal, { input: use.input });
+          await this.ensureAllowed(use.name, emit, signal, { input: use.input, who: onClaude ? 'Claude' : providers.PROVIDERS[providers.splitModel(model).provider]?.label || 'The AI' });
           const content = await abortable(this.execute(use.name, use.input), signal);
           results.push({ type: 'tool_result', tool_use_id: use.id, content });
           emit({ type: 'tool_done', id: use.id, ok: true });
@@ -1150,7 +1200,21 @@ class Agent {
   // switch while it's showing can't move it elsewhere), and if that tab has moved to another site by
   // the time the user answers, the new site is asked about too. close_tab asks about the tab it closes.
   // Pages with no host (data:, about:, file:) are asked about as a group, never skipped.
-  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {} } = {}) {
+  // Exfiltration guard: once a chat has read page content (READING_TOOLS or the attached page text;
+  // `run` is the task scope, whose chat holds the taint until New chat, or an MCP session for outside
+  // agents), navigate / open_tab / read_urls to a destination host that isn't approved yet ask first
+  // ("<who> wants to open <host>"), one card per new host. The answer joins the same approved hosts.
+  // A chat that hasn't read anything goes freely.
+  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
+    if (DESTINATION_TOOLS.has(name) && taintHolder(run)?.tainted) {
+      for (const host of destinationHosts(name, input)) {
+        if (hosts.has(host)) continue;
+        const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal, { action: 'open', who });
+        if (!ok) throw new Error(`The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
+        hosts.add(host);
+      }
+    }
+    if (READING_TOOLS.has(name)) this.markTainted(run);
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' ? this.browser.tabById?.(input.tab_id) : this.taskTab();
@@ -1170,9 +1234,17 @@ class Agent {
     if (!hosts.has(siteOf())) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
   }
 
-  askApproval(host, emit, signal) {
+  // A chat (via its task scope) or an MCP session has seen page content; see ensureAllowed.
+  markTainted(run = taskScope.getStore()) {
+    const holder = taintHolder(run);
+    if (holder) holder.tainted = true;
+  }
+
+  // action 'open' (a tainted run heading to a new host) is shown as "<who> wants to open <host>";
+  // without it, the card is the usual "Allow … to interact with <host>?".
+  askApproval(host, emit, signal, { action = 'interact', who = null } = {}) {
     const approvalId = ++this.approvalSeq;
-    emit({ type: 'approval', approvalId, host });
+    emit(action === 'open' ? { type: 'approval', approvalId, host, action, title: `${who || 'Claude'} wants to open ${host}` } : { type: 'approval', approvalId, host });
     return new Promise((resolve, reject) => {
       const onAbort = () => {
         this.pendingApprovals.delete(approvalId);
@@ -1424,7 +1496,7 @@ class Agent {
         return `Now at ${wc.getURL()}.`;
       }
       case 'list_tabs':
-        return JSON.stringify(this.browser.listTabs());
+        return JSON.stringify(agentTabList(this.browser.listTabs()));
       case 'open_tab': {
         const tab = this.browser.openTab(webUrl(input.url));
         this.pinTab(tab.id); // it opens in front; the task carries on there
@@ -1432,10 +1504,12 @@ class Agent {
         return `Opened tab ${tab.id}: ${tab.webContents.getURL()}`;
       }
       case 'switch_tab': {
-        if (!this.browser.switchTab(input.tab_id)) throw new Error(`No tab with id ${input.tab_id}.`);
+        // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.
+        const listed = agentTabList(this.browser.listTabs()).find((t) => t.id === input.tab_id);
+        if (!listed || !this.browser.switchTab(input.tab_id)) throw new Error(`No tab with id ${input.tab_id}.`);
         this.pinTab(input.tab_id);
         const wc = this.requireTab();
-        return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${wc.getURL()}`;
+        return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
       }
       case 'wait': {
         const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;

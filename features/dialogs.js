@@ -12,8 +12,9 @@
 //
 // deps: { win: () => BrowserWindow|null, paths: { preload, html }, switchToContents(webContents),
 //         isInFront(webContents) -> bool (false only for a tab that isn't the active one),
-//         onPendingChange(), restoreFocus() }
+//         onPendingChange(), restoreFocus(), openUrl(url) (a web link from the overlay: a new tab) }
 const { WebContentsView } = require('electron');
+const { pathToFileURL } = require('url');
 
 function createDialogs(deps) {
   let overlay = null;
@@ -32,6 +33,14 @@ function createDialogs(deps) {
       webPreferences: { preload: deps.paths.preload, sandbox: true, contextIsolation: true },
     });
     overlay.setBackgroundColor('#00000000');
+    // The overlay shows dialog.html and nothing else: no navigating it, no windows from it.
+    const ownUrl = pathToFileURL(deps.paths.html).href.toLowerCase();
+    const isOwn = (url) => { try { const u = new URL(url); u.search = ''; u.hash = ''; return u.href.toLowerCase() === ownUrl; } catch { return false; } };
+    overlay.webContents.on('will-navigate', (event) => { if (!isOwn(event.url)) event.preventDefault(); });
+    overlay.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) deps.openUrl?.(url);
+      return { action: 'deny' };
+    });
     overlay.webContents.loadFile(deps.paths.html);
     return overlay;
   }

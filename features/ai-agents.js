@@ -119,7 +119,13 @@ function setupAiAgents(deps) {
     const engineRun = owner ? owner.active : null;
     const toUi = engineRun ? engineRun.emit : mcpEvent;
     const signal = engineRun ? engineRun.signal : session.controller.signal;
-    const allow = engineRun ? { hosts: agent.approvedHosts, who: owner === grokBuild ? 'Grok' : 'Claude', input: args } : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args }; // outside agents always ask
+    const scope = engineRun && agent.engineScope();
+    // `run` carries the "has read page content" taint (agent.ensureAllowed): the engine's message
+    // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
+    // page text counts), the MCP session for an outside agent (every call in the session shares it).
+    const allow = engineRun
+      ? { hosts: agent.approvedHosts, who: owner === grokBuild ? 'Grok' : 'Claude', input: args, run: scope || engineRun }
+      : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
     toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
@@ -129,7 +135,6 @@ function setupAiAgents(deps) {
       await agent.ensureAllowed(name, emit, signal, allow);
       return abortable(agent.execute(name, args), signal);
     };
-    const scope = engineRun && agent.engineScope();
     try {
       const result = await (scope ? agent.inScope(scope, work) : agent.inTask(agent.browser.activeTab()?.id, signal, work));
       toUi({ type: 'tool_done', id: stepId, ok: true });

@@ -36,6 +36,15 @@ const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html
 const settingsPage = require('./settings-backend'); // [settings] lumen://settings
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url);
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
+// The browser UI's own document and its privileged preload (see the IPC gate and hardenUiView below).
+const UI_HTML = path.join(__dirname, 'renderer', 'index.html');
+const UI_URL = pathToFileURL(UI_HTML).href;
+const UI_PRELOAD = path.join(__dirname, 'preload.js');
+const SUGGEST_URL = pathToFileURL(path.join(__dirname, 'renderer', 'suggest.html')).href;
+// `url` is the local file `fileUrl` (query and hash aside). Case-insensitive: Windows paths are.
+const sameFileUrl = (url, fileUrl) => {
+  try { const u = new URL(url); u.search = ''; u.hash = ''; return u.protocol === 'file:' && u.href.toLowerCase() === fileUrl.toLowerCase(); } catch { return false; }
+};
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const isWebUrl = (url) => /^https?:\/\//i.test(url);
 
@@ -83,11 +92,64 @@ function isSettingsSender(event) {
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
 const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode):/;
-const trustedSender = (event) => event.sender === ui() || isSettingsSender(event);
+// Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
+// top-level renderer/index.html document, never a page that somehow got into that window or a frame
+// inside it. test/hardening.js checks this list against preload.js.
+const UI_ONLY_IPC = new Set([
+  'content-bounds', 'view:freeze', 'view:thaw', 'chat:full', 'view:warm',
+  'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
+  'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize',
+  'bookmark:toggle', 'zoom:reset', 'downloads:menu',
+  'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
+  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
+  'settings-page:open', 'prefs:ui',
+  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow',
+  'pagecontext:get', 'pagecontext:set',
+]);
+const isUiUrl = (url) => sameFileUrl(url, UI_URL);
+const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
+  && event.senderFrame === event.sender.mainFrame && isUiUrl(event.senderFrame?.url);
+// Tests drive some handlers with ipcMain.emit and a stand-in event (no real renderer behind it);
+// a real message from a renderer always carries its live webContents.
+const { webContents: webContentsModule } = require('electron');
+const syntheticTestEvent = (event) => Boolean(process.env.CLAUDE_BROWSER_TEST)
+  && !(event?.sender && typeof event.sender.id === 'number' && webContentsModule.fromId(event.sender.id) === event.sender);
+const trustedSender = (event, channel) => syntheticTestEvent(event) || isUiSender(event)
+  || (PRIVILEGED_IPC.test(channel) && isSettingsSender(event));
+const gatedChannel = (channel) => PRIVILEGED_IPC.test(channel) || UI_ONLY_IPC.has(channel);
+if (process.env.CLAUDE_BROWSER_TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: gatedChannel, uiUrl: UI_URL };
+
+// Lumen's own views (the UI, the suggestions dropdown, the dialogs overlay) show one local file
+// each and nothing else: a link, drop or script can't navigate them, and window.open never makes a
+// new window (which would inherit the view's preload). Web links open as ordinary tabs instead.
+function hardenOwnView(wc, ownUrl) {
+  wc.on('will-navigate', (event) => { if (!sameFileUrl(event.url, ownUrl)) event.preventDefault(); });
+  wc.setWindowOpenHandler(({ url, disposition }) => {
+    if (isWebUrl(url) && win && !win.isDestroyed()) openTab(url, { background: disposition === 'background-tab' });
+    return { action: 'deny' };
+  });
+}
+
+// Backstop for every webContents, including ones made later or by libraries: no <webview>, and
+// nothing using the UI's preload may leave renderer/index.html.
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-attach-webview', (event) => event.preventDefault());
+  // Electron has no public getter for a view's preload; _getPreloadScript() is what it uses itself.
+  // Failing that, a view showing the UI's own page is treated the same.
+  const usesUiPreload = () => {
+    try {
+      const p = contents._getPreloadScript?.()?.filePath || contents.getLastWebPreferences?.()?.preload;
+      if (p && path.resolve(p).toLowerCase() === UI_PRELOAD.toLowerCase()) return true;
+    } catch {}
+    return isUiUrl(contents.getURL());
+  };
+  contents.on('will-navigate', (event) => { if (!isUiUrl(event.url) && usesUiPreload()) event.preventDefault(); });
+  contents.on('will-redirect', (event) => { if (!isUiUrl(event.url) && usesUiPreload()) event.preventDefault(); });
+});
 for (const method of ['handle', 'on']) {
   const register = ipcMain[method].bind(ipcMain);
-  ipcMain[method] = (channel, listener) => register(channel, !PRIVILEGED_IPC.test(channel) ? listener : (event, ...args) => {
-    if (trustedSender(event)) return listener(event, ...args);
+  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? listener : (event, ...args) => {
+    if (trustedSender(event, channel)) return listener(event, ...args);
     console.error(`[lumen] refused ${channel} from ${event.sender.getURL?.().slice(0, 80)}`);
     if (method === 'handle') throw new Error('Not allowed');
     return undefined;
@@ -235,6 +297,7 @@ const dialogs = createDialogs({
   // A popup window's own page: its dialogs are drawn in the popup (null means the browser window).
   windowFor: (wc) => { const w = BrowserWindow.fromWebContents(wc); return w && w !== win && !w.isDestroyed() ? w : null; },
   restoreFocus: () => { const wc = activeTab()?.webContents; if (wc) wc.focus(); else ui()?.focus(); },
+  openUrl: (url) => { if (win && !win.isDestroyed()) openTab(url); },
 });
 // Every existing `dialog.showMessageBox(...)` call (here, in settings-backend.js, features/downloads.js)
 // now draws Lumen's own card; the native pickers (showOpenDialog etc., used only by settings-backend.js
@@ -325,6 +388,12 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  // The AI's hidden reader/search views (agent.js, partition 'claude-reader') load pages nobody
+  // sees: they get no permissions at all (camera, location, notifications, …) and no downloads.
+  const reader = session.fromPartition('claude-reader');
+  reader.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  reader.setPermissionCheckHandler(() => false);
+  reader.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
 });
 
 // ---------- permissions: ask like Safari, remember per origin ----------
@@ -723,6 +792,7 @@ function createSuggestView() {
   suggestView.setBackgroundColor('#00000000');
   suggestView.setVisible(false);
   win.contentView.addChildView(suggestView);
+  hardenOwnView(suggestView.webContents, SUGGEST_URL);
   suggestView.webContents.on('focus', () => ui()?.focus());
   suggestView.webContents.once('did-finish-load', () => {
     if (!ui()?.isFocused() && !activeTab()?.webContents.isFocused()) ui()?.focus();
@@ -2073,6 +2143,14 @@ function createWindow() {
   });
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
   win.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
+  hardenOwnView(win.webContents, UI_URL);
+  // will-navigate doesn't see loads started from the main process: if anything ever points the UI
+  // elsewhere, put the UI straight back (the IPC gate already ignores any other document meanwhile).
+  win.webContents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument || isUiUrl(details.url)) return;
+    const wc = win?.webContents;
+    setImmediate(() => { if (wc && !wc.isDestroyed()) wc.loadFile(UI_HTML).catch(() => {}); });
+  });
   win.on('close', saveSession);
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
@@ -2105,7 +2183,7 @@ function createWindow() {
   win.on('blur', () => ui()?.send('window-focus', false));
   win.on('resize', () => { hideSuggestions(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   win.on('blur', hideSuggestions);
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.loadFile(UI_HTML);
   win.webContents.once('did-finish-load', () => {
     createSuggestView();
     restoreSession();
