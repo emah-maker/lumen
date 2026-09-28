@@ -211,5 +211,37 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('updates: a non-https URL in the release info is ignored', manualAsset({ kind: 'zip', version: '0.3.0', files: [{ url: 'http://evil.example/Lumen-0.3.0-win-x64.zip' }] }).url === `${base}Lumen-0.3.0-win-x64.zip`, 'http');
 }
 
+// ---- Windows icons: Lumen.exe is Electron's binary, so shortcuts must name Lumen's .ico
+{
+  const { appIcon, fixShortcutIcons } = require('../features/instance');
+  check('icon: falls back to the app\'s own assets/icon.ico', appIcon() === path.join(__dirname, '..', 'assets', 'icon.ico') && fs.existsSync(appIcon()), appIcon());
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-icons-'));
+  const desktop = path.join(dir, 'Desktop');
+  const programs = path.join(dir, 'AppData', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  fs.mkdirSync(path.join(programs, 'Lumen'), { recursive: true });
+  fs.mkdirSync(desktop);
+  const links = {
+    [path.join(desktop, 'Lumen.lnk')]: { target: process.execPath, icon: process.execPath },
+    [path.join(programs, 'Lumen', 'Lumen.lnk')]: { target: process.execPath, icon: '' },
+    [path.join(programs, 'Lumen.lnk')]: { target: 'C:\\Other\\Lumen.exe', icon: 'C:\\Other\\Lumen.exe' },
+  };
+  for (const file of Object.keys(links)) fs.writeFileSync(file, '');
+  const updates = [];
+  const shell = { readShortcutLink: (f) => links[f], writeShortcutLink: (f, op, o) => { updates.push({ f, op, icon: o.icon }); return true; } };
+  const fakeApp = (packaged) => ({ isPackaged: packaged, getPath: (n) => (n === 'desktop' ? desktop : path.join(dir, 'AppData')) });
+  fixShortcutIcons(fakeApp(false), shell);
+  check('icon: dev runs leave shortcuts alone', updates.length === 0, JSON.stringify(updates));
+  fixShortcutIcons(fakeApp(true), shell);
+  if (process.platform === 'win32') {
+    check('icon: the installer\'s shortcuts to this exe get Lumen\'s .ico', updates.length === 2 && updates.every((u) => u.op === 'update' && /\.ico$/.test(u.icon)), JSON.stringify(updates));
+    check('icon: a shortcut to another program is left alone', !updates.some((u) => u.f === path.join(programs, 'Lumen.lnk')), JSON.stringify(updates));
+    updates.length = 0;
+    for (const file of Object.keys(links)) links[file].icon = appIcon();
+    fixShortcutIcons(fakeApp(true), shell);
+    check('icon: shortcuts that already have the .ico are not rewritten', updates.length === 0, JSON.stringify(updates));
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

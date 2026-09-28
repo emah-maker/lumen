@@ -2,16 +2,41 @@
 const fs = require('fs');
 const path = require('path');
 
+// Lumen.exe is Electron's unmodified binary (scripts/build.js), so its own icon is Electron's: every
+// place Windows shows Lumen's icon has to be pointed at an .ico instead. The installed copy's
+// icon.ico (scripts/install-windows.ps1) or, in the setup installer's copy, the app's own.
+function appIcon() {
+  const installed = path.join(path.dirname(process.execPath), 'icon.ico');
+  return fs.existsSync(installed) ? installed : path.join(__dirname, '..', 'assets', 'icon.ico');
+}
+
+const shortcutDirs = (app) => [app.getPath('desktop'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')];
+
 // `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
 // Start menu shortcuts carrying the app ID and icon, then exits.
 function installShortcuts(app, shell, appId) {
   const exe = process.execPath;
-  const icon = path.join(path.dirname(exe), 'icon.ico');
-  const options = { target: exe, cwd: path.dirname(exe), icon: fs.existsSync(icon) ? icon : exe, iconIndex: 0, appUserModelId: appId, description: 'Lumen, the AI browser' };
-  const startMenu = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-  for (const dir of [app.getPath('desktop'), startMenu]) {
+  const options = { target: exe, cwd: path.dirname(exe), icon: appIcon(), iconIndex: 0, appUserModelId: appId, description: 'Lumen, the AI browser' };
+  for (const dir of shortcutDirs(app)) {
     shell.writeShortcutLink(path.join(dir, 'Lumen.lnk'), 'create', options);
     fs.rmSync(path.join(dir, 'Claude Browser.lnk'), { force: true }); // the shortcut from before the rename
+  }
+}
+
+// The setup installer's shortcuts take their icon from Lumen.exe (Electron's): point any shortcut
+// to this exe that still does at Lumen's icon. Runs at startup; a no-op once they're right.
+function fixShortcutIcons(app, shell) {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  const exe = path.resolve(process.execPath).toLowerCase();
+  for (const dir of shortcutDirs(app)) {
+    for (const file of [path.join(dir, 'Lumen.lnk'), path.join(dir, 'Lumen', 'Lumen.lnk')]) {
+      try {
+        if (!fs.existsSync(file)) continue;
+        const link = shell.readShortcutLink(file);
+        if (path.resolve(link.target || '').toLowerCase() !== exe || /\.ico$/i.test(link.icon || '')) continue;
+        shell.writeShortcutLink(file, 'update', { icon: appIcon(), iconIndex: 0 });
+      } catch {} // someone else's shortcut, or one we can't read: leave it
+    }
   }
 }
 
@@ -75,4 +100,4 @@ function acquireInstanceLock(app) {
   return false;
 }
 
-module.exports = { installShortcuts, acquireInstanceLock, listenForSecondInstances };
+module.exports = { appIcon, installShortcuts, fixShortcutIcons, acquireInstanceLock, listenForSecondInstances };
