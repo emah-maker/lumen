@@ -11,6 +11,8 @@ const os = require('os');
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Polls until fn() is truthy (returns true) or the time runs out (returns false).
+  const waitFor = async (fn, ms = 3000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await sleep(50); } return false; };
 
   const seenHints = {}; // Sec-CH-UA as the server received it, by path
   const server = http.createServer((req, res) => {
@@ -60,7 +62,7 @@ const os = require('os');
     await ui.mouse.down();
     await sleep(90); // a slow press: several updates arrive while the button is held
     await ui.mouse.up();
-    await sleep(250);
+    await sleep(250); // also lets the strip reflow before the next close button is aimed at
     if ((await tabCount()) === before - 1) closed++;
   }
   check(`the ✕ closes a tab while its title updates (${closed}/6)`, closed === 6, closed);
@@ -91,17 +93,17 @@ const os = require('os');
   // ---- 2. an overflowing strip scrolls with the wheel and stays put during updates ----
   for (let i = 0; i < 26; i++) await open(`${base}/q${i}`, true);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 700));
-  await sleep(400);
+  await waitFor(() => ui.evaluate(() => { const s = document.getElementById('tabs'); return s.scrollWidth > s.clientWidth; }));
   const busyId = (await app.evaluate(() => global.__agent.browser.listTabs())).find((t) => /busy/.test(t.title))?.id;
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), busyId);
   await ui.evaluate(() => { document.getElementById('tabs').scrollLeft = 1e6; });
-  await sleep(300);
+  await waitFor(() => ui.evaluate(() => document.getElementById('tabs').classList.contains('more-left')));
   const over = await ui.evaluate(() => { const s = document.getElementById('tabs'); return { overflow: s.scrollWidth > s.clientWidth, left: s.classList.contains('more-left'), start: s.scrollLeft }; });
   check('many tabs overflow the strip and it shows a fade on the hidden side', over.overflow && over.left, JSON.stringify(over));
   const stripBox = await ui.evaluate(() => { const r = document.getElementById('tabs').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
   await ui.mouse.move(stripBox.x, stripBox.y);
   await ui.mouse.wheel(0, -400);
-  await sleep(200);
+  await waitFor(() => ui.evaluate((start) => document.getElementById('tabs').scrollLeft < start - 100, over.start));
   const scrolled = await ui.evaluate(() => document.getElementById('tabs').scrollLeft);
   check('the mouse wheel scrolls the strip sideways', scrolled < over.start - 100, `${over.start} -> ${scrolled}`);
   await sleep(800); // the busy (active) tab keeps updating
@@ -113,7 +115,7 @@ const os = require('os');
   const list = await strip();
   const pinId = list[list.length - 1].id;
   await app.evaluate((_e, id) => global.__pinTab(id, true), pinId);
-  await sleep(200);
+  await waitFor(async () => (await strip())[0].id === pinId);
   let now = await strip();
   check('a pinned tab moves to the front', now[0].id === pinId && now[0].pinned, JSON.stringify(now.slice(0, 2)));
   const pinnedEl = await ui.evaluate(() => { const el = document.querySelector('#tabs .tab'); return { pinned: el.classList.contains('pinned'), width: el.getBoundingClientRect().width, title: getComputedStyle(el.querySelector('.tab-title')).display }; });
@@ -131,13 +133,13 @@ const os = require('os');
   check('unpinning makes it the first loose tab', !now[1].pinned && now[1].id === second, JSON.stringify(now.slice(0, 3)));
 
   // ---- 4. zoom reset goes to the default zoom from Settings ----
-  await app.evaluate(async (_e, id) => { await global.__settings.backend.set('defaultZoom', 1.25); global.__agent.browser.switchTab(id); }, (await strip()).find((t) => !t.pinned && t.id !== busyId).id);
-  await sleep(300);
+  const zoomTab = (await strip()).find((t) => !t.pinned && t.id !== busyId).id;
+  await app.evaluate(async (_e, id) => { await global.__settings.backend.set('defaultZoom', 1.25); global.__agent.browser.switchTab(id); }, zoomTab);
+  await waitFor(async () => (await app.evaluate(() => global.__agent.browser.activeTab().id)) === zoomTab);
   await app.evaluate(() => { global.__zoomBy(0.5); global.__zoomBy(0.5); });
-  await sleep(200);
-  const zoomedIn = await ui.evaluate(() => !document.getElementById('zoom').hidden);
+  const zoomedIn = await waitFor(() => ui.evaluate(() => !document.getElementById('zoom').hidden));
   await app.evaluate(() => global.__zoomBy(0));
-  await sleep(200);
+  await waitFor(async () => Math.abs((await app.evaluate(() => global.__agent.browser.activeTab().webContents.getZoomFactor())) - 1.25) < 0.01 && (await ui.evaluate(() => document.getElementById('zoom').hidden)));
   const factor = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getZoomFactor());
   const pill = await ui.evaluate(() => document.getElementById('zoom').hidden);
   check('Actual Size returns to the default zoom (125%), and the zoom pill hides', zoomedIn && Math.abs(factor - 1.25) < 0.01 && pill, JSON.stringify({ zoomedIn, factor, pill }));
@@ -149,14 +151,14 @@ const os = require('os');
     const wc = global.__agent.browser.activeTab().webContents;
     await new Promise((r) => { if (!wc.isLoading()) r(); else wc.once('did-finish-load', r); });
   });
-  await sleep(500);
   const inTab = (js) => app.evaluate((_e, code) => global.__agent.browser.activeTab().webContents.executeJavaScript(code), js);
+  await waitFor(async () => (await inTab("document.querySelectorAll('.row').length")) >= 5);
   const historyUrl = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL());
   const rows = await inTab("document.querySelectorAll('.row').length");
   check('History lists visited pages without packing them into the URL', rows >= 5 && !historyUrl.includes('#'), `${rows} rows, ${historyUrl.slice(-40)}`);
   const firstUrl = await inTab("document.querySelector('.row a').href");
   await inTab("document.querySelector('.row .remove').click()");
-  await sleep(300);
+  await waitFor(async () => (await inTab("document.querySelectorAll('.row').length")) === rows - 1);
   const listed = await inTab('window.lumenHistory.list().then((l) => l.map((e) => e.url))');
   const rowsAfter = await inTab("document.querySelectorAll('.row').length");
   check('a history entry can be removed', rowsAfter === rows - 1 && !listed.includes(firstUrl), `${rows} -> ${rowsAfter}, still listed: ${listed.includes(firstUrl)}`);
@@ -166,12 +168,12 @@ const os = require('os');
   // ---- 6. F11 (Windows/Linux) ----
   if (process.platform !== 'darwin') {
     const key = (k) => app.evaluate(({ BrowserWindow }, k) => { const wc = BrowserWindow.getAllWindows()[0].webContents; wc.sendInputEvent({ type: 'keyDown', keyCode: k }); wc.sendInputEvent({ type: 'keyUp', keyCode: k }); }, k);
+    const isFull = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen());
     await key('F11');
-    await sleep(700);
-    const full = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen());
+    const full = await waitFor(isFull);
+    await sleep(300); // let the window settle in full screen before leaving it
     await key('F11');
-    await sleep(700);
-    const back = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen());
+    const back = !(await waitFor(async () => !(await isFull())));
     check('F11 toggles full screen', full && !back, JSON.stringify({ full, back }));
   }
 
@@ -227,7 +229,7 @@ const os = require('os');
   ui = await app.firstWindow();
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
-  await sleep(1500);
+  await waitFor(async () => (await strip()).length >= 20 && Boolean(await app.evaluate(() => global.__agent.browser.activeTab()?.webContents.getURL())), 5000);
   const restored = await strip();
   const loaded = restored.filter((t) => !t.sleeping);
   check('after a restart only the active tab loads', loaded.length === 1 && restored.length >= 20, `${loaded.length} loaded of ${restored.length}`);
@@ -238,7 +240,7 @@ const os = require('os');
   check('the tab that was active is active again', loaded[0] && activeAgain === activeUrl, `${activeAgain} vs ${activeUrl}`);
   const sleeper = restored.find((t) => t.sleeping && !t.pinned);
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), sleeper.id);
-  await sleep(1500);
+  await waitFor(async () => /\/(p|q)\d+$/.test((await app.evaluate(() => global.__agent.browser.activeTab()?.webContents.getURL())) || ''), 5000);
   const woke = await app.evaluate(() => global.__agent.browser.activeTab()?.webContents.getURL());
   check('opening a restored tab loads it', /\/(p|q)\d+$/.test(woke || ''), woke);
 
@@ -249,7 +251,7 @@ const os = require('os');
   await open(`${base}/other`);
   await app.evaluate((_e, id) => global.__tabSleep.sleep(id), hid);
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), hid);
-  await sleep(1500);
+  await waitFor(() => app.evaluate(() => { const wc = global.__agent.browser.activeTab().webContents; return wc.getURL().endsWith('/h2') && wc.navigationHistory.canGoBack(); }), 5000);
   const nav = await app.evaluate(() => { const wc = global.__agent.browser.activeTab().webContents; return { url: wc.getURL(), back: wc.navigationHistory.canGoBack() }; });
   check('a woken tab can still go back', nav.url.endsWith('/h2') && nav.back, JSON.stringify(nav));
 
@@ -268,7 +270,7 @@ const os = require('os');
 
   // ---- 11. a cross-site iframe presents itself as Chrome like its page (Cloudflare checks this) ----
   await open(`${base}/xframe`);
-  await sleep(500);
+  await waitFor(() => app.evaluate(() => global.__agent.browser.activeTab().webContents.mainFrame.framesInSubtree.some((f) => f.url.includes('localhost'))));
   const frames = await app.evaluate(async () => {
     const wc = global.__agent.browser.activeTab().webContents;
     return Promise.all(wc.mainFrame.framesInSubtree.map(async (f) => ({ url: f.url, brands: await f.executeJavaScript('JSON.stringify(navigator.userAgentData?.brands.map((b) => b.brand) || [])') })));

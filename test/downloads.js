@@ -69,7 +69,8 @@ const os = require('os');
   await waitFor(async () => (await list()).length > count && (await list())[0].received > 0);
   check('Cancel is offered', (await click(0, 'Cancel')) === 'ok', 'no cancel');
   check('a cancelled download is marked cancelled', await waitFor(async () => (await list())[0]?.state === 'cancelled'), JSON.stringify((await list())[0]));
-  check('a cancelled download leaves no file', !fs.existsSync(path.join(dlDir, 'slow (1).bin')), fs.readdirSync(dlDir).join(','));
+  // The partial file is removed a moment after the cancel lands, so wait for it rather than look once.
+  check('a cancelled download leaves no file', await waitFor(() => !fs.readdirSync(dlDir).some((f) => f.startsWith('slow (1)')), 5000), fs.readdirSync(dlDir).join(','));
   const retry = await app.evaluate(() => global.__downloads.menu()[0].submenu?.[0]?.label);
   check('a cancelled download offers Retry', retry === 'Retry', retry);
 

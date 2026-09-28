@@ -58,6 +58,8 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
     }), id);
   };
   const tabCount = async () => JSON.parse(await run('list_tabs', {})).length;
+  // Polls until fn() is truthy (returns true) or the time runs out (returns false).
+  const waitFor = async (fn, ms = 4000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 50)); } return false; };
   const pageEval = (code) => app.evaluate((_e, c) => global.__agent.browser.activeTab().webContents.executeJavaScript(c, true), code);
 
   await run('navigate', { url: base + '/' });
@@ -75,7 +77,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   // target=_blank opens a foreground tab; Ctrl+click-style background disposition stays in the background.
   const before = await tabCount();
   await pageEval("document.getElementById('blank').click()");
-  await new Promise((r) => setTimeout(r, 1200));
+  await waitFor(async () => (await tabCount()) === before + 1);
   check('target=_blank link opens a new tab', (await tabCount()) === before + 1, await tabCount());
   await run('switch_tab', { tab_id: 1 });
   const activeBefore = await app.evaluate(() => global.__agent.browser.activeTab().id);
@@ -88,14 +90,15 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
     wc.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: ['control'] });
     wc.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: ['control'] });
   }, pt);
-  await new Promise((r) => setTimeout(r, 1200));
+  await waitFor(async () => (await tabCount()) === before + 2);
+  await new Promise((r) => setTimeout(r, 300)); // a background tab must not take focus a moment later either
   const activeAfter = await app.evaluate(() => global.__agent.browser.activeTab().id);
   check('Ctrl+click opens a background tab', (await tabCount()) === before + 2 && activeAfter === activeBefore, `tabs=${await tabCount()} active ${activeBefore}->${activeAfter}`);
 
   // Popups keep window.opener.
   const windowsBefore = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
   await pageEval("document.getElementById('pop').click()");
-  await new Promise((r) => setTimeout(r, 1500));
+  await waitFor(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((w) => w.webContents.getURL().includes('/popup') && w.webContents.getTitle() === 'has-opener')));
   const popup = await app.evaluate(({ BrowserWindow }) => {
     const wins = BrowserWindow.getAllWindows();
     const p = wins.find((w) => w.webContents.getURL().includes('/popup'));
@@ -105,8 +108,10 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('/popup'))?.close());
 
   // HTML fullscreen fills the window.
+  const viewTop = () => app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents)?.getBounds().y; });
   await pageEval("document.getElementById('fs').click()");
-  await new Promise((r) => setTimeout(r, 1200));
+  await waitFor(async () => (await viewTop()) === 0);
+  await new Promise((r) => setTimeout(r, 200)); // the width follows the move
   const fsBounds = await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
     const view = win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents);
@@ -114,7 +119,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   });
   check('video fullscreen fills the whole window', fsBounds.view.y === 0 && fsBounds.view.x === 0 && fsBounds.view.width === fsBounds.content[0], JSON.stringify(fsBounds));
   await pageEval('document.exitFullscreen()');
-  await new Promise((r) => setTimeout(r, 1200));
+  await waitFor(async () => (await viewTop()) > 0);
   const normal = await app.evaluate(() => global.__agent.browser.activeTab().webContents);
   const afterFs = await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
@@ -129,8 +134,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   check('tab state reports zoom', active(state)?.zoom === 120, JSON.stringify(active(state)));
   await ui.evaluate(() => window.browser.resetZoom());
   await ui.evaluate(() => window.browser.toggleBookmark());
-  await new Promise((r) => setTimeout(r, 300));
-  state = await tabState();
+  await waitFor(async () => { state = await tabState(); return active(state)?.bookmarked === true; });
   check('bookmarking marks the tab', active(state)?.bookmarked === true && active(state)?.zoom === 100, JSON.stringify(active(state)));
   const ntUrl = await app.evaluate(async () => {
     const t = global.__agent.browser.openTab();
@@ -145,8 +149,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   const order = state.tabs.map((t) => t.id);
   const last = order[order.length - 1];
   await ui.evaluate((id) => window.browser.moveTab(id, 0), last);
-  await new Promise((r) => setTimeout(r, 300));
-  state = await tabState();
+  await waitFor(async () => { state = await tabState(); return state?.tabs[0].id === last; });
   check('tabs can be reordered', state.tabs[0].id === last, JSON.stringify(state.tabs.map((t) => t.id)));
 
   // Downloads save to the Downloads folder without a dialog.
@@ -154,7 +157,7 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   const dlDir = await app.evaluate(({ app: a }) => a.getPath('downloads'));
   const existing = new Set(fs.readdirSync(dlDir));
   await pageEval("document.getElementById('dl').click()");
-  await new Promise((r) => setTimeout(r, 2000));
+  await waitFor(() => fs.readdirSync(dlDir).some((f) => !existing.has(f) && f.startsWith('claude-browser-test') && !f.endsWith('.crdownload') && fs.readFileSync(path.join(dlDir, f), 'utf8') === 'hello download'), 6000);
   const added = fs.readdirSync(dlDir).filter((f) => !existing.has(f) && f.startsWith('claude-browser-test'));
   check('downloads save to the Downloads folder', added.length === 1 && fs.readFileSync(path.join(dlDir, added[0]), 'utf8') === 'hello download', added.join(','));
   for (const f of added) fs.unlinkSync(path.join(dlDir, f));
