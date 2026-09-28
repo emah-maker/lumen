@@ -395,6 +395,15 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('updates: a non-https URL in the release info is ignored', manualAsset({ kind: 'zip', version: '0.3.0', files: [{ url: 'http://evil.example/Lumen-0.3.0-win-x64.zip' }] }).url === `${base}Lumen-0.3.0-win-x64.zip`, 'http');
 }
 
+// ---- The UI's sandboxed preload is a committed bundle; it must match preload.js and the library
+{
+  const { bundle, OUT } = require('../scripts/bundle-preload');
+  const committed = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8').replace(/\r\n/g, '\n') : '';
+  check('preload bundle: preload.bundle.js is up to date (run node scripts/bundle-preload.js)', committed === bundle(), `${committed.length} vs ${bundle().length} chars`);
+  const requires = [...committed.matchAll(/\brequire\((['"])([^'"]+)\1\)/g)].map((m) => m[2]).filter((id) => id !== 'electron' && id !== 'electron-chrome-extensions/browser-action');
+  check('preload bundle: needs nothing a sandboxed preload can\'t load', requires.length === 0, requires.join(', '));
+}
+
 // ---- Windows icons: Lumen.exe is Electron's binary, so shortcuts must name Lumen's .ico
 {
   const { appIcon, fixShortcutIcons } = require('../features/instance');

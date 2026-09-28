@@ -2151,9 +2151,9 @@ function createWindow() {
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
       : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() }),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.bundle.js'), // preload.js with the toolbar element inlined (scripts/bundle-preload.js)
       contextIsolation: true,
-      sandbox: false, // preload loads electron-chrome-extensions' toolbar element; the page is our own local UI
+      sandbox: true,
       nodeIntegration: false,
       additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
     },

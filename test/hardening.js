@@ -30,6 +30,18 @@ const path = require('path');
   const ungated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), channels);
   check(`every preload.js channel (${channels.length}) is gated to the UI`, channels.length > 30 && ungated.length === 0, ungated.join(', '));
 
+  // ---- the UI window runs sandboxed, and its bundled preload still works there
+  const prefs = await app.evaluate(({ BrowserWindow }) => {
+    const p = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();
+    return { sandbox: p.sandbox, contextIsolation: p.contextIsolation, nodeIntegration: p.nodeIntegration };
+  });
+  check('UI: the window is sandboxed with context isolation', prefs.sandbox === true && prefs.contextIsolation === true && !prefs.nodeIntegration, JSON.stringify(prefs));
+  // webPreferences don't report the preload path, so check the source names the bundle.
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  check('UI: it loads the bundled preload', /preload: path\.join\(__dirname, 'preload\.bundle\.js'\)/.test(mainSrc) && !/'preload\.js'\)/.test(mainSrc), 'main.js');
+  const bridge = await ui.evaluate(() => ({ browser: typeof window.browser?.newTab, toolbar: Boolean(customElements.get('browser-action-list')), node: typeof require }));
+  check('UI: the bridge and the extensions toolbar element work under the sandbox', bridge.browser === 'function' && bridge.toolbar && bridge.node === 'undefined', JSON.stringify(bridge));
+
   // ---- the UI can't be navigated away from index.html
   await ui.evaluate(() => { location.href = 'https://example.com/'; }).catch(() => {});
   await sleep(1500);
@@ -79,7 +91,7 @@ const path = require('path');
 
   // ---- backstop: any other webContents with the UI preload can't leave index.html either
   const backstop = await app.evaluate(async ({ BrowserWindow }, preload) => {
-    const w = new BrowserWindow({ show: false, webPreferences: { preload, contextIsolation: true, sandbox: false } });
+    const w = new BrowserWindow({ show: false, webPreferences: { preload, contextIsolation: true, sandbox: true } });
     await w.loadURL('about:blank#probe').catch(() => {});
     // about:blank is where it started; a renderer-side navigation to the web must be refused.
     await w.webContents.executeJavaScript("location.href = 'https://example.com/'; 1");
@@ -87,8 +99,8 @@ const path = require('path');
     const url = w.webContents.getURL();
     w.destroy();
     return { url };
-  }, path.join(__dirname, '..', 'preload.js'));
-  check('backstop: a view with preload.js can\'t navigate to the web', !/example\.com/.test(backstop.url), backstop.url);
+  }, path.join(__dirname, '..', 'preload.bundle.js'));
+  check('backstop: a view with the UI preload can\'t navigate to the web', !/example\.com/.test(backstop.url), backstop.url);
 
   // ---- privileged / UI-only IPC from a tab (or a subframe) is refused
   const ipc = await app.evaluate(async ({ ipcMain, BrowserWindow }) => {
