@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree } = require('./cli-utils');
+const { exists, lookup, killTree, validModel } = require('./cli-utils');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -64,9 +64,25 @@ const ARGS_BASE = [
   '--permission-mode', 'dontAsk',
 ];
 
+// The picker's Claude Code choices (the part after 'claudecode:'). 'default' passes no --model, so
+// the CLI's own choice applies (its /model setting, else the plan's default); the rest are the family
+// aliases `claude --model` accepts (claude --help, 2.1.283), each following that family's latest model.
+const MODELS = [
+  { id: 'default', label: 'Default' },
+  { id: 'fable', label: 'Fable' },
+  { id: 'opus', label: 'Opus' },
+  { id: 'sonnet', label: 'Sonnet' },
+  { id: 'haiku', label: 'Haiku' },
+];
+
 // The argv for one message (exported for tests and the report; never joined into a shell string).
-function buildArgs({ mcpConfig, sessionId, resume, systemPrompt }) {
-  return [...ARGS_BASE, '--mcp-config', mcpConfig, '--append-system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId];
+// A resumed session takes --model too: it applies to the rest of the session, as /model does.
+function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default' }) {
+  return [
+    ...ARGS_BASE,
+    ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
+    '--mcp-config', mcpConfig, '--append-system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId,
+  ];
 }
 
 // The one stream-json line written to stdin for a turn: text first, then any images, in the same
@@ -145,7 +161,7 @@ class ClaudeCodeEngine {
   }
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, signal, emit }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', signal, emit }) {
     const bin = await this.detect(true);
     if (!bin) {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
@@ -158,7 +174,7 @@ class ClaudeCodeEngine {
     const mcpConfig = path.join(dir, 'mcp.json');
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { lumen: { command, args, env: { ...env, LUMEN_USERDATA: this.userData, LUMEN_ENGINE: tag } } } }), { mode: 0o600 });
 
-    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt });
+    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: dir }); // an empty folder: no project settings or files
@@ -232,4 +248,4 @@ class ClaudeCodeEngine {
   }
 }
 
-module.exports = { ClaudeCodeEngine, findClaude, buildArgs, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus };
+module.exports = { ClaudeCodeEngine, findClaude, buildArgs, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus };

@@ -77,6 +77,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 - Lumen never sees your claude.ai credentials; the CLI keeps its own login. Not signed in? Run `claude` once in a terminal and type `/login`.
 - The CLI only gets Lumen's browser tools (no shell, no file edits), and Lumen's approval cards still apply. Follow-ups continue the same Claude Code session; **New chat** starts a fresh one. **Stop** ends the CLI and everything it started.
+- **Claude Code** uses the model set in Claude Code; **Claude Code · Fable / Opus / Sonnet / Haiku** pass `--model` with that alias. Switching between them mid-chat keeps the same session. (Grok Build, when offered, lists the models `grok models` reports the same way; switching its model starts a new Grok session that is handed the conversation so far.)
 - Uses your Claude Code login. For personal use; apps offered to others need Anthropic's approval to use claude.ai logins.
 
 ## Tabs that organize themselves

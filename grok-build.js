@@ -103,7 +103,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree } = require('./cli-utils');
+const { exists, lookup, killTree, validModel } = require('./cli-utils');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://x.ai/cli/install.ps1 | iex, then run `grok` once to sign in (needs SuperGrok or X Premium+).'
@@ -149,21 +149,25 @@ function describeFailure(text, code) {
 // in 1.0.41 -- see `grok help`), so this is the least-bad signed-in check available, exactly as a
 // real run showed it: "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\n...". Runs
 // against the user's own GROK_HOME (the login linkAuth shares), and never parses auth.json itself.
+// The same output lists the models the account can use, which the picker offers (`-m <id>`):
+// "Available models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.6".
 function parseGrokModels(stdout) {
   const t = String(stdout || '');
   if (/you are logged in/i.test(t)) {
     const m = /Default model:\s*(\S+)/i.exec(t);
-    return { signedIn: true, detail: m ? m[1] : null };
+    const list = t.split(/Available models:/i)[1] || '';
+    const models = [...new Set([...list.matchAll(/^\s*[*-]\s+(\S+)/gm)].map((x) => x[1]).filter(validModel))];
+    return { signedIn: true, detail: m ? m[1] : null, models };
   }
-  if (/not logged in|please (sign|log) in|run `grok login`/i.test(t)) return { signedIn: false, detail: null };
-  return { signedIn: 'unknown', detail: null };
+  if (/not logged in|please (sign|log) in|run `grok login`/i.test(t)) return { signedIn: false, detail: null, models: [] };
+  return { signedIn: 'unknown', detail: null, models: [] };
 }
 function checkAuthStatus(bin) {
   return new Promise((resolve) => {
     // cwd: os.tmpdir(), not the app's own folder -- a plain status check shouldn't pick up any
     // project-scoped .grok/config.toml that might happen to sit above Lumen's own install/dev folder.
     execFile(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd: os.tmpdir() }, (err, stdout) => {
-      resolve(err ? { signedIn: 'unknown', detail: null } : parseGrokModels(stdout));
+      resolve(err ? { signedIn: 'unknown', detail: null, models: [] } : parseGrokModels(stdout));
     });
   });
 }
@@ -204,9 +208,11 @@ const ARGS_BASE = [
 // ENAMETOOLONG). --prompt-file takes the same JSON content blocks as --prompt-json, images included
 // (flat ACP blocks: { type: 'image', data, mimeType }; verified 2026-09-27, a red test image came back
 // "Red"). The system prompt (~4 KB) stays on the command line: there is no file form of it.
-function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd }) {
+// model: one of `grok models`' ids, or 'default' (no -m: the CLI's own default model).
+function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default' }) {
   return [
     ...ARGS_BASE,
+    ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--cwd', cwd,
     '--system-prompt-override', systemPrompt, // full replace: Grok Build has no --append-system-prompt
     resume ? '--resume' : '--session-id', sessionId,
@@ -335,11 +341,12 @@ class GrokBuildEngine {
     return this.bin;
   }
 
-  // { installed, signedIn: true|false|'unknown', detail } -- detail is the CLI's reported default
-  // model, when known (there is no account-type distinction to report here, unlike Claude Code).
+  // { installed, signedIn: true|false|'unknown', detail, models } -- detail is the CLI's reported
+  // default model, when known (there is no account-type distinction to report here, unlike Claude
+  // Code), and models the ids `grok models` lists ([] when unknown).
   async status(refresh = false) {
     const bin = await this.detect(refresh);
-    if (!bin) { this.statusCache = null; return { installed: false, signedIn: false, detail: null }; }
+    if (!bin) { this.statusCache = null; return { installed: false, signedIn: false, detail: null, models: [] }; }
     if (!refresh && this.statusCache && Date.now() - this.statusCache.at < 30000) return { installed: true, ...this.statusCache.value };
     const value = await checkAuthStatus(bin);
     this.statusCache = { at: Date.now(), value };
@@ -352,7 +359,7 @@ class GrokBuildEngine {
   }
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, signal, emit }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', signal, emit }) {
     const bin = await this.detect(true);
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
@@ -374,7 +381,7 @@ class GrokBuildEngine {
     try { authBefore = linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
     const promptFile = path.join(dir, `prompt-${tag}.json`);
     fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const argv = buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd: dir });
+    const argv = buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model });
     const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData }), cwd: dir });
     this.active = { tag, emit, signal, child };
     // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background

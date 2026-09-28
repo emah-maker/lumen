@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
-const { exists, lookup: which } = require('../cli-utils');
+const { exists, lookup: which, validModel } = require('../cli-utils');
 
 const MAIN_DIR = path.join(__dirname, '..');
 const DEFAULT_AUTOMATION_PORT = 9222;
@@ -104,6 +104,7 @@ function setupAiAgents(deps) {
   let grokBuildFound = false;
   let grokBuildSignedIn = 'unknown'; // true | false | 'unknown' — mirrors grokBuild.status().signedIn
   let grokBuildDetail = null; // the CLI's reported default model, when known
+  let grokBuildModels = []; // the model ids `grok models` lists, when known
   const grokBuildModule = () => require('../grok-build');
   // Grok Build in the sidebar is experimental and labelled unsafe (see grok-build.js's header: it is
   // held to Lumen's tools by grok's own permission rules, not a tool allowlist like Claude Code's).
@@ -386,6 +387,7 @@ function setupAiAgents(deps) {
       grokBuildFound = s.installed;
       grokBuildSignedIn = s.signedIn;
       grokBuildDetail = s.detail;
+      grokBuildModels = s.models || [];
       if (s.installed) ui()?.send('models-updated');
       return s;
     });
@@ -416,26 +418,47 @@ function setupAiAgents(deps) {
     // silently failing on the first message. Alphabetical, after modelOptions() sorts everything
     // else: Claude Code before Grok Build, same as any other equally-treated pair of entries.
     modelOptions: () => [
-      ...(claudeCodeFound ? [{
-        id: 'claudecode:default',
-        label: 'Claude Code',
-        detail: claudeCodeSignedIn === false ? 'Not signed in: open a terminal, run claude, then type /login' : CLAUDE_CODE_NOTE,
-        group: 'Your Claude account',
-        signedIn: claudeCodeSignedIn,
-        accountDetail: claudeCodeDetail,
-      }] : []),
-      ...(grokSidebar() && grokBuildFound ? [{
-        id: 'grokbuild:default',
-        label: 'Grok Build (unsafe, experimental)',
-        detail: grokBuildSignedIn === false
-          ? 'Not signed in: open a terminal, run grok, then run grok login'
-          : `${GROK_BUILD_NOTE} · unsafe, experimental: held to Lumen’s tools by Grok’s own permission rules, which are weaker than Claude Code’s`,
-        group: 'Your Grok account',
-        signedIn: grokBuildSignedIn,
-        accountDetail: grokBuildDetail,
-      }] : []),
+      ...(claudeCodeFound ? claudeCodeOptions({ signedIn: claudeCodeSignedIn, accountDetail: claudeCodeDetail }) : []),
+      ...(grokSidebar() && grokBuildFound ? grokBuildOptions({ signedIn: grokBuildSignedIn, accountDetail: grokBuildDetail, models: grokBuildModels, saved: readSettings().model }) : []),
     ],
   };
 }
 
-module.exports = { setupAiAgents, prepareAutomation, validPort, DEFAULT_AUTOMATION_PORT };
+// The picker entries for the user's own Claude Code CLI, one per choice in claude-code.js's MODELS.
+// The CLI's own default comes first and keeps its id and plain "Claude Code" label, so a saved
+// 'claudecode:default' pick (and its replies' labels) stay as they were before there was a choice.
+function claudeCodeOptions({ signedIn = 'unknown', accountDetail = null } = {}) {
+  return require('../claude-code').MODELS.map((m) => ({
+    id: `claudecode:${m.id}`,
+    label: m.id === 'default' ? 'Claude Code' : `Claude Code · ${m.label}`,
+    detail: signedIn === false
+      ? 'Not signed in: open a terminal, run claude, then type /login'
+      : m.id === 'default' ? `${CLAUDE_CODE_NOTE} · the model set in Claude Code` : `${CLAUDE_CODE_NOTE} · ${m.label} (the latest ${m.label} model)`,
+    group: 'Your Claude account',
+    signedIn,
+    accountDetail,
+  }));
+}
+
+// The picker entries for the user's own Grok Build CLI: its default (the saved 'grokbuild:default'
+// pick, as before), then each model `grok models` lists. accountDetail is the default it reports.
+// A saved pick the CLI didn't list this time (`grok models` timed out, say) stays offered, as a
+// saved OpenRouter model does in main.js, instead of the picker quietly moving to another AI.
+function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models = [], saved = null } = {}) {
+  const list = models.filter((m) => m !== 'default' && validModel(m));
+  const pick = /^grokbuild:(.+)$/.exec(String(saved || ''))?.[1];
+  if (pick && pick !== 'default' && validModel(pick) && !list.includes(pick)) list.push(pick);
+  const unsafe = 'unsafe, experimental: held to Lumen’s tools by Grok’s own permission rules, which are weaker than Claude Code’s';
+  return ['default', ...list].map((model) => ({
+    id: `grokbuild:${model}`,
+    label: model === 'default' ? 'Grok Build (unsafe, experimental)' : `Grok Build · ${model} (unsafe, experimental)`,
+    detail: signedIn === false
+      ? 'Not signed in: open a terminal, run grok, then run grok login'
+      : `${GROK_BUILD_NOTE} · ${model === 'default' ? `Grok’s default model${accountDetail ? ` (${accountDetail})` : ''}` : model} · ${unsafe}`,
+    group: 'Your Grok account',
+    signedIn,
+    accountDetail,
+  }));
+}
+
+module.exports = { setupAiAgents, prepareAutomation, validPort, DEFAULT_AUTOMATION_PORT, claudeCodeOptions, grokBuildOptions };

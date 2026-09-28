@@ -4,6 +4,7 @@ const scripts = require('./page-scripts');
 const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
+const { engineModel } = require('./cli-utils');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -850,6 +851,14 @@ class Agent {
     // ---- [claude code engine] + [grok build engine] + [page context]
     const viaClaudeCode = String(messages.settings.model).startsWith('claudecode:') && Boolean(this.engines?.claudecode);
     const viaGrokBuild = String(messages.settings.model).startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
+    // A Grok Build session stays on the model it was started with (gbModel; sessions from before the
+    // picker offered models were all 'grokbuild:default'): after a switch to another Grok model the
+    // next message starts a new session, handed the conversation so far, instead of relying on how
+    // grok --resume treats a different -m. Claude Code resumes across its models (see claude-code.js).
+    if (viaGrokBuild && messages.settings.gbSession && (messages.settings.gbModel || 'grokbuild:default') !== messages.settings.model) {
+      delete messages.settings.gbSession;
+      delete messages.settings.gbModel;
+    }
     // Stop works while the page is being read, too (it can take a few seconds on a heavy page).
     const page = await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
     if (page) this.markTainted(); // the attached page text counts as reading the page (see ensureAllowed)
@@ -937,6 +946,7 @@ class Agent {
       images: [...historyImages, ...images],
       sessionId: settings.ccSession || crypto.randomUUID(),
       resume,
+      model: engineModel(settings.model), // 'default' or a `claude --model` alias
       systemPrompt: systemFor(settings) + CLAUDE_CODE_NOTE,
       signal,
       emit,
@@ -973,12 +983,13 @@ class Agent {
       images: [...historyImages, ...images],
       sessionId: settings.gbSession || crypto.randomUUID(),
       resume,
+      model: engineModel(settings.model), // 'default' or one of `grok models`' ids
       systemPrompt: systemFor(settings) + GROK_BUILD_NOTE,
       signal,
       emit,
     });
-    if (out.sessionId === null) delete settings.gbSession;
-    else if (!out.failed && (!out.stopped || out.text)) settings.gbSession = out.sessionId;
+    if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
+    else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
