@@ -72,6 +72,7 @@ These are set from the sidebar rather than the settings page:
 | Send a "Do Not Track" request | `sendDoNotTrack` | off | Adds `DNT: 1` to every request. |
 | Send Global Privacy Control | `sendGpc` | off | Adds `Sec-GPC: 1` to every request. |
 | Always use secure connections | `httpsOnly` | off | Upgrades `http://` to `https://` and warns before loading a site with no secure version. Local addresses are left alone. |
+| Warn about dangerous sites (Google Safe Browsing) | `safeBrowsing` | off | Checks each page against Google's lists of suspected phishing and malware, kept on your computer; a listed page shows a warning instead. Needs your own Google API key (stored encrypted in `keys.safebrowsing`, or `GOOGLE_SAFE_BROWSING_API_KEY`). Only 4-byte partial hashes of a matching address go to Google. |
 | Block ads and trackers | `adblock` | on | Built-in blocker using uBlock Origin-compatible filter lists. |
 | Sites where ads are allowed | `adblockAllow` | none | Host names the blocker leaves alone. |
 | Default for new sites | `permissionDefaults` | ask | Per permission (location, camera and microphone, notifications, clipboard): `ask` or `block`. |

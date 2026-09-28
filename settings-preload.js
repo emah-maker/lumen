@@ -35,6 +35,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       get: call('settings:get'),
       setKey: call('settings:set-key'),
       setProviderKey: call('settings:set-provider-key'),
+      safeBrowsing: call('settings:safe-browsing'),
+      setSafeBrowsingKey: call('settings:set-safe-browsing-key'),
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),
       setModel: call('settings:set-model'),

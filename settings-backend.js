@@ -43,6 +43,7 @@ const DEFAULTS = {
   sendDoNotTrack: false,
   sendGpc: false,
   httpsOnly: false,
+  safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
   adblock: true,
   adblockAllow: [],
   permissionDefaults: {}, // permission -> 'ask' | 'block'
@@ -378,6 +379,7 @@ function create(deps) {
       // The blocker reads these on every request, so the change applies to whatever loads next.
       // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
       case 'adblock': case 'adblockAllow': break;
+      case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());

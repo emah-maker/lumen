@@ -396,6 +396,35 @@ async function buildPrivacy(card) {
     toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'),
   );
 
+  // Safe Browsing (features/safe-browsing.js)
+  const sbNote = status('safe-browsing-status');
+  const sbKey = h('div', { class: 'controls' });
+  const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+  const renderSb = (s) => {
+    if (!s.enabled) sbNote.textContent = 'Off.';
+    else if (!s.hasKey) sbNote.textContent = 'Inactive: add a Google Safe Browsing API key below.';
+    else if (s.error) sbNote.textContent = `Couldn’t update the lists: ${s.error}. Pages still load; Lumen will try again.`;
+    else if (!s.entries) sbNote.textContent = s.syncing ? 'Downloading Google’s lists…' : 'Waiting for Google’s lists.';
+    else sbNote.textContent = `Active. ${s.entries.toLocaleString()} entries, updated ${ago(s.lastUpdate)}.`;
+    sbNote.className = `note${s.enabled && (!s.hasKey || s.error) ? ' err' : ''}`;
+    const input = h('input', { type: 'password', class: 'grow', id: 'safe-browsing-key', autocomplete: 'off', placeholder: s.keyStored ? 'Key saved' : s.keyEnv ? 'From GOOGLE_SAFE_BROWSING_API_KEY' : 'Google API key', 'aria-label': 'Google Safe Browsing API key' });
+    const keyNote = status();
+    const put = async (value) => {
+      try { renderSb(await S.ai.setSafeBrowsingKey(value)); } catch (err) { flash(keyNote, String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+    };
+    sbKey.replaceChildren(...[input,
+      h('button', { text: 'Save key', id: 'safe-browsing-save', onclick: () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); } }),
+      s.keyStored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put('') }) : null,
+      keyNote].filter(Boolean));
+  };
+  card.append(
+    toggle('safeBrowsing', 'Warn about dangerous sites (Google Safe Browsing)',
+      'Lumen downloads Google’s lists of suspected phishing and malware sites and checks each page against them on your computer. Only when an address matches the lists does Lumen send Google a short, partial hash of it, never the address itself, and without your cookies. Needs your own Google API key with the Safe Browsing API enabled (free, for non-commercial use). No list is perfect: some unsafe sites may be missed, and some safe sites flagged in error.',
+      async () => renderSb(await S.ai.safeBrowsing())),
+    stackRow('Safe Browsing API key', 'Encrypted with your OS keychain. Create one in the Google Cloud console.', sbNote, sbKey),
+  );
+  S.ai.safeBrowsing().then(renderSb).catch(() => {});
+
   // Ad blocker
   const allowList = h('div', { class: 'list', id: 'adblock-allow' });
   const allowInput = h('input', { type: 'text', class: 'grow', id: 'adblock-add', placeholder: 'example.com' });
