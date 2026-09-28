@@ -72,6 +72,31 @@
 // Grok Build is offered as unsafe and experimental for those reasons.
 //
 // ---------------------------------------------------------------------------------------------
+// LUMEN'S TOOLS ON THE FIRST MESSAGE (grok 1.0.41, measured 2026-09-28)
+// ---------------------------------------------------------------------------------------------
+// Grok starts MCP servers with the session and gives them a short grace before the first model
+// call ("strategy: Blocking"; --debug logs `wait_for_mcp_handshakes_until ... DeadlineExpired
+// elapsed_ms=2007`), then goes on without whatever is still connecting. search_tool then answers
+// `"status": "partial", "note": "Some MCP servers are still connecting"` with no results, and the
+// model replies without Lumen's tools. Lumen's bridge is Lumen's own executable in Node mode, and
+// its first start after a while took ~2.5 s here (later ones ~50 ms), so a chat's first message
+// could lose that race. No flag or documented key waits longer: startup_timeout_sec /
+// GROK_MCP_STARTUP_TIMEOUT_SECS bound the handshake itself (with the latter at 60 the grace was
+// still 2 s), and mcp_servers[].status in system/init is taken before the grace. Nor is "lumen
+// connected by the first model event" enough: the model was told lumen was still connecting when
+// the grace ran out, and in one run said so ("Lumen is still connecting...") after the bridge had
+// come up during its thinking. So on a chat's first message run() holds back what Grok streams and:
+//  - reads Grok's own log line for that wait (RUST_LOG narrowed to it, on stderr; mcpWait), which
+//    comes before the model call and names the servers connected by then. lumen among them: go
+//    on. lumen not among them: that grok is stopped unseen and the message is sent once more, as a
+//    new session, by which time the bridge starts warm;
+//  - should that line never come (another CLI version), falls back to Lumen's own view: held
+//    output is let through once Lumen's MCP server has listed its tools to this run's bridge
+//    (lumenReady, by run tag), and a reply or tool call that starts before that means a retry.
+// Later messages resume a session and are not held: their bridge starts warm (and a retry would
+// repeat the message in that session).
+//
+// ---------------------------------------------------------------------------------------------
 // VERIFIED EVENT SHAPES (--output-format streaming-messages-json --include-partial-messages, grok
 // 1.0.41, captured from real headless runs against a throwaway fake MCP server in an isolated temp
 // dir on 2026-09-27):
@@ -297,7 +322,19 @@ const ENV_KEEP = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSPEC|TEMP|TMP|
 function buildEnv({ userData, base = process.env }) {
   const home = sidebarDirFor(userData);
   const kept = Object.fromEntries(Object.entries(base).filter(([k]) => ENV_KEEP.test(k)));
-  return { ...kept, ...COMPAT_ENV, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1' };
+  return { ...kept, ...COMPAT_ENV, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1', RUST_LOG: GROK_LOG, NO_COLOR: '1' };
+}
+
+// Headless grok logs nothing to stderr by default; this turns on the one log line Lumen reads (the
+// MCP wait before a model call, see mcpWait and the file header) and nothing else.
+const GROK_LOG = 'off,xai_grok_shell::session::acp_session::mcp_snapshot=info';
+// That line (grok 1.0.41): `wait_for_mcp_handshakes_until: done session_id=... outcome=Complete
+// elapsed_ms=2 final_initializing_names=[] final_client_names=["lumen"]`, or outcome=DeadlineExpired
+// with final_initializing_names=["lumen"] when the bridge was late. Returns { lumen }, whether lumen
+// was connected, or null for any other line.
+function mcpWait(line) {
+  const m = /wait_for_mcp_handshakes_until: done\b.*\bfinal_client_names=\[([^\]]*)\]/.exec(String(line).replace(/\x1b\[[0-9;]*m/g, '')); // (colour codes, should NO_COLOR be ignored)
+  return m ? { lumen: /"lumen"/.test(m[1]) } : null;
 }
 
 // Lumen's own check on every tool call Grok reports (see the file header): Lumen's tools are
@@ -404,12 +441,15 @@ function capImages(images, emit) {
 
 class GrokBuildEngine {
   // mcpCommand(): { command, args, env } for Lumen's bridge, written into Lumen's own GROK_HOME
-  // config.toml before each message. ensureServer(): starts the MCP server. spawn / kill: the
-  // child_process spawn and cli-utils killTree, swappable for tests.
-  constructor({ userData, mcpCommand, ensureServer, spawn: spawnChild = spawn, kill = killTree }) {
+  // config.toml before each message. ensureServer(): starts the MCP server. lumenReady(tag): true
+  // once Lumen's MCP server has listed its tools to the bridge carrying that run tag (optional:
+  // without it, the first message doesn't wait). spawn / kill: the child_process spawn and
+  // cli-utils killTree, swappable for tests.
+  constructor({ userData, mcpCommand, ensureServer, lumenReady = null, spawn: spawnChild = spawn, kill = killTree }) {
     this.userData = userData;
     this.mcpCommand = mcpCommand;
     this.ensureServer = ensureServer;
+    this.lumenReady = lumenReady;
     this.spawn = spawnChild;
     this.kill = kill;
     this.bin = undefined; // undefined: not looked up yet; null: not installed
@@ -447,7 +487,6 @@ class GrokBuildEngine {
       return { text: '', sessionId: null, failed: true };
     }
     this.ensureServer();
-    const tag = crypto.randomBytes(18).toString('hex');
     // Lumen's own GROK_HOME (see the file header): config.toml names only the `lumen` server, and
     // the user's auth.json is linked in so their sign-in works. The working folder is a separate,
     // fixed, empty folder that is also the child's HOME, so Grok finds no project files there.
@@ -455,13 +494,31 @@ class GrokBuildEngine {
     const dir = sidebarDirFor(this.userData);
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     fs.mkdirSync(dir, { recursive: true });
+    const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
+    fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
+    const args = { bin, home, dir, promptFile, resume, systemPrompt, model, signal, emit };
+    try {
+      // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
+      // the file header): if the model starts answering before the lumen bridge is connected, that
+      // try is stopped unseen and the message goes once more, as a new session.
+      const out = await this.attempt({ ...args, sessionId, waitForLumen: !resume && Boolean(this.lumenReady) });
+      return out.retry ? await this.attempt({ ...args, sessionId: crypto.randomUUID(), waitForLumen: false }) : out;
+    } finally {
+      try { fs.rmSync(promptFile, { force: true }); } catch {} // (dir itself is kept: the fixed sidebar folder, see above)
+    }
+  }
+
+  // One grok process for run(). With waitForLumen, what it streams is held back until Grok's log
+  // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
+  // wasn't, or the model starts a reply or a tool call first, the process is stopped and
+  // { retry: true } comes back instead.
+  async attempt({ bin, home, dir, promptFile, sessionId, resume, systemPrompt, model, signal, emit, waitForLumen }) {
+    const tag = crypto.randomBytes(18).toString('hex');
     const mcp = this.mcpCommand();
     fs.writeFileSync(path.join(home, 'config.toml'), grokConfig({ ...mcp, env: { ...mcp.env, LUMEN_USERDATA: this.userData, LUMEN_ENGINE: tag } }), { mode: 0o600 });
     const userHome = userGrokHome();
     let authBefore = null;
     try { authBefore = linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
-    const promptFile = path.join(dir, `prompt-${tag}.json`);
-    fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
     const argv = buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
@@ -482,10 +539,25 @@ class GrokBuildEngine {
     // run and the process tree at once, and nothing after it reaches the sidebar.
     const watch = toolWatch();
     let offTool = null;
+    // Sidebar events held back while waiting for Lumen's tools (null: not waiting, or no longer).
+    let held = waitForLumen ? [] : null;
+    let early = false; // the model went ahead without Lumen's tools: stopped, to be sent again
+    const show = (event) => (held ? held.push(event) : emit(event));
+    // Settles the wait: Lumen's tools are up (show what was held) or the model went without them.
+    const lumenUp = (up) => {
+      if (!held || early || offTool) return;
+      if (up) { for (const event of held) emit(event); held = null; } else { early = true; this.kill(child); }
+    };
     const handle = (msg) => {
-      if (offTool) return;
+      if (offTool || early) return;
       offTool = watch(msg);
       if (offTool) { this.kill(child); return; }
+      if (held && this.lumenReady(tag)) lumenUp(true);
+      if (held) {
+        // Thinking may go on meanwhile; a reply, a tool call or the end of the turn may not.
+        const block = msg.type === 'stream_event' && msg.event?.type === 'content_block_start' ? msg.event.content_block?.type : '';
+        if (/^(text|tool_use|server_tool_use)$/.test(block || '') || msg.type === 'assistant' || (msg.type === 'result' && !msg.is_error)) { early = true; this.kill(child); return; }
+      }
       if (msg.type === 'system' && msg.subtype === 'init') {
         newSession = msg.session_id || newSession;
         // No connection-status notice here: see file header -- mcp_servers[].status is "pending"
@@ -494,9 +566,9 @@ class GrokBuildEngine {
       } else if (msg.type === 'stream_event') {
         const e = msg.event || {};
         // A new text block starts a new paragraph in the saved reply too (see claude-code.js).
-        if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; emit({ type: 'text_block' }); }
-        else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') { text += e.delta.text; emit({ type: 'text', text: e.delta.text }); }
-        else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') emit({ type: 'thinking', text: e.delta.thinking });
+        if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; show({ type: 'text_block' }); }
+        else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') { text += e.delta.text; show({ type: 'text', text: e.delta.text }); }
+        else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') show({ type: 'thinking', text: e.delta.thinking });
         // tool_use blocks are not shown here: Lumen's MCP side emits one step row per call.
       } else if (msg.type === 'assistant') {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
@@ -518,7 +590,23 @@ class GrokBuildEngine {
         try { handle(JSON.parse(line)); } catch {}
       }
     });
-    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
+    // stderr carries Grok's own log line about its MCP wait (see buildEnv's RUST_LOG), which says
+    // exactly whether lumen was connected when the model was called; it is not kept as error text.
+    let errBuffer = '';
+    let waitSeen = false;
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      errBuffer += chunk;
+      let i;
+      while ((i = errBuffer.indexOf('\n')) >= 0) {
+        const line = errBuffer.slice(0, i + 1);
+        errBuffer = errBuffer.slice(i + 1);
+        const wait = mcpWait(line);
+        if (!wait) { stderr = (stderr + line).slice(-4000); continue; }
+        if (!waitSeen) { waitSeen = true; lumenUp(wait.lumen); }
+      }
+      if (errBuffer.length > 4000) { stderr = (stderr + errBuffer).slice(-4000); errBuffer = ''; }
+    });
 
     const code = await new Promise((resolve) => {
       child.on('error', (err) => { stderr += `\n${err.message}`; resolve(err.code === 'ENOENT' ? 'ENOENT' : -1); });
@@ -526,8 +614,8 @@ class GrokBuildEngine {
     });
     signal.removeEventListener('abort', onAbort);
     if (this.active?.tag === tag) this.active = null;
-    try { fs.rmSync(promptFile, { force: true }); } catch {} // (dir itself is kept: the fixed sidebar folder, see above)
     try { settleAuth(userHome, home, authBefore); } catch {}
+    stderr = (stderr + errBuffer).slice(-4000);
 
     if (offTool) {
       // The session is dropped (sessionId null) so the next message starts a new one instead of
@@ -536,6 +624,8 @@ class GrokBuildEngine {
       return { text, sessionId: null, failed: true };
     }
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
+    if (early) return { retry: true };
+    if (held) for (const event of held) emit(event); // ended (a failure, say) before Lumen's tools came up
     if (code === 'ENOENT') {
       this.bin = null;
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
@@ -552,4 +642,4 @@ class GrokBuildEngine {
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, isLumenTool, toolWatch, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };

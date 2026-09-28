@@ -149,24 +149,31 @@ try {
 }
 
 // Grok Build runs against a fake grok child: `script` is the stream it prints (one JSON object per
-// line); a kill ends it (close with no exit code), as taskkill would. Resolves the run's result, the
-// events it emitted, the kills and the spawn call. Nothing touches the user's own ~/.grok.
+// line; a function in it runs instead, e.g. to bring Lumen's tools up), or a list of those, one per
+// spawn; a kill ends it (close with no exit code), as taskkill would. Resolves the run's result, the
+// events it emitted, the kills and the spawn calls. Nothing touches the user's own ~/.grok.
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gbrun-'));
   const savedHome = process.env.GROK_HOME;
   process.env.GROK_HOME = path.join(data, 'user-grok'); // userGrokHome(): no auth.json there
+  const scripts = Array.isArray(script[0]) ? script : [script];
   const kills = [];
+  const spawns = [];
   let spawned = null;
   const spawn = (bin, argv, opts) => {
     const child = new EventEmitter();
-    Object.assign(child, { pid: 4242, exitCode: null, killed: false, stdout: new PassThrough(), stderr: new PassThrough() });
+    Object.assign(child, { pid: 4242 + spawns.length, exitCode: null, killed: false, stdout: new PassThrough(), stderr: new PassThrough() });
     spawned = { bin, argv, opts, child };
+    const lines = scripts[Math.min(spawns.length, scripts.length - 1)];
+    spawns.push(spawned);
     (async () => {
-      for (const line of script) {
+      for (const line of lines) {
         if (child.killed) return;
-        child.stdout.write(`${JSON.stringify(line)}\n`);
+        if (typeof line === 'function') line();
+        else if (line.stderr) child.stderr.write(`${line.stderr}\n`);
+        else child.stdout.write(`${JSON.stringify(line)}\n`);
         await new Promise((r) => setImmediate(r));
       }
       child.exitCode = 0;
@@ -187,7 +194,7 @@ async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
   const events = [];
   try {
     const out = await engine.run({ prompt: 'hi', sessionId: 'id-1', resume: false, systemPrompt: 'S', signal: new AbortController().signal, emit: (e) => events.push(e), ...run });
-    return { out, events, kills, spawned, data, engine };
+    return { out, events, kills, spawned, spawns, data, engine };
   } finally {
     if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
     fs.rmSync(data, { recursive: true, force: true });
@@ -214,6 +221,61 @@ async function grokRuns() {
   {
     const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'lumen__read_page'), { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'c0', content: 'ok' }] } }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), gbDone('The page says hi.')]);
     check('Grok Build run: Lumen\'s own tools run to the end untouched', kills.length === 0 && !out.failed && out.text === 'The page says hi.' && out.sessionId === 'id-1' && !events.some((e) => e.type === 'error'), JSON.stringify({ out, kills, events }));
+  }
+
+  // A chat's first message waits for Lumen's tools. Grok's own log line about its MCP wait decides
+  // (lines as grok 1.0.41 prints them, colour codes included once); lumenReady is the fallback.
+  const thinking = (index, t) => [gbEv({ type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '' } }), gbEv({ type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: t } })];
+  const flag = (argv, f) => argv[argv.indexOf(f) + 1];
+  const late = '\x1b[2m2026-09-28T13:55:59.920798Z\x1b[0m \x1b[32m INFO\x1b[0m wait_for_mcp_handshakes_until: done session_id=5b3a outcome=DeadlineExpired elapsed_ms=2003 final_initializing_names=["lumen"] final_client_names=[]';
+  const onTime = '2026-09-28T13:56:16.819695Z  INFO wait_for_mcp_handshakes_until: wait_for_mcp_handshakes_until: done session_id=50ea outcome=Complete elapsed_ms=2 final_initializing_names=[] final_client_names=["lumen"]';
+  check('MCP wait line: lumen late / on time / other lines', JSON.stringify(gb.mcpWait(late)) === '{"lumen":false}' && JSON.stringify(gb.mcpWait(onTime)) === '{"lumen":true}' && gb.mcpWait('some other log line') === null && gb.mcpWait('wait_for_mcp_handshakes_until: done final_client_names=["other"]').lumen === false, JSON.stringify([gb.mcpWait(late), gb.mcpWait(onTime)]));
+  check('Grok Build env turns on only that log line, without colour', gb.buildEnv({ userData: 'u', base: { RUST_LOG: 'debug' } }).RUST_LOG === 'off,xai_grok_shell::session::acp_session::mcp_snapshot=info' && gb.buildEnv({ userData: 'u', base: {} }).NO_COLOR === '1', gb.buildEnv({ userData: 'u', base: {} }).RUST_LOG);
+  {
+    let ready = false;
+    const { out, events, kills, spawns } = await fakeGrokRun([
+      [{ stderr: late }, () => { ready = true; }, gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'Lumen is still connecting'), ...gbText(1, 'BLIND'), gbDone('BLIND')],
+      [{ stderr: onTime }, { ...gbInit, session_id: 'id-2' }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), { ...gbDone('The page says hi.'), session_id: 'id-2' }],
+    ], { engine: { lumenReady: () => ready } });
+    check('Grok Build first message: grok\'s log saying lumen was late means a retry, even if the bridge came up since', spawns.length === 2 && kills.length === 1 && out.text === 'The page says hi.' && out.sessionId === 'id-2' && !events.some((e) => /BLIND|still connecting/.test(e.text || '')), JSON.stringify({ out, events, n: spawns.length }));
+  }
+  {
+    const { out, events, spawns } = await fakeGrokRun([{ stderr: onTime }, gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')], { engine: { lumenReady: () => false } });
+    check('Grok Build first message: grok\'s log saying lumen was connected lets the reply through', spawns.length === 1 && out.text === 'Hi.' && events.some((e) => e.text === 'Hi.'), JSON.stringify({ out, events }));
+  }
+  {
+    let ready = false;
+    const blind = [gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'no tools?'), ...gbText(1, 'BLIND: I cannot see your page.'), gbDone('BLIND')];
+    const warm = [() => { ready = true; }, { ...gbInit, session_id: 'id-2' }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), { ...gbDone('The page says hi.'), session_id: 'id-2' }];
+    const { out, events, kills, spawns } = await fakeGrokRun([blind, warm], { engine: { lumenReady: () => ready } });
+    check('Grok Build first message: a reply begun before Lumen\'s tools are up is stopped and sent again', spawns.length === 2 && kills.length === 1 && kills[0] === spawns[0].child.pid && out.text === 'The page says hi.' && !out.failed, JSON.stringify({ out, kills, n: spawns.length }));
+    check('Grok Build first message: nothing of the stopped try reaches the sidebar', !events.some((e) => /BLIND|no tools/.test(e.text || '')) && !events.some((e) => e.type === 'error' || e.type === 'notice'), JSON.stringify(events));
+    check('Grok Build first message: the second try is a new session with the same prompt file', flag(spawns[0].argv, '--session-id') === 'id-1' && flag(spawns[1].argv, '--session-id') !== 'id-1' && /^[0-9a-f-]{36}$/.test(flag(spawns[1].argv, '--session-id')) && flag(spawns[1].argv, '--prompt-file') === flag(spawns[0].argv, '--prompt-file') && out.sessionId === 'id-2', JSON.stringify(spawns.map((s) => s.argv.slice(-4))));
+  }
+  {
+    let ready = false;
+    const { out, events, kills, spawns } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'first thought'), () => { ready = true; }, gbEv({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: ' then more' } }), ...gbText(1, 'Hello.'), gbDone('Hello.')], { engine: { lumenReady: () => ready } });
+    const shown = events.filter((e) => e.type === 'thinking' || e.type === 'text').map((e) => e.text);
+    check('Grok Build first message: held thinking is shown, in order, once Lumen\'s tools are up', spawns.length === 1 && kills.length === 0 && JSON.stringify(shown) === '["first thought"," then more","Hello."]' && out.text === 'Hello.', JSON.stringify({ shown, kills }));
+  }
+  {
+    const { out, events, spawns } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Resumed.'), gbDone('Resumed.')], { run: { resume: true }, engine: { lumenReady: () => false } });
+    check('Grok Build later messages (resume) are not held or retried', spawns.length === 1 && out.text === 'Resumed.' && events.some((e) => e.text === 'Resumed.') && flag(spawns[0].argv, '--resume') === 'id-1', JSON.stringify({ out, n: spawns.length }));
+  }
+  {
+    const { createSession } = require('../mcp');
+    const s = createSession({ tools: [{ name: 'read_page', description: 'd', input_schema: {} }], callTool: async () => ({}), enabled: () => true, onEvent: () => {}, send: () => {}, engine: 'tag' });
+    await s.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+    const before = Boolean(s.session.listed);
+    await s.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    check('MCP session: marked as listed once the agent has fetched Lumen\'s tools (what lumenReady reads)', !before && s.session.listed === true && s.session.engine === 'tag', JSON.stringify(s.session));
+  }
+  {
+    const { out, events, spawns } = await fakeGrokRun([{ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['Not logged in. Run `grok login`.'] }], { engine: { lumenReady: () => false } });
+    check('Grok Build first message: a failed start is reported, not retried', spawns.length === 1 && out.failed && /not signed in/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, events }));
+    const crashed = await fakeGrokRun([{ stderr: onTime }, { stderr: 'panicked at the disco' }], { engine: { lumenReady: () => true } });
+    const said = crashed.events.find((e) => e.type === 'error')?.text || '';
+    check('Grok Build: the MCP wait log line never shows up as error text', /panicked at the disco/.test(said) && !/wait_for_mcp/.test(said), said);
   }
 }
 

@@ -123,7 +123,9 @@ function setupAiAgents(deps) {
   const grokBuildEngine = () => {
     if (!grokBuild) {
       const { GrokBuildEngine } = grokBuildModule();
-      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true) });
+      // lumenReady: has this run's bridge (its LUMEN_ENGINE tag) been given Lumen's tool list yet?
+      const lumenReady = (tag) => [...(mcpServer?.sessions || [])].some((s) => s.session.engine === tag && s.session.listed);
+      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), lumenReady });
     }
     return grokBuild;
   };
