@@ -15,11 +15,12 @@
 //
 //  - GROK_HOME points at a Lumen-owned folder (<userData>/grok-home), never the user's ~/.grok. Its
 //    config.toml is written by Lumen before every message (grokConfig) and names exactly one MCP
-//    server, `lumen` (Lumen's own bridge, with this run's LUMEN_ENGINE tag), and turns off every
+//    server, `lumen` (served by Lumen itself over local HTTP, mcp-http.js), and turns off every
 //    [compat.claude] / [compat.cursor] import, so none of the user's ~/.claude.json or Cursor MCP
 //    servers, CLAUDE.md, skills, rules or hooks are loaded. The same compat switches are also set
 //    in the child's environment (buildEnv), since an env var beats config.toml. `grok inspect
-//    --json` with this home listed one MCP server (lumen), no hooks, skills or project instructions.
+//    --json` with this home lists one MCP server (lumen, http), Lumen's two gate hooks and no
+//    skills or project instructions.
 //    The user's ~/.grok/config.toml, their other MCP servers, trusted folders and sessions are not
 //    read or written, and --trust is never passed.
 //
@@ -49,52 +50,61 @@
 // ---------------------------------------------------------------------------------------------
 // WHO ENFORCES WHAT (grok 1.0.41, measured 2026-09-28)
 // ---------------------------------------------------------------------------------------------
-// Enforced by Grok (its own flags and config, which have changed between CLI versions): which MCP
-// servers load (GROK_HOME's config.toml), which built-ins exist (--disallowed-tools, --deny), and
-// whether a call may run (--allow lumen__* / search_tool, [permission], --permission-mode dontAsk).
-// These are the only things that keep a non-Lumen tool from running.
+// 1. Lumen's gate, before any tool runs. config.toml gives Grok two command hooks (gateScript, a
+//    one-line curl) that post UserPromptSubmit and every PreToolUse to Lumen (mcp-http.js). Grok
+//    runs PreToolUse hooks before its own permission checks and before the tool, and blocks on a
+//    deny; MCP calls show under their real name (lumen__navigate), not as use_tool. Lumen allows
+//    search_tool and lumen__<one of its tools>, and denies everything else.
+//    - Grok's hooks fail open (a crashed or timed-out hook allows), so the script exits 2, Grok's
+//      deny, when it can't reach Lumen, and an unknown or expired run token gets a deny.
+//    - Grok's HTTP hooks refuse http:// URLs ("SSRF protection"), hence the curl script.
+//    - A Grok that didn't load the hooks at all is stopped by Lumen: the gate must have seen this
+//      turn's UserPromptSubmit (which comes before the model call) before the model's first
+//      output, or the process tree is killed before a tool call can even be streamed.
+//    Measured with Grok's own rules taken away (always-approve, no --deny, Lumen's stream check
+//    off; test/grokgate.js): a run told to write a file with run_terminal_command got "Hook denied"
+//    and wrote nothing. The same run with the gate unreachable through a script without the exit 2
+//    DID write the file, which is what the exit 2 and the UserPromptSubmit check are for.
+// 2. Grok's own rules, as before: which MCP servers load (GROK_HOME's config.toml), which built-ins
+//    exist (--disallowed-tools, --deny), and whether a call may run (--allow lumen__* / search_tool,
+//    [permission], --permission-mode dontAsk).
+// 3. Lumen's stream check (toolWatch), as a last line: the first reported tool call that isn't
+//    Lumen's (isLumenTool) kills the grok process tree and ends the message with an error; the
+//    chat's Grok session is dropped. On its own this is detection, not prevention: Grok starts a
+//    tool as it reports it (a file appeared ~490 ms after its tool_use event; taskkill took ~300 ms).
+// Also: the environment (buildEnv / ENV_KEEP) is only what a process needs to start and reach the
+// network, plus XAI_API_KEY and this run's gate URL and MCP token; the working folder is a
+// Lumen-owned empty folder (also the child's HOME), stdin is closed and only stdout/stderr pipes are
+// shared. Calls to Lumen's own tools still go through Lumen's site approvals
+// (features/ai-agents.js mcpCallTool), as for any agent.
 //
-// Enforced by Lumen, whatever Grok's rules say:
-//  - Tool calls are watched (toolWatch): the first one that isn't Lumen's (isLumenTool: lumen__*,
-//    search_tool, or use_tool naming lumen__*) kills the grok process tree and ends the message
-//    with an error; the chat's Grok session is dropped. This is DETECTION, not prevention: Grok
-//    starts a tool as it reports it. With a second MCP server allowed on purpose, its tools/call
-//    reached that server 1 ms after the use_tool event in one run, and 1 ms BEFORE it in another,
-//    killed at once with child.kill(); a terminal command's file appeared ~490 ms after its
-//    tool_use event (spawning the shell), and taskkill /T took ~300 ms. So Lumen can cut a run
-//    short, not stop a call Grok's own rules let through. That is why the picker still says unsafe.
-//  - The environment (buildEnv / ENV_KEEP): only what a process needs to start and reach the
-//    network; no API keys, tokens or the user's own GROK_* settings.
-//  - The working folder is a Lumen-owned empty folder (also the child's HOME), stdin is closed and
-//    only stdout/stderr pipes are shared. Calls to Lumen's own tools still go through Lumen's
-//    site approvals (features/ai-agents.js mcpCallTool), as for any agent.
-//
-// Grok Build is offered as unsafe and experimental for those reasons.
+// What is left: the gate is enforced inside Grok's process (Grok runs the hook and honours its
+// answer), so a Grok that skipped its own hooks AND its own permission rules could still run a tool
+// before Lumen's stream check stops it. That is why the engine stays "experimental". Grok's OS
+// sandbox (--sandbox) would add a kernel-level layer on macOS and Linux; it isn't used yet (untested
+// here), and Grok has none on Windows.
 //
 // ---------------------------------------------------------------------------------------------
 // LUMEN'S TOOLS ON THE FIRST MESSAGE (grok 1.0.41, measured 2026-09-28)
 // ---------------------------------------------------------------------------------------------
 // Grok starts MCP servers with the session and gives them a short grace before the first model
 // call ("strategy: Blocking"; --debug logs `wait_for_mcp_handshakes_until ... DeadlineExpired
-// elapsed_ms=2007`), then goes on without whatever is still connecting. search_tool then answers
-// `"status": "partial", "note": "Some MCP servers are still connecting"` with no results, and the
-// model replies without Lumen's tools. Lumen's bridge is Lumen's own executable in Node mode, and
-// its first start after a while took ~2.5 s here (later ones ~50 ms), so a chat's first message
-// could lose that race. No flag or documented key waits longer: startup_timeout_sec /
-// GROK_MCP_STARTUP_TIMEOUT_SECS bound the handshake itself (with the latter at 60 the grace was
-// still 2 s), and mcp_servers[].status in system/init is taken before the grace. Nor is "lumen
-// connected by the first model event" enough: the model was told lumen was still connecting when
-// the grace ran out, and in one run said so ("Lumen is still connecting...") after the bridge had
-// come up during its thinking. So on a chat's first message run() holds back what Grok streams and:
+// elapsed_ms=2007`), then goes on without whatever is still connecting; search_tool then finds
+// nothing and the model replies without Lumen's tools. No flag or documented key waits longer.
+// Lumen used to be reached through a bridge (Lumen's own executable in Node mode), whose cold start
+// took ~2.5 s and lost that race. Now Lumen serves MCP itself over local HTTP (mcp-http.js), which
+// is already listening: Grok's tools/list was answered ~2.4 s after spawn, before UserPromptSubmit
+// and ~1 s before the first model event. The gate also holds its UserPromptSubmit answer (up to
+// 8 s) until this run has listed Lumen's tools. As a fallback, a chat's first message still holds
+// back what Grok streams and:
 //  - reads Grok's own log line for that wait (RUST_LOG narrowed to it, on stderr; mcpWait), which
 //    comes before the model call and names the servers connected by then. lumen among them: go
 //    on. lumen not among them: that grok is stopped unseen and the message is sent once more, as a
-//    new session, by which time the bridge starts warm;
+//    new session;
 //  - should that line never come (another CLI version), falls back to Lumen's own view: held
-//    output is let through once Lumen's MCP server has listed its tools to this run's bridge
-//    (lumenReady, by run tag), and a reply or tool call that starts before that means a retry.
-// Later messages resume a session and are not held: their bridge starts warm (and a retry would
-// repeat the message in that session).
+//    output is let through once Lumen has listed its tools to this run (lumenReady, by run tag),
+//    and a reply or tool call that starts before that means a retry.
+// Later messages resume a session and are not held (a retry would repeat the message there).
 //
 // ---------------------------------------------------------------------------------------------
 // VERIFIED EVENT SHAPES (--output-format streaming-messages-json --include-partial-messages, grok
@@ -200,7 +210,7 @@ function describeFailure(text, code) {
 // "Available models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.6".
 function parseGrokModels(stdout) {
   const t = String(stdout || '');
-  if (/you are logged in/i.test(t)) {
+  if (/you are logged in|you are using XAI_API_KEY/i.test(t)) {
     const m = /Default model:\s*(\S+)/i.exec(t);
     const list = t.split(/Available models:/i)[1] || '';
     const models = [...new Set([...list.matchAll(/^\s*[*-]\s+(\S+)/gm)].map((x) => x[1]).filter(validModel))];
@@ -282,23 +292,25 @@ const userGrokHome = () => process.env.GROK_HOME || path.join(os.homedir(), '.gr
 const COMPAT_SURFACES = ['skills', 'rules', 'agents', 'mcps', 'hooks'];
 const COMPAT_ENV = Object.fromEntries(['CLAUDE', 'CURSOR'].flatMap((v) => COMPAT_SURFACES.map((s) => [`GROK_${v}_${s.toUpperCase()}_ENABLED`, '0'])));
 
-// config.toml for Lumen's GROK_HOME: only the `lumen` MCP server (mcp is mcpCommand() plus this run's
-// LUMEN_ENGINE tag and LUMEN_USERDATA in env). JSON string escapes are valid TOML basic strings.
-// The [marketplace] markers are the ones Grok writes after its first-run setup; set up front, Grok
-// doesn't add its official plugin marketplace to this home.
-function grokConfig({ command, args = [], env = {} }) {
+// config.toml for Lumen's GROK_HOME: only the `lumen` MCP server, served by Lumen itself over local
+// HTTP (mcp-http.js), and Lumen's tool gate as UserPromptSubmit and PreToolUse hooks (gateScript).
+// The URLs and tokens are this run's and live only in the child's environment (buildEnv), which
+// Grok expands in the url, headers and the hook's command; nothing secret is written here. JSON
+// string escapes are valid TOML basic strings. The [marketplace] markers are the ones Grok writes
+// after its first-run setup; set up front, Grok doesn't add its official plugin marketplace.
+function grokConfig({ gate }) {
   const str = (s) => JSON.stringify(String(s));
   const off = COMPAT_SURFACES.map((s) => `${s} = false`);
+  const hook = `hooks = [{ type = "command", command = ${str(gate)}, timeout = 30 }]`;
   return [
     '# Written by Lumen before every Grok Build sidebar message (grok-build.js). Edits are overwritten.',
     '[mcp_servers.lumen]',
-    `command = ${str(command)}`,
-    `args = [${args.map(str).join(', ')}]`,
+    'url = "${LUMEN_MCP_URL}"',
+    'headers = { "Authorization" = "Bearer ${LUMEN_MCP_TOKEN}" }',
     'enabled = true',
     '',
-    '[mcp_servers.lumen.env]',
-    ...Object.entries(env).map(([k, v]) => `${str(k)} = ${str(v)}`),
-    '',
+    '[[hooks.UserPromptSubmit]]', hook, '',
+    '[[hooks.PreToolUse]]', hook, '',
     '[compat.claude]', ...off, '',
     '[compat.cursor]', ...off, '',
     '[permission]',
@@ -314,18 +326,31 @@ function grokConfig({ command, args = [], env = {} }) {
 // The only variables of Lumen's own environment the grok child gets: what a process needs to start
 // and reach the network on each OS (system folders, temp, locale, proxies and CA files), nothing
 // else. API keys, tokens and the rest of the user's shell environment stay behind, and so do the
-// user's own GROK_* settings (a GROK_SANDBOX=off, say). Grok signs in from auth.json in its home, so
-// it needs no secret here (XAI_API_KEY, which Grok would fall back to, is dropped too). The lumen
-// bridge inherits this environment plus config.toml's [mcp_servers.lumen.env]. Case-insensitive:
+// user's own GROK_* settings (a GROK_SANDBOX=off, say). The one secret kept is XAI_API_KEY, Grok's
+// own sign-in for API-key users (Grok prefers auth.json's session when both exist); with the tool
+// gate, Grok has no tool that could read it back. Case-insensitive:
 // Windows spells them Path, SystemRoot, etc.
-const ENV_KEEP = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSPEC|TEMP|TMP|TMPDIR|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|COMMONPROGRAMFILES\(X86\)|COMMONPROGRAMW6432|OS|PROCESSOR_ARCHITECTURE|PROCESSOR_IDENTIFIER|NUMBER_OF_PROCESSORS|USERNAME|USERDOMAIN|COMPUTERNAME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|XDG_RUNTIME_DIR|__CF_USER_TEXT_ENCODING|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
+const ENV_KEEP = /^(XAI_API_KEY|PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSPEC|TEMP|TMP|TMPDIR|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|COMMONPROGRAMFILES\(X86\)|COMMONPROGRAMW6432|OS|PROCESSOR_ARCHITECTURE|PROCESSOR_IDENTIFIER|NUMBER_OF_PROCESSORS|USERNAME|USERDOMAIN|COMPUTERNAME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|XDG_RUNTIME_DIR|__CF_USER_TEXT_ENCODING|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
 
-// The grok child's environment (see ENV_KEEP). Nothing Lumen-specific rides here: the tag goes to
-// the bridge through config.toml's [mcp_servers.lumen.env], as claude-code.js does through its mcp.json.
-function buildEnv({ userData, base = process.env }) {
+// The grok child's environment (see ENV_KEEP). `run`: this run's { mcpUrl, mcpToken, hookUrl } from
+// Lumen's HTTP gate (mcp-http.js), which config.toml and the gate script read from here.
+function buildEnv({ userData, base = process.env, run = null }) {
   const home = sidebarDirFor(userData);
   const kept = Object.fromEntries(Object.entries(base).filter(([k]) => ENV_KEEP.test(k)));
-  return { ...kept, ...COMPAT_ENV, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1', RUST_LOG: GROK_LOG, NO_COLOR: '1' };
+  const gate = run ? { LUMEN_MCP_URL: run.mcpUrl, LUMEN_MCP_TOKEN: run.mcpToken, LUMEN_HOOK_URL: run.hookUrl } : {};
+  return { ...kept, ...COMPAT_ENV, ...gate, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1', RUST_LOG: GROK_LOG, NO_COLOR: '1' };
+}
+
+// The hook command Grok runs for UserPromptSubmit and PreToolUse: hands the event (stdin) to
+// Lumen's gate and prints Lumen's answer. Grok treats a failed hook as "allow", so a gate that
+// can't be reached exits 2, which Grok treats as a deny (curl -f: any non-2xx fails too). Grok's
+// HTTP hooks accept https:// only, hence curl (in Windows since 10 1803, macOS and most Linux);
+// without it the run is never armed and grok-build.js stops it before the model's first output.
+const GATE_FILE = process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh';
+function gateScript(platform = process.platform) {
+  return platform === 'win32'
+    ? '@"%SystemRoot%\\System32\\curl.exe" -s -f --max-time 25 -H "Content-Type: application/json" --data-binary @- "%LUMEN_HOOK_URL%" || exit /b 2\r\n'
+    : '#!/bin/sh\ncurl -s -f --max-time 25 -H "Content-Type: application/json" --data-binary @- "$LUMEN_HOOK_URL" || exit 2\n';
 }
 
 // Headless grok logs nothing to stderr by default; this turns on the one log line Lumen reads (the
@@ -333,7 +358,7 @@ function buildEnv({ userData, base = process.env }) {
 const GROK_LOG = 'off,xai_grok_shell::session::acp_session::mcp_snapshot=info';
 // That line (grok 1.0.41): `wait_for_mcp_handshakes_until: done session_id=... outcome=Complete
 // elapsed_ms=2 final_initializing_names=[] final_client_names=["lumen"]`, or outcome=DeadlineExpired
-// with final_initializing_names=["lumen"] when the bridge was late. Returns { lumen }, whether lumen
+// with final_initializing_names=["lumen"] when Lumen was late. Returns { lumen }, whether lumen
 // was connected, or null for any other line.
 function mcpWait(line) {
   const m = /wait_for_mcp_handshakes_until: done\b.*\bfinal_client_names=\[([^\]]*)\]/.exec(String(line).replace(/\x1b\[[0-9;]*m/g, '')); // (colour codes, should NO_COLOR be ignored)
@@ -443,16 +468,17 @@ function capImages(images, emit) {
 }
 
 class GrokBuildEngine {
-  // mcpCommand(): { command, args, env } for Lumen's bridge, written into Lumen's own GROK_HOME
-  // config.toml before each message. ensureServer(): starts the MCP server. lumenReady(tag): true
-  // once Lumen's MCP server has listed its tools to the bridge carrying that run tag (optional:
-  // without it, the first message doesn't wait). spawn / kill / exec: the child_process spawn,
-  // cli-utils killTree and child_process execFile (for status), swappable for tests.
-  constructor({ userData, mcpCommand, ensureServer, lumenReady = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile }) {
+  // gate(): resolves Lumen's HTTP MCP server and tool gate (mcp-http.js startHttp), started on
+  // first use. lumenReady(tag): true once Lumen's tools have been listed to that run (default: the
+  // gate's own record). spawn / kill / exec: the child_process spawn, cli-utils killTree and
+  // child_process execFile (for status), swappable for tests. argsFor and watch exist for
+  // test/grokgate.js only, which loosens Grok's own rules to show the gate alone stops a call.
+  constructor({ userData, gate, lumenReady = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
     this.userData = userData;
-    this.mcpCommand = mcpCommand;
-    this.ensureServer = ensureServer;
+    this.gate = gate;
     this.lumenReady = lumenReady;
+    this.argsFor = argsFor;
+    this.watch = watch;
     this.spawn = spawnChild;
     this.kill = kill;
     this.exec = exec;
@@ -490,7 +516,7 @@ class GrokBuildEngine {
     return { installed: true, ...value };
   }
 
-  // True when an MCP session belongs to the run in progress (its bridge carries our tag).
+  // True when an MCP session belongs to the run in progress (its run tag is ours).
   owns(tag) {
     return Boolean(tag && this.active && tag.length === this.active.tag.length && crypto.timingSafeEqual(Buffer.from(tag), Buffer.from(this.active.tag)));
   }
@@ -502,7 +528,7 @@ class GrokBuildEngine {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
-    this.ensureServer();
+    const gate = await this.gate();
     // Lumen's own GROK_HOME (see the file header): config.toml names only the `lumen` server, and
     // the user's auth.json is linked in so their sign-in works. The working folder is a separate,
     // fixed, empty folder that is also the child's HOME, so Grok finds no project files there.
@@ -512,12 +538,12 @@ class GrokBuildEngine {
     fs.mkdirSync(dir, { recursive: true });
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, home, dir, promptFile, resume, systemPrompt, model, signal, emit };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, signal, emit };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
-      // the file header): if the model starts answering before the lumen bridge is connected, that
+      // the file header): if the model starts answering before Lumen's tools are connected, that
       // try is stopped unseen and the message goes once more, as a new session.
-      const out = await this.attempt({ ...args, sessionId, waitForLumen: !resume && Boolean(this.lumenReady) });
+      const out = await this.attempt({ ...args, sessionId, waitForLumen: !resume });
       return out.retry ? await this.attempt({ ...args, sessionId: crypto.randomUUID(), waitForLumen: false }) : out;
     } finally {
       try { fs.rmSync(promptFile, { force: true }); } catch {} // (dir itself is kept: the fixed sidebar folder, see above)
@@ -528,17 +554,21 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, home, dir, promptFile, sessionId, resume, systemPrompt, model, signal, emit, waitForLumen }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, signal, emit, waitForLumen }) {
     const tag = crypto.randomBytes(18).toString('hex');
-    const mcp = this.mcpCommand();
-    fs.writeFileSync(path.join(home, 'config.toml'), grokConfig({ ...mcp, env: { ...mcp.env, LUMEN_USERDATA: this.userData, LUMEN_ENGINE: tag } }), { mode: 0o600 });
+    const lumenReady = this.lumenReady || ((t) => gate.listed(t));
+    // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
+    const gateRun = gate.open(tag);
+    const gateFile = path.join(home, GATE_FILE);
+    fs.writeFileSync(gateFile, gateScript(), { mode: 0o700 });
+    fs.writeFileSync(path.join(home, 'config.toml'), grokConfig({ gate: gateFile }), { mode: 0o600 });
     const userHome = userGrokHome();
     let authBefore = null;
     try { authBefore = linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
-    const argv = buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model });
+    const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
-    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData }), cwd: dir });
+    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun }), cwd: dir });
     this.active = { tag, emit, signal, child };
     // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background
     // "leader" process, `grok leader list/kill`, did not show up in Lumen's GROK_HOME in testing.)
@@ -553,8 +583,14 @@ class GrokBuildEngine {
     let buffer = '';
     // Lumen's own tool check (see the file header): the first tool call that isn't Lumen's ends the
     // run and the process tree at once, and nothing after it reaches the sidebar.
-    const watch = toolWatch();
+    const watch = this.watch ? toolWatch() : () => null;
     let offTool = null;
+    // Lumen's gate must have seen this turn's UserPromptSubmit before the model says anything: that
+    // proves Grok loaded the hooks, so every tool call of the turn goes through Lumen first. A Grok
+    // that answers without it (hooks not loaded, curl missing, another CLI version) is stopped
+    // before the model can call a tool.
+    let armed = false;
+    let unguarded = false;
     // Sidebar events held back while waiting for Lumen's tools (null: not waiting, or no longer).
     let held = waitForLumen ? [] : null;
     let early = false; // the model went ahead without Lumen's tools: stopped, to be sent again
@@ -565,10 +601,14 @@ class GrokBuildEngine {
       if (up) { for (const event of held) emit(event); held = null; } else { early = true; this.kill(child); }
     };
     const handle = (msg) => {
-      if (offTool || early) return;
+      if (offTool || early || unguarded) return;
+      if (!armed && /^(stream_event|assistant|user)$/.test(msg.type)) {
+        armed = gate.armed(tag);
+        if (!armed) { unguarded = true; this.kill(child); return; }
+      }
       offTool = watch(msg);
       if (offTool) { this.kill(child); return; }
-      if (held && this.lumenReady(tag)) lumenUp(true);
+      if (held && lumenReady(tag)) lumenUp(true);
       if (held) {
         // Thinking may go on meanwhile; a reply, a tool call or the end of the turn may not.
         const block = msg.type === 'stream_event' && msg.event?.type === 'content_block_start' ? msg.event.content_block?.type : '';
@@ -630,6 +670,9 @@ class GrokBuildEngine {
     });
     signal.removeEventListener('abort', onAbort);
     if (this.active?.tag === tag) this.active = null;
+    // A turn Grok ended without Lumen's gate ever seeing it (its prompt hook blocked, say) is no reply.
+    if (!armed && !gate.armed(tag) && result && !result.is_error) unguarded = true;
+    gate.close(tag);
     try { settleAuth(userHome, home, authBefore); } catch {}
     stderr = (stderr + errBuffer).slice(-4000);
 
@@ -638,6 +681,10 @@ class GrokBuildEngine {
       // resuming a conversation that just reached for another tool.
       emit({ type: 'error', text: `Lumen stopped Grok Build: it called a tool that isn't one of Lumen's (${offTool}). Grok reports a tool call as it starts running it, so that tool may already have run. Grok Build should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
       return { text, sessionId: null, failed: true };
+    }
+    if (unguarded) {
+      emit({ type: 'error', text: 'Lumen stopped Grok Build before it could act: Lumen couldn\'t confirm its check on Grok\'s tool calls was running. Make sure curl is installed and Grok Build is up to date, or pick another AI in the model picker.' });
+      return { text: '', sessionId: null, failed: true };
     }
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
     if (early) return { retry: true };
@@ -658,4 +705,4 @@ class GrokBuildEngine {
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };

@@ -264,6 +264,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - `tab-groups.js`: groups by site and by topic (local TF-IDF clustering), undo
 - `extensions-dnr-preload.js`: `browser` alias and chrome.declarativeNetRequest for extensions (rules kept, not applied; content blockers with static rulesets are refused at install)
 - `mcp.js`: MCP server for external agents (stdio bridge + local authenticated channel)
+- `mcp-http.js`: Lumen's MCP server and tool-call gate over local HTTP, for the sidebar's Grok Build engine
 - `claude-code.js`: the "your Claude account" engine (runs your own `claude` CLI headless)
 - `cli-auth.js`: sign-in with the Anthropic CLI (`ant`), installed from its GitHub release if missing
 - `providers.js`: OpenAI / Grok / Gemini / OpenRouter adapter (Chat Completions, history conversion, OpenRouter catalog)
