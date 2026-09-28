@@ -76,8 +76,41 @@ const path = require('path');
   check('chrome.declarativeNetRequest works in extension pages (rules kept, no throw)', fixture.present && JSON.stringify(fixture.added) === '[7]' && fixture.after === 0 && fixture.block === 'block' && fixture.regex === true, JSON.stringify(fixture));
   check('extension pages get `browser` as chrome, and can still set their own', fixture.alias === true && fixture.ownKept === true, JSON.stringify(fixture));
 
+  // The store's own "Add to Lumen" button, then "Add Extension" in Lumen's dialog. On Electron
+  // before 44.4.0 this used to crash the main process (features/webstore-preload.js).
+  let exited = null;
+  app.process().on('exit', (code) => { exited = code; });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); // not ui.waitForTimeout: the UI may be gone
+  const inStore = (js) => app.evaluate((_e, js) => global.__agent.browser.activeTab().webContents.executeJavaScript(js, true), js);
+  await app.evaluate(() => global.__agent.execute('navigate', { url: 'https://chromewebstore.google.com/detail/bettercampus-prev-betterc/cndibmoanboadcifjkjbdpjgfedanolh' }));
+  let clicked = 'no button';
+  for (let i = 0; i < 40 && clicked === 'no button'; i++) {
+    await sleep(250);
+    clicked = await inStore(`(() => { const b = [...document.querySelectorAll('button')].find((x) => /add to (chrome|lumen)/i.test(x.textContent)); if (!b) return 'no button'; b.click(); return 'clicked'; })()`).catch(() => 'no button');
+  }
+  if (clicked !== 'clicked') {
+    console.log('SKIP  store button install (the store page did not load; offline?)');
+  } else {
+    let id = null;
+    for (let i = 0; i < 60 && !id && exited === null; i++) { await sleep(250); id = await app.evaluate(() => global.__dialogs.currentId?.() || null).catch(() => null); }
+    check('store button: the "Add …?" dialog opens', Boolean(id), 'no dialog');
+    if (id) await app.evaluate((_e, id) => global.__dialogs.respond({ id, response: 1 }), id).catch(() => {});
+    let ext = null;
+    for (let i = 0; i < 40 && !ext && exited === null; i++) {
+      await sleep(250);
+      ext = await app.evaluate(({ session }) => session.defaultSession.extensions.getExtension('cndibmoanboadcifjkjbdpjgfedanolh')?.id || null).catch(() => null);
+    }
+    await sleep(3000); // the store refreshes its state right after the install; that call used to crash
+    check('store button: Lumen is still running after the install', exited === null, `exit code ${exited}`);
+    check('store button: the extension is installed', Boolean(ext), 'not loaded');
+    const pinned = exited === null
+      ? await inStore('({ ok: chrome.webstorePrivate === globalThis.electronWebstore && chrome.management.getAll === globalThis.electronManagement.getAll })').catch((e) => ({ error: e.message }))
+      : null;
+    check('store page keeps the stand-in store APIs after an extension loads', pinned?.ok === true, JSON.stringify(pinned));
+  }
+
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
-  await app.close();
+  if (exited === null) await app.close();
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
