@@ -1,28 +1,31 @@
 // Automation tools over the Chrome DevTools Protocol (opt-in, off by default).
 //
-// With the setting on, Chromium's own debugging port is opened on a random localhost port and a
-// filtering proxy listens on 127.0.0.1:<port> (default 9222). Every proxy URL starts with a secret
-// token (http://127.0.0.1:<port>/<token>, shown in Settings), so knowing the port isn't enough.
-// Playwright's connectOverCDP, Playwright MCP (--cdp-endpoint) and other CDP tools connect to the
-// proxy, which:
+// With the setting on, a filtering proxy listens on 127.0.0.1:<port> (default 9222). Every proxy URL
+// starts with a secret token (http://127.0.0.1:<port>/<token>, shown in Settings), so knowing the
+// port isn't enough. Playwright's connectOverCDP, Playwright MCP (--cdp-endpoint) and other CDP
+// tools connect to the proxy, which:
 // - shows only the user's tabs: Lumen's own UI, hidden reader tabs and
 //   extension pages are filtered out of every target list and event, and can't be attached to;
 // - turns Target.createTarget (Playwright's newPage) into a real Lumen tab, Target.closeTarget
 //   into closing that tab, and ignores Browser.close (disconnecting never quits Lumen);
 // - reports connects and disconnects, so the sidebar shows "Lumen is being driven by …".
 //
-// Chromium's port itself can't be locked: it has no authentication, and a local program that finds
-// it gets everything, Lumen's own UI included (why the pipe isn't used instead: prepareAutomation).
-// The proxy reads DevToolsActivePort as soon as Chromium writes it and deletes it, and never hands
-// out the port or the browser endpoint's id, so finding it takes a scan of localhost ports.
+// Behind the proxy is one CDP connection to Chromium, shared by every client (multiplexer below):
+// on Windows and Linux a pipe that only launcher.js holds the other end of, so nothing else on the
+// computer can reach Chromium's DevTools. On macOS (why: launcher.js) and in test runs under
+// Playwright it is Chromium's own debugging port on a random localhost port, which can't be locked:
+// it has no authentication, and a local program that finds it gets everything, Lumen's own UI
+// included. There the proxy reads DevToolsActivePort as soon as Chromium writes it and deletes it,
+// and never hands out the port or the browser endpoint's id, so finding it takes a port scan.
 
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 const crypto = require('crypto');
 
 const OWN_ID_BASE = 1e9; // ids for commands the proxy sends itself; clients count up from 1
 
-// The debugging switch itself is set before ready by prepareAutomation (features/ai-agents.js).
+// The debugging switches themselves are set before ready by prepareAutomation (features/ai-agents.js).
 
 // Chromium writes "<port>\n<browser ws path>" once the debugging server is up.
 async function internalEndpoint(file) {
@@ -111,23 +114,157 @@ function upgrade(req, socket) {
   ].join('\r\n'));
 }
 
+// ---------------------------------------------------------------- the connection to Chromium
+
+// Each is { ready: Promise, send(msg), onMessage(text), onClose() }: one browser-level connection.
+
+// The launcher's pipe (launcher.js): NUL-terminated JSON, the same as Chromium's own pipe.
+function pipeUpstream(fd) {
+  const up = { onMessage() {}, onClose() {} };
+  let socket;
+  try {
+    socket = new net.Socket({ fd, readable: true, writable: true });
+  } catch (err) {
+    up.ready = Promise.reject(new Error(`Chromium's debugging pipe is not connected (${err.message}).`));
+    return up;
+  }
+  up.ready = Promise.resolve();
+  up.send = (msg) => socket.write(`${JSON.stringify(msg)}\0`);
+  let buffer = '';
+  socket.setEncoding('utf8');
+  socket.on('data', (chunk) => {
+    buffer += chunk;
+    for (let end; (end = buffer.indexOf('\0')) >= 0; buffer = buffer.slice(end + 1)) up.onMessage(buffer.slice(0, end));
+  });
+  socket.on('close', () => up.onClose());
+  socket.on('error', () => {});
+  return up;
+}
+
+// Chromium's port (macOS, test runs): its browser endpoint, read once from DevToolsActivePort,
+// after which the file is taken away from anyone else.
+function portUpstream(file) {
+  const up = { onMessage() {}, onClose() {} };
+  up.ready = internalEndpoint(file).then(({ port, wsPath }) => new Promise((resolve, reject) => {
+    try { fs.rmSync(file, { force: true }); } catch {}
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${wsPath}`);
+    up.send = (msg) => ws.send(JSON.stringify(msg));
+    ws.onopen = resolve;
+    ws.onerror = () => reject(new Error('Could not connect to Chromium.'));
+    ws.onmessage = (e) => up.onMessage(String(e.data));
+    ws.onclose = () => up.onClose();
+  }));
+  return up;
+}
+
+// Shares one connection among clients: each gets its own session (on the browser for the browser
+// endpoint, on one tab for a page endpoint) and sees only the sessions it opened, with its own ids.
+// open(targetId | null) -> { send(text), close(), onMessage(text), onClose() }.
+function multiplexer(up) {
+  let nextId = 1;
+  const pending = new Map(); // upstream id -> { conn, id } for a client's command, { resolve } for ours
+  const owners = new Map(); // sessionId -> the client it belongs to
+  const roots = new Map(); // a client's own session -> the client
+  const ready = up.ready;
+  ready.catch(() => {});
+  let lost = false;
+  const send = (msg) => ready.then(() => up.send(msg));
+  // Our own commands; resolves with Chromium's whole reply ({ result } or { error }).
+  const call = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+    if (lost) { reject(new Error('Lost the connection to Chromium.')); return; }
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    send({ id, method, params, ...(sessionId ? { sessionId } : {}) }).catch(reject);
+  });
+
+  function finish(conn, notify) {
+    if (conn.closed) return;
+    conn.closed = true;
+    for (const [sessionId, owner] of owners) if (owner === conn) owners.delete(sessionId);
+    roots.delete(conn.root);
+    if (notify) conn.onClose();
+    else if (conn.root) call('Target.detachFromTarget', { sessionId: conn.root }).catch(() => {});
+  }
+  function deliver(conn, msg) {
+    if (conn.closed) return;
+    if (msg.sessionId === conn.root) delete msg.sessionId;
+    conn.onMessage(JSON.stringify(msg));
+  }
+
+  up.onMessage = (text) => {
+    let msg;
+    try { msg = JSON.parse(text); } catch { return; }
+    if (msg.id !== undefined) {
+      const waiting = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (waiting?.resolve) waiting.resolve(msg);
+      else if (waiting) deliver(waiting.conn, { ...msg, id: waiting.id });
+      return;
+    }
+    // Events outside every client's session: only a client's own session going away matters.
+    if (!msg.sessionId) {
+      if (msg.method === 'Target.detachedFromTarget' && roots.has(msg.params.sessionId)) finish(roots.get(msg.params.sessionId), true);
+      return;
+    }
+    const conn = owners.get(msg.sessionId);
+    if (!conn) return;
+    if (msg.method === 'Target.attachedToTarget') owners.set(msg.params.sessionId, conn);
+    if (msg.method === 'Target.detachedFromTarget') owners.delete(msg.params.sessionId);
+    deliver(conn, msg);
+  };
+  up.onClose = () => {
+    lost = true;
+    for (const waiting of pending.values()) waiting.reject?.(new Error('Lost the connection to Chromium.'));
+    pending.clear();
+    for (const conn of [...roots.values()]) finish(conn, true);
+  };
+
+  function open(targetId) {
+    const conn = { root: null, closed: false, onMessage() {}, onClose() {} };
+    const attached = call(targetId ? 'Target.attachToTarget' : 'Target.attachToBrowserTarget', targetId ? { targetId, flatten: true } : {}).then((reply) => {
+      const sessionId = reply.result?.sessionId;
+      if (!sessionId) throw new Error(reply.error?.message || 'Could not attach.');
+      conn.root = sessionId;
+      if (conn.closed) { call('Target.detachFromTarget', { sessionId }).catch(() => {}); return; }
+      owners.set(sessionId, conn);
+      roots.set(sessionId, conn);
+    });
+    attached.catch(() => finish(conn, true));
+    conn.send = (text) => attached.then(() => {
+      let msg;
+      try { msg = JSON.parse(text); } catch { return; }
+      if (conn.closed) return;
+      if (msg.sessionId && owners.get(msg.sessionId) !== conn) {
+        deliver(conn, { id: msg.id, sessionId: msg.sessionId, error: { code: -32001, message: 'Session with given id not found.' } });
+        return;
+      }
+      const id = nextId++;
+      pending.set(id, { conn, id: msg.id });
+      send({ ...msg, id, sessionId: msg.sessionId || conn.root });
+    }, () => {});
+    conn.close = () => finish(conn, false);
+    return conn;
+  }
+
+  return { ready, call, open };
+}
+
 // ---------------------------------------------------------------- the proxy
 
 // token: the secret every URL starts with.
 // hooks: { tabs() -> [{ id, webContents }], openTab(url) -> { id, webContents }, closeTab(id),
 //          onSession({ active, remaining }) }
-function start({ port, file, token, hooks }) {
+// pipeFd: the launcher's pipe; file: DevToolsActivePort, where there is none (see the top).
+function start({ port, pipeFd, file, token, hooks }) {
   const targetIds = new WeakMap(); // webContents -> targetId
   const clients = new Set();
-  let internal = null;
-  let finding = null;
-  // Chromium's port, read once (right away), after which the file is taken away from anyone else.
-  const endpoint = async () => internal || (finding ||= internalEndpoint(file).then((found) => {
-    internal = found;
-    try { fs.rmSync(file, { force: true }); } catch {}
-    return found;
-  }, (err) => { finding = null; throw err; }));
-  endpoint().catch(() => {});
+  const chromium = multiplexer(pipeFd !== undefined ? pipeUpstream(pipeFd) : portUpstream(file));
+  // Our own command on the browser; throws Chromium's error.
+  const command = async (method, params) => {
+    const reply = await chromium.call(method, params);
+    if (reply.error) throw new Error(reply.error.message);
+    return reply.result;
+  };
 
   async function targetIdOf(wc) {
     if (targetIds.has(wc)) return targetIds.get(wc);
@@ -176,17 +313,14 @@ function start({ port, file, token, hooks }) {
     return { url, route: route.replace(/\/$/, '') };
   };
   const NO_TOKEN = 'Wrong or missing token: use the full address from Lumen’s Settings (You and AI → Allow automation tools).';
-  const fetchJson = async (p) => (await fetch(`http://127.0.0.1:${(await endpoint()).port}${p}`)).json();
-  const rewrite = (t) => ({
-    ...t,
-    webSocketDebuggerUrl: t.webSocketDebuggerUrl?.replace(/ws:\/\/[^/]+/, `ws://${base}`),
-    devtoolsFrontendUrl: undefined,
-  });
-
+  // /json/list, the way Chromium's own port answers it, for the user's tabs.
   async function listPages() {
     const users = await userTargets();
-    const list = await fetchJson('/json/list');
-    return list.filter((t) => t.type === 'page' && users.has(t.id)).map(rewrite);
+    const { targetInfos } = await command('Target.getTargets');
+    return targetInfos.filter((t) => t.type === 'page' && users.has(t.targetId)).map((t) => ({
+      description: '', id: t.targetId, title: t.title, type: t.type, url: t.url,
+      webSocketDebuggerUrl: `ws://${base}/devtools/page/${t.targetId}`,
+    }));
   }
 
   const server = http.createServer(async (req, res) => {
@@ -202,11 +336,17 @@ function start({ port, file, token, hooks }) {
     try {
       const { url, route } = routed;
       if (route === '/json/version') {
-        const version = await fetchJson('/json/version');
-        return send(200, { ...version, Browser: `Lumen/${version.Browser?.split('/')[1] || ''}`.replace(/\/$/, ''), webSocketDebuggerUrl: `ws://${base}${BROWSER_PATH}` });
+        const version = await command('Browser.getVersion');
+        return send(200, {
+          Browser: `Lumen/${version.product?.split('/')[1] || ''}`.replace(/\/$/, ''),
+          'Protocol-Version': version.protocolVersion,
+          'User-Agent': version.userAgent,
+          'V8-Version': version.jsVersion,
+          'WebKit-Version': `537.36 (${version.revision})`,
+          webSocketDebuggerUrl: `ws://${base}${BROWSER_PATH}`,
+        });
       }
       if (route === '/json' || route === '/json/list') return send(200, await listPages());
-      if (route === '/json/protocol') return send(200, await fetchJson('/json/protocol'));
       if (route === '/json/new') {
         if (req.method !== 'PUT') return send(405, { error: 'Use PUT' });
         const target = decodeURIComponent(url.search.slice(1)) || 'about:blank';
@@ -235,10 +375,10 @@ function start({ port, file, token, hooks }) {
       if ((req.headers.origin && !/^(devtools|chrome-devtools):/.test(req.headers.origin)) || !localHost(req)) throw new Error('origin');
       const routed = routeOf(req);
       if (!routed) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
-      await endpoint();
+      await chromium.ready;
       if (routed.route === BROWSER_PATH) return browserClient(req, socket);
       const page = /^\/devtools\/page\/(.+)$/.exec(routed.route);
-      if (page && (await userTargets()).has(page[1])) return pageClient(req, socket, routed.route);
+      if (page && (await userTargets()).has(page[1])) return pageClient(req, socket, page[1]);
       throw new Error('target');
     } catch {
       socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
@@ -248,18 +388,16 @@ function start({ port, file, token, hooks }) {
   const announce = () => hooks.onSession?.({ remaining: clients.size });
 
   // Page endpoints are one tab only: pass messages straight through.
-  function pageClient(req, socket, pathname) {
-    const upstream = new WebSocket(`ws://127.0.0.1:${internal.port}${pathname}`);
-    const queue = [];
+  function pageClient(req, socket, targetId) {
+    const upstream = chromium.open(targetId);
     let client;
     const entry = { close: () => client.close() };
-    upstream.onopen = () => { for (const m of queue.splice(0)) upstream.send(m); };
-    upstream.onmessage = (e) => client.send(String(e.data));
-    upstream.onclose = () => client.close();
+    upstream.onMessage = (text) => client.send(text);
+    upstream.onClose = () => client.close();
     upgrade(req, socket);
     client = serverSocket(socket, {
-      onMessage: (text) => (upstream.readyState === 1 ? upstream.send(text) : queue.push(text)),
-      onClose: () => { try { upstream.close(); } catch {} if (clients.delete(entry)) announce(); },
+      onMessage: (text) => upstream.send(text),
+      onClose: () => { upstream.close(); if (clients.delete(entry)) announce(); },
     });
     clients.add(entry);
     hooks.onSession?.({ active: true, remaining: clients.size });
@@ -267,8 +405,7 @@ function start({ port, file, token, hooks }) {
 
   // The browser endpoint: filter targets, sessions and a few commands.
   function browserClient(req, socket) {
-    const upstream = new WebSocket(`ws://127.0.0.1:${internal.port}${internal.wsPath}`);
-    const queue = [];
+    const upstream = chromium.open(null);
     const allowedSessions = new Set(); // sessions of user tabs (and their frames/workers)
     const heldSessions = new Map(); // sessionId -> messages waiting for the tab check
     const knownTargets = new Set(); // user targets this client was told about
@@ -278,10 +415,7 @@ function start({ port, file, token, hooks }) {
     let client;
     const entry = { close: () => client.close() };
 
-    const toUpstream = (msg) => {
-      const text = JSON.stringify(msg);
-      if (upstream.readyState === 1) upstream.send(text); else queue.push(text);
-    };
+    const toUpstream = (msg) => upstream.send(JSON.stringify(msg));
     const reply = (id, sessionId, result, error) => client.send(JSON.stringify({ id, ...(sessionId ? { sessionId } : {}), ...(error ? { error: { code: -32000, message: error } } : { result }) }));
     const own = (method, params, sessionId) => toUpstream({ id: ownId++, method, params, ...(sessionId ? { sessionId } : {}) });
 
@@ -405,20 +539,19 @@ function start({ port, file, token, hooks }) {
       toUpstream(msg);
     }
 
-    upstream.onopen = () => { for (const m of queue.splice(0)) upstream.send(m); };
-    upstream.onmessage = (e) => fromUpstream(String(e.data));
-    upstream.onclose = () => client.close();
-    upstream.onerror = () => {};
+    upstream.onMessage = fromUpstream;
+    upstream.onClose = () => client.close();
     upgrade(req, socket);
     client = serverSocket(socket, {
       onMessage: (text) => { fromClient(text).catch(() => {}); },
-      onClose: () => { try { upstream.close(); } catch {} if (clients.delete(entry)) announce(); },
+      onClose: () => { upstream.close(); if (clients.delete(entry)) announce(); },
     });
     clients.add(entry);
     hooks.onSession?.({ active: true, remaining: clients.size });
   }
 
   const state = { port, listening: false, error: null };
+  chromium.ready.catch((err) => { state.error = String(err.message); });
   server.on('error', (err) => { state.error = err.code === 'EADDRINUSE' ? `Port ${port} is already in use.` : String(err.message); });
   server.listen(port, '127.0.0.1', () => { state.listening = true; });
   return {

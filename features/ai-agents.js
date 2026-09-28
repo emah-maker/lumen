@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { exists, lookup: which, validModel } = require('../cli-utils');
+const launcher = require('../launcher');
 
 const MAIN_DIR = path.join(__dirname, '..');
 const DEFAULT_AUTOMATION_PORT = 9222;
@@ -39,20 +40,27 @@ function automationToken(userData) {
 }
 
 // Called at startup, before the app is ready: the debugging switches only work if set this early.
+// { relaunch: true }: this process should hand over to launcher.js (main.js does). Otherwise the
+// proxy's plan, with Chromium's DevTools on the launcher's pipe (pipeFd) or, on macOS and in test
+// runs under Playwright, on a localhost port (file: where Chromium says which).
 function prepareAutomation(app, settings) {
+  const launched = launcher.isLaunched();
   if (!settings.automationEnabled) return null;
-  const file = path.join(app.getPath('userData'), 'DevToolsActivePort');
-  try { fs.rmSync(file, { force: true }); } catch {}
-  // Chromium's port has no authentication; automation.js hides it as well as it can (see there).
-  // --remote-debugging-pipe would avoid a port, but Chromium reads that pipe from CRT fds 3 and 4 of
-  // this process, which by now hold Electron's own .asar archives, and the handle-based
-  // --remote-debugging-io-pipes needs Win32 handle values that JavaScript can't get at.
-  app.commandLine.appendSwitch('remote-debugging-port', '0');
-  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
-  // A debugging port makes Chromium set navigator.webdriver = true on every page, which Cloudflare's
+  if (!launched && launcher.available()) return { relaunch: true };
+  const plan = { port: validPort(settings.automationPort), token: automationToken(app.getPath('userData')) };
+  // Debugging makes Chromium set navigator.webdriver = true on every page, which Cloudflare's
   // "Verify you are human" and Google sign-in treat as a bot: the checkbox spins and resets forever.
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-  return { port: validPort(settings.automationPort), file, token: automationToken(app.getPath('userData')) };
+  if (launched) {
+    app.commandLine.appendSwitch('remote-debugging-pipe');
+    return { ...plan, pipeFd: launcher.LUMEN_FD };
+  }
+  // Chromium's port has no authentication; automation.js hides it as well as it can (see there).
+  const file = path.join(app.getPath('userData'), 'DevToolsActivePort');
+  try { fs.rmSync(file, { force: true }); } catch {}
+  app.commandLine.appendSwitch('remote-debugging-port', '0');
+  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+  return { ...plan, file };
 }
 
 // Settles as soon as `signal` aborts, so Stop answers the agent at once even mid-tool.
@@ -343,6 +351,7 @@ function setupAiAgents(deps) {
       // The address is http://127.0.0.1:<port>/<token>; the token of the next launch while it's on.
       token: automationProxy ? deps.automationPlan.token : settings.automationEnabled ? automationToken(app.getPath('userData')) : null,
       running: automationProxy ? { port: automationProxy.state.port, listening: automationProxy.state.listening, error: automationProxy.state.error, clients: automationProxy.clients() } : null,
+      internalPort: !launcher.available(), // Chromium's own port is open too (macOS: see launcher.js)
     };
   });
   ipcMain.handle('automation:set', (_e, { enabled, port } = {}) => {
