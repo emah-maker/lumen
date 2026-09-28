@@ -268,7 +268,7 @@ function extendTools(TOOLS) {
   TOOLS.push(...NEW_TOOLS.map((tool) => ({ ...tool, eager_input_streaming: true })));
 }
 
-// batch changes pages, so it needs the same per-site OK as click/type.
+// batch changes pages, so it needs the same per-site OK as click/type (and each step is checked again).
 const ACTING = ['batch'];
 
 // ---------------------------------------------------------------- execution
@@ -338,17 +338,20 @@ async function batch(agent, wc, input, h) {
   for (const [i, step] of steps.entries()) {
     const n = `${i + 1}.`;
     try {
-      let result;
+      let tool;
       switch (step.do) {
-        case 'type': result = await agent.execute('type_text', { element_id: step.ref, text: step.text ?? '', press_enter: Boolean(step.enter) }); break;
-        case 'select': result = await agent.execute('type_text', { element_id: step.ref, text: step.text ?? '' }); break;
-        case 'click': result = await agent.execute('click', step.ref ? { element_id: step.ref } : { text: step.text }); break;
-        case 'press': result = await agent.execute('press_key', { key: step.key, ...(step.modifiers ? { modifiers: step.modifiers } : {}) }); break;
-        case 'wait_for': result = await agent.execute('wait_for', { text: step.text, seconds: 10 }); break;
-        case 'scroll': result = await agent.execute('scroll', { direction: step.direction || 'down' }); break;
-        case 'hover': result = await agent.execute('hover', { element_id: step.ref }); break;
+        case 'type': tool = ['type_text', { element_id: step.ref, text: step.text ?? '', press_enter: Boolean(step.enter) }]; break;
+        case 'select': tool = ['type_text', { element_id: step.ref, text: step.text ?? '' }]; break;
+        case 'click': tool = ['click', step.ref ? { element_id: step.ref } : { text: step.text }]; break;
+        case 'press': tool = ['press_key', { key: step.key, ...(step.modifiers ? { modifiers: step.modifiers } : {}) }]; break;
+        case 'wait_for': tool = ['wait_for', { text: step.text, seconds: 10 }]; break;
+        case 'scroll': tool = ['scroll', { direction: step.direction || 'down' }]; break;
+        case 'hover': tool = ['hover', { element_id: step.ref }]; break;
         default: throw new Error(`Unknown step "${step.do}".`);
       }
+      // The OK for the batch was for the site it started on; each step is asked about where it runs.
+      await agent.allowStep(...tool);
+      const result = await agent.execute(...tool);
       report.push(`${n} ${String(result).split('\n')[0].slice(0, 160)}`);
     } catch (err) {
       report.push(`${n} FAILED: ${err.message}`);

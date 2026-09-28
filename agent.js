@@ -1216,6 +1216,8 @@ class Agent {
   // web_search asks the same way about DuckDuckGo, with the query on the card (it is what gets sent).
   // A chat that hasn't read anything goes freely. Redirects the tool then runs into are checked
   // against the same hosts (guardRedirects), so the call's context is kept on the task scope.
+  // run_script in a tainted run has its own card per site ("<who> wants to run a script on <host>"):
+  // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
   async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
     const gate = { emit, signal, hosts, who, external, run };
     const scope = taskScope.getStore();
@@ -1226,6 +1228,7 @@ class Agent {
         if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search to DuckDuckGo. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
       }
     }
+    const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
     if (READING_TOOLS.has(name)) this.markTainted(run);
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
@@ -1236,14 +1239,27 @@ class Agent {
         return parsed.host || `${parsed.protocol.replace(/:$/, '')} pages`;
       } catch { return ''; }
     };
+    // A script OK is kept as "script:<host>" next to the host itself (it covers interacting too).
+    const keyOf = (host) => (scripted ? `script:${host}` : host);
     for (let asked = 0; asked < 3; asked++) {
       const host = siteOf();
-      if (!host || hosts.has(host)) return;
-      const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal);
-      if (!ok) throw new Error(`The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
+      if (!host || hosts.has(keyOf(host))) return;
+      const ok = !external && this.browser.autoApprove?.() ? true : await this.askApproval(host, emit, signal, scripted ? { action: 'script', who } : undefined);
+      if (!ok) throw new Error(scripted
+        ? `The user did not allow ${who} to run scripts on ${host} (a script can send page content to any site). Use read_page, find or click instead, or ask them.`
+        : `The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
       hosts.add(host);
+      hosts.add(keyOf(host));
     }
-    if (!hosts.has(siteOf())) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
+    if (!hosts.has(keyOf(siteOf()))) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
+  }
+
+  // ensureAllowed for a tool another tool runs (each batch step), with the outer call's context.
+  // Outside a gated call (no ensureAllowed ran in this scope) there is nothing to check against.
+  async allowStep(name, input) {
+    const gate = taskScope.getStore()?.gate;
+    if (!gate) return;
+    await this.ensureAllowed(name, gate.emit, gate.signal, { hosts: gate.hosts, who: gate.who, external: gate.external, input, run: gate.run });
   }
 
   // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
@@ -1337,13 +1353,16 @@ class Agent {
   }
 
   // action 'open' (a tainted run heading to a new host) is shown as "<who> wants to open <host>"
-  // (or `title`, with the search `query` for web_search); without it, the card is the usual
-  // "Allow … to interact with <host>?".
+  // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
+  // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
+  // with <host>?".
   askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null } = {}) {
     const approvalId = ++this.approvalSeq;
     emit(action === 'open'
       ? { type: 'approval', approvalId, host, action, title: title || `${who || 'Claude'} wants to open ${host}`, ...(query === null ? {} : { query }) }
-      : { type: 'approval', approvalId, host });
+      : action === 'script'
+        ? { type: 'approval', approvalId, host, action, title: `${who || 'Claude'} wants to run a script on ${host}` }
+        : { type: 'approval', approvalId, host });
     return new Promise((resolve, reject) => {
       const onAbort = () => {
         this.pendingApprovals.delete(approvalId);
@@ -1373,11 +1392,12 @@ class Agent {
     return tab.webContents;
   }
 
-  // Runs a tool; in a tainted run, redirects in the task's tab are checked while it runs.
+  // Runs a tool; in a tainted run, redirects in the task's tab are checked while it runs (and for
+  // navigate and run_script, the page's own jumps: a script can set location).
   async execute(name, input) {
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
-    const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' });
+    const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
     if (!guard) return this.runTool(name, input);
     try {
       const result = await this.runTool(name, input);

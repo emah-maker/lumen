@@ -1,7 +1,8 @@
 // Exfiltration guard: once a run has read page content, taking the browser to a host the user hasn't
 // approved (navigate / open_tab / read_urls) asks first; approved hosts and runs that read nothing go
 // freely; outside (MCP) agents are always asked; an approved host redirecting to a new one asks too;
-// web_search asks before sending the query; list_tabs hides query strings and Lumen's own tabs.
+// web_search asks before sending the query; run_script and each batch step are gated per site;
+// list_tabs hides query strings and Lumen's own tabs.
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -22,6 +23,10 @@ const path = require('path');
       return;
     }
     res.setHeader('Content-Type', 'text/html');
+    if (req.url.startsWith('/buttons')) {
+      res.end(`<title>Buttons</title><button onclick="document.title = 'clicked'">Go</button>`);
+      return;
+    }
     res.end(`<title>Page ${req.url}</title><h1>Secret ${req.url}</h1><p>Private text on this page.</p>`);
   }).listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
@@ -183,6 +188,44 @@ const path = require('path');
     { name: 'web_search', input: { query: 'lumen browser' } },
   ] });
   check('an untainted web_search shows no card', r.approvals.length === 0 && !/did not allow/.test(r.results[0]?.text), JSON.stringify(r));
+
+  // 7d. run_script in a tainted run: a site approved for clicking doesn't cover scripts (they can
+  // fetch() anywhere), so there is a script card; denied, the script doesn't run. Untainted: no card.
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'run_script', input: { code: `await fetch('${other}/fetched').catch(() => {}); return 1;` } },
+  ] });
+  check('a tainted run_script shows a script card, even on an approved site', r.approvals.length === 1 && r.approvals[0].host === homeHost && r.approvals[0].action === 'script' && r.approvals[0].title === `Claude wants to run a script on ${homeHost}`, JSON.stringify(r.approvals));
+  check('denied: the script does not run and its fetch never goes out', r.results[1]?.error && /did not allow Claude to run scripts/.test(r.results[1].text) && !hits.includes(`${otherHost}/fetched`), JSON.stringify({ r, hits: hits.slice(-4) }));
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
+    { name: 'run_script', input: { code: `await fetch('${other}/fetched-untainted').catch(() => {}); return 1;` } },
+  ] });
+  check('an untainted run_script on an approved site runs without a card', r.approvals.length === 0 && !r.results[0]?.error && hits.includes(`${otherHost}/fetched-untainted`), JSON.stringify(r));
+  // Scripts allowed on the site: setting location to a new host is still stopped and asked about.
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost, `script:${homeHost}`], toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'run_script', input: { code: `location.href = '${other}/moved'; return 1;` } },
+  ] });
+  check('a tainted script sending the tab to a new host asks, and denied, the tab stays', r.approvals.length === 1 && r.approvals[0].host === otherHost && r.approvals[0].action === 'open' && r.url.startsWith(home) && !hits.includes(`${otherHost}/moved`), JSON.stringify(r));
+
+  // 7e. Each batch step is checked where it runs, not only the site the batch was allowed on: here
+  // the batch itself skipped the check (as if the tab changed sites after its OK) and its click asks.
+  const batched = await app.evaluate(async (_e, h) => {
+    const agent = global.__agent;
+    agent.reset();
+    const tab = agent.browser.activeTab();
+    await tab.webContents.loadURL(`${h}/buttons`).catch(() => {});
+    const events = [];
+    const emit = (e) => { events.push(e); if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, false), 20); };
+    const session = { approvedHosts: new Set(), clientName: 'Test MCP' };
+    const signal = new AbortController().signal;
+    const report = await agent.inTask(tab.id, signal, async () => {
+      await agent.ensureAllowed('read_page', emit, signal, { hosts: session.approvedHosts, who: session.clientName, external: true, input: {}, run: session });
+      return agent.execute('batch', { steps: [{ do: 'click', text: 'Go' }] });
+    });
+    return { report, title: tab.webContents.getTitle(), approvals: events.filter((e) => e.type === 'approval').map(({ host, action }) => ({ host, action })) };
+  }, home);
+  check('a batch step on an unapproved site asks, and denied, it does not run', batched.approvals.length === 1 && batched.approvals[0].host === homeHost && /1\. FAILED: The user did not allow Test MCP to interact/.test(batched.report) && batched.title === 'Buttons', JSON.stringify(batched));
 
   // 8. Auto-allow covers the sidebar's AI; an outside MCP agent is still asked, taint kept per session.
   const mcp = await app.evaluate(async (_e, { home: h, other: o }) => {
