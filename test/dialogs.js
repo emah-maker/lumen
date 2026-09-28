@@ -11,6 +11,10 @@ const SHOT_DIR = process.env.LUMEN_SHOT_DIR;
   const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1' } });
   const ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
+  // The first tab's page can take over a second to exist on a cold start (macOS especially).
+  await app.evaluate(async ({ webContents }) => {
+    for (let i = 0; i < 100 && !webContents.getAllWebContents().some((w) => w.getURL().includes('newtab.html')); i++) await new Promise((r) => setTimeout(r, 100));
+  });
   await ui.waitForTimeout(800);
 
   // Runs `script` in the active tab without waiting (the page blocks until the dialog is answered).

@@ -1449,6 +1449,17 @@ class Agent {
 
   pressKey(wc, key, modifiers = []) {
     const keyCode = KEY_CODES[key] || key;
+    // Models write Windows shortcuts (Ctrl+A, Ctrl+C...). On macOS those are Cmd+letter, and
+    // Chromium runs them from the app menu, not from synthetic key events, so a sent Cmd+A never
+    // selects anything. Run the edit command itself; send other Ctrl+letter keys as Cmd+letter.
+    if (process.platform === 'darwin' && [...key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'))) {
+      const mods = modifiers.filter((m) => m !== 'control' && m !== 'meta');
+      const letter = key.toLowerCase();
+      const command = mods.length === 0 ? { a: 'selectAll', c: 'copy', v: 'paste', x: 'cut', z: 'undo', y: 'redo' }[letter]
+        : mods.length === 1 && mods[0] === 'shift' ? { z: 'redo', v: 'pasteAndMatchStyle' }[letter] : null;
+      if (command) { wc[command](); return; }
+      modifiers = [...mods, 'meta'];
+    }
     wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
     // Only unmodified printable keys produce text.
     if (!modifiers.some((m) => m !== 'shift')) {
