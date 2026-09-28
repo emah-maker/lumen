@@ -8,7 +8,7 @@
     "postinstall": "node node_modules/electron/install.js",
     "start": "electron .",
     "dist": "node scripts/build.js",
-    "test": "node test/units.js && node test/cli-json.js && node test/smoke.js && node test/tools.js && node test/ui.js && node test/images.js && node test/models.js && node test/adhd.js && node test/extensions.js && node test/adblock.js && node test/pagecontext.js && node test/dialogs.js && node test/recovery.js && node test/tasklock.js && node test/tabstrip.js && node test/downloads.js && node test/hardening.js && node test/exfil.js && node test/security-ui.js && node test/updates.js",
+    "test": "node scripts/test-all.js",
     "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
     "dist:win": "node scripts/build.js --win",
     "dist:mac": "node scripts/build.js --mac"
