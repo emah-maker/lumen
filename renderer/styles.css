@@ -223,6 +223,8 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: 100px; padding-right
 .omnibox-action.reload { opacity: 0; }
 .omnibox:hover .omnibox-action.reload, .omnibox-action:focus-visible, body.tab-loading .omnibox-action.reload { opacity: 1; }
 .omnibox-action:hover { color: var(--text); background: var(--hover); }
+.reader svg { stroke-width: 1.3; }
+.reader[aria-pressed="true"] { color: var(--accent); }
 .star svg { stroke-width: 1.3; transition: fill var(--t-fast) ease-out; }
 .star[aria-pressed="true"] { color: var(--accent); }
 .star[aria-pressed="true"] svg { fill: currentColor; animation: star-pop var(--t-snappy) var(--spring-bouncy); }

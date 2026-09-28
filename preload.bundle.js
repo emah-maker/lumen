@@ -456,6 +456,7 @@ contextBridge.exposeInMainWorld('browser', {
   organizeTabs: () => ipcRenderer.send('tabs:organize'),
   onOrganizing: on('tabs:organizing'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
+  toggleReader: () => ipcRenderer.send('page:reader'),
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
