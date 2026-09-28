@@ -5,6 +5,9 @@ const { injectBrowserAction } = require('electron-chrome-extensions/browser-acti
 // holds it to renderer/index.html (it can only make the view more restricted).
 ipcRenderer.sendSync('ui-preload:loaded');
 
+// The UI's strings in the system's language (features/i18n.js; renderer/i18n.js looks them up).
+contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('ui:strings') || { locale: 'en', strings: {} });
+
 // Defines <browser-action-list>, the row of extension buttons in the toolbar.
 injectBrowserAction();
 

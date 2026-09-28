@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { hostOf } = require('./adblock');
+const { t } = require('./i18n');
 
 const RISKY_TYPES = /^\.(exe|msi|msix|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|hta|jar|dll|lnk|reg|appx)$/i;
 const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
@@ -150,32 +151,32 @@ function createDownloads(deps) {
   }
 
   function menu() {
-    if (!downloads.length) return [{ label: 'No downloads yet', enabled: false }];
+    if (!downloads.length) return [{ label: t('downloads.none'), enabled: false }];
     const items = downloads.slice(0, 10).map((d) => {
       const percent = d.total ? `${Math.round((d.received / d.total) * 100)}%` : '';
       if (d.state === 'completed') {
         return { label: d.name, click: () => deps.shell.openPath(d.path) };
       }
       if (d.state === 'progressing') {
-        const status = d.awaitingOk ? 'waiting for your OK' : d.paused ? `paused${percent ? ` at ${percent}` : ''}` : percent || 'downloading';
+        const status = d.awaitingOk ? t('downloads.waitingOk') : d.paused ? (percent ? t('downloads.pausedAt', { percent }) : t('downloads.paused')) : percent || t('downloads.downloading');
         return {
-          label: `${d.name} — ${status}`,
+          label: t('downloads.item', { name: d.name, status }),
           submenu: [
             ...(d.awaitingOk ? [] : [d.paused
-              ? { label: 'Resume', click: () => { d.item.resume(); } }
-              : { label: 'Pause', click: () => { d.item.pause(); } }]),
-            { label: 'Cancel', click: () => { if (d.held) finish(d, 'cancelled'); else d.item.cancel(); } },
+              ? { label: t('downloads.resume'), click: () => { d.item.resume(); } }
+              : { label: t('downloads.pause'), click: () => { d.item.pause(); } }]),
+            { label: t('downloads.cancel'), click: () => { if (d.held) finish(d, 'cancelled'); else d.item.cancel(); } },
           ],
         };
       }
       return { // cancelled | interrupted
-        label: `${d.name} — ${d.state === 'cancelled' ? 'cancelled' : 'failed'}`,
-        submenu: [{ label: d.state === 'interrupted' && d.item.canResume() ? 'Resume' : 'Retry', click: () => retry(d) }],
+        label: t('downloads.item', { name: d.name, status: d.state === 'cancelled' ? t('downloads.cancelled') : t('downloads.failed') }),
+        submenu: [{ label: d.state === 'interrupted' && d.item.canResume() ? t('downloads.resume') : t('downloads.retry'), click: () => retry(d) }],
       };
     });
     const done = downloads.filter((d) => d.state === 'completed');
-    if (done.length) items.push({ type: 'separator' }, { label: 'Show Latest in Folder', click: () => deps.shell.showItemInFolder(done[0].path) });
-    items.push({ type: 'separator' }, { label: 'Open Downloads Folder', click: () => deps.shell.openPath(deps.downloadDir()) });
+    if (done.length) items.push({ type: 'separator' }, { label: t('downloads.showLatest'), click: () => deps.shell.showItemInFolder(done[0].path) });
+    items.push({ type: 'separator' }, { label: t('downloads.openFolder'), click: () => deps.shell.openPath(deps.downloadDir()) });
     return items;
   }
 

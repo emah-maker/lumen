@@ -12,43 +12,43 @@
 </head>
 <body class="sidebar-hidden">
   <header class="chrome">
-    <div class="tabstrip" id="tabstrip" role="tablist" aria-label="Tabs">
-      <div id="tabs" class="tabs"></div>
-      <button class="icon-btn new-tab" id="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">
+    <div class="tabstrip" id="tabstrip">
+      <div id="tabs" class="tabs" role="tablist" aria-label="Tabs" data-i18n-aria-label="tabs.label"></div>
+      <button class="icon-btn new-tab" id="new-tab" title="New tab (Ctrl+T)" aria-label="New tab" data-i18n-title="toolbar.newTab.title" data-i18n-aria-label="toolbar.newTab">
         <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
       </button>
-      <button class="organize-tabs" id="organize-tabs" type="button" hidden title="Group open tabs by topic with AI" aria-label="Organize tabs with AI">
+      <button class="organize-tabs" id="organize-tabs" type="button" hidden title="Group open tabs by topic with AI" aria-label="Organize tabs with AI" data-i18n-title="tabs.organize.title" data-i18n-aria-label="tabs.organize.label">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l1.3 3.2L12.5 7l-3.2 1.3L8 11.5 6.7 8.3 3.5 7l3.2-1.3z"/></svg>
-        <span>Organize</span>
+        <span data-i18n="tabs.organize">Organize</span>
       </button>
       <button class="icon-btn tab-search-btn" id="tab-search" type="button" title="Search tabs (Ctrl+Shift+A)" aria-label="Search tabs" aria-haspopup="dialog" aria-expanded="false">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>
       </button>
     </div>
 
-    <nav class="toolbar">
+    <nav class="toolbar" aria-label="Toolbar" data-i18n-aria-label="toolbar.label">
       <div class="toolbar-start">
-        <button class="icon-btn" id="back" title="Back (Alt+Left)" aria-label="Back">
+        <button class="icon-btn" id="back" title="Back (Alt+Left)" aria-label="Back" data-i18n-title="toolbar.back.title" data-i18n-aria-label="toolbar.back">
           <svg viewBox="0 0 16 16"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>
         </button>
-        <button class="icon-btn" id="forward" title="Forward (Alt+Right)" aria-label="Forward">
+        <button class="icon-btn" id="forward" title="Forward (Alt+Right)" aria-label="Forward" data-i18n-title="toolbar.forward.title" data-i18n-aria-label="toolbar.forward">
           <svg viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
         </button>
       </div>
 
-      <form class="omnibox" id="omnibox">
+      <form class="omnibox" id="omnibox" role="search">
         <span class="security" id="security" hidden></span>
         <input id="address" type="text" spellcheck="false" autocomplete="off"
-               placeholder="Search or enter address" aria-label="Address" />
+               placeholder="Search or enter address" aria-label="Address" data-i18n-placeholder="address.placeholder" data-i18n-aria-label="address.label" />
         <div class="omnibox-end">
-          <button class="zoom-pill" id="zoom" type="button" title="Reset zoom (Ctrl+0)" hidden></button>
-          <button class="omnibox-action reader" id="reader" type="button" title="Reader mode" aria-label="Reader mode" aria-pressed="false" hidden>
+          <button class="zoom-pill" id="zoom" type="button" title="Reset zoom (Ctrl+0)" aria-label="Reset zoom" data-i18n-title="toolbar.zoomReset.title" data-i18n-aria-label="toolbar.zoomReset" hidden></button>
+          <button class="omnibox-action reader" id="reader" type="button" title="Reader mode" aria-label="Reader mode" aria-pressed="false" data-i18n-title="toolbar.reader.title" data-i18n-aria-label="toolbar.reader" hidden>
             <svg viewBox="0 0 16 16"><path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5Zm11 0H9.25A1.25 1.25 0 0 0 8 4.75v8a1.25 1.25 0 0 1 1.25-1.25h4.25Z"/></svg>
           </button>
-          <button class="omnibox-action star" id="bookmark" type="button" title="Bookmark this page (Ctrl+D)" aria-label="Bookmark this page" aria-pressed="false" hidden>
+          <button class="omnibox-action star" id="bookmark" type="button" title="Bookmark this page (Ctrl+D)" aria-label="Bookmark this page" aria-pressed="false" data-i18n-title="bookmark.add.title" data-i18n-aria-label="bookmark.add" hidden>
             <svg viewBox="0 0 16 16"><path d="M8 2.2l1.75 3.6 3.95.55-2.87 2.77.7 3.93L8 11.2l-3.53 1.85.7-3.93L2.3 6.35l3.95-.55Z"/></svg>
           </button>
-          <button class="omnibox-action reload" id="reload" type="button" title="Reload (Ctrl+R)" aria-label="Reload">
+          <button class="omnibox-action reload" id="reload" type="button" title="Reload (Ctrl+R)" aria-label="Reload" data-i18n-title="toolbar.reload.title" data-i18n-aria-label="toolbar.reload">
             <svg viewBox="0 0 16 16" id="reload-icon"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/></svg>
           </button>
         </div>
@@ -58,9 +58,9 @@
         <div class="agent-pill" id="agent-pill" role="status">
           <span class="agent-dot" aria-hidden="true"></span>
           <span id="agent-pill-text">Lumen is using this tab</span>
-          <button type="button" id="agent-stop">Stop</button>
+          <button type="button" id="agent-stop" data-i18n="agent.stop">Stop</button>
         </div>
-        <button class="icon-btn download-btn" id="downloads" type="button" aria-label="Downloads" hidden>
+        <button class="icon-btn download-btn" id="downloads" type="button" aria-label="Downloads" data-i18n-aria-label="toolbar.downloads" hidden>
           <svg viewBox="0 0 24 24" class="download-ring" aria-hidden="true">
             <circle class="ring-track" cx="12" cy="12" r="10"/>
             <circle class="ring-bar" cx="12" cy="12" r="10"/>
@@ -68,10 +68,10 @@
           <svg viewBox="0 0 16 16" class="download-arrow" aria-hidden="true"><path d="M8 3v7M5 7.5 8 10.5l3-3M4.5 13h7"/></svg>
         </button>
         <browser-action-list id="extension-actions" alignment="bottom right"></browser-action-list>
-        <button class="icon-btn" id="toggle-sidebar" title="AI (Ctrl+J)" aria-label="AI assistant" aria-pressed="false">
+        <button class="icon-btn" id="toggle-sidebar" title="AI (Ctrl+J)" aria-label="AI assistant" aria-pressed="false" data-i18n-title="toolbar.ai.title" data-i18n-aria-label="toolbar.ai">
           <svg viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8"/></svg>
         </button>
-        <button class="icon-btn" id="app-menu" title="Menu" aria-label="Menu">
+        <button class="icon-btn" id="app-menu" title="Menu" aria-label="Menu" aria-haspopup="menu" data-i18n-title="toolbar.menu" data-i18n-aria-label="toolbar.menu">
           <svg viewBox="0 0 16 16" class="dots"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>
         </button>
       </div>
@@ -79,15 +79,15 @@
 
     <div class="findbar" id="findbar" hidden>
       <div class="findbar-inner">
-        <input id="find-input" type="text" spellcheck="false" placeholder="Find in page" aria-label="Find in page" />
+        <input id="find-input" type="text" spellcheck="false" placeholder="Find in page" aria-label="Find in page" data-i18n-placeholder="find.placeholder" data-i18n-aria-label="find.placeholder" />
         <span class="find-count" id="find-count" aria-live="polite"></span>
-        <button class="icon-btn" id="find-prev" title="Previous (Shift+Enter)" aria-label="Previous match">
+        <button class="icon-btn" id="find-prev" title="Previous (Shift+Enter)" aria-label="Previous match" data-i18n-title="find.previous.title" data-i18n-aria-label="find.previous">
           <svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4"/></svg>
         </button>
-        <button class="icon-btn" id="find-next" title="Next (Enter)" aria-label="Next match">
+        <button class="icon-btn" id="find-next" title="Next (Enter)" aria-label="Next match" data-i18n-title="find.next.title" data-i18n-aria-label="find.next">
           <svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg>
         </button>
-        <button class="icon-btn" id="find-close" title="Close (Esc)" aria-label="Close find bar">
+        <button class="icon-btn" id="find-close" title="Close (Esc)" aria-label="Close find bar" data-i18n-title="find.close.title" data-i18n-aria-label="find.close">
           <svg viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
         </button>
     </div>
@@ -98,70 +98,71 @@
   <main class="body">
     <div id="viewport" class="viewport"></div>
 
-    <aside id="sidebar" class="sidebar" aria-label="AI assistant">
-      <div class="sidebar-resize" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
+    <aside id="sidebar" class="sidebar" aria-label="AI assistant" data-i18n-aria-label="toolbar.ai">
+      <div class="sidebar-resize" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" data-i18n-aria-label="sidebar.resize" tabindex="0"></div>
       <div class="sidebar-head">
         <div class="model-picker">
-          <select id="model" aria-label="Model"></select>
+          <select id="model" aria-label="Model" data-i18n-aria-label="sidebar.model"></select>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
         </div>
         <div class="sidebar-actions">
-          <button class="icon-btn" id="dock-to-side" title="Dock to side" aria-label="Dock to side">
+          <button class="icon-btn" id="dock-to-side" title="Dock to side" aria-label="Dock to side" data-i18n-title="sidebar.dock" data-i18n-aria-label="sidebar.dock">
             <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
           </button>
-          <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false">
+          <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
           </button>
-          <button class="icon-btn" id="chat-history" title="Chats" aria-label="Chats" aria-expanded="false" aria-controls="chat-list">
+          <button class="icon-btn" id="chat-history" title="Chats" aria-label="Chats" aria-expanded="false" aria-controls="chat-list" data-i18n-title="sidebar.chats" data-i18n-aria-label="sidebar.chats">
             <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>
           </button>
-          <button class="icon-btn" id="new-chat" title="New chat" aria-label="New chat">
+          <button class="icon-btn" id="new-chat" title="New chat" aria-label="New chat" data-i18n-title="sidebar.newChat" data-i18n-aria-label="sidebar.newChat">
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
           </button>
-          <button class="icon-btn" id="open-settings" title="AI settings (opens Settings)" aria-label="AI settings">
+          <button class="icon-btn" id="open-settings" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
             <svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.75" class="knob"/><circle cx="5.5" cy="11.5" r="1.75" class="knob"/></svg>
           </button>
         </div>
       </div>
 
       <div id="chat-usage" class="chat-usage" hidden></div>
-      <div id="chat-list" class="chat-list" role="dialog" aria-label="Chats" hidden></div>
+      <div id="chat-list" class="chat-list" role="dialog" aria-label="Chats" data-i18n-aria-label="sidebar.chats" hidden></div>
       <div id="messages" class="messages" aria-live="polite">
         <div class="empty" id="empty">
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>
           <div class="setup" id="setup" hidden>
-            <p class="setup-title">Set up an AI</p>
+            <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
             <button class="setup-option" type="button" id="setup-keys">
-              <span class="setup-name">Add an API key</span>
-              <span class="setup-detail">Anthropic, OpenAI, Grok or Gemini.</span>
+              <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
+              <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
             </button>
             <button class="setup-option" type="button" id="setup-openrouter">
-              <span class="setup-name">Sign in with OpenRouter</span>
-              <span class="setup-detail">One key, many models.</span>
+              <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
+              <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
             </button>
             <button class="setup-option" type="button" id="setup-claude-code">
-              <span class="setup-name">Use your own Claude Code</span>
-              <span class="setup-detail" id="setup-claude-code-detail">Through Claude Code, with your own login (including school or work).</span>
+              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
+              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
             </button>
           </div>
           <div class="chips">
-            <button class="chip" data-prompt="Summarize this page.">Summarize this page</button>
-            <button class="chip" data-prompt="What are the key takeaways from this page?">Key takeaways</button>
-            <button class="chip" data-prompt="Explain this page in simple terms.">Explain simply</button>
+            <button class="chip" data-prompt="Summarize this page." data-i18n="chips.summarize">Summarize this page</button>
+            <button class="chip" data-prompt="What are the key takeaways from this page?" data-i18n="chips.takeaways">Key takeaways</button>
+            <button class="chip" data-prompt="Explain this page in simple terms." data-i18n="chips.explain">Explain simply</button>
           </div>
         </div>
       </div>
 
       <form id="composer" class="composer">
         <div class="attachments" id="attachments" hidden></div>
-        <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant"></textarea>
-        <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" disabled>
+        <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
+        <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-title="composer.send.title" data-i18n-aria-label="composer.send" disabled>
           <svg viewBox="0 0 16 16"><path d="M8 12.5v-9M4 7.5 8 3.5l4 4"/></svg>
         </button>
       </form>
     </aside>
   </main>
 
+  <script src="i18n.js"></script>
   <script src="markdown.js"></script>
   <script src="picker.js"></script>
   <script src="app.js"></script>

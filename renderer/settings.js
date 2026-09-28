@@ -19,6 +19,11 @@ function h(tag, props = {}, ...children) {
 }
 
 let st = null; // prefs:get state
+// A string from the page's table (renderer/i18n.js), or the English given here when it has none.
+const tr = (key, english, vars) => {
+  const text = window.t ? window.t(key, vars) : key;
+  return text === key ? (vars ? english.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : english) : text;
+};
 const sections = new Map(); // id -> { title, el, card, build }
 
 async function save(key, value) {
@@ -343,7 +348,7 @@ async function buildSearch(card) {
 
 function buildStartup(card) {
   const list = h('div', { class: 'list', id: 'startup-pages' });
-  const input = h('input', { type: 'url', class: 'grow', id: 'startup-add', placeholder: 'https://example.com' });
+  const input = h('input', { type: 'url', class: 'grow', id: 'startup-add', placeholder: 'https://example.com', 'aria-label': tr('settings.startup.addPage', 'Page to open on startup') });
   const renderPages = () => list.replaceChildren(...st.prefs.startupPages.map((url, i) => h('div', { class: 'item' },
     h('span', { class: 'grow mono', text: url }),
     h('button', { text: 'Remove', onclick: async () => { await save('startupPages', st.prefs.startupPages.filter((_, j) => j !== i)); renderPages(); } }))));
@@ -427,7 +432,7 @@ async function buildPrivacy(card) {
 
   // Ad blocker
   const allowList = h('div', { class: 'list', id: 'adblock-allow' });
-  const allowInput = h('input', { type: 'text', class: 'grow', id: 'adblock-add', placeholder: 'example.com' });
+  const allowInput = h('input', { type: 'text', class: 'grow', id: 'adblock-add', placeholder: 'example.com', 'aria-label': tr('settings.adblock.addSite', 'Site to allow ads on') });
   const renderAllow = () => allowList.replaceChildren(...(st.prefs.adblockAllow.length ? st.prefs.adblockAllow.map((host) => h('div', { class: 'item' },
     h('span', { class: 'grow', text: host }),
     h('button', { text: 'Remove', onclick: async () => { await save('adblockAllow', st.prefs.adblockAllow.filter((x) => x !== host)); renderAllow(); } })))
@@ -690,7 +695,7 @@ function route() {
   current = sections.has(id) ? id : 'you-and-ai';
   if (query()) $('search').value = '';
   show();
-  document.title = `Settings · ${sections.get(current).title}`;
+  document.title = tr('settings.docTitle', 'Settings · {section}', { section: sections.get(current).title });
   window.scrollTo(0, 0);
 }
 
@@ -701,6 +706,9 @@ async function init() {
     return;
   }
   st = await S.get();
+  window.setI18n?.(await S.strings?.().catch(() => null)); // renderer/i18n.js
+  // Section titles in the system's language; English (above) when a locale lacks one.
+  for (const def of SECTIONS) def.title = tr(`settings.section.${def.id}`, def.title);
   applyPageClasses();
   for (const def of SECTIONS) {
     const card = h('div', { class: 'card' });
@@ -713,7 +721,7 @@ async function init() {
     try {
       await def.build(sections.get(def.id).card);
     } catch (err) {
-      sections.get(def.id).card.append(row('Couldn’t load this section', String(err?.message || err)));
+      sections.get(def.id).card.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), String(err?.message || err)));
     }
   }));
   refreshRestartNotes();

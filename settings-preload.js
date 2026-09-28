@@ -24,6 +24,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     taskManager: call('prefs:task-manager'),
     restartTab: call('prefs:restart-tab'),
     internals: call('prefs:internals'),
+    strings: call('settings:strings'), // the page's text in the system's language (features/i18n.js)
     // About → Updates (features/updates.js)
     updates: {
       state: call('settings:updates-state'),

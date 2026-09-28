@@ -42,6 +42,7 @@ const { createAiSites, siteOf: aiSiteOf } = require('./features/ai-sites'); // [
 const { createSafeBrowsing } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
+const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -127,7 +128,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
-  'pagecontext:get', 'pagecontext:set',
+  'pagecontext:get', 'pagecontext:set', 'ui:strings',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen',
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -301,7 +302,7 @@ function modelOptions() {
       const chatOnly = !providers.canUseTools(provider, model);
       return { id: `${provider}:${model}`, label: chatOnly ? `${model} (chat only)` : model, detail: `${info.label} · ${model}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}` };
     });
-    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: 'More models…', detail: 'Search every model on OpenRouter' });
+    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), detail: t('models.more.detail') });
     groups.push({ label: info.label, entries });
   }
   groups.sort((a, b) => a.label.localeCompare(b.label));
@@ -377,12 +378,12 @@ if (TEST) global.__safeBrowsing = safeBrowsing;
 // HTTP Basic/Digest auth: a styled sign-in sheet instead of the native prompt.
 app.on('login', (event, webContents, details, authInfo, callback) => {
   event.preventDefault();
-  const insecure = !authInfo.isProxy && !/^https:/i.test(details.url) ? ' Your connection to this site is not private.' : '';
+  const insecure = !authInfo.isProxy && !/^https:/i.test(details.url) ? t('dialog.signIn.insecure') : '';
   dialogs.ask({
-    message: 'Sign in',
-    detail: `${authInfo.host}${authInfo.realm ? ` (${authInfo.realm})` : ''} requires a username and password.${insecure}`,
-    fields: [{ name: 'username', label: 'Username' }, { name: 'password', label: 'Password', type: 'password' }],
-    buttons: ['Cancel', 'Sign In'],
+    message: t('dialog.signIn'),
+    detail: `${t(authInfo.realm ? 'dialog.signIn.detailRealm' : 'dialog.signIn.detail', { host: authInfo.host, realm: authInfo.realm })}${insecure}`,
+    fields: [{ name: 'username', label: t('dialog.username') }, { name: 'password', label: t('dialog.password'), type: 'password' }],
+    buttons: [t('dialog.cancel'), t('dialog.signIn.button')],
     defaultId: 1,
     cancelId: 0,
     owner: webContents,
@@ -427,7 +428,7 @@ ipcMain.on('page-dialog', (event, req) => {
   try { host = new URL(event.senderFrame?.url || realUrl(wc) || wc.getURL()).host; } catch { host = ''; }
   const embedded = event.senderFrame && event.senderFrame !== wc.mainFrame;
   const title = host ? (embedded ? `An embedded page at ${host} says` : `${host} says`) : '';
-  const checkboxLabel = entry.count > 1 ? "Don't let this page show more dialogs" : '';
+  const checkboxLabel = entry.count > 1 ? t('dialog.muteDialogs') : '';
   const finish = (value, checkboxChecked) => {
     if (checkboxChecked) entry.muted = true;
     event.returnValue = value;
@@ -435,15 +436,15 @@ ipcMain.on('page-dialog', (event, req) => {
   if (req.kind === 'prompt') {
     dialogs.ask({
       title, message: req.message, fields: [{ name: 'value', value: req.defaultValue || '' }],
-      buttons: ['Cancel', 'OK'], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
+      buttons: [t('dialog.cancel'), t('dialog.ok')], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
     }).then(({ response, values, checkboxChecked }) => finish(response === 1 && values ? values.value : null, checkboxChecked));
   } else if (req.kind === 'confirm') {
     dialogs.showMessageBox(win, {
-      title, message: req.message, buttons: ['Cancel', 'OK'], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
+      title, message: req.message, buttons: [t('dialog.cancel'), t('dialog.ok')], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
     }).then(({ response, checkboxChecked }) => finish(response === 1, checkboxChecked));
   } else {
     dialogs.showMessageBox(win, {
-      title, message: req.message, buttons: ['OK'], defaultId: 0, cancelId: 0, owner: wc, checkboxLabel,
+      title, message: req.message, buttons: [t('dialog.ok')], defaultId: 0, cancelId: 0, owner: wc, checkboxLabel,
     }).then(({ checkboxChecked }) => finish(undefined, checkboxChecked));
   }
 });
@@ -494,10 +495,10 @@ function setupPermissions() {
     // remembered as a "no") if the tab navigates away or closes first.
     const { response, cancelled } = await dialog.showMessageBox(win, {
       type: 'question',
-      buttons: ["Don't Allow", 'Allow'],
+      buttons: [t('permission.deny'), t('permission.allow')],
       defaultId: 0,
       cancelId: 0,
-      message: `Allow ${new URL(origin).host} to ${reason}?`,
+      message: t('permission.ask', { host: new URL(origin).host, reason: t(`permission.${permission}`) }),
       owner: wc,
     });
     if (cancelled) return callback(false);
@@ -526,14 +527,14 @@ async function askOpenExternal(wc, details) {
   if (externalDecisions.get(key)) return true;
   let host = '';
   try { host = new URL(origin).host; } catch {}
-  const label = { mailto: 'your email app', tel: 'your phone app', sms: 'your messages app' }[scheme] || `the app for ${scheme}: links`;
+  const label = ['mailto', 'tel', 'sms'].includes(scheme) ? t(`external.${scheme}`) : t('external.other', { scheme });
   const { response, cancelled } = await dialog.showMessageBox(win, {
     type: 'question',
-    buttons: ['Cancel', 'Open'],
+    buttons: [t('dialog.cancel'), t('external.open')],
     defaultId: 1,
     cancelId: 0,
-    message: `Open ${label}?`,
-    detail: host ? `${host} wants to open ${label}.` : `This page wants to open ${label}.`,
+    message: t('external.ask', { app: label }),
+    detail: host ? t('external.detail', { host, app: label }) : t('external.detailPage', { app: label }),
     owner: wc,
   });
   if (cancelled || response !== 1) return false;
@@ -560,12 +561,12 @@ async function pickScreenToShare(request, callback) {
     const screens = pickable.filter((s) => s.id.startsWith('screen:'));
     const windows = pickable.filter((s) => s.id.startsWith('window:'));
     Menu.buildFromTemplate([
-      { label: host ? `Share with ${host}` : 'Share your screen', enabled: false },
-      ...screens.map((s, i) => item(s, screens.length > 1 ? `Entire screen ${i + 1}` : 'Entire screen')),
+      { label: host ? t('menu.shareWith', { host }) : t('menu.shareScreen'), enabled: false },
+      ...screens.map((s, i) => item(s, screens.length > 1 ? t('menu.entireScreenN', { n: i + 1 }) : t('menu.entireScreen'))),
       ...(windows.length ? [{ type: 'separator' }] : []),
       ...windows.slice(0, 20).map((s) => item(s, s.name.length > 60 ? `${s.name.slice(0, 59)}…` : s.name)),
       { type: 'separator' },
-      { label: 'Cancel' },
+      { label: t('menu.cancel') },
     ]).popup({
       window: win,
       // The click runs just after the menu closes; give it a moment before answering.
@@ -708,7 +709,7 @@ async function setupExtensions() {
   // Lists what it asks for (all sites, history, downloads, …) before anything is installed.
   const extensionAsks = (manifest) => {
     const lines = extensionPermissionLines(manifest);
-    return lines.length ? `It can:\n${lines.map((l) => `• ${l}`).join('\n')}` : 'It asks for no special permissions.';
+    return lines.length ? `${t('extension.canDo')}\n${lines.map((l) => `• ${l}`).join('\n')}` : t('extension.noPermissions');
   };
   await installChromeWebStore({
     session: ses,
@@ -716,18 +717,18 @@ async function setupExtensions() {
       if (isContentBlocker(manifest, localizedName)) {
         await dialog.showMessageBox(win, {
           type: 'info',
-          message: `“${localizedName}” can't be added`,
-          detail: 'It blocks content with Chrome filter lists (declarativeNetRequest rulesets) that Lumen cannot apply yet. For ad and tracker blocking, use the built-in blocker in ⋯ → Ad Blocker.',
+          message: t('extension.cantAdd', { name: localizedName }),
+          detail: t('extension.cantAdd.detail'),
         });
         return { action: 'deny' };
       }
       const { response } = await dialog.showMessageBox(win, {
         type: 'question',
-        buttons: ['Cancel', 'Add Extension'],
+        buttons: [t('dialog.cancel'), t('extension.add.button')],
         defaultId: 1,
         cancelId: 0,
-        message: `Add “${localizedName}”?`,
-        detail: `${extensionAsks(manifest)}${(manifest.permissions || []).includes('nativeMessaging') ? '\n\nParts that talk to a desktop app (such as unlocking with the 1Password app) may not work in Lumen. Sign in inside the extension instead.' : ''}`,
+        message: t('extension.add', { name: localizedName }),
+        detail: `${extensionAsks(manifest)}${(manifest.permissions || []).includes('nativeMessaging') ? `\n\n${t('extension.nativeMessaging')}` : ''}`,
       });
       return { action: response === 1 ? 'allow' : 'deny' };
     },
@@ -741,13 +742,13 @@ function extensionsMenu() {
     label: ext.name,
     submenu: [
       ...(ext.manifest.options_page || ext.manifest.options_ui
-        ? [{ label: 'Options', click: () => openTab(`chrome-extension://${ext.id}/${ext.manifest.options_ui?.page || ext.manifest.options_page}`) }]
+        ? [{ label: t('menu.options'), click: () => openTab(`chrome-extension://${ext.id}/${ext.manifest.options_ui?.page || ext.manifest.options_page}`) }]
         : []),
       {
-        label: 'Remove',
+        label: t('menu.remove'),
         click: async () => {
           const { response } = await dialog.showMessageBox(win, {
-            type: 'question', buttons: ['Cancel', 'Remove'], defaultId: 1, cancelId: 0, message: `Remove “${ext.name}”?`,
+            type: 'question', buttons: [t('dialog.cancel'), t('extension.remove.button')], defaultId: 1, cancelId: 0, message: t('extension.remove', { name: ext.name }),
           });
           if (response === 1) await uninstallExtension(ext.id, { session: session.defaultSession }).catch(() => {});
         },
@@ -755,41 +756,41 @@ function extensionsMenu() {
     ],
   }));
   if (items.length) items.push({ type: 'separator' });
-  items.push({ label: 'Get Extensions…', click: () => openTab('https://chromewebstore.google.com/') });
+  items.push({ label: t('menu.getExtensions'), click: () => openTab('https://chromewebstore.google.com/') });
   return items;
 }
 
 function showAppMenu({ x, y }) {
   const wc = activeTab()?.webContents;
   Menu.buildFromTemplate([
-    { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => openTab() },
-    { label: 'New Private Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
-    { label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
-    { label: 'Search Tabs…', accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
+    { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
+    { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
+    { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
+    { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
     { type: 'separator' },
-    { label: 'Find…', accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
-    { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
-    { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
-    { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
-    { label: 'Print…', accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
-    { label: 'Save Page As…', accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
-    { label: 'View Page Source', accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
-    { label: 'Reader Mode', type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
-    ...(process.platform === 'darwin' ? [] : [{ label: 'Full Screen', accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
+    { label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
+    { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
+    { label: t('menu.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
+    { label: t('menu.actualSize'), accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
+    { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
+    { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
+    { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
+    { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
+    ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
     { type: 'separator' },
-    { label: 'Bookmarks', submenu: bookmarksMenu() },
-    { label: 'History', submenu: historyMenu() },
-    { label: 'Downloads', submenu: [{ label: 'Show All Downloads', accelerator: process.platform === 'darwin' ? 'Alt+Cmd+L' : 'Ctrl+Shift+J', click: () => managers.open('downloads') }, { type: 'separator' }, ...downloads.menu()] },
+    { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
+    { label: t('menu.history'), submenu: historyMenu() },
+    { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), accelerator: process.platform === 'darwin' ? 'Alt+Cmd+L' : 'Ctrl+Shift+J', click: () => managers.open('downloads') }, { type: 'separator' }, ...downloads.menu()] },
     { type: 'separator' },
-    { label: 'Tab Groups', submenu: tabGroupsMenu() },
-    { label: 'Search Engine', submenu: searchEngineMenu() },
-    { label: 'Import Bookmarks and History', submenu: importMenu() },
-    { label: 'Ad Blocker', submenu: adblock.menu() },
-    { label: 'Extensions', submenu: extensionsMenu() },
-    { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }, // [settings]
-    ...(isDefaultBrowser() ? [] : [{ label: 'Make Lumen Your Default Browser…', click: makeDefaultBrowser }]),
+    { label: t('menu.tabGroups'), submenu: tabGroupsMenu() },
+    { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
+    { label: t('menu.import'), submenu: importMenu() },
+    { label: t('menu.adBlocker'), submenu: adblock.menu() },
+    { label: t('menu.extensions'), submenu: extensionsMenu() },
+    { label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }, // [settings]
+    ...(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
     { type: 'separator' },
-    { label: 'Developer Tools', accelerator: 'F12', click: () => wc?.toggleDevTools() },
+    { label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() },
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
 
@@ -1119,9 +1120,9 @@ function wireView(tab, url, history = null) {
     let host = '';
     try { host = new URL(realUrl(wc)).host; } catch {}
     dialogs.showMessageBox(win, {
-      type: 'warning', buttons: ['Wait', 'Close Page'], defaultId: 0, cancelId: 0,
-      message: `${host || 'This page'} isn't responding`,
-      detail: 'You can wait for it to respond, or close the page.',
+      type: 'warning', buttons: [t('hung.wait'), t('hung.close')], defaultId: 0, cancelId: 0,
+      message: host ? t('hung.page', { host }) : t('hung.thisPage'),
+      detail: t('hung.detail'),
       owner: wc,
     }).then(({ response, cancelled }) => {
       if (response === 1 && !cancelled && !wc.isDestroyed()) wc.forcefullyCrashRenderer();
@@ -1178,11 +1179,11 @@ function wireView(tab, url, history = null) {
     sendTabs(); // back in the strip while it asks
     dialogs.showMessageBox(win, {
       type: 'warning',
-      buttons: ['Cancel', 'Leave'],
+      buttons: [t('dialog.cancel'), t('leave.button')],
       defaultId: 0,
       cancelId: 0,
-      message: 'Leave site?',
-      detail: 'Changes you made may not be saved.',
+      message: t('leave.title'),
+      detail: t('leave.detail'),
       owner: wc,
       bringToFront: true, // the user asked to close this tab, so show it with its question
     }).then(({ response }) => {
@@ -1575,16 +1576,16 @@ async function organizeTabs() {
   try {
     const list = tabs.filter((t) => alive(t) && isWebUrl(realUrl(t.view.webContents)))
       .map((t) => ({ id: t.id, title: t.view.webContents.getTitle().slice(0, 120), host: hostOf(realUrl(t.view.webContents)) }));
-    if (list.length < 2) throw new Error('Open a few pages first; there is nothing to organize yet.');
+    if (list.length < 2) throw new Error(t('organize.tooFew'));
     const model = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
     const count = tabGroups.applyProposal(await proposeGroups(model, list));
     sendTabs();
     if (!count && win && !win.isDestroyed()) {
-      await dialog.showMessageBox(win, { type: 'info', message: 'No groups suggested', detail: 'These tabs look unrelated, so they were left as they are.' });
+      await dialog.showMessageBox(win, { type: 'info', message: t('organize.none'), detail: t('organize.none.detail') });
     }
   } catch (err) {
-    const detail = err instanceof anthropicSdk().AuthenticationError ? 'Your Anthropic API key was rejected. Check it in Claude settings.' : err.message;
-    if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: "Couldn't organize tabs", detail });
+    const detail = err instanceof anthropicSdk().AuthenticationError ? t('organize.keyRejected') : err.message;
+    if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: t('organize.failed'), detail });
   } finally {
     organizing = false;
     ui()?.send('tabs:organizing', false);
@@ -1639,7 +1640,7 @@ function undoOrganize() {
   if (tabGroups.undoOrganize()) sendTabs();
 }
 
-const colorLabel = (c) => c.charAt(0).toUpperCase() + c.slice(1);
+const colorLabel = (c) => t(`color.${c}`);
 
 // ---------- pinned tabs ----------
 // Pinned tabs sit at the left of the strip, icon only, and are never in a group. Anything that
@@ -1669,10 +1670,10 @@ const tabUrl = (tab) => (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepU
 function audioMenuItems(tab) {
   const muted = tabTools.state(tab, alive(tab)).muted;
   const host = tabTools.siteOf(tabUrl(tab));
-  const items = [{ label: muted ? 'Unmute Tab' : 'Mute Tab', click: () => tabTools.setMuted(tab, !muted) }];
+  const items = [{ label: muted ? t('menu.unmuteTab') : t('menu.muteTab'), click: () => tabTools.setMuted(tab, !muted) }];
   if (host) {
     const siteMuted = tabTools.siteMuted(host);
-    items.push({ label: siteMuted ? 'Unmute Site' : 'Mute Site', click: () => tabTools.setSiteMuted(host, !siteMuted, tabs, tabUrl) });
+    items.push({ label: siteMuted ? t('menu.unmuteSite') : t('menu.muteSite'), click: () => tabTools.setSiteMuted(host, !siteMuted, tabs, tabUrl) });
   }
   return items;
 }
@@ -1693,17 +1694,17 @@ function tabMenu(id, { x, y }) {
   if (!tab) return;
   if (tab.pinned) {
     Menu.buildFromTemplate([
-      { label: 'Unpin Tab', click: () => pinTab(id, false) },
+      { label: t('menu.unpinTab'), click: () => pinTab(id, false) },
       ...audioMenuItems(tab),
       { type: 'separator' },
       ...aiSiteMenu(tab),
-      { label: 'Close Tab', click: () => requestCloseTab(id) },
+      { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
     ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
     return;
   }
   const others = tabGroups.state().filter((g) => g.id !== tab.groupId);
-  const items = [{ label: 'Pin Tab', click: () => pinTab(id, true) }, ...audioMenuItems(tab), { type: 'separator' }, {
-    label: 'Add to New Group',
+  const items = [{ label: t('menu.pinTab'), click: () => pinTab(id, true) }, ...audioMenuItems(tab), { type: 'separator' }, {
+    label: t('menu.addToNewGroup'),
     click: () => {
       if (tab.groupId) tabGroups.remove(id, { byUser: true });
       // A sleeping tab has no webContents to read; its sleep snapshot has the same info.
@@ -1714,11 +1715,11 @@ function tabMenu(id, { x, y }) {
       ui()?.send('group:rename-start', group.id);
     },
   }];
-  if (others.length) items.push({ label: 'Add to Group', submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
-  if (tab.groupId) items.push({ label: 'Remove from Group', click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
-  items.push({ type: 'separator' }, { label: 'Organize Tabs by Topic', click: organizeByTopic });
-  if (tabGroups.canUndo()) items.push({ label: 'Undo Organize', click: undoOrganize });
-  items.push({ type: 'separator' }, ...aiSiteMenu(tab), { label: 'Close Tab', click: () => requestCloseTab(id) });
+  if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
+  if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
+  items.push({ type: 'separator' }, { label: t('menu.organizeByTopic'), click: organizeByTopic });
+  if (tabGroups.canUndo()) items.push({ label: t('menu.undoOrganize'), click: undoOrganize });
+  items.push({ type: 'separator' }, ...aiSiteMenu(tab), { label: t('menu.closeTab'), click: () => requestCloseTab(id) });
   Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
 
@@ -1728,31 +1729,31 @@ function aiSiteMenu(tab) {
   const site = aiSiteOf(url);
   if (!site) return [];
   const off = aiSites.isOff(url);
-  return [{ label: off ? `Turn On AI on ${site}` : `Turn Off AI on ${site}`, click: () => { aiSites.set(site, !off); sendTabs(); } }, { type: 'separator' }];
+  return [{ label: off ? t('menu.turnOnAi', { site }) : t('menu.turnOffAi', { site }), click: () => { aiSites.set(site, !off); sendTabs(); } }, { type: 'separator' }];
 }
 
 function groupMenu(groupId, { x, y }) {
   const group = tabGroups.groups.get(groupId);
   if (!group) return;
   Menu.buildFromTemplate([
-    { label: 'Rename…', click: () => ui()?.send('group:rename-start', groupId) },
-    { label: 'Colour', submenu: tabGroups.GROUP_COLORS.map((c) => ({ label: colorLabel(c), type: 'radio', checked: group.color === c, click: () => { group.color = c; sendTabs(); } })) },
-    { label: 'New Tab in Group', click: () => openTab(undefined, { groupId }) },
+    { label: t('menu.rename'), click: () => ui()?.send('group:rename-start', groupId) },
+    { label: t('menu.colour'), submenu: tabGroups.GROUP_COLORS.map((c) => ({ label: colorLabel(c), type: 'radio', checked: group.color === c, click: () => { group.color = c; sendTabs(); } })) },
+    { label: t('menu.newTabInGroup'), click: () => openTab(undefined, { groupId }) },
     { type: 'separator' },
-    { label: 'Ungroup', click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
-    { label: 'Close Group', click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id)) },
+    { label: t('menu.ungroup'), click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
+    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id)) },
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
 
 function tabGroupsMenu() {
   const mode = groupingMode();
   return [
-    { label: 'Organize Tabs by Topic', click: organizeByTopic },
-    { label: 'Undo Organize', enabled: tabGroups.canUndo(), click: undoOrganize },
-    { label: 'Organize Tabs with AI', enabled: !organizing, click: organizeTabs },
+    { label: t('menu.organizeByTopic'), click: organizeByTopic },
+    { label: t('menu.undoOrganize'), enabled: tabGroups.canUndo(), click: undoOrganize },
+    { label: t('menu.organizeWithAi'), enabled: !organizing, click: organizeTabs },
     { type: 'separator' },
-    { label: 'Group Automatically', enabled: false },
-    ...[['off', 'Off'], ['site', 'By Site'], ['topic', 'By Topic']].map(([value, label]) => ({ label, type: 'radio', checked: mode === value, click: () => setTabGrouping(value) })),
+    { label: t('menu.groupAutomatically'), enabled: false },
+    ...[['off', t('menu.off')], ['site', t('menu.bySite')], ['topic', t('menu.byTopic')]].map(([value, label]) => ({ label, type: 'radio', checked: mode === value, click: () => setTabGrouping(value) })),
   ];
 }
 
@@ -1818,17 +1819,20 @@ async function runImport(id) {
     const result = importBrowser(id);
     await dialog.showMessageBox(win, {
       type: 'info',
-      message: `Imported from ${result.label}`,
-      detail: `${result.bookmarks} bookmark${result.bookmarks === 1 ? '' : 's'} and ${result.history.toLocaleString()} history entr${result.history === 1 ? 'y' : 'ies'} added. Passwords and cookies are not imported.`,
+      message: t('import.done', { browser: result.label }),
+      detail: t('import.detail', {
+        bookmarks: t(result.bookmarks === 1 ? 'import.bookmarks.one' : 'import.bookmarks.other', { count: result.bookmarks }),
+        history: t(result.history === 1 ? 'import.history.one' : 'import.history.other', { count: result.history.toLocaleString() }),
+      }),
     });
   } catch (err) {
-    await dialog.showMessageBox(win, { type: 'warning', message: 'Import failed', detail: err.message });
+    await dialog.showMessageBox(win, { type: 'warning', message: t('import.failed'), detail: err.message });
   }
 }
 
 function importMenu() {
   const found = importer.detectBrowsers();
-  if (!found.length) return [{ label: 'No other browsers found', enabled: false }];
+  if (!found.length) return [{ label: t('menu.noBrowsers'), enabled: false }];
   return found.map((b) => ({ label: b.label, click: () => runImport(b.id) }));
 }
 
@@ -1852,16 +1856,16 @@ ipcMain.handle('history:remove', (event, url) => {
 
 function historyMenu() {
   const recent = [...history.values()].sort((a, b) => b.last - a.last).slice(0, 15);
-  if (!recent.length) return [{ label: 'No history yet', enabled: false }];
+  if (!recent.length) return [{ label: t('menu.noHistory'), enabled: false }];
   return [
-    { label: 'Show All History', accelerator: process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H', click: openHistoryPage },
+    { label: t('menu.showAllHistory'), accelerator: process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H', click: openHistoryPage },
     { type: 'separator' },
     ...recent.map((h) => ({ label: (h.title || bareUrl(h.url)).slice(0, 60), click: () => openTab(h.url) })),
     { type: 'separator' },
     {
-      label: 'Clear History…',
+      label: t('menu.clearHistory'),
       click: async () => {
-        const { response } = await dialog.showMessageBox(win, { type: 'question', buttons: ['Cancel', 'Clear'], defaultId: 1, cancelId: 0, message: 'Clear browsing history?', detail: 'Removes visited pages and address bar suggestions. Bookmarks stay.' });
+        const { response } = await dialog.showMessageBox(win, { type: 'question', buttons: [t('dialog.cancel'), t('history.clear.button')], defaultId: 1, cancelId: 0, message: t('history.clear'), detail: t('history.clear.detail') });
         if (response !== 1) return;
         history.clear();
         fs.rm(HISTORY_FILE(), { force: true }, () => {});
@@ -1968,8 +1972,8 @@ function bookmarksMenu() {
   const current = wc ? realUrl(wc) : '';
   const marked = list.some((b) => b.url === current);
   return [
-    { label: marked ? 'Remove Bookmark' : 'Bookmark This Page', accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
-    { label: 'Show All Bookmarks', accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
+    { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
+    { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: b.title || b.url, click: () => openTab(b.url) })),
     ...[...new Set(list.filter((b) => b.folder).map((b) => b.folder))].map((folder) => ({
@@ -2084,14 +2088,14 @@ function showContextMenu(wc, p) {
   const selection = p.selectionText.trim();
   if (p.linkURL && isWebUrl(p.linkURL)) {
     items.push(
-      { label: 'Open Link in New Tab', click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id }) },
-      { label: 'Copy Link', click: () => clipboard.writeText(p.linkURL) },
+      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id }) },
+      { label: t('menu.copyLink'), click: () => clipboard.writeText(p.linkURL) },
       { type: 'separator' },
     );
   }
   if (p.mediaType === 'image' && p.srcURL) {
-    if (isWebUrl(p.srcURL)) items.push({ label: 'Open Image in New Tab', click: () => openTab(p.srcURL, { background: true }) });
-    items.push({ label: 'Copy Image', click: () => wc.copyImageAt(p.x, p.y) }, { type: 'separator' });
+    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true }) });
+    items.push({ label: t('menu.copyImage'), click: () => wc.copyImageAt(p.x, p.y) }, { type: 'separator' });
   }
   items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
@@ -2100,16 +2104,16 @@ function showContextMenu(wc, p) {
     const short = selection.length > 30 ? `${selection.slice(0, 29)}…` : selection;
     items.push(
       { role: 'copy' },
-      { label: `Search ${engineFor(readSettings().searchEngine).label} for “${short}”`, click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
-      { label: 'Ask Claude About Selection', click: () => ui()?.send('ask-selection', selection) },
+      { label: t('menu.searchFor', { engine: engineFor(readSettings().searchEngine).label, text: short }), click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
+      { label: t('menu.askAboutSelection'), click: () => ui()?.send('ask-selection', selection) },
       { type: 'separator' },
     );
   }
   if (items.length === 0) {
     items.push(
-      { label: 'Back', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
-      { label: 'Forward', enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
-      { label: 'Reload', click: () => wc.reload() },
+      { label: t('menu.back'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
+      { label: t('menu.forward'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
+      { label: t('menu.reload'), click: () => wc.reload() },
       { type: 'separator' },
     );
     if (isWebUrl(wc.getURL())) {
@@ -2122,7 +2126,7 @@ function showContextMenu(wc, p) {
   }
   const extensionItems = extensions ? extensions.getContextMenuItems(wc, p) : [];
   if (extensionItems.length) items.push(...extensionItems, { type: 'separator' });
-  items.push({ label: 'Inspect Element', click: () => wc.inspectElement(p.x, p.y) });
+  items.push({ label: t('menu.inspect'), click: () => wc.inspectElement(p.x, p.y) });
   Menu.buildFromTemplate(items).popup({ window: win });
 }
 
@@ -2148,6 +2152,8 @@ function handleShortcut(event, input) {
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
   else if (mod && key === 'r') reloadActive();
   else if (mod && key === 'tab') cycleTab(input.shift ? -1 : 1);
+  else if (mod && input.shift && (key === 'pageup' || key === 'pagedown')) { const i = tabs.findIndex((t) => t.id === activeId); if (i !== -1) moveTab(activeId, i + (key === 'pageup' ? -1 : 1)); }
+  else if (mod && (key === 'pageup' || key === 'pagedown')) cycleTab(key === 'pageup' ? -1 : 1);
   else if (mod && /^[1-9]$/.test(key)) { const t = key === '9' ? tabs[tabs.length - 1] : tabs[Number(key) - 1]; if (t) switchTab(t.id); }
   else if (mod && (key === '=' || key === '+')) zoomBy(wc, 0.5);
   else if (mod && key === '-') zoomBy(wc, -0.5);
@@ -2347,51 +2353,51 @@ function macMenu() {
   return Menu.buildFromTemplate([
     { role: 'appMenu' },
     {
-      label: 'File',
+      label: t('menu.file'),
       submenu: [
-        { label: 'New Tab', ...shown('Cmd+T'), click: () => openTab() },
-        { label: 'New Private Window', ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
-        { label: 'Reopen Closed Tab', ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
-        { label: 'Search Tabs…', ...shown('Cmd+Shift+A'), click: openTabSearch },
-        { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
+        { label: t('menu.newTab'), ...shown('Cmd+T'), click: () => openTab() },
+        { label: t('menu.newPrivateWindow'), ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
+        { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
+        { label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch },
+        { label: t('menu.openLocation'), ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
-        { label: 'Save Page As…', ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
-        { label: 'Print…', ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
+        { label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
+        { label: t('menu.print'), ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
         { type: 'separator' },
-        { label: 'Close Tab', ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
+        { label: t('menu.closeTab'), ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
       ],
     },
     { role: 'editMenu' },
     {
-      label: 'View',
+      label: t('menu.view'),
       submenu: [
-        { label: 'Reload', ...shown('Cmd+R'), click: reloadActive },
-        { label: 'Find…', ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
-        { label: 'Reader Mode', click: () => toggleReaderActive() },
-        { label: 'View Page Source', ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
+        { label: t('menu.reload'), ...shown('Cmd+R'), click: reloadActive },
+        { label: t('menu.find'), ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
+        { label: t('menu.readerMode'), click: () => toggleReaderActive() },
+        { label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
         { type: 'separator' },
-        { label: 'Zoom In', ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
-        { label: 'Zoom Out', ...shown('Cmd+-'), click: () => zoomBy(wc(), -0.5) },
-        { label: 'Actual Size', ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
+        { label: t('menu.zoomIn'), ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
+        { label: t('menu.zoomOut'), ...shown('Cmd+-'), click: () => zoomBy(wc(), -0.5) },
+        { label: t('menu.actualSize'), ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
         { type: 'separator' },
-        { label: 'Toggle Sidebar', ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
-        { label: 'Developer Tools', accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
+        { label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
+        { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
     },
     {
-      label: 'History',
+      label: t('menu.history'),
       submenu: [
-        { label: 'Back', ...shown('Cmd+['), click: () => wc()?.navigationHistory.goBack() },
-        { label: 'Forward', ...shown('Cmd+]'), click: () => wc()?.navigationHistory.goForward() },
-        { label: 'Show All History', ...shown('Cmd+Y'), click: openHistoryPage },
+        { label: t('menu.back'), ...shown('Cmd+['), click: () => wc()?.navigationHistory.goBack() },
+        { label: t('menu.forward'), ...shown('Cmd+]'), click: () => wc()?.navigationHistory.goForward() },
+        { label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage },
       ],
     },
-    { label: 'Bookmarks', submenu: [{ label: 'Bookmark This Page', ...shown('Cmd+D'), click: toggleBookmark }, { label: 'Show All Bookmarks', ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }] },
-    { label: 'Downloads', submenu: [{ label: 'Show All Downloads', ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
+    { label: t('menu.bookmarks'), submenu: [{ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }, { label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }] },
+    { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
     { role: 'windowMenu' },
-    { role: 'help', submenu: [{ label: 'Lumen on GitHub', click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
+    { role: 'help', submenu: [{ label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
 }
 
@@ -2446,9 +2452,9 @@ function createWindow() {
     if (uiHungAsked) return;
     uiHungAsked = true;
     dialogs.showMessageBox(win, {
-      type: 'warning', buttons: ['Wait', 'Reload Lumen'], defaultId: 0, cancelId: 0,
-      message: "Lumen's window isn't responding",
-      detail: 'Your tabs are safe. Reloading redraws the toolbar and sidebar.',
+      type: 'warning', buttons: [t('hung.wait'), t('uiHung.reload')], defaultId: 0, cancelId: 0,
+      message: t('uiHung.title'),
+      detail: t('uiHung.detail'),
     }).then(({ response }) => { if (response === 1 && ui()) ui().forcefullyCrashRenderer(); });
   });
   win.webContents.on('responsive', () => { uiHungAsked = false; });
@@ -2713,9 +2719,14 @@ ipcMain.on('tab:new', (_e, url) => {
   if (internal) openSettingsPage(internal.section);
   else openTab(url ? resolveInput(url) : undefined);
 });
+// The UI's and Settings' strings in the system's language (features/i18n.js).
+ipcMain.on('ui:strings', (event) => { event.returnValue = { locale: i18n().locale, strings: i18n().strings }; });
+ipcMain.handle('settings:strings', () => ({ locale: i18n().locale, strings: i18n().strings }));
+if (TEST) global.__i18n = () => i18n(); // test/a11y.js
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));
-ipcMain.on('tab:move', (_e, id, toIndex) => {
+ipcMain.on('tab:move', (_e, id, toIndex) => moveTab(id, toIndex));
+function moveTab(id, toIndex) {
   const from = tabs.findIndex((t) => t.id === id);
   if (from === -1) return;
   const [tab] = tabs.splice(from, 1);
@@ -2741,7 +2752,7 @@ ipcMain.on('tab:move', (_e, id, toIndex) => {
   tabGroups.cleanup();
   tabGroups.arrange();
   sendTabs();
-});
+}
 ipcMain.on('bookmark:toggle', toggleBookmark);
 ipcMain.on('tab:context-menu', (_e, id, point) => tabMenu(id, point));
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
@@ -2986,7 +2997,7 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     if (authTab && tabs.some((t) => t.id === authTab)) setTimeout(() => { if (tabs.some((t) => t.id === authTab)) closeTab(authTab); }, 1200);
     resolve(result);
   };
-  cancelOpenRouterSignIn = () => finish({ ok: false, cancelled: true, message: 'OpenRouter sign-in was cancelled.' });
+  cancelOpenRouterSignIn = () => finish({ ok: false, cancelled: true, message: t('openrouter.cancelled') });
   // Closing the sign-in tab (or it failing to load, offline, and the user closing it) cancels at
   // once, instead of leaving the button disabled until the 5-minute timeout.
   const watch = setInterval(() => { if (authTab && !tabs.some((t) => t.id === authTab)) cancelOpenRouterSignIn?.(); }, 700);
@@ -3007,11 +3018,11 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
       finish({ ok: true });
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' }).end('<title>Sign-in failed</title><body style="font:15px system-ui;padding:40px">OpenRouter sign-in failed. Close this tab and try again.</body>');
-      finish({ ok: false, message: `OpenRouter sign-in failed: ${err.message}` });
+      finish({ ok: false, message: t('openrouter.failed', { error: err.message }) });
     }
   });
-  const timer = setTimeout(() => finish({ ok: false, message: 'OpenRouter sign-in timed out. Try again.' }), 5 * 60 * 1000);
-  server.on('error', (err) => finish({ ok: false, message: `OpenRouter sign-in couldn't start: ${err.message}` }));
+  const timer = setTimeout(() => finish({ ok: false, message: t('openrouter.timeout') }), 5 * 60 * 1000);
+  server.on('error', (err) => finish({ ok: false, message: t('openrouter.cantStart', { error: err.message }) }));
   server.listen(0, '127.0.0.1', () => {
     const callback = `http://127.0.0.1:${server.address().port}/callback`;
     const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
