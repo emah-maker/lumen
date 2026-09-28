@@ -109,6 +109,8 @@ const { findClaude, buildArgs, stdinMessage, describeFailure, parseAuthStatus } 
   const rows = await ui.evaluate(() => ({ steps: document.querySelectorAll('#messages .step:not(.mcp-step)').length, mcp: document.querySelectorAll('#messages .mcp-step').length, notices: [...document.querySelectorAll('#messages .notice')].map((n) => n.textContent) }));
   check('one step row per call, none duplicated as an external agent', rows.steps >= 1 && rows.mcp === 0 && !rows.notices.some((n) => /connected to Lumen|disconnected/.test(n)), JSON.stringify(rows));
   check('the reply shows in the chat', /Example Domain/i.test(await ui.evaluate(() => [...document.querySelectorAll('#messages .msg.assistant')].pop()?.textContent || '')), 'no reply bubble');
+  const replyModel = await ui.evaluate(() => [...document.querySelectorAll('#messages .reply-model')].pop()?.textContent || '');
+  check('the reply is labelled "Claude Code", not "Claude Claude Code"', replyModel === 'Claude Code', replyModel);
   const session = await app.evaluate(() => global.__agent.messages.settings?.ccSession || null);
   check('the Claude Code session is kept for follow-ups', /^[0-9a-f-]{36}$/.test(session || ''), session);
   await ui.click('#new-chat');

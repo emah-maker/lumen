@@ -1608,8 +1608,13 @@ function labelReply(bubble, modelId) {
   flushStreaming(bubble);
   if (!bubble || !modelId || bubble.querySelector('.reply-model')) return;
   const option = [...$('model').options].find((o) => o.value === modelId);
-  const group = option?.parentElement?.label;
-  const name = option ? (group && group !== 'Claude' ? `${group} · ${option.textContent}` : `Claude ${option.textContent}`) : modelId;
+  // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
+  const group = modelGroups.get(modelId) ?? option?.parentElement?.label;
+  // Local engines (Claude Code, Grok Build) already name themselves.
+  const name = !option ? modelId
+    : group === 'Claude' ? `Claude ${option.textContent}`
+    : !group || /^Your .* account$/.test(group) ? option.textContent
+    : `${group} · ${option.textContent}`;
   bubble.append(Object.assign(document.createElement('span'), { className: 'reply-model', textContent: name }));
 }
 
