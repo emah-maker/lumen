@@ -97,18 +97,18 @@ function setupAiAgents(deps) {
   };
 
   // ---------- Grok Build engine (created on first use) ----------
-  // See grok-build.js's file header for why this engine, unlike claudeCodeEngine above, never mints
-  // its own per-run MCP server config: it reuses the pre-existing user-scope `lumen` entry instead.
+  // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
+  // grok-build.js's file header); only the user's sign-in is shared with their ~/.grok.
 
   let grokBuild = null;
   let grokBuildFound = false;
   let grokBuildSignedIn = 'unknown'; // true | false | 'unknown' — mirrors grokBuild.status().signedIn
   let grokBuildDetail = null; // the CLI's reported default model, when known
   const grokBuildModule = () => require('../grok-build');
-  // Grok Build in the sidebar is experimental (see grok-build.js's header: its isolation is weaker
-  // than Claude Code's, and in testing the model often couldn't see Lumen's tools on its first turn).
+  // Grok Build in the sidebar is experimental and labelled unsafe (see grok-build.js's header: it is
+  // held to Lumen's tools by grok's own permission rules, not a tool allowlist like Claude Code's).
   // It is offered only once the user has connected Lumen to Grok Build ("Add to Grok Build" in
-  // Settings, which is also the MCP entry this engine relies on), or with LUMEN_GROK_SIDEBAR=1.
+  // Settings), or with LUMEN_GROK_SIDEBAR=1.
   const grokSidebar = () => process.env.LUMEN_GROK_SIDEBAR === '1' || (process.env.LUMEN_GROK_SIDEBAR !== '0' && readSettings().grokSidebar === true);
   const grokBuildEngine = () => {
     if (!grokBuild) {
@@ -426,10 +426,10 @@ function setupAiAgents(deps) {
       }] : []),
       ...(grokSidebar() && grokBuildFound ? [{
         id: 'grokbuild:default',
-        label: 'Grok Build (experimental)',
+        label: 'Grok Build (unsafe, experimental)',
         detail: grokBuildSignedIn === false
           ? 'Not signed in: open a terminal, run grok, then run grok login'
-          : `${GROK_BUILD_NOTE} · experimental: it may answer without being able to use your tabs, especially on a chat’s first message`,
+          : `${GROK_BUILD_NOTE} · unsafe, experimental: held to Lumen’s tools by Grok’s own permission rules, which are weaker than Claude Code’s`,
         group: 'Your Grok account',
         signedIn: grokBuildSignedIn,
         accountDetail: grokBuildDetail,
