@@ -3,7 +3,8 @@ const js = require('@eslint/js');
 const globals = require('globals');
 
 module.exports = [
-  { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**'] },
+  // preload.bundle.js is generated from preload.js (scripts/bundle-preload.js); lint the source.
+  { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**', 'preload.bundle.js'] },
   js.configs.recommended,
   {
     languageOptions: { ecmaVersion: 'latest', sourceType: 'commonjs', globals: { ...globals.node } },
