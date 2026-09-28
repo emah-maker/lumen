@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src data:" />
+  <title>Bookmarks</title>
+  <link rel="stylesheet" href="managers.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Bookmarks</h1>
+      <button id="add" type="button">Add bookmark</button>
+      <button id="import" type="button">Import…</button>
+      <button id="export" type="button">Export…</button>
+    </header>
+    <input id="q" type="search" placeholder="Search bookmarks" aria-label="Search bookmarks" autocomplete="off" />
+    <p id="status" role="status" aria-live="polite"></p>
+    <div id="form-slot"></div>
+    <div id="list"></div>
+    <datalist id="folders"></datalist>
+  </main>
+  <script src="bookmarks.js"></script>
+</body>
+</html>

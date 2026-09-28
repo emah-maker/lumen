@@ -16,7 +16,10 @@ function createDownloads(deps) {
   const downloads = []; // { id, name, path, state, received, total, paused, awaitingOk } (+ item, url, contents: not sent)
   const reserved = new Set(); // paths claimed by downloads still running, so two same-named files don't collide
   let downloadSeq = 0;
-  const sendDownloads = () => deps.ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total, paused }) => ({ id, name, state, received, total, paused })));
+  const sendDownloads = () => {
+    deps.ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total, paused }) => ({ id, name, state, received, total, paused })));
+    deps.onChange?.(); // the Downloads page (features/managers.js)
+  };
 
   // The first free name in `dir`: "report.pdf", then "report (1).pdf", …
   function freePath(dir, base) {
@@ -63,7 +66,7 @@ function createDownloads(deps) {
         if (ask) item.setSaveDialogOptions({ defaultPath: target });
         else item.setSavePath(target);
       }
-      const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky, awaitingOk: risky };
+      const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky, awaitingOk: risky, started: Date.now() };
       Object.defineProperties(entry, { item: { value: item, writable: true }, url: { value: url }, contents: { value: contents } });
       downloads.unshift(entry);
       trim();
@@ -176,7 +179,27 @@ function createDownloads(deps) {
     return items;
   }
 
-  return { list: downloads, send: sendDownloads, setup, menu };
+  // The Downloads page: every remembered download, and what its buttons do.
+  const summary = () => downloads.map((d) => ({
+    id: d.id, name: d.name, path: d.path, state: d.state, received: d.received, total: d.total, paused: d.paused,
+    awaitingOk: Boolean(d.awaitingOk), started: d.started, url: d.url,
+    canResume: d.state === 'interrupted' && Boolean(d.item?.canResume?.()),
+    exists: d.state === 'completed' && Boolean(d.path) && fs.existsSync(d.path),
+  }));
+  function act(id, action) {
+    const d = downloads.find((x) => x.id === id);
+    if (!d) return false;
+    if (action === 'open' && d.state === 'completed' && d.path) { deps.shell.openPath(d.path); return true; }
+    if (action === 'show' && d.state === 'completed' && d.path) { deps.shell.showItemInFolder(d.path); return true; }
+    if (action === 'pause' && d.state === 'progressing' && !d.awaitingOk && !d.paused) { d.item.pause(); return true; }
+    if (action === 'resume' && d.state === 'progressing' && !d.awaitingOk && d.paused) { d.item.resume(); return true; }
+    if (action === 'cancel' && d.state === 'progressing') { if (d.held) finish(d, 'cancelled'); else d.item.cancel(); return true; }
+    if (action === 'retry' && (d.state === 'cancelled' || d.state === 'interrupted')) { retry(d); return true; }
+    if (action === 'remove' && d.state !== 'progressing') { downloads.splice(downloads.indexOf(d), 1); sendDownloads(); return true; }
+    return false;
+  }
+
+  return { list: downloads, send: sendDownloads, setup, menu, summary, act };
 }
 
 module.exports = { createDownloads };

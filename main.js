@@ -32,6 +32,8 @@ const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName } = require('./tab-groups');
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
+const { createManagers, pageOf: managerPageOf } = require('./features/managers'); // Bookmarks and Downloads pages
+const { createSiteActivity } = require('./features/site-activity');
 const { createDialogs } = require('./features/dialogs');
 const { createSiteSecurity } = require('./features/site-security');
 const instance = require('./features/instance');
@@ -48,7 +50,7 @@ const pageTools = require('./features/page-tools').createPageTools({
   downloadDir: () => settingsBackend.downloadDir(),
   showSaveDialog: (options) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(win, options)),
 });
-const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url);
+const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
 const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL);
@@ -745,7 +747,7 @@ function showAppMenu({ x, y }) {
     { type: 'separator' },
     { label: 'Bookmarks', submenu: bookmarksMenu() },
     { label: 'History', submenu: historyMenu() },
-    { label: 'Downloads', submenu: downloads.menu() },
+    { label: 'Downloads', submenu: [{ label: 'Show All Downloads', accelerator: process.platform === 'darwin' ? 'Alt+Cmd+L' : 'Ctrl+Shift+J', click: () => managers.open('downloads') }, { type: 'separator' }, ...downloads.menu()] },
     { type: 'separator' },
     { label: 'Tab Groups', submenu: tabGroupsMenu() },
     { label: 'Search Engine', submenu: searchEngineMenu() },
@@ -916,7 +918,7 @@ function tabState() {
         url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: t.favicon || null,
-        page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url), // Lumen's own pages get their own icon
+        page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url) || managerPageOf(url), // Lumen's own pages get their own icon
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
@@ -978,17 +980,18 @@ function layout() {
   }
 }
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false } = {}) {
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null } = {}) {
   const view = new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings),
       ...(historyPage ? { preload: path.join(__dirname, 'history-preload.js') } : {}),
+      ...(managerPage ? { preload: managers.PRELOAD } : {}), // the Bookmarks or Downloads page
     },
   });
   const id = nextTabId++;
-  const tab = { id, view, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now() };
+  const tab = { id, view, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}) };
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
@@ -1231,7 +1234,10 @@ function sleepTab(tab) {
 function wakeTab(tab) {
   if (!tab.sleeping) return;
   const view = new WebContentsView({
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) },
+    webPreferences: {
+      sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
+      ...(tab.managerPage ? { preload: managers.PRELOAD } : {}),
+    },
   });
   tab.view = view;
   tab.sleeping = false;
@@ -1736,6 +1742,7 @@ function importBrowser(id, profilePath) {
     addedBookmarks++;
   }
   writeSettings({ ...readSettings(), bookmarks: list });
+  managers.pushBookmarks();
   let addedHistory = 0;
   for (const h of data.history) {
     if (isCaptchaPage(h.url)) continue;
@@ -1900,6 +1907,7 @@ function toggleBookmark() {
   else list.push({ url, title: wc.getTitle() || hostOf(url) });
   writeSettings({ ...readSettings(), bookmarks: list });
   sendTabs();
+  managers.pushBookmarks(); // an open Bookmarks page
 }
 
 function bookmarksMenu() {
@@ -1909,6 +1917,7 @@ function bookmarksMenu() {
   const marked = list.some((b) => b.url === current);
   return [
     { label: marked ? 'Remove Bookmark' : 'Bookmark This Page', accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
+    { label: 'Show All Bookmarks', accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: b.title || b.url, click: () => openTab(b.url) })),
     ...[...new Set(list.filter((b) => b.folder).map((b) => b.folder))].map((folder) => ({
@@ -1925,7 +1934,28 @@ const downloads = createDownloads({
   win: () => win,
   downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
   askWhereToSave: () => settingsBackend.askWhereToSave(),
+  onChange: () => managers?.pushDownloads(),
 });
+
+// ---------- Bookmarks and Downloads pages (features/managers.js) ----------
+
+const managers = createManagers({
+  ipcMain, dialog, hostOf,
+  win: () => win,
+  tabs: () => tabs,
+  alive,
+  openTab: (url, opts) => openTab(url, opts),
+  switchTab: (id) => switchTab(id),
+  bookmarks: () => bookmarks(),
+  saveBookmarks: (list) => writeSettings({ ...readSettings(), bookmarks: list }),
+  bookmarksChanged: () => sendTabs(),
+  downloads,
+  openFolder: () => shell.openPath(settingsBackend.downloadDir()),
+});
+managers.setup();
+// When each site last stored cookies: lets Clear browsing data honour a time range for them.
+const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
+if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol.
@@ -2060,6 +2090,9 @@ function handleShortcut(event, input) {
   else if (mod && key === 'l') focusAddress();
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') { ui()?.focus(); ui()?.send('find:open'); }
+  else if (mod && input.shift && key === 'o') managers.open('bookmarks');
+  else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
+  else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
   else if (mod && key === 'r') reloadActive();
   else if (mod && key === 'tab') cycleTab(input.shift ? -1 : 1);
@@ -2255,7 +2288,8 @@ function macMenu() {
         { label: 'Show All History', ...shown('Cmd+Y'), click: openHistoryPage },
       ],
     },
-    { label: 'Bookmarks', submenu: [{ label: 'Bookmark This Page', ...shown('Cmd+D'), click: toggleBookmark }] },
+    { label: 'Bookmarks', submenu: [{ label: 'Bookmark This Page', ...shown('Cmd+D'), click: toggleBookmark }, { label: 'Show All Bookmarks', ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }] },
+    { label: 'Downloads', submenu: [{ label: 'Show All Downloads', ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
     { role: 'windowMenu' },
     { role: 'help', submenu: [{ label: 'Lumen on GitHub', click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
@@ -2382,18 +2416,23 @@ function ungroupTabsFor(ids) {
   return count;
 }
 
-// [settings] the AI agent (and MCP clients, which use it) never gets the settings tab as its page.
-const agentActiveTab = () => { const t = activeTab(); return t && tabs.find((x) => x.id === t.id)?.settings ? null : t; };
-// Why there's no page to work on while the settings tab is in front (instead of "No tab is open").
-const noTabReason = () => (tabs.find((t) => t.id === activeId)?.settings
-  ? 'The active tab is Lumen Settings, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.'
-  : null);
+// [settings] the AI agent (and MCP clients, which use it) never gets the settings tab as its page,
+// nor the Bookmarks or Downloads page (their page API can edit bookmarks and open downloaded files).
+const agentOffLimits = (t) => Boolean(t && (t.settings || (alive(t) && managerPageOf(t.view.webContents.getURL()))));
+const agentActiveTab = () => { const t = activeTab(); return t && agentOffLimits(tabs.find((x) => x.id === t.id)) ? null : t; };
+// Why there's no page to work on while one of those is in front (instead of "No tab is open").
+const noTabReason = () => {
+  const t = tabs.find((x) => x.id === activeId);
+  if (!agentOffLimits(t)) return null;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${managerPageOf(t.view.webContents.getURL()) === 'bookmarks' ? 'Bookmarks' : 'Downloads'} page`;
+  return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
+};
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
 // is woken, since the agent is about to use it.
 const agentTabById = (id) => {
   const t = tabs.find((x) => x.id === id);
   if (t?.sleeping) wakeTab(t);
-  return t && alive(t) && !t.settings ? { id: t.id, webContents: t.view.webContents } : null;
+  return t && alive(t) && !agentOffLimits(t) ? { id: t.id, webContents: t.view.webContents } : null;
 };
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
@@ -2447,6 +2486,7 @@ const settingsBackend = settingsPage.create({
   tabsInfo: () => tabs.filter(alive).map((t) => ({ id: t.id, title: t.view.webContents.getTitle(), wc: t.view.webContents, settings: Boolean(t.settings) })),
   history: () => history,
   saveHistory: saveHistorySoon,
+  siteActivity,
   downloads: downloads.list,
   sendDownloads: downloads.send,
   permissionDecisions,
@@ -2586,7 +2626,7 @@ ipcMain.on('group:rename', (_e, id, name) => {
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);
-ipcMain.on('downloads:menu', (_e, { x, y }) => Menu.buildFromTemplate(downloads.menu()).popup({ window: win, x: Math.round(x), y: Math.round(y) }));
+ipcMain.on('downloads:menu', (_e, { x, y }) => Menu.buildFromTemplate([...downloads.menu(), { type: 'separator' }, { label: 'Show All Downloads', click: () => managers.open('downloads') }]).popup({ window: win, x: Math.round(x), y: Math.round(y) }));
 ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
 ipcMain.on('nav:go', (_e, text) => {
   const wc = activeTab()?.webContents;
@@ -2905,6 +2945,7 @@ app.whenReady().then(async () => {
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
   downloads.setup();
+  siteActivity.watch(session.defaultSession);
   loadChat();
   loadHistory();
   // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs.

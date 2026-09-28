@@ -354,7 +354,7 @@ async function buildPrivacy(card) {
     [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
   const box = (id, text, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked }), text);
   const result = status('clear-status');
-  card.append(stackRow('Clear browsing data', 'History follows the time range. Cookies, site data and the cache are cleared for all time: Electron can only remove them all at once.',
+  card.append(stackRow('Clear browsing data', 'For a time range, cookies and site data are removed for the sites you visited or that stored cookies in that time (all of that site’s data, not only the recent part). Cached images and files are always cleared for all time: Electron has no time range for the cache.',
     h('div', { class: 'controls start' }, h('span', { class: 'note', text: 'Time range' }), range),
     box('clear-history', 'Browsing history', true), box('clear-cookies', 'Cookies and other site data', false),
     box('clear-cache', 'Cached images and files', true), box('clear-downloads', 'Download list', false),
@@ -364,7 +364,7 @@ async function buildPrivacy(card) {
         const done = await S.clearData({ range: range.value, history: $('clear-history').checked, cookies: $('clear-cookies').checked, cache: $('clear-cache').checked, downloads: $('clear-downloads').checked });
         const parts = [];
         if (done.history !== undefined) parts.push(`${done.history} history entr${done.history === 1 ? 'y' : 'ies'}`);
-        if (done.cookies) parts.push('cookies and site data');
+        if (done.cookies) parts.push(done.sites !== undefined ? `cookies and site data of ${done.sites} site${done.sites === 1 ? '' : 's'}` : 'cookies and site data');
         if (done.cache) parts.push('cache');
         if (done.downloads !== undefined) parts.push(`${done.downloads} download${done.downloads === 1 ? '' : 's'}`);
         flash(result, parts.length ? `Cleared ${parts.join(', ')}.` : 'Nothing selected.');
