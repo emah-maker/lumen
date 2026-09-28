@@ -38,6 +38,14 @@ if (platformFlag === '--win') {
   if (process.env.LUMEN_ELECTRON_DIST) builderArgs.push(`-c.electronVersion=${version}`);
 }
 
+// The UI's sandboxed preload ships from the committed bundle; rebuild it so a stale one never ships.
+const preload = require('./bundle-preload');
+const fresh = preload.bundle();
+if (!fs.existsSync(preload.OUT) || fs.readFileSync(preload.OUT, 'utf8').replace(/\r\n/g, '\n') !== fresh) {
+  fs.writeFileSync(preload.OUT, fresh);
+  console.warn('warning: preload.bundle.js was out of date and has been rebuilt; commit it');
+}
+
 console.log(`Building ${platformFlag.slice(2)} into ${out}`);
 const result = spawnSync(process.execPath, [require.resolve('electron-builder/cli.js'), ...builderArgs], { cwd: root, stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status || 1);
