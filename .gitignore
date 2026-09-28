@@ -3,7 +3,16 @@ dist/
 .impeccable/
 *.log
 shot-*.png
-.claude/worktrees/
 .env
 .env.*
 !.env.example
+.claude/
+out/
+.DS_Store
+Thumbs.db
+# Test and dev profiles (CLAUDE_BROWSER_PROFILE / userData pointed inside the repo)
+profile/
+profiles/
+user-data/
+userData/
+lumen-profile*/
