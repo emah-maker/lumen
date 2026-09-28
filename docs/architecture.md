@@ -39,8 +39,8 @@ Lumen.exe (main process: main.js)
 
 ## Outside agents
 
-- **MCP** (`mcp.js`, `features/ai-agents.js`): CLI agents start a small stdio bridge (Lumen's executable in Node mode running `mcp.js`). The bridge connects to the running Lumen over a per-user local channel (a named pipe on Windows, a Unix socket elsewhere) and proves it can read a random token in the profile folder with an HMAC challenge-response. Tool calls then go through the same tools and the same approval cards as the sidebar.
-- **Automation (CDP)** (`automation.js`, `launcher.js`): off by default. When on, a proxy on `127.0.0.1` with a secret token in its URL serves the Chrome DevTools Protocol to Playwright and similar tools. It shows only the user's tabs and turns "new page" into a real Lumen tab. On Windows and Linux, `launcher.js` starts the browser with `--remote-debugging-pipe`, so the proxy talks to Chromium over a private pipe and no debugging port is opened.
+- **MCP** (`mcp.js`, `features/ai-agents.js`): CLI agents start a small stdio bridge (Lumen's executable in Node mode running `mcp.js`). The bridge connects to the running Lumen over a per-user local channel (a named pipe on Windows, a Unix socket elsewhere) and proves it can read a random token in the profile folder with an HMAC challenge-response. Tool calls then go through the same tools and the same approval cards as the sidebar. Grok Build instead reaches the same tools over local HTTP with a per-run token (`mcp-http.js`), and Lumen checks each of its tool calls before it runs.
+- **Automation (CDP)** (`automation.js`, `launcher.js`): off by default. When on, a proxy on `127.0.0.1` with a secret token in its URL serves the Chrome DevTools Protocol to Playwright and similar tools. It shows only the user's tabs and turns "new page" into a real Lumen tab. `launcher.js` starts the browser with `--remote-debugging-pipe`, so the proxy talks to Chromium over a private pipe and no debugging port is opened.
 
 ## Browsing features
 
@@ -59,4 +59,4 @@ Lumen.exe (main process: main.js)
 ## Build and tests
 
 - `scripts/build.js` packages with electron-builder. `Lumen.exe` stays byte-identical to Electron's own binary, so the icon comes from shortcuts and the window rather than the executable.
-- Tests in `test/` drive the real app with Playwright's Electron support and a throwaway profile (`CLAUDE_BROWSER_TEST=1`, `CLAUDE_BROWSER_PROFILE=<folder>`). Test mode only works in a development run (`test-mode.js`); a packaged Lumen ignores it. `test/units.js` covers the logic that doesn't need a window.
+- Tests in `test/` drive the real app with Playwright's Electron support and a throwaway profile (`CLAUDE_BROWSER_TEST=1`, `CLAUDE_BROWSER_PROFILE=<folder>`). Test mode only works in a development run (`test-mode.js`); a packaged Lumen ignores it. `test/units.js` covers the logic that doesn't need a window. `npm test` (`scripts/test-all.js`) runs the core suites one at a time and reports every failure.
