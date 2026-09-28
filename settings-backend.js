@@ -206,10 +206,23 @@ function create(deps) {
       if (hintOrigins.size > 1000) hintOrigins.delete(hintOrigins.values().next().value); // oldest first
     }
   }
+  // Chrome sends client hints only to secure origins: https, and http on localhost.
+  function sendsClientHints(url) {
+    try {
+      const u = new URL(url);
+      return u.protocol === 'https:' || u.protocol === 'wss:' || (/^(http|ws):$/.test(u.protocol) && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname));
+    } catch {
+      return false;
+    }
+  }
   function setupHeaders() {
     ses().webRequest.onBeforeSendHeaders((details, callback) => {
       const p = prefs();
       const headers = details.requestHeaders;
+      if (deps.chromeHintHeaders && sendsClientHints(details.url)) {
+        for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];
+        Object.assign(headers, deps.chromeHintHeaders);
+      }
       if (p.sendDoNotTrack) headers.DNT = '1';
       if (p.sendGpc) headers['Sec-GPC'] = '1';
       if (p.languages.length) headers['Accept-Language'] = acceptLanguage(p.languages);
