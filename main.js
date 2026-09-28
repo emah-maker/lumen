@@ -1059,6 +1059,25 @@ function wireView(tab, url, history = null) {
 // scroll position isn't attempted). See canSleep() for every case this leaves alone.
 const SLEEP_AFTER_MS = 20 * 60 * 1000;
 const SLEEP_CHECK_MS = 60 * 1000;
+// When the OS is short of memory, background tabs sleep after 2 minutes instead, oldest first. On
+// an 8 GB Mac a dozen tabs is enough to start swapping long before the 20 minutes are up.
+const PRESSURE_SLEEP_AFTER_MS = 2 * 60 * 1000;
+
+// macOS: the kernel's own pressure level (1 normal, 2 warning, 4 critical), the signal Activity
+// Monitor's graph shows; free-page counts are misleading there because of compression. Elsewhere:
+// under 10% of RAM available.
+function memoryPressure() {
+  if (process.platform !== 'darwin') {
+    const { total, free } = process.getSystemMemoryInfo();
+    return Promise.resolve(total > 0 && free / total < 0.1);
+  }
+  return new Promise((resolve) => {
+    require('child_process').execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], (err, out) => {
+      if (err) { console.error('[lumen] memory pressure check failed:', err.message); return resolve(false); }
+      resolve(Number(out) >= 2);
+    });
+  });
+}
 
 function sleepTab(tab) {
   const wc = tab.view.webContents;
@@ -1131,8 +1150,9 @@ async function canSleep(tab) {
 
 async function sweepSleep() {
   if (!win || win.isDestroyed() || readSettings().tabSleep === false) return;
-  const cutoff = Date.now() - SLEEP_AFTER_MS;
-  for (const tab of tabs) {
+  const pressure = await pressureCheck();
+  const cutoff = Date.now() - (pressure ? PRESSURE_SLEEP_AFTER_MS : SLEEP_AFTER_MS);
+  for (const tab of [...tabs].sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0))) {
     if (!tab.lastActiveAt || tab.lastActiveAt > cutoff) continue;
     if (!(await canSleep(tab))) continue;
     // hasUnsavedInput (inside canSleep) is an async round trip to the page: re-check the fast,
@@ -1142,8 +1162,9 @@ async function sweepSleep() {
     sendTabs();
   }
 }
+let pressureCheck = memoryPressure;
 setInterval(() => { sweepSleep().catch(() => {}); }, SLEEP_CHECK_MS);
-if (process.env.CLAUDE_BROWSER_TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })) };
+if (process.env.CLAUDE_BROWSER_TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id === id); if (t && alive(t)) sleepTab(t); sendTabs(); }, canSleep: (id) => canSleep(tabs.find((x) => x.id === id)), state: () => tabs.map((t) => ({ id: t.id, sleeping: Boolean(t.sleeping), view: Boolean(t.view) })), sweep: () => sweepSleep(), memoryPressure, fakePressure: (on) => { pressureCheck = () => Promise.resolve(on); }, age: (id, ms) => { const t = tabs.find((x) => x.id === id); if (t) t.lastActiveAt -= ms; } };
 
 // ---- new-tab focus. A blank new tab opens with the cursor in the address bar, as in Chrome.
 // Chromium focuses a tab's page by itself when its view is shown and again on its first navigation,

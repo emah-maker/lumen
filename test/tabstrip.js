@@ -248,6 +248,19 @@ const os = require('os');
   const nav = await app.evaluate(() => { const wc = global.__agent.browser.activeTab().webContents; return { url: wc.getURL(), back: wc.navigationHistory.canGoBack() }; });
   check('a woken tab can still go back', nav.url.endsWith('/h2') && nav.back, JSON.stringify(nav));
 
+  // ---- 10. under memory pressure a background tab sleeps after minutes, not 20 minutes ----
+  await open(`${base}/pressure`);
+  const pid = await app.evaluate(() => global.__agent.browser.activeTab().id);
+  await open(`${base}/front`);
+  await app.evaluate((_e, id) => global.__tabSleep.age(id, 3 * 60 * 1000), pid);
+  const asleep = async () => (await app.evaluate(() => global.__tabSleep.state())).find((t) => t.id === pid).sleeping;
+  await app.evaluate(() => { global.__tabSleep.fakePressure(false); return global.__tabSleep.sweep(); });
+  check('no pressure: a tab idle 3 minutes stays awake', !(await asleep()));
+  await app.evaluate(() => { global.__tabSleep.fakePressure(true); return global.__tabSleep.sweep(); });
+  check('memory pressure: a tab idle 3 minutes sleeps', await asleep());
+  const level = await app.evaluate(() => global.__tabSleep.memoryPressure());
+  check('the real pressure check answers', typeof level === 'boolean', level);
+
   check('no renderer errors', errors.length === 0, errors.join('; '));
   server.close();
   await app.close();
