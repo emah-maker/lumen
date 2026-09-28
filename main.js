@@ -599,6 +599,8 @@ async function setupExtensions() {
   const ses = session.defaultSession;
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'extensions-dnr-preload.js') });
+  // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
+  ses.registerPreloadScript({ id: 'lumen-webstore', type: 'frame', filePath: path.join(__dirname, 'features', 'webstore-preload.js') });
   ElectronChromeExtensions.handleCRXProtocol(ses); // extension icons in the toolbar
   extensions = new ElectronChromeExtensions({
     license: 'GPL-3.0',
