@@ -5,6 +5,7 @@ const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
+const { addUsage } = require('./features/chat-usage');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -292,6 +293,14 @@ const BASIC_SEARCH_TOOLS = [...TOOLS, { type: 'web_search_20250305', name: 'web_
 
 // Which model wrote each assistant turn (a WeakMap, so nothing extra is serialized into requests).
 const producedBy = new WeakMap();
+
+// The chat's token and cost totals live in its settings, so they're saved with the chat and move
+// with it in the history list. The sidebar gets the new total after each model turn.
+function recordUsage(messages, entry, emit) {
+  if (!messages.settings) return;
+  messages.settings.usage = addUsage(messages.settings.usage, entry);
+  emit({ type: 'usage', usage: messages.settings.usage });
+}
 
 // A turn written by another model is passed on in a form any model accepts: text (without
 // citations), client tool calls, and web search results as plain text. Thinking blocks are
@@ -661,6 +670,33 @@ async function searchWeb(query) {
   }
 }
 
+// What the sidebar shows for a restored chat: user/assistant text and pasted images, no tool steps.
+// Also used for chats in the history list and for exporting one (main.js).
+function transcriptFor(chatMessages) {
+  const items = [];
+  let steps = 0;
+  for (const m of chatMessages) {
+    const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
+    if (m.role === 'user') {
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '')).join('\n').trim();
+      const images = blocks.filter((b) => b.type === 'image' && b.source?.type === 'base64').map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
+      if (text === 'The user attached the image(s) above without a message.') items.push({ role: 'user', text: '', images });
+      else if (text || images.length) items.push({ role: 'user', text, images });
+    } else {
+      steps += blocks.filter((b) => b.type === 'tool_use' || b.type === 'server_tool_use').length;
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n').trim();
+      const final = !blocks.some((b) => b.type === 'tool_use');
+      if (text && final) {
+        items.push({ role: 'assistant', text, images: [], steps });
+        steps = 0;
+      } else if (text) {
+        items.push({ role: 'assistant', text, images: [] });
+      }
+    }
+  }
+  return items;
+}
+
 class Agent {
   // browser: { activeTab(), tabById(id), noTabReason(), listTabs(), openTab(url), switchTab(id), closeTab(id),
   //   requestCloseTab(id), hasUnsavedInput(id), groupTabs(name, ids), ungroupTabs(ids), autoApprove(),
@@ -749,30 +785,9 @@ class Agent {
     this.messages = messages;
   }
 
-  // What the sidebar shows for a restored chat: user/assistant text and pasted images, no tool steps.
+  // What the sidebar shows for a restored chat (see transcriptFor).
   transcript() {
-    const items = [];
-    let steps = 0;
-    for (const m of this.messages) {
-      const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
-      if (m.role === 'user') {
-        const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '')).join('\n').trim();
-        const images = blocks.filter((b) => b.type === 'image' && b.source?.type === 'base64').map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
-        if (text === 'The user attached the image(s) above without a message.') items.push({ role: 'user', text: '', images });
-        else if (text || images.length) items.push({ role: 'user', text, images });
-      } else {
-        steps += blocks.filter((b) => b.type === 'tool_use' || b.type === 'server_tool_use').length;
-        const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n').trim();
-        const final = !blocks.some((b) => b.type === 'tool_use');
-        if (text && final) {
-          items.push({ role: 'assistant', text, images: [], steps });
-          steps = 0;
-        } else if (text) {
-          items.push({ role: 'assistant', text, images: [] });
-        }
-      }
-    }
-    return items;
+    return transcriptFor(this.messages);
   }
 
   // Switch the current conversation to another model. Mid-run it waits for the next message: a
@@ -951,6 +966,7 @@ class Agent {
       signal,
       emit,
     });
+    recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
@@ -988,6 +1004,7 @@ class Agent {
       signal,
       emit,
     });
+    recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
@@ -1079,6 +1096,8 @@ class Agent {
         keepPartialReply(messages, streamed, model);
         throw err;
       }
+
+      recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
 
       for (const block of message.content) {
         if (block.type === 'server_tool_use' && block.name === 'web_search') {
@@ -1751,4 +1770,4 @@ function describeError(err, auth = null) {
 // Tools offered to external agents over MCP: every browser tool plus the client-side web search.
 const EXTERNAL_TOOLS = OTHER_TOOLS;
 
-module.exports = { Agent, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };
+module.exports = { Agent, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };

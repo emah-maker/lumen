@@ -185,18 +185,28 @@ function toChatMessages(system, messages) {
   return out;
 }
 
+// Token counts for the chat's usage line (features/chat-usage.js): OpenAI and xAI send them in a final
+// chunk when asked; OpenRouter also reports the request's cost. Gemini sends usage without asking.
+function usageOptions(provider) {
+  if (provider === 'openrouter') return { stream_options: { include_usage: true }, usage: { include: true } };
+  if (provider === 'openai' || provider === 'xai') return { stream_options: { include_usage: true } };
+  return {};
+}
+
 const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Math.random().toString(36).slice(2, 12)}`);
 
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
 async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit }) {
   const stream = await clientFor(provider, apiKey).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider) } : {}), stream: true },
+    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider) } : {}), stream: true, ...usageOptions(provider) },
     { signal },
   );
   let text = '';
   let finish = null;
   const calls = [];
+  let usage = null;
   for await (const chunk of stream) {
+    if (chunk.usage) usage = chunk.usage; // the last chunk, when the provider sends token counts
     const choice = chunk.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};
@@ -227,7 +237,7 @@ async function streamTurn({ provider, model, apiKey, system, messages, tools, si
   }
   if (!content.length) content.push({ type: 'text', text: '(no reply)' });
   const stopReason = calls.length ? 'tool_use' : finish === 'length' ? 'max_tokens' : finish === 'content_filter' ? 'refusal' : 'end_turn';
-  return { content, stop_reason: stopReason, model: `${provider}:${model}` };
+  return { content, stop_reason: stopReason, model: `${provider}:${model}`, usage };
 }
 
 // One non-streaming request that must answer with a JSON object.
