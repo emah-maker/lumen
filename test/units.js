@@ -403,21 +403,28 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const desktop = path.join(dir, 'Desktop');
   const programs = path.join(dir, 'AppData', 'Microsoft', 'Windows', 'Start Menu', 'Programs');
   fs.mkdirSync(path.join(programs, 'Lumen'), { recursive: true });
+  fs.mkdirSync(path.join(programs, 'Tools'));
   fs.mkdirSync(desktop);
   const links = {
     [path.join(desktop, 'Lumen.lnk')]: { target: process.execPath, icon: process.execPath },
     [path.join(programs, 'Lumen', 'Lumen.lnk')]: { target: process.execPath, icon: '' },
     [path.join(programs, 'Lumen.lnk')]: { target: 'C:\\Other\\Lumen.exe', icon: 'C:\\Other\\Lumen.exe' },
+    [path.join(programs, 'Electron.lnk')]: { target: process.execPath, icon: `${process.execPath},0` }, // a stray one under another name
+    [path.join(programs, 'Tools', 'Editor.lnk')]: { target: 'C:\\Tools\\editor.exe', icon: '' },
   };
   for (const file of Object.keys(links)) fs.writeFileSync(file, '');
+  fs.writeFileSync(path.join(programs, 'Tools', 'notes.txt'), ''); // not a shortcut: never read
   const updates = [];
-  const shell = { readShortcutLink: (f) => links[f], writeShortcutLink: (f, op, o) => { updates.push({ f, op, icon: o.icon }); return true; } };
+  const read = [];
+  const shell = { readShortcutLink: (f) => { read.push(f); return links[f]; }, writeShortcutLink: (f, op, o) => { updates.push({ f, op, icon: o.icon }); return true; } };
   const fakeApp = (packaged) => ({ isPackaged: packaged, getPath: (n) => (n === 'desktop' ? desktop : path.join(dir, 'AppData')) });
   fixShortcutIcons(fakeApp(false), shell);
   check('icon: dev runs leave shortcuts alone', updates.length === 0, JSON.stringify(updates));
   fixShortcutIcons(fakeApp(true), shell);
   if (process.platform === 'win32') {
-    check('icon: the installer\'s shortcuts to this exe get Lumen\'s .ico', updates.length === 2 && updates.every((u) => u.op === 'update' && /\.ico$/.test(u.icon)), JSON.stringify(updates));
+    check('icon: every shortcut to this exe gets Lumen\'s .ico, whatever its name', updates.length === 3 && updates.every((u) => u.op === 'update' && /\.ico$/.test(u.icon)) && updates.some((u) => u.f === path.join(programs, 'Electron.lnk')), JSON.stringify(updates));
+    check('icon: shortcuts in Start menu subfolders are read, other files are not', read.includes(path.join(programs, 'Tools', 'Editor.lnk')) && !read.some((f) => /\.txt$/.test(f)), JSON.stringify(read));
+    check('icon: a shortcut to another program in a subfolder is left alone', !updates.some((u) => u.f === path.join(programs, 'Tools', 'Editor.lnk')), JSON.stringify(updates));
     check('icon: a shortcut to another program is left alone', !updates.some((u) => u.f === path.join(programs, 'Lumen.lnk')), JSON.stringify(updates));
     updates.length = 0;
     for (const file of Object.keys(links)) links[file].icon = appIcon();
