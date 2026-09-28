@@ -9,6 +9,7 @@
     "start": "electron .",
     "dist": "node scripts/build.js",
     "test": "node scripts/test-all.js",
+    "lint": "eslint .",
     "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
     "dist:win": "node scripts/build.js --win",
     "dist:mac": "node scripts/build.js --mac"
@@ -25,8 +26,11 @@
   },
   "devDependencies": {
     "@electron/fuses": "^1.8.0",
+    "@eslint/js": "^10.0.1",
     "electron": "github:castlabs/electron-releases#v44.1.0+wvcus",
     "electron-builder": "^26.15.3",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
     "playwright-core": "^1.63.0"
   },
   "author": "Lumen",
@@ -47,7 +51,9 @@
       "!scripts/**",
       "!.github/**",
       "!shot-*.png",
-      "!docs/**"
+      "!docs/**",
+      "!eslint.config.js",
+      "!.editorconfig"
     ],
     "win": {
       "icon": "assets/icon.png",
