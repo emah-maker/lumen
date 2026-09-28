@@ -113,6 +113,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow',
   'pagecontext:get', 'pagecontext:set',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen',
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -164,6 +165,7 @@ let activeId = null;
 let nextTabId = 1;
 let contentBounds = { x: 0, y: 0, width: 800, height: 600 };
 const closedTabs = []; // URLs, most recent last
+const tabTools = require('./features/tab-tools').create({ onChange: () => sendTabs(), isWebUrl }); // tab search, tab audio
 
 // ---------- settings / API key ----------
 
@@ -722,6 +724,7 @@ function showAppMenu({ x, y }) {
     { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => openTab() },
     { label: 'New Private Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
     { label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
+    { label: 'Search Tabs…', accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
     { type: 'separator' },
     { label: 'Find…', accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
     { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
@@ -892,6 +895,7 @@ function tabState() {
           groupId: t.groupId || null,
           pinned: Boolean(t.pinned),
           sleeping: true,
+          ...tabTools.state(t, false),
         };
       }
       const wc = t.view.webContents;
@@ -911,6 +915,7 @@ function tabState() {
         groupId: t.groupId || null,
         alert: dialogs.pendingFor(wc), // a dialog is waiting for this background tab
         pinned: Boolean(t.pinned),
+        ...tabTools.state(t, true), // audible, muted
       };
     }),
     activeId,
@@ -1000,6 +1005,7 @@ const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url ||
 function wireView(tab, url, history = null) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
+  tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
     // An extension's pages open only from that same extension: a web page could otherwise open any
@@ -1359,7 +1365,10 @@ function closeTab(id, { destroyed = false } = {}) {
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
   // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
-  if (url && !isInternal(url)) closedTabs.push(url);
+  if (url && !isInternal(url)) {
+    closedTabs.push(url);
+    tabTools.noteClosed(url, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
+  }
   if (closedTabs.length > 50) closedTabs.splice(0, closedTabs.length - 50); // Reopen Closed Tab goes back 50
   if (!win || win.isDestroyed()) return; // the app is quitting
   if (tab.view) win.contentView.removeChildView(tab.view); // no view to remove if it was sleeping
@@ -1595,19 +1604,44 @@ function pinTab(id, on) {
   sendTabs();
 }
 
+// ---- [tab audio + tab search] (features/tab-tools.js)
+const tabUrl = (tab) => (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
+function audioMenuItems(tab) {
+  const muted = tabTools.state(tab, alive(tab)).muted;
+  const host = tabTools.siteOf(tabUrl(tab));
+  const items = [{ label: muted ? 'Unmute Tab' : 'Mute Tab', click: () => tabTools.setMuted(tab, !muted) }];
+  if (host) {
+    const siteMuted = tabTools.siteMuted(host);
+    items.push({ label: siteMuted ? 'Unmute Site' : 'Mute Site', click: () => tabTools.setSiteMuted(host, !siteMuted, tabs, tabUrl) });
+  }
+  return items;
+}
+function openTabSearch() {
+  ui()?.focus();
+  ui()?.send('tabsearch:open');
+}
+function reopenClosed(index, url) {
+  if (!Number.isInteger(index) || closedTabs[index] !== url) return false; // the list changed meanwhile
+  closedTabs.splice(index, 1);
+  openTab(url);
+  return true;
+}
+// ---- [/tab audio + tab search]
+
 function tabMenu(id, { x, y }) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
   if (tab.pinned) {
     Menu.buildFromTemplate([
       { label: 'Unpin Tab', click: () => pinTab(id, false) },
+      ...audioMenuItems(tab),
       { type: 'separator' },
       { label: 'Close Tab', click: () => requestCloseTab(id) },
     ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
     return;
   }
   const others = tabGroups.state().filter((g) => g.id !== tab.groupId);
-  const items = [{ label: 'Pin Tab', click: () => pinTab(id, true) }, { type: 'separator' }, {
+  const items = [{ label: 'Pin Tab', click: () => pinTab(id, true) }, ...audioMenuItems(tab), { type: 'separator' }, {
     label: 'Add to New Group',
     click: () => {
       if (tab.groupId) tabGroups.remove(id, { byUser: true });
@@ -2000,6 +2034,7 @@ function handleShortcut(event, input) {
   let handled = true;
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
+  else if (mod && input.shift && key === 'a') openTabSearch();
   else if (mod && key === 't') openTab();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
   else if (mod && key === 'l') focusAddress();
@@ -2162,6 +2197,7 @@ function macMenu() {
         { label: 'New Tab', ...shown('Cmd+T'), click: () => openTab() },
         { label: 'New Private Window', ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
         { label: 'Reopen Closed Tab', ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
+        { label: 'Search Tabs…', ...shown('Cmd+Shift+A'), click: openTabSearch },
         { label: 'Open Location…', ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
         { label: 'Print…', ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
@@ -2366,6 +2402,14 @@ if (TEST) {
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu() };
   global.__patchSettings = (patch) => writeSettings({ ...readSettings(), ...patch });
+  // The tab menu's Mute Tab / Mute Site items (a native menu the tests can't click)
+  global.__tabAudioMenu = (id, label) => {
+    const tab = tabs.find((t) => t.id === id);
+    const items = tab ? audioMenuItems(tab) : [];
+    if (label) items.find((i) => i.label === label)?.click();
+    return items.map((i) => i.label);
+  };
+  global.__closedTabs = () => closedTabs.slice();
 }
 
 // ---------- [settings] lumen://settings ----------
@@ -2500,6 +2544,9 @@ ipcMain.on('tab:move', (_e, id, toIndex) => {
 });
 ipcMain.on('bookmark:toggle', toggleBookmark);
 ipcMain.on('tab:context-menu', (_e, id, point) => tabMenu(id, point));
+ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
+ipcMain.handle('tabsearch:closed', () => tabTools.closedEntries(closedTabs));
+ipcMain.handle('tabsearch:reopen', (_e, index, url) => reopenClosed(index, url));
 ipcMain.on('group:context-menu', (_e, id, point) => groupMenu(id, point));
 ipcMain.on('group:toggle', (_e, id) => {
   const group = tabGroups.groups.get(id);

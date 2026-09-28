@@ -1,0 +1,40 @@
+/* Tab search popup and the tab strip's speaker button (tab-search.js). */
+
+.tab-search-btn { flex: none; width: 28px; height: 28px; margin-left: 2px; }
+.tab-search-btn svg { width: 14px; height: 14px; }
+.tab-search-btn[aria-expanded="true"] { background: var(--hover); }
+
+.tab-audio { flex: none; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: none; border-radius: 5px; background: transparent; color: var(--muted); cursor: default; }
+.tab-audio:hover { background: var(--hover); color: var(--text); }
+.tab-audio svg, .tab-search-audio svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.tab-audio svg path:first-child, .tab-search-audio svg path:first-child { fill: currentColor; }
+.tab-audio .cross, .tab-audio.muted .wave, .tab-search-audio .cross { display: none; }
+.tab-audio.muted .cross { display: inline; }
+.tab-audio.muted { color: var(--danger); }
+.tab.pinned .tab-audio { width: 14px; }
+
+.tab-search-panel {
+  position: fixed; top: 40px; right: 12px; z-index: 50; width: min(420px, calc(100vw - 24px));
+  display: flex; flex-direction: column; max-height: min(480px, calc(100vh - 60px));
+  padding: 8px; border-radius: 12px; background: var(--surface-raised); color: var(--text);
+  box-shadow: 0 0 0 0.5px var(--border), 0 18px 48px -12px rgb(0 0 0 / calc(1.2 * var(--shadow-k)));
+}
+.tab-search-panel[hidden] { display: none; }
+.tab-search-panel input {
+  flex: none; height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field);
+  color: var(--text); font: inherit; font-size: 13px; outline: none;
+}
+.tab-search-panel input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), 0 0 0 4px var(--accent-soft); }
+.tab-search-results { list-style: none; margin: 6px 0 0; padding: 0; overflow-y: auto; }
+.tab-search-section { padding: 8px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.tab-search-empty { padding: 14px 8px; font-size: 12.5px; color: var(--muted); }
+.tab-search-item { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 7px; font-size: 12.5px; }
+.tab-search-item.selected { background: var(--accent-soft); }
+.tab-search-item.current .tab-search-title { font-weight: 600; }
+.tab-search-item[data-kind="closed"] .tab-search-icon.blank { opacity: 0.5; }
+.tab-search-icon { flex: none; width: 16px; height: 16px; border-radius: 3px; }
+.tab-search-icon.blank { background: var(--field); }
+.tab-search-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tab-search-title, .tab-search-host { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tab-search-host { font-size: 11px; color: var(--muted); }
+.tab-search-audio { flex: none; color: var(--muted); display: grid; }
