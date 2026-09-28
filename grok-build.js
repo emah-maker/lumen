@@ -3,75 +3,51 @@
 // claude-code.js as closely as Grok Build's own CLI allows; see the divergences called out below.
 //
 // Lumen never sees x.ai/grok.com credentials: the CLI uses its own login (`grok login`, SuperGrok or
-// X Premium+). The CLI is spawned with an argv array and shell:false (the prompt goes in as an argv
-// element -- see "no stdin channel" below), so user text never reaches a shell.
+// X Premium+). The CLI is spawned with an argv array and shell:false (the message goes in a file,
+// --prompt-file -- see "no stdin channel" below), so user text never reaches a shell.
 //
 // ---------------------------------------------------------------------------------------------
-// ISOLATION: what this engine can and cannot lock down, and why (verified on grok 1.0.41, 2026-09-27)
+// ISOLATION (verified on grok 1.0.41, 2026-09-27)
 // ---------------------------------------------------------------------------------------------
-// Claude Code's engine gets near-total isolation from three things working together: an empty temp
-// cwd, `--strict-mcp-config` (ignore every other MCP source, use only the one per-run mcp.json this
-// file writes), and `--tools ""` (no built-in tools at all). Grok Build has no equivalents for the
-// first two:
+// Claude Code's engine is locked down with --tools "", --strict-mcp-config and --allowedTools
+// mcp__lumen. Grok Build has no --mcp-config / --strict-mcp-config flag, so the same result comes
+// from GROK_HOME instead:
 //
-//  - No `--mcp-config` / `--strict-mcp-config` flag exists at all. The *only* way to add a
-//    still-unknown-to-grok MCP server for one run is a project-scoped `./.grok/config.toml`
-//    (`grok mcp add --scope project`) -- but `grok mcp doctor` reports project-scoped servers as
-//    unhealthy ("repo-local (project-scoped) server not started for an untrusted folder") until the
-//    folder is trusted, and the only way to trust a folder is `--trust`, which permanently records
-//    that folder's path in the user's own ~/.grok/trusted_folders.toml (confirmed by inspection: a
-//    brand-new file appears there after one `--trust` run, one entry per unique path, and it is never
-//    cleaned up by grok itself). Because this engine uses a fresh mkdtemp'd, then-deleted, cwd for
-//    every single message (mirroring claude-code.js), using --trust here would leave one permanent,
-//    never-cleaned entry in that file per message ever sent -- unacceptable. So this engine mints NO
-//    MCP server of its own and never passes --trust.
+//  - GROK_HOME points at a Lumen-owned folder (<userData>/grok-home), never the user's ~/.grok. Its
+//    config.toml is written by Lumen before every message (grokConfig) and names exactly one MCP
+//    server, `lumen` (Lumen's own bridge, with this run's LUMEN_ENGINE tag), and turns off every
+//    [compat.claude] / [compat.cursor] import, so none of the user's ~/.claude.json or Cursor MCP
+//    servers, CLAUDE.md, skills, rules or hooks are loaded. The same compat switches are also set
+//    in the child's environment (buildEnv), since an env var beats config.toml. `grok inspect
+//    --json` with this home listed one MCP server (lumen), no hooks, skills or project instructions.
+//    The user's ~/.grok/config.toml, their other MCP servers, trusted folders and sessions are not
+//    read or written, and --trust is never passed.
 //
-//    Instead it reuses the *pre-existing*, user-configured `lumen` server in ~/.grok/config.toml
-//    (added once, out of band, e.g. via the "Add to Grok Build" button in Settings -> You and AI,
-//    which runs `grok mcp add lumen -- <Lumen --mcp bridge>`; see features/ai-agents.js AGENTS.grok
-//    and mcpCommandNoEnv). That entry is user-scope, so it starts without any trust prompt. This file
-//    never edits ~/.grok/config.toml and never runs `grok mcp add/remove/enable/disable`.
+//  - Sign-in lives in GROK_HOME too (auth.json). linkAuth() hard-links the user's ~/.grok/auth.json
+//    into Lumen's home (a copy if the link fails, e.g. across drives), so `grok login` in a terminal
+//    keeps working and nothing else of ~/.grok is shared. If Grok replaced the file during a run
+//    (a token refresh) and the user's own copy hasn't changed since, the new one is copied back so
+//    a rotated refresh token isn't lost. Lumen never parses the file.
 //
-//  - Because there is no compat-disabling flag or project-scope override for it either (`[compat.claude]`
-//    is a *user*-scope-only config.toml section per docs.x.ai/build/settings/reference -- project scope
-//    is limited to [mcp_servers], [plugins], [permission] -- so it can't be turned off per run without
-//    editing ~/.grok/config.toml, which we must not do), Grok Build ALWAYS imports the user's Claude
-//    setup on top of whatever this engine asks for: `grok inspect --json` in a brand-new empty temp
-//    dir showed ~/.claude/CLAUDE.md and rule files as "project instructions", ~/.claude's skills and
-//    agent defs, ~/.claude/settings.local.json permission rules, and (most importantly) all 6 MCP
-//    servers from ~/.claude.json (ruflo, playwright, context7, fraim, claude-code-docs, expo) --
-//    *plus* the pre-existing user-scope `lumen` entry above, i.e. 7 extra MCP servers this engine did
-//    not ask for and cannot turn off, on every single run. This is a real leak (those tools are
-//    "known" to the model even though our --disallowed-tools/--deny below try to keep it from acting
-//    on any of it) that we could not close within this task's constraints (no editing
-//    ~/.grok/config.toml, no --trust, no GROK_HOME).
+//  - Built-in tools: --tools '' alone did NOT shrink the advertised list; naming them in
+//    --disallowed-tools does, except four Grok keeps registered (DENIED), which --deny covers. Under
+//    --permission-mode dontAsk, anything not allowed is refused: a run told to `echo hi > file`
+//    through run_terminal_command was cancelled and wrote nothing. config.toml adds [permission]
+//    deny rules (Bash, Edit, Write, WebFetch, WebSearch) as a second layer; with them the same call
+//    is refused by policy and the turn goes on to a text reply. Not Read: it also gates search_tool.
 //
-//  - Worse than a privacy leak: those 7 MCP servers connecting concurrently appears to starve the
-//    model's very first turn of a ready tool list. In every live test run here, the system/init
-//    event's `mcp_servers` array showed every server (ours included) stuck at status "pending" for
-//    the whole run, with no later event ever resolving it, and a prompt that told the model "if a
-//    tool with 'lumen' and 'ping' in its name isn't in your list, just say NOT_READY" got back
-//    exactly "NOT_READY" every time -- i.e. Lumen's own tools were not visible to the model within a
-//    single headless turn. We could not get a real MCP tool call to Lumen to succeed in this task's
-//    run budget. This means, in practice, the first message of a new Grok Build sidebar conversation
-//    may frequently answer without ever touching Lumen's tools. There is no known workaround short of
-//    the (forbidden) config edits above.
-//
-//  - `--tools ''` (empty) did NOT shrink the advertised built-in tool list on its own (the system/init
-//    event still listed every built-in). Listing them by their literal internal names in
-//    --disallowed-tools (see BUILTIN_TOOLS) did shrink it -- except `run_terminal_command`, which
-//    stayed listed and was actually invoked (and executed: a plain `echo` came back with real output)
-//    on one run despite being named in --disallowed-tools and covered by a `--deny Bash` rule; an
-//    apparently-identical second call in the same run was then denied ("User cancelled the
-//    execution"). We could not explain the inconsistency in this task's budget. Treat
-//    --disallowed-tools/--deny here as defense in depth, not a proven boundary the way Claude Code's
-//    `--tools ""` + `--strict-mcp-config` combination is.
+//  - MCP tools are deferred behind search_tool / use_tool and are named <server>__<tool>. The only
+//    MCP allow is lumen__* (not use_tool itself), so use_tool runs only for Lumen's tools: with a
+//    second test server configured, use_tool lumen__ping ran and use_tool other__ping was refused.
 //
 //  - There is no stdin channel for the prompt (unlike Claude Code's --input-format stream-json),
 //    and -p / --prompt-json put the whole message on the command line, which overflowed Windows'
 //    ~32,767-character limit once the page's content was in it (spawn ENAMETOOLONG). --prompt-file
 //    takes the same JSON content blocks, images included, so the message goes in a file instead
 //    (see buildArgs / promptBlocks) with the same ~8 MB image budget as claude-code.js.
+//
+// Grok Build is still offered as experimental: these are Grok's own flags and config, not a
+// boundary Lumen enforces, and they have changed between CLI versions.
 //
 // ---------------------------------------------------------------------------------------------
 // VERIFIED EVENT SHAPES (--output-format streaming-messages-json --include-partial-messages, grok
@@ -82,10 +58,11 @@
 //    "cwd":"...","permissionMode":"dontAsk","tools":["run_terminal_command",...],
 //    "slash_commands":[...],"mcp_servers":[{"name":"lumen","status":"pending"},...],
 //    "skills":[...],"uuid":"..."}
-//     -- same shape family as Claude Code's system/init, but (a) `mcp_servers[].status` was always
-//        "pending" with no later update in every run we captured (see above -- do NOT treat this as
-//        Claude Code's engine does, i.e. as a connection-failure signal: it would fire on every run),
-//        and (b) `tools` never included any MCP-derived tool names, only built-ins.
+//     -- same shape family as Claude Code's system/init, but (a) `mcp_servers[].status` is a
+//        snapshot taken before the servers finish connecting: it said "pending" in every run, with
+//        no later update, including runs whose lumen__ calls then succeeded (so do NOT treat it as
+//        Claude Code's engine does, i.e. as a connection-failure signal), and (b) `tools` lists
+//        only built-ins plus search_tool / use_tool, never the MCP tool names themselves.
 //   {"type":"stream_event","event":{"type":"message_start","message":{...}}}
 //   {"type":"stream_event","event":{"type":"content_block_start","index":0,
 //    "content_block":{"type":"thinking","thinking":"","signature":""}}}
@@ -107,15 +84,15 @@
 //    "session_id":"<uuid>"}
 //   {"type":"result","subtype":"error_during_execution","is_error":true,"stop_reason":"cancelled",
 //    "errors":["cancelled"],"total_cost_usd":...,"session_id":"<uuid>"}
-//     -- when a tool call is denied under --permission-mode dontAsk, the *whole run* ends in this
-//        error result rather than the agent continuing on to produce a text reply -- unlike Claude
-//        Code, where a denied tool just becomes one failed step and the turn continues. So a denied
-//        built-in tool here reliably means this engine's run() reports `failed: true` with no text.
+//     -- when a tool call matches no allow rule under --permission-mode dontAsk (e.g. use_tool on
+//        another server), the *whole run* ends in this error result rather than the agent going on
+//        to a text reply -- unlike Claude Code, where a denied tool is one failed step. run() then
+//        reports `failed: true`. A call hitting a config.toml deny rule instead comes back as
+//        "Tool `...` was not executed: Denied by permission policy" and the turn continues.
 //
-//   Tool naming for Lumen's own MCP tools: NOT independently confirmed. We could never get the model
-//   to actually call our test server's tool (see the "pending" MCP race above), across every attempt
-//   in this task's budget, so the `<server>__<tool>` convention this engine's system prompt mentions
-//   is stated as one of two plausible forms, not asserted as fact (see GROK_BUILD_NOTE in agent.js).
+//   A Lumen tool call: search_tool finds `lumen__<tool>`, then
+//   {"type":"tool_use","name":"use_tool","input":{"tool_name":"lumen__ping","tool_input":{}}} and its
+//   tool_result content `{"type":"MCP","tool_name":"ping","server_name":"lumen","output":{"OkayOutput":"..."}}`.
 //
 //   Images via --prompt-json: confirmed working with a flat ACP-style block --
 //   `{"type":"image","data":"<base64>","mimeType":"image/png"}` (same shape as this codebase's own
@@ -170,8 +147,8 @@ function describeFailure(text, code) {
 
 // `grok models`: there is no `grok auth status --json` (no `auth`/`whoami` subcommand exists at all
 // in 1.0.41 -- see `grok help`), so this is the least-bad signed-in check available, exactly as a
-// real run showed it: "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\n...". Never
-// reads ~/.grok/auth.json.
+// real run showed it: "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\n...". Runs
+// against the user's own GROK_HOME (the login linkAuth shares), and never parses auth.json itself.
 function parseGrokModels(stdout) {
   const t = String(stdout || '');
   if (/you are logged in/i.test(t)) {
@@ -193,7 +170,7 @@ function checkAuthStatus(bin) {
 
 // Every built-in tool name Grok Build was observed to register for a headless run (system/init
 // event's `tools` array, grok 1.0.41, 2026-09-27). See the file header for why this list -- not
-// `--tools ''` alone -- is what actually shrinks it, and why even so it is not a proven boundary.
+// `--tools ''` alone -- is what actually shrinks it.
 const BUILTIN_TOOLS = [
   'run_terminal_command', 'read_file', 'search_replace', 'list_dir', 'write',
   'kill_command_or_subagent', 'todo_write', 'get_command_or_subagent_output', 'spawn_subagent',
@@ -207,14 +184,15 @@ const BUILTIN_TOOLS = [
 // command-output helpers, which Grok keeps registered; --deny with Grok's own tool names (not Claude's
 // "Bash"/"Edit", which is why an earlier run still executed a command) cancels them, and under
 // dontAsk a cancelled call ends the whole run with an error: nothing ran, no file was written.
-// MCP tools are deferred behind search_tool / use_tool (Lumen's are lumen__<tool>), so those two stay
-// and are allowed along with lumen__*; dontAsk refuses everything else.
+// MCP tools are deferred behind search_tool / use_tool (Lumen's are lumen__<tool>). use_tool itself is
+// NOT allowed: Grok checks each use_tool call against the tool it names, so `lumen__*` lets through
+// Lumen's tools and dontAsk refuses any other server's (verified: other__ping was cancelled).
 const DENIED = ['run_terminal_command', 'spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output'];
 const ARGS_BASE = [
   '--output-format', 'streaming-messages-json', '--include-partial-messages',
   '--disallowed-tools', BUILTIN_TOOLS,
   ...DENIED.flatMap((t) => ['--deny', t]),
-  '--allow', 'lumen__*', '--allow', 'search_tool', '--allow', 'use_tool',
+  '--allow', 'lumen__*', '--allow', 'search_tool',
   '--permission-mode', 'dontAsk',
   '--no-subagents', '--no-plan', '--disable-web-search',
   '--max-turns', '20',
@@ -234,6 +212,85 @@ function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd }) {
     resume ? '--resume' : '--session-id', sessionId,
     '--prompt-file', promptFile,
   ];
+}
+
+// Lumen's own GROK_HOME, and the fixed empty folder that is each run's working folder and the
+// child's HOME/USERPROFILE (fixed, not per message, so --resume finds the session again).
+const grokHomeFor = (userData) => path.join(userData, 'grok-home');
+const sidebarDirFor = (userData) => path.join(userData, 'grok-sidebar');
+// The user's own Grok home, where `grok login` keeps auth.json.
+const userGrokHome = () => process.env.GROK_HOME || path.join(os.homedir(), '.grok');
+
+// Grok's imports of the user's Claude Code and Cursor setups. Off in config.toml and, because an env
+// var beats config.toml, in the child's environment too.
+const COMPAT_SURFACES = ['skills', 'rules', 'agents', 'mcps', 'hooks'];
+const COMPAT_ENV = Object.fromEntries(['CLAUDE', 'CURSOR'].flatMap((v) => COMPAT_SURFACES.map((s) => [`GROK_${v}_${s.toUpperCase()}_ENABLED`, '0'])));
+
+// config.toml for Lumen's GROK_HOME: only the `lumen` MCP server (mcp is mcpCommand() plus this run's
+// LUMEN_ENGINE tag and LUMEN_USERDATA in env). JSON string escapes are valid TOML basic strings.
+// The [marketplace] markers are the ones Grok writes after its first-run setup; set up front, Grok
+// doesn't add its official plugin marketplace to this home.
+function grokConfig({ command, args = [], env = {} }) {
+  const str = (s) => JSON.stringify(String(s));
+  const off = COMPAT_SURFACES.map((s) => `${s} = false`);
+  return [
+    '# Written by Lumen before every Grok Build sidebar message (grok-build.js). Edits are overwritten.',
+    '[mcp_servers.lumen]',
+    `command = ${str(command)}`,
+    `args = [${args.map(str).join(', ')}]`,
+    'enabled = true',
+    '',
+    '[mcp_servers.lumen.env]',
+    ...Object.entries(env).map(([k, v]) => `${str(k)} = ${str(v)}`),
+    '',
+    '[compat.claude]', ...off, '',
+    '[compat.cursor]', ...off, '',
+    '[permission]',
+    'allow = ["MCPTool(lumen__*)"]',
+    'deny = ["Bash", "Edit", "Write", "WebFetch", "WebSearch"]',
+    '',
+    '[ui]', 'remember_tool_approvals = false', '',
+    '[cli]', 'auto_update = false', '',
+    '[marketplace]', 'default_skills_installs_purged = true', 'official_marketplace_auto_installed = true', '',
+  ].join('\n');
+}
+
+// The grok child's environment. Nothing Lumen-specific rides here: the tag goes to the bridge
+// through config.toml's [mcp_servers.lumen.env], as claude-code.js does through its mcp.json.
+function buildEnv({ userData, base = process.env }) {
+  const home = sidebarDirFor(userData);
+  const env = { ...base, ...COMPAT_ENV, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1' };
+  for (const k of ['ELECTRON_RUN_AS_NODE', 'GROK_CONFIG', 'GROK_CONFIG_PATH', 'LUMEN_ENGINE']) delete env[k];
+  return env;
+}
+
+// Shares the user's sign-in, and only that, with Lumen's GROK_HOME (see the file header): a hard
+// link to their auth.json, or a copy where linking fails. Returns what the user's file looked like,
+// for settleAuth after the run.
+const statOf = (p) => { try { return fs.statSync(p, { bigint: true }); } catch { return null; } };
+const sameFile = (a, b) => Boolean(a && b && a.ino === b.ino && a.dev === b.dev);
+function linkAuth(userHome, home) {
+  const real = path.join(userHome, 'auth.json');
+  const own = path.join(home, 'auth.json');
+  const before = statOf(real);
+  if (sameFile(before, statOf(own))) return before;
+  fs.rmSync(own, { force: true });
+  if (!before) return null; // signed out: the run itself reports "not signed in"
+  try { fs.linkSync(real, own); } catch { fs.copyFileSync(real, own); fs.chmodSync(own, 0o600); }
+  return before;
+}
+// After a run: if Grok replaced Lumen's auth.json (a token refresh) and the user's own file is
+// untouched since linkAuth, the newer one goes back so a rotated refresh token isn't lost.
+function settleAuth(userHome, home, before) {
+  const real = path.join(userHome, 'auth.json');
+  const own = path.join(home, 'auth.json');
+  const now = statOf(real);
+  const mine = statOf(own);
+  if (!before || !now || !mine || sameFile(now, mine)) return false;
+  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false; // the user signed in again meanwhile
+  if (fs.readFileSync(own).equals(fs.readFileSync(real))) return false;
+  fs.copyFileSync(own, real);
+  return true;
 }
 
 // The --prompt-file contents: the text, then any images.
@@ -262,12 +319,8 @@ function capImages(images, emit) {
 }
 
 class GrokBuildEngine {
-  // mcpCommand(): accepted for structural parity with ClaudeCodeEngine (and in case a future Grok
-  // Build adds a real per-run MCP config flag), but currently unused -- see the file header: this
-  // engine cannot mint its own per-run MCP server without either persisting global trust state or
-  // editing ~/.grok/config.toml, so it relies entirely on the pre-existing user-scope `lumen` entry.
-  // ensureServer(): still essential -- it starts Lumen's own MCP acceptor so that pre-existing entry
-  // has something to connect to.
+  // mcpCommand(): { command, args, env } for Lumen's bridge, written into Lumen's own GROK_HOME
+  // config.toml before each message. ensureServer(): starts the MCP server.
   constructor({ userData, mcpCommand, ensureServer }) {
     this.userData = userData;
     this.mcpCommand = mcpCommand;
@@ -305,34 +358,27 @@ class GrokBuildEngine {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
-    this.ensureServer(); // Lumen's MCP acceptor must be listening for the pre-existing `lumen` entry to reach
+    this.ensureServer();
     const tag = crypto.randomBytes(18).toString('hex');
-    // One fixed, empty folder in Lumen's data is both the working folder and the child's home
-    // (USERPROFILE/HOME): Grok then finds no project files and none of the user's Claude setup (it
-    // imports ~/.claude instructions, skills, permissions and ~/.claude.json MCP servers from the home
-    // folder), while GROK_HOME keeps the user's real ~/.grok, so their own sign-in and the user-scope
-    // `lumen` server are used as they are. Nothing in ~/.grok is read or written by Lumen. Fixed (not
-    // per message) so --resume finds the session again.
-    const dir = path.join(this.userData, 'grok-sidebar');
+    // Lumen's own GROK_HOME (see the file header): config.toml names only the `lumen` server, and
+    // the user's auth.json is linked in so their sign-in works. The working folder is a separate,
+    // fixed, empty folder that is also the child's HOME, so Grok finds no project files there.
+    const home = grokHomeFor(this.userData);
+    const dir = sidebarDirFor(this.userData);
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     fs.mkdirSync(dir, { recursive: true });
+    const mcp = this.mcpCommand();
+    fs.writeFileSync(path.join(home, 'config.toml'), grokConfig({ ...mcp, env: { ...mcp.env, LUMEN_USERDATA: this.userData, LUMEN_ENGINE: tag } }), { mode: 0o600 });
+    const userHome = userGrokHome();
+    let authBefore = null;
+    try { authBefore = linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
     const promptFile = path.join(dir, `prompt-${tag}.json`);
     fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
     const argv = buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd: dir });
-    // LUMEN_ENGINE/LUMEN_USERDATA ride on the *grok* child's own env, not a per-server config
-    // override (there is none we can use -- see file header): this assumes grok inherits its own
-    // process environment into the stdio MCP servers it spawns (standard behavior for MCP stdio
-    // clients, and the only channel available), which we could not independently confirm against the
-    // real Lumen bridge without either launching the Electron app or editing ~/.grok/config.toml,
-    // both out of bounds for this task.
-    const childEnv = { ...process.env, LUMEN_ENGINE: tag, LUMEN_USERDATA: this.userData, GROK_HOME: process.env.GROK_HOME || path.join(os.homedir(), '.grok'), USERPROFILE: dir, HOME: dir };
-    delete childEnv.ELECTRON_RUN_AS_NODE;
-    const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: childEnv, cwd: dir });
+    const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData }), cwd: dir });
     this.active = { tag, emit, signal, child };
-    // Best-effort, mirroring claude-code.js. Grok Build centers on a persistent background "leader"
-    // process (`grok leader list/kill`, `~/.grok/leader.sock`); a `grok -p` invocation may just be a
-    // thin client for it. We could not verify within this task's budget whether killing our child
-    // process here also stops an in-flight turn/tool call inside that leader, or only detaches our
-    // view of it -- this kills what we can reach: our own spawned process tree.
+    // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background
+    // "leader" process, `grok leader list/kill`, did not show up in Lumen's GROK_HOME in testing.)
     const onAbort = () => killTree(child);
     signal.addEventListener('abort', onAbort, { once: true });
 
@@ -345,9 +391,9 @@ class GrokBuildEngine {
     const handle = (msg) => {
       if (msg.type === 'system' && msg.subtype === 'init') {
         newSession = msg.session_id || newSession;
-        // No connection-status notice here: see file header -- mcp_servers[].status was "pending"
-        // in every run captured, with no later resolving event, so treating that as a failure signal
-        // (the way claude-code.js does) would misfire on effectively every run.
+        // No connection-status notice here: see file header -- mcp_servers[].status is "pending"
+        // at init even when the lumen server then works, so treating that as a failure signal (the
+        // way claude-code.js does) would misfire on every run.
       } else if (msg.type === 'stream_event') {
         const e = msg.event || {};
         // A new text block starts a new paragraph in the saved reply too (see claude-code.js).
@@ -384,6 +430,7 @@ class GrokBuildEngine {
     signal.removeEventListener('abort', onAbort);
     if (this.active?.tag === tag) this.active = null;
     try { fs.rmSync(promptFile, { force: true }); } catch {} // (dir itself is kept: the fixed sidebar folder, see above)
+    try { settleAuth(userHome, home, authBefore); } catch {}
 
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
     if (code === 'ENOENT') {
@@ -392,8 +439,8 @@ class GrokBuildEngine {
       return { text: '', sessionId: null, failed: true };
     }
     if (!result || result.is_error || result.subtype !== 'success') {
-      // A denied tool call ends the whole run in error here (unlike Claude Code, where it's one
-      // failed step and the turn continues) -- see file header.
+      // A tool call outside the allow rules ends the whole run in error here (unlike Claude Code,
+      // where it's one failed step and the turn continues) -- see file header.
       const failText = (result?.errors || []).join('\n') || result?.result || stderr;
       emit({ type: 'error', ...describeFailure(failText, code) });
       return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true };
@@ -402,4 +449,4 @@ class GrokBuildEngine {
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
