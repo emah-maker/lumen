@@ -3090,6 +3090,7 @@ const agent = new Agent({
   hasUnsavedInput: inRun(agentHasUnsavedInput), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
+  maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.

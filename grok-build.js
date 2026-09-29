@@ -161,6 +161,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, usageOf } = require('./cli-utils');
+const { turnLimitHit } = require('./loop-guard');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://x.ai/cli/install.ps1 | iex, then run `grok` once to sign in (needs SuperGrok or X Premium+).'
@@ -256,6 +257,8 @@ const BUILTIN_TOOLS = [
 // 2 -- Grok's own dontAsk -- still runs after the gate's allow, and refuses anything --allow doesn't
 // name). The other three stay hard-denied: no approval flow exists for them.
 const DENIED = ['spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output'];
+// Grok always gets a cap (a headless run must end); this is it when Max steps per task is Unlimited.
+const DEFAULT_MAX_TURNS = 100;
 const ARGS_BASE = [
   '--output-format', 'streaming-messages-json', '--include-partial-messages',
   '--disallowed-tools', BUILTIN_TOOLS,
@@ -263,7 +266,6 @@ const ARGS_BASE = [
   '--allow', 'lumen__*', '--allow', 'search_tool', '--allow', 'run_terminal_command',
   '--permission-mode', 'dontAsk',
   '--no-subagents', '--no-plan', '--disable-web-search',
-  '--max-turns', '20',
 ];
 
 // The argv for one message (exported for tests and the report; never joined into a shell string).
@@ -273,9 +275,10 @@ const ARGS_BASE = [
 // (flat ACP blocks: { type: 'image', data, mimeType }; verified 2026-09-27, a red test image came back
 // "Red"). The system prompt (~4 KB) stays on the command line: there is no file form of it.
 // model: one of `grok models`' ids, or 'default' (no -m: the CLI's own default model).
-function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default' }) {
+function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default', maxTurns = 0 }) {
   return [
     ...ARGS_BASE,
+    '--max-turns', String(maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS), // hitting it ends in a "continue" notice (turnLimitHit), not an error
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--cwd', cwd,
     '--system-prompt-override', systemPrompt, // full replace: Grok Build has no --append-system-prompt
@@ -536,7 +539,7 @@ class GrokBuildEngine {
   }
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', signal, emit }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit }) {
     const bin = await this.ensureBin();
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
@@ -552,7 +555,7 @@ class GrokBuildEngine {
     fs.mkdirSync(dir, { recursive: true });
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, signal, emit };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -568,7 +571,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, signal, emit, waitForLumen }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen }) {
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
@@ -582,7 +585,7 @@ class GrokBuildEngine {
     const userHome = userGrokHome();
     let authBefore = null;
     try { authBefore = linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
-    const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model });
+    const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model, maxTurns });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
     const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun }), cwd: dir });
@@ -711,6 +714,7 @@ class GrokBuildEngine {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
+    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: result.total_cost_usd, usage: usageOf(result) }; // see claude-code.js
     if (!result || result.is_error || result.subtype !== 'success') {
       // A tool call outside the allow rules ends the whole run in error here (unlike Claude Code,
       // where it's one failed step and the turn continues) -- see file header.

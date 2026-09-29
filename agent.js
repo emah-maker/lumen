@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
 const { addUsage } = require('./features/chat-usage');
-const { RepeatDetector, withNote, trimToolResults, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
+const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, trimToolResults, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('./features/pdf-text');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
@@ -47,14 +47,17 @@ const SYSTEM = `You are Claude, the assistant built into a web browser. You sit 
 You have full control of the browser: tabs, navigation, clicking, typing, hovering, keyboard shortcuts, and clicking any point on a screenshot.
 
 How to work:
+- A question that needs neither the page nor the web (general knowledge, writing, math, advice): answer at once with zero tool calls.
 - Plan in one line, then act. Don't ask clarifying questions you can resolve yourself (pick a sensible default and say so); ask only when the answer changes what you would do and you can't tell.
 - Questions about the current page: read_page mode:"compact" first (or find for one fact or field), then answer from its content. Don't re-read a page you already have unless it changed.
 - Prefer direct navigation: if you know or can build the URL (a search URL, a site's known path), navigate there instead of hunting through menus. For facts, web_search or read_urls beats browsing site by site.
-- Prefer high-level tools: batch for several actions in one call, fill_form for forms, click with text for obvious buttons and links, read_urls to research several pages at once without disturbing the user's tabs, run_script to extract tables/lists, wait_for instead of fixed waits.
+- Prefer high-level tools: batch for several actions in one call, fill_form for forms, click with text for obvious buttons and links, read_urls to research several pages at once without disturbing the user's tabs, wait_for instead of fixed waits, read_pdf for PDFs.
+- run_script is the last resort: use it only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do the job (for example, pulling a large table into structured data), in one call. Never use it to click, type or navigate: those have their own tools.
 - Tasks ("book", "find", "fill in", "compare"): act step by step. Chain the steps you already know into one batch call instead of one call per click, and check the result with read_page since_last:true (only what changed) or screenshot (for visual layout, images, charts). When several lookups are independent, issue their tool calls together in one turn.
-- Verify: after an action that matters, confirm it worked (URL, confirmation text, changed field) before saying it is done. Report failures plainly.
-- If a click or type fails or the ref is gone, don't retry the same call: re-read with read_page mode:"compact" (or find), or click by visible text. If the same approach fails twice, change strategy (another route, direct URL, run_script) or tell the user what blocks you.
-- Stop as soon as the task is done and give the answer; no extra checks or offers.
+- Verify: after an action that matters, confirm it worked (URL, confirmation text, changed field) before saying it is done. Report failures plainly. Don't re-verify what a tool result already showed you.
+- Work within a step budget. Batch independent steps into one batch call, stop exploring once you have the answer, and if a note says few steps are left, finish or summarize what is done and what remains. Always end with a written answer.
+- If a click or type fails or the ref is gone, don't retry the same call: re-read with read_page mode:"compact" (or find), or click by visible text. If the same approach fails twice, change strategy (another route, direct URL) or tell the user what blocks you.
+- Stop as soon as you have the answer and give it; no extra checks, no extra exploring, no offers.
 - General questions that do not need the user's page: answer directly, or use web_search for current facts.
 - If a site shows a CAPTCHA or "unusual traffic" page, do not try to solve it: use web_search (or another site) instead and tell the user.
 - Element ids from read_page are only valid until the page changes. Call read_page again after navigation or large page updates.
@@ -143,7 +146,7 @@ const TOOLS = [
   },
   {
     name: 'run_script',
-    description: 'Run JavaScript in the active tab and return its result (use `return`; async/await allowed). Best for extracting structured data (tables, lists, prices) or repetitive page operations in one step. The result is JSON-serialized. Never use it to get around the confirmation rules.',
+    description: 'LAST RESORT. Run JavaScript in the active tab and return its result (use `return`; async/await allowed). Use it only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do the job, e.g. extracting a large table or list as structured data, and do it in one call. Never use it to click, type or navigate, and never to get around the confirmation rules. The result is JSON-serialized.',
     input_schema: {
       type: 'object',
       properties: { code: { type: 'string' } },
@@ -1014,6 +1017,7 @@ class Agent {
       sessionId: settings.ccSession || crypto.randomUUID(),
       resume,
       model: engineModel(settings.model), // 'default' or a `claude --model` alias
+      maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: no cap)
       systemPrompt: systemFor(settings) + CLAUDE_CODE_NOTE,
       signal,
       emit,
@@ -1023,6 +1027,7 @@ class Agent {
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
+    if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
       producedBy.set(turn, settings.model);
@@ -1053,6 +1058,7 @@ class Agent {
       sessionId: settings.gbSession || crypto.randomUUID(),
       resume,
       model: engineModel(settings.model), // 'default' or one of `grok models`' ids
+      maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
       systemPrompt: systemFor(settings) + GROK_BUILD_NOTE,
       signal,
       emit,
@@ -1062,6 +1068,7 @@ class Agent {
     if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
+    if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
       producedBy.set(turn, settings.model);
@@ -1071,10 +1078,11 @@ class Agent {
   // ---- [/grok build engine]
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
-  async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic) {
+  async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
     const params = requestFor(messages.settings, messages, budget);
     const extra = await this.externalToolDefs(emit); // [mcp client]
     if (extra.length) params.tools = cacheLastTool([...params.tools, ...extra]);
+    if (noTools) params.tool_choice = { type: 'none' }; // the wrap-up turn: answer in text
     const stream = this.getClient().beta.messages.stream(params, { signal });
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {
@@ -1091,7 +1099,7 @@ class Agent {
   }
 
   // One turn on OpenAI, Grok or Gemini (Chat Completions). Same message shape as Claude's.
-  async otherTurn(messages, signal, emit, budget = CONTEXT_CHARS.other) {
+  async otherTurn(messages, signal, emit, budget = CONTEXT_CHARS.other, noTools = false) {
     const { provider, model } = providers.splitModel(messages.settings.model);
     const apiKey = this.getKey(provider);
     if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
@@ -1110,6 +1118,7 @@ class Agent {
       tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
+      noTools,
     });
   }
 
@@ -1117,8 +1126,12 @@ class Agent {
     let jsonRetries = 0;
     const repeats = new RepeatDetector(); // a run of the same failing call gets a "change strategy" note
     let budgetScale = 1; // halved once if the model still says the request is too long (see fitContext)
+    const budget = new RunBudget({ limit: stepLimit(this.browser.maxSteps?.()) }); // the user's step limit (0: unlimited), run_script count, notes (loop-guard.js)
+    let wrap = null; // 'limit' | 'stalled': the next turn has tools off and must answer in text
 
-    for (let step = 0; step < 60; step++) {
+    for (let step = 0; step < budget.max; step++) {
+      const finalTurn = Boolean(wrap) || budget.isFinal(step);
+      const wrapReason = wrap || 'limit';
       emit({ type: 'turn_start' });
       const model = messages.settings.model;
       // Never sent to the API as a Claude model id (setModel defers switches mid-run, so this is a guard).
@@ -1135,8 +1148,8 @@ class Agent {
       let message;
       try {
         message = onClaude
-          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale))
-          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale)).catch((err) => {
+          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale), finalTurn)
+          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale), finalTurn).catch((err) => {
             err.__provider = providers.splitModel(model).provider;
             throw err;
           });
@@ -1190,7 +1203,16 @@ class Agent {
         messages.push({ role: 'user', content: toolUses.map((use) => ({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: 'This tool call was cut off by the output length limit. Try again with less input per call.' })) });
         continue;
       }
-      if (toolUses.length === 0) return;
+      if (toolUses.length === 0) {
+        if (finalTurn) emit({ type: 'notice', text: wrapReason === 'stalled' ? STALL_NOTICE : LIMIT_NOTICE, action: 'continue' });
+        return;
+      }
+      if (finalTurn) {
+        // Tools were off but the model asked for one anyway: answer it as not run so the history stays valid.
+        messages.push({ role: 'user', content: toolUses.map((use) => ({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `Not run: ${WRAP_UP[wrapReason]}` })) });
+        emit({ type: 'notice', text: wrapReason === 'stalled' ? STALL_NOTICE : LIMIT_NOTICE, action: 'continue' });
+        return;
+      }
 
       const who = onClaude ? 'Claude' : providers.PROVIDERS[providers.splitModel(model).provider]?.label || 'The AI';
       // Gates run one at a time in order; consecutive read-only calls then run together (loop-guard.js).
@@ -1222,7 +1244,8 @@ class Agent {
         if (o.skipped) {
           results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: signal.aborted ? 'Not run: stopped by the user.' : `Not run: ${TAB_CLOSED}` });
         } else if (o.ok) {
-          results.push({ type: 'tool_result', tool_use_id: use.id, content: withNote(o.value, repeats.record(use.name, use.input, true)) });
+          budget.countCall(use.name);
+          results.push({ type: 'tool_result', tool_use_id: use.id, content: withNote(withNote(o.value, repeats.record(use.name, use.input, true)), use.name === 'run_script' ? budget.scriptNote() : null) });
         } else if (o.error?.invalid) {
           results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `INVALID_INPUT: ${o.error.message}` });
         } else if (signal.aborted) {
@@ -1232,12 +1255,19 @@ class Agent {
         } else {
           const text = toolError(o.error);
           if (text === TAB_CLOSED) tabClosed = true;
-          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: withNote(text, repeats.record(use.name, use.input, false)) });
+          budget.countCall(use.name);
+          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: withNote(withNote(text, repeats.record(use.name, use.input, false)), use.name === 'run_script' ? budget.scriptNote() : null) });
         }
       }
       if (signal.aborted) {
         messages.push({ role: 'user', content: results });
         throw stopError || new Error('Stopped');
+      }
+      if (!tabClosed && results.length) {
+        // Budget / stall advice rides on the last result; a stalled run gets its tool-free wrap-up turn.
+        if (repeats.stalled) wrap = 'stalled';
+        const advice = wrap ? WRAP_UP[wrap] : budget.stepNote(step);
+        if (advice) results[results.length - 1].content = withNote(results[results.length - 1].content, advice);
       }
       messages.push({ role: 'user', content: results });
       if (tabClosed) {
@@ -1245,7 +1275,8 @@ class Agent {
         return;
       }
     }
-    emit({ type: 'notice', text: 'Stopped after 60 steps. Send a message to continue.' });
+    // Unreachable in practice (the last step is the tool-free wrap-up above); never end without a message.
+    emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
   }
 
   // Human-readable step text for the sidebar, e.g. Clicking “Sign in” button.
