@@ -3,9 +3,11 @@
 // its hash: widgets: [{ id, type, title, data, error, loading }]. Tokens stay in main.js (encrypted
 // with safeStorage) and never reach the page, the hash or settings.json in plain text.
 //
-// The list is the `homeWidgets` setting: [{ id, type, title, span, ...config }], in the order shown.
-// span is the card's width in the page's six-column grid (SPANS); the page moves cards by dragging
-// and resizes them from their corner (place() and resize(), through actionFrom()).
+// The list is the `homeWidgets` setting: [{ id, type, title, x, y, w, h, snap?, span, ...config }],
+// in reading order. x, y, w, h are the card's cells in the page's 12-column grid (features/
+// widget-layout.js does all the arithmetic); span (and an embed's height) mirror w and h in the
+// units older Lumens used, and are what a list without x, y, w, h (an older one) is migrated from.
+// The page moves and resizes cards by asking for a whole new layout (do=layout, through actionFrom()).
 // Opening a new tab shows what is cached at once, fetches whatever is stale in the background, and
 // the fresh data reaches every open new-tab page through deps.onUpdate (main.js refreshNewTabs).
 //
@@ -23,14 +25,20 @@
 //   act(c, action, x) (optional) a page action (the Todoist checkbox): see actionFrom() below
 // and a renderer with the same type in renderer/newtab.js's WIDGET_RENDERERS.
 const ics = require('./ics');
+const WL = require('./widget-layout');
+const TV = require('./todoist-view');
+const WX = require('./weather-view');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
   forecast: 'https://api.open-meteo.com/v1/forecast',
+  // "My location": which city this network is in (no key). Asked only after the user agreed, only
+  // from this process; it sees the IP address and nothing else of ours is sent.
+  locate: 'https://ipapi.co/json/',
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
 };
 const MAX_WIDGETS = 12;
-const SPANS = [2, 3, 4, 6]; // a third, half, two thirds, the full width
+const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
 const HEIGHTS = ['small', 'medium', 'large', 'tall']; // a web page's frame
 const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
 const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when asked
@@ -54,63 +62,76 @@ function httpsUrl(value, { allowWebcal = false } = {}) {
     return u.href;
   } catch { return null; }
 }
-const shortPlace = (s) => String(s || '').split(',')[0].trim();
+const LOCATE_SERVICE = 'ipapi.co';
+// Geocoding (Open-Meteo, keyless): a city or postal code -> [{ name, lat, lon }] with region and country.
+async function searchPlaces(x, query) {
+  const url = `${x.endpoint('geocode')}?${new URLSearchParams({ name: query, count: '6', language: 'en', format: 'json' })}`;
+  const out = [];
+  for (const r of (await x.json(url)).results || []) {
+    if (!r || num(r.latitude, -90, 90) === null || num(r.longitude, -180, 180) === null) continue;
+    const name = [...new Set([r.name, r.admin1, r.country].map((p) => str(p, 60)).filter(Boolean))].join(', ');
+    if (name) out.push({ name, lat: r.latitude, lon: r.longitude });
+  }
+  return out;
+}
 
 // ---- connectors ----
 const CONNECTORS = {
+  // Places, units, sections: c.wx (features/weather-view.js). An older widget has only place, lat, lon
+  // and units, and that place becomes its first one. "My location" (wx.places[].here) is asked of an IP
+  // service by x.here(), only after the user agreed (Settings, or the card's own question).
   weather: {
     label: 'Weather',
     ttl: 15 * 60e3,
     clean: (c) => {
-      const lat = num(c.lat, -90, 90);
-      const lon = num(c.lon, -180, 180);
-      const place = str(c.place, 120);
-      if (lat === null || lon === null || !place) return null;
-      return { place, lat, lon, units: pick(c.units, ['f', 'c'], 'f') };
+      const wx = WX.cleanConfig(c.wx, c);
+      return wx ? { ...WX.mirrorPlace(wx, null), units: wx.units, wx } : null;
     },
     async resolve(input, x) {
-      const query = str(input.city, 80);
-      if (!query) throw new Error('Type a city.');
-      const url = `${x.endpoint('geocode')}?${new URLSearchParams({ name: query, count: '1', language: 'en', format: 'json' })}`;
-      const found = (await x.json(url)).results?.[0];
-      if (!found || num(found.latitude, -90, 90) === null || num(found.longitude, -180, 180) === null) throw new Error(`No place called “${query}” was found.`);
-      const place = [...new Set([found.name, found.admin1, found.country].map((p) => str(p, 60)).filter(Boolean))].join(', ');
-      return { config: { place, lat: found.latitude, lon: found.longitude, units: pick(input.units, ['f', 'c'], 'f') }, message: `Found ${place}.` };
+      let places = WX.cleanPlaces(input.wx?.places);
+      let message = places.length === 1 ? `${places[0].here ? 'My location' : places[0].name} is ready.` : `${places.length} places are ready.`;
+      if (!places.length) { // the older form: a typed city
+        const query = str(input.city, 80);
+        if (!query) throw new Error('Type a city, or search for a place.');
+        const found = (await searchPlaces(x, query))[0];
+        if (!found) throw new Error(`No place called “${query}” was found.`);
+        places = [{ name: found.name, lat: found.lat, lon: found.lon }];
+        message = `Found ${found.name}.`;
+      }
+      const wx = WX.cleanConfig({ ...input.wx, places, units: pick(input.units, ['f', 'c'], input.wx?.units) }, {});
+      return { config: { ...WX.mirrorPlace(wx, null), units: wx.units, wx }, message };
     },
-    title: (c) => shortPlace(c.place),
-    summary: (c) => `${c.place} · °${c.units.toUpperCase()}`,
+    title: (c) => (c.wx.places.length > 1 ? 'Weather' : c.wx.places[0].here ? c.wx.places[0].nick || 'My location' : WX.placeLabel(c.wx.places[0])),
+    summary: (c) => `${c.wx.places.map((p) => (p.here ? 'My location' : WX.placeLabel(p))).join(', ')} · °${c.wx.units.toUpperCase()}`,
     async fetch(c, x) {
-      const params = new URLSearchParams({
-        latitude: String(c.lat), longitude: String(c.lon), timezone: 'auto', forecast_days: '5', forecast_hours: '7',
-        current: 'temperature_2m,apparent_temperature,weather_code,is_day',
-        hourly: 'temperature_2m,weather_code,is_day',
-        daily: 'weather_code,temperature_2m_max,temperature_2m_min',
-        temperature_unit: c.units === 'c' ? 'celsius' : 'fahrenheit',
-      });
-      const w = await x.json(`${x.endpoint('forecast')}?${params}`);
-      const round = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
-      const code = (v) => (Number.isInteger(v) && v >= 0 && v < 100 ? v : null);
-      const hourOf = (t) => { const m = /T(\d{2}):/.exec(String(t)); return m ? Number(m[1]) : null; };
-      const cur = w.current || {};
-      const hourly = w.hourly || {};
-      const daily = w.daily || {};
-      const at = (list, i) => (Array.isArray(list) ? list[i] : undefined);
-      const hours = [];
-      for (let i = 1; i < Math.min(7, hourly.time?.length || 0); i++) {
-        hours.push({ hour: hourOf(at(hourly.time, i)), temp: round(at(hourly.temperature_2m, i)), code: code(at(hourly.weather_code, i)), day: at(hourly.is_day, i) !== 0 });
+      const wx = c.wx;
+      const places = [];
+      let ask = false;
+      let hereNote = '';
+      for (const p of wx.places) {
+        let real = p;
+        if (p.here) {
+          const at = await x.here();
+          if (at.status === 'consent') { ask = true; continue; }
+          if (at.status !== 'ok') { hereNote = at.message || 'My location is off.'; continue; }
+          real = { name: at.place.name, lat: at.place.lat, lon: at.place.lon, nick: p.nick };
+        }
+        try {
+          const shaped = await x.memo(`wx:${real.lat},${real.lon}:${wx.units}:${wx.wind}:${wx.days}:${wx.hours}`, 10 * 60e3, async () => {
+            const s = WX.shape(await x.json(`${x.endpoint('forecast')}?${new URLSearchParams(WX.forecastParams(real, wx))}`), wx);
+            if (!s) throw new Error('The forecast came back empty.');
+            return s;
+          });
+          places.push({ name: real.name, label: WX.placeLabel(real), here: Boolean(p.here), approximate: Boolean(p.here), ...shaped });
+        } catch (err) {
+          places.push({ name: real.name, label: WX.placeLabel(real), here: Boolean(p.here), error: String(err?.message || err).slice(0, 200) });
+        }
       }
-      const days = [];
-      for (let i = 0; i < Math.min(5, daily.time?.length || 0); i++) {
-        const date = /^\d{4}-\d{2}-\d{2}$/.test(at(daily.time, i)) ? at(daily.time, i) : null;
-        days.push({ date, hi: round(at(daily.temperature_2m_max, i)), lo: round(at(daily.temperature_2m_min, i)), code: code(at(daily.weather_code, i)) });
-      }
-      if (round(cur.temperature_2m) === null) throw new Error('The forecast came back empty.');
+      if (places.length && places.every((p) => p.error)) throw new Error(places[0].error);
       return {
-        place: c.place, units: c.units,
-        temp: round(cur.temperature_2m), feels: round(cur.apparent_temperature), code: code(cur.weather_code), day: cur.is_day !== 0,
-        hi: days[0]?.hi ?? null, lo: days[0]?.lo ?? null,
-        hours: hours.filter((h) => h.hour !== null && h.temp !== null).slice(0, 5),
-        days: days.filter((d) => d.date && d.hi !== null).slice(1, 5),
+        places, ask, hereNote, units: wx.units, windLabel: WX.WIND_LABELS[WX.windUnit(wx)], precipUnit: WX.precipUnit(wx),
+        clock: wx.clock, view: wx.view, show: wx.show, days: wx.days, hours: wx.hours, service: LOCATE_SERVICE,
+        hourLabels: Object.fromEntries([...Array(24).keys()].map((h) => [h, WX.hourLabel(h, wx.clock)])),
       };
     },
   },
@@ -138,7 +159,7 @@ const CONNECTORS = {
     async fetch(c, x) {
       const now = Date.now();
       const cal = ics.eventsBetween(await x.text(c.url, { max: 5e6 }), { from: now, days: 14, limit: 60 });
-      const events = cal.events.filter((e) => e.allDay || e.end > now).slice(0, c.count)
+      const events = cal.events.filter((e) => e.allDay || e.end > now).slice(0, 12)
         .map(({ title, location, url, allDay, date, start, end }) => ({ title: title || 'Busy', location, url, allDay, date: date || null, start, end }));
       return { events, name: cal.name };
     },
@@ -148,45 +169,61 @@ const CONNECTORS = {
     label: 'Todoist',
     ttl: 5 * 60e3,
     secret: 'todoist',
-    clean: () => ({}),
+    // What it shows is c.todo (features/todoist-view.js); an older widget has none: today and overdue.
+    clean: (c) => ({ todo: TV.cleanConfig(c.todo) }),
     async resolve(input, x) {
       const token = typeof input.token === 'string' ? input.token.trim() : '';
       if (token && !/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw new Error('That doesn’t look like a Todoist API token (Settings → Integrations → Developer in Todoist).');
       if (!token && !x.secret()) throw new Error('Paste your Todoist API token.');
-      const tasks = await todoistTasks(x, token || x.secret());
+      const todo = TV.cleanConfig(input.todo);
+      const tasks = await todoistTasks(x, token || x.secret(), todo);
       const n = tasks.length;
-      return { config: {}, secret: token || undefined, message: `Connected. ${n === 1 ? '1 task is' : `${n} tasks are`} due today or overdue.` };
+      const what = { todayOverdue: 'due today or overdue', today: 'due today', upcoming: `due in the next ${todo.days} days`, inbox: 'in the Inbox', project: 'in that project', label: 'with that label', all: 'open', custom: 'matching that filter' }[todo.source];
+      return { config: { todo }, secret: token || undefined, message: `Connected. ${n === 1 ? '1 task is' : `${n} tasks are`} ${what}.` };
     },
-    title: () => 'Today',
-    summary: () => 'Today and overdue tasks',
-    async fetch(_c, x) {
+    title: (c) => TV.nameFor(c.todo),
+    summary: (c) => TV.summaryFor(c.todo),
+    async fetch(c, x) {
       if (!x.secret()) throw new Error('Add your Todoist API token in Settings.');
-      const today = localDate(new Date());
-      const tasks = (await todoistTasks(x, x.secret())).map((t) => {
-        const due = t.due && typeof t.due === 'object' ? t.due : null;
-        const when = str(due?.datetime || due?.date, 30);
-        const date = when.slice(0, 10);
-        const time = /T\d{2}:\d{2}/.test(when) ? when : null;
-        return {
-          id: str(String(t.id ?? ''), 40),
-          title: str(t.content, 300) || 'Untitled task',
-          due: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
-          time: time && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?Z?$/.test(time) ? time : null,
-          overdue: /^\d{4}-\d{2}-\d{2}$/.test(date) && date < today,
-          priority: pick(t.priority, [1, 2, 3, 4], 1), // 4 is Todoist's p1 (urgent)
-          url: /^[\w-]{1,40}$/.test(String(t.id ?? '')) ? `https://app.todoist.com/app/task/${t.id}` : null,
-        };
-      }).filter((t) => /^[\w-]{1,40}$/.test(t.id));
-      tasks.sort((a, b) => Number(b.overdue) - Number(a.overdue) || b.priority - a.priority || String(a.time || a.due).localeCompare(String(b.time || b.due)));
-      return { tasks: tasks.slice(0, 8), more: Math.max(0, tasks.length - 8), open: 'https://app.todoist.com/app/today' };
+      const today = TV.ymd(new Date());
+      const projects = await x.projects().catch(() => new Map());
+      const tasks = (await todoistTasks(x, x.secret(), c.todo)).map((t) => TV.normalizeTask(t, projects, today)).filter(Boolean);
+      const done = c.todo.showDone ? await completedToday(x).catch(() => []) : [];
+      const project = c.todo.source === 'project' && c.todo.projectId ? `https://app.todoist.com/app/project/${c.todo.projectId}` : null;
+      return {
+        ...TV.shape(tasks, c.todo, today), done,
+        open: project || 'https://app.todoist.com/app/today',
+        density: c.todo.density, overdueRed: c.todo.overdueRed, showCount: c.todo.showCount, quick: c.todo.quick,
+      };
     },
-    async act(_c, action, x, cached) {
-      if (action.do !== 'complete') return false;
-      // Only a task the card is showing can be completed from it.
-      if (!cached?.tasks?.some((t) => t.id === action.task)) return false;
-      await x.request(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(action.task)}/close`, { method: 'POST', headers: { Authorization: `Bearer ${x.secret()}` } });
-      cached.tasks = cached.tasks.filter((t) => t.id !== action.task);
-      return true;
+    // Page actions: complete (the caller then keeps an undo for a few seconds), undo (reopen it), add (quick add).
+    async act(c, action, x, cached) {
+      const find = (id) => cached.groups?.flatMap((g) => g.tasks).find((t) => t.id === id);
+      const auth = { Authorization: `Bearer ${x.secret()}` };
+      if (action.do === 'complete') {
+        const task = find(action.task); // only a task the card is showing can be completed from it
+        if (!task) return false;
+        await x.request(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(action.task)}/close`, { method: 'POST', headers: auth });
+        for (const g of cached.groups) g.tasks = g.tasks.filter((t) => t.id !== action.task);
+        cached.groups = cached.groups.filter((g) => g.tasks.length);
+        cached.total = Math.max(0, cached.total - 1);
+        cached.shown = Math.max(0, cached.shown - 1);
+        return { undo: { id: action.task, title: task.title } };
+      }
+      if (action.do === 'undo') {
+        await x.request(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(action.task)}/reopen`, { method: 'POST', headers: auth });
+        return { undone: true };
+      }
+      if (action.do === 'add') {
+        if (c.todo.quick === 'off' || !action.text) return false;
+        const made = await x.postJson(`${x.endpoint('todoist')}/tasks/quick`, { text: action.text });
+        // Quick add reads the due date out of the words; the project (its name can have spaces) is set after.
+        if (c.todo.quickProjectId && made && typeof made === 'object' && String(made.project_id) !== c.todo.quickProjectId && /^[\w-]{1,40}$/.test(String(made.id))) {
+          await x.postJson(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(String(made.id))}/move`, { project_id: c.todo.quickProjectId }).catch(() => {});
+        }
+        return { added: true };
+      }
+      return false;
     },
   },
 
@@ -217,23 +254,55 @@ const CONNECTORS = {
   },
 };
 
-// Todoist's tasks due today or overdue (the unified API: /tasks/filter, paged by cursor).
-async function todoistTasks(x, token) {
-  const out = [];
-  let cursor = null;
-  for (let page = 0; page < 3; page++) {
-    const params = new URLSearchParams({ query: 'today | overdue', limit: '50' });
-    if (cursor) params.set('cursor', cursor);
-    const body = await x.json(`${x.endpoint('todoist')}/tasks/filter?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-    const results = Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : null;
-    if (!results) throw new Error('Todoist sent something unexpected.');
-    out.push(...results.filter((t) => t && typeof t === 'object'));
-    cursor = typeof body?.next_cursor === 'string' && body.next_cursor ? body.next_cursor : null;
-    if (!cursor) break;
-  }
-  return out;
+// Todoist's tasks for a widget's question (a filter query, or a project's own list; the unified API,
+// paged by cursor). Shared for a minute between widgets asking the same thing.
+async function todoistTasks(x, token, cfg) {
+  const question = TV.questionFor(cfg);
+  return x.memo(`tasks:${token.length}:${token.slice(-6)}:${JSON.stringify(question)}`, 60e3, async () => {
+    const out = [];
+    let cursor = null;
+    for (let page = 0; page < Math.ceil(TV.FETCH_LIMIT / 50); page++) {
+      const params = new URLSearchParams(question.projectId ? { project_id: question.projectId, limit: '50' } : { query: question.query, limit: '50' });
+      if (cursor) params.set('cursor', cursor);
+      const body = await x.json(`${x.endpoint('todoist')}/tasks${question.projectId ? '' : '/filter'}?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+      const results = Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : null;
+      if (!results) throw new Error('Todoist sent something unexpected.');
+      out.push(...results.filter((t) => t && typeof t === 'object'));
+      cursor = typeof body?.next_cursor === 'string' && body.next_cursor ? body.next_cursor : null;
+      if (!cursor) break;
+    }
+    return out;
+  });
 }
-const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// The projects (id -> { name, color }): names and colours for the cards, and Settings' picker.
+async function todoistProjects(x, token) {
+  return x.memo(`projects:${token.length}:${token.slice(-6)}`, 10 * 60e3, async () => {
+    const map = new Map();
+    let cursor = null;
+    for (let page = 0; page < 4; page++) {
+      const params = new URLSearchParams({ limit: '100' });
+      if (cursor) params.set('cursor', cursor);
+      const body = await x.json(`${x.endpoint('todoist')}/projects?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+      const results = Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : null;
+      if (!results) throw new Error('Todoist sent something unexpected.');
+      for (const p of results) if (p && /^[\w-]{1,40}$/.test(String(p.id ?? ''))) map.set(String(p.id), { name: str(p.name, 60) || 'Project', color: p.color });
+      cursor = typeof body?.next_cursor === 'string' && body.next_cursor ? body.next_cursor : null;
+      if (!cursor) break;
+    }
+    return map;
+  });
+}
+// Tasks completed today, for the struck-through section ("show completed today").
+async function completedToday(x) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const params = new URLSearchParams({ since: start.toISOString(), until: new Date(start.getTime() + 86400e3).toISOString(), limit: '30' });
+  return x.memo(`done:${params}`, 60e3, async () => {
+    const body = await x.json(`${x.endpoint('todoist')}/tasks/completed/by_completion_date?${params}`, { headers: { Authorization: `Bearer ${x.secret()}` } });
+    const items = Array.isArray(body?.items) ? body.items : Array.isArray(body?.results) ? body.results : [];
+    return items.map((i) => ({ id: str(String(i?.task_id ?? i?.id ?? ''), 40), title: str(i?.content, 300) })).filter((i) => /^[\w-]{1,40}$/.test(i.id) && i.title).slice(0, 10);
+  });
+}
 
 // Whether a page lets itself be shown in a frame on the new-tab page, and its title. The new-tab
 // page is a file: page, so X-Frame-Options (any value) and a CSP frame-ancestors directive (any
@@ -254,55 +323,133 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '' };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo };
 }
 
-// A stored widget -> { id, type, title, ...config } with every field checked, or null.
+// A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
+// x, y, w, h are left out when they aren't four integers (an older list, or garbage): cleanList places those.
 function cleanWidget(w) {
   if (!w || typeof w !== 'object' || !CONNECTORS[w.type] || typeof w.id !== 'string' || !/^w[0-9a-z]{4,20}$/.test(w.id)) return null;
   const config = CONNECTORS[w.type].clean(w);
-  return config ? { id: w.id, type: w.type, title: str(w.title, 60), span: pick(w.span, SPANS, defaultSpan(w.type)), ...config } : null;
+  if (!config) return null;
+  const out = { id: w.id, type: w.type, title: str(w.title, 60), span: pick(w.span, SPANS, defaultSpan(w.type)), ...config };
+  const rect = WL.cleanRect(w.type, w); // w.x, w.y, w.w, w.h
+  if (rect) {
+    Object.assign(out, rect);
+    const snap = WL.cleanSnap(w.snap);
+    if (snap) out.snap = snap;
+  }
+  return out;
+}
+const hasRect = (w) => Number.isInteger(w.x);
+// Every widget gets a place: an older list is migrated from span and height (same order and sizes),
+// a widget without one goes in the first free spot, overlaps are pushed down, and span/height are
+// kept in step (what an older Lumen reads); the list stays in reading order.
+function layoutAll(items) {
+  if (!items.length) return items;
+  let rects;
+  if (!items.some(hasRect)) {
+    rects = WL.fromLegacy(items);
+  } else {
+    const taken = items.filter(hasRect).map(WL.rectOf);
+    rects = items.map((it) => {
+      if (hasRect(it)) return WL.rectOf(it);
+      const size = WL.sizeFromLegacy(it.type, it.span, it.height);
+      const r = { ...WL.firstFit(taken, size), ...size };
+      taken.push(r);
+      return r;
+    });
+  }
+  const laid = WL.resolve(items.map((it, i) => ({ id: it.id, type: it.type, ...rects[i], ...(it.snap && hasRect(it) ? { snap: it.snap } : {}) })), { packed: false });
+  const out = items.map((it, i) => {
+    const { x, y, w, h, snap } = laid[i];
+    const next = { ...it, x, y, w, h, ...WL.mirror(it.type, { w, h }) };
+    if (snap) next.snap = snap; else delete next.snap;
+    return next;
+  });
+  return WL.flowOrder(out);
 }
 // The homeWidgets setting, checked (settings-backend.js validate()).
 function cleanList(list) {
   if (!Array.isArray(list)) return null;
   const seen = new Set();
-  return list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)).slice(0, MAX_WIDGETS);
+  return layoutAll(list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)).slice(0, MAX_WIDGETS));
+}
+// The last size used per kind of widget (the default for a new one): { weather: { w, h }, ... }.
+function cleanSizes(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const type of Object.keys(CONNECTORS)) {
+    const r = WL.cleanRect(type, { x: 0, y: 0, w: v[type]?.w, h: v[type]?.h });
+    if (r) out[type] = { w: r.w, h: r.h };
+  }
+  return out;
+}
+const toItem = (w) => ({ id: w.id, type: w.type, x: w.x, y: w.y, w: w.w, h: w.h, ...(w.snap ? { snap: w.snap } : {}) });
+function applyRects(widgets, items) {
+  return widgets.map((w) => {
+    const r = items.find((i) => i.id === w.id);
+    if (!r) return w;
+    const next = { ...w, x: r.x, y: r.y, w: r.w, h: r.h };
+    if (r.snap) next.snap = r.snap; else delete next.snap;
+    return next;
+  });
 }
 
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
-//         onUpdate(), endpoints() (test overrides; {} otherwise), now? }
+//         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs? }
 function createWidgets(deps) {
-  const cache = new Map(); // id -> { data, error, at, key, pending }
+  const cache = new Map(); // id -> { data, error, at, key, pending, undo }
   const recent = []; // times of recent network requests (the rate limit)
+  const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
+  let backoffUntil = 0; // after a 429: no requests until then
+  let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
   const now = () => (deps.now ? deps.now() : Date.now());
+  const UNDO_MS = deps.undoMs ?? 6000;
 
   const list = () => cleanList(deps.readSettings().homeWidgets) || [];
-  const save = (widgets) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: widgets });
-  // A changed config invalidates its cached data; its size on the page doesn't.
-  const keyOf = ({ span, height, ...w }) => JSON.stringify(w);
+  const save = (widgets, extra = {}) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList(widgets), ...extra });
+  const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
+  const sizeFor = (type) => sizes()[type] || WL.DEFAULT_SIZE[type] || { w: 4, h: 3 };
+  // A changed config invalidates its cached data; its size and place on the page don't.
+  const keyOf = ({ span, height, x, y, w, h, snap, ...rest }) => JSON.stringify(rest);
+
+  async function memo(key, ttl, fn) {
+    const hit = memoCache.get(key);
+    if (hit && now() - hit.at < ttl) return hit.value;
+    const value = await fn();
+    memoCache.set(key, { at: now(), value });
+    if (memoCache.size > 60) memoCache.delete(memoCache.keys().next().value);
+    return value;
+  }
+  const forget = (prefix) => { for (const k of [...memoCache.keys()]) if (k.startsWith(prefix)) memoCache.delete(k); };
 
   // ---- network helpers handed to connectors (x) ----
   function spend() {
     const t = now();
+    if (t < backoffUntil) throw new Error('The service asked Lumen to slow down. It will try again shortly.');
     while (recent.length && t - recent[0] > RATE.window) recent.shift();
     if (recent.length >= RATE.max) throw new Error('Too many requests right now. Try again in a minute.');
     recent.push(t);
   }
-  async function request(url, { method = 'GET', headers = {}, max = 2e6 } = {}) {
+  async function request(url, { method = 'GET', headers = {}, max = 2e6, body } = {}) {
     if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
     spend();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT);
     let res;
     try {
-      res = await deps.fetch(url, { method, headers: { Accept: '*/*', ...headers }, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' });
+      res = await deps.fetch(url, { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' });
     } catch (err) {
       clearTimeout(timer);
       throw new Error(err.name === 'AbortError' ? 'The server took too long to answer.' : 'Couldn’t connect. Check your internet connection.');
     }
     try {
       if (res.url && !/^https:\/\//.test(res.url)) throw new Error('The address redirected away from https.');
+      if (res.status === 429) {
+        const wait = Number(res.headers.get('retry-after'));
+        backoffUntil = now() + Math.min(120e3, Math.max(5e3, Number.isFinite(wait) && wait > 0 ? wait * 1000 : 60e3));
+      }
       // Read at most `max` bytes: a huge or endless answer can't eat memory.
       const reader = res.body?.getReader();
       const chunks = [];
@@ -326,7 +473,7 @@ function createWidgets(deps) {
     return new Error(`The server answered ${res.status}.`);
   };
   function helpers(secretName, secretOverride) {
-    return {
+    const x = {
       endpoint: (name) => deps.endpoints?.()[name] || ENDPOINTS[name],
       secret: () => secretOverride || (secretName ? deps.getSecret(secretName) : null),
       raw: (url, opts) => request(url, opts),
@@ -346,21 +493,53 @@ function createWidgets(deps) {
         if (res.truncated) throw new Error('That file is too big.');
         return res.body;
       },
+      // A POST with a JSON body and the token (Todoist), the answer parsed when there is one.
+      async postJson(url, obj) {
+        const res = await request(url, { method: 'POST', max: 65536, body: JSON.stringify(obj), headers: { Authorization: `Bearer ${x.secret()}`, 'Content-Type': 'application/json', Accept: 'application/json' } });
+        if (!res.ok) throw failure(res);
+        try { return res.body ? JSON.parse(res.body) : null; } catch { return null; }
+      },
+      memo,
+      forget,
+      projects: () => todoistProjects(x, x.secret() || ''),
+      // "My location": { status: 'consent' | 'off' | 'ok' | 'error', place?, message? }. Nothing is sent
+      // before the user agreed; the answer is kept for an hour (in settings, so a restart doesn't ask again).
+      async here() {
+        const s = deps.readSettings();
+        const consent = pick(s.weatherLocation, ['unset', 'granted', 'denied'], 'unset');
+        const h = s.weatherHere;
+        const cached = h && typeof h === 'object' && Number.isFinite(h.at) && str(h.name, 80) && num(h.lat, -90, 90) !== null && num(h.lon, -180, 180) !== null ? { name: str(h.name, 80), lat: h.lat, lon: h.lon, at: h.at } : null;
+        const d = WX.locationDecision({ consent, cached, now: now() });
+        if (d === 'consent') return { status: 'consent' };
+        if (d === 'off') return { status: 'off' };
+        if (d === 'cached') return { status: 'ok', place: cached };
+        try {
+          const loc = WX.cleanLocation(await x.json(x.endpoint('locate')));
+          if (!loc) throw new Error('Couldn’t tell which city you are in.');
+          deps.writeSettings({ ...deps.readSettings(), weatherHere: { ...loc, at: now() } });
+          return { status: 'ok', place: loc };
+        } catch (err) {
+          if (cached) return { status: 'ok', place: cached };
+          return { status: 'error', message: `My location: ${String(err?.message || err).slice(0, 120)}` };
+        }
+      },
     };
+    return x;
   }
 
   // ---- fetching ----
   function refresh(w, { force = false } = {}) {
     const c = connector(w);
     let entry = cache.get(w.id);
-    if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0 }; cache.set(w.id, entry); }
+    if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, undo: entry?.undo }; cache.set(w.id, entry); }
     if (entry.pending) return entry.pending;
     const age = now() - entry.at;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : c.ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
+    if (force) { forget('tasks:'); forget('done:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
-      .then((data) => { entry.data = data; entry.error = null; }, (err) => { entry.error = String(err?.message || err).slice(0, 200); })
+      .then((data) => { entry.data = data; entry.error = null; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); })
       .then(() => { entry.at = now(); entry.pending = null; deps.onUpdate?.(); return true; });
     return entry.pending;
   }
@@ -371,7 +550,12 @@ function createWidgets(deps) {
       const entry = cache.get(w.id);
       const current = entry && entry.key === keyOf(w) ? entry : null;
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, data: current?.data ?? null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
+      const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
+      const data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
+      const layout = WL.rectOf(w);
+      if (w.snap) layout.snap = w.snap;
+      // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, layout, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
     });
   }
   function refreshAll({ force = false } = {}) {
@@ -401,18 +585,33 @@ function createWidgets(deps) {
   // Add (no id) or replace a widget. The token, if any, is saved encrypted, never in the widget.
   async function saveWidget(input, id = null) {
     const widgets = list();
-    if (id && !widgets.some((w) => w.id === id)) throw new Error('That widget is gone.');
+    const prev = id ? widgets.find((w) => w.id === id) : null;
+    if (id && !prev) throw new Error('That widget is gone.');
     if (!id && widgets.length >= MAX_WIDGETS) throw new Error(`Up to ${MAX_WIDGETS} widgets.`);
     const { widget, secret, message } = await resolveInput(input, id);
-    if (id && !cleanInput(input).span) widget.span = widgets.find((w) => w.id === id).span; // an edit keeps its size
+    const ci = cleanInput(input);
+    if (prev) {
+      // An edit keeps its place and size; the width and height pickers only count when they changed.
+      Object.assign(widget, WL.rectOf(prev));
+      if (prev.snap) widget.snap = prev.snap;
+      if (ci.span && ci.span !== prev.span) widget.w = WL.sizeFromLegacy(widget.type, ci.span).w;
+      if (widget.type === 'embed' && widget.height !== prev.height) widget.h = WL.sizeFromLegacy('embed', null, widget.height).h;
+    } else {
+      // A new one is the size last used for its kind, or what the pickers ask for, in the first free spot.
+      const size = { ...sizeFor(widget.type) };
+      if (ci.span && ci.span !== defaultSpan(widget.type)) size.w = WL.sizeFromLegacy(widget.type, ci.span).w;
+      if (widget.type === 'embed' && widget.height !== 'medium') size.h = WL.sizeFromLegacy('embed', null, widget.height).h;
+      Object.assign(widget, WL.firstFit(widgets.map(WL.rectOf), size), size);
+    }
     if (secret && CONNECTORS[widget.type].secret) deps.setSecret(CONNECTORS[widget.type].secret, secret);
+    if (widget.type === 'weather') rememberPlaces(widget.wx.places);
     const next = id ? widgets.map((w) => (w.id === id ? widget : w)) : [...widgets, widget];
     save(next);
     cache.delete(widget.id);
     if (secret) for (const w of next) if (w.type === widget.type) cache.delete(w.id);
     deps.onUpdate?.();
-    refresh(widget).catch(() => {});
-    return { widget, message };
+    refresh(list().find((w) => w.id === widget.id) || widget).catch(() => {});
+    return { widget: list().find((w) => w.id === widget.id) || widget, message };
   }
   function remove(id) {
     const widgets = list();
@@ -426,61 +625,154 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // Settings' up and down: swap places with the neighbour in reading order.
   function move(id, delta) {
     const widgets = list();
     const i = widgets.findIndex((w) => w.id === id);
     const j = i + (delta < 0 ? -1 : 1);
     if (i < 0 || j < 0 || j >= widgets.length) return false;
-    [widgets[i], widgets[j]] = [widgets[j], widgets[i]];
+    const a = widgets[i];
+    const b = widgets[j];
+    [a.x, b.x] = [b.x, a.x];
+    [a.y, b.y] = [b.y, a.y];
+    delete a.snap;
+    delete b.snap;
     save(widgets);
     deps.onUpdate?.();
     return true;
   }
-  // The page's drag and drop: put a widget at a position in the list.
+  // do=place: take the place of the widget at an index in reading order (the others make room).
   function place(id, to) {
     const widgets = list();
-    const i = widgets.findIndex((w) => w.id === id);
-    const j = Math.max(0, Math.min(widgets.length - 1, Math.trunc(to)));
-    if (i < 0 || !Number.isFinite(to) || i === j) return false;
-    widgets.splice(j, 0, ...widgets.splice(i, 1));
-    save(widgets);
+    const it = widgets.find((w) => w.id === id);
+    const target = widgets[Math.max(0, Math.min(widgets.length - 1, Math.trunc(to)))];
+    if (!it || !target || target === it || !Number.isFinite(to)) return false;
+    save(applyRects(widgets, WL.move(widgets.map(toItem), id, { x: target.x, y: target.y }, { packed: false })));
     deps.onUpdate?.();
     return true;
   }
-  // The page's resize corner: a width (SPANS) and, for a web page, a frame height (HEIGHTS).
+  // do=size (older pages and tests): a width in the old units and, for a web page, a frame height.
   function resize(id, { span, height } = {}) {
     const widgets = list();
     const w = widgets.find((x) => x.id === id);
     if (!w) return false;
-    const next = { ...w, span: pick(span, SPANS, w.span) };
-    if (w.type === 'embed') next.height = pick(height, HEIGHTS, w.height);
-    if (next.span === w.span && next.height === w.height) return false;
-    save(widgets.map((x) => (x.id === id ? next : x)));
+    const want = { x: w.x, y: w.y, w: span ? WL.sizeFromLegacy(w.type, pick(span, SPANS, w.span)).w : w.w, h: w.type === 'embed' && height ? WL.sizeFromLegacy('embed', null, pick(height, HEIGHTS, w.height)).h : w.h };
+    if (want.w === w.w && want.h === w.h) return false;
+    save(applyRects(widgets, WL.resize(widgets.map(toItem), id, want, { packed: false })));
+    deps.onUpdate?.();
+    return true;
+  }
+  // do=layout: the page's drag, resize and snap: rects for (some of) the widgets. Checked and clamped
+  // here; the last size resized per kind is remembered for new widgets.
+  function layout(items) {
+    const widgets = list();
+    let resized = null;
+    const next = widgets.map((w) => {
+      const r = Array.isArray(items) ? items.find((i) => i && i.id === w.id) : null;
+      const rect = r && WL.cleanRect(w.type, r);
+      if (!rect) return w;
+      const n = { ...w, ...rect };
+      const snap = WL.cleanSnap(r.snap);
+      if (snap) n.snap = snap; else delete n.snap;
+      if ((rect.w !== w.w || rect.h !== w.h) && !snap) resized = { type: w.type, w: rect.w, h: rect.h };
+      return n;
+    });
+    if (JSON.stringify(cleanList(next)) === JSON.stringify(widgets)) return false;
+    save(next, resized ? { homeWidgetSizes: { ...sizes(), [resized.type]: { w: resized.w, h: resized.h } } } : {});
+    deps.onUpdate?.();
+    return true;
+  }
+  // Settings' "Reset layout": every card its default size, packed in reading order.
+  function resetLayout() {
+    const widgets = list();
+    const rects = WL.flowPack(widgets.map((w) => WL.DEFAULT_SIZE[w.type] || { w: 4, h: 3 }));
+    widgets.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
+    save(widgets, { homeWidgetSizes: {} });
+    deps.onUpdate?.();
+    return true;
+  }
+  // Settings' project picker for a Todoist widget (a token typed but not saved yet may be given).
+  async function projects(token) {
+    const t = typeof token === 'string' ? token.trim() : '';
+    if (t && !/^[A-Za-z0-9_-]{20,100}$/.test(t)) throw new Error('That doesn’t look like a Todoist API token.');
+    const x = helpers('todoist', t || undefined);
+    if (!x.secret()) throw new Error('Add your Todoist token first.');
+    return [...(await x.projects())].map(([id, p]) => ({ id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
+  }
+  // ---- weather: places and "My location" ----
+  const savedPlaces = () => WX.cleanSaved(deps.readSettings().weatherPlaces);
+  const rememberPlaces = (places) => {
+    const merged = WX.cleanSaved([...savedPlaces(), ...places.filter((p) => !p.here)]);
+    deps.writeSettings({ ...deps.readSettings(), weatherPlaces: merged });
+  };
+  // Settings' place editor for the saved list (rename, reorder, remove).
+  function setSavedPlaces(list) {
+    deps.writeSettings({ ...deps.readSettings(), weatherPlaces: WX.cleanSaved(list) });
+    return savedPlaces();
+  }
+  async function search(query) {
+    const q = str(query, 80);
+    if (q.length < 2) throw new Error('Type at least two letters.');
+    return searchPlaces(helpers(null), q);
+  }
+  const locationState = () => {
+    const h = deps.readSettings().weatherHere;
+    return { consent: pick(deps.readSettings().weatherLocation, ['unset', 'granted', 'denied'], 'unset'), service: LOCATE_SERVICE, here: h && typeof h.name === 'string' ? str(h.name, 80) : '' };
+  };
+  // The user's answer to "Show weather for where you are?" (Settings, or the card's own question).
+  function setLocationConsent(choice) {
+    if (choice !== 'allow' && choice !== 'deny') return false;
+    deps.writeSettings({ ...deps.readSettings(), weatherLocation: choice === 'allow' ? 'granted' : 'denied', weatherHere: null });
+    forget('wx:');
+    for (const w of list()) if (w.type === 'weather') cache.delete(w.id);
+    deps.onUpdate?.();
+    return true;
+  }
+  // Ask again where the network is (the card's refresh-location button).
+  function relocate() {
+    deps.writeSettings({ ...deps.readSettings(), weatherHere: null });
+    forget('wx:');
+    for (const w of list()) if (w.type === 'weather') cache.delete(w.id);
     deps.onUpdate?.();
     return true;
   }
   // For Settings: the list with a line each, and which secrets are stored (never their values).
   function state() {
+    const edit = pendingEdit;
+    pendingEdit = null;
     return {
+      savedPlaces: savedPlaces(),
+      location: locationState(),
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       max: MAX_WIDGETS,
       spans: SPANS,
+      edit,
     };
   }
 
   // ---- page actions ----
   // The new-tab page asks by loading itself with ?widget=<id>&do=<action>[&task=<id>] (like its Ask
-  // AI box), or &do=place&to=<index>, or &do=size&span=<2|3|4|6>[&height=<name>]; main.js cancels
-  // that navigation and passes the URL here. True when it was one.
+  // AI box): refresh, complete, undo (&task), add (&text), place (&to=<index>), size (&span, &height),
+  // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure. main.js cancels that navigation and passes
+  // the URL here. Null when it isn't one; { invalid: true } when it is one that is refused.
   function actionFrom(url) {
     let params;
     try { params = new URL(url).searchParams; } catch { return null; }
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|place|size)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
+    if (action.do === 'add') {
+      action.text = str(params.get('text'), 300);
+      if (!action.text) return { invalid: true };
+    }
+    if (action.do === 'consent') {
+      action.arg = params.get('arg');
+      if (action.arg !== 'allow' && action.arg !== 'deny') return { invalid: true };
+    }
     if (action.do === 'place') {
       if (!/^\d{1,2}$/.test(params.get('to') || '')) return { invalid: true };
       action.to = Number(params.get('to'));
@@ -490,6 +782,10 @@ function createWidgets(deps) {
       action.height = params.has('height') ? pick(params.get('height'), HEIGHTS, null) : undefined;
       if (!action.span || action.height === null) return { invalid: true };
     }
+    if (action.do === 'layout') {
+      action.items = WL.decode(params.get('l'));
+      if (!action.items) return { invalid: true };
+    }
     return action;
   }
   async function act(action) {
@@ -498,15 +794,27 @@ function createWidgets(deps) {
     if (action.do === 'refresh') return refresh(w, { force: true });
     if (action.do === 'place') return place(w.id, action.to);
     if (action.do === 'size') return resize(w.id, { span: action.span, height: action.height });
+    if (action.do === 'layout') return layout(action.items);
+    if (action.do === 'remove') return remove(w.id);
+    if (action.do === 'consent') return setLocationConsent(action.arg);
+    if (action.do === 'locate') return relocate();
+    if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     const c = connector(w);
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;
     try {
       const done = await c.act(w, action, helpers(c.secret), entry.data);
       if (!done) return false;
+      forget('tasks:');
+      forget('done:');
+      if (done.undo) {
+        entry.undo = { ...done.undo, until: now() + UNDO_MS };
+        setTimeout(() => { if (entry.undo && entry.undo.until <= now()) { entry.undo = null; deps.onUpdate?.(); } }, UNDO_MS + 50);
+      }
+      if (done.undone) entry.undo = null;
       deps.onUpdate?.(); // the task leaves the card at once
       entry.at = 0; // and the list is fetched again
-      setTimeout(() => refresh(w).catch(() => {}), 800);
+      setTimeout(() => refresh(w).catch(() => {}), done.undo ? 800 : 0);
       return true;
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);
@@ -516,7 +824,7 @@ function createWidgets(deps) {
     }
   }
 
-  return { list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, state, actionFrom, act, cache };
+  return { list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
 }
 
-module.exports = { createWidgets, cleanList, cleanWidget, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };
+module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };
