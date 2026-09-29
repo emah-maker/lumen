@@ -44,10 +44,20 @@ function lookOf(l) {
   return {
     background, image,
     effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true, lite: look.lite === true,
+    effectStyle: effectStyleOf(look.effectStyle),
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
     sections: { favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
+  };
+}
+function effectStyleOf(s) {
+  const st = s && typeof s === 'object' ? s : {};
+  const one = (v, allowed) => (allowed.includes(v) ? v : 'normal');
+  return {
+    color: ['auto', 'accent', 'rainbow'].includes(st.color) || hex(st.color) ? st.color : 'auto',
+    amount: one(st.amount, ['few', 'many']), speed: one(st.speed, ['slow', 'fast']), size: one(st.size, ['small', 'large']),
+    interact: st.interact !== false,
   };
 }
 const dark = matchMedia('(prefers-color-scheme: dark)');
@@ -70,6 +80,7 @@ function applyLook(look) {
 // The animated effect's script is loaded the first time one is on, never otherwise.
 let effectScript = null;
 function applyEffect(look) {
+  document.body.classList.toggle('has-effect', look.effect !== 'none'); // the page's fields turn less see-through over one
   if (window.setBackdropEffect) { window.setBackdropEffect(look.effect, look); return; }
   if (look.effect === 'none' || effectScript) return;
   effectScript = document.createElement('script');

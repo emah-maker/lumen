@@ -36,6 +36,11 @@ const DEFAULTS = {
   accentColor: 'blue', // [look] a preset from ACCENTS, or '#rrggbb'
   newTabBackground: 'plain', // [look] plain | aurora | dusk | ocean | forest | sunset | graphite | image
   newTabEffect: 'none', // [look] an animated layer over the background: none | particles | stars | bubbles | snow
+  newTabEffectColor: 'auto', // [look] auto (white, or the text color on Plain) | accent | rainbow | #rrggbb
+  newTabEffectAmount: 'normal', // [look] few | normal | many
+  newTabEffectSpeed: 'normal', // [look] slow | normal | fast
+  newTabEffectSize: 'normal', // [look] small | normal | large
+  newTabEffectInteract: true, // [look] the pointer pulls, lights up or pushes the particles
   newTabImage: 0, // [look] when the wallpaper file (newtab-wallpaper.jpg in the profile) was last set; 0: none
   newTabClock: true, // [look] the big clock above the greeting
   newTabName: '', // [look] "Good evening, <name>"
@@ -91,6 +96,7 @@ const ACCENTS = {
 };
 const NEW_TAB_BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
 const NEW_TAB_EFFECTS = ['none', 'particles', 'stars', 'bubbles', 'snow'];
+const EFFECT_LEVELS = { newTabEffectAmount: ['few', 'normal', 'many'], newTabEffectSpeed: ['slow', 'normal', 'fast'], newTabEffectSize: ['small', 'normal', 'large'] };
 const HEX = /^#[0-9a-f]{6}$/i;
 const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
@@ -109,6 +115,8 @@ function validate(key, value) {
     case 'accentColor': return ACCENTS[value] || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabBackground': return pick(value, NEW_TAB_BACKGROUNDS, null);
     case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
+    case 'newTabEffectColor': return ['auto', 'accent', 'rainbow'].includes(value) || HEX.test(String(value)) ? String(value).toLowerCase() : null;
+    case 'newTabEffectAmount': case 'newTabEffectSpeed': case 'newTabEffectSize': return pick(value, EFFECT_LEVELS[key], null);
     case 'newTabName': return String(value ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40);
     case 'newTabImage': return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
@@ -218,6 +226,7 @@ function create(deps) {
       image,
       // Reduce motion draws one still frame; Performance mode keeps the effect sparser and slower.
       effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
+      effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor),
       clock: p.newTabClock, name: p.newTabName,
       sections: { favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },

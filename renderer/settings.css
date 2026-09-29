@@ -265,3 +265,10 @@ body.interstitial { display: block; }
 .widget-buttons > .note { flex: 0 1 auto; min-width: 0; max-width: 60%; }
 .note.warn { color: #b25000; }
 @media (prefers-color-scheme: dark) { .note.warn { color: #ffb340; } }
+
+/* [look] Appearance → Animated effect's options */
+.effect-options[hidden] { display: none; }
+.effect-options .seg button { padding: 0 12px; }
+.effect-options .row.stack .swatches { justify-content: flex-start; margin-top: 10px; }
+.effect-options .swatch[data-color="#ffffff"] { box-shadow: inset 0 0 0 1px var(--hairline); }
+.effect-options .swatch[data-color="#ffffff"][aria-checked="true"] { box-shadow: inset 0 0 0 1px var(--hairline), 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
