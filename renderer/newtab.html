@@ -271,7 +271,7 @@
     .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
     .w-card:hover .w-icon-btn, .w-icon-btn:focus-visible { opacity: 1; }
     .w-icon-btn:hover { background: var(--hover); color: var(--text); }
-    .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible, .wx-day:focus-visible, .wx-dot:focus-visible, .td-add input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible, .wx-day:focus-visible, .wx-dot:focus-visible, .td-add input:focus-visible, .mu-ask input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .w-note { margin: auto 0; padding: 6px 0 2px; color: var(--muted); font-size: 12.5px; }
     .w-note.small { margin: 4px 0 0; padding: 0; font-size: 11.5px; }
     .w-note strong { display: block; color: var(--text); font-weight: 550; font-size: 13px; margin-bottom: 2px; }
@@ -389,6 +389,21 @@
     .w-day:first-child { padding-top: 0; }
     .w-time { flex: none; width: 58px; padding-top: 1px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .w-bar { flex: none; width: 3px; align-self: stretch; margin: 2px 0; border-radius: 2px; background: var(--ev, var(--accent)); opacity: 0.85; }
+    /* World clock: one row per place; the time is ticked by the page (newtab-widgets.js). */
+    .w-card.worldclock .w-body { overflow-y: auto; }
+    .wc-list { display: flex; flex-direction: column; gap: 2px; }
+    .wc-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 2px; }
+    .wc-row + .wc-row { border-top: 0.5px solid var(--hover); }
+    .wc-icon { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
+    .wc-icon .wx-icon { width: 22px; height: 22px; }
+    .wc-row[data-day="night"] .wc-icon { opacity: 0.85; }
+    .wc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+    .wc-city { font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .wc-sub { display: none; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
+    .wc-time { flex: none; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .wc-sun { display: none; flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    @container card (min-height: 120px) { .wc-sub { display: flex; } }
+    @container card (min-width: 330px) { .wc-row.has-sun .wc-sun { display: block; } }
     /* Colors setting (calendar, weather, todoist): "Match screen", "Accent only" and "Monochrome" tint the card from
        the page's own colours; the text colours are derived to stay at 4.5:1 or better on the tinted surface. */
     body .w-card.tinted { background: var(--w-surface); box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--w-text) 14%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--w-text); --text: var(--w-text); --muted: color-mix(in srgb, var(--w-text) 70%, var(--w-surface)); --faint: color-mix(in srgb, var(--w-text) 45%, var(--w-surface)); --hover: color-mix(in srgb, var(--w-text) 9%, transparent); --field: color-mix(in srgb, var(--w-text) 10%, transparent); transition: transform 260ms var(--ease), box-shadow 200ms var(--ease), scale 200ms var(--ease), background-color 300ms ease-out; }
@@ -401,10 +416,45 @@
     .w-card.tinted .w-btn.primary { background: var(--w-head); color: var(--w-surface); }
     body.calm .w-card.tinted { transition: none; }
     /* Calendar: the next event on a small card, three on a middling one, the whole agenda on a tall one. */
+    @container card (max-height: 149px) { .feed .later { display: none; } }
+    @container card (max-height: 299px) { .feed .far { display: none; } }
     @container card (max-height: 149px) { .calendar .later { display: none; } }
     @container card (max-height: 299px) { .calendar .far, .calendar .w-day.later { display: none; } }
     @container card (max-width: 240px) { .w-time { width: 48px; } .w-fallback { flex-wrap: wrap; } }
+    /* Spotify: title and artist on a small card; the album art, the controls and the progress bar as the card grows. */
+    .sp-wrap { display: flex; gap: 12px; align-items: center; flex: 1 1 auto; min-height: 0; }
+    .sp-art { display: none; flex: none; width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: var(--field); }
+    .sp-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .sp-title { font-size: 13.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .sp-artist, .sp-album { color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .sp-album, .sp-controls, .sp-progress { display: none; }
+    .sp-controls { align-items: center; justify-content: center; gap: 10px; margin-top: 8px; }
+    .sp-btn { appearance: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text); cursor: default; outline: none; transition: background-color 150ms ease-out; }
+    .sp-btn:hover { background: var(--hover); }
+    .sp-btn:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .sp-btn svg { width: 14px; height: 14px; fill: currentColor; }
+    .sp-btn.main { width: 36px; height: 36px; background: var(--text); color: var(--bg); }
+    .sp-btn.main:hover { background: var(--text); opacity: 0.85; }
+    .sp-progress { align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .sp-bar { flex: 1 1 auto; height: 3px; border-radius: 2px; background: var(--field); overflow: hidden; }
+    .sp-bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--accent); }
+    .sp-card-idle .sp-title { font-weight: 500; color: var(--muted); }
+    @container card (min-width: 190px) and (min-height: 100px) { .sp-controls { display: flex; } }
+    @container card (min-width: 260px) and (min-height: 130px) { .sp-art { display: block; } .sp-album, .sp-progress { display: flex; } .sp-album { display: block; } }
+    @container card (max-height: 129px) { .sp-progress { display: none; } }
     /* Todoist: a count and the next task on a small card, the list (with what the settings switch on) on a bigger one. */
+    .sl-summary { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 0; flex: 1 1 auto; }
+    .sl-counts { display: flex; gap: 18px; }
+    .sl-count { display: flex; flex-direction: column; }
+    .sl-n { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .sl-of { color: var(--muted); font-size: 11.5px; }
+    .sl-next { font-size: 12.5px; font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .sl-full { display: none; flex-direction: column; gap: 6px; }
+    @container card (min-width: 190px) and (min-height: 150px) { .sl-summary { display: none; } .sl-full { display: flex; } }
+    .sl-chats { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+    .sl-chat { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; }
+    .sl-full .w-row.unread .w-title, .sl-full .w-row.unread a { font-weight: 600; }
+    .sl-reconnect { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
     .td-summary { display: flex; flex-direction: column; justify-content: center; min-height: 0; flex: 1 1 auto; }
     .td-count { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .td-of { color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
@@ -427,6 +477,75 @@
     .td-toast { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 12px; box-shadow: 0 6px 18px var(--shadow); }
     .td-toast span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .td-toast .w-btn { margin: 0; padding: 2px 10px; background: rgba(128, 128, 128, 0.3); color: inherit; }
+
+    /* Gmail (read-only): the unread count, then the latest messages; a small card shows the count and the newest one. */
+    .gm-head { display: flex; align-items: baseline; gap: 6px; margin: 0 0 4px; }
+    .gm-count { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .gm-of { color: var(--muted); font-size: 11.5px; }
+    .gm-row .w-main { min-width: 0; }
+    .gm-from { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11.5px; color: var(--muted); }
+    .gm-row.unread .gm-from { color: var(--text); font-weight: 600; }
+    .gm-row .w-title, .gm-row a { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .gm-snip { display: none; color: var(--muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .gm-row .gm-when { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; padding-top: 1px; }
+    @container card (min-width: 260px) and (min-height: 200px) { .gm-snip { display: block; } }
+    @container card (max-height: 149px) { .gm-row.later { display: none; } }
+    /* GitHub: the numbers on a small card, the lists on a bigger one. */
+    .gh-summary { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 18px; min-height: 0; flex: 1 1 auto; align-content: center; }
+    .gh-stat { display: flex; flex-direction: column; color: inherit; text-decoration: none; }
+    .gh-num { font-size: 30px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .gh-of { color: var(--muted); font-size: 11.5px; }
+    .gh-full { display: none; flex-direction: column; gap: 6px; }
+    @container card (min-width: 220px) and (min-height: 150px) { .gh-summary { display: none; } .gh-full { display: flex; } }
+    .gh-unread { margin: 0 0 2px; padding: 0 6px; font-size: 12.5px; font-weight: 500; }
+    .gh-section { display: flex; flex-direction: column; }
+    .gh-kind { flex: none; align-self: flex-start; margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; }
+    .gh-kind.draft { opacity: 0.7; }
+    .gh-meta { display: none; flex-wrap: wrap; gap: 0 8px; color: var(--muted); font-size: 11.5px; }
+    @container card (min-width: 260px) { .gh-meta { display: flex; } }
+    .gh-repo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+    /* Muse: the answer scrolls, the question field stays at the bottom. */
+    .muse-card .w-body { display: flex; flex-direction: column; min-height: 0; }
+    .mu-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .mu-p { margin: 0 0 6px; font-size: 12.5px; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; }
+    .mu-sources { margin: 4px 0 6px; padding: 0; list-style: none; font-size: 11.5px; }
+    .mu-sources li { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .mu-ask { display: flex; gap: 6px; align-items: center; margin: 8px 0 0; flex: none; }
+    .mu-ask input { flex: 1 1 auto; width: auto; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12.5px; }
+    .mu-ask .w-btn { margin: 0; flex: none; }
+    /* Stocks and Crypto: a price table and a simulated paper portfolio. Direction is always shown with ▲/▼ as well as colour. */
+    .w-card.stocks, .w-card.crypto { --up: #17772f; --down: #c4262e; }
+    @media (prefers-color-scheme: dark) { .w-card.stocks, .w-card.crypto { --up: #4bd166; --down: #ff7a72; } }
+    body.on-media .w-card.stocks, body.on-media .w-card.crypto { --up: #6ce085; --down: #ff9a94; }
+    .w-card.stocks .w-body, .w-card.crypto .w-body { overflow: auto; }
+    .mk-badge { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: 10.5px; font-weight: 600; }
+    .mk-badge.live { color: var(--up); } .mk-badge.off { color: var(--warn); }
+    .mk-tabs { display: flex; gap: 2px; margin: 0 0 6px; }
+    .mk-tab { appearance: none; border: 0; padding: 2px 9px; border-radius: 7px; background: transparent; color: var(--muted); font: 600 11px/18px system-ui, sans-serif; cursor: default; outline: none; }
+    .mk-tab[aria-selected="true"] { background: var(--field); color: var(--text); }
+    .mk-tab:focus-visible, .mk-trade select:focus-visible, .mk-trade input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .mk-panel[hidden] { display: none; }
+    .mk-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .mk-table th, .mk-table td { padding: 3px 4px; text-align: right; font-weight: 400; white-space: nowrap; }
+    .mk-table thead th { color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+    .mk-table th:first-child { text-align: left; }
+    .mk-table tbody th.mk-sym { font-weight: 650; color: var(--text); }
+    .mk-chg.up { color: var(--up); } .mk-chg.down { color: var(--down); } .mk-chg.flat { color: var(--muted); }
+    .mk-foot { margin: 6px 0 0; color: var(--muted); font-size: 10.5px; }
+    .mk-paper-note { margin: 0 0 6px; color: var(--muted); font-size: 10.5px; font-weight: 600; }
+    .mk-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 6px; }
+    .mk-sum > div { display: flex; flex-direction: column; }
+    .mk-k { color: var(--muted); font-size: 10.5px; } .mk-v { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .mk-hold { margin-bottom: 6px; }
+    .mk-trade { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .mk-trade select, .mk-trade input { height: 28px; padding: 0 8px; border-radius: 8px; border: 0; background: var(--field); color: var(--text); font: 12.5px system-ui, sans-serif; outline: none; }
+    .mk-trade input { width: 84px; min-width: 0; }
+    .mk-trade .w-btn { margin: 0; }
+    .mk-trade :disabled, .mk-trade .w-btn:disabled { opacity: 0.5; }
+    .mk-err { min-height: 0; margin: 4px 0 0; color: var(--warn); font-size: 11.5px; } .mk-err:empty { display: none; }
+    .mk-reset { margin-top: 8px; font-size: 11px; padding: 3px 10px; }
+    .w-card.mk-offline .mk-table, .w-card.mk-offline .mk-sum { opacity: 0.55; }
+    .mk-notice { margin: 0 0 6px; padding: 0; }
 
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
@@ -468,9 +587,14 @@
   <div id="widgets" class="widgets" role="region" aria-label="Widgets"></div>
   <script src="favicons.js"></script>
   <script src="../features/widget-layout.js"></script>
+  <script src="../features/widget-system.js"></script>
+  <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>
+  <script src="newtab-system.js"></script>
+  <script src="../features/worldclock-view.js"></script>
   <script src="newtab-widgets.js"></script>
   <script src="newtab-widgets-grid.js"></script>
+  <script src="newtab-edit.js"></script>
   <script src="newtab.js"></script>
 </body>
 </html>

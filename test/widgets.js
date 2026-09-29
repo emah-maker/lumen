@@ -571,7 +571,7 @@ function server(opts) {
   check('dragging a snapped card away un-snaps it and the centre column comes back', !(await layoutOf()).includes(`${ID.board}:`) || !new RegExp(`${ID.board}:[^;]*,top`).test(await layoutOf()), await layoutOf());
 
   // ---- edit mode ----
-  check('there is an Edit widgets button', await page("document.querySelector('.w-edit-btn')?.textContent === 'Edit widgets' && !document.querySelector('.w-edit-btn').hidden"), '');
+  check('there is an Edit layout button', await page("document.querySelector('.w-edit-btn')?.textContent === 'Edit layout' && !document.querySelector('.w-edit-btn').hidden"), '');
   await page(`(() => { const c = window.__t.card(${JSON.stringify(ID.weather)}); const b = c.querySelector('.wx-now') || c.querySelector('.w-body'); const r = b.getBoundingClientRect(); window.__t.fire(b, 'pointerdown', r.left + 8, r.top + 8); return 1; })()`);
   await sleep(250);
   check('a press on a card shows a cue before the 400 ms are up', await page(`window.__t.card(${JSON.stringify(ID.weather)}).classList.contains('pressing')`) && !(await page("document.body.classList.contains('w-editing')")), '');
@@ -606,15 +606,14 @@ function server(opts) {
   await page("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
   check('Escape leaves edit mode', !(await page("document.body.classList.contains('w-editing')")), '');
   await page("document.querySelector('.w-edit-btn').click()");
-  await page("window.__t.fire(document.querySelector('main h1'), 'pointerdown', 5, 5)");
+  await page("window.__t.fire(document.getElementById('backdrop'), 'pointerdown', 5, 5)");
   check('clicking empty space leaves edit mode', !(await page("document.body.classList.contains('w-editing')")), '');
-  // Removing (two steps) and the gear.
+  // Removing (one press; Undo brings it back) and the gear.
   await page("document.querySelector('.w-edit-btn').click()");
-  await page(`(() => { const b = window.__t.card(${JSON.stringify(ID.deny)}).querySelector('.w-remove'); b.click(); return b.classList.contains('armed'); })()`);
-  check('the remove badge asks twice (the first press only arms it)', (await W('list')).some((x) => x.id === ID.deny), '');
   await page(`window.__t.card(${JSON.stringify(ID.deny)}).querySelector('.w-remove').click()`);
   for (let i = 0; i < 20 && (await W('list')).some((x) => x.id === ID.deny); i++) await sleep(150);
-  check('…the second press removes the widget', !(await W('list')).some((x) => x.id === ID.deny), '');
+  check('the remove badge removes the widget at once', !(await W('list')).some((x) => x.id === ID.deny), '');
+  check('…and a toast offers Undo', await page("Boolean(document.querySelector('.w-toast .w-toast-undo'))"), '');
   await page(`window.__t.card(${JSON.stringify(ID.todo)}).querySelector('.w-gear').click()`);
   check('the gear opens that widget’s editor in Settings', await waitFor(`Boolean(document.getElementById('widget-form')) && /Edit/.test(document.querySelector('.widget-form .sub-label').textContent)`, 60), await sp("document.body.innerText.slice(0, 200)").catch((e) => e.message));
   await sp("document.getElementById('widget-form') && [...document.querySelectorAll('.widget-form .widget-buttons button')].find((b) => b.textContent === 'Cancel').click()").catch(() => {});

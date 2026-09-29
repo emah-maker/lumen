@@ -38,6 +38,7 @@ const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords } = require('./tab-groups');
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
+const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
 const { createManagers, pageOf: managerPageOf } = require('./features/managers'); // Bookmarks and Downloads pages
@@ -51,6 +52,7 @@ const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
+const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -136,7 +138,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode|skills):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -1171,13 +1173,33 @@ function layout() {
     const show = visible && !viewFrozen && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
+    // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
+    // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
+    // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
+    const overlay = visible && !tab.fullscreen && isNewTab(tab.view.webContents.getURL())
+      ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds })
+      : null;
+    setOverlay(tab, overlay);
     if (!visible) continue;
     if (tab.fullscreen) {
       const [width, height] = win.getContentSize();
       tab.view.setBounds({ x: 0, y: 0, width, height });
     } else {
-      tab.view.setBounds(contentBounds);
+      tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
     }
+  }
+}
+// Turn the tab's full-width layout override on, change it or off (only when it changed).
+function setOverlay(tab, params) {
+  if (sidebarOverlay.sameParams(tab.overlay || null, params)) return;
+  const wc = tab.view.webContents;
+  try {
+    if (params) wc.enableDeviceEmulation(params);
+    else wc.disableDeviceEmulation();
+    tab.overlay = params;
+  } catch (err) {
+    console.error('[lumen] sidebar overlay:', err.message);
+    tab.overlay = null;
   }
 }
 
@@ -1244,6 +1266,15 @@ function wireView(tab, url, history = null) {
   });
   wc.on('enter-html-full-screen', () => { tab.fullscreen = true; layout(); });
   wc.on('leave-html-full-screen', () => { tab.fullscreen = false; layout(); });
+  // A new page may come from a fresh renderer that doesn't carry the full-width layout override:
+  // drop it and let layout() put it back if this is still (or now) the new-tab page under the sidebar.
+  wc.on('did-navigate', () => {
+    if (tab.overlay) {
+      try { wc.disableDeviceEmulation(); } catch { /* the page is going away */ }
+      tab.overlay = null;
+    }
+    if (tab.id === activeId) layout();
+  });
   wc.on('zoom-changed', (_e, direction) => {
     zoomBy(wc, direction === 'in' ? 0.5 : -0.5);
   });
@@ -3731,6 +3762,8 @@ const widgets = createWidgets({
   fetch: (url, options) => net.fetch(url, options),
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
+  // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
+  openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {
@@ -3808,6 +3841,7 @@ ipcMain.on('content-bounds', (_e, bounds) => {
     y: Math.round(bounds.y),
     width: Math.max(0, Math.round(bounds.width)),
     height: Math.max(0, Math.round(bounds.height)),
+    fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
   layout();
 });
@@ -4197,6 +4231,55 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
     authTab = openTab(url).id;
   });
+}));
+
+// ---- Spotify widget sign-in (OAuth Authorization Code + PKCE, no client secret): the user's own Client
+// ID, Spotify asks in an ordinary tab, then redirects to the registered loopback address with a code.
+// features/widgets.js trades the code for tokens and stores the refresh token encrypted (widgetSecret).
+let cancelSpotifySignIn = null;
+ipcMain.handle('spotify:cancel', () => { cancelSpotifySignIn?.(); return true; });
+ipcMain.handle('spotify:disconnect', () => widgets.spotifyDisconnect());
+ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) => {
+  cancelSpotifySignIn?.(); // one sign-in at a time
+  let session;
+  try { session = widgets.spotifyStart(clientId); } catch (err) { resolve({ ok: false, message: err.message }); return; }
+  let authTab = null;
+  let done = false;
+  const finish = (result) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    clearInterval(watch);
+    cancelSpotifySignIn = null;
+    server.close();
+    if (authTab && tabs.some((x) => x.id === authTab)) setTimeout(() => { if (tabs.some((x) => x.id === authTab)) closeTab(authTab); }, 1200);
+    resolve(result);
+  };
+  cancelSpotifySignIn = () => finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
+  // Closing the sign-in tab cancels at once, instead of waiting for the 5-minute timeout.
+  const watch = setInterval(() => { if (authTab && !tabs.some((x) => x.id === authTab)) cancelSpotifySignIn?.(); }, 700);
+  const page = (title, text) => `<title>${title}</title><body style="font:15px system-ui;padding:40px">${text}</body>`;
+  const server = require('http').createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname !== '/callback') { res.writeHead(404).end(); return; }
+    if (url.searchParams.get('state') !== session.state) { res.writeHead(400).end(); return; } // not our sign-in: ignore, keep waiting
+    if (url.searchParams.get('error')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Not connected', 'Spotify was not connected. You can close this tab.'));
+      finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
+      return;
+    }
+    try {
+      await session.exchange(url.searchParams.get('code'));
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Connected', 'Spotify is connected to Lumen. You can close this tab.'));
+      finish({ ok: true, message: t('spotify.connected') });
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Sign-in failed', 'Spotify sign-in failed. Close this tab and try again.'));
+      finish({ ok: false, message: t('spotify.failed', { error: err.message }) });
+    }
+  });
+  const timer = setTimeout(() => finish({ ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
+  server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: SPOTIFY_REDIRECT_PORT }) }));
+  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; });
 }));
 
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)

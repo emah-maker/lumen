@@ -6,10 +6,11 @@ const WL = require('../features/widget-layout');
 const TV = require('../features/todoist-view');
 const WX = require('../features/weather-view');
 const WC = require('../features/widget-colors');
+const WCK = require('../features/worldclock-view');
 const ics = require('../features/ics');
 const { cleanList, cleanWidget } = require('../features/widgets');
 
-module.exports = function widgetUnits(check) {
+module.exports = async function widgetUnits(check) {
   const it = (id, type, x, y, w, h, extra) => ({ id, type, x, y, w, h, ...extra });
   const enc = WL.encode;
   const noOverlap = (items) => items.every((a, i) => items.every((b, j) => i === j || !WL.overlap(a, b)));
@@ -271,4 +272,103 @@ module.exports = function widgetUnits(check) {
   const cal = ics.eventsBetween(['BEGIN:VCALENDAR', 'X-APPLE-CALENDAR-COLOR:#FF2968FF', 'BEGIN:VEVENT', 'UID:a', 'DTSTART:20990101T100000Z', 'COLOR:teal', 'SUMMARY:x', 'END:VEVENT', 'BEGIN:VEVENT', 'UID:b', 'DTSTART:20990101T110000Z', 'COLOR:url(x)', 'SUMMARY:y', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'), { from: Date.parse('2099-01-01T00:00:00Z'), days: 3 });
   check('calendar colors: the feed\'s calendar colour and an event\'s own colour are read and checked', cal.color === '#ff2968' && cal.events[0].color === '#008080' && cal.events[1].color === '', JSON.stringify([cal.color, cal.events.map((e) => e.color)]));
   check('widgets: the colors mode is stored per widget and defaults to Calendar colors', cleanWidget({ id: 'wcolor1', type: 'calendar', url: 'https://example.com/a.ics', colors: 'match' }).colors === 'match' && cleanWidget({ id: 'wcolor2', type: 'calendar', url: 'https://example.com/a.ics', colors: 'neon' }).colors === 'calendar' && cleanWidget({ id: 'wcolor3', type: 'todoist' }).colors === 'calendar' && cleanWidget({ id: 'wcolor4', type: 'weather', place: 'B', lat: 1, lon: 2, colors: 'accent' }).colors === 'accent', '');
+
+  // ---- feed headlines: the RSS / Atom reader (features/feed.js) ----
+  const FD = require('../features/feed');
+  const FEED_NOW = Date.parse('2026-09-29T12:00:00Z');
+  const feedRss = `<?xml version="1.0"?><rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><title>Bloomberg &amp; Co</title>
+    <item><title><![CDATA[Banks <b>draw</b> $11.5B]]></title><link>https://www.bloomberg.com/news/a</link><pubDate>Tue, 29 Sep 2026 11:30:00 GMT</pubDate></item>
+    <item><title>Second &#8211; &lt;i&gt;story&lt;/i&gt;</title><link>/news/b</link><dc:date>2026-09-29T10:00:00Z</dc:date></item>
+    <item><title>No link</title><guid isPermaLink="true">https://example.com/g</guid></item>
+    <item><title>Bad scheme</title><link>javascript:alert(1)</link></item>
+    <item><title></title><link>https://example.com/empty</link></item></channel></rss>`;
+  const r1 = FD.parseFeed(feedRss, { base: 'https://www.bloomberg.com/feeds/x.rss', now: FEED_NOW });
+  check('feed: RSS 2.0 title, items, CDATA and entities', r1.title === 'Bloomberg & Co' && r1.items.length === 4 && r1.items[0].title === 'Banks draw $11.5B' && r1.items[1].title === 'Second – story', JSON.stringify(r1));
+  check('feed: RSS links (absolute, relative resolved, permalink guid) and dates (pubDate, dc:date)', r1.items[0].url === 'https://www.bloomberg.com/news/a' && r1.items[1].url === 'https://www.bloomberg.com/news/b' && r1.items[2].url === 'https://example.com/g' && r1.items[0].time === Date.parse('2026-09-29T11:30:00Z') && r1.items[1].time === Date.parse('2026-09-29T10:00:00Z') && r1.items[2].time === 0, JSON.stringify(r1.items));
+  check('feed: a javascript: link is dropped but the headline stays', r1.items[3].title === 'Bad scheme' && r1.items[3].url === '', JSON.stringify(r1.items[3]));
+  const feedAtom = `<feed xmlns="http://www.w3.org/2005/Atom"><title type="html">&lt;b&gt;Blog&lt;/b&gt;</title>
+    <entry><title type="html">Hello &amp;amp; welcome</title><link rel="self" href="https://e.com/self"/><link rel="alternate" type="text/html" href="https://e.com/1"/><updated>2026-09-29T09:00:00+02:00</updated></entry>
+    <entry><title>Second</title><link href="http://e.com/2"/><published>2026-09-28T09:00:00Z</published><updated>2026-09-29T09:00:00Z</updated></entry>
+    <entry><title>Ftp</title><link href="ftp://e.com/3"/></entry></feed>`;
+  const a1 = FD.parseFeed(feedAtom, { now: FEED_NOW });
+  check('feed: Atom title, alternate link, published/updated, markup stripped', a1.title === 'Blog' && a1.items[0].title === 'Hello & welcome' && a1.items[0].url === 'https://e.com/1' && a1.items[0].time === Date.parse('2026-09-29T07:00:00Z') && a1.items[1].url === 'http://e.com/2' && a1.items[1].time === Date.parse('2026-09-28T09:00:00Z') && a1.items[2].url === '', JSON.stringify(a1));
+  const feedMany = `<rss><channel>${'<item><title>t</title></item>'.repeat(200)}</channel></rss>`;
+  check('feed: the item count is capped', FD.parseFeed(feedMany, { max: 7 }).items.length === 7 && FD.parseFeed(feedMany, { max: 999 }).items.length === FD.MAX_ITEMS, '');
+  check('feed: a date far in the future shows no time', FD.parseFeed('<rss><channel><item><title>x</title><pubDate>Mon, 01 Jan 2035 00:00:00 GMT</pubDate></item></channel></rss>', { now: FEED_NOW }).items[0].time === 0, '');
+  const rejects = (label, xml, want) => { let msg = ''; try { FD.parseFeed(xml); } catch (e) { msg = e.message; } check(`feed: ${label}`, want.test(msg), msg || 'did not throw'); };
+  rejects('an empty body is refused with a message', '', /empty/);
+  rejects('an HTML page is refused', '<!DOCTYPE html><html><body>hi</body></html>', /web page/);
+  rejects('a JSON body is refused', '{"a":1}', /RSS or Atom/);
+  rejects('a feed with no items is refused', '<rss><channel><title>x</title></channel></rss>', /no headlines/);
+  const torn = FD.parseFeed('<rss><channel><title>T</title><item><title>One</title><link>https://a.com/1</link></item><item><title>Two</ti');
+  check('feed: a truncated document keeps what was read', torn.items.length >= 1 && torn.items[0].title === 'One', JSON.stringify(torn));
+  check('feed: unclosed and stray tags do not throw', FD.parseFeed('<rss><channel><item><title>a < b and 3 <3 you</title><link>https://a.com</link></channel>').items[0].title.startsWith('a'), '');
+  // Hostile input
+  rejects('a custom <!ENTITY> (billion laughs) is refused', '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;">]><rss><channel><item><title>&lol2;</title></item></channel></rss>', /entities/);
+  rejects('an external entity (XXE) is refused', '<!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]><rss><channel><item><title>&x;</title></item></channel></rss>', /entities/);
+  const dt = FD.parseFeed('<!DOCTYPE rss PUBLIC "-//x//y" "http://x/y.dtd"><rss><channel><item><title>&lol; &#x41; &#0; &#xD800; &bogus;</title></item></channel></rss>');
+  check('feed: a plain DOCTYPE is skipped; unknown entities stay text, bad numeric ones vanish, nothing expands', dt.items[0].title === '&lol; A &bogus;', dt.items[0].title);
+  rejects('deep nesting is refused', `<rss>${'<a>'.repeat(200)}</rss>`, /deeply/);
+  rejects('too many elements is refused', `<rss><channel>${'<a/>'.repeat(30000)}</channel></rss>`, /too big/);
+  const t0 = Date.now();
+  FD.parseFeed(`<rss><channel><item><title>x</title></item>${'<'.repeat(1.4e6)}</channel></rss>`);
+  FD.parseFeed(`<rss><channel><item><title>x</title></item>${"<a b='".repeat(200000)}</channel></rss>`);
+  FD.parseFeed(`<rss><channel><item><title>x</title></item>${'<!--'.repeat(300000)}</channel></rss>`);
+  check('feed: pathological input is scanned in linear time', Date.now() - t0 < 4000, `${Date.now() - t0} ms`);
+  const feedBig = FD.parseFeed(`<rss><channel><item><title>${'A'.repeat(100000)}</title><link>https://a.com/${'p'.repeat(5000)}</link></item></channel></rss>`).items[0];
+  check('feed: an enormous title is cut and an enormous link dropped', feedBig.title.length === 200 && feedBig.url === '', `${feedBig.title.length} ${feedBig.url.length}`);
+  const feedEvil = FD.parseFeed('<rss><channel><item><title><![CDATA[<script>alert(1)</script><img src=x onerror=alert(2)>Real‮title\u0000\u0007]]></title><link>https://user:pw@a.com/</link></item><item><title>Two</title><link>data:text/html,hi</link></item><item><title>Three</title><link>https://a.com/a b</link></item></channel></rss>').items;
+  check('feed: script/markup/bidi/control characters are stripped; credentials, data: and spaced links dropped', feedEvil[0].title === 'alert(1) Real title' && feedEvil[0].url === '' && feedEvil[1].url === '' && feedEvil[2].url === '', JSON.stringify(feedEvil));
+  check('feed: linkUrl accepts only http(s) without credentials', FD.linkUrl('https://a.com/x') === 'https://a.com/x' && FD.linkUrl('HTTP://a.com') === 'http://a.com/' && ['file:///etc/passwd', 'javascript:1', 'vbscript:x', 'https://a@b.com', 'https://a.com/"x'].every((u) => FD.linkUrl(u) === ''), '');
+  // The connector: config checking and presets
+  check('feed: every preset is an https address with an id and a name', FD.PRESETS.length >= 5 && FD.PRESETS.every((p) => /^https:\/\//.test(p.url) && p.id && p.name) && FD.PRESETS.some((p) => /bloomberg/.test(p.id)) && FD.PRESETS.some((p) => /^hn/.test(p.id)), '');
+  const fw = cleanWidget({ id: 'wfeed01', type: 'feed', url: 'https://www.bloomberg.com/feeds/markets/news.rss', preset: 'bloomberg-markets', name: 'Markets', count: 5 });
+  check('feed: widget config is checked (https only, count clamped, preset must match its address, default size 4x4)', fw && fw.count === 5 && fw.preset === 'bloomberg-markets' && cleanWidget({ id: 'wfeed02', type: 'feed', url: 'http://a.com/rss' }) === null && cleanWidget({ id: 'wfeed03', type: 'feed', url: 'https://a.com/rss', preset: 'hn', count: 99 }).preset === '' && cleanWidget({ id: 'wfeed04', type: 'feed', url: 'https://a.com/rss', count: 99 }).count === 8 && WL.DEFAULT_SIZE.feed.w === 4 && WL.DEFAULT_SIZE.feed.h === 4 && cleanList([{ id: 'wfeed05', type: 'feed', url: 'https://a.com/rss' }])[0].h === 4, JSON.stringify(fw));
+  const { CONNECTORS } = require('../features/widgets');
+  const served = { text: async () => `<rss><channel><title>Site</title>${'<item><title>H</title><link>http://a.com/1</link></item>'.repeat(20)}</channel></rss>` };
+  const fetched = await CONNECTORS.feed.fetch({ url: 'https://a.com/rss', name: '', count: 4 }, served);
+  check('feed: the connector returns source and at most count items with https links', fetched.source === 'Site' && fetched.items.length === 4 && fetched.items[0].url === 'https://a.com/1', JSON.stringify(fetched));
+  let refused = '';
+  await CONNECTORS.feed.resolve({ url: 'http://a.com/rss' }, served).catch((e) => { refused = e.message; });
+  check('feed: Settings refuses a non-https custom address', /https/.test(refused), refused);
+
+  await require('./widget-edit-units')(check); // system cards and Edit layout
+  await require('./slack-units')(check);
+  // ---- world clock: zones, clocks and sun times (features/worldclock-view.js) ----
+  check('world clock: the default size is 4x3', WL.DEFAULT_SIZE.worldclock.w === 4 && WL.DEFAULT_SIZE.worldclock.h === 3, JSON.stringify(WL.DEFAULT_SIZE.worldclock));
+  check('world clock: it is resized within the same limits as the other cards', WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).w === 12 && WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).h === 2, '');
+  check('world clock: time zone names are checked (a real IANA name, or nothing)', WCK.cleanTz('Asia/Tokyo') === 'Asia/Tokyo' && WCK.cleanTz('America/Argentina/Buenos_Aires') === 'America/Argentina/Buenos_Aires' && WCK.cleanTz('UTC') === 'UTC' && WCK.cleanTz('Mars/Olympus') === null && WCK.cleanTz('<b>/x') === null && WCK.cleanTz('../../etc') === null && WCK.cleanTz('') === null && WCK.cleanTz(42) === null && WCK.cleanTz('A/'.repeat(40)) === null, '');
+  const jan = Date.UTC(2026, 0, 15, 12, 0, 0); // winter: New York is UTC-5, London UTC+0
+  const jul = Date.UTC(2026, 6, 15, 12, 0, 0); // summer: New York UTC-4, London UTC+1
+  check('world clock: offsets follow daylight saving time', WCK.offsetMinutes(jan, 'America/New_York') === -300 && WCK.offsetMinutes(jul, 'America/New_York') === -240 && WCK.offsetMinutes(jan, 'Europe/London') === 0 && WCK.offsetMinutes(jul, 'Europe/London') === 60, [WCK.offsetMinutes(jan, 'America/New_York'), WCK.offsetMinutes(jul, 'America/New_York')].join());
+  check('world clock: half-hour and 45-minute zones', WCK.offsetMinutes(jan, 'Asia/Kolkata') === 330 && WCK.offsetMinutes(jan, 'Asia/Kathmandu') === 345, '');
+  const tokyo = WCK.zoneParts(Date.UTC(2026, 11, 31, 23, 30, 5), 'Asia/Tokyo'); // 08:30:05 on New Year's Day there
+  check('world clock: the wall clock in a zone crosses the date line (Tokyo is already tomorrow)', tokyo.date === '2027-01-01' && tokyo.hour === 8 && tokyo.minute === 30 && tokyo.second === 5 && tokyo.minutes === 510, JSON.stringify(tokyo));
+  check('world clock: midnight is hour 0, never 24', WCK.zoneParts(Date.UTC(2026, 0, 15, 5, 0, 0), 'America/New_York').hour === 0, '');
+  check('world clock: how far ahead or behind you a zone is', WCK.relativeLabel(180) === '+3 h' && WCK.relativeLabel(-570) === '-9:30 h' && WCK.relativeLabel(0) === 'same time' && WCK.relativeLabel(NaN) === 'same time' && WCK.relativeLabel(345) === '+5:45 h', '');
+  const clockAt = Date.UTC(2026, 0, 15, 21, 5, 9);
+  check('world clock: 12-hour, 24-hour and seconds', /^4:05\s?PM$/.test(WCK.timeText(clockAt, 'America/New_York', { clock: '12' })) && WCK.timeText(clockAt, 'America/New_York', { clock: '24' }) === '16:05' && WCK.timeText(clockAt, 'America/New_York', { clock: '24', seconds: true }) === '16:05:09', WCK.timeText(clockAt, 'America/New_York', { clock: '12' }));
+  check('world clock: the date is the place\'s own', WCK.dateText(clockAt, 'Pacific/Auckland') === 'Fri, Jan 16' && WCK.dateText(clockAt, 'America/New_York') === 'Thu, Jan 15', WCK.dateText(clockAt, 'Pacific/Auckland'));
+  const sunDay = { sunrise: '06:12', sunset: '19:48' };
+  check('world clock: day and night around sunrise and sunset', WCK.isDaylight({ minutes: 6 * 60 + 11 }, sunDay) === false && WCK.isDaylight({ minutes: 6 * 60 + 12 }, sunDay) === true && WCK.isDaylight({ minutes: 19 * 60 + 47 }, sunDay) === true && WCK.isDaylight({ minutes: 19 * 60 + 48 }, sunDay) === false && WCK.isDaylight({ minutes: 0 }, sunDay) === false, '');
+  check('world clock: a sunset after midnight (sunrise later than sunset on the clock) still works', WCK.isDaylight({ minutes: 60 }, { sunrise: '20:00', sunset: '02:00' }) === true && WCK.isDaylight({ minutes: 12 * 60 }, { sunrise: '20:00', sunset: '02:00' }) === false, '');
+  check('world clock: polar or missing sun times are unknown, not a guess', WCK.isDaylight({ minutes: 600 }, { sunrise: null, sunset: null }) === null && WCK.isDaylight({ minutes: 600 }, null) === null && WCK.isDaylight({ minutes: 600 }, { sunrise: '25:99', sunset: 'x' }) === null, '');
+  check('world clock: the day record is found by the place\'s own date', WCK.dayFor([{ date: '2026-09-29' }, { date: '2026-09-30' }], '2026-09-30').date === '2026-09-30' && WCK.dayFor([{ date: '2026-09-29' }], '2026-10-05') === null && WCK.dayFor(null, 'x') === null, '');
+  const clockPlaces = WCK.cleanPlaces([
+    { name: 'Tokyo, Japan', lat: 35.6895, lon: 139.6917, tz: 'Asia/Tokyo', nick: ' Home  base ' }, { name: 'Tokyo again', lat: 35.69, lon: 139.69 }, // the same place
+    { name: '<b>Paris</b>, France', lat: 48.8534, lon: 2.3488, tz: 'Nope/Zone' }, { name: 'No coords' }, { name: 'Far', lat: 999, lon: 0 }, null, 'x',
+  ]);
+  check('world clock: places are checked, de-duplicated, stripped of markup, and their zone names validated', clockPlaces.length === 2 && clockPlaces[0].tz === 'Asia/Tokyo' && clockPlaces[0].nick === 'Home base' && clockPlaces[1].tz === undefined && !/[<>]/.test(clockPlaces[1].name) && WCK.placeLabel(clockPlaces[0]) === 'Home base' && WCK.placeLabel(clockPlaces[1]) === 'b Paris /b', JSON.stringify(clockPlaces));
+  check('world clock: at most eight places', WCK.cleanPlaces(Array.from({ length: 20 }, (_, i) => ({ name: `P${i}`, lat: i * 3, lon: i * 5 }))).length === 8, '');
+  const clockCfg = WCK.cleanConfig({ places: [{ name: 'Oslo, Norway', lat: 59.91, lon: 10.75 }], clock: '13', seconds: 'yes', show: { sun: false } });
+  check('world clock: config defaults (system clock, no seconds, date and offset on) and it needs a place', clockCfg.clock === 'auto' && clockCfg.seconds === false && clockCfg.show.sun === false && clockCfg.show.date === true && clockCfg.show.offset === true && WCK.cleanConfig({ places: [] }) === null && WCK.cleanConfig(null) === null, JSON.stringify(clockCfg));
+  const sunAnswer = WCK.shapeSun({ timezone: 'Europe/Oslo', daily: { time: ['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'], sunrise: ['2026-09-29T07:11', '2026-09-30T07:13', null, 'x'], sunset: ['2026-09-29T18:59', '2026-09-30T18:56', null, 'x'] } }, null);
+  check('world clock: the sun answer becomes the zone name and up to three days of "HH:MM"', sunAnswer.tz === 'Europe/Oslo' && sunAnswer.days.length === 3 && sunAnswer.days[0].sunrise === '07:11' && sunAnswer.days[0].sunset === '18:59' && sunAnswer.days[2].sunrise === null, JSON.stringify(sunAnswer));
+  check('world clock: without a zone name in the answer the place\'s own is used; with neither (or a bad one) it is refused', WCK.shapeSun({ daily: {} }, { tz: 'Asia/Tokyo' }).tz === 'Asia/Tokyo' && WCK.shapeSun({ timezone: '<script>' }, {}) === null && WCK.shapeSun(null, null) === null, '');
+  check('world clock: the request sends only the place and asks only for the two sun times', (() => { const q = WCK.sunParams({ lat: 1.5, lon: -2.5 }); return q.latitude === '1.5' && q.longitude === '-2.5' && q.daily === 'sunrise,sunset' && q.timezone === 'auto' && Object.keys(q).length === 5; })(), '');
+  const clockWidget = cleanWidget({ id: 'wclock01', type: 'worldclock', wc: { places: [{ name: 'Tokyo, Japan', lat: 35.69, lon: 139.69, tz: 'Asia/Tokyo' }], clock: '24' }, colors: 'accent', x: 0, y: 0, w: 4, h: 3 });
+  check('world clock: a stored widget is checked and keeps its colors and size; one without a place is dropped', clockWidget.wc.clock === '24' && clockWidget.colors === 'accent' && clockWidget.w === 4 && clockWidget.h === 3 && cleanWidget({ id: 'wclock02', type: 'worldclock', wc: { places: [] } }) === null && cleanWidget({ id: 'wclock03', type: 'worldclock' }) === null, JSON.stringify(clockWidget));
+  const clockList = cleanList([{ id: 'wclock04', type: 'worldclock', wc: { places: [{ name: 'Tokyo', lat: 35.69, lon: 139.69 }] } }, { id: 'wweath04', type: 'weather', place: 'B', lat: 1, lon: 2 }]);
+  check('world clock: an older list without positions still lays out, without overlap', clockList.length === 2 && noOverlap(clockList), enc(clockList));
+  return require('./widget-muse')(check); // Muse: pure logic, and the connector against a fake fetch
 };

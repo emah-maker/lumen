@@ -441,6 +441,7 @@ function buildLook(card) {
   name.addEventListener('change', () => save('newTabName', name.value));
   card.append(
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
+    toggle('newTabHeader', 'Show the date and greeting', 'Turn off to hide the date and “Good evening” line. In Edit layout on the new-tab page, the ✕ on a section does the same.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
@@ -458,8 +459,17 @@ function buildLook(card) {
 // (and from a card's gear in edit mode on the new-tab page, which opens this editor).
 const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
+  worldclock: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.2V8l2.6 1.6M2 8h12M8 2c-2 1.8-2 10.2 0 12M8 2c2 1.8 2 10.2 0 12"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
+  spotify: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M4.9 6.2c2.2-.7 4.7-.5 6.6.6M5.3 8.3c1.8-.5 3.7-.3 5.2.5M5.7 10.3c1.4-.4 2.7-.2 3.9.4"/></svg>',
+  gmail: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="3.2" width="12.4" height="9.6" rx="2"/><path d="m2.4 4.4 5.6 4.2 5.6-4.2"/></svg>',
+  slack: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.2 2 5 14M11 2l-1.2 12M2.6 5.6h11.2M2.2 10.4h11.2"/></svg>',
+  github: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.7"/><circle cx="4.5" cy="12.5" r="1.7"/><circle cx="11.5" cy="6" r="1.7"/><path d="M4.5 5.2v5.6M11.5 7.7c0 2.4-3.2 2-6 3.4"/></svg>',
+  feed: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5a9.5 9.5 0 0 1 9.5 9.5M3 7.5a5.5 5.5 0 0 1 5.5 5.5"/><circle cx="3.8" cy="12.2" r="1"/></svg>',
+  muse: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.7 3.8 1.5-3.8 1.5L8 12.2 6.6 8.5 2.8 7l3.8-1.5z"/><path d="M12.5 11.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/></svg>',
+  stocks: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5 6 8l2.6 2.6L14 4.5M10.5 4.5H14V8"/></svg>',
+  crypto: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.4 5v6M6.4 5h2.3a1.5 1.5 0 0 1 0 3H6.4m0 0h2.6a1.5 1.5 0 0 1 0 3H6.4M7.6 4v1M7.6 11v1"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -479,7 +489,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, a world clock, your calendar, your Todoist tasks, headlines, Spotify, Gmail, Slack, GitHub, stocks or crypto prices, Muse, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -499,8 +509,8 @@ async function buildWidgets(card) {
   const chk = (id, label, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked: Boolean(checked) }), label);
 
   // Add or edit: a type, its fields, and Check before Save.
-  function openForm(existing = null) {
-    let type = existing?.type || 'weather';
+  function openForm(existing = null, initialType = null) {
+    let type = existing?.type || initialType || 'weather';
     const note = h('span', { class: 'note', role: 'status', id: 'widget-note' });
     const fields = h('div', { class: 'widget-fields' });
     const title = h('input', { type: 'text', id: 'widget-title', placeholder: 'Automatic', maxlength: '60', 'aria-label': 'Card title' });
@@ -510,6 +520,7 @@ async function buildWidgets(card) {
     const plain = (label, control, hint) => h('div', { class: 'widget-field' }, h('span', { class: 'label', text: label }), control, hint ? h('span', { class: 'note', text: hint }) : null);
     let places = (existing?.type === 'weather' && existing.wx?.places ? existing.wx.places : []).map((p) => ({ ...p }));
     let projects = [];
+    let clockPlaces = (existing?.type === 'worldclock' && existing.wc?.places ? existing.wc.places : []).map((p) => ({ ...p }));
     const colors = sel('widget-colors', 'Colors', WIDGET_COLORS, existing?.colors || 'calendar');
 
     // ---- weather: places, units, sections ----
@@ -570,6 +581,42 @@ async function buildWidgets(card) {
         plain('Show', h('div', { class: 'widget-checks' }, Object.values(inputs.show)), 'The card also shows more or less depending on its size.'),
         field('Colors', colors, '“Match screen” tints the card from your accent color and background.'));
     }
+    // ---- world clock: places, clock format, what each row shows ----
+    function clockFields(same) {
+      const wc = same?.wc || {};
+      const placesBox = h('div', { class: 'wx-edit-places', id: 'widget-places' });
+      const found = h('div', { class: 'wx-edit-found', id: 'widget-found' });
+      const drawPlaces = () => {
+        placesBox.replaceChildren(...clockPlaces.map((p, i) => h('div', { class: 'item wx-edit-place' },
+          h('span', { class: 'grow', text: p.tz ? `${p.name} (${p.tz})` : p.name }),
+          h('input', { type: 'text', class: 'wx-nick', maxlength: '30', placeholder: tr('widgets.worldclock.nickname', 'Nickname'), 'aria-label': tr('widgets.worldclock.nicknameFor', 'Nickname for {name}', { name: p.name }), value: p.nick || '', onchange: (e) => { clockPlaces[i] = { ...clockPlaces[i], nick: e.target.value.trim() || undefined }; } }),
+          h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${p.name} up`, disabled: i === 0, onclick: () => { [clockPlaces[i - 1], clockPlaces[i]] = [clockPlaces[i], clockPlaces[i - 1]]; drawPlaces(); } }),
+          h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${p.name} down`, disabled: i === clockPlaces.length - 1, onclick: () => { [clockPlaces[i + 1], clockPlaces[i]] = [clockPlaces[i], clockPlaces[i + 1]]; drawPlaces(); } }),
+          h('button', { class: 'danger', text: 'Remove', 'aria-label': `Remove ${p.name}`, onclick: () => { clockPlaces.splice(i, 1); drawPlaces(); } }))));
+        if (!clockPlaces.length) placesBox.append(h('p', { class: 'note', text: tr('widgets.worldclock.noPlaces', 'No places yet: search below.') }));
+      };
+      inputs.city = h('input', { type: 'text', id: 'widget-city', placeholder: tr('widgets.worldclock.search', 'City or ZIP code'), maxlength: '80', 'aria-label': tr('widgets.worldclock.searchLabel', 'Search for a place') });
+      const search = async () => {
+        const q = inputs.city.value.trim();
+        if (q.length < 2) return;
+        found.replaceChildren(h('span', { class: 'note', text: 'Searching…' }));
+        try {
+          const out = await S.widgets.search(q);
+          found.replaceChildren(...(out.length ? out.map((r) => h('button', { class: 'plain', text: `+ ${r.name}`, onclick: () => { if (clockPlaces.length < 8 && !clockPlaces.some((p) => Math.abs(p.lat - r.lat) < 0.01 && Math.abs(p.lon - r.lon) < 0.01)) clockPlaces.push({ name: r.name, lat: r.lat, lon: r.lon, ...(r.tz ? { tz: r.tz } : {}) }); found.replaceChildren(); inputs.city.value = ''; drawPlaces(); } })) : [h('span', { class: 'note', text: `No place called “${q}” was found.` })]));
+        } catch (err) { found.replaceChildren(h('span', { class: 'note error', text: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })); }
+      };
+      inputs.city.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+      inputs.clock = sel('widget-clock', 'Clock', [['auto', 'System'], ['12', '12-hour'], ['24', '24-hour']], wc.clock || 'auto');
+      const show = wc.show || {};
+      inputs.seconds = chk('widget-show-seconds', tr('widgets.worldclock.seconds', 'Seconds'), wc.seconds === true);
+      inputs.show = { date: chk('widget-show-date', tr('widgets.worldclock.date', 'Date'), show.date !== false), offset: chk('widget-show-offset', tr('widgets.worldclock.offset', 'Hours ahead or behind you'), show.offset !== false), sun: chk('widget-show-sun', tr('widgets.worldclock.sun', 'Sunrise and sunset'), show.sun !== false) };
+      drawPlaces();
+      fields.replaceChildren(
+        plain(tr('widgets.worldclock.places', 'Places'), h('div', null, placesBox, h('div', { class: 'widget-inline' }, inputs.city, h('button', { id: 'widget-search', text: 'Search', onclick: search })), found), tr('widgets.worldclock.hint', 'Sunrise and sunset come from Open-Meteo (free, no account); only the place goes to it. The time itself is worked out on the page and needs no network.')),
+        field('Clock', inputs.clock),
+        plain(tr('widgets.worldclock.show', 'Show'), h('div', { class: 'widget-checks' }, [inputs.seconds, ...Object.values(inputs.show)])),
+        field('Colors', colors, '“Match screen” tints the card from your accent color and background.'));
+    }
     // ---- todoist: what to show ----
     function todoFields(same) {
       const t = same?.todo || {};
@@ -619,6 +666,213 @@ async function buildWidgets(card) {
         field('Add-task field', inputs.quick, 'Typed like in Todoist’s quick add: “Pay rent tomorrow 9am”.'), field('New tasks go to', inputs.quickProject, 'Load projects above to pick one.'),
         field('Colors', colors, 'Only the card’s surface and title follow it; priority colors stay.'));
     }
+    // ---- spotify: the user's own Client ID, then Connect (OAuth PKCE in a tab; the token stays in the browser) ----
+    function spotifyFields(same) {
+      inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '64', placeholder: '32-character Client ID', value: same?.clientId || '', 'aria-label': 'Spotify Client ID' });
+      inputs.art = chk('widget-spotify-art', 'Show the album art', same ? same.art !== false : true);
+      const status = h('span', { class: 'note', role: 'status', id: 'widget-spotify-status' });
+      const connect = h('button', { id: 'widget-spotify-connect', text: ws.secrets.spotify ? 'Reconnect' : 'Connect Spotify' });
+      const disconnect = h('button', { id: 'widget-spotify-disconnect', class: 'danger', text: 'Disconnect', hidden: !ws.secrets.spotify });
+      const drawStatus = () => {
+        status.textContent = ws.secrets.spotify ? 'Connected. Lumen holds an encrypted sign-in; it never reaches the new-tab page.' : 'Not connected yet.';
+        connect.textContent = ws.secrets.spotify ? 'Reconnect' : 'Connect Spotify';
+        disconnect.hidden = !ws.secrets.spotify;
+      };
+      connect.addEventListener('click', async () => {
+        connect.disabled = true;
+        flash(note, 'Waiting for Spotify in the tab that just opened…', 'ok');
+        try {
+          const r = await S.widgets.spotifySignIn(inputs.clientId.value);
+          ws = await S.widgets.state();
+          drawStatus();
+          flash(note, r.message || (r.ok ? 'Spotify is connected.' : 'Spotify sign-in did not finish.'), r.ok ? 'ok' : 'warn');
+        } catch (err) { flash(note, String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+        connect.disabled = false;
+      });
+      disconnect.addEventListener('click', async () => { await S.widgets.spotifyDisconnect(); ws = await S.widgets.state(); drawStatus(); flash(note, 'Spotify is disconnected.', 'ok'); });
+      drawStatus();
+      fields.replaceChildren(
+        plain('Set up', h('ol', { class: 'note' },
+          h('li', { text: 'In the Spotify Developer Dashboard, create an app (Web API).' }),
+          h('li', { text: `Add this Redirect URI to it: ${ws.spotify?.redirect || ''}` }),
+          h('li', { text: 'Paste its Client ID below, then press Connect. No client secret is needed.' })), 'Playback controls (play, pause, next, previous) need Spotify Premium.'),
+        field('Client ID', inputs.clientId),
+        plain('Account', h('div', { class: 'widget-inline' }, connect, disconnect, status)),
+        plain('Show', h('div', { class: 'widget-checks' }, inputs.art)),
+        field('Colors', colors, 'Only the card’s surface and title follow it.'));
+    }
+    // ---- gmail: your own Google Cloud OAuth client, then Connect (opens your browser) ----
+    function gmailFields(same) {
+      const g = same || {};
+      const connected = () => Boolean(ws.connections?.gmail);
+      inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID'), value: g.clientId || '' });
+      inputs.clientSecret = h('input', { type: 'password', id: 'widget-clientsecret', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
+      inputs.count = sel('widget-gmail-count', tr('settings.gmail.count', 'Messages shown'), [3, 4, 5, 6, 8, 10].map((n) => [n, String(n)]), g.count || 5);
+      inputs.snippets = chk('widget-gmail-snippets', tr('settings.gmail.snippets', 'Show a short preview under each subject'), g.snippets !== false);
+      const status = h('span', { class: 'note', role: 'status', id: 'widget-gmail-status' });
+      const connect = h('button', { id: 'widget-gmail-connect', text: tr('settings.gmail.connect', 'Connect Gmail') });
+      const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
+      const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
+      const draw = () => {
+        disconnect.hidden = !connected();
+        connect.textContent = connected() ? tr('settings.gmail.reconnect', 'Connect again') : tr('settings.gmail.connect', 'Connect Gmail');
+        if (!status.textContent) status.textContent = connected() ? tr('settings.gmail.connected', 'A Google account is connected.') : tr('settings.gmail.notConnected', 'Not connected yet.');
+      };
+      connect.addEventListener('click', async () => {
+        connect.disabled = true;
+        cancel.hidden = false;
+        flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
+        try {
+          const r = await S.widgets.gmailConnect({ clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value });
+          ws = r.state;
+          inputs.clientSecret.value = '';
+          inputs.clientSecret.placeholder = tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.');
+          flash(status, r.message, 'ok');
+        } catch (err) {
+          flash(status, String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err');
+        }
+        connect.disabled = false;
+        cancel.hidden = true;
+        draw();
+      });
+      cancel.addEventListener('click', () => S.widgets.gmailCancel());
+      disconnect.addEventListener('click', async () => {
+        ws = await S.widgets.gmailDisconnect();
+        status.textContent = '';
+        flash(status, tr('settings.gmail.disconnected', 'Disconnected. Lumen also asked Google to revoke access.'), 'ok');
+        draw();
+      });
+      draw();
+      fields.replaceChildren(
+        plain(tr('settings.gmail.setup', 'Your Google Cloud client'), h('div', { class: 'widget-fields' },
+          field(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId),
+          field(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret)),
+        tr('settings.gmail.setupHelp', 'In Google Cloud Console, enable the Gmail API, create an OAuth client of type Desktop app, and paste its Client ID and secret here. Lumen asks only for read-only access to your mail (gmail.readonly), opens Google’s sign-in page in your normal browser, and keeps the tokens encrypted on this computer. The new-tab page only ever receives sender, subject and preview text.')),
+        plain(tr('settings.gmail.account', 'Account'), h('div', { class: 'widget-inline' }, connect, cancel, disconnect, status),
+          tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.')),
+        field(tr('settings.gmail.count', 'Messages shown'), inputs.count), plain(tr('settings.gmail.show', 'Show'), h('div', { class: 'widget-checks' }, inputs.snippets)),
+        field('Colors', colors));
+    }
+    // ---- slack: sign in (OAuth v2 with your own Slack app), then what to show ----
+    function slackFields(same) {
+      const sc = same?.slack || {};
+      let st = ws.slack || {};
+      const picked = new Map((sc.channels || []).map((c) => [c.id, c.name]));
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: 'Optional: a user token (xoxp-…) instead of signing in', 'aria-label': 'Slack user token' });
+      const clientId = h('input', { type: 'text', id: 'slack-client-id', autocomplete: 'off', spellcheck: 'false', placeholder: '1234567890.1234567890', value: st.clientId || '', 'aria-label': 'Slack app Client ID' });
+      const clientSecret = h('input', { type: 'password', id: 'slack-client-secret', autocomplete: 'off', spellcheck: 'false', placeholder: st.hasSecret ? 'Saved. Paste a new secret to replace it.' : 'Client Secret', 'aria-label': 'Slack app Client Secret' });
+      const redirect = h('input', { type: 'url', id: 'slack-redirect', spellcheck: 'false', value: st.redirect || '', 'aria-label': 'Slack redirect URL' });
+      const pasted = h('input', { type: 'text', id: 'slack-pasted', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the address you landed on', 'aria-label': 'Address after approving' });
+      const status = h('span', { class: 'note', role: 'status', id: 'slack-status' });
+      const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      const drawStatus = () => {
+        st = ws.slack || st;
+        if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Open Slack again to reconnect.`, 'warn');
+        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.canRefresh ? ' (renewing itself)' : ''}. Read-only.`, 'ok');
+        else if (st.waiting) flash(status, 'Approve in the browser tab that opened, then paste the address it ends on.', 'note');
+        else { status.textContent = 'Not connected.'; status.className = 'note'; }
+        disconnect.hidden = !st.connected;
+      };
+      const open = h('button', { type: 'button', id: 'slack-open', text: st.connected ? 'Reconnect' : 'Open Slack', onclick: async () => {
+        try {
+          const r = await S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value });
+          ws = r.state; clientSecret.value = ''; drawStatus();
+        } catch (err) { flash(status, clean(err), 'err'); }
+      } });
+      const finish = h('button', { type: 'button', id: 'slack-finish', text: 'Finish', onclick: async () => {
+        try {
+          const r = await S.widgets.slackFinish(pasted.value);
+          ws = r.state; pasted.value = ''; drawStatus(); flash(status, r.message, 'ok');
+        } catch (err) { flash(status, clean(err), 'err'); }
+      } });
+      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: async () => { ws = await S.widgets.slackDisconnect(); drawStatus(); } });
+      const chBox = h('div', { class: 'widget-checks', id: 'slack-channels' });
+      const drawChannels = (list) => {
+        chBox.replaceChildren(...list.map((c) => {
+          const l = chk(`slack-ch-${c.id}`, `${c.private ? '🔒 ' : '#'}${c.name}`, picked.has(c.id));
+          l.querySelector('input').dataset.id = c.id;
+          l.querySelector('input').dataset.name = c.name;
+          l.querySelector('input').addEventListener('change', (e) => { if (e.target.checked) picked.set(c.id, c.name); else picked.delete(c.id); });
+          return l;
+        }));
+      };
+      drawChannels([...picked].map(([id, name]) => ({ id, name, private: false })));
+      const load = h('button', { type: 'button', id: 'slack-load', text: 'Load channels', onclick: async () => {
+        try { drawChannels(await S.widgets.slackChannels()); } catch (err) { flash(status, clean(err), 'err'); }
+      } });
+      inputs.slackPicked = picked;
+      inputs.dms = chk('widget-slack-dms', 'Unread direct messages', sc.dms !== false);
+      inputs.mentions = chk('widget-slack-mentions', 'Mentions of you in the chosen channels', sc.mentions !== false);
+      inputs.count = sel('widget-slack-count', 'Recent messages', [[3, '3'], [5, '5'], [8, '8'], [10, '10']], sc.count || 5);
+      drawStatus();
+      fields.replaceChildren(
+        plain('Slack app', h('div', null,
+          h('div', { class: 'widget-inline' }, clientId, clientSecret),
+          h('div', { class: 'widget-inline' }, redirect, open),
+          h('div', { class: 'widget-inline' }, pasted, finish, disconnect),
+          status),
+        'Slack needs your own app (api.slack.com/apps → Create New App). Under OAuth & Permissions add the redirect URL above (Slack requires https, so approving ends on a page that may not load: that is fine) and these User Token Scopes: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Read-only: nothing can be posted. Keep the app private (not distributed) so Slack’s normal rate limits apply. Everything is stored encrypted by your system and never reaches the new-tab page.'),
+        field('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token from your app’s OAuth & Permissions page. It doesn’t renew itself.'),
+        plain('Channels', h('div', null, h('div', { class: 'widget-inline' }, load), chBox), 'Up to 4 channels you are in; their recent messages show on the card.'),
+        plain('Show', h('div', { class: 'widget-checks' }, inputs.dms, inputs.mentions)),
+        field('Recent messages', inputs.count),
+        field('Colors', colors, 'Only the card’s surface and title follow it.'));
+    }
+    // ---- github: token and which lists ----
+    function githubFields(same) {
+      const g = same?.gh || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.github ? tr('settings.widgets.github.tokenSaved', 'Saved. Paste a new token to replace it.') : tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
+      inputs.reviews = chk('widget-gh-reviews', tr('settings.widgets.github.reviews', 'Review requests'), g.reviews !== false);
+      inputs.assigned = chk('widget-gh-assigned', tr('settings.widgets.github.assigned', 'Assigned issues and pull requests'), g.assigned !== false);
+      inputs.notifications = chk('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false);
+      inputs.hideDrafts = chk('widget-gh-drafts', tr('settings.widgets.github.hideDrafts', 'Hide draft pull requests in review requests'), g.hideDrafts);
+      inputs.max = sel('widget-gh-max', tr('settings.widgets.github.max', 'Items per list'), [[5, '5'], [10, '10'], [20, '20']], g.max ?? 10);
+      const privacy = h('div', { class: 'widget-field' }, h('span', { class: 'label', text: tr('settings.widgets.github.privacyLabel', 'Private repositories') }),
+        h('span', { class: 'note', text: tr('settings.widgets.github.privacy', 'Titles of issues and pull requests from private repositories are fetched too, and Lumen keeps them in memory (they are not written to settings.json) and passes them to your new-tab pages to show them, so they can appear in a new tab’s history on this device. To keep a repository off the card, don’t give the token access to it.') }));
+      fields.replaceChildren(
+        field(tr('settings.widgets.github.token', 'Access token'), inputs.token, tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.')),
+        plain(tr('settings.widgets.github.show', 'Show'), h('div', { class: 'widget-checks' }, inputs.reviews, inputs.assigned, inputs.notifications, inputs.hideDrafts), tr('settings.widgets.github.showHelp', 'Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets.')),
+        field(tr('settings.widgets.github.max', 'Items per list'), inputs.max),
+        privacy,
+        field('Colors', colors, 'Only the card’s surface and title follow it.'));
+    }
+    // ---- muse: Meta's model: key, saved prompt, model, web search ----
+    function museFields(same) {
+      const m = same?.muse || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.muse ? tr('widgets.muse.keySaved', 'Saved. Paste a new key to replace it.') : tr('widgets.muse.keyPaste', 'Paste your Meta API key'), 'aria-label': tr('widgets.muse.key', 'Meta API key') });
+      inputs.prompt = h('textarea', { id: 'widget-muse-prompt', rows: '3', maxlength: '1000', 'aria-label': tr('widgets.muse.prompt', 'Saved prompt') });
+      inputs.prompt.value = m.prompt || 'Give me a short daily brief: three or four bullet points on what matters today in technology and world news, one line each.';
+      inputs.model = h('input', { type: 'text', id: 'widget-muse-model', maxlength: '64', spellcheck: 'false', placeholder: 'muse-spark-1.3', 'aria-label': tr('widgets.muse.model', 'Model') });
+      inputs.model.value = m.model || 'muse-spark-1.3';
+      inputs.search = chk('widget-muse-search', tr('widgets.muse.search', 'Ground answers with web search (shows sources)'), m.search);
+      fields.replaceChildren(
+        field(tr('widgets.muse.key', 'Meta API key'), inputs.token, tr('widgets.muse.keyHelp', 'Create a key at dev.meta.ai (Meta Model API, public preview). It is stored encrypted by your system and never reaches the new-tab page or your settings file.')),
+        plain(tr('widgets.muse.privacy', 'What is sent, and the cost'), h('span', { class: 'note', text: tr('widgets.muse.privacyHelp', 'Your prompt and every question you type go to Meta, and so do the answers it returns. Each answer uses your key’s credit (about $1.25 per million tokens in and $4.25 per million out, at the time of writing). The card asks about every six hours at most, or when you press Refresh or Ask; check Meta’s current terms and limits.') })),
+        field(tr('widgets.muse.prompt', 'Saved prompt'), inputs.prompt, tr('widgets.muse.promptHelp', 'Answered on the card. Keep it short: answers are capped at a few hundred words.')),
+        field(tr('widgets.muse.model', 'Model'), inputs.model, tr('widgets.muse.modelHelp', 'Default muse-spark-1.3. Other names from dev.meta.ai work too (muse-spark-1.2, muse-spark-1.1).')),
+        plain(tr('widgets.muse.also', 'Also'), h('div', { class: 'widget-checks' }, inputs.search), tr('widgets.muse.searchHelp', 'Web search uses a different Meta endpoint and can cost more.')),
+        field(tr('widgets.colors', 'Colors'), colors, tr('widgets.muse.colorsHelp', 'Only the card’s surface and title follow it.')));
+    }
+    // ---- stocks and crypto: a watchlist, the data provider's key, the paper portfolio's starting cash ----
+    function marketFields(same) {
+      const crypto = type === 'crypto';
+      const provider = crypto ? 'CoinGecko' : 'Twelve Data';
+      const saved = ws.secrets[crypto ? 'coingecko' : 'twelvedata'];
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: saved ? 'Saved. Paste a new key to replace it.' : crypto ? 'Optional: a free Demo API key' : 'Paste your API key', 'aria-label': `${provider} API key` });
+      inputs.list = h('input', { type: 'text', id: 'widget-watchlist', maxlength: '400', placeholder: crypto ? 'bitcoin, ethereum, solana' : 'AAPL, MSFT, NVDA', 'aria-label': crypto ? 'Coin ids' : 'Stock symbols', value: crypto ? (same?.mk?.coins || []).map((c) => `${c.id}=${c.sym}`).join(', ') : (same?.mk?.symbols || []).join(', ') });
+      const hasTrades = Boolean(same?.pf?.trades?.length);
+      inputs.startCash = h('input', { type: 'number', id: 'widget-startcash', min: '1000', max: '1000000000', step: '1000', value: String(same?.pf?.cash0 || 100000), disabled: hasTrades, 'aria-label': 'Starting paper cash in dollars' });
+      fields.replaceChildren(
+        field(crypto ? 'CoinGecko API key (optional)' : 'Twelve Data API key', inputs.token, crypto
+          ? 'Works without a key at a lower request limit. A free Demo key (coingecko.com/en/api, Demo plan) raises it. Stored encrypted by your system; it never reaches the new-tab page.'
+          : 'Create a free account at twelvedata.com and copy the key from its dashboard. Stored encrypted by your system; it never reaches the new-tab page.'),
+        field(crypto ? 'Coins (up to 12)' : 'Symbols (up to 8)', inputs.list, crypto
+          ? 'CoinGecko ids, comma separated, like “bitcoin, ethereum”. Add =TICKER to name the ticker: “ethereum=ETH”. All coins are fetched in one request every 2 minutes.'
+          : 'Ticker symbols, comma separated. All are fetched in one request every 15 minutes (hourly while the market is closed); the free plan counts each symbol as a credit against 8 a minute and 800 a day.'),
+        field('Starting paper cash ($)', inputs.startCash, hasTrades ? 'Reset the portfolio on the card to change it.' : 'For the simulated portfolio. Default $100,000.'),
+        plain('About the data', h('span', { class: 'note', text: `The symbols on the watchlist are sent to ${provider}, from Lumen, to get prices${crypto ? '' : ' (along with your key)'}. Your use of the data is under ${provider}’s terms for your own ${crypto ? 'key or keyless access' : 'account and key'}, not Lumen’s. Paper trading is simulated: no real orders, nothing is bought or sold anywhere. Not investment advice. Quotes ${crypto ? 'can lag by a minute or more' : 'on the free plan are delayed'}.` })),
+        field('Colors', colors, 'Only the card’s surface and title follow it; up and down colors stay.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -627,6 +881,8 @@ async function buildWidgets(card) {
       const same = existing?.type === type ? existing : null;
       if (type === 'weather') {
         weatherFields(same);
+      } else if (type === 'worldclock') {
+        clockFields(same);
       } else if (type === 'calendar') {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'webcal://… or https://….ics', 'aria-label': 'Calendar address (ICS)' });
         inputs.url.value = same?.url || '';
@@ -634,6 +890,33 @@ async function buildWidgets(card) {
           field('Colors', colors, '“Calendar colors” uses the color the feed gives each event; “Match screen” follows your accent color and background.'));
       } else if (type === 'todoist') {
         todoFields(same);
+      } else if (type === 'spotify') {
+        spotifyFields(same);
+      } else if (type === 'gmail') {
+        gmailFields(same);
+      } else if (type === 'slack') {
+        slackFields(same);
+      } else if (type === 'github') {
+        githubFields(same);
+      } else if (type === 'feed') {
+        const presets = ws.feedPresets || [];
+        const custom = same && !same.preset;
+        inputs.preset = sel('widget-feed', tr('settings.widgets.feed.pick', 'Feed'), [...presets.map((p) => [p.id, p.name]), ['', tr('settings.widgets.feed.custom', 'Custom address…')]], same ? same.preset || '' : presets[0]?.id || '');
+        inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://example.com/feed.xml', maxlength: '2000', 'aria-label': tr('settings.widgets.feed.url', 'Feed address (RSS or Atom)') });
+        inputs.url.value = custom ? same.url : '';
+        inputs.count = sel('widget-feed-count', tr('settings.widgets.feed.count', 'Headlines shown'), [3, 5, 8, 10, 12].map((n) => [n, String(n)]), same?.count || 8);
+        const syncUrl = () => { inputs.url.hidden = inputs.preset.value !== ''; };
+        inputs.preset.addEventListener('change', syncUrl);
+        syncUrl();
+        fields.replaceChildren(
+          field(tr('settings.widgets.feed.pick', 'Feed'), inputs.preset, tr('settings.widgets.feed.pickHint', 'Lumen fetches the feed itself; the new-tab page never goes online. Headlines open in a new tab.')),
+          field(tr('settings.widgets.feed.url', 'Feed address (RSS or Atom)'), inputs.url, tr('settings.widgets.feed.urlHint', 'Only used with Custom address. Must be https://.')),
+          field(tr('settings.widgets.feed.count', 'Headlines shown'), inputs.count),
+          field('Colors', colors));
+      } else if (type === 'muse') {
+        museFields(same);
+      } else if (type === 'stocks' || type === 'crypto') {
+        marketFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -650,6 +933,10 @@ async function buildWidgets(card) {
       if (type === 'weather') {
         return { ...base, city: inputs.city?.value, units: inputs.units.value, wx: { places, units: inputs.units.value, wind: inputs.wind.value, clock: inputs.clock.value, days: Number(inputs.days.value), hours: Number(inputs.hours.value), view: inputs.view.value, show: Object.fromEntries(Object.entries(inputs.show).map(([k, c]) => [k, val(c)])) } };
       }
+      if (type === 'worldclock') {
+        return { ...base, city: inputs.city?.value, wc: { places: clockPlaces, clock: inputs.clock.value, seconds: val(inputs.seconds), show: Object.fromEntries(Object.entries(inputs.show).map(([k, c]) => [k, val(c)])) } };
+      }
+      if (type === 'muse') return { ...base, token: inputs.token.value, muse: { prompt: inputs.prompt.value, model: inputs.model.value, search: val(inputs.search) } };
       if (type === 'todoist') {
         const p = inputs.project.selectedOptions[0];
         const q = inputs.quickProject.selectedOptions[0];
@@ -658,6 +945,20 @@ async function buildWidgets(card) {
           group: inputs.group.value, sort: inputs.sort.value, density: inputs.density.value, max: Number(inputs.max.value), fields: Object.fromEntries(Object.entries(inputs.fields).map(([k, c]) => [k, val(c)])),
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
+      }
+      if (type === 'spotify') return { ...base, clientId: inputs.clientId.value, art: val(inputs.art) };
+      if (type === 'gmail') {
+        return { ...base, clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value, count: Number(inputs.count.value), snippets: val(inputs.snippets) };
+      }
+      if (type === 'slack') {
+        return { ...base, token: inputs.token.value, slack: { channels: [...inputs.slackPicked].map(([id, name]) => ({ id, name })), dms: val(inputs.dms), mentions: val(inputs.mentions), count: Number(inputs.count.value) } };
+      }
+      if (type === 'github') {
+        return { ...base, token: inputs.token.value, gh: { reviews: val(inputs.reviews), assigned: val(inputs.assigned), notifications: val(inputs.notifications), hideDrafts: val(inputs.hideDrafts), max: Number(inputs.max.value) } };
+      }
+      if (type === 'feed') return { ...base, feed: inputs.preset.value, url: inputs.url.value, count: Number(inputs.count.value) };
+      if (type === 'stocks' || type === 'crypto') {
+        return { ...base, token: inputs.token.value, mk: { [type === 'crypto' ? 'coins' : 'symbols']: inputs.list.value, startCash: Number(inputs.startCash.value) } };
       }
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
@@ -688,22 +989,23 @@ async function buildWidgets(card) {
       ws.types.map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, disabled: Boolean(existing) && t.type !== existing.type, onclick: () => { type = t.type; renderFields(); syncWidth(); } }, widgetIcon(t.type), t.label)));
     const form = h('div', { class: 'widget-form', id: 'widget-form' },
       h('div', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
-      types, fields, field('Title', title), field('Width', width, 'Or use Edit widgets on the new-tab page: drag a card anywhere, resize it from any edge, snap it to a side.'),
+      types, fields, field('Title', title), field('Width', width, 'Or use Edit layout on the new-tab page: drag a card anywhere, resize it from any edge, snap it to a side.'),
       h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: closeForm }), check, save));
     formHost.replaceChildren(form);
     renderFields();
     syncWidth();
     renderList();
-    (inputs.city || inputs.url || inputs.token)?.focus();
+    (inputs.city || inputs.url || inputs.list || inputs.token || inputs.clientId)?.focus();
     form.scrollIntoView?.({ block: 'nearest' });
   }
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
-  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every card its default size, packed in order', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, a world clock, news headlines (RSS or Atom), Spotify (now playing, with play, pause, next and previous), Gmail, Slack and GitHub (all read-only), stock and crypto prices with a paper portfolio, Muse (Meta’s model), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page
+  else if (ws.create && ws.types.some((t) => t.type === ws.create)) openForm(null, ws.create); // its Add widget picker
 }
 function alertLine(host, text) {
   host.querySelector('.note.error')?.remove();

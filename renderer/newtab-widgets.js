@@ -44,6 +44,17 @@ const ICON_REFRESH = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 6
 const ICON_LOCATE = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><path d="M6 .8v1.8M6 9.4v1.8M.8 6h1.8M9.4 6h1.8"/></svg>';
 const ICON_REPEAT = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 5.5V5a2 2 0 0 1 2-2h5M9 1.5 10.5 3 9 4.5M10 6.5V7a2 2 0 0 1-2 2H3M3 10.5 1.5 9 3 7.5"/></svg>';
 
+const SP_ICONS = { // Spotify card buttons (constant markup)
+  prev: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3h1.7v10H3.5zM13 3.4v9.2L6.2 8z"/></svg>',
+  next: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 3h1.7v10h-1.7zM3 3.4v9.2L9.8 8z"/></svg>',
+  play: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z"/></svg>',
+  pause: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h2.6v10H4zM9.4 3H12v10H9.4z"/></svg>',
+};
+const spClock = (millis) => {
+  const s = Math.floor(Math.max(0, millis) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -51,6 +62,8 @@ const el = (tag, cls, text) => {
   return e;
 };
 const safeUrl = (u) => (typeof u === 'string' && u.length < 2000 && /^https:\/\/[^\s"'<>\\]+$/i.test(u) ? u : null);
+// A github.com address (an issue, a pull request or one of its list pages), or null.
+const githubUrl = (u) => (typeof u === 'string' && u.length < 300 && /^https:\/\/github\.com\/[A-Za-z0-9_./#-]{0,250}$/.test(u) ? u : null);
 const text = (v, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '');
 const int = (v) => (Number.isFinite(v) ? Math.round(v) : null);
 const pct = (v) => (Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null);
@@ -121,6 +134,7 @@ function dayName(date, i) {
 }
 function agoText(ms) {
   const min = Math.max(0, Math.round((Date.now() - ms) / 60e3));
+  if (min >= 1440) return `${Math.round(min / 1440)} d ago`;
   return min < 1 ? 'just now' : min < 60 ? `${min} min ago` : `${Math.round(min / 60)} h ago`;
 }
 
@@ -262,6 +276,200 @@ const WIDGET_RENDERERS = {
     if (typeof d.hereNote === 'string' && d.hereNote && places.length) card.body.append(el('p', 'w-note small', text(d.hereNote, 200)));
   },
 
+  // Now playing. Everything is a checked string or number set with textContent; the album picture is a
+  // data: URL that main made from bytes it sniffed itself; the buttons ask main to call Spotify.
+  spotify(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const open = typeof d.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(d.url) ? d.url : null;
+    if (open) card.head.append(openLink(open, 'Open in Spotify'));
+    const state = d.state === 'playing' || d.state === 'paused' ? d.state : 'idle';
+    card.el.classList.toggle('sp-card-idle', state === 'idle');
+    if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
+    const title = text(d.title, 200);
+    const wrap = el('div', 'sp-wrap');
+    const art = typeof d.art === 'string' && d.art.length < 200000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(d.art) ? d.art : '';
+    if (art) {
+      const img = document.createElement('img');
+      img.className = 'sp-art';
+      img.alt = '';
+      img.src = art;
+      wrap.append(img);
+    }
+    const info = el('div', 'sp-text');
+    if (state === 'idle') {
+      info.append(el('span', 'sp-title', 'Nothing is playing'), el('span', 'sp-artist', text(d.device, 60) ? `${text(d.device, 60)} is ready` : 'Start Spotify on any device'));
+    } else {
+      info.append(el('span', 'sp-title', title), el('span', 'sp-artist', text(d.artist, 200)));
+      if (text(d.album, 120)) info.append(el('span', 'sp-album', text(d.album, 120)));
+    }
+    wrap.append(info);
+    card.body.append(wrap);
+    const button = (name, label, act, cls = 'sp-btn') => {
+      const b = el('button', cls);
+      b.type = 'button';
+      b.innerHTML = SP_ICONS[name]; // constant markup
+      b.setAttribute('aria-label', label);
+      b.title = label;
+      b.addEventListener('click', () => widgetAct(w.id, act));
+      return b;
+    };
+    const controls = el('div', 'sp-controls');
+    if (state === 'idle') { // nothing to skip: Play resumes on the last device (Spotify says if there is none)
+      controls.append(button('play', 'Play on Spotify', 'play', 'sp-btn main'));
+      card.body.append(controls);
+      return;
+    }
+    controls.append(button('prev', 'Previous track', 'previous'), state === 'playing' ? button('pause', 'Pause', 'pause', 'sp-btn main') : button('play', 'Play', 'play', 'sp-btn main'), button('next', 'Next track', 'next'));
+    card.body.append(controls);
+    // Progress: main sends where the playhead was and when; this page moves it on once a second.
+    const duration = Number.isFinite(d.durationMs) && d.durationMs > 0 ? d.durationMs : 0;
+    if (duration) {
+      const at = Number.isFinite(d.at) ? d.at : Date.now();
+      const from = Number.isFinite(d.progressMs) ? d.progressMs : 0;
+      const bar = el('div', 'sp-bar');
+      const fill = document.createElement('i');
+      bar.append(fill);
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', `${title} progress`);
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
+      const elapsed = el('span', 'sp-elapsed');
+      const total = el('span', 'sp-total', spClock(duration));
+      const progress = el('div', 'sp-progress');
+      progress.append(elapsed, bar, total);
+      card.body.append(progress);
+      const draw = () => {
+        const now = Math.min(duration, Math.max(0, from + (state === 'playing' ? Math.max(0, Date.now() - at) : 0)));
+        elapsed.textContent = spClock(now);
+        fill.style.width = `${(now / duration) * 100}%`;
+        bar.setAttribute('aria-valuenow', String(Math.round((now / duration) * 100)));
+        return now;
+      };
+      draw();
+      if (state === 'playing') {
+        const timer = setInterval(() => {
+          if (!progress.isConnected) { clearInterval(timer); return; } // the card was redrawn or removed
+          if (!document.hidden && draw() >= duration) clearInterval(timer);
+        }, 1000);
+      }
+    }
+  },
+
+  // GitHub: unread notifications and review requests as numbers on a small card; the lists on a bigger one.
+  // Everything comes from features/github-view.js already checked, and is checked again here.
+  github(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const open = githubUrl(d.open);
+    if (open) card.head.append(openLink(open, 'Open GitHub'));
+    const listOf = (v) => {
+      if (!v || typeof v !== 'object') return null;
+      if (typeof v.error === 'string' && v.error) return { error: text(v.error, 200) };
+      const items = (Array.isArray(v.items) ? v.items : []).filter((it) => it && typeof it.title === 'string' && githubUrl(it.url)).slice(0, 20);
+      return { items, total: Math.max(items.length, int(v.total) || 0), partial: v.partial === true };
+    };
+    const reviews = listOf(d.reviews);
+    const assigned = listOf(d.assigned);
+    const notif = d.notifications && typeof d.notifications === 'object' ? d.notifications : null;
+    const unread = notif && !notif.error && int(notif.count) !== null ? { n: int(notif.count), label: /^\d{1,4}\+?$/.test(notif.label) ? notif.label : String(int(notif.count)) } : null;
+    const stat = (n, label, href) => {
+      const box = href ? link(href, '', 'gh-stat') : el('span', 'gh-stat');
+      box.append(el('span', 'gh-num', n), el('span', 'gh-of', label));
+      return box;
+    };
+    // Small: the numbers.
+    const small = el('div', 'gh-summary');
+    if (unread) small.append(stat(unread.label, unread.n === 1 ? 'unread notification' : 'unread notifications', githubUrl(d.openNotifications)));
+    if (reviews && !reviews.error) small.append(stat(String(reviews.total), reviews.total === 1 ? 'review requested' : 'reviews requested', githubUrl(d.openReviews)));
+    if (assigned && !assigned.error) small.append(stat(String(assigned.total), 'assigned to you', githubUrl(d.openAssigned)));
+    if (!small.children.length) small.append(el('span', 'gh-of', 'Nothing to show.'));
+    card.body.append(small);
+    // Bigger: the counts in one line and the lists.
+    const full = el('div', 'gh-full');
+    if (notif) {
+      const line = el('p', 'gh-unread');
+      if (unread) {
+        const a = link(githubUrl(d.openNotifications) || 'https://github.com/notifications', `${unread.label} unread notification${unread.n === 1 ? '' : 's'}`, 'w-link');
+        line.append(a);
+      } else {
+        line.classList.add('w-note');
+        line.append(text(notif.error, 200) || 'Notifications aren’t available.');
+      }
+      full.append(line);
+    }
+    const now = Date.now();
+    const since = (ms) => {
+      if (!Number.isFinite(ms) || ms > now) return '';
+      const min = Math.round((now - ms) / 60e3);
+      return min < 1 ? 'just now' : min < 60 ? `${min} min ago` : min < 1440 ? `${Math.round(min / 60)} h ago` : `${Math.round(min / 1440)} d ago`;
+    };
+    const section = (heading, data, moreUrl, empty) => {
+      if (!data) return;
+      const wrap = el('div', 'gh-section');
+      wrap.append(el('div', 'w-day', data.error ? heading : `${heading} · ${data.total}`));
+      if (data.error) { wrap.append(el('p', 'w-note', data.error)); full.append(wrap); return; }
+      if (!data.items.length) wrap.append(el('p', 'w-empty', empty));
+      const list = el('div', 'w-list');
+      for (const it of data.items) {
+        const row = el('div', 'w-row');
+        const pr = it.kind === 'pr';
+        const mark = el('span', `gh-kind ${pr ? 'pr' : 'issue'}${it.draft ? ' draft' : ''}`, pr ? (it.draft ? 'Draft' : 'PR') : 'Issue');
+        const main = el('div', 'w-main');
+        main.append(link(githubUrl(it.url), text(it.title) || 'Untitled', ''));
+        const meta = el('div', 'gh-meta');
+        meta.append(el('span', 'gh-repo', `${text(it.repo, 120)}#${int(it.number) ?? ''}`));
+        if (typeof it.author === 'string' && it.author) meta.append(el('span', null, text(it.author, 40)));
+        const ago = since(it.updated);
+        if (ago) meta.append(el('span', null, ago));
+        main.append(meta);
+        row.append(mark, main);
+        list.append(row);
+      }
+      wrap.append(list);
+      if (data.total > data.items.length) {
+        const more = el('p', 'w-more');
+        const href = githubUrl(moreUrl);
+        if (href) more.append(link(href, `${data.total - data.items.length} more on GitHub`, 'w-link')); else more.append(`${data.total - data.items.length} more`);
+        wrap.append(more);
+      }
+      full.append(wrap);
+    };
+    section('Review requests', reviews, d.openReviews, 'No reviews waiting on you.');
+    section('Assigned to you', assigned, d.openAssigned, 'Nothing assigned to you.');
+    card.body.append(full);
+  },
+
+  worldclock(w, card) {
+    const d = w.data;
+    const WCK = window.WorldClock;
+    card.head.append(refreshButton(w));
+    const show = d.show && typeof d.show === 'object' ? d.show : {};
+    const opts = { clock: ['12', '24'].includes(d.clock) ? d.clock : 'auto', seconds: d.seconds === true };
+    const places = (Array.isArray(d.places) ? d.places : []).map((p) => (p && typeof p === 'object' ? { label: text(p.label, 40), name: text(p.name, 80), tz: WCK?.cleanTz(p.tz), days: Array.isArray(p.days) ? p.days.slice(0, 3) : [] } : null)).filter((p) => p && p.tz).slice(0, 8);
+    if (!places.length) { card.body.append(el('p', 'w-note', 'No places to show. Add one in Settings.')); return; }
+    const list = el('div', 'wc-list');
+    for (const p of places) {
+      const row = el('div', 'wc-row');
+      row.title = p.name;
+      const icon = el('span', 'wc-icon');
+      const main = el('div', 'wc-main');
+      main.append(el('span', 'wc-city', p.label || p.name));
+      const sub = el('span', 'wc-sub');
+      if (show.date !== false) sub.append(el('span', 'wc-date'));
+      if (show.offset !== false) sub.append(el('span', 'wc-off'));
+      main.append(sub);
+      const sun = el('span', 'wc-sun');
+      const time = el('span', 'wc-time');
+      row.append(icon, main, time);
+      if (show.sun !== false) { row.append(sun); row.classList.add('has-sun'); }
+      list.append(row);
+      clockRows.set(row, { tz: p.tz, days: p.days, opts, icon, time, date: sub.querySelector('.wc-date'), off: sub.querySelector('.wc-off'), sun: show.sun !== false ? sun : null, sunKey: '', dayKey: '' });
+    }
+    card.body.append(list);
+    tickClocks();
+  },
+
   todoist(w, card) {
     const d = w.data;
     card.head.append(refreshButton(w));
@@ -401,6 +609,177 @@ const WIDGET_RENDERERS = {
     card.body.append(list);
   },
 
+  // Gmail (read-only): only text from the API arrives here, and it is set with textContent. The
+  // message links are https://mail.google.com addresses built by the browser from a checked id.
+  gmail(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    if (d.state === 'reconnect') {
+      const note = el('p', 'w-note');
+      note.append(el('strong', null, 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
+      const fix = el('button', 'w-btn primary', 'Open Settings');
+      fix.type = 'button';
+      fix.setAttribute('aria-label', `Open settings to reconnect ${text(w.title, 60)}`);
+      fix.addEventListener('click', () => widgetAct(w.id, 'configure'));
+      const wrap = el('div');
+      wrap.append(fix);
+      card.body.append(note, wrap);
+      return;
+    }
+    const open = safeUrl(d.open);
+    if (open && /^https:\/\/mail\.google\.com\//.test(open)) card.head.append(openLink(open, 'Open Gmail'));
+    const unread = int(d.unread) ?? 0;
+    const head = el('div', 'gm-head');
+    head.append(el('span', 'gm-count', String(unread)), el('span', 'gm-of', 'unread'));
+    card.body.append(head);
+    const messages = (Array.isArray(d.messages) ? d.messages : []).filter((m) => m && typeof m.id === 'string' && /^[0-9a-f]{6,32}$/i.test(m.id)).slice(0, 10);
+    if (!messages.length) { card.body.append(el('p', 'w-empty', 'The inbox is empty.')); return; }
+    const list = el('div', 'w-list');
+    messages.forEach((m, i) => {
+      const row = el('div', `w-row gm-row${m.unread ? ' unread' : ''}${i > 0 ? ' later' : ''}`);
+      const main = el('div', 'w-main');
+      const subject = text(m.subject, 200) || '(no subject)';
+      const a = link(`https://mail.google.com/mail/u/0/#inbox/${m.id}`, subject, '');
+      main.append(el('span', 'gm-from', text(m.from, 100) || 'Unknown sender'), a);
+      if (m.snippet) main.append(el('span', 'gm-snip', text(m.snippet, 160)));
+      row.append(main);
+      if (Number.isFinite(m.at) && m.at > 0) row.append(el('span', 'gm-when', gmailWhen(m.at)));
+      list.append(row);
+    });
+    card.body.append(list);
+  },
+
+  feed(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const source = text(d.source, 80) || text(w.title, 80);
+    const items = (Array.isArray(d.items) ? d.items : []).filter((i) => i && text(i.title)).slice(0, 12);
+    if (!items.length) { card.body.append(el('p', 'w-empty', 'No headlines right now.')); return; }
+    const list = el('div', 'w-list');
+    items.forEach((i, n) => {
+      const row = el('div', 'w-row feed-row');
+      if (n > 2) row.classList.add('far');
+      if (n > 0) row.classList.add('later');
+      const main = el('div', 'w-main');
+      const title = text(i.title, 200);
+      const url = safeUrl(i.url);
+      main.append(url ? link(url, title, '') : el('span', 'w-title', title));
+      const when = Number.isFinite(i.time) && i.time > 0 ? agoText(i.time) : '';
+      main.append(el('span', 'w-sub', [source, when].filter(Boolean).join(' · ')));
+      row.append(main);
+      list.append(row);
+    });
+    card.body.append(list);
+  },
+
+  slack(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const home = safeUrl(d.teamUrl);
+    if (home && !d.reconnect) card.head.append(openLink(home, 'Open Slack'));
+    // Slack refused the stored sign-in: say so, and the button opens this card's settings to sign in again.
+    if (d.reconnect) {
+      const box = el('div', 'sl-reconnect');
+      box.append(el('p', 'w-note', `Slack needs you to reconnect. ${text(d.reason, 160)}`.trim()));
+      const btn = el('button', 'w-btn primary', 'Reconnect');
+      btn.type = 'button';
+      btn.setAttribute('aria-label', `Reconnect ${text(w.title, 60)} in Settings`);
+      btn.addEventListener('click', () => widgetAct(w.id, 'configure'));
+      box.append(btn);
+      card.body.append(box);
+      return;
+    }
+    if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
+    const unread = int(d.unread) || 0;
+    const mentions = int(d.mentions) || 0;
+    const showDms = d.showDms !== false;
+    const showMentions = d.showMentions !== false && (int(d.channelCount) || 0) > 0;
+    const counts = el('div', 'sl-counts');
+    const count = (n, label) => { const c = el('div', 'sl-count'); c.append(el('span', 'sl-n', String(n)), el('span', 'sl-of', label)); return c; };
+    if (showDms) counts.append(count(unread, unread === 1 ? 'unread DM' : 'unread DMs'));
+    if (showMentions) counts.append(count(mentions, mentions === 1 ? 'mention' : 'mentions'));
+    const messages = (Array.isArray(d.messages) ? d.messages : []).filter((m) => m && typeof m === 'object').slice(0, 10);
+    // Small: the counts and the newest message.
+    const small = el('div', 'sl-summary');
+    small.append(counts.cloneNode(true));
+    if (messages[0]) small.append(el('span', 'sl-next', `${text(messages[0].from, 60)}: ${text(messages[0].text, 140)}`));
+    else small.append(el('span', 'sl-next', 'All caught up.'));
+    card.body.append(small);
+    const full = el('div', 'sl-full');
+    if (counts.children.length) full.append(counts);
+    const chats = (Array.isArray(d.dmChats) ? d.dmChats : []).filter((c) => c && typeof c.name === 'string').slice(0, 5);
+    if (showDms && chats.length) {
+      full.append(el('div', 'w-day', 'Unread'));
+      const cl = el('div', 'sl-chats');
+      for (const c of chats) { const r = el('span', 'sl-chat', `${text(c.name, 40)} · ${int(c.unread) || 0}`); cl.append(r); }
+      full.append(cl);
+    }
+    if (!messages.length) full.append(el('p', 'w-empty', showDms || (int(d.channelCount) || 0) ? 'Nothing new.' : 'Pick channels or turn on DMs in Settings.'));
+    const list = el('div', 'w-list');
+    for (const m of messages) {
+      const row = el('div', `w-row${m.unread ? ' unread' : ''}`);
+      const main = el('div', 'w-main');
+      const line = `${text(m.from, 60)}: ${text(m.text, 160)}`;
+      const url = safeUrl(m.url);
+      main.append(url ? link(url, line, '') : el('span', 'w-title', line));
+      const when = Number.isFinite(m.ts) && m.ts > 0 ? agoText(m.ts) : '';
+      main.append(el('span', 'w-sub', [text(m.where, 60), when].filter(Boolean).join(' · ')));
+      row.append(main);
+      list.append(row);
+    }
+    full.append(list);
+    card.body.append(full);
+  },
+
+  // Muse (Meta's model): the saved prompt's answer, its sources (https links only), and a field for one
+  // question. Everything from the network is text (textContent), split into paragraphs.
+  muse(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const paragraphs = (v) => (typeof v === 'string' ? v.slice(0, 6000).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).slice(0, 40) : []);
+    const sourcesOf = (list) => (Array.isArray(list) ? list : []).slice(0, 8).map((s) => ({ url: safeUrl(s?.url), title: text(s?.title, 120) })).filter((s) => s.url);
+    const drawAnswer = (parent, answer, sources, cls) => {
+      const box = el('div', cls);
+      for (const p of paragraphs(answer)) box.append(el('p', 'mu-p', p));
+      const links = sourcesOf(sources);
+      if (links.length) {
+        const list = el('ul', 'mu-sources');
+        list.setAttribute('aria-label', 'Sources');
+        for (const s of links) {
+          const li = el('li');
+          li.append(link(s.url, s.title || s.url));
+          list.append(li);
+        }
+        box.append(list);
+      }
+      parent.append(box);
+    };
+    const wrap = el('div', 'mu-wrap');
+    if (typeof d.notice === 'string' && d.notice) wrap.append(el('p', 'w-note', text(d.notice, 200)));
+    drawAnswer(wrap, d.answer, d.sources, 'mu-answer');
+    if (!paragraphs(d.answer).length) wrap.append(el('p', 'w-empty', 'Nothing yet.'));
+    if (d.asked && typeof d.asked === 'object') {
+      wrap.append(el('div', 'w-day', text(d.asked.question, 500)));
+      drawAnswer(wrap, d.asked.answer, d.asked.sources, 'mu-asked');
+    }
+    const box = el('div', 'mu-ask');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 500;
+    input.placeholder = 'Ask Muse…';
+    input.setAttribute('aria-label', `Ask Muse a question in ${text(w.title, 60)}`);
+    const go = () => { const v = input.value.trim(); if (v) { input.disabled = true; btn.disabled = true; btn.textContent = 'Asking…'; widgetAct(w.id, 'ask', { text: v.slice(0, 500) }); } };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } e.stopPropagation(); });
+    const btn = el('button', 'w-btn', 'Ask');
+    btn.type = 'button';
+    btn.addEventListener('click', go);
+    box.append(input, btn);
+    card.body.append(wrap, box);
+    card.el.classList.add('muse-card');
+  },
+  stocks: (w, card) => marketCard(w, card),
+  crypto: (w, card) => marketCard(w, card),
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -430,6 +809,11 @@ const WIDGET_RENDERERS = {
   },
 };
 
+// Today: the time; earlier: the day.
+function gmailWhen(ms) {
+  const d = new Date(ms);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 // Ask before "My location": what is sent, to whom. Nothing goes anywhere until Allow.
 function askBox(w, d) {
   const box = el('div', 'wx-ask');
@@ -447,6 +831,152 @@ function askBox(w, d) {
   box.append(row);
   return box;
 }
+// ---- Stocks and Crypto: a price table, and a SIMULATED paper portfolio (features/markets-view.js) ----
+const marketTab = new Map(); // card id -> 'prices' | 'paper' (a redraw keeps the tab)
+const usd = (v, small) => (Number.isFinite(v) ? v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: small && Math.abs(v) < 1 ? 6 : 2 }) : '–');
+const qtyText = (v) => (Number.isFinite(v) ? String(Math.round(v * 1e8) / 1e8) : '–');
+function change(v, cls = 'mk-chg') {
+  const e = el('span', cls);
+  if (!Number.isFinite(v)) { e.textContent = '–'; return e; }
+  const dir = v > 0 ? 'up' : v < 0 ? 'down' : 'flat';
+  e.classList.add(dir);
+  e.textContent = `${v > 0 ? '▲' : v < 0 ? '▼' : ''}${v === 0 ? '' : ' '}${Math.abs(v).toFixed(2)}%`;
+  e.setAttribute('aria-label', `${dir === 'flat' ? 'unchanged' : dir}${dir === 'flat' ? '' : ` ${Math.abs(v).toFixed(2)} percent`}`);
+  return e;
+}
+function marketCard(w, card) {
+  const d = w.data;
+  const crypto = d.kind === 'crypto';
+  const rows = (Array.isArray(d.rows) ? d.rows : []).filter((r) => r && typeof r.sym === 'string' && Number.isFinite(r.px)).slice(0, 12);
+  const pf = d.pf && typeof d.pf === 'object' ? d.pf : {};
+  const offline = d.offline === true;
+  card.el.classList.toggle('mk-offline', offline);
+  card.head.append(el('span', `mk-badge${d.badge === 'Live' ? ' live' : ''}`, d.badge === 'Live' ? 'Live' : 'Delayed'));
+  if (offline) card.head.append(el('span', 'mk-badge off', 'offline'));
+  else if (!crypto && d.marketOpen === false) card.head.append(el('span', 'mk-badge', 'Market closed'));
+  card.head.append(refreshButton(w));
+  if (typeof d.notice === 'string' && d.notice) { const n = el('p', 'w-note mk-notice', d.notice.slice(0, 200)); n.setAttribute('role', 'status'); card.body.append(n); }
+
+  const tabs = el('div', 'mk-tabs');
+  tabs.setAttribute('role', 'tablist');
+  const panels = { prices: el('div', 'mk-panel'), paper: el('div', 'mk-panel') };
+  const select = (name) => {
+    marketTab.set(w.id, name);
+    for (const [k, p] of Object.entries(panels)) p.hidden = k !== name;
+    for (const b of tabs.children) { const on = b.dataset.tab === name; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+  };
+  for (const [name, label] of [['prices', 'Prices'], ['paper', 'Paper trading']]) {
+    const b = el('button', 'mk-tab', label);
+    b.type = 'button';
+    b.dataset.tab = name;
+    b.setAttribute('role', 'tab');
+    b.addEventListener('click', () => select(name));
+    b.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); select(name === 'prices' ? 'paper' : 'prices'); tabs.querySelector('[aria-selected="true"]').focus(); } });
+    tabs.append(b);
+  }
+
+  // Prices: symbol, price, change.
+  const table = el('table', 'mk-table');
+  table.setAttribute('aria-label', crypto ? 'Crypto prices' : 'Stock prices');
+  const head = el('tr');
+  for (const t of ['Symbol', 'Price', crypto ? '24h' : 'Change']) { const th = el('th', null, t); th.scope = 'col'; head.append(th); }
+  const thead = el('thead');
+  thead.append(head);
+  const tbody = el('tbody');
+  for (const r of rows) {
+    const tr = el('tr');
+    const sym = el('th', 'mk-sym', text(r.sym, 12));
+    sym.scope = 'row';
+    if (text(r.name, 60) && !crypto) sym.title = text(r.name, 60);
+    tr.append(sym, el('td', 'mk-px', usd(r.px, true)), (() => { const td = el('td'); td.append(change(r.chg)); return td; })());
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  panels.prices.append(table);
+  const missing = (Array.isArray(d.missing) ? d.missing : []).filter((s) => typeof s === 'string').slice(0, 12).map((s) => text(s, 12));
+  if (missing.length) panels.prices.append(el('p', 'w-note small', `No quote for ${missing.join(', ')}.`));
+  const asOf = Number.isFinite(d.asOf) && d.asOf > 0 ? new Date(d.asOf).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  panels.prices.append(el('p', 'mk-foot', [asOf && `as of ${asOf}`, offline && 'offline (last known prices)', text(d.attribution, 60)].filter(Boolean).join(' · ')));
+
+  // Paper trading: equity, P/L, holdings, and a buy/sell form.
+  const paper = panels.paper;
+  paper.append(el('p', 'mk-paper-note', 'Paper trading — simulated. Not investment advice.'));
+  const sum = el('div', 'mk-sum');
+  const cell = (label, node) => { const c = el('div'); c.append(el('span', 'mk-k', label), node); return c; };
+  const plNode = el('span', 'mk-v');
+  plNode.append(change(pf.plPct));
+  const plMoney = Number.isFinite(pf.pl) ? `${pf.pl > 0 ? '+' : pf.pl < 0 ? '−' : ''}${usd(Math.abs(pf.pl))}` : '–';
+  plNode.prepend(`${plMoney} `);
+  sum.append(cell('Equity', el('span', 'mk-v', usd(pf.equity))), cell('P/L', plNode), cell('Cash', el('span', 'mk-v', usd(pf.cash))));
+  paper.append(sum);
+  const holdings = (Array.isArray(pf.positions) ? pf.positions : []).filter((p) => p && typeof p.sym === 'string').slice(0, 50);
+  if (holdings.length) {
+    const ht = el('table', 'mk-table mk-hold');
+    ht.setAttribute('aria-label', 'Paper holdings');
+    const hr = el('tr');
+    for (const t of ['Holding', 'Value', 'P/L']) { const th = el('th', null, t); th.scope = 'col'; hr.append(th); }
+    const hh = el('thead');
+    hh.append(hr);
+    const hb = el('tbody');
+    for (const p of holdings) {
+      const tr = el('tr');
+      const s = el('th', 'mk-sym', `${text(p.sym, 12)} ×${qtyText(p.qty)}`);
+      s.scope = 'row';
+      const td = el('td');
+      td.append(change(p.plPct));
+      tr.append(s, el('td', 'mk-px', usd(p.value)), td);
+      if (!Number.isFinite(p.px)) tr.title = 'No current price: valued at cost';
+      hb.append(tr);
+    }
+    ht.append(hh, hb);
+    paper.append(ht);
+  } else paper.append(el('p', 'w-note small', 'No holdings yet. Buy something with the simulated cash.'));
+
+  const trade = el('div', 'mk-trade');
+  const sel = document.createElement('select');
+  sel.setAttribute('aria-label', 'Symbol to trade');
+  const held = holdings.map((p) => p.sym);
+  const symbols = [...new Set([...rows.map((r) => r.sym), ...held])];
+  for (const s of symbols) { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.append(o); }
+  const qty = document.createElement('input');
+  qty.type = 'text';
+  qty.inputMode = 'decimal';
+  qty.maxLength = 17;
+  qty.placeholder = crypto ? 'Amount' : 'Shares';
+  qty.setAttribute('aria-label', crypto ? 'Amount to trade' : 'Number of shares');
+  const err = el('p', 'mk-err');
+  err.setAttribute('role', 'status');
+  const go = (side) => {
+    const q = qty.value.trim();
+    const ok = /^\d{1,8}(\.\d{1,8})?$/.test(q) && Number(q) > 0 && (crypto || /^\d+$/.test(q));
+    if (!ok) { err.textContent = crypto ? 'Enter an amount.' : 'Enter a whole number of shares.'; return; }
+    if (!sel.value) { err.textContent = 'Pick a symbol.'; return; }
+    for (const b of trade.querySelectorAll('button')) b.disabled = true;
+    widgetAct(w.id, side, { sym: sel.value, qty: q });
+  };
+  qty.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go('buy'); } e.stopPropagation(); });
+  const buy = el('button', 'w-btn primary', 'Buy');
+  const sell = el('button', 'w-btn', 'Sell');
+  for (const [b, side] of [[buy, 'buy'], [sell, 'sell']]) { b.type = 'button'; b.addEventListener('click', () => go(side)); }
+  const blocked = d.tradable !== true || !symbols.length;
+  for (const c of [sel, qty, buy, sell]) c.disabled = blocked;
+  trade.append(sel, qty, buy, sell);
+  paper.append(trade, err);
+  if (blocked) paper.append(el('p', 'w-note small', text(d.tradeBlock, 120) || 'Trading is paused.'));
+  else paper.append(el('p', 'w-note small', 'Trades fill at the last price shown.'));
+  const reset = el('button', 'w-btn mk-reset', 'Reset portfolio');
+  reset.type = 'button';
+  reset.addEventListener('click', () => {
+    if (reset.dataset.sure !== '1') { reset.dataset.sure = '1'; reset.textContent = 'Click again to erase all paper trades'; setTimeout(() => { reset.dataset.sure = ''; reset.textContent = 'Reset portfolio'; }, 4000); return; }
+    reset.disabled = true;
+    widgetAct(w.id, 'resetpf');
+  });
+  paper.append(el('p', 'mk-foot', `${int(pf.trades) || 0} of ${int(pf.tradesMax) || 200} trades · started with ${usd(pf.start)} · ${asOf ? `prices as of ${asOf} · ` : ''}${text(d.attribution, 60)}`), reset);
+
+  card.body.append(tabs, panels.prices, panels.paper);
+  select(marketTab.get(w.id) === 'paper' ? 'paper' : 'prices');
+}
+
 function dayLabel(date) {
   const start = new Date(new Date().setHours(0, 0, 0, 0));
   const diff = Math.round((new Date(date).setHours(0, 0, 0, 0) - start) / 86400e3);
@@ -541,9 +1071,13 @@ function renderWidgets(list) {
   for (const [id, s] of shownWidgets) if (!valid.some((w) => w.id === id)) { s.el.remove(); shownWidgets.delete(id); }
   // Cards are never reordered in the DOM (moving a frame would reload it): new ones go at the end.
   for (const card of cards) if (card.parentNode !== box) box.append(card);
-  box.classList.toggle('empty', !cards.length);
+  // The page's own sections that are cards too (newtab-system.js): part of the same grid.
+  const system = window.newtabSystem;
+  const all = new Map(valid.map((w, i) => [w.id, cards[i]]));
+  if (system) for (const [id, card] of system.cards()) all.set(id, card);
+  box.classList.toggle('empty', !all.size);
   applyWidgetColors();
-  window.widgetGrid?.sync(valid, new Map(valid.map((w, i) => [w.id, cards[i]])));
+  window.widgetGrid?.sync([...valid, ...(system ? system.entries() : [])], all);
 }
 // A card's Colors setting: 'calendar' leaves it alone; the others tint its surface, title, event bars and
 // today highlight from the page's accent and background (features/widget-colors.js keeps the text readable).
@@ -568,21 +1102,52 @@ function applyWidgetColors() {
 }
 window.applyWidgetColors = applyWidgetColors;
 
+// ---- World clock: the page ticks the times itself from time zone names (Intl); nothing is fetched to do it ----
+const clockRows = new Map(); // row element -> what it shows
+const sunTime = (v, opts) => { const m = /^(\d{2}):(\d{2})$/.exec(typeof v === 'string' ? v : ''); return m ? clockText(Number(m[1]), Number(m[2]), opts) : '–'; };
+function tickClocks() {
+  const WCK = window.WorldClock;
+  if (!WCK) return;
+  const now = Date.now();
+  for (const [row, c] of clockRows) {
+    if (!row.isConnected) { clockRows.delete(row); continue; }
+    try {
+      const t = WCK.timeText(now, c.tz, c.opts);
+      if (c.time.textContent !== t) c.time.textContent = t;
+      const parts = WCK.zoneParts(now, c.tz);
+      const day = WCK.dayFor(c.days, parts.date);
+      const up = WCK.isDaylight(parts, day);
+      const key = `${parts.date}|${up}`;
+      if (key === c.dayKey) continue;
+      c.dayKey = key;
+      row.dataset.day = up === null ? '' : up ? 'day' : 'night';
+      c.icon.replaceChildren(skyIcon(0, up !== false));
+      if (c.date) c.date.textContent = WCK.dateText(now, c.tz);
+      if (c.off) {
+        c.off.textContent = WCK.relativeLabel(WCK.offsetMinutes(now, c.tz) - WCK.offsetMinutes(now, Intl.DateTimeFormat().resolvedOptions().timeZone));
+      }
+      if (c.sun) c.sun.textContent = day ? `↑ ${sunTime(day.sunrise, c.opts)}  ↓ ${sunTime(day.sunset, c.opts)}` : '';
+    } catch (err) { console.error('world clock', err); clockRows.delete(row); }
+  }
+}
+setInterval(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 1000);
+
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;
   for (const [id, s] of shownWidgets) {
-    if (s.el.classList.contains('calendar') || s.el.classList.contains('todoist')) shownWidgets.set(id, { key: '', el: s.el });
+    if (s.el.classList.contains('calendar') || s.el.classList.contains('feed') || s.el.classList.contains('todoist')) shownWidgets.set(id, { key: '', el: s.el });
   }
   for (const w of lastList.current) {
-    const after = REFRESH_AFTER[w.type];
+    // Stocks and Crypto say how often they refresh (a closed market: hourly).
+    const after = (w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type];
     if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh'); return; }
   }
   const box = document.getElementById('widgets');
-  if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
+  if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !box.querySelector('.mk-trade :focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
 setInterval(tick, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
@@ -604,3 +1169,4 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) tick
   }, 0));
 }
 window.renderWidgets = renderWidgets;
+window.widgetTypes = () => Object.keys(WIDGET_RENDERERS); // the kinds of card this file can draw (newtab-edit.js's Add widget picker)

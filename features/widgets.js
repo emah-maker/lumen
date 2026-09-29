@@ -13,7 +13,7 @@
 //
 // Adding a connector is one entry in CONNECTORS below:
 //   label             its name in Settings' type picker
-//   ttl               how long fetched data stays fresh, in ms
+//   ttl               how long fetched data stays fresh, in ms (or a function of the data cached so far)
 //   secret            (optional) the name of the encrypted key it needs; resolve() may return one to save
 //   clean(c)          a stored config -> its checked fields (plain values), or null. Runs on every read.
 //   resolve(input, x) Settings' form input -> { config, secret?, message } to store; may look things up
@@ -22,13 +22,43 @@
 //   summary(c)        one line for Settings' list
 //   fetch(c, x)       -> the card's data: plain JSON (strings, numbers, arrays). renderer/newtab.js
 //                     draws it with textContent only, so nothing from the network is ever markup.
-//   act(c, action, x) (optional) a page action (the Todoist checkbox): see actionFrom() below
-// and a renderer with the same type in renderer/newtab.js's WIDGET_RENDERERS.
+//                     fetch() may throw an Error with .waitMs (a rate limit): the widget isn't asked again before then.
+//   (a connector that signs in with OAuth keeps its tokens as one JSON secret: features/oauth.js packs it,
+//    x.setSecret(json) rewrites it after a refresh, and the sign-in itself is a set of createWidgets methods,
+//    like slackStart/slackFinish/slackDisconnect, that Settings calls)
+//   act(c, action, x) (optional) a page action (the Todoist checkbox, Spotify's play/pause, Muse's ask): see actionFrom() below;
+//                     returning { keep: true } shows the change without fetching the card again.
+//                     act(c, action, x, cached, ctx) may also return { config } (fields merged into the stored
+//                     widget), { notice } (a line the card shows for a few seconds) and { local: true } (nothing
+//                     to fetch again): the Stocks and Crypto paper trades.
+//   ttl               a number of ms, or (data) => ms when the age depends on the answer (Stocks: a closed market)
+//   present(c, data, ctx) (optional) the cached data -> what the page gets, worked out on every read
+//                     (Stocks and Crypto value the paper portfolio at the last quotes here)
+// and a renderer with the same type in renderer/newtab-widgets.js's WIDGET_RENDERERS.
+//
+// A connector with `secret` keeps one encrypted string under that name (main.js widgetSecret). For a
+// token (Todoist) that is the token itself. For an OAuth sign-in (Gmail) it is a small JSON blob of
+// client id, client secret and refresh token (features/oauth.js encodeCreds), written by the sign-in
+// and the token refresh, and never read by anything but this file: the access token lives only in
+// memory (x.session()), and none of it ever reaches the page, the hash or settings.json in plain text.
+//   x.session(creds?)   the OAuth account for this connector's secret (or for creds, to check them)
+//   x.backoff(ms)       no requests for a while (a service's own rate-limit answer)
 const ics = require('./ics');
+const FEED = require('./feed');
 const WL = require('./widget-layout');
 const TV = require('./todoist-view');
+const GH = require('./github-view');
 const WX = require('./weather-view');
 const WC = require('./widget-colors');
+const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
+const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
+const SV = require('./spotify-view');
+const GV = require('./gmail-view');
+const SL = require('./slack-view');
+const OA = require('./oauth');
+const WCK = require('./worldclock-view');
+const MV = require('./muse-view');
+const MK = require('./markets-view');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -37,8 +67,19 @@ const ENDPOINTS = {
   // from this process; it sees the IP address and nothing else of ours is sent.
   locate: 'https://ipapi.co/json/',
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
+  spotify: 'https://api.spotify.com/v1',
+  spotifyAccounts: 'https://accounts.spotify.com', // sign-in and tokens (PKCE: no client secret)
+  googleAuth: 'https://accounts.google.com/o/oauth2/v2/auth', // opened in the user's own browser, never in Lumen
+  googleToken: 'https://oauth2.googleapis.com/token',
+  googleRevoke: 'https://oauth2.googleapis.com/revoke',
+  gmail: 'https://gmail.googleapis.com/gmail/v1',
+  slack: 'https://slack.com/api', // Web API; sign-in is oauth.v2.access here and slack.com/oauth/v2/authorize (features/slack-view.js)
+  github: 'https://api.github.com',
+  muse: 'https://api.meta.ai/v1', // Meta Model API (OpenAI-style), bearer key
+  twelvedata: 'https://api.twelvedata.com', // Stocks: the user's own free key
+  coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
 };
-const MAX_WIDGETS = 12;
+const MAX_WIDGETS = 24; // every kind of card can be added more than once (several feeds, places, pages), so the cap is well above the number of kinds
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
 const HEIGHTS = ['small', 'medium', 'large', 'tall']; // a web page's frame
 const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
@@ -46,6 +87,7 @@ const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when a
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
 const TIMEOUT = 12e3;
+const MUSE_TIMEOUT = 60e3; // a model answer (with web search) takes longer than a lookup
 
 // Text is only ever shown with textContent, so < and > stay (a task called "<b>" reads "<b>").
 const str = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
@@ -71,7 +113,8 @@ async function searchPlaces(x, query) {
   for (const r of (await x.json(url)).results || []) {
     if (!r || num(r.latitude, -90, 90) === null || num(r.longitude, -180, 180) === null) continue;
     const name = [...new Set([r.name, r.admin1, r.country].map((p) => str(p, 60)).filter(Boolean))].join(', ');
-    if (name) out.push({ name, lat: r.latitude, lon: r.longitude });
+    const tz = WCK.cleanTz(r.timezone); // the World clock keeps it; the weather ignores it
+    if (name) out.push({ name, lat: r.latitude, lon: r.longitude, ...(tz ? { tz } : {}) });
   }
   return out;
 }
@@ -137,6 +180,48 @@ const CONNECTORS = {
     },
   },
 
+  // Places and options: c.wc (features/worldclock-view.js). Only sunrise and sunset come from the network
+  // (Open-Meteo, keyless); the page gets each place's time zone NAME and ticks the time itself.
+  worldclock: {
+    label: 'World clock',
+    ttl: 6 * 3600e3,
+    clean: (c) => {
+      const wc = WCK.cleanConfig(c.wc);
+      return wc ? { wc, colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      let places = WCK.cleanPlaces(input.wc?.places);
+      if (!places.length) { // a typed city
+        const query = str(input.city, 80);
+        if (!query) throw new Error('Type a city, or search for a place.');
+        const found = (await searchPlaces(x, query))[0];
+        if (!found) throw new Error(`No place called “${query}” was found.`);
+        places = WCK.cleanPlaces([found]);
+      }
+      const sun = await Promise.all(places.map((p) => sunFor(x, p)));
+      places = places.map((p, i) => ({ ...p, tz: sun[i].tz }));
+      const wc = WCK.cleanConfig({ ...input.wc, places });
+      return { config: { wc, colors: WC.cleanMode(input.colors) }, message: places.length === 1 ? `${places[0].name} is ready.` : `${places.length} places are ready.` };
+    },
+    title: () => 'World clock',
+    summary: (c) => c.wc.places.map(WCK.placeLabel).join(', '),
+    async fetch(c, x) {
+      const wc = c.wc;
+      const places = [];
+      for (const p of wc.places) {
+        try {
+          const s = await sunFor(x, p);
+          places.push({ label: WCK.placeLabel(p), name: p.name, tz: s.tz, days: s.days });
+        } catch (err) {
+          // Without a sun answer the clock still runs if the zone is known.
+          if (p.tz) places.push({ label: WCK.placeLabel(p), name: p.name, tz: p.tz, days: [], error: String(err?.message || err).slice(0, 200) });
+        }
+      }
+      if (!places.length) throw new Error('Couldn’t find the time zones. Check your internet connection.');
+      return { places, clock: wc.clock, seconds: wc.seconds, show: wc.show };
+    },
+  },
+
   calendar: {
     label: 'Calendar (ICS)',
     ttl: 15 * 60e3,
@@ -163,6 +248,37 @@ const CONNECTORS = {
       const events = cal.events.filter((e) => e.allDay || e.end > now).slice(0, 12)
         .map(({ title, location, url, color, allDay, date, start, end }) => ({ title: title || 'Busy', location, url, color: color || '', allDay, date: date || null, start, end }));
       return { events, name: cal.name, color: cal.color || '' };
+    },
+  },
+
+  // Headlines from an RSS 2.0 or Atom feed (features/feed.js reads it safely): a preset (FEED.PRESETS) or
+  // any https address. The card gets { source, items: [{ title, url, time }] }; links are https only.
+  feed: {
+    label: 'Feed headlines',
+    ttl: 10 * 60e3,
+    clean: (c) => {
+      const url = httpsUrl(c.url);
+      const preset = FEED.presetFor(c.preset);
+      return url ? { url, preset: preset && preset.url === url ? preset.id : '', name: str(c.name, 80), count: Math.min(12, Math.max(3, Math.round(num(c.count, 3, 12) ?? 8))), colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const preset = FEED.presetFor(input.feed);
+      const url = preset ? preset.url : httpsUrl(input.url);
+      if (!url) throw new Error('Pick a feed, or paste an https:// feed address.');
+      const feed = FEED.parseFeed(await x.text(url, { max: FEED.MAX_INPUT }), { base: url });
+      const name = preset ? preset.name : feed.title || hostOf(url);
+      return {
+        config: { url, preset: preset ? preset.id : '', name, count: input.count ?? 8, colors: WC.cleanMode(input.colors) },
+        message: `${name}: ${feed.items.length} headlines, the newest “${feed.items[0].title.slice(0, 60)}”.`,
+      };
+    },
+    title: (c) => c.name || hostOf(c.url) || 'Headlines',
+    summary: (c) => hostOf(c.url),
+    async fetch(c, x) {
+      const feed = FEED.parseFeed(await x.text(c.url, { max: FEED.MAX_INPUT }), { base: c.url, max: 12 });
+      // The page opens https links only: a feed's http article address is upgraded, the same page nearly everywhere.
+      const items = feed.items.slice(0, c.count).map((i) => ({ title: i.title, url: i.url.replace(/^http:/i, 'https:'), time: i.time }));
+      return { source: c.name || feed.title || hostOf(c.url), items };
     },
   },
 
@@ -228,6 +344,271 @@ const CONNECTORS = {
     },
   },
 
+  // Now playing (Spotify Web API). The user's own Client ID is in the config; the refresh token is the
+  // encrypted secret (OAuth Authorization Code + PKCE, signed in from Settings: spotifyStart() below).
+  // The short-lived access token lives only in memory here. The album picture is fetched here and goes
+  // to the page as a data: URL, so the page never learns an address or a token.
+  spotify: {
+    label: 'Spotify',
+    ttl: 20e3,
+    secret: 'spotify',
+    clean: (c) => {
+      const cfg = SV.cleanConfig(c);
+      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const clientId = SV.cleanClientId(input.clientId);
+      if (!clientId) throw new Error('Paste your Spotify app’s Client ID (32 letters and digits).');
+      if (!x.secret()) throw new Error('Connect Spotify first (the Connect button).');
+      const me = await spotifyCall(x, { clientId }, 'GET', '/me');
+      if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
+      let name = '';
+      try { name = str(JSON.parse(me.body)?.display_name, 60); } catch { /* the name is only for the message */ }
+      return { config: { clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
+    },
+    title: () => 'Spotify',
+    summary: (c) => `Now playing${c.art ? '' : ' · no album art'}`,
+    async fetch(c, x) {
+      if (!x.secret()) throw new Error('Connect Spotify in Settings.');
+      const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
+      if (res.status !== 204 && !res.ok) throw new Error(SV.playerError(res.status, res.body));
+      let body = null;
+      if (res.status !== 204 && res.body) {
+        try { body = JSON.parse(res.body); } catch { throw new Error('Spotify sent something unexpected.'); }
+      }
+      const { images, ...data } = SV.normalizePlayback(body, x.now());
+      let art = '';
+      if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
+      return { ...data, art };
+    },
+    // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
+    async act(c, action, x, cached) {
+      const req = SV.actionRequest(action.do);
+      if (!req) return false;
+      const res = await spotifyCall(x, c, req.method, req.path);
+      if (!res.ok) throw new Error(SV.playerError(res.status, res.body));
+      if (action.do === 'play' || action.do === 'pause') {
+        cached.progressMs = Math.round(SV.progressNow(cached, x.now()));
+        cached.at = x.now();
+        cached.state = action.do === 'play' ? 'playing' : 'paused';
+      }
+      delete cached.notice;
+      return { delay: 700 };
+    },
+  },
+
+  // Read-only inbox summary: the unread count and the latest few subjects, senders and snippets. Signs
+  // in with the user's own Google Cloud OAuth client (features/oauth.js); see features/gmail-view.js.
+  gmail: {
+    label: 'Gmail',
+    ttl: 5 * 60e3,
+    secret: 'gmail',
+    clean: (c) => { const g = GV.cleanConfig(c); return g ? { ...g, colors: WC.cleanMode(c.colors) } : null; },
+    async resolve(input, x) {
+      const clientId = GV.cleanClientId(input.clientId);
+      if (!clientId) throw new Error('Paste the Client ID of your Google Cloud OAuth client (it ends in .apps.googleusercontent.com).');
+      const typed = typeof input.clientSecret === 'string' ? input.clientSecret.trim() : '';
+      if (typed && !GV.cleanClientSecret(typed)) throw new Error('That doesn’t look like a Google client secret.');
+      const stored = OA.decodeCreds(x.secret());
+      const same = stored?.clientId === clientId;
+      const creds = { clientId, clientSecret: typed || (same ? stored.clientSecret : ''), refresh: same ? stored.refresh : '' };
+      if (!creds.clientSecret) throw new Error('Paste the client secret shown next to the Client ID in Google Cloud.');
+      if (!creds.refresh) throw new Error('Connect your Google account first: use Connect Gmail.');
+      const cfg = GV.cleanConfig({ ...input, clientId });
+      const data = await gmailData(x, x.session(creds), { ...cfg, count: 3 });
+      const changed = !stored || stored.clientId !== creds.clientId || stored.clientSecret !== creds.clientSecret || stored.refresh !== creds.refresh;
+      return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, secret: changed ? OA.encodeCreds(creds) : undefined, message: `Connected. ${data.unread === 1 ? '1 unread message' : `${data.unread} unread messages`} in the inbox.` };
+    },
+    title: () => 'Gmail',
+    summary: (c) => `Inbox · ${c.count} latest`,
+    async fetch(c, x) {
+      const session = x.session();
+      if (!session.connected()) return GV.reconnect('Connect Gmail in Settings.');
+      try {
+        return await gmailData(x, session, c);
+      } catch (err) {
+        if (err?.reconnect) return GV.reconnect(err.message); // a revoked grant is a state the card shows, not an error
+        throw err;
+      }
+    },
+  },
+
+  // Read-only Slack: unread DM and mention counts and recent messages from chosen channels. Sign-in is
+  // OAuth v2 with the user's own Slack app (features/slack-view.js explains the paste-the-address flow);
+  // the secret is one encrypted JSON string (client id and secret, user token, refresh token, expiry).
+  // Only display text (names, short plain messages, counts) is sent to the page.
+  slack: {
+    label: 'Slack',
+    ttl: 4 * 60e3,
+    secret: 'slack',
+    clean: (c) => ({ slack: SL.cleanConfig(c.slack), colors: WC.cleanMode(c.colors) }),
+    async resolve(input, x) {
+      const pasted = SL.cleanUserToken(input.token);
+      if (typeof input.token === 'string' && input.token.trim() && !pasted) throw new Error('That doesn’t look like a Slack user token (it starts with xoxp-). Or use Sign in with a client ID and secret.');
+      let secret;
+      let who;
+      if (pasted) {
+        who = await x.slack.identify(pasted);
+        secret = OA.packTokens({ access: pasted, userId: who.userId, teamId: who.teamId, teamName: who.teamName, teamUrl: who.teamUrl });
+      } else {
+        if (!OA.unpackTokens(x.secret())?.access) throw new Error('Sign in to Slack first (Open Slack, approve, paste the address), or paste a user token.');
+        who = await x.slack.identify();
+      }
+      const slack = SL.cleanConfig(input.slack);
+      const what = [slack.dms && 'unread DMs', slack.mentions && slack.channels.length && 'mentions', slack.channels.length && `${slack.channels.length} channel${slack.channels.length === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+      return { config: { slack, colors: WC.cleanMode(input.colors) }, secret, message: `Connected to ${who.teamName || 'Slack'}${what ? `: ${what}` : ''}.` };
+    },
+    title: (c) => SL.nameFor(c.slack),
+    summary: (c) => SL.summaryFor(c.slack),
+    async fetch(c, x) {
+      const tok = OA.unpackTokens(x.secret());
+      if (!tok?.access) return { reconnect: true, reason: 'Sign in to Slack in Settings.' };
+      try {
+        const data = await SL.collect((method, params) => x.slack.call(method, params), c.slack, tok, (id) => x.slack.userName(id));
+        return { ...data, reconnect: false };
+      } catch (err) {
+        if (err instanceof SL.SlackError && err.reconnect) return { reconnect: true, reason: err.message, team: tok.teamName };
+        if (err instanceof SL.SlackError && err.code === 'ratelimited') throw new Error('Slack asked Lumen to slow down. It will try again shortly.');
+        throw err;
+      }
+    },
+  },
+
+  // Review requests, assigned issues and pull requests, and the unread notification count (settings in
+  // c.gh, features/github-view.js). The token (a fine-grained read-only personal access token) is the
+  // encrypted `github` secret and goes only to api.github.com, from this process.
+  github: {
+    label: 'GitHub',
+    ttl: 5 * 60e3,
+    secret: 'github',
+    clean: (c) => ({ gh: GH.cleanConfig(c.gh), colors: WC.cleanMode(c.colors) }),
+    async resolve(input, x) {
+      const token = typeof input.token === 'string' ? input.token.trim() : '';
+      if (token && !GH.looksLikeToken(token)) throw new Error('That doesn’t look like a GitHub token. Create a fine-grained personal access token at github.com/settings/personal-access-tokens.');
+      if (!token && !x.secret()) throw new Error('Paste your GitHub token.');
+      const gh = GH.cleanConfig(input.gh);
+      const data = await githubData(x, token || x.secret(), gh);
+      const parts = [];
+      if (data.reviews) parts.push(data.reviews.error ? 'review requests unavailable' : `${data.reviews.total} review request${data.reviews.total === 1 ? '' : 's'}`);
+      if (data.assigned) parts.push(data.assigned.error ? 'assigned items unavailable' : `${data.assigned.total} assigned`);
+      if (data.notifications) parts.push(data.notifications.error ? 'notifications unavailable' : `${GH.countLabel(data.notifications)} unread`);
+      return { config: { gh, colors: WC.cleanMode(input.colors) }, secret: token || undefined, message: `Connected: ${parts.join(', ')}.` };
+    },
+    title: (c) => GH.nameFor(c.gh),
+    summary: (c) => GH.summaryFor(c.gh),
+    async fetch(c, x) {
+      if (!x.secret()) throw new Error('Add your GitHub token in Settings.');
+      return GH.shape(await githubData(x, x.secret(), c.gh), c.gh);
+    },
+  },
+
+  // Meta's Muse model: a saved prompt answered on the card (c.muse, features/muse-view.js), and a
+  // field on the card for one-off questions. One encrypted secret, the API key. Prompts and answers go
+  // to Meta and use the key's credit, so nothing is asked until the card is added, the answer is kept
+  // for hours, and a typed question is kept in memory only (never stored, no history).
+  muse: {
+    label: 'Muse',
+    ttl: 6 * 3600e3,
+    secret: 'muse',
+    clean: (c) => ({ muse: MV.cleanConfig(c.muse), colors: WC.cleanMode(c.colors) }),
+    async resolve(input, x) {
+      const token = typeof input.token === 'string' ? input.token.trim() : '';
+      if (token && !MV.cleanKey(token)) throw new Error('That doesn’t look like a Meta API key (create one at dev.meta.ai).');
+      if (!token && !x.secret()) throw new Error('Paste your Meta API key.');
+      // No request here: checking would spend the key's credit. A wrong key shows on the card.
+      return { config: { muse: MV.cleanConfig(input.muse), colors: WC.cleanMode(input.colors) }, secret: token || undefined, message: 'Saved. The key is used the first time the card loads, and it costs a small amount of your Meta credit each time.' };
+    },
+    title: () => 'Muse',
+    summary: (c) => `${c.muse.model}${c.muse.search ? ' · web search' : ''}`,
+    async fetch(c, x) {
+      const got = await museCall(x, c.muse, null);
+      return { ...got, model: c.muse.model, search: c.muse.search, asked: null };
+    },
+    // Page action ask: one typed question. The answer sits on the card until the next refresh.
+    async act(c, action, x, cached) {
+      if (action.do !== 'ask') return false;
+      const question = MV.cleanQuestion(action.text);
+      if (!question) return false;
+      const t = x.now();
+      if (t - (cached.askedAt || 0) < MIN_REFRESH) { cached.notice = 'Wait a few seconds between questions.'; return { keep: true }; }
+      cached.askedAt = t;
+      try {
+        const got = await museCall(x, c.muse, question);
+        cached.asked = { question, answer: got.answer, sources: got.sources };
+        delete cached.notice;
+      } catch (err) {
+        delete cached.asked;
+        cached.notice = String(err?.message || err).slice(0, 200);
+      }
+      return { keep: true };
+    },
+  },
+
+  // Stocks and Crypto: a watchlist and a SIMULATED paper portfolio (features/markets-view.js). Lumen never
+  // places an order anywhere; the trades are entries in this widget's own config, filled at the last quote.
+  stocks: {
+    label: 'Stocks',
+    ttl: (data) => (data?.rows?.length && !data.anyOpen ? 60 * 60e3 : 15 * 60e3), // market closed: quotes can't change
+    secret: 'twelvedata',
+    portfolio: true,
+    clean: (c) => {
+      const symbols = MK.cleanSymbols(c.mk?.symbols, MK.MAX_STOCKS);
+      return symbols.length ? { mk: { symbols }, pf: MK.cleanPortfolio(c.pf, { fractional: false }), colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const token = keyFrom(input.token, 'Twelve Data');
+      if (!token && !x.secret()) throw new Error('Paste your Twelve Data API key (twelvedata.com, free plan).');
+      const symbols = MK.cleanSymbols(input.mk?.symbols, MK.MAX_STOCKS);
+      if (!symbols.length) throw new Error('Add at least one symbol, like AAPL.');
+      const { rows, missing } = await twelveQuotes(x, symbols, token || x.secret());
+      return {
+        config: { mk: { symbols }, pf: { cash0: MK.cleanCash(input.mk?.startCash) }, colors: WC.cleanMode(input.colors) }, secret: token || undefined,
+        message: `Connected. ${rows.length} of ${symbols.length} symbols found${missing.length ? ` (no quote for ${missing.join(', ')})` : ''}.`,
+      };
+    },
+    title: () => 'Stocks',
+    summary: (c) => c.mk.symbols.join(', '),
+    async fetch(c, x) {
+      if (!x.secret()) throw new Error('Add your Twelve Data API key in Settings.');
+      const { rows, missing } = await twelveQuotes(x, c.mk.symbols, x.secret());
+      if (!rows.length) throw new Error(`Twelve Data has no quote for ${missing.join(', ')}.`);
+      const anyOpen = rows.some((r) => r.open);
+      return marketData(rows, missing, x.now(), { anyOpen, refreshMs: anyOpen ? 15 * 60e3 : 60 * 60e3 });
+    },
+    present: (c, d, ctx) => presentMarket('stocks', c, d, ctx),
+    act: (c, action, x, cached, ctx) => marketAct(c, action, cached, ctx, false),
+  },
+
+  crypto: {
+    label: 'Crypto',
+    ttl: 2 * 60e3,
+    secret: 'coingecko', // optional: a free Demo key allows more requests than going without
+    portfolio: true,
+    clean: (c) => {
+      const coins = MK.cleanCoins(c.mk?.coins, MK.MAX_COINS);
+      return coins.length ? { mk: { coins }, pf: MK.cleanPortfolio(c.pf, { fractional: true }), colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const token = keyFrom(input.token, 'CoinGecko');
+      const coins = MK.cleanCoins(input.mk?.coins, MK.MAX_COINS);
+      if (!coins.length) throw new Error('Add at least one coin, like bitcoin (CoinGecko’s id for it).');
+      const { rows, missing } = await geckoQuotes(x, coins, token || x.secret());
+      return {
+        config: { mk: { coins }, pf: { cash0: MK.cleanCash(input.mk?.startCash) }, colors: WC.cleanMode(input.colors) }, secret: token || undefined,
+        message: `Connected${token || x.secret() ? '' : ' without a key'}. ${rows.length} of ${coins.length} coins found${missing.length ? ` (no price for ${missing.join(', ')})` : ''}.`,
+      };
+    },
+    title: () => 'Crypto',
+    summary: (c) => c.mk.coins.map((k) => k.sym).join(', '),
+    async fetch(c, x) {
+      const { rows, missing } = await geckoQuotes(x, c.mk.coins, x.secret());
+      if (!rows.length) throw new Error(`CoinGecko has no price for ${missing.join(', ')}.`);
+      return marketData(rows, missing, x.now(), { anyOpen: true, refreshMs: 2 * 60e3 });
+    },
+    present: (c, d, ctx) => presentMarket('crypto', c, d, ctx),
+    act: (c, action, x, cached, ctx) => marketAct(c, action, cached, ctx, true),
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -254,6 +635,88 @@ const CONNECTORS = {
     },
   },
 };
+
+// One place's time zone and sunrise/sunset for the next days (shared for hours between clocks asking the same).
+function sunFor(x, place) {
+  return x.memo(`wc:${place.lat},${place.lon}`, 3 * 3600e3, async () => {
+    const s = WCK.shapeSun(await x.json(`${x.endpoint('forecast')}?${new URLSearchParams(WCK.sunParams(place))}`), place);
+    if (!s) throw new Error('The service didn’t say which time zone this is.');
+    return s;
+  });
+}
+
+// One call to Meta: the saved prompt (no question) or a typed question -> { answer, sources }.
+async function museCall(x, cfg, question) {
+  const key = x.secret();
+  if (!key) throw new Error('Add your Meta API key in Settings.');
+  const req = MV.buildRequest(cfg, question);
+  const res = await x.raw(`${x.endpoint('muse')}/${req.path}`, {
+    method: 'POST', max: MV.MAX_BODY, timeout: MUSE_TIMEOUT, body: JSON.stringify(req.body),
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(MV.errorMessage(res.status, res.body));
+  let json = null;
+  try { json = JSON.parse(res.body); } catch { /* handled below */ }
+  const out = MV.parseResponse(json);
+  if (!out) throw new Error('Muse sent an answer Lumen couldn’t read.');
+  return out;
+}
+
+// ---- Stocks and Crypto ----
+// An API key typed in Settings, or '' when none was ("" keeps the saved one); throws when it can't be one.
+function keyFrom(value, who) {
+  const key = typeof value === 'string' ? value.trim() : '';
+  if (key && !/^[A-Za-z0-9_-]{8,80}$/.test(key)) throw new Error(`That doesn’t look like a ${who} API key.`);
+  return key;
+}
+// Twelve Data /quote for the watchlist in ONE request (an error may come as HTTP 200, or with the status).
+async function twelveQuotes(x, symbols, key) {
+  const url = `${x.endpoint('twelvedata')}/quote?${new URLSearchParams({ symbol: symbols.join(',') })}`;
+  const res = await x.raw(url, { headers: { Authorization: `apikey ${key}`, Accept: 'application/json' } });
+  let body = null;
+  try { body = JSON.parse(res.body); } catch { /* handled below */ }
+  if (!res.ok) throw new Error(MK.twelveError(res.status, body && typeof body === 'object' ? body : null));
+  return MK.parseTwelve(body, symbols, x.now(), res.status);
+}
+// CoinGecko /simple/price for all coins in ONE request; the Demo key (if any) goes in a header.
+async function geckoQuotes(x, coins, key) {
+  const params = new URLSearchParams({ ids: coins.map((c) => c.id).join(','), vs_currencies: 'usd', include_24hr_change: 'true', include_last_updated_at: 'true' });
+  const res = await x.raw(`${x.endpoint('coingecko')}/simple/price?${params}`, { headers: { Accept: 'application/json', ...(key ? { 'x-cg-demo-api-key': key } : {}) } });
+  let body = null;
+  try { body = JSON.parse(res.body); } catch { /* handled below */ }
+  if (!res.ok) throw new Error(MK.geckoError(res.status, body && typeof body === 'object' ? body : null));
+  return MK.parseGecko(body, coins, x.now());
+}
+const marketData = (rows, missing, fetchedAt, extra) => ({ rows, missing, fetchedAt, asOf: Math.max(0, ...rows.map((r) => r.at || 0)) || fetchedAt, ...extra });
+const MARKET_INFO = {
+  stocks: { source: 'Twelve Data', attribution: 'Data: Twelve Data', badge: 'Delayed' },
+  crypto: { source: 'CoinGecko', attribution: 'Data: CoinGecko', badge: 'Live' },
+};
+// What the page gets: the cached quotes plus the paper portfolio worked out from the trades, now.
+function presentMarket(kind, c, d, ctx) {
+  const fractional = kind === 'crypto';
+  const quotes = Object.fromEntries(d.rows.map((r) => [r.sym, r.px]));
+  const offline = Boolean(ctx.offline);
+  const stale = MK.isStale({ fetchedAt: d.fetchedAt, now: ctx.now, refreshMs: d.refreshMs, offline });
+  return {
+    kind, ...MARKET_INFO[kind], rows: d.rows, missing: d.missing, asOf: d.asOf, fetchedAt: d.fetchedAt, refreshMs: d.refreshMs,
+    marketOpen: kind === 'stocks' ? d.anyOpen : true, offline, fractional,
+    tradable: !stale, tradeBlock: offline ? 'Offline: trading is paused.' : stale ? 'Prices are out of date: trading is paused.' : '',
+    pf: MK.present(c.pf, quotes, { fractional }),
+  };
+}
+// Page actions of Stocks and Crypto: buy and sell at the last fetched quote (simulated), reset the portfolio.
+function marketAct(c, action, cached, ctx, fractional) {
+  if (action.do === 'resetpf') return { config: { pf: { cash0: c.pf.cash0, trades: [] } }, local: true, notice: 'Paper portfolio reset.' };
+  if (action.do !== 'buy' && action.do !== 'sell') return false;
+  const stale = MK.isStale({ fetchedAt: cached.fetchedAt, now: ctx.now, refreshMs: cached.refreshMs, offline: ctx.offline });
+  if (stale) return { local: true, notice: ctx.offline ? 'Offline: trading is paused.' : 'Prices are out of date: trading is paused.' };
+  const row = cached.rows.find((r) => r.sym === action.sym);
+  const r = MK.attempt(c.pf, { side: action.do, sym: action.sym, qty: action.qty, px: row?.px, now: ctx.now, fractional });
+  if (!r.ok) return { local: true, notice: r.error };
+  const t = r.trade;
+  return { config: { pf: r.pf }, local: true, notice: `Paper ${t.qty > 0 ? 'bought' : 'sold'} ${Math.abs(t.qty)} ${t.sym} at ${t.px.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 6 })}.` };
+}
 
 // Todoist's tasks for a widget's question (a filter query, or a project's own list; the unified API,
 // paged by cursor). Shared for a minute between widgets asking the same thing.
@@ -293,6 +756,58 @@ async function todoistProjects(x, token) {
     return map;
   });
 }
+// One GET to api.github.com with the token -> { body, link }. A refusal becomes an Error carrying
+// .kind ('auth' | 'rate' | 'scope' | 'missing' | 'other') and, for a rate limit, .waitMs (Retry-After or
+// x-ratelimit-reset), which the widget honours before asking again.
+async function githubGet(x, token, path, params) {
+  const res = await x.raw(`${x.endpoint('github')}${path}?${new URLSearchParams(params)}`, {
+    max: 1e6,
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+  });
+  if (!res.ok) {
+    const f = GH.classify(res.status, res.headers, res.body, x.now());
+    throw Object.assign(new Error(f.message), { kind: f.kind, waitMs: f.waitMs });
+  }
+  let body;
+  try { if (res.truncated) throw new Error('too big'); body = JSON.parse(res.body); } catch { throw new Error('GitHub sent something unexpected.'); }
+  return { body, link: res.headers.get('link') };
+}
+// The lists for a widget's settings, shared for a minute between widgets asking the same. A list GitHub
+// refuses on its own (the token lacks a permission) is an { error } in its place; a bad token, a rate
+// limit or no connection fails the whole fetch. When every list is refused the first refusal is thrown.
+async function githubData(x, token, cfg) {
+  return x.memo(`gh:${token.length}:${token.slice(-6)}:${JSON.stringify(cfg)}`, 60e3, async () => {
+    const out = { reviews: null, assigned: null, notifications: null };
+    const errors = [];
+    const section = async (name, fn) => {
+      try {
+        out[name] = await fn();
+      } catch (err) {
+        if (!['scope', 'missing', 'other'].includes(err.kind)) throw err;
+        errors.push(err);
+        out[name] = { error: name === 'notifications' && err.kind !== 'other' ? 'Notifications aren’t available to this token. GitHub allows them only on a classic token with the notifications scope.' : err.message };
+      }
+    };
+    const search = (kind) => async () => {
+      const { body } = await githubGet(x, token, '/search/issues', { q: GH.searchFor(kind, cfg), sort: 'updated', order: 'desc', per_page: String(cfg.max) });
+      const r = GH.readSearch(body, cfg);
+      if (!r) throw new Error('GitHub sent something unexpected.');
+      return r;
+    };
+    if (cfg.reviews) await section('reviews', search('reviews'));
+    if (cfg.assigned) await section('assigned', search('assigned'));
+    if (cfg.notifications) {
+      await section('notifications', async () => {
+        const { body, link } = await githubGet(x, token, '/notifications', { per_page: '1' }); // unread only; the "last" page number is the count
+        const n = GH.readNotificationCount(body, link);
+        if (!n) throw new Error('GitHub sent something unexpected.');
+        return n;
+      });
+    }
+    if (errors.length && errors.length === ['reviews', 'assigned', 'notifications'].filter((k) => out[k]).length) throw errors[0];
+    return out;
+  });
+}
 // Tasks completed today, for the struck-through section ("show completed today").
 async function completedToday(x) {
   const start = new Date();
@@ -303,6 +818,77 @@ async function completedToday(x) {
     const items = Array.isArray(body?.items) ? body.items : Array.isArray(body?.results) ? body.results : [];
     return items.map((i) => ({ id: str(String(i?.task_id ?? i?.id ?? ''), 40), title: str(i?.content, 300) })).filter((i) => /^[\w-]{1,40}$/.test(i.id) && i.title).slice(0, 10);
   });
+}
+
+// One call to the Spotify Web API with a fresh access token. A 401 gets one refresh and one retry;
+// a 429 already backs every request off (request() below) and reads as a calm message.
+async function spotifyCall(x, cfg, method, path, body) {
+  const go = async (force) => {
+    const token = await spotifyAccess(x, cfg.clientId, force);
+    return x.raw(`${x.endpoint('spotify')}${path}`, {
+      method, max: 262144, body: body ? JSON.stringify(body) : undefined,
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    });
+  };
+  let res = await go(false);
+  if (res.status === 401) res = await go(true);
+  return res;
+}
+// The access token: the one in memory while it lasts, else a new one from the refresh token (kept
+// encrypted; Spotify may send a new refresh token, which replaces the old).
+async function spotifyAccess(x, clientId, force = false) {
+  const s = x.spotifyToken;
+  if (!force && s.access && s.exp > x.now()) return s.access;
+  if (!s.pending) {
+    s.pending = (async () => {
+      const refresh = x.secret();
+      if (!refresh) throw new Error('Connect Spotify in Settings.');
+      const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
+        method: 'POST', max: 65536, body: SV.tokenForm('refresh', { clientId, refresh }),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      });
+      if (!res.ok) {
+        if (res.status === 400 || res.status === 401) s.access = null;
+        throw new Error(SV.tokenError(res.status, res.body));
+      }
+      const t = SV.parseToken(res.body, x.now(), refresh);
+      s.access = t.access;
+      s.exp = t.exp;
+      if (t.refresh !== refresh) x.setSecret(t.refresh);
+    })().finally(() => { s.pending = null; });
+  }
+  await s.pending;
+  return s.access;
+}
+
+// Gmail's inbox: the label (unread count), the newest ids, then each message's headers (in parallel).
+async function gmailData(x, session, cfg) {
+  try {
+    const label = await gmailGet(x, session, GV.labelPath());
+    const ids = GV.messageIds(await gmailGet(x, session, GV.listPath(cfg.count)), cfg.count);
+    const failed = [];
+    const got = await Promise.all(ids.map((id) => gmailGet(x, session, GV.messagePath(id)).catch((err) => { failed.push(err); return null; })));
+    const messages = got.filter(Boolean);
+    if (ids.length && !messages.length) throw failed[0];
+    return GV.shape(label, messages, cfg);
+  } catch (err) {
+    if (err?.retryAfter) x.backoff(err.retryAfter);
+    throw err;
+  }
+}
+// One GET with the bearer token. A 401 gets a fresh token and one more try; what still fails is
+// explained by GV.apiError (revoked grant -> err.reconnect, rate limit -> err.retryAfter).
+async function gmailGet(x, session, path) {
+  for (let attempt = 0; ; attempt++) {
+    const access = await session.access({ force: attempt > 0 });
+    const res = await x.raw(`${x.endpoint('gmail')}${path}`, { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json' }, max: 1e6 });
+    if (res.status === 401 && attempt === 0) { session.invalidate(); continue; }
+    if (res.ok) {
+      try { return JSON.parse(res.body); } catch { throw new Error('Gmail sent something unexpected.'); }
+    }
+    const e = GV.apiError(res.status, res.body);
+    throw new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other', retryAfter: e.rate ? OA.classifyTokenFailure(429, '', res.headers.get('retry-after')).retryAfter : 0 });
+  }
 }
 
 // Whether a page lets itself be shown in a frame on the new-tab page, and its title. The new-tab
@@ -324,12 +910,13 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
 // x, y, w, h are left out when they aren't four integers (an older list, or garbage): cleanList places those.
 function cleanWidget(w) {
+  if (SYS.isSystem(w)) return SYS.clean(w);
   if (!w || typeof w !== 'object' || !CONNECTORS[w.type] || typeof w.id !== 'string' || !/^w[0-9a-z]{4,20}$/.test(w.id)) return null;
   const config = CONNECTORS[w.type].clean(w);
   if (!config) return null;
@@ -364,7 +951,7 @@ function layoutAll(items) {
   const laid = WL.resolve(items.map((it, i) => ({ id: it.id, type: it.type, ...rects[i], ...(it.snap && hasRect(it) ? { snap: it.snap } : {}) })), { packed: false });
   const out = items.map((it, i) => {
     const { x, y, w, h, snap } = laid[i];
-    const next = { ...it, x, y, w, h, ...WL.mirror(it.type, { w, h }) };
+    const next = { ...it, x, y, w, h, ...(SYS.isSystem(it) ? {} : WL.mirror(it.type, { w, h })) };
     if (snap) next.snap = snap; else delete next.snap;
     return next;
   });
@@ -374,7 +961,7 @@ function layoutAll(items) {
 function cleanList(list) {
   if (!Array.isArray(list)) return null;
   const seen = new Set();
-  return layoutAll(list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)).slice(0, MAX_WIDGETS));
+  return layoutAll(SYS.capReal(list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)), MAX_WIDGETS));
 }
 // The last size used per kind of widget (the default for a new one): { weather: { w, h }, ... }.
 function cleanSizes(v) {
@@ -398,22 +985,31 @@ function applyRects(widgets, items) {
 }
 
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
-//         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs? }
+//         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
+//         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
-  const cache = new Map(); // id -> { data, error, at, key, pending, undo }
+  const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
   const recent = []; // times of recent network requests (the rate limit)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
+  const spotifyTokens = new Map(); // secret name -> { access, exp, pending }: short-lived tokens, in memory only
   let backoffUntil = 0; // after a 429: no requests until then
   let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
+  let slackPending = null; // a Slack sign-in that is waiting for its address: { state, clientId, clientSecret, redirectUri, at }
+  let slackBad = false; // Slack refused the stored sign-in: the cards say Reconnect until it is redone
+  let slackRefreshing = null; // one token refresh at a time (rotation invalidates the old refresh token)
   const now = () => (deps.now ? deps.now() : Date.now());
   const UNDO_MS = deps.undoMs ?? 6000;
 
-  const list = () => cleanList(deps.readSettings().homeWidgets) || [];
-  const save = (widgets, extra = {}) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList(widgets), ...extra });
+  // list(): the widgets. The system cards (features/widget-system.js) share the stored list, and are kept through every save.
+  const stored = () => cleanList(deps.readSettings().homeWidgets) || [];
+  const list = () => stored().filter((w) => !SYS.isSystem(w));
+  const sysList = () => stored().filter(SYS.isSystem);
+  const save = (widgets, extra = {}, sys = sysList()) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList([...widgets, ...sys]), ...extra });
+  const trash = createTrash({ now, ttl: deps.trashMs ?? 30000 });
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.DEFAULT_SIZE[type] || { w: 4, h: 3 };
-  // A changed config invalidates its cached data; its size and place on the page don't.
-  const keyOf = ({ span, height, x, y, w, h, snap, colors, ...rest }) => JSON.stringify(rest);
+  // A changed config invalidates its cached data; its size, place and paper trades don't.
+  const keyOf = ({ span, height, x, y, w, h, snap, colors, pf, ...rest }) => JSON.stringify(rest);
 
   let epoch = 0; // flush() bumps it: an answer that was in flight is not kept
   async function memo(key, ttl, fn) {
@@ -436,11 +1032,11 @@ function createWidgets(deps) {
     if (recent.length >= (Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
     recent.push(t);
   }
-  async function request(url, { method = 'GET', headers = {}, max = 2e6, body } = {}) {
+  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT } = {}) {
     if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
     spend();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT);
+    const timer = setTimeout(() => controller.abort(), timeout);
     let res;
     try {
       res = await deps.fetch(url, { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' });
@@ -465,10 +1061,30 @@ function createWidgets(deps) {
         if (size > max) { chunks.push(value.subarray(0, value.length - (size - max))); await reader.cancel().catch(() => {}); break; }
         chunks.push(value);
       }
-      return { ok: res.ok, status: res.status, headers: res.headers, url: res.url, body: Buffer.concat(chunks).toString('utf8'), truncated: size > max };
+      const bytes = Buffer.concat(chunks);
+      return { ok: res.ok, status: res.status, headers: res.headers, url: res.url, body: bytes.toString('utf8'), bytes, truncated: size > max };
     } finally {
       clearTimeout(timer);
     }
+  }
+  // A form POST to an OAuth token endpoint: { ok, status, body, retryAfter } (a failure is an answer, not a throw).
+  async function formPost(url, body) {
+    const res = await request(url, { method: 'POST', max: 65536, body, headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } });
+    return { ok: res.ok, status: res.status, body: res.body, retryAfter: res.headers.get('retry-after') };
+  }
+  // OAuth accounts by secret name: the access token is kept here, in memory, and the refresh token in
+  // the encrypted secret (a JSON blob, see features/oauth.js).
+  const sessions = new Map();
+  const tokenUrl = () => deps.endpoints?.().googleToken || ENDPOINTS.googleToken;
+  function sessionFor(name) {
+    if (!sessions.has(name)) {
+      sessions.set(name, OA.createSession({
+        tokenUrl, post: formPost, now,
+        load: () => OA.decodeCreds(deps.getSecret(name)),
+        save: (c) => deps.setSecret(name, c ? OA.encodeCreds(c) : null),
+      }));
+    }
+    return sessions.get(name);
   }
   const failure = (res) => {
     if (res.status === 401 || res.status === 403) return new Error('The token was refused. Check it in Settings.');
@@ -476,10 +1092,30 @@ function createWidgets(deps) {
     if (res.status === 429) return new Error('The service is busy. Lumen will try again shortly.');
     return new Error(`The server answered ${res.status}.`);
   };
+  const spotifyTokenFor = (name) => { if (!name) return {}; if (!spotifyTokens.has(name)) spotifyTokens.set(name, {}); return spotifyTokens.get(name); };
   function helpers(secretName, secretOverride) {
     const x = {
       endpoint: (name) => deps.endpoints?.()[name] || ENDPOINTS[name],
+      now,
       secret: () => secretOverride || (secretName ? deps.getSecret(secretName) : null),
+      setSecret: (value) => { if (secretName) deps.setSecret(secretName, value); },
+      spotifyToken: spotifyTokenFor(secretName),
+      // A small picture as a data: URL (Spotify's album art), kept for an hour. Throws when it isn't a
+      // small enough JPEG, PNG or WebP from Spotify's own host.
+      image: (url) => memo(`img:${url}`, 3600e3, async () => {
+        if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
+        const res = await request(url, { max: SV.MAX_ART_BYTES + 1, headers: { Accept: 'image/*' } });
+        const data = res.ok && !res.truncated ? SV.dataUrl(res.bytes) : null;
+        if (!data) throw new Error('That picture can’t be shown.');
+        return data;
+      }),
+      // The OAuth account behind this connector's secret; or one built from creds not stored yet (Check).
+      session(creds) {
+        if (!creds) return sessionFor(secretName);
+        let held = creds;
+        return OA.createSession({ tokenUrl, post: formPost, now, load: () => held, save: (c) => { held = c; } });
+      },
+      backoff(ms) { backoffUntil = Math.max(backoffUntil, now() + Math.min(120e3, Math.max(1e3, ms))); },
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -505,6 +1141,7 @@ function createWidgets(deps) {
       },
       memo,
       forget,
+      get slack() { return (this._slack ||= slackHelpers(x)); },
       projects: () => todoistProjects(x, x.secret() || ''),
       // "My location": { status: 'consent' | 'off' | 'ok' | 'error', place?, message? }. Nothing is sent
       // before the user agreed; the answer is kept for an hour (in settings, so a restart doesn't ask again).
@@ -531,36 +1168,92 @@ function createWidgets(deps) {
     return x;
   }
 
+  // ---- Slack (features/slack-view.js, features/oauth.js) ----
+  const FORM = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
+  // One Web API call. Slack answers 200 with { ok: false, error } for most failures; 429 carries Retry-After
+  // (request() already backs every widget off for that long).
+  async function slackRequest(x, access, method, params = {}) {
+    const res = await request(`${x.endpoint('slack')}/${method}`, { method: 'POST', max: 1e6, body: OA.form(params), headers: { ...FORM, Authorization: `Bearer ${access}` } });
+    if (res.status === 429) throw new SL.SlackError('ratelimited');
+    let body = null;
+    try { body = JSON.parse(res.body); } catch { /* not JSON */ }
+    if (!body || typeof body !== 'object') throw new Error(res.ok ? 'Slack sent something unexpected.' : `Slack answered ${res.status}.`);
+    if (!body.ok) throw new SL.SlackError(typeof body.error === 'string' ? body.error.replace(/[^\w]/g, '').slice(0, 60) : 'unknown_error');
+    return body;
+  }
+  // The stored sign-in, refreshed first when Slack's rotating token is about to expire.
+  async function slackToken(x) {
+    const tok = OA.unpackTokens(x.secret());
+    if (!tok?.access) throw new SL.SlackError('not_authed');
+    if (OA.isFresh(tok, now())) return tok;
+    if (!tok.refresh || !tok.clientId || !tok.clientSecret) throw new SL.SlackError('token_expired');
+    if (!slackRefreshing) {
+      slackRefreshing = (async () => {
+        const res = await request(`${x.endpoint('slack')}/oauth.v2.access`, { method: 'POST', max: 65536, body: SL.refreshForm({ clientId: tok.clientId, clientSecret: tok.clientSecret, refresh: tok.refresh }), headers: FORM });
+        if (res.status === 429) throw new SL.SlackError('ratelimited');
+        const next = { ...tok, ...SL.parseAccess(res.body, now(), tok) };
+        x.setSecret(OA.packTokens(next));
+        return next;
+      })().finally(() => { slackRefreshing = null; });
+    }
+    return slackRefreshing;
+  }
+  function slackHelpers(x) {
+    return {
+      async call(method, params) {
+        try {
+          return await slackRequest(x, (await slackToken(x)).access, method, params);
+        } catch (err) {
+          if (err instanceof SL.SlackError && err.reconnect && !slackBad) { slackBad = true; deps.onUpdate?.(); }
+          throw err;
+        }
+      },
+      async identify(access) {
+        const r = await slackRequest(x, access || (await slackToken(x)).access, 'auth.test');
+        return { userId: str(r.user_id, 40), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
+      },
+      userName: (id) => x.memo(`slack:user:${id}`, 3600e3, async () => {
+        const u = (await x.slack.call('users.info', { user: id })).user || {};
+        return str(u.profile?.display_name, 60) || str(u.real_name, 60) || str(u.name, 60);
+      }),
+    };
+  }
+
   // ---- fetching ----
   function refresh(w, { force = false } = {}) {
     const c = connector(w);
     let entry = cache.get(w.id);
     if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, undo: entry?.undo }; cache.set(w.id, entry); }
     if (entry.pending) return entry.pending;
+    if (entry.retryAt && now() < entry.retryAt) return Promise.resolve(false); // a rate limit said when to come back
     const age = now() - entry.at;
-    const fresh = entry.at && age < (entry.error ? ERROR_TTL : c.ttl);
+    const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
+    const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
-    if (force) { forget('tasks:'); forget('done:'); forget('wx:'); }
+    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
-      .then((data) => { entry.data = data; entry.error = null; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); })
+      .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
       .then(() => { entry.at = now(); entry.pending = null; deps.onUpdate?.(); return true; });
     return entry.pending;
   }
   const connector = (w) => CONNECTORS[w.type];
   // What the new-tab page shows now; stale widgets refresh in the background.
   function forPage() {
-    return list().map((w) => {
+    const cards = list().map((w) => {
       const entry = cache.get(w.id);
       const current = entry && entry.key === keyOf(w) ? entry : null;
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
-      const data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
+      let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error) });
+      if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
     });
+    return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
   function refreshAll({ force = false } = {}) {
     return Promise.all(list().map((w) => refresh(w, { force })));
@@ -593,6 +1286,8 @@ function createWidgets(deps) {
     if (id && !prev) throw new Error('That widget is gone.');
     if (!id && widgets.length >= MAX_WIDGETS) throw new Error(`Up to ${MAX_WIDGETS} widgets.`);
     const { widget, secret, message } = await resolveInput(input, id);
+    // Paper trades survive an edit; the starting cash can only change while there are none (Reset first).
+    if (prev?.pf && CONNECTORS[widget.type].portfolio) widget.pf = { cash0: prev.pf.trades.length ? prev.pf.cash0 : widget.pf?.cash0, trades: prev.pf.trades };
     const ci = cleanInput(input);
     if (prev) {
       // An edit keeps its place and size; the width and height pickers only count when they changed.
@@ -625,7 +1320,12 @@ function createWidgets(deps) {
     cache.delete(id);
     // The last widget that used a token takes the token with it.
     const secret = gone && CONNECTORS[gone.type].secret;
-    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) deps.setSecret(secret, null);
+    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) {
+      if (secret === 'gmail') revokeGoogle(OA.decodeCreds(deps.getSecret(secret)));
+      deps.setSecret(secret, null);
+      spotifyTokens.delete(secret);
+      sessions.get(secret)?.invalidate();
+    }
     deps.onUpdate?.();
     return true;
   }
@@ -668,8 +1368,10 @@ function createWidgets(deps) {
   }
   // do=layout: the page's drag, resize and snap: rects for (some of) the widgets. Checked and clamped
   // here; the last size resized per kind is remembered for new widgets.
-  function layout(items) {
+  function layout(items, dock) {
     const widgets = list();
+    const sysBefore = sysList();
+    const sysNext = SYS.applyLayout(sysBefore, items, dock);
     let resized = null;
     const next = widgets.map((w) => {
       const r = Array.isArray(items) ? items.find((i) => i && i.id === w.id) : null;
@@ -681,8 +1383,8 @@ function createWidgets(deps) {
       if ((rect.w !== w.w || rect.h !== w.h) && !snap) resized = { type: w.type, w: rect.w, h: rect.h };
       return n;
     });
-    if (JSON.stringify(cleanList(next)) === JSON.stringify(widgets)) return false;
-    save(next, resized ? { homeWidgetSizes: { ...sizes(), [resized.type]: { w: resized.w, h: resized.h } } } : {});
+    if (JSON.stringify(cleanList([...next, ...sysNext])) === JSON.stringify(cleanList([...widgets, ...sysBefore]))) return false;
+    save(next, resized ? { homeWidgetSizes: { ...sizes(), [resized.type]: { w: resized.w, h: resized.h } } } : {}, sysNext);
     deps.onUpdate?.();
     return true;
   }
@@ -691,8 +1393,55 @@ function createWidgets(deps) {
     const widgets = list();
     const rects = WL.flowPack(widgets.map((w) => WL.DEFAULT_SIZE[w.type] || { w: 4, h: 3 }));
     widgets.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
-    save(widgets, { homeWidgetSizes: {} });
+    save(widgets, { homeWidgetSizes: {} }, []); // and every section back in the centre column
     deps.onUpdate?.();
+    return true;
+  }
+  // ---- Gmail: sign-in from Settings ----
+  // The consent page opens in the user's default browser (deps.openExternal, https only); Google
+  // redirects to a one-shot listener on 127.0.0.1 (features/oauth.js). Only this process sees the code,
+  // the tokens and the client secret; Settings gets a message, never a token.
+  let signIn = null;
+  const staleGmail = () => { sessions.get('gmail')?.invalidate(); for (const w of list()) if (w.type === 'gmail') cache.delete(w.id); deps.onUpdate?.(); };
+  async function gmailConnect(input) {
+    const clientId = GV.cleanClientId(input?.clientId);
+    if (!clientId) throw new Error('Paste the Client ID of your Google Cloud OAuth client (it ends in .apps.googleusercontent.com).');
+    const typed = typeof input?.clientSecret === 'string' ? input.clientSecret.trim() : '';
+    if (typed && !GV.cleanClientSecret(typed)) throw new Error('That doesn’t look like a Google client secret.');
+    const stored = OA.decodeCreds(deps.getSecret('gmail'));
+    const clientSecret = typed || (stored?.clientId === clientId ? stored.clientSecret : '');
+    if (!clientSecret) throw new Error('Paste the client secret shown next to the Client ID in Google Cloud.');
+    if (!deps.openExternal) throw new Error('Lumen can’t open your browser here.');
+    const authBase = deps.endpoints?.().googleAuth || ENDPOINTS.googleAuth;
+    signIn?.cancel(); // one sign-in at a time
+    const flow = await OA.beginSignIn({
+      authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: GV.SCOPE, extra: GV.AUTH_EXTRA, post: formPost, now, timeoutMs: deps.signInMs,
+      openExternal: (url) => { if (!url.startsWith(`${authBase}?`)) throw new Error('Refusing to open that address.'); return deps.openExternal(url); },
+      messages: { title: 'Lumen', done: 'Gmail is connected to Lumen. You can close this tab.', denied: 'Gmail was not connected. You can close this tab.' },
+    });
+    signIn = flow;
+    try {
+      const t = await flow.done;
+      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh }));
+      staleGmail();
+      return { message: 'Gmail is connected.' };
+    } finally {
+      if (signIn === flow) signIn = null;
+    }
+  }
+  const gmailCancel = () => { signIn?.cancel(); return true; };
+  // Best effort: tell Google the refresh token is no longer wanted.
+  function revokeGoogle(creds) {
+    if (!creds?.refresh) return Promise.resolve(false);
+    return formPost(deps.endpoints?.().googleRevoke || ENDPOINTS.googleRevoke, new URLSearchParams({ token: creds.refresh }).toString()).then(() => true, () => false);
+  }
+  // Forget the sign-in (the client id and secret stay, so connecting again is one click).
+  async function gmailDisconnect() {
+    const creds = OA.decodeCreds(deps.getSecret('gmail'));
+    signIn?.cancel();
+    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '' }));
+    staleGmail();
+    await revokeGoogle(creds);
     return true;
   }
   // Settings' project picker for a Todoist widget (a token typed but not saved yet may be given).
@@ -702,6 +1451,99 @@ function createWidgets(deps) {
     const x = helpers('todoist', t || undefined);
     if (!x.secret()) throw new Error('Add your Todoist token first.');
     return [...(await x.projects())].map(([id, p]) => ({ id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
+  }
+  // ---- Spotify: sign-in (main.js opens the browser and the loopback listener) ----
+  // Returns what main.js needs: the address to open, the state to check on return, and exchange(code),
+  // which trades the code for tokens (the PKCE verifier stays in here) and stores the refresh token encrypted.
+  function spotifyStart(clientIdInput) {
+    const clientId = SV.cleanClientId(clientIdInput);
+    if (!clientId) throw new Error('Paste your Spotify app’s Client ID first (32 letters and digits).');
+    const p = SV.pkce();
+    const x = helpers('spotify');
+    return {
+      url: SV.authorizeUrl(x.endpoint('spotifyAccounts'), { clientId, challenge: p.challenge, state: p.state }),
+      state: p.state,
+      async exchange(code) {
+        if (typeof code !== 'string' || !/^[\w.~-]{1,2000}$/.test(code)) throw new Error('Spotify sent something unexpected.');
+        const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
+          method: 'POST', max: 65536, body: SV.tokenForm('code', { clientId, code, verifier: p.verifier }),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        });
+        if (!res.ok) throw new Error(SV.tokenError(res.status, res.body));
+        const t = SV.parseToken(res.body, now());
+        deps.setSecret('spotify', t.refresh);
+        Object.assign(x.spotifyToken, { access: t.access, exp: t.exp });
+        for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+        deps.onUpdate?.();
+        return true;
+      },
+    };
+  }
+  // Settings' Disconnect: forget the refresh token (Spotify's own account page can revoke the app too).
+  function spotifyDisconnect() {
+    deps.setSecret('spotify', null);
+    spotifyTokens.delete('spotify');
+    for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+    deps.onUpdate?.();
+    return true;
+  }
+  // ---- Slack: sign-in (Settings calls these; settings-backend.js opens the approval page) ----
+  const slackReset = () => { slackBad = false; slackRefreshing = null; forget('slack:'); for (const w of list()) if (w.type === 'slack') cache.delete(w.id); deps.onUpdate?.(); };
+  // For Settings: what is stored, never its values (the client id is not secret, so it prefills the form).
+  function slackStatus() {
+    const tok = OA.unpackTokens(deps.getSecret('slack'));
+    return {
+      connected: Boolean(tok?.access), team: tok?.teamName || '', reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
+      clientId: tok?.clientId || slackPending?.clientId || '', hasSecret: Boolean(tok?.clientSecret), redirect: SL.DEFAULT_REDIRECT, scopes: SL.USER_SCOPES, waiting: Boolean(slackPending),
+    };
+  }
+  // Step 1: check the app's client id and secret (the stored secret is kept when the field is left empty),
+  // remember them for the exchange, and return Slack's approval address for settings-backend to open.
+  function slackStart(input) {
+    const i = input && typeof input === 'object' ? input : {};
+    const stored = OA.unpackTokens(deps.getSecret('slack'));
+    const clientId = SL.cleanClientId(i.clientId) || (!i.clientId && stored?.clientId) || '';
+    const clientSecret = SL.cleanClientSecret(i.clientSecret) || (!i.clientSecret && clientId === stored?.clientId && stored?.clientSecret) || '';
+    const redirectUri = SL.cleanRedirect(i.redirect);
+    if (!clientId) throw new Error('Paste your Slack app’s Client ID (Basic Information → App Credentials: two numbers with a dot).');
+    if (!clientSecret) throw new Error('Paste your Slack app’s Client Secret (the same page). It is stored encrypted and never shown again.');
+    if (!redirectUri) throw new Error('The redirect URL must be an https:// address. Add the same one under OAuth & Permissions → Redirect URLs in your Slack app.');
+    slackPending = { state: OA.randomState(), clientId, clientSecret, redirectUri, at: now() };
+    return { url: SL.authorizeUrl({ clientId, redirectUri, state: slackPending.state }), redirectUri };
+  }
+  // Step 2: the address the browser landed on after approving. Checks its state, trades the code for a
+  // user token, learns the workspace, and stores everything encrypted (the code works once).
+  async function slackFinish(pasted) {
+    const p = slackPending;
+    if (!p || now() - p.at > 15 * 60e3) { slackPending = null; throw new Error('That sign-in timed out. Start again with “Open Slack”.'); }
+    const { code } = OA.parseRedirect(pasted, p.state);
+    slackPending = null;
+    const x = helpers('slack');
+    const res = await request(`${x.endpoint('slack')}/oauth.v2.access`, { method: 'POST', max: 65536, body: SL.codeForm({ clientId: p.clientId, clientSecret: p.clientSecret, code, redirectUri: p.redirectUri }), headers: FORM });
+    if (res.status === 429) throw new SL.SlackError('ratelimited');
+    const t = SL.parseAccess(res.body, now());
+    const who = await x.slack.identify(t.access).catch(() => ({}));
+    deps.setSecret('slack', OA.packTokens({ ...t, teamUrl: who.teamUrl, clientId: p.clientId, clientSecret: p.clientSecret }));
+    slackReset();
+    return { message: `Connected to ${t.teamName || 'Slack'}.` };
+  }
+  function slackCancel() { slackPending = null; return true; }
+  // Settings' Disconnect: revoke the token at Slack when possible, then forget everything stored.
+  async function slackDisconnect() {
+    const tok = OA.unpackTokens(deps.getSecret('slack'));
+    slackPending = null;
+    if (tok?.access) await slackRequest(helpers('slack'), tok.access, 'auth.revoke').catch(() => {});
+    deps.setSecret('slack', null);
+    slackReset();
+    return true;
+  }
+  // The channels the signed-in user is in, for Settings' picker.
+  async function slackChannels() {
+    const x = helpers('slack');
+    if (!OA.unpackTokens(x.secret())?.access) throw new Error('Sign in to Slack first.');
+    const out = await x.slack.call('users.conversations', { types: 'public_channel,private_channel', exclude_archived: 'true', limit: '200' });
+    return (Array.isArray(out.channels) ? out.channels : []).filter((c) => c && /^[CG][A-Z0-9]{2,20}$/.test(String(c.id)))
+      .map((c) => ({ id: c.id, name: str(c.name, 80), private: Boolean(c.is_private) })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
   }
   // ---- weather: places and "My location" ----
   const savedPlaces = () => WX.cleanSaved(deps.readSettings().weatherPlaces);
@@ -749,16 +1591,21 @@ function createWidgets(deps) {
       location: locationState(),
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
+      connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
+      slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
+      feedPresets: FEED.PRESETS.map(({ id, name }) => ({ id, name })),
       max: MAX_WIDGETS,
       spans: SPANS,
-      edit,
+      edit: typeof edit === 'string' ? edit : null,
+      create: edit?.create || null, // the page's Add widget picked a kind: Settings opens the new-widget form for it
+      spotify: { redirect: SV.REDIRECT_URI },
     };
   }
 
   // ---- page actions ----
   // The new-tab page asks by loading itself with ?widget=<id>&do=<action>[&task=<id>] (like its Ask
-  // AI box): refresh, complete, undo (&task), add (&text), place (&to=<index>), size (&span, &height),
+  // AI box): refresh, complete, undo (&task), add (&text), play, pause, next, previous (Spotify), place (&to=<index>), size (&span, &height),
   // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure. main.js cancels that navigation and passes
   // the URL here. Null when it isn't one; { invalid: true } when it is one that is refused.
   function actionFrom(url) {
@@ -767,11 +1614,21 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|play|pause|next|previous|ask|buy|sell|resetpf)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
       if (!action.text) return { invalid: true };
+    }
+    if (action.do === 'ask') {
+      action.text = MV.cleanQuestion(params.get('text'));
+      if (!action.text) return { invalid: true };
+    }
+    if (action.do === 'buy' || action.do === 'sell') {
+      action.sym = params.get('sym');
+      const qty = params.get('qty') || '';
+      if (!MK.SYM_RE.test(action.sym || '') || !/^\d{1,8}(\.\d{1,8})?$/.test(qty) || !(Number(qty) > 0) || Number(qty) > MK.MAX_QTY) return { invalid: true };
+      action.qty = Number(qty);
     }
     if (action.do === 'consent') {
       action.arg = params.get('arg');
@@ -789,17 +1646,58 @@ function createWidgets(deps) {
     if (action.do === 'layout') {
       action.items = WL.decode(params.get('l'));
       if (!action.items) return { invalid: true };
+      action.dock = (params.get('d') || '').split(',').filter(SYS.isSystemId).slice(0, SYS.IDS.length); // system cards back to the centre column
+    }
+    if (action.do === 'create') { // the page's Add widget: open Settings' new-widget form for a kind
+      action.type = Object.prototype.hasOwnProperty.call(CONNECTORS, params.get('type')) ? params.get('type') : null;
+      if (!action.type) return { invalid: true };
     }
     return action;
   }
+  // ---- the new-tab page's edit mode: hiding a section, removing with Undo ----
+  // A system card: layout (moved, resized, docked), remove (hides the section: its Settings toggle) or nothing else.
+  function setSectionShown(id, shown) {
+    const pref = SYS.prefOf(id);
+    if (!pref) return false;
+    deps.writeSettings({ ...deps.readSettings(), [pref]: shown });
+    deps.onUpdate?.();
+    return true;
+  }
+  function actSystem(action) {
+    if (action.do === 'layout') return layout(action.items, action.dock);
+    if (action.do === 'remove') return setSectionShown(action.id, false);
+    return false;
+  }
+  // The page's remove badge: the widget goes, but its settings (and token) are kept for a few seconds so Undo can bring it back.
+  function removeFromPage(w) {
+    const name = CONNECTORS[w.type].secret;
+    trash.hold({ id: w.id, widget: w, secretName: name || null, secret: name ? deps.getSecret(name) || null : null });
+    return remove(w.id);
+  }
+  // do=restore: Undo of a removal, or "show again" for a section that was hidden.
+  function restore(id) {
+    if (SYS.isSystemId(id)) return setSectionShown(id, true);
+    const held = trash.take(id);
+    if (!held) return false;
+    const widgets = list();
+    if (widgets.length >= MAX_WIDGETS || widgets.some((w) => w.id === id)) return false;
+    if (held.secret && held.secretName) deps.setSecret(held.secretName, held.secret);
+    save([...widgets, held.widget]);
+    deps.onUpdate?.();
+    return true;
+  }
   async function act(action) {
+    if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
+    if (action.do === 'restore') return restore(action.id);
+    if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
+    if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
     if (action.do === 'refresh') return refresh(w, { force: true });
     if (action.do === 'place') return place(w.id, action.to);
     if (action.do === 'size') return resize(w.id, { span: action.span, height: action.height });
-    if (action.do === 'layout') return layout(action.items);
-    if (action.do === 'remove') return remove(w.id);
+    if (action.do === 'layout') return layout(action.items, action.dock);
+    if (action.do === 'remove') return removeFromPage(w);
     if (action.do === 'consent') return setLocationConsent(action.arg);
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
@@ -807,10 +1705,17 @@ function createWidgets(deps) {
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;
     try {
-      const done = await c.act(w, action, helpers(c.secret), entry.data);
+      const done = await c.act(w, action, helpers(c.secret), entry.data, { now: now(), offline: Boolean(entry.error) });
       if (!done) return false;
+      if (done.keep) { deps.onUpdate?.(); return true; } // nothing to fetch again (a Muse answer costs money)
       forget('tasks:');
       forget('done:');
+      if (done.config) save(list().map((x) => (x.id === w.id ? { ...x, ...done.config } : x)));
+      if (done.notice) {
+        entry.notice = { text: String(done.notice).slice(0, 200), until: now() + 8000 };
+        setTimeout(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+      }
+      if (done.local) { deps.onUpdate?.(); return true; }
       if (done.undo) {
         entry.undo = { ...done.undo, until: now() + UNDO_MS };
         setTimeout(() => { if (entry.undo && entry.undo.until <= now()) { entry.undo = null; deps.onUpdate?.(); } }, UNDO_MS + 50);
@@ -818,7 +1723,7 @@ function createWidgets(deps) {
       if (done.undone) entry.undo = null;
       deps.onUpdate?.(); // the task leaves the card at once
       entry.at = 0; // and the list is fetched again
-      setTimeout(() => refresh(w).catch(() => {}), done.undo ? 800 : 0);
+      setTimeout(() => refresh(w).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
       return true;
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);
@@ -830,7 +1735,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
 }
 
-module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };
+module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
