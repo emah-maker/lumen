@@ -428,6 +428,21 @@
     .td-toast span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .td-toast .w-btn { margin: 0; padding: 2px 10px; background: rgba(128, 128, 128, 0.3); color: inherit; }
 
+    /* GitHub: the numbers on a small card, the lists on a bigger one. */
+    .gh-summary { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 18px; min-height: 0; flex: 1 1 auto; align-content: center; }
+    .gh-stat { display: flex; flex-direction: column; color: inherit; text-decoration: none; }
+    .gh-num { font-size: 30px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .gh-of { color: var(--muted); font-size: 11.5px; }
+    .gh-full { display: none; flex-direction: column; gap: 6px; }
+    @container card (min-width: 220px) and (min-height: 150px) { .gh-summary { display: none; } .gh-full { display: flex; } }
+    .gh-unread { margin: 0 0 2px; padding: 0 6px; font-size: 12.5px; font-weight: 500; }
+    .gh-section { display: flex; flex-direction: column; }
+    .gh-kind { flex: none; align-self: flex-start; margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; }
+    .gh-kind.draft { opacity: 0.7; }
+    .gh-meta { display: none; flex-wrap: wrap; gap: 0 8px; color: var(--muted); font-size: 11.5px; }
+    @container card (min-width: 260px) { .gh-meta { display: flex; } }
+    .gh-repo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
     .w-card.embed { padding-bottom: 10px; }

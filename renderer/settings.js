@@ -460,6 +460,7 @@ const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
+  github: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.7"/><circle cx="4.5" cy="12.5" r="1.7"/><circle cx="11.5" cy="6" r="1.7"/><path d="M4.5 5.2v5.6M11.5 7.7c0 2.4-3.2 2-6 3.4"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -479,7 +480,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, your GitHub reviews, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -619,6 +620,24 @@ async function buildWidgets(card) {
         field('Add-task field', inputs.quick, 'Typed like in Todoist’s quick add: “Pay rent tomorrow 9am”.'), field('New tasks go to', inputs.quickProject, 'Load projects above to pick one.'),
         field('Colors', colors, 'Only the card’s surface and title follow it; priority colors stay.'));
     }
+    // ---- github: token and which lists ----
+    function githubFields(same) {
+      const g = same?.gh || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.github ? tr('settings.widgets.github.tokenSaved', 'Saved. Paste a new token to replace it.') : tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
+      inputs.reviews = chk('widget-gh-reviews', tr('settings.widgets.github.reviews', 'Review requests'), g.reviews !== false);
+      inputs.assigned = chk('widget-gh-assigned', tr('settings.widgets.github.assigned', 'Assigned issues and pull requests'), g.assigned !== false);
+      inputs.notifications = chk('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false);
+      inputs.hideDrafts = chk('widget-gh-drafts', tr('settings.widgets.github.hideDrafts', 'Hide draft pull requests in review requests'), g.hideDrafts);
+      inputs.max = sel('widget-gh-max', tr('settings.widgets.github.max', 'Items per list'), [[5, '5'], [10, '10'], [20, '20']], g.max ?? 10);
+      const privacy = h('div', { class: 'widget-field' }, h('span', { class: 'label', text: tr('settings.widgets.github.privacyLabel', 'Private repositories') }),
+        h('span', { class: 'note', text: tr('settings.widgets.github.privacy', 'Titles of issues and pull requests from private repositories are fetched too, and Lumen keeps them in memory (they are not written to settings.json) and passes them to your new-tab pages to show them, so they can appear in a new tab’s history on this device. To keep a repository off the card, don’t give the token access to it.') }));
+      fields.replaceChildren(
+        field(tr('settings.widgets.github.token', 'Access token'), inputs.token, tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.')),
+        plain(tr('settings.widgets.github.show', 'Show'), h('div', { class: 'widget-checks' }, inputs.reviews, inputs.assigned, inputs.notifications, inputs.hideDrafts), tr('settings.widgets.github.showHelp', 'Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets.')),
+        field(tr('settings.widgets.github.max', 'Items per list'), inputs.max),
+        privacy,
+        field('Colors', colors, 'Only the card’s surface and title follow it.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -634,6 +653,8 @@ async function buildWidgets(card) {
           field('Colors', colors, '“Calendar colors” uses the color the feed gives each event; “Match screen” follows your accent color and background.'));
       } else if (type === 'todoist') {
         todoFields(same);
+      } else if (type === 'github') {
+        githubFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -658,6 +679,9 @@ async function buildWidgets(card) {
           group: inputs.group.value, sort: inputs.sort.value, density: inputs.density.value, max: Number(inputs.max.value), fields: Object.fromEntries(Object.entries(inputs.fields).map(([k, c]) => [k, val(c)])),
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
+      }
+      if (type === 'github') {
+        return { ...base, token: inputs.token.value, gh: { reviews: val(inputs.reviews), assigned: val(inputs.assigned), notifications: val(inputs.notifications), hideDrafts: val(inputs.hideDrafts), max: Number(inputs.max.value) } };
       }
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
@@ -700,7 +724,7 @@ async function buildWidgets(card) {
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every card its default size, packed in order', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, GitHub, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page

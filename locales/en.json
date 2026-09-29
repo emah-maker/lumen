@@ -694,5 +694,19 @@
   "settings.translate.never": "Sites never offered translation",
   "settings.translate.neverNone": "No sites.",
   "settings.translate.consent": "Allowed to receive page text",
-  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate."
+  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate.",
+  "settings.widgets.github.tokenSaved": "Saved. Paste a new token to replace it.",
+  "settings.widgets.github.tokenPlaceholder": "Paste your GitHub token",
+  "settings.widgets.github.tokenLabel": "GitHub access token",
+  "settings.widgets.github.reviews": "Review requests",
+  "settings.widgets.github.assigned": "Assigned issues and pull requests",
+  "settings.widgets.github.notifications": "Unread notification count",
+  "settings.widgets.github.hideDrafts": "Hide draft pull requests in review requests",
+  "settings.widgets.github.max": "Items per list",
+  "settings.widgets.github.privacyLabel": "Private repositories",
+  "settings.widgets.github.privacy": "Titles of issues and pull requests from private repositories are fetched too, and Lumen keeps them in memory (they are not written to settings.json) and passes them to your new-tab pages to show them, so they can appear in a new tab’s history on this device. To keep a repository off the card, don’t give the token access to it.",
+  "settings.widgets.github.token": "Access token",
+  "settings.widgets.github.tokenHelp": "Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.",
+  "settings.widgets.github.show": "Show",
+  "settings.widgets.github.showHelp": "Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets."
 }

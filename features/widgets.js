@@ -23,10 +23,12 @@
 //   fetch(c, x)       -> the card's data: plain JSON (strings, numbers, arrays). renderer/newtab.js
 //                     draws it with textContent only, so nothing from the network is ever markup.
 //   act(c, action, x) (optional) a page action (the Todoist checkbox): see actionFrom() below
+//                     fetch() may throw an Error with .waitMs (a rate limit): the widget isn't asked again before then.
 // and a renderer with the same type in renderer/newtab.js's WIDGET_RENDERERS.
 const ics = require('./ics');
 const WL = require('./widget-layout');
 const TV = require('./todoist-view');
+const GV = require('./github-view');
 const WX = require('./weather-view');
 const WC = require('./widget-colors');
 
@@ -37,6 +39,7 @@ const ENDPOINTS = {
   // from this process; it sees the IP address and nothing else of ours is sent.
   locate: 'https://ipapi.co/json/',
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
+  github: 'https://api.github.com',
 };
 const MAX_WIDGETS = 12;
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -228,6 +231,34 @@ const CONNECTORS = {
     },
   },
 
+  // Review requests, assigned issues and pull requests, and the unread notification count (settings in
+  // c.gh, features/github-view.js). The token (a fine-grained read-only personal access token) is the
+  // encrypted `github` secret and goes only to api.github.com, from this process.
+  github: {
+    label: 'GitHub',
+    ttl: 5 * 60e3,
+    secret: 'github',
+    clean: (c) => ({ gh: GV.cleanConfig(c.gh), colors: WC.cleanMode(c.colors) }),
+    async resolve(input, x) {
+      const token = typeof input.token === 'string' ? input.token.trim() : '';
+      if (token && !GV.looksLikeToken(token)) throw new Error('That doesn’t look like a GitHub token. Create a fine-grained personal access token at github.com/settings/personal-access-tokens.');
+      if (!token && !x.secret()) throw new Error('Paste your GitHub token.');
+      const gh = GV.cleanConfig(input.gh);
+      const data = await githubData(x, token || x.secret(), gh);
+      const parts = [];
+      if (data.reviews) parts.push(data.reviews.error ? 'review requests unavailable' : `${data.reviews.total} review request${data.reviews.total === 1 ? '' : 's'}`);
+      if (data.assigned) parts.push(data.assigned.error ? 'assigned items unavailable' : `${data.assigned.total} assigned`);
+      if (data.notifications) parts.push(data.notifications.error ? 'notifications unavailable' : `${GV.countLabel(data.notifications)} unread`);
+      return { config: { gh, colors: WC.cleanMode(input.colors) }, secret: token || undefined, message: `Connected: ${parts.join(', ')}.` };
+    },
+    title: (c) => GV.nameFor(c.gh),
+    summary: (c) => GV.summaryFor(c.gh),
+    async fetch(c, x) {
+      if (!x.secret()) throw new Error('Add your GitHub token in Settings.');
+      return GV.shape(await githubData(x, x.secret(), c.gh), c.gh);
+    },
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -293,6 +324,58 @@ async function todoistProjects(x, token) {
     return map;
   });
 }
+// One GET to api.github.com with the token -> { body, link }. A refusal becomes an Error carrying
+// .kind ('auth' | 'rate' | 'scope' | 'missing' | 'other') and, for a rate limit, .waitMs (Retry-After or
+// x-ratelimit-reset), which the widget honours before asking again.
+async function githubGet(x, token, path, params) {
+  const res = await x.raw(`${x.endpoint('github')}${path}?${new URLSearchParams(params)}`, {
+    max: 1e6,
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+  });
+  if (!res.ok) {
+    const f = GV.classify(res.status, res.headers, res.body, x.now());
+    throw Object.assign(new Error(f.message), { kind: f.kind, waitMs: f.waitMs });
+  }
+  let body;
+  try { if (res.truncated) throw new Error('too big'); body = JSON.parse(res.body); } catch { throw new Error('GitHub sent something unexpected.'); }
+  return { body, link: res.headers.get('link') };
+}
+// The lists for a widget's settings, shared for a minute between widgets asking the same. A list GitHub
+// refuses on its own (the token lacks a permission) is an { error } in its place; a bad token, a rate
+// limit or no connection fails the whole fetch. When every list is refused the first refusal is thrown.
+async function githubData(x, token, cfg) {
+  return x.memo(`gh:${token.length}:${token.slice(-6)}:${JSON.stringify(cfg)}`, 60e3, async () => {
+    const out = { reviews: null, assigned: null, notifications: null };
+    const errors = [];
+    const section = async (name, fn) => {
+      try {
+        out[name] = await fn();
+      } catch (err) {
+        if (!['scope', 'missing', 'other'].includes(err.kind)) throw err;
+        errors.push(err);
+        out[name] = { error: name === 'notifications' && err.kind !== 'other' ? 'Notifications aren’t available to this token. GitHub allows them only on a classic token with the notifications scope.' : err.message };
+      }
+    };
+    const search = (kind) => async () => {
+      const { body } = await githubGet(x, token, '/search/issues', { q: GV.searchFor(kind, cfg), sort: 'updated', order: 'desc', per_page: String(cfg.max) });
+      const r = GV.readSearch(body, cfg);
+      if (!r) throw new Error('GitHub sent something unexpected.');
+      return r;
+    };
+    if (cfg.reviews) await section('reviews', search('reviews'));
+    if (cfg.assigned) await section('assigned', search('assigned'));
+    if (cfg.notifications) {
+      await section('notifications', async () => {
+        const { body, link } = await githubGet(x, token, '/notifications', { per_page: '1' }); // unread only; the "last" page number is the count
+        const n = GV.readNotificationCount(body, link);
+        if (!n) throw new Error('GitHub sent something unexpected.');
+        return n;
+      });
+    }
+    if (errors.length && errors.length === ['reviews', 'assigned', 'notifications'].filter((k) => out[k]).length) throw errors[0];
+    return out;
+  });
+}
 // Tasks completed today, for the struck-through section ("show completed today").
 async function completedToday(x) {
   const start = new Date();
@@ -324,7 +407,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, gh: i.gh, wx: i.wx };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -505,6 +588,7 @@ function createWidgets(deps) {
       },
       memo,
       forget,
+      now,
       projects: () => todoistProjects(x, x.secret() || ''),
       // "My location": { status: 'consent' | 'off' | 'ok' | 'error', place?, message? }. Nothing is sent
       // before the user agreed; the answer is kept for an hour (in settings, so a restart doesn't ask again).
@@ -537,13 +621,14 @@ function createWidgets(deps) {
     let entry = cache.get(w.id);
     if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, undo: entry?.undo }; cache.set(w.id, entry); }
     if (entry.pending) return entry.pending;
+    if (entry.retryAt && now() < entry.retryAt) return Promise.resolve(false); // a rate limit said when to come back
     const age = now() - entry.at;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : c.ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
-    if (force) { forget('tasks:'); forget('done:'); forget('wx:'); }
+    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
-      .then((data) => { entry.data = data; entry.error = null; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); })
+      .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
       .then(() => { entry.at = now(); entry.pending = null; deps.onUpdate?.(); return true; });
     return entry.pending;
   }

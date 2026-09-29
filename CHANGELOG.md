@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New GitHub widget for the new-tab page: your review requests, issues and pull requests assigned to you, and your unread notification count. It uses a fine-grained read-only personal access token (stored encrypted, sent only to api.github.com, never shown to the page), waits out GitHub rate limits, and says so plainly when the token is rejected. Unread notifications need a classic token with the notifications scope; without one the card still shows the two lists. Titles from private repositories are shown on the card and kept in memory, so leave repositories out of the token to keep them off it.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.

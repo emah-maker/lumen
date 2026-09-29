@@ -248,6 +248,7 @@ body.interstitial { display: block; }
 .wi-weather { background: linear-gradient(160deg, #5ac8fa, #007aff); }
 .wi-calendar { background: linear-gradient(160deg, #ff6b6b, #ff3b30); }
 .wi-todoist { background: linear-gradient(160deg, #f0735f, #db4c3f); }
+.wi-github { background: linear-gradient(160deg, #57606a, #24292f); }
 .wi-embed { background: linear-gradient(160deg, #a1a1a6, #636366); }
 .widget-form { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; padding: 14px; border-radius: 10px; background: var(--field); }
 .widget-form .sub-label { font-weight: 600; }
