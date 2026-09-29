@@ -7,9 +7,9 @@
 // separate .sig file next to the exe — it does not modify the exe itself, so this runs
 // after build.js's byte-identical check for win-unpacked/Lumen.exe.
 //
-// On macOS it also flips two Electron fuses off (NODE_OPTIONS and --inspect), so nothing can
-// attach a debugger to, or inject code into, the app from outside. electron-builder signs the app
-// after this hook, so the signature covers the flipped binary. Windows is left alone: the fuses
+// On macOS an unsigned build also flips two Electron fuses off (NODE_OPTIONS and --inspect), so
+// nothing can attach a debugger to, or inject code into, the app from outside. A VMP-signed build
+// skips that: castlabs won't sign a modified binary. Windows is left alone: the fuses
 // live inside Lumen.exe, which must stay byte-identical to Electron's (see scripts/build.js).
 // RunAsNode stays on everywhere: the MCP bridge (mcp.js) and launcher.js run Lumen in Node mode.
 const { spawnSync } = require('child_process');
@@ -49,6 +49,7 @@ function vmpSign(appOutDir) {
     return warnSkipVmp(headless ? 'EVS signing failed; check EVS_ACCOUNT_NAME / EVS_PASSWD' : 'EVS signing failed; no EVS account configured? run account signup/reauth', appOutDir);
   }
   console.log('Widevine VMP signing complete.');
+  return true;
 }
 
 // The fuses to flip for a platform, or null to leave the Electron binary untouched.
@@ -65,8 +66,11 @@ function fuses(electronPlatformName) {
 exports.default = async (context) => {
   const { appOutDir, electronPlatformName } = context;
   fs.rmSync(path.join(appOutDir, 'resources', 'default_app.asar'), { force: true });
+  const signed = (electronPlatformName === 'win32' || electronPlatformName === 'darwin') && vmpSign(appOutDir);
   const config = fuses(electronPlatformName);
-  if (config) await context.packager.addElectronFuses(context, config);
-  if (electronPlatformName === 'win32' || electronPlatformName === 'darwin') vmpSign(appOutDir);
+  // castlabs refuses to VMP-sign a binary whose fuses were changed, and a change after signing
+  // breaks the signature, so a signed macOS build keeps stock fuses (DRM over hardening).
+  if (config && signed) console.log('Leaving Electron fuses at their defaults so the VMP signature stays valid.');
+  else if (config) await context.packager.addElectronFuses(context, config);
 };
 exports.fuses = fuses;
