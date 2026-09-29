@@ -99,8 +99,8 @@ const gbData = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gb-'));
 try {
   const argv = gb.buildArgs({ promptFile: 'p.json', sessionId: 'id', resume: false, systemPrompt: 'sys', cwd: 'cwd' });
   const allows = argv.flatMap((a, i) => (argv[i - 1] === '--allow' ? [a] : []));
-  check('Grok Build allows only Lumen MCP tools and search_tool, not use_tool itself', JSON.stringify(allows) === JSON.stringify(['lumen__*', 'search_tool']) && !argv.includes('use_tool'), JSON.stringify(allows));
-  check('Grok Build denies the terminal and runs under dontAsk', argv.includes('run_terminal_command') && argv[argv.indexOf('--permission-mode') + 1] === 'dontAsk', argv.join(' '));
+  check('Grok Build allows Lumen MCP tools, search_tool and run_terminal_command (gated per call by Lumen\'s own PreToolUse hook), not use_tool itself', JSON.stringify(allows) === JSON.stringify(['lumen__*', 'search_tool', 'run_terminal_command']) && !argv.includes('use_tool'), JSON.stringify(allows));
+  check('Grok Build leaves the terminal to Lumen\'s gate instead of --deny, and runs under dontAsk', !argv.some((a, i) => a === '--deny' && argv[i + 1] === 'run_terminal_command') && argv[argv.indexOf('--permission-mode') + 1] === 'dontAsk', argv.join(' '));
 
   const env = gb.buildEnv({ userData: gbData, base: { PATH: 'x', GROK_HOME: '/users/real/.grok', GROK_CLAUDE_MCPS_ENABLED: '1', GROK_CONFIG: '{}', ELECTRON_RUN_AS_NODE: '1' } });
   check('Grok Build GROK_HOME is Lumen\'s own folder under userData, not the user\'s', env.GROK_HOME === path.join(gbData, 'grok-home') && env.GROK_HOME === gb.grokHomeFor(gbData), env.GROK_HOME);
@@ -113,12 +113,13 @@ try {
   check('Grok Build env: HOME and USERPROFILE are the empty sidebar folder, GROK_HOME Lumen\'s', scrubbed.HOME === path.join(gbData, 'grok-sidebar') && scrubbed.USERPROFILE === scrubbed.HOME && scrubbed.GROK_HOME === gb.grokHomeFor(gbData), JSON.stringify(scrubbed));
 
   // Lumen's own check on the tool calls Grok reports.
-  check('tool check: Lumen\'s tools pass (lumen__read_page, search_tool, use_tool -> lumen__x)', gb.isLumenTool('lumen__read_page') && gb.isLumenTool('search_tool', { query: 'page' }) && gb.isLumenTool('use_tool', { tool_name: 'lumen__x', tool_input: {} }), 'rejected a Lumen tool');
-  check('tool check: other tools are refused (use_tool -> other__x, Bash, run_terminal_command, edit_file)', ![['use_tool', { tool_name: 'other__x' }], ['Bash'], ['run_terminal_command', { command: 'echo' }], ['edit_file'], ['use_tool', {}], ['use_tool', null], ['use_tool', { tool_name: 'xlumen__a' }], ['lumen__'], ['web_search']].some(([n, i]) => gb.isLumenTool(n, i)), 'accepted a non-Lumen tool');
+  check('tool check: Lumen\'s tools pass (lumen__read_page, search_tool, use_tool -> lumen__x, run_terminal_command -- gated per call by the PreToolUse hook, not this check)', gb.isLumenTool('lumen__read_page') && gb.isLumenTool('search_tool', { query: 'page' }) && gb.isLumenTool('use_tool', { tool_name: 'lumen__x', tool_input: {} }) && gb.isLumenTool('run_terminal_command', { command: 'echo' }), 'rejected a Lumen tool');
+  check('tool check: other tools are refused (use_tool -> other__x, Bash, edit_file)', ![['use_tool', { tool_name: 'other__x' }], ['Bash'], ['edit_file'], ['use_tool', {}], ['use_tool', null], ['use_tool', { tool_name: 'xlumen__a' }], ['lumen__'], ['web_search']].some(([n, i]) => gb.isLumenTool(n, i)), 'accepted a non-Lumen tool');
   const streamed = (lines) => { const w = gb.toolWatch(); for (const l of lines) { const bad = w(l); if (bad) return bad; } return null; };
   const ev = (event) => ({ type: 'stream_event', event });
   const useTool = (name, index = 1) => [ev({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: 'c', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ tool_name: name, tool_input: {} }) } }), ev({ type: 'content_block_stop', index })];
-  check('tool check (stream): a built-in is caught at content_block_start', streamed([ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } })]) === 'run_terminal_command', 'missed');
+  check('tool check (stream): a built-in is caught at content_block_start', streamed([ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'edit_file', input: {} } })]) === 'edit_file', 'missed');
+  check('tool check (stream): run_terminal_command is left alone here (Lumen\'s PreToolUse gate already judged it, per call)', streamed([ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } })]) === null, 'caught');
   check('tool check (stream): use_tool is judged by the tool it names', streamed(useTool('lumen__read_page')) === null && streamed(useTool('other__probe')) === 'use_tool other__probe', streamed(useTool('other__probe')));
   check('tool check (stream): a use_tool whose input never parses is refused', streamed([ev({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"tool_na' } }), ev({ type: 'content_block_stop', index: 2 })]) === 'use_tool (unreadable)', 'accepted');
   check('tool check (stream): hosted server tools and whole assistant messages are checked too', streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } })]) === 'web_search' && streamed([{ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'edit_file', input: {} }] } }]) === 'edit_file' && streamed([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'use_tool', input: { tool_name: 'lumen__click' } }] } }]) === null, 'missed');
@@ -249,14 +250,81 @@ async function grokGateServer() {
   }
 }
 
+// The PreToolUse gate's decision for run_terminal_command specifically (mcp-http.js terminalDecision):
+// grokGateServer() above covers the no-onTerminalApproval default (an automatic deny, unchanged from
+// before this existed); this covers the approval flow itself, isolated from the real grok CLI and
+// Electron. "always" is remembered per chat session (the 2nd arg to open(), grok-build.js's Grok
+// session id), not per message tag, and never leaks across chats.
+async function grokTerminalApproval() {
+  const asked = [];
+  const answers = ['once', 'always', 'deny']; // consumed in order, one per ask
+  const gate = await require('../mcp-http').startHttp({
+    tools: [],
+    callTool: async () => ({ content: [], isError: false }),
+    onTerminalApproval: async (tag, command) => { asked.push({ tag, command }); return answers[asked.length - 1]; },
+    terminalHoldMs: 500,
+  });
+  const http = require('http');
+  const post = (url, body) => new Promise((resolve) => {
+    const u = new URL(url);
+    const req = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve({ status: res.statusCode, body: b ? JSON.parse(b) : null })); });
+    req.end(JSON.stringify(body));
+  });
+  const term = (run) => post(run.hookUrl, { hook_event_name: 'PreToolUse', tool_name: 'run_terminal_command', tool_input: { command: 'echo hi' } }).then((r) => r.body?.hookSpecificOutput?.permissionDecision || 'allow');
+  try {
+    const run1 = gate.open('t1', 'chatA'); // message 1 of chat A: asked, 'once' allows just this call
+    check('Grok gate: run_terminal_command with onTerminalApproval asks, and "once" allows that call', await term(run1) === 'allow' && asked.length === 1 && asked[0].command === 'echo hi', JSON.stringify(asked));
+    gate.close('t1');
+
+    const run2 = gate.open('t2', 'chatA'); // message 2, same chat: "once" wasn't remembered, asks again
+    check('Grok gate: "once" is not remembered -- the next message in the same chat asks again', await term(run2) === 'allow' && asked.length === 2, JSON.stringify(asked));
+    gate.close('t2');
+
+    const run3 = gate.open('t3', 'chatA'); // message 3, same chat: "always" (from message 2) is remembered
+    check('Grok gate: "always" is remembered for the rest of this chat -- no third ask', await term(run3) === 'allow' && asked.length === 2, JSON.stringify(asked));
+    gate.close('t3');
+
+    const run4 = gate.open('t4', 'chatB'); // a different chat: never said "always", asked on its own
+    check('Grok gate: a different chat session is asked on its own; another chat\'s "always" doesn\'t leak into it', await term(run4) === 'deny' && asked.length === 3, JSON.stringify(asked));
+    gate.close('t4');
+  } finally {
+    gate.stop();
+  }
+
+  // A stuck onTerminalApproval (never resolves, e.g. a card left unanswered) times out to a deny
+  // instead of hanging -- same fail-closed default as an unreachable gate.
+  const stuckAsked = [];
+  const stuckGate = await require('../mcp-http').startHttp({
+    tools: [],
+    callTool: async () => ({ content: [], isError: false }),
+    onTerminalApproval: async (_tag, command) => { stuckAsked.push(command); return new Promise(() => {}); },
+    terminalHoldMs: 200,
+  });
+  try {
+    const srun = stuckGate.open('s1', 'chatC');
+    const before = Date.now();
+    const decision = await term(srun);
+    check('Grok gate: an unanswered approval times out to a deny (fail-closed), not a hang', decision === 'deny' && Date.now() - before < 5000 && stuckAsked.length === 1, JSON.stringify({ decision, elapsed: Date.now() - before }));
+  } finally {
+    stuckGate.stop();
+  }
+}
+
 async function grokRuns() {
   {
-    const { out, events, kills, spawned } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Let me look.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, 'LEAKED'), gbDone('LEAKED')]);
+    const { out, events, kills, spawned } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Let me look.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'edit_file', input: {} } }), ...gbText(2, 'LEAKED'), gbDone('LEAKED')]);
     const error = events.find((e) => e.type === 'error');
     check('Grok Build run: a built-in tool call kills the process tree at once', kills.length === 1 && kills[0] === spawned.child.pid, JSON.stringify(kills));
-    check('Grok Build run: it ends as failed, with an error naming the tool, and drops the session', out.failed === true && out.sessionId === null && /isn't one of Lumen's \(run_terminal_command\)/.test(error?.text || ''), JSON.stringify({ out, error }));
+    check('Grok Build run: it ends as failed, with an error naming the tool, and drops the session', out.failed === true && out.sessionId === null && /isn't one of Lumen's \(edit_file\)/.test(error?.text || ''), JSON.stringify({ out, error }));
     check('Grok Build run: nothing after the off-limits call reaches the sidebar', !events.some((e) => /LEAKED/.test(e.text || '')) && !/LEAKED/.test(out.text), JSON.stringify(events));
     check('Grok Build run: the child gets the scrubbed env and the empty sidebar folder as cwd', spawned.opts.cwd.endsWith('grok-sidebar') && spawned.opts.env.HOME === spawned.opts.cwd && spawned.opts.stdio[0] === 'ignore' && spawned.opts.shell === false && !Object.keys(spawned.opts.env).some((k) => /API_KEY|TOKEN|SECRET/i.test(k) && !['LUMEN_MCP_TOKEN', 'XAI_API_KEY'].includes(k)), JSON.stringify(spawned.opts));
+  }
+  {
+    // run_terminal_command is no longer an automatic kill here: Lumen's PreToolUse gate (mcp-http.js
+    // terminalDecision) is what judges it now, per call, before it ever runs -- this stream-level
+    // check (the last-resort layer) just needs to leave it alone once it's been reported.
+    const { out, events, kills } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Running it.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, ' Done.'), gbDone('Running it. Done.')]);
+    check('Grok Build run: run_terminal_command in the stream is not killed here (the gate already judged it)', kills.length === 0 && out.failed !== true && out.text === 'Running it. Done.', JSON.stringify({ out, events, kills }));
   }
   {
     const { out, spawned, gate } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')]);
@@ -271,6 +339,7 @@ async function grokRuns() {
     check('Grok Build run: nothing of an unguarded run reaches the sidebar', !events.some((e) => /LEAKED/.test(e.text || '')) && !/LEAKED/.test(out.text), JSON.stringify(events));
   }
   await grokGateServer();
+  await grokTerminalApproval();
   {
     const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'other__probe'), gbDone('probed')]);
     check('Grok Build run: use_tool on another server is stopped the same way', kills.length === 1 && out.failed && /use_tool other__probe/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, kills }));
