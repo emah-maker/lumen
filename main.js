@@ -131,7 +131,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -2408,6 +2408,13 @@ function applyChromeIdentity(wc) {
 
 // ---------- context menu ----------
 
+// "Run skill ▸" for selected text: the skills that read a selection, run in the sidebar.
+function skillMenuItems(selection) {
+  const items = skillsFeature.menuTemplate(selection, (id, text) => ui()?.send('skill:run', { id, selection: text }));
+  if (!items.length) return [];
+  return [{ label: t('menu.runSkill'), submenu: [...items, { type: 'separator' }, { label: t('menu.manageSkills'), click: () => openSettingsPage('skills') }] }];
+}
+
 function showContextMenu(wc, p) {
   const items = [...settingsBackend.spellingItems(wc, p)]; // [settings] spelling suggestions first
   const selection = p.selectionText.trim();
@@ -2432,6 +2439,7 @@ function showContextMenu(wc, p) {
       { label: t('menu.searchFor', { engine: engineFor(readSettings().searchEngine).label, text: short }), click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
       { label: t('menu.askAboutSelection'), click: () => ui()?.send('ask-selection', selection) },
       { label: t('menu.qrSelection'), enabled: selection.length <= 500, click: () => showQrCode(wc, selection, 'text') },
+      ...skillMenuItems(selection),
       { type: 'separator' },
     );
   }
@@ -3469,6 +3477,68 @@ if (TEST) {
   global.__mcpClient = mcpClient;
 }
 
+// ---------- skills (features/skills.js): /summarize and friends; managed in Settings → Skills ----------
+// Saved prompts run from the composer's "/" menu. A run is an ordinary chat message (the expanded
+// prompt), so usage, the approval gate and the taint rules apply unchanged; agent:ask above picks up
+// the prepared run's options (tools off, own model, page text counted as read).
+const skillPageScripts = require('./page-scripts');
+const SKILL_WORLD = 1002; // a JavaScript world of our own, apart from the page's and the agent's
+const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
+const skillSurfaces = () => [ui(), ...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)].filter((wc) => wc && !wc.isDestroyed());
+// One model call outside the chat (the proposal for "Create a skill from this chat"): same routes as tab grouping.
+async function completeSkillJson({ system, user, schema }) {
+  const model = String(cheapTopicModel());
+  const route = await groupingRoute(model);
+  if (route.engine) {
+    const bin = await agent.engines[route.engine].detect();
+    if (!bin) throw new Error(route.engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+    return cliJson.completeJSON({ engine: route.engine, bin, model: route.model, system, user, schema, userData: app.getPath('userData') });
+  }
+  const { provider, model: id } = providers.splitModel(model);
+  if (provider === 'anthropic') {
+    const res = await agent.getClient().messages.create({ model: id, max_tokens: 2000, system, output_config: { format: { type: 'json_schema', schema } }, messages: [{ role: 'user', content: user }] });
+    if (res.stop_reason === 'refusal') throw new Error('The model declined.');
+    return JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  }
+  const apiKey = providerKey(provider);
+  if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key in Settings first.`);
+  return providers.completeJSON({ provider, model: id, apiKey, system, user });
+}
+const skillsFeature = require('./features/skills').create({
+  ipcMain,
+  dialog: electronDialog,
+  win: () => win,
+  file: path.join(app.getPath('userData'), 'skills.json'),
+  documentsDir: () => app.getPath('documents'),
+  language: () => { try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(app.getLocale().split('-')[0]) || 'English'; } catch { return 'English'; } },
+  clipboardText: async () => String(await clipboard.readText()).slice(0, 50000), // (a Promise in this Electron)
+  // The tab a sender's skills read: the sidebar's active tab, or the chat page's target tab. Never
+  // Settings, the chat page, a non-web page or a site the user turned AI off on.
+  tabFor: (event) => {
+    const tab = tabs.find((t) => t.id === (chatPageRt.isChatSender(event) ? chatPageRt.pick() : activeId));
+    return tab && skillTabOk(tab) ? tab.view.webContents : null;
+  },
+  readPage: async (wc) => {
+    const page = await skillWithin(wc.executeJavaScriptInIsolatedWorld(1001, [{ code: skillPageScripts.readPage(0, 0) }]));
+    return { title: page.title, url: page.url, text: page.text };
+  },
+  readSelection: async (wc) => String(await skillWithin(wc.executeJavaScriptInIsolatedWorld(SKILL_WORLD, [{ code: 'String(getSelection())' }]))),
+  tabText: async (id) => {
+    const tab = Number.isInteger(id) ? tabs.find((t) => t.id === id) : null;
+    if (!tab || !skillTabOk(tab)) return null;
+    const page = await skillWithin(tab.view.webContents.executeJavaScriptInIsolatedWorld(1001, [{ code: skillPageScripts.readPage(0, 0) }]));
+    return { title: page.title, url: page.url, text: page.text };
+  },
+  broadcast: (channel, payload) => { for (const wc of skillSurfaces()) wc.send(channel, payload); },
+  openSettings: (section) => openSettingsPage(section),
+  emitDraft: (draft) => { for (const t of tabs) if (t.settings && alive(t)) t.view.webContents.send('skills:draft', draft); },
+  transcript: () => agent.transcript(),
+  complete: (args) => (TEST && global.__skillsComplete ? global.__skillsComplete(args) : completeSkillJson(args)),
+});
+skillsFeature.register();
+if (TEST) global.__skills = skillsFeature;
+
 // ---------- [settings] lumen://settings ----------
 
 const settingsBackend = settingsPage.create({
@@ -3702,7 +3772,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     else if (msg.type === 'tool_done') saveChatSoon(generation);
     else if (msg.type === 'usage' && generation === chatGeneration) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
-  }, valid, { tabs: tabsAsk.cleanIds(tabIds) }); // tabIds: the tabs the user picked with "@" (features/tabs-ask.js)
+  // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
+  }, valid, { tabs: tabsAsk.cleanIds(tabIds) }, skillsFeature.takeRun(String(text || '')));
 });
 // The tabs the "@" picker offers: this window's readable tabs, never a private window's.
 ipcMain.handle('tabs:ask-list', (event) => {

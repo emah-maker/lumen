@@ -84,7 +84,7 @@ const path = require('path');
   await ui.keyboard.press('Enter');
   await sleep(200);
   check('Enter picks the tab as a chip (and does not send)', JSON.stringify(await chipsNow()) === '["@Page beta"]' && (await ui.evaluate(() => document.querySelectorAll('.msg.user').length)) === 0 && (await ui.inputValue('#prompt')) === '', `${JSON.stringify(await chipsNow())} ${await ui.inputValue('#prompt')}`);
-  check('the picker closed', await ui.evaluate(() => document.getElementById('tabs-picker').hidden && !document.getElementById('prompt').hasAttribute('aria-expanded')), '');
+  check('the picker closed', await ui.evaluate(() => document.getElementById('tabs-picker').hidden && document.getElementById('prompt').getAttribute('aria-expanded') !== 'true'), '');
 
   // Send with the chip: the tab's text arrives labelled, and the active tab does not change.
   const before = await active();

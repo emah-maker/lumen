@@ -82,7 +82,13 @@
     mention = null;
     picker.hidden = true;
     picker.replaceChildren();
+    if (prompt.getAttribute('aria-controls') !== 'tabs-picker') return; // the "/" menu's state (slash.js) is not ours to clear
     prompt.removeAttribute('aria-activedescendant');
+    if (document.getElementById('slash-menu')) { // hand the box back to the "/" menu
+      prompt.setAttribute('aria-controls', 'slash-menu');
+      prompt.setAttribute('aria-expanded', 'false');
+      return;
+    }
     prompt.removeAttribute('aria-expanded');
     prompt.removeAttribute('aria-controls');
     prompt.removeAttribute('aria-autocomplete');
