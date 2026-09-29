@@ -559,6 +559,17 @@ contextBridge.exposeInMainWorld('assistant', {
   ...testOnly,
 });
 
+// Skills (features/skills.js): the composer's "/" menu. Running one is a normal chat message; managing
+// them is in lumen://settings (settings-preload.js).
+contextBridge.exposeInMainWorld('skillsApi', {
+  menu: () => ipcRenderer.invoke('skills:menu'),
+  context: (options) => ipcRenderer.invoke('skills:context', options),
+  prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
+  draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+  onChanged: on('skills:changed'),
+  onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
+});
+
 // ---- [claude code engine] + [page context]
 contextBridge.exposeInMainWorld('lumenExtras', {
   getPageContext: () => ipcRenderer.invoke('pagecontext:get'),

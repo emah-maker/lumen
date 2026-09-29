@@ -857,14 +857,15 @@ class Agent {
   }
 
   // A new run waits for any previous run to finish stopping, so runs never overlap.
-  run(userText, emit, images = []) {
+  // `skill`: options of a prepared skill run { mode, model, tainted } (features/skills.js), or null.
+  run(userText, emit, images = [], skill = null) {
     const previous = this.current;
     const next = (async () => {
       if (previous) {
         this.stop();
         await previous.catch(() => {});
       }
-      await this.runOnce(userText, emit, images);
+      await this.runOnce(userText, emit, images, skill);
     })();
     this.current = next;
     const clear = () => { if (this.current === next) this.current = null; };
@@ -874,7 +875,9 @@ class Agent {
 
   // Never throws, and always ends with a 'done' event: anything that goes wrong before the model is
   // even asked (a tab destroyed mid-read, say) used to leave the sidebar "running" forever.
-  async runOnce(userText, emit, images = []) {
+  async runOnce(userText, emit, images = [], skill = null) {
+    this.skillRun = skill; // read by runTask and loop; cleared below
+    let modelBefore = null; // a skill's own model applies to this run only
     const controller = new AbortController();
     this.controller = controller;
     const messages = this.messages; // reset() swaps in a new array; this run keeps writing to its own
@@ -887,6 +890,7 @@ class Agent {
       // The model the picker shows: a saved model that isn't connected anymore falls back the same way.
       // (Nothing connected at all: keep it, and the request fails with the "set up an AI" message.)
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
+      if (skill?.model && this.browser.effectiveModel?.(skill.model) === skill.model) { modelBefore = messages.settings.model; messages.settings.model = skill.model; }
 
       const tab = this.browser.activeTab();
       await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit), messages, log);
@@ -898,6 +902,8 @@ class Agent {
       if (this.controller === controller) this.controller = null;
       const undo = this.undoSummary(log);
       emit({ type: 'done', model: messages.settings?.model, ...(undo ? { undo } : {}) });
+      this.skillRun = null;
+      if (modelBefore && messages.settings) messages.settings.model = modelBefore;
     }
   }
 
@@ -922,7 +928,7 @@ class Agent {
     }
     // Stop works while the page is being read, too (it can take a few seconds on a heavy page).
     const page = await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
-    if (page) this.markTainted(); // the attached page text counts as reading the page (see ensureAllowed)
+    if (page || this.skillRun?.tainted) this.markTainted(); // the attached page text (or a skill's page, selection or clipboard text) counts as reading the page (see ensureAllowed)
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
@@ -1131,6 +1137,7 @@ class Agent {
 
     for (let step = 0; step < budget.max; step++) {
       const finalTurn = Boolean(wrap) || budget.isFinal(step);
+      const toolsOff = finalTurn || this.skillRun?.mode === 'no-tools'; // a skill in no-tools mode answers in text only
       const wrapReason = wrap || 'limit';
       emit({ type: 'turn_start' });
       const model = messages.settings.model;
@@ -1148,8 +1155,8 @@ class Agent {
       let message;
       try {
         message = onClaude
-          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale), finalTurn)
-          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale), finalTurn).catch((err) => {
+          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale), toolsOff)
+          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale), toolsOff).catch((err) => {
             err.__provider = providers.splitModel(model).provider;
             throw err;
           });
@@ -1205,6 +1212,10 @@ class Agent {
       }
       if (toolUses.length === 0) {
         if (finalTurn) emit({ type: 'notice', text: wrapReason === 'stalled' ? STALL_NOTICE : LIMIT_NOTICE, action: 'continue' });
+        return;
+      }
+      if (toolsOff && !finalTurn) { // no-tools skill: a tool call is answered as not run and the reply ends
+        messages.push({ role: 'user', content: toolUses.map((use) => ({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: 'Not run: this skill answers without tools.' })) });
         return;
       }
       if (finalTurn) {

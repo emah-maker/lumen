@@ -36,6 +36,21 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       check: call('settings:updates-check'),
       apply: call('settings:updates-apply'),
     },
+    // Skills (features/skills.js)
+    skills: {
+      list: call('skills:list'),
+      save: call('skills:save'),
+      remove: call('skills:delete'),
+      reset: call('skills:reset'), // one built-in (id) or all of them
+      preview: call('skills:preview'),
+      exportAll: call('skills:export'),
+      importPick: call('skills:import-pick'),
+      importText: call('skills:import-text'),
+      importCommit: call('skills:import-commit'),
+      takeDraft: call('skills:take-draft'),
+      onDraft: (cb) => ipcRenderer.on('skills:draft', (_e, draft) => cb(draft)),
+      onChanged: (cb) => ipcRenderer.on('skills:changed', (_e, list) => cb(list)),
+    },
     // "You and AI" reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),
