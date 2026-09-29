@@ -41,14 +41,19 @@ const validModel = (model) => /^[a-z0-9][\w.[\]-]*$/i.test(String(model || ''));
 function usageOf(result) {
   if (!result || typeof result !== 'object') return null;
   const u = result.usage || {};
+  const rows = Object.values(result.modelUsage || {}).filter((m) => m && typeof m === 'object');
   const models = Object.keys(result.modelUsage || {});
+  // Grok Build's result (verified, grok 1.0.41) carries the same snake_case `usage` and camelCase
+  // `modelUsage` rows as Claude Code's. If a version leaves `usage` out, the per-model rows add up.
+  const fromRows = (key) => rows.reduce((a, m) => a + (Number(m[key]) || 0), 0);
+  const pick = (top, rowKey) => Number(u[top]) || (u[top] == null ? fromRows(rowKey) : 0);
   return {
-    inputTokens: Number(u.input_tokens) || 0,
-    outputTokens: Number(u.output_tokens) || 0,
-    cacheReadTokens: Number(u.cache_read_input_tokens) || 0,
-    cacheWriteTokens: Number(u.cache_creation_input_tokens) || 0,
+    inputTokens: pick('input_tokens', 'inputTokens'),
+    outputTokens: pick('output_tokens', 'outputTokens'),
+    cacheReadTokens: pick('cache_read_input_tokens', 'cacheReadInputTokens'),
+    cacheWriteTokens: pick('cache_creation_input_tokens', 'cacheCreationInputTokens'),
     costUSD: Number(result.total_cost_usd) || 0,
-    contextWindow: Math.max(0, ...Object.values(result.modelUsage || {}).map((m) => Number(m?.contextWindow) || 0)),
+    contextWindow: Math.max(0, ...rows.map((m) => Number(m.contextWindow) || 0)),
     models,
   };
 }

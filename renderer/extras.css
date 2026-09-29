@@ -94,4 +94,8 @@
 .usage-meter .um-bar { flex: none; width: 44px; height: 4px; border-radius: 2px; background: rgba(127, 127, 127, 0.22); overflow: hidden; }
 .usage-meter .um-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent, #007aff); transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1); }
 .usage-meter.high .um-bar i { background: #ff453a; }
+.usage-meter.warn .um-bar i { background: #ff9f0a; }
+.usage-meter.high[data-kind="limit"] .um-text { color: #ff453a; }
+.usage-meter.hint { cursor: default; }
+.pref-lite .usage-meter .um-bar i { transition: none; }
 .usage-meter .um-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

@@ -12,6 +12,10 @@
 //    else using the same account at that moment moves it too: a Claude Code session outside Lumen is
 //    detected from its transcripts and makes that turn's share unknown; claude.ai and other machines
 //    can't be seen, so the panel still calls it approximate.
+//  - Grok publishes no plan limits (no command, no field: grok 1.0.41), so its bar never shows a
+//    plan percentage. It shows what is real: the chat's context-window fill, Lumen's own use in
+//    rolling windows, a budget the user sets (a real progress bar toward that), and the limit-reached
+//    state with the reset time Grok's own message named.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -46,12 +50,64 @@ function fiveHourOf(info) {
   return { percent: Number(w.utilization) * 100, resetsAt: Number(w.resetsAt) * 1000 };
 }
 
+// ---- Grok: rolling windows, budget, limit state (all from Lumen's own log or Grok's own message)
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+const WARN_AT = 80;
+const DEFAULT_BUDGET = { unit: 'usd', daily: 0, weekly: 0 };
+const recTokens = (r) => (r.inputTokens || 0) + (r.outputTokens || 0) + (r.cacheReadTokens || 0) + (r.cacheWriteTokens || 0);
+const totals = (list) => list.reduce((a, r) => ({ turns: a.turns + 1, tokens: a.tokens + recTokens(r), costUSD: a.costUSD + (r.costUSD || 0) }), { turns: 0, tokens: 0, costUSD: 0 });
+
+// { unit: 'usd' | 'tokens', daily, weekly } from anything a settings page could send; 0 = no limit.
+function normalizeBudget(b) {
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.min(n, 1e12) : 0; };
+  return { unit: b?.unit === 'tokens' ? 'tokens' : 'usd', daily: num(b?.daily), weekly: num(b?.weekly) };
+}
+// Where a budget period began (local time): midnight, or Monday's midnight. And when it ends.
+function periodStart(kind, now) {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  if (kind === 'weekly') d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d.getTime();
+}
+function periodEnd(kind, now) {
+  const d = new Date(periodStart(kind, now));
+  d.setDate(d.getDate() + (kind === 'weekly' ? 7 : 1));
+  return d.getTime();
+}
+const grokRecords = (records) => records.filter((r) => r.engine === 'grokbuild');
+// Lumen's own Grok use in the last 5 hours and 7 days (rolling), exactly from the log.
+function grokWindows(records, now) {
+  const mine = grokRecords(records);
+  return { h5: totals(mine.filter((r) => r.at >= now - 5 * HOUR)), d7: totals(mine.filter((r) => r.at >= now - 7 * DAY)) };
+}
+// Progress toward the user's budget: null when none is set. Each set period reports { kind, used,
+// limit, percent (unclamped), resetsAt }; `top` is the one furthest along.
+function budgetStatus(records, budgetIn, now) {
+  const budget = normalizeBudget(budgetIn);
+  if (!(budget.daily > 0) && !(budget.weekly > 0)) return null;
+  const mine = grokRecords(records);
+  const periods = ['daily', 'weekly'].filter((k) => budget[k] > 0).map((kind) => {
+    const list = mine.filter((r) => r.at >= periodStart(kind, now));
+    const used = budget.unit === 'tokens' ? totals(list).tokens : totals(list).costUSD;
+    return { kind, used, limit: budget[kind], percent: (used / budget[kind]) * 100, start: periodStart(kind, now), resetsAt: periodEnd(kind, now) };
+  });
+  return { unit: budget.unit, periods, top: periods.reduce((a, p) => (p.percent > a.percent ? p : a)) };
+}
+const levelOf = (percent, warnAt = WARN_AT, highAt = 100) => (percent >= highAt ? 'high' : percent >= warnAt ? 'warn' : 'ok');
+
 // What the sidebar's usage bar shows for one engine, from summary()'s data, or null when there is
 // nothing real to show (the bar stays hidden rather than guess).
 //  - claudecode: the plan's 5-hour limit ({ kind: 'plan', percent, resetsAt | resetsText }), the
 //    weekly limit when the plan has one, and Lumen's share of the window.
-//  - any other CLI engine: { kind: 'context' }, from the turns' own usage: tokens and cost today, and
-//    how full the context window was on the last turn when the CLI reports its size (else percent null).
+//  - grokbuild: never a plan percentage (Grok publishes no limits). In order of precedence:
+//    { kind: 'limit' }   Grok said the plan's limit was reached (resetsAt when its message named a time);
+//    { kind: 'budget' }  a progress bar toward the budget the user set;
+//    { kind: 'context' } how full the current chat's context window is (percent null when unknown),
+//                        with today's tokens and cost.
+//    Every kind carries `windows`: Lumen's own use in the last 5 hours and 7 days, and `level`
+//    ('ok' | 'warn' | 'high') for the colour.
+//  - any other CLI engine: { kind: 'context' }, from the turns' own usage.
 function barFor(engine, s) {
   if (!s) return null;
   if (engine === 'claudecode') {
@@ -67,11 +123,23 @@ function barFor(engine, s) {
       lumenPoints: s.lumen?.window?.limitPoints ?? null,
     };
   }
+  const g = engine === 'grokbuild' ? s.grok || {} : {};
+  const windows = g.windows || null;
+  if (g.limit) return { engine, kind: 'limit', percent: 100, level: 'high', resetsAt: g.limit.resetsAt || null, message: g.limit.text || '', windows };
   const e = s.engines?.[engine];
-  if (!e || !e.today?.turns || (!e.today.tokens && !e.today.costUSD)) return null;
-  const { contextTokens, contextWindow } = e.last || {};
-  const percent = contextWindow > 0 && contextTokens > 0 ? Math.min(100, (contextTokens / contextWindow) * 100) : null;
-  return { engine, kind: 'context', percent, tokens: e.today.tokens, costUSD: e.today.costUSD, turns: e.today.turns, contextTokens: contextTokens || 0, contextWindow: contextWindow || 0 };
+  const budget = g.budget?.status;
+  if (!budget && (!e || (!e.today?.turns && !windows?.d7?.turns) || (!e.today?.tokens && !e.today?.costUSD && !windows?.d7?.tokens))) return null;
+  const { contextTokens, contextWindow, compactPercent } = e?.last || {};
+  const contextPercent = contextWindow > 0 && contextTokens > 0 ? Math.min(100, (contextTokens / contextWindow) * 100) : null;
+  const today = e?.today || { turns: 0, tokens: 0, costUSD: 0 };
+  const context = { contextPercent, compactPercent: compactPercent || null, contextTokens: contextTokens || 0, contextWindow: contextWindow || 0 };
+  if (budget) {
+    const top = budget.top;
+    return { engine, kind: 'budget', percent: Math.max(0, Math.min(100, top.percent)), level: levelOf(top.percent), unit: budget.unit, period: top.kind, used: top.used, limit: top.limit, resetsAt: top.resetsAt, ...context, tokens: today.tokens, costUSD: today.costUSD, turns: today.turns, windows };
+  }
+  // Amber from 10 points below the model's own auto-compaction threshold (100 when it isn't known).
+  const compactAt = compactPercent || 100;
+  return { engine, kind: 'context', percent: contextPercent, level: contextPercent == null ? 'ok' : levelOf(contextPercent, Math.max(1, compactAt - 10), Infinity), ...context, tokens: today.tokens, costUSD: today.costUSD, turns: today.turns, windows };
 }
 
 // Did any Claude Code session other than Lumen's own write since `since` (ms)? Lumen runs each turn in
@@ -101,6 +169,9 @@ function createUsage(deps) {
   let latestInfo = null; // the latest rate_limit_event info (status, overage)
   let plan = null; // { at, data } from /usage
   let planRun = null;
+  let grokLimit = null; // Grok said the plan's limit was reached: { at, resetsAt (ms | null), text }
+  let budget = { ...DEFAULT_BUDGET }; // the user's Grok budget (Settings → Usage); 0 = none
+  let notified = {}; // budget notices already shown: { 'daily:<period start>:80': true }
   const file = () => path.join(deps.app.getPath('userData'), 'usage.json');
 
   function load() {
@@ -108,6 +179,9 @@ function createUsage(deps) {
       const saved = JSON.parse(fs.readFileSync(file(), 'utf8'));
       if (Array.isArray(saved.records)) records = saved.records.filter((r) => r && Number.isFinite(r.at));
       if (saved.meter && Number.isFinite(saved.meter.percent)) meter = saved.meter;
+      if (saved.grokLimit && Number.isFinite(saved.grokLimit.at)) grokLimit = { at: saved.grokLimit.at, resetsAt: Number.isFinite(saved.grokLimit.resetsAt) ? saved.grokLimit.resetsAt : null, text: String(saved.grokLimit.text || '').slice(0, 200) };
+      if (saved.budget) budget = normalizeBudget(saved.budget);
+      if (saved.notified && typeof saved.notified === 'object') notified = saved.notified;
     } catch (err) {
       if (err.code !== 'ENOENT') console.error('[lumen] could not read usage.json:', err.message);
     }
@@ -118,7 +192,7 @@ function createUsage(deps) {
     saveTimer = setTimeout(() => {
       const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
       records = records.filter((r) => r.at >= cutoff);
-      fs.promises.writeFile(file(), JSON.stringify({ records, meter })).catch((err) => console.error('[lumen] could not save usage.json:', err.message));
+      fs.promises.writeFile(file(), JSON.stringify({ records, meter, grokLimit, budget, notified })).catch((err) => console.error('[lumen] could not save usage.json:', err.message));
     }, 500);
   }
 
@@ -133,8 +207,15 @@ function createUsage(deps) {
   }
 
   // One finished turn. `engine`: 'claudecode' | 'grokbuild' | 'anthropic' | 'openai' | …
-  function record(engine, { usage, rateLimit, model } = {}) {
-    if (!usage) return;
+  // Grok's limit state (see grokLimitNow): `limit` is { text, resetsAt } from a failed turn's message;
+  // `ok` marks a finished turn, which clears it. Returns { notice } when this turn took a budget
+  // over 80% or 100% for the first time in its period.
+  function record(engine, { usage, rateLimit, model, session, limit, ok } = {}) {
+    if (engine === 'grokbuild') {
+      if (limit) { grokLimit = { at: clock(), resetsAt: Number.isFinite(limit.resetsAt) ? limit.resetsAt : null, text: String(limit.text || '').slice(0, 200) }; save(); }
+      else if (ok && grokLimit) { grokLimit = null; save(); }
+    }
+    if (!usage) return null;
     let limitPoints = null;
     const beforeAt = meter?.at ?? null;
     if (rateLimit) {
@@ -143,11 +224,13 @@ function createUsage(deps) {
       if (w) limitPoints = reading(w.percent, w.resetsAt, 'turn');
     }
     const rec = {
-      at: Date.now(), engine, model: model || (usage.models || [])[0] || null,
+      at: clock(), engine, model: model || (usage.models || [])[0] || null,
       inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0,
       cacheReadTokens: usage.cacheReadTokens || 0, cacheWriteTokens: usage.cacheWriteTokens || 0,
       costUSD: usage.costUSD || 0, limitPoints,
-      contextTokens: (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0), contextWindow: usage.contextWindow || 0,
+      // Grok reports the last model call's own input (a long tool loop would otherwise count the context once per call).
+      contextTokens: Number.isFinite(usage.contextTokens) ? usage.contextTokens : (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0), contextWindow: usage.contextWindow || 0,
+      ...(engine === 'grokbuild' ? { session: session || null, compactPercent: usage.compactPercent || null } : {}),
     };
     records.push(rec);
     // The meter is account-wide: if you used Claude Code elsewhere since the reading this turn is
@@ -155,7 +238,40 @@ function createUsage(deps) {
     if (limitPoints != null && beforeAt) {
       (deps.otherActivity || otherClaudeActivity)(beforeAt - 2000).then((other) => { if (other) { rec.limitPoints = null; save(); } }, () => {});
     }
+    const notice = engine === 'grokbuild' ? budgetNotice(rec.at) : null;
     save();
+    return notice ? { notice } : null;
+  }
+
+  const clock = () => (deps.now || Date.now)();
+  // The limit-reached state while it applies: until the time Grok's message named, or (when it
+  // named none) until the next finished turn clears it. A passed time drops it.
+  function grokLimitNow(now = clock()) {
+    if (!grokLimit) return null;
+    if (grokLimit.resetsAt != null && grokLimit.resetsAt <= now) { grokLimit = null; save(); return null; }
+    return grokLimit;
+  }
+
+  // One non-blocking notice per period and level (80%, 100%) when the budget is crossed.
+  function budgetNotice(now) {
+    const status = budgetStatus(records, budget, now);
+    if (!status) return null;
+    let text = null;
+    for (const p of status.periods) {
+      for (const level of [80, 100]) {
+        if (p.percent < level) continue;
+        const key = `${p.kind}:${p.start}:${level}`;
+        if (notified[key]) continue;
+        notified[key] = true;
+        const fmt = status.unit === 'tokens' ? (n) => `${Math.round(n).toLocaleString('en-US')} tokens` : (n) => `$${n.toFixed(2)}`;
+        const which = p.kind === 'daily' ? 'daily' : 'weekly';
+        text = level === 100
+          ? `You've reached your ${which} Grok budget (${fmt(p.used)} of ${fmt(p.limit)}). Nothing is blocked: it counts only Lumen's own Grok use, and you can change it in Settings → Usage.`
+          : `You've used ${Math.round(p.percent)}% of your ${which} Grok budget (${fmt(p.used)} of ${fmt(p.limit)}). It counts only Lumen's own Grok use.`;
+      }
+    }
+    notified = Object.fromEntries(Object.entries(notified).slice(-40));
+    return text;
   }
 
   // `claude -p /usage`: a local command (0 tokens), run in an empty folder so no project settings
@@ -205,7 +321,7 @@ function createUsage(deps) {
 
   // Everything the panel and the meter show.
   async function summary({ refresh = false } = {}) {
-    const now = Date.now();
+    const now = clock();
     // The sidebar meter asks after every reply; while a turn's own rate_limit_event has the 5-hour
     // reading fresh, it doesn't need a `claude -p /usage` process (a whole CLI start) each time.
     const passive = !refresh && meterIsFresh(now);
@@ -214,12 +330,19 @@ function createUsage(deps) {
     const since = (t) => records.filter((r) => r.at >= t);
     const byEngine = {};
     for (const r of since(now - 7 * 24 * 60 * 60 * 1000)) (byEngine[r.engine] ||= []).push(r);
-    const today = since(new Date().setHours(0, 0, 0, 0));
+    const today = since(new Date(now).setHours(0, 0, 0, 0));
     const engines = {};
     for (const name of new Set(records.map((r) => r.engine))) {
       const mine = records.filter((r) => r.engine === name);
-      const last = mine[mine.length - 1];
-      engines[name] = { today: sum(today.filter((r) => r.engine === name)), last: { at: last.at, contextTokens: last.contextTokens || 0, contextWindow: last.contextWindow || 0 } };
+      let last = mine[mine.length - 1];
+      // Grok's context fill is the current chat's: its last turn, or none for a chat with no Grok turn yet.
+      let fresh = false;
+      if (name === 'grokbuild' && deps.grokSession) {
+        const session = deps.grokSession();
+        const own = session ? mine.filter((r) => r.session === session) : [];
+        if (own.length) last = own[own.length - 1]; else fresh = true;
+      }
+      engines[name] = { today: sum(today.filter((r) => r.engine === name)), last: { at: last.at, contextTokens: fresh ? 0 : last.contextTokens || 0, contextWindow: last.contextWindow || 0, compactPercent: last.compactPercent || null } };
     }
     const result = {
       plan: planData,
@@ -227,19 +350,22 @@ function createUsage(deps) {
       status: latestInfo ? { status: latestInfo.status || null, overage: latestInfo.isUsingOverage ? 'in use' : latestInfo.overageStatus || null } : null,
       lumen: {
         window: { start: windowStart, ...sum(since(windowStart).filter((r) => r.engine === 'claudecode')) },
-        today: sum(since(new Date().setHours(0, 0, 0, 0))),
+        today: sum(today),
         week: sum(since(now - 7 * 24 * 60 * 60 * 1000)),
         byEngine: Object.fromEntries(Object.entries(byEngine).map(([k, v]) => [k, sum(v)])),
       },
       engines,
+      // Grok: no plan numbers exist, only Lumen's own use, the user's budget and the limit message.
+      grok: { limit: grokLimitNow(now), windows: grokWindows(records, now), budget: { config: budget, status: budgetStatus(records, budget, now) } },
     };
     result.bars = { claudecode: barFor('claudecode', result), grokbuild: barFor('grokbuild', result) };
     return result;
   }
 
   function clear() { records = []; save(); }
+  function setBudget(next) { budget = normalizeBudget(next); save(); return budget; }
 
-  return { load, record, summary, planUsage, clear, meter: () => meter };
+  return { load, record, summary, planUsage, clear, setBudget, budget: () => budget, meter: () => meter };
 }
 
-module.exports = { createUsage, parsePlan, fiveHourOf, barFor, otherClaudeActivity };
+module.exports = { createUsage, parsePlan, fiveHourOf, barFor, otherClaudeActivity, normalizeBudget, periodStart, periodEnd, grokWindows, budgetStatus };

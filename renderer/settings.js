@@ -736,6 +736,36 @@ function meterRow(label, percent, note) {
   bar.classList.toggle('high', p >= 80);
   return stackRow(label, note, h('div', { class: 'meter-line' }, bar, h('span', { class: 'meter-value', text: `${Math.round(p)}%` })));
 }
+// Grok Build: it publishes no plan limits, so these rows are Lumen's own use (from its log), an optional
+// budget the user sets, and Grok's own limit-reached message. None of it is "plan remaining".
+function grokUsageRows(u, refresh) {
+  const g = u.grok;
+  if (!g) return [];
+  const rows = [];
+  rows.push(row('Grok Build', 'Grok doesn’t share your plan’s limits, so this shows Lumen’s own use; set a budget to get a progress bar.'));
+  if (g.limit) {
+    const when = g.limit.resetsAt ? `resets at ${new Date(g.limit.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : 'no reset time was given';
+    rows.push(row('Grok limit reached', `${when}. ${g.limit.text || ''} This clears after your next Grok reply that works.`.trim()));
+  }
+  const line = (label, w) => `${label}: ${w.turns} turn${w.turns === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens · ${dollars(w.costUSD)} at API prices`;
+  rows.push(row('Lumen’s Grok use', g.windows?.d7?.turns
+    ? `${line('Last 5 hours', g.windows.h5)}. ${line('Last 7 days', g.windows.d7)}. This is Lumen’s own use, not what’s left of your plan.`
+    : 'No Grok chats in Lumen in the last 7 days.'));
+  const cfg = g.budget?.config || { unit: 'usd', daily: 0, weekly: 0 };
+  for (const p of g.budget?.status?.periods || []) {
+    const fmt = g.budget.status.unit === 'tokens' ? (n) => `${tokens(Math.round(n))} tokens` : dollars;
+    rows.push(meterRow(p.kind === 'daily' ? 'Grok daily budget' : 'Grok weekly budget', p.percent, `${fmt(p.used)} of ${fmt(p.limit)} · resets ${new Date(p.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`));
+  }
+  const unit = h('select', { id: 'usage-budget-unit', 'aria-label': 'Budget unit' }, h('option', { value: 'usd', text: 'Dollars (API prices)' }), h('option', { value: 'tokens', text: 'Tokens' }));
+  unit.value = cfg.unit;
+  const amount = (id, label, value) => h('input', { type: 'number', id, min: '0', step: 'any', placeholder: 'None', 'aria-label': label, value: value ? String(value) : '' });
+  const daily = amount('usage-budget-daily', 'Daily budget', cfg.daily);
+  const weekly = amount('usage-budget-weekly', 'Weekly budget', cfg.weekly);
+  rows.push(stackRow('Grok budget (optional)', 'Counts Lumen’s own Grok use. The sidebar bar becomes a progress bar toward it (a day ends at midnight, a week on Monday), turns amber at 80% and red at 100%, and never blocks anything. Leave both empty for none.',
+    h('div', { class: 'controls' }, unit, h('label', { class: 'note', text: 'Daily' }), daily, h('label', { class: 'note', text: 'Weekly' }), weekly,
+      h('button', { id: 'usage-budget-save', text: 'Save budget', onclick: async () => { await S.setUsageBudget({ unit: unit.value, daily: daily.value, weekly: weekly.value }); refresh(); } }))));
+  return rows;
+}
 async function buildUsage(card) {
   const body = h('div', { class: 'usage' });
   const render = async (refresh) => {
@@ -771,6 +801,7 @@ async function buildUsage(card) {
         h('span', { class: 'note', text: `${e.turns} turn${e.turns === 1 ? '' : 's'} · ${tokens(e.tokens)} tokens${e.costUSD ? ` · ${dollars(e.costUSD)} at API prices` : ''}` })))
       : [h('span', { class: 'note', text: 'Nothing yet.' })]);
     parts.push(stackRow('Lumen, last 7 days', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.', list));
+    parts.push(...grokUsageRows(u, () => render(false)));
     parts.push(row('', null,
       h('button', { id: 'usage-refresh', text: 'Refresh', onclick: () => render(true) }),
       h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));

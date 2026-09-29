@@ -722,6 +722,7 @@ function create(deps) {
     handle('prefs:internals', internals);
     handle('prefs:usage', (options) => deps.usage?.summary({ refresh: Boolean(options?.refresh) }) ?? null); // [usage]
     handle('prefs:clear-usage', () => { deps.usage?.clear(); return true; });
+    handle('prefs:usage-budget', (budget) => deps.usage?.setBudget(budget) ?? null); // [usage] the Grok budget
     ipcMain.handle('prefs:ui', () => uiPrefs()); // the browser UI's own classes (compact tabs, …)
   }
 

@@ -1026,8 +1026,8 @@ class Agent {
   // [usage] Each finished turn's tokens (and, for Claude Code, the plan's limits) go to
   // features/usage.js through main.js (agent.onUsage). A failure there never affects the reply.
   reportUsage(engine, data) {
-    if (!this.onUsage || !data?.usage) return;
-    try { this.onUsage(engine, data); } catch (err) { console.error('[lumen] usage log failed:', err.message); }
+    if (!this.onUsage || !(data?.usage || data?.limit)) return null;
+    try { return this.onUsage(engine, data) || null; } catch (err) { console.error('[lumen] usage log failed:', err.message); return null; }
   }
 
   // ---- [claude code engine] One message through the user's Claude Code CLI. The session id lives
@@ -1101,7 +1101,10 @@ class Agent {
       emit,
     });
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
-    this.reportUsage('grokbuild', { usage: out.usage, model: engineModel(settings.model) });
+    // A plan-limit failure carries the reset time when Grok's message named one (out.planLimit); a
+    // finished turn clears it. The log may answer with a budget notice (features/usage.js).
+    const logged = this.reportUsage('grokbuild', { usage: out.usage, model: engineModel(settings.model), session: out.sessionId || settings.gbSession || null, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
+    if (logged?.notice) emit({ type: 'notice', text: logged.notice });
     if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });

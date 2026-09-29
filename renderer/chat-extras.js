@@ -25,9 +25,10 @@
 
   // ---------- [usage] the usage bar ----------
   // One compact bar per CLI engine, from features/usage.js's barFor(): Claude Code shows its plan's
-  // 5-hour limit ("Plan 29% · resets 8:09 PM · week 12% · Lumen ≈3"); Grok Build shows the tokens and
-  // cost of today's sidebar turns, and the context window's fill when the CLI reports its size. The
-  // bar hides when there is nothing real to show. Live during a Claude turn (rate_limit_event),
+  // 5-hour limit ("Plan 29% · resets 8:09 PM · week 12% · Lumen ≈3"); Grok Build, which
+  // publishes no plan limits, shows the chat's context-window fill with today's tokens and cost, a
+  // progress bar toward the budget the user set, or "limit reached" with its reset time; never a
+  // plan percentage. With nothing real yet it shows a hint instead of a bar. Live during a Claude turn (rate_limit_event),
   // refreshed after each one; a click opens Settings → Usage.
   const meter = Object.assign(document.createElement('button'), { type: 'button', id: 'usage-meter', className: 'usage-meter', hidden: true });
   const meterBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
@@ -47,15 +48,64 @@
   const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const compact = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
   const pts = (n) => (n < 1 ? '<1' : String(Math.round(n)));
+  const money = (n) => (n <= 0 ? '$0' : `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`);
+  // A time of day when it is today, else with the weekday too ("Mon 12:00 AM").
+  const when = (ms) => (new Date(ms).toDateString() === new Date().toDateString() ? clock(ms) : new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }));
+  let limitTimer = null;
+  // What Grok's bar says (features/usage.js barFor, kinds limit | budget | context). Grok publishes
+  // no plan limits, so nothing here is "plan remaining": the title says whose use it is.
+  function grokParts(bar, text, title) {
+    let head = null;
+    if (bar.kind === 'limit') {
+      head = bar.resetsAt ? window.t('usage.grok.limit', { time: when(bar.resetsAt) }) : window.t('usage.grok.limit.unknown');
+      text.push(head);
+      title.push(window.t('usage.grok.limit.title'));
+      if (bar.message) title.push(bar.message);
+    } else if (bar.kind === 'budget') {
+      const fmt = bar.unit === 'tokens' ? (n) => window.t('usage.tokens', { tokens: compact(n) }) : money;
+      const period = window.t(bar.period === 'weekly' ? 'usage.period.weekly' : 'usage.period.daily');
+      head = window.t('usage.grok.budget', { percent: Math.round(bar.percent) });
+      text.push(head, window.t('usage.grok.budget.of', { used: fmt(bar.used), limit: fmt(bar.limit), period }), window.t('usage.resets', { time: when(bar.resetsAt) }));
+      title.push(window.t('usage.grok.budget.title', { percent: Math.round(bar.percent), used: fmt(bar.used), limit: fmt(bar.limit), period }));
+    } else {
+      if (bar.percent != null) {
+        head = window.t('usage.grok.context', { percent: Math.round(bar.percent) });
+        text.push(head);
+        title.push(window.t('usage.context.title', { percent: Math.round(bar.percent), used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
+        if (bar.compactPercent) title.push(window.t('usage.grok.compact.title', { percent: bar.compactPercent }));
+      }
+      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
+      if (bar.costUSD > 0) text.push(window.t('usage.grok.cost', { cost: money(bar.costUSD) }));
+    }
+    const w = bar.windows;
+    if (w && w.d7?.turns) {
+      title.push(window.t('usage.grok.windows.title', { t5: compact(w.h5.tokens), c5: money(w.h5.costUSD), t7: compact(w.d7.tokens), c7: money(w.d7.costUSD) }));
+    }
+    title.push(window.t('usage.grok.noplan.title'));
+    return head;
+  }
   function renderMeter() {
     const key = engineKey();
     const bar = ENGINE_NAMES[key] ? usage?.bars?.[key] : null;
-    meter.hidden = !bar;
+    clearTimeout(limitTimer);
+    // Grok Build, nothing real yet: the bar stays hidden, and a hint says how to get one.
+    const hint = !bar && key === 'grokbuild' && Boolean(usage);
+    meter.hidden = !bar && !hint;
+    meter.classList.toggle('hint', hint);
+    if (hint) {
+      meterBar.hidden = true;
+      meter.classList.remove('high', 'warn');
+      delete meter.dataset.kind;
+      meterText.textContent = window.t('usage.grok.hint');
+      meter.title = `${window.t('usage.grok.noplan.title')} ${window.t('usage.more')}`;
+      return;
+    }
     if (!bar) return;
     const engine = ENGINE_NAMES[key];
     const text = [];
     const title = [];
     const percent = bar.percent == null ? null : Math.round(bar.percent);
+    let head = null;
     if (bar.kind === 'plan') {
       const resets = bar.resetsAt ? clock(bar.resetsAt) : bar.resetsText;
       text.push(window.t('usage.plan', { percent }));
@@ -66,10 +116,15 @@
       if (resets) title.push(window.t('usage.resets.title', { time: resets }));
       if (bar.weekly) title.push(window.t('usage.week.title', { percent: Math.round(bar.weekly.percent) }));
       if (bar.lumenPoints != null) title.push(window.t('usage.share.title', { points: pts(bar.lumenPoints) }));
+      head = text[0];
+    } else if (key === 'grokbuild') {
+      head = grokParts(bar, text, title);
+      if (bar.kind === 'limit' && bar.resetsAt) limitTimer = setTimeout(() => refreshUsage(false), Math.min(2 ** 31 - 1, Math.max(1000, bar.resetsAt - Date.now() + 1000)));
     } else {
       if (percent != null) {
         text.push(window.t('usage.context', { percent }));
         title.push(window.t('usage.context.title', { percent, used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
+        head = text[0];
       }
       if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }) + (bar.costUSD > 0 ? ` · ~$${bar.costUSD < 0.01 ? bar.costUSD.toFixed(4) : bar.costUSD.toFixed(2)}` : ''));
       title.push(window.t('usage.tokens.title', { engine }));
@@ -78,10 +133,13 @@
     if (percent != null) {
       meterFill.style.width = `${percent}%`;
       meterBar.setAttribute('aria-valuenow', String(percent));
-      meterBar.setAttribute('aria-valuetext', text[0]);
+      meterBar.setAttribute('aria-valuetext', head || text[0]);
     }
     meterBar.setAttribute('aria-label', window.t('usage.label', { engine }));
-    meter.classList.toggle('high', percent != null && percent >= 80);
+    const level = bar.level || (percent != null && percent >= 80 ? 'high' : 'ok');
+    meter.classList.toggle('high', level === 'high');
+    meter.classList.toggle('warn', level === 'warn');
+    meter.dataset.kind = bar.kind;
     meterText.textContent = text.join(' · ');
     meter.title = `${title.join(' ')} ${window.t('usage.more')}`;
   }
