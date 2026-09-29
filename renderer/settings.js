@@ -1032,7 +1032,8 @@ function buildSystem(card) {
   const perfNote = h('span', { class: 'note', id: 'performance-note' });
   const showPerfNote = () => {
     const p = st.performance;
-    const why = (p?.reasons || []).map((r) => tr('settings.performance.why.' + r.key, { memory: 'this PC has {gb} GB of memory', cpu: 'this PC has {count} processor cores', gpu: 'graphics acceleration is not available', throttled: 'the PC is limiting its speed' }[r.key], r.vars));
+    const WHY_KEYS = { memory: 'settings.performance.why.memory', cpu: 'settings.performance.why.cpu', gpu: 'settings.performance.why.gpu', throttled: 'settings.performance.why.throttled' };
+    const why = (p?.reasons || []).filter((r) => WHY_KEYS[r.key]).map((r) => tr(WHY_KEYS[r.key], { memory: 'this PC has {gb} GB of memory', cpu: 'this PC has {count} processor cores', gpu: 'graphics acceleration is not available', throttled: 'the PC is limiting its speed' }[r.key], r.vars));
     perfNote.textContent = p?.active ? (why.length ? tr('settings.performance.on.because', 'Performance mode is on because {why}.', { why: why.join(', ') }) : tr('settings.performance.on.note', 'Performance mode is on.')) : '';
   };
   showPerfNote();
