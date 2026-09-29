@@ -97,7 +97,7 @@ const USAGE_TEXT = [
     page = await app.evaluate(async () => {
       const t = global.__settings.tabs().find((x) => x.settings);
       const wc = t && global.__settings.contents(t.id);
-      return wc ? wc.executeJavaScript("(() => { const sec = document.getElementById('sec-usage'); return sec && !sec.hidden && { meters: sec.querySelectorAll('.meter').length, width: sec.querySelector('.meter i')?.style.width, text: sec.textContent }; })()") : null;
+      return wc ? wc.executeJavaScript("(() => { const sec = document.getElementById('sec-usage'); return sec && !sec.closest('[hidden]') && { meters: sec.querySelectorAll('.meter').length, width: sec.querySelector('.meter i')?.style.width, text: sec.textContent }; })()") : null;
     });
   }
   check('lumen://settings/usage opens on Usage and shows the plan\'s bars', page && page.meters >= 1, JSON.stringify(page).slice(0, 300));

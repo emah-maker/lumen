@@ -14,11 +14,15 @@ const { cleanList: cleanWidgets, cleanSizes } = require('./features/widgets');
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
 const SETTINGS_PRELOAD = path.join(__dirname, 'settings-preload.js');
-const SECTIONS = ['you-and-ai', 'skills', 'usage', 'appearance', 'search', 'startup', 'privacy', 'downloads', 'languages', 'accessibility', 'system', 'extensions', 'reset', 'about', 'internals'];
+// The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
+// section ids (mapped to a category) and the sub-pages.
+const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
+const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
+  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
-const urlFor = (section) => (SECTIONS.includes(section) ? `${SETTINGS_URL}#${section}` : SETTINGS_URL);
+const urlFor = (section) => (SECTION_LINKS.includes(section) ? `${SETTINGS_URL}#${section}` : SETTINGS_URL);
 const displayUrl = (url) => {
   const section = url.split('#')[1] || '';
   return `lumen://settings${section ? `/${section}` : ''}`;
@@ -48,7 +52,7 @@ const DEFAULTS = {
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
-  newTabWidgetsPacked: true, // [widgets] Keep widgets packed: cards slide up into gaps
+  newTabWidgetsPacked: false, // [widgets] Keep widgets packed: cards slide up into gaps (off: a card stays in the cell it was put in)
   homeWidgetSizes: {}, // [widgets] the last size used per kind of widget (the default for a new one); internal
   weatherPlaces: [], // [widgets] places saved from weather widgets (features/weather-view.js); internal
   weatherHere: null, // [widgets] the last "My location" answer { name, lat, lon, at }, kept an hour; internal
@@ -83,6 +87,8 @@ const DEFAULTS = {
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
+  autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
+  researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
   translateNever: [], // sites where the offer stays away
@@ -254,7 +260,7 @@ function create(deps) {
       accent: accentOf(p.accentColor),
       clock: p.newTabClock, name: p.newTabName,
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
-      widgetsPacked: p.newTabWidgetsPacked !== false,
+      widgetsPacked: p.newTabWidgetsPacked === true,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };
   }
@@ -303,7 +309,16 @@ function create(deps) {
     const config = { mode };
     if (mode === 'fixed_servers') Object.assign(config, { proxyRules: rules, proxyBypassRules: bypass });
     if (mode === 'pac_script') config.pacScript = pacUrl;
-    return ses().setProxy(config).catch((err) => console.error('Proxy:', err.message));
+    return Promise.all([ses(), ...mirrored].map((target) => target.setProxy(config).catch((err) => console.error('Proxy:', err.message))));
+  }
+  // Other sessions that follow the profile's network settings (proxy, request headers): the research tabs'
+  // isolated session must not go around a proxy the user set, or ignore Do Not Track / language.
+  const mirrored = new Set();
+  function mirrorSession(target) {
+    if (mirrored.has(target)) return;
+    mirrored.add(target);
+    applyProxy();
+    setupHeaders(target);
   }
 
   // ---- request headers: the one onBeforeSendHeaders listener (the ad blocker owns the others) ----
@@ -334,8 +349,8 @@ function create(deps) {
       return false;
     }
   }
-  function setupHeaders() {
-    ses().webRequest.onBeforeSendHeaders((details, callback) => {
+  function setupHeaders(target = ses()) {
+    target.webRequest.onBeforeSendHeaders((details, callback) => {
       const p = prefs();
       const headers = details.requestHeaders;
       if (deps.chromeHintHeaders && sendsClientHints(details.url)) {
@@ -782,10 +797,10 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, attachTab, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    prefs, set, state, start, attachTab, mirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };
 }
 
-module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

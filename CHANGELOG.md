@@ -4,6 +4,18 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.3.1 (2026-09-29)
+
+- Settings, redesigned like System Settings: a sidebar with search and eleven categories, one category per page in grouped lists, and deeper areas (skills, usage, MCP servers, site permissions, widgets, internals) as their own pages. Rarely used options moved under Advanced. No setting was removed and old `lumen://settings/...` links still open the right place.
+- The AI now shows its research: pages it searches or reads open as background tabs in an "AI: <query>" group with a reading marker. These tabs use a separate memory-only session, so none of your cookies or logins reach those pages and nothing they set reaches your profile. Turn it off in Settings > AI and agents.
+- Claude Code with no model picked now chooses Haiku, Sonnet or Opus per message by how hard the request looks; a model you pick is always used. Toggle in Settings > AI and agents.
+- Faster agent tools: `navigate`/`open_tab` can return the new page's outline in the same call, clicks and typing can return only what changed, `read_page` can extract tables, links and lists as JSON, and `read_pdf` takes a `query` that finds which pages mention something in one call.
+- PDFs zoom with Ctrl+Plus, Ctrl+Minus, Ctrl+0 and Ctrl+scroll.
+- Organize tabs counts sleeping and not-yet-loaded tabs, and its "nothing to group" and error messages are a note that closes itself instead of a dialog.
+- New-tab page: the clock and search stay centred at full size; widgets stay exactly where you drop them (packing is now opt-in) with a clear gap from the centre column and a narrower outer margin; the weather week lays out in a row on wide cards; the world clock and Favorites no longer show a scrollbar when everything fits.
+- The sidebar's "working" line keeps animating under Reduce motion and Performance mode, no longer restarts with each streamed word, and hides while an approval waits for you.
+- Security: the Organize undo message is now accepted only from Lumen's own interface, and one-shot Grok calls can't use the terminal.
+
 ## 0.3.0 (2026-09-29)
 
 - The AI sidebar now floats over the new-tab page instead of squeezing it: opening it no longer narrows and re-wraps the cards and the search box; the sidebar simply covers the right side of the page. Web pages still make room for the sidebar beside them as before. The sidebar's own keyboard use, focus and Reduce motion behavior are unchanged.

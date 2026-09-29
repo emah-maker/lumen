@@ -17,6 +17,14 @@ const MAX_PAGES = 5000;
 
 class PdfError extends Error {}
 
+// What the AI is told about read_pdf (agent.js and snapshot.js both use these, so every registry agrees).
+const READ_PDF_DESCRIPTION = `Read a PDF open in a tab; the user is asked once per PDF. Pages come under "--- Page N of M ---" markers. To find the page with some text, use query (one call: matching pages plus snippets). Up to ${MAX_CHARS} chars per call; if cut off, it says which pages to ask for next. Untrusted content.`;
+const READ_PDF_PROPERTIES = {
+  tab_id: { type: 'integer' },
+  pages: { type: 'string', description: 'e.g. "3", "1-5", "4-"' },
+  query: { type: 'string', description: 'Text to find (case-insensitive)' },
+};
+
 // ---- objects ----
 const WS = /\s/;
 
@@ -288,24 +296,80 @@ function parsePageRange(spec, total) {
   return [...wanted].sort((a, b) => a - b);
 }
 
-// -> { numPages, pages: [n…], text, truncated, next } (next: first page not returned, or null)
-function extractPdfText(buf, { pages: spec, maxChars = MAX_CHARS } = {}) {
+// Every page's text, in order: string[] (index 0 = page 1). This is the expensive step; callers cache it.
+function extractPages(buf) {
   const objects = parseObjects(buf);
   const list = pageList(objects);
   if (!list.length) throw new PdfError('No pages were found in this PDF.');
-  const wanted = parsePageRange(spec, list.length);
-  if (!wanted.length) throw new PdfError(`This PDF has ${list.length} page${list.length === 1 ? '' : 's'}; that range has none.`);
   const cache = new Map();
+  return list.map((page) => {
+    const contents = refsIn(valueOf(page.dict, 'Contents')).map((num) => objects.get(num)?.data).filter(Boolean);
+    return contents.length ? pageText(Buffer.concat(contents.flatMap((c) => [c, Buffer.from('\n')])), fontsOf(objects, page.resources, cache)) : '';
+  });
+}
+
+const NO_TEXT = '(no text on this page; it may be a scan or an image)';
+// One page as the AI sees it: a marker line, then the text.
+const pageBlock = (n, total, body) => `--- Page ${n} of ${total} ---
+${body || NO_TEXT}`;
+
+const SNIPPET_RADIUS = 90; // characters of context each side of a hit
+const MAX_HIT_PAGES = 40; // pages listed for a query
+const MAX_SNIPPETS_PER_PAGE = 2;
+
+// Case-insensitive search of one page's text (whitespace collapsed, so a phrase that wraps across
+// lines still matches). -> { count, snippets: [string] }
+function findInPage(body, query) {
+  const needle = String(query).trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!needle) return { count: 0, snippets: [] };
+  const flat = String(body).replace(/\s+/g, ' ');
+  const hay = flat.toLowerCase();
+  const snippets = [];
+  let count = 0;
+  let last = -Infinity;
+  for (let at = hay.indexOf(needle); at !== -1; at = hay.indexOf(needle, at + needle.length)) {
+    count++;
+    if (snippets.length < MAX_SNIPPETS_PER_PAGE && at - last > SNIPPET_RADIUS) {
+      const from = Math.max(0, at - SNIPPET_RADIUS);
+      const to = Math.min(flat.length, at + needle.length + SNIPPET_RADIUS);
+      snippets.push(`${from > 0 ? '…' : ''}${flat.slice(from, to).trim()}${to < flat.length ? '…' : ''}`);
+      last = at;
+    }
+  }
+  return { count, snippets };
+}
+
+// -> { numPages, pages: [n…] (returned), text, truncated, next, hits? }
+// Without `query`: the wanted pages, each under a "--- Page N of M ---" marker, up to maxChars.
+// With `query`: only the pages (within the range) that contain it, with a snippet or two each.
+function formatPages(texts, { pages: spec, query, maxChars = MAX_CHARS } = {}) {
+  const total = texts.length;
+  const wanted = parsePageRange(spec, total);
+  if (!wanted.length) throw new PdfError(`This PDF has ${total} page${total === 1 ? '' : 's'}; that range has none.`);
+  if (query !== undefined && query !== null && String(query).trim() !== '') {
+    const hits = [];
+    for (const n of wanted) {
+      const found = findInPage(texts[n - 1], query);
+      if (found.count) hits.push({ page: n, ...found });
+    }
+    const shown = hits.slice(0, MAX_HIT_PAGES);
+    const lines = shown.map((h) => `Page ${h.page} (${h.count} match${h.count === 1 ? '' : 'es'}): ${h.snippets.join(' | ')}`);
+    const searched = spec ? `pages ${String(spec).trim()}` : `all ${total} pages`;
+    let text = hits.length
+      ? `"${String(query).trim()}" found on ${hits.length} page${hits.length === 1 ? '' : 's'} (${hits.map((h) => h.page).slice(0, MAX_HIT_PAGES).join(', ')}${hits.length > MAX_HIT_PAGES ? ', …' : ''}), searched ${searched}:
+${lines.join('\n')}`
+      : `"${String(query).trim()}" was not found in ${searched}. ${texts.every((t) => !t) ? 'This PDF has no extractable text (scanned?).' : 'Try a shorter or differently spelled query; text is matched case-insensitively.'}`;
+    if (hits.length > MAX_HIT_PAGES) text += `
+(${hits.length - MAX_HIT_PAGES} more pages match; narrow with pages:"${shown[shown.length - 1].page + 1}-".)`;
+    return { numPages: total, pages: shown.map((h) => h.page), text, truncated: false, next: null, hits: hits.map((h) => ({ page: h.page, count: h.count })) };
+  }
   const parts = [];
   const done = [];
   let used = 0;
   let truncated = false;
   let next = null;
   for (const n of wanted) {
-    const page = list[n - 1];
-    const contents = refsIn(valueOf(page.dict, 'Contents')).map((num) => objects.get(num)?.data).filter(Boolean);
-    const body = contents.length ? pageText(Buffer.concat(contents.flatMap((c) => [c, Buffer.from('\n')])), fontsOf(objects, page.resources, cache)) : '';
-    const block = `--- Page ${n} of ${list.length} ---\n${body || '(no text on this page; it may be a scan or an image)'}`;
+    const block = pageBlock(n, total, texts[n - 1]);
     if (used + block.length > maxChars) {
       truncated = true;
       if (!done.length) { parts.push(`${block.slice(0, maxChars)}…`); done.push(n); next = wanted.find((p) => p > n) ?? null; }
@@ -316,7 +380,38 @@ function extractPdfText(buf, { pages: spec, maxChars = MAX_CHARS } = {}) {
     done.push(n);
     used += block.length + 2;
   }
-  return { numPages: list.length, pages: done, text: parts.join('\n\n'), truncated, next };
+  return { numPages: total, pages: done, text: parts.join('\n\n'), truncated, next };
+}
+
+function extractPdfText(buf, opts = {}) {
+  return formatPages(extractPages(buf), opts);
+}
+
+// Parsed pages are kept per PDF so a second read_pdf call (another range, a query) neither
+// downloads nor parses again. Key: address without fragment, plus the file's size and mtime for
+// local files so an edited file is re-read. Small LRU.
+const PAGE_CACHE = new Map();
+const PAGE_CACHE_MAX = 6;
+function cacheGet(key) {
+  const hit = PAGE_CACHE.get(key);
+  if (hit) { PAGE_CACHE.delete(key); PAGE_CACHE.set(key, hit); }
+  return hit;
+}
+function cachePut(key, texts) {
+  PAGE_CACHE.set(key, texts);
+  while (PAGE_CACHE.size > PAGE_CACHE_MAX) PAGE_CACHE.delete(PAGE_CACHE.keys().next().value);
+}
+async function fileStamp(url) {
+  if (!/^file:/i.test(url)) return '';
+  try { const st = await fs.promises.stat(fileURLToPath(url)); return `|${st.size}|${st.mtimeMs}`; } catch { return ''; }
+}
+async function loadPdfPages(session, url) {
+  const key = pdfKey(url) + (await fileStamp(url));
+  const cached = cacheGet(key);
+  if (cached) return cached;
+  const texts = extractPages(await loadPdfBytes(session, url));
+  cachePut(key, texts);
+  return texts;
 }
 
 // ---- what the approval card and result say about the file ----
@@ -372,4 +467,4 @@ async function loadPdfBytes(session, url) {
   return Buffer.concat(chunks);
 }
 
-module.exports = { extractPdfText, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };
+module.exports = { READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };

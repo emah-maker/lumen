@@ -38,6 +38,7 @@ const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords } = require('./tab-groups');
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
+const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
 const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
@@ -145,7 +146,7 @@ const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|
 const UI_ONLY_IPC = new Set([
   'content-bounds', 'view:freeze', 'view:thaw', 'chat:full', 'view:warm',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
-  'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize',
+  'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
@@ -688,8 +689,9 @@ const tabGroups = createTabGroups({
   learned: organizeLearner,
   getTabs: () => tabs,
   setTabs: (list) => { tabs = list; },
-  urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : ''),
-  titleOf: (t) => (alive(t) ? t.view.webContents.getTitle() : ''),
+  // A sleeping / restored-but-unloaded tab has no webContents; its stored URL and title stand in, so it can be grouped.
+  urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || ''),
+  titleOf: (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || ''),
   textOf: (t) => t.pageText || '', // the page's description / first heading (see readPageText)
   isWeb: (url) => isWebUrl(url),
   mode: () => groupingMode(),
@@ -1128,6 +1130,8 @@ function tabState() {
         groupId: t.groupId || null,
         alert: dialogs.pendingFor(wc), // a dialog is waiting for this background tab
         pinned: Boolean(t.pinned),
+        isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
+        aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         ...tabTools.state(t, true), // audible, muted
       };
     }),
@@ -1203,7 +1207,33 @@ function setOverlay(tab, params) {
   }
 }
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null } = {}) {
+// [research tabs] Tabs the AI opened to show its research live in a separate, memory-only session: none of the
+// user's cookies, logins, storage or cache go to those pages, and nothing they set reaches the profile. Only that
+// one known partition is accepted (never a "persist:" one), and it is passed on to tabs opened from such a tab.
+const RESEARCH_PARTITION = require('./features/research-tabs').RESEARCH_PARTITION;
+const isolatedPartition = (p) => (p === RESEARCH_PARTITION ? p : null);
+let researchSes = null;
+function researchSession() {
+  if (researchSes) return researchSes;
+  const ses = session.fromPartition(RESEARCH_PARTITION);
+  // Nothing to ask the user about in a page the AI opened to read: no permissions, no downloads.
+  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  ses.setPermissionCheckHandler(() => false);
+  ses.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
+  ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
+  // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
+  ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'page-dialogs-preload.js') });
+  ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  settingsBackend.mirrorSession(ses); // the profile's proxy, Do Not Track / Global Privacy Control, languages
+  adblock.attachSession(ses); // the same filters as normal tabs (waits for the engine if it is still loading)
+  researchSes = ses;
+  return ses;
+}
+const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
+
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null } = {}) {
+  const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
+  if (isolated) researchSession();
   const view = new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
@@ -1211,10 +1241,11 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings),
       ...(historyPage ? { preload: path.join(__dirname, 'history-preload.js') } : {}),
       ...(managerPage ? { preload: managers.preloadFor(managerPage) } : {}), // the Bookmarks, Downloads or chat page
+      ...(isolated ? { partition: isolated } : {}),
     },
   });
   const id = nextTabId++;
-  const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}) };
+  const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
@@ -1261,7 +1292,7 @@ function wireView(tab, url, history = null) {
         },
       };
     }
-    withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id }));
+    withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id, partition: tab.isolated })); // a link from a research tab stays in its session
     return { action: 'deny' };
   });
   wc.on('enter-html-full-screen', () => { tab.fullscreen = true; layout(); });
@@ -1292,7 +1323,7 @@ function wireView(tab, url, history = null) {
     tab.favicons = tab.faviconUrls;
     tab.favicon = tab.favicons[0] || null;
     sendTabs();
-    if (tab.favicons.length) cacheFavicon(wc.getURL(), tab.favicons);
+    if (tab.favicons.length && !tab.isolated) cacheFavicon(wc.getURL(), tab.favicons);
   });
   wc.on('did-navigate', (_e, url) => {
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
@@ -1351,7 +1382,7 @@ function wireView(tab, url, history = null) {
       sendTabs();
       return;
     }
-    recordVisit(url, wc.getTitle());
+    if (!tab.isolated) recordVisit(url, wc.getTitle()); // research pages stay out of the user's History
     tab.lastVisitUrl = url;
     tab.pageText = ''; // a new page: its text arrives after it loads
     scheduleAutoGroup();
@@ -1362,7 +1393,7 @@ function wireView(tab, url, history = null) {
   wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
     if (!isMainFrame || url.split('#')[0] === (tab.lastVisitUrl || '').split('#')[0]) return;
     tab.lastVisitUrl = url;
-    recordVisit(url, wc.getTitle());
+    if (!tab.isolated) recordVisit(url, wc.getTitle());
   });
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
@@ -1423,7 +1454,7 @@ function wireView(tab, url, history = null) {
     applyChromeIdentity(wc);
     siteSecurity.attachTab(wc); // mixed content, on the debugger session applyChromeIdentity opened
     safeBrowsing.attachTab(wc); // the warning page's "Visit this site" link
-    syncExtensions(() => extensions?.addTab(wc, win));
+    if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
     // A popup (sign-in, payment) presents itself as Chrome like the tab that opened it: Google
     // sign-in and some payment pages refuse browsers they don't recognise.
     wc.on('did-create-window', (child) => applyChromeIdentity(child.webContents));
@@ -1488,6 +1519,7 @@ function wakeTab(tab) {
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
       ...(tab.managerPage ? { preload: managers.preloadFor(tab.managerPage) } : {}),
+      ...(tab.isolated ? { partition: tab.isolated } : {}), // a sleeping research tab wakes in the same session
     },
   });
   tab.view = view;
@@ -1652,7 +1684,7 @@ function closeTab(id, { destroyed = false } = {}) {
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
   // sleeping tab has no webContents at all; sleepUrl is its last known URL instead.
   const url = tab.pendingCloseUrl ?? (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
-  if (url && !isInternal(url)) {
+  if (url && !isInternal(url) && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
     closedTabs.push(url);
     tabTools.noteClosed(url, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
   }
@@ -1715,6 +1747,15 @@ function resolveInput(text) {
 
 function zoomBy(wc, step) {
   if (!wc) return;
+  // A PDF tab: the built-in viewer keeps its own scale and ignores page zoom (features/pdf-zoom.js).
+  if (pdfZoom.viewerFrame(wc)) {
+    pdfZoom.zoomPdf(wc, step).then((took) => { if (!took) zoomPage(wc, step); });
+    return;
+  }
+  zoomPage(wc, step);
+}
+
+function zoomPage(wc, step) {
   // [settings] Reset (Ctrl+0, the zoom pill) goes back to the default zoom from Settings, and the
   // site follows that default again; zooming by hand makes the default leave this site alone.
   if (step === 0) settingsBackend.resetZoom(wc);
@@ -1902,12 +1943,12 @@ async function organizeTabs() {
     });
     sendTabs();
     if (!stats.groups && !stats.created) {
-      if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'info', message: t('organize.none'), detail: t('organize.none.detail') });
+      organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // a note that closes itself, not a modal: nothing needs an answer
     } else if (stats.reason === 'confident' || stats.reason === 'cached') organizeNote(t('organize.noAi'), { undo: true });
     else if (stats.reason === 'refined') organizeNote(t('organize.refined'), { undo: true });
     else if (stats.reason !== 'cancelled') organizeNote(t('organize.localOnly'), { undo: true });
   } catch (err) {
-    if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: t('organize.failed'), detail: err.message });
+    organizeNote(`${t('organize.failed')}: ${err.message}`);
   } finally {
     organizing = false;
     organizeAbort = null;
@@ -2170,7 +2211,7 @@ function duplicateTab(id) {
     }
   }
   const url = tabUrl(tab) || newTabUrl();
-  const { id: newId } = openTab(url, { background: true, history, historyPage: url.startsWith(HISTORY_URL), managerPage: tab.managerPage || null });
+  const { id: newId } = openTab(url, { background: true, history, historyPage: url.startsWith(HISTORY_URL), managerPage: tab.managerPage || null, partition: tab.isolated });
   const copy = tabs.find((t) => t.id === newId);
   copy.pinned = Boolean(tab.pinned);
   placeAfter(copy, tab);
@@ -2603,16 +2644,16 @@ function showContextMenu(wc, p) {
   const selection = p.selectionText.trim();
   if (p.linkURL && isWebUrl(p.linkURL)) {
     items.push(
-      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id }) },
+      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: isolatedOf(wc) }) },
       { label: t('menu.copyLink'), click: () => clipboard.writeText(p.linkURL) },
       { type: 'separator' },
     );
   }
   if (p.mediaType === 'image' && p.srcURL) {
-    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true }) });
+    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) }) });
     items.push({ label: t('menu.copyImage'), click: () => wc.copyImageAt(p.x, p.y) }, { type: 'separator' });
   }
-  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true }), copy: (text) => clipboard.writeText(text) }));
+  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
   } else if (selection) {
@@ -2830,7 +2871,7 @@ function sessionEntry() {
   // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
   // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
   const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
-  const saved = tabs.filter((t) => isWebUrl(urlOf(t)) || chatPage.isChatUrl(urlOf(t))); // web pages, and lumen://chat
+  const saved = tabs.filter((t) => !t.isolated && (isWebUrl(urlOf(t)) || chatPage.isChatUrl(urlOf(t)))); // web pages, and lumen://chat (not research tabs: they would come back in the user's session)
   const urls = saved.map(urlOf);
   const titleOf = (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '');
   return {
@@ -3561,13 +3602,29 @@ app.on('will-quit', () => mcpClient.stopAll());
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 let runRec = null;
 const inRun = (fn) => (...args) => (runRec && winRecs.has(runRec) ? withWindow(runRec, () => fn(...args)) : fn(...args));
+// [research tabs] web_search / read_urls show what they look at in background tabs (features/research-tabs.js).
+// The tabs open in the run's window, behind the user's current tab, never through agentOpenTab (that
+// would move the task onto them). Private windows have no agent, so none of this reaches them.
+const researchTabs = require('./features/research-tabs').createResearchTabs({
+  enabled: () => readSettings().researchTabs !== false,
+  isAiOff: (url) => aiSites.isOff(url),
+  searchUrl: (query) => searchUrlFor(readSettings().searchEngine, query),
+  openTab: inRun((url, opts) => openTab(url, { background: true, ...opts }).id),
+  navigateTab: inRun((id, url) => { const t = tabs.find((x) => x.id === id); if (alive(t)) t.view.webContents.loadURL(url).catch(() => {}); }),
+  tabExists: inRun((id) => { const t = tabs.find((x) => x.id === id); return Boolean(t && !t.closing && (alive(t) || t.sleeping)); }),
+  createGroup: inRun((name, ids) => { const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
+  groupExists: inRun((groupId) => tabGroups.groups.has(groupId)),
+  setReading: inRun((id, on) => { const t = tabs.find((x) => x.id === id); if (t && Boolean(t.aiReading) !== on) { t.aiReading = on; sendTabs(); } }),
+});
 const agent = new Agent({
+  research: researchTabs,
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
+  autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).

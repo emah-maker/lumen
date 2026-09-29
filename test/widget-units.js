@@ -24,6 +24,24 @@ module.exports = async function widgetUnits(check) {
   check('widgets layout: without packing a card stays where it is dropped (gaps allowed)', r[0].x === 3 && r[0].y === 10 && r[1].y === 0, enc(r));
   r = WL.move(items, 'waaaa1', { x: 3, y: 10 }, { packed: true });
   check('widgets layout: with packing it slides up into the gap', r[0].y === 3 && noOverlap(r), enc(r));
+  // A card can be put in any cell, in a low row with nothing above it, and stays exactly there (the page does not pack by default).
+  {
+    const low = { obstacle: { x: 4, y: 0, w: 4, h: 6 }, packed: false };
+    const lone = [it('waaaa1', 'weather', 0, 0, 4, 3), it('wbbbb1', 'calendar', 8, 0, 4, 3)];
+    r = WL.move(lone, 'waaaa1', { x: 0, y: 12 }, low);
+    check('widgets layout: a card dropped in a low row with empty rows above stays there', r[0].x === 0 && r[0].y === 12 && r[1].y === 0 && noOverlap(r), enc(r));
+    r = WL.move(lone, 'waaaa1', { x: 5, y: 15 }, low);
+    check('widgets layout: a low row under the centre column is a valid drop', r[0].x === 5 && r[0].y === 15, enc(r));
+    r = WL.resolve(WL.move(lone, 'waaaa1', { x: 2, y: 30 }, low), low);
+    check('widgets layout: re-resolving a saved layout (a reload) does not pull a low card up', r[0].y === 30 && r[1].y === 0, enc(r));
+    r = WL.resize(WL.move(lone, 'waaaa1', { x: 0, y: 12 }, low), 'waaaa1', { x: 0, y: 12, w: 6, h: 4 }, low);
+    check('widgets layout: resizing a low card keeps its row', r[0].y === 12 && r[0].w === 6 && r[0].h === 4, enc(r));
+    r = WL.move(WL.move(lone, 'waaaa1', { x: 0, y: 12 }, low), 'wbbbb1', { x: 0, y: 14 }, low);
+    check('widgets layout: a card dropped on a low one pushes it down, neither is pulled up', noOverlap(r) && r[1].y === 14 && r[0].y >= 12, enc(r));
+    const mm = WL.metrics(1280);
+    const px = WL.cellToPx({ x: 2, y: 12, w: 3, h: 2 }, mm);
+    check('widgets layout: a pointer over a low cell maps back to that cell', Math.round((px.left - mm.pad) / mm.pitchX) === 2 && Math.round((px.top - mm.top) / mm.pitchY) === 12, JSON.stringify(px));
+  }
   r = WL.move(items, 'waaaa1', { x: 99, y: -5 }, NO_OB);
   check('widgets layout: a drop outside the grid is clamped in', r[0].x === 8 && r[0].y === 0 && noOverlap(r), enc(r));
   check('widgets layout: an unknown id or a garbage target changes nothing', enc(WL.move(items, 'nope', { x: 1, y: 1 })) === enc(items) && enc(WL.move(items, 'waaaa1', { x: NaN, y: 1 })) === enc(items), '');
@@ -71,6 +89,18 @@ module.exports = async function widgetUnits(check) {
   const box = { left: 400, right: 1040, bottom: 800 };
   const obs = WL.obstacleFor(box, m);
   check('widgets layout: the centre column\'s box becomes the obstacle in cells', obs && obs.x >= 2 && obs.x + obs.w <= 10 && obs.h > 5 && obs.y === 0, JSON.stringify(obs));
+  // The centre column keeps a clear gap (>= OB_MARGIN px) from cards beside it, at any window width, and stays centred.
+  for (const width of [1000, 1280, 1440, 2000, 2560]) {
+    const mw = WL.metrics(width);
+    const bx = { left: (width - 640) / 2, right: (width + 640) / 2, bottom: 600 };
+    const ob = WL.obstacleFor(bx, mw);
+    const leftPx = WL.cellToPx({ x: ob.x - 1, y: 0, w: 1, h: 1 }, mw);
+    const rightPx = WL.cellToPx({ x: ob.x + ob.w, y: 0, w: 1, h: 1 }, mw);
+    const okL = ob.x === 0 || bx.left - (leftPx.left + leftPx.width) >= WL.OB_MARGIN - 1e-6;
+    const okR = ob.x + ob.w >= mw.cols || rightPx.left - bx.right >= WL.OB_MARGIN - 1e-6;
+    check(`widgets layout: ${width}px wide, cards beside the centre column leave >= ${WL.OB_MARGIN}px`, okL && okR && mw.pad <= 20, JSON.stringify({ ob, okL, okR }));
+  }
+  check('widgets layout: the outer gutter is narrow (side cards near the window edge)', WL.metrics(2000).pad === 20 && WL.metrics(1000).pad === 16, '');
   const narrow = WL.resolve([it('wbbbb1', 'weather', 6, 0, 4, 3), it('waaaa1', 'weather', 0, 0, 4, 3), it('wcccc1', 'weather', 0, 6, 4, 3)], { cols: 1, obstacle: { x: 0, y: 0, w: 1, h: 8 } });
   check('widgets layout: a narrow window stacks one column ordered by (y, x), below the centre column', narrow[1].y === 8 && narrow[0].y === 11 && narrow[2].y === 14 && narrow.every((c) => c.x === 0 && c.w === 1), enc(narrow));
   check('widgets layout: dragging in a stacked window does nothing (saved places stay)', enc(WL.move(narrow, 'waaaa1', { x: 5, y: 5 }, { cols: 1 })) === enc(narrow), '');
@@ -337,6 +367,7 @@ module.exports = async function widgetUnits(check) {
   // ---- world clock: zones, clocks and sun times (features/worldclock-view.js) ----
   check('world clock: the default size is 4x3', WL.DEFAULT_SIZE.worldclock.w === 4 && WL.DEFAULT_SIZE.worldclock.h === 3, JSON.stringify(WL.DEFAULT_SIZE.worldclock));
   check('world clock: it is resized within the same limits as the other cards', WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).w === 12 && WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).h === 2, '');
+  check('world clock: the card is at least 3 cells wide so the time (with seconds) is never clipped or shrunk, and 2 rows tall', WL.limitsOf('worldclock').minW === 3 && WL.limitsOf('worldclock').minH === 2 && WL.cleanRect('worldclock', { x: 0, y: 0, w: 1, h: 1 }).w === 3, JSON.stringify(WL.limitsOf('worldclock')));
   check('world clock: time zone names are checked (a real IANA name, or nothing)', WCK.cleanTz('Asia/Tokyo') === 'Asia/Tokyo' && WCK.cleanTz('America/Argentina/Buenos_Aires') === 'America/Argentina/Buenos_Aires' && WCK.cleanTz('UTC') === 'UTC' && WCK.cleanTz('Mars/Olympus') === null && WCK.cleanTz('<b>/x') === null && WCK.cleanTz('../../etc') === null && WCK.cleanTz('') === null && WCK.cleanTz(42) === null && WCK.cleanTz('A/'.repeat(40)) === null, '');
   const jan = Date.UTC(2026, 0, 15, 12, 0, 0); // winter: New York is UTC-5, London UTC+0
   const jul = Date.UTC(2026, 6, 15, 12, 0, 0); // summer: New York UTC-4, London UTC+1

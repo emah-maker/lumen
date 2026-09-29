@@ -98,16 +98,23 @@ const { openSettingsTab } = require('./settings-tab');
   check('the sidebar chip says AI is off on the site', /AI is off on:.*localhost/.test(chip || ''), chip);
 
   // ---- 3. Every tool refuses the tab (sidebar run: the refusal comes back as the tool's error)
-  r = await run({ startUrl: `${off}/inbox`, toolUses: [
-    { name: 'read_page', input: {} },
-    { name: 'find', input: { query: 'Secret' } },
-    { name: 'screenshot', input: {} },
-    { name: 'run_script', input: { code: 'return document.title' } },
-    { name: 'click', input: { text: 'Secret' } },
-    { name: 'scroll', input: { direction: 'down' } },
-    { name: 'batch', input: { steps: [{ do: 'scroll', direction: 'down' }] } },
-    { name: 'navigate', input: { url: `${on}/elsewhere` } },
-  ] });
+  // Two runs of four: six refusals in a row end a run as stalled (loop-guard.js: the remaining calls come back "Not run"),
+  // which is right for the agent but would hide whether the last tools were refused by the AI-off gate.
+  const refusedRuns = [
+    await run({ startUrl: `${off}/inbox`, toolUses: [
+      { name: 'read_page', input: {} },
+      { name: 'find', input: { query: 'Secret' } },
+      { name: 'screenshot', input: {} },
+      { name: 'run_script', input: { code: 'return document.title' } },
+    ] }),
+    await run({ startUrl: `${off}/inbox`, toolUses: [
+      { name: 'click', input: { text: 'Secret' } },
+      { name: 'scroll', input: { direction: 'down' } },
+      { name: 'batch', input: { steps: [{ do: 'scroll', direction: 'down' }] } },
+      { name: 'navigate', input: { url: `${on}/elsewhere` } },
+    ] }),
+  ];
+  r = { results: refusedRuns.flatMap((x) => x.results), url: refusedRuns[1].url };
   check('read_page, find, screenshot, run_script, click, scroll, batch and navigate are all refused', r.results.length === 8 && r.results.every((x) => x.error && /turned off AI on localhost/.test(x.text)), JSON.stringify(r.results));
   check('nothing from the page reached the model', !r.results.some((x) => /Private text|Secret \//.test(x.text)), JSON.stringify(r.results));
   check('the tab stayed where it was', r.url === `${off}/inbox`, r.url);
@@ -185,7 +192,9 @@ const { openSettingsTab } = require('./settings-tab');
       const ids = [...sentList.matchAll(/"id":(\d+)/g)].map((m) => Number(m[1]));
       return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ groups: [{ name: 'Mine', tab_ids: ids }] }) }] };
     } } });
+    global.__organizeAlwaysAsk = true; // ask the model even when the local groups look clear (the real app skips it then), so what would be sent is visible
     await global.__organizeTabs();
+    global.__organizeAlwaysAsk = false;
     agent.getClient = baseClient;
     if (keyBefore === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keyBefore;
     for (const t of agent.browser.listTabs()) if (t.group) agent.browser.ungroupTabs([t.id]);
@@ -260,6 +269,10 @@ const { openSettingsTab } = require('./settings-tab');
       return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => message };
     } } } });
   }, on);
+  // The sidebar only sends when a model is connected (chat-core.js modelReady). This profile has no key, so give it a fake one
+  // (the fake client above answers) and reload the model list, instead of depending on when that list last refreshed.
+  await app.evaluate(() => { process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake'; });
+  await ui.evaluate(() => window.loadModels?.() || eval('loadModels()'));
   await ui.evaluate(() => ask('move it')); // app.js: the sidebar's own send
   const button = await waitFor(() => ui.evaluate(() => Boolean([...document.querySelectorAll('.run-undo button')].find((b) => b.textContent === 'Undo tab changes'))));
   check('the sidebar shows "Undo tab changes" under the reply', button, 'no button');

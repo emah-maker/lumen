@@ -138,6 +138,25 @@ function createAdblock(deps) {
     serveStubs(deps.session.defaultSession);
     blocker.enableBlockingInSession(deps.session.defaultSession);
     deps.session.defaultSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'adblock-preload.js') });
+    for (const ses of extraSessions) enableIn(ses);
+  }
+
+  // Another session that should be filtered like the default one (the research tabs' isolated session).
+  // Before the engine has loaded it waits in the list; setup() then attaches it.
+  const extraSessions = new Set();
+  function enableIn(ses) {
+    serveStubs(ses);
+    // Not blocker.enableBlockingInSession(): a second call registers the library's ipcMain handlers again (they are
+    // global, and already answer every session), which throws. The session-level parts are wired here instead.
+    ses.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (details, callback) => blocker.onHeadersReceived(details, callback));
+    ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => blocker.onBeforeRequest(details, callback));
+    try { ses.registerPreloadScript({ type: 'frame', filePath: require.resolve('@ghostery/adblocker-electron-preload') }); } catch { /* cosmetic CSS only */ }
+    ses.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'adblock-preload.js') });
+  }
+  function attachSession(ses) {
+    if (extraSessions.has(ses)) return;
+    extraSessions.add(ses);
+    if (blocker) enableIn(ses);
   }
 
   function menu() {
@@ -171,6 +190,7 @@ function createAdblock(deps) {
 
   return {
     setup,
+    attachSession,
     menu,
     ready: () => blocker !== null,
     blocked: (id) => blockedCount.get(id) || 0,

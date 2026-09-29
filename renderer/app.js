@@ -394,20 +394,20 @@ function faviconImg(el, key, urls, retried = false) {
 
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
-  el.className = 'tab' + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '')
+  el.className = 'tab' + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
     + (selectedTabs.has(tab.id) && !active ? ' selected' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
-  el.setAttribute('aria-label', tab.title);
+  el.setAttribute('aria-label', tab.aiReading ? `${tab.title} (AI is reading)` : tab.title);
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
-  const iconKey = tab.loading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;
+  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;
   if (el.dataset.icon !== iconKey) {
     el.dataset.icon = iconKey;
     let icon;
-    if (tab.loading) {
+    if (tab.loading || tab.aiReading) {
       icon = document.createElement('span');
       icon.className = 'tab-favicon spinner';
     } else if (favicons.length && !tab.error) {
@@ -662,7 +662,7 @@ function fillHoverCard(el) {
   hoverCardEl.querySelector('.hover-card-title').textContent = tab.title;
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
-  hostEl.textContent = host;
+  hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
   hostEl.hidden = !host;
   return true;
 }

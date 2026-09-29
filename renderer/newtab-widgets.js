@@ -468,6 +468,10 @@ const WIDGET_RENDERERS = {
     }
     card.body.append(list);
     tickClocks();
+    // The time is never shrunk or scrolled: when the card is short the last places are hidden instead.
+    const fit = () => fitClockRows(card.body, list);
+    if (typeof ResizeObserver === 'function') new ResizeObserver(fit).observe(card.body);
+    requestAnimationFrame(fit);
   },
 
   todoist(w, card) {
@@ -1131,6 +1135,14 @@ function tickClocks() {
   }
 }
 setInterval(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 1000);
+// Show as many places as fit whole (at least the first); the rest are hidden, so the list never needs a scrollbar.
+function fitClockRows(body, list) {
+  if (!body.isConnected) return;
+  const rows = [...list.children];
+  for (const r of rows) r.hidden = false;
+  const room = body.clientHeight;
+  for (let i = rows.length - 1; i > 0 && list.scrollHeight > room + 1; i--) rows[i].hidden = true;
+}
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.

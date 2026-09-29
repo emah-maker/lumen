@@ -293,7 +293,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   const toolsIdx = av.indexOf('--tools');
   check('the task\'s claude has the sidebar\'s lock-down: no built-in tools, only mcp__lumen, strict MCP config, dontAsk', toolsIdx >= 0 && av[toolsIdx + 1] === '' && argAfter(av, '--allowedTools') === 'mcp__lumen' && av.includes('--strict-mcp-config') && argAfter(av, '--permission-mode') === 'dontAsk', av.join(' '));
   check('its step limit is --max-turns 60 (Max steps is unlimited) and its model is the one picked', argAfter(av, '--max-turns') === '60' && argAfter(av, '--model') === 'sonnet' && argAfter(av, '--session-id') === sa.session && !av.includes('--resume'), av.join(' '));
-  check('the sidebar\'s own message has no turn cap and picked no model (unchanged)', !ss.argv.includes('--max-turns') && !ss.argv.includes('--model'), ss.argv.join(' '));
+  check('the sidebar\'s own message has no turn cap and its unpicked model is auto-routed to a tier alias', !ss.argv.includes('--max-turns') && ['haiku', 'sonnet', 'opus'].includes(argAfter(ss.argv, '--model')), ss.argv.join(' '));
   check('each has its own empty temp folder as cwd', /lumen-cc-/.test(sa.cwd) && /lumen-cc-/.test(ss.cwd) && sa.cwd !== ss.cwd, `${sa.cwd} | ${ss.cwd}`);
   check('the task\'s claude is told it is a background task', /background task/.test(sa.system) && !/background task/.test(ss.system), sa.system.slice(-200));
   const taskRead = logOf('TASK-CA', 'tool').find((e) => e.name === 'read_page');

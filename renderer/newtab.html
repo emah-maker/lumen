@@ -78,8 +78,9 @@
     body.on-media input { background: rgba(255, 255, 255, 0.16); color: #fff; box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.22); }
     body.on-media input:focus { background: rgba(20, 20, 24, 0.62); }
     body.on-media .frequent a, body.on-media .privacy, body.on-media .w-card { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
-    /* The clock: large, light, and steady (tabular digits don't jitter as minutes change). */
-    .clock { margin: 0 0 4px; font-size: clamp(56px, 9vw, 88px); line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    /* The clock: large, light, and steady (tabular digits don't jitter as minutes change). Always full size: it never
+       shrinks with the window and is never clipped or scrolled (the header is pinned in the centre column, never a card). */
+    .clock { margin: 0 0 4px; font-size: 88px; white-space: nowrap; overflow: visible; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .clock[hidden] { display: none; }
     main { animation: arrive 700ms var(--ease) both; }
     @keyframes arrive { from { opacity: 0; transform: translateY(8px); } }
@@ -343,6 +344,15 @@
     @container card (min-width: 200px) and (min-height: 150px) { .wx-hours { display: flex; } }
     @container card (min-height: 300px) { .wx-days { display: flex; } }
     @container card (min-width: 260px) and (min-height: 260px) { .wx-details { display: grid; } }
+    /* A card that is wider than it is tall lays the forecast days out across: a column per day (name, icon, high, low).
+       A tall card keeps the list above. A wide but short one drops the hourly strip to make room. */
+    @container card (min-aspect-ratio: 1/1) and (min-width: 320px) and (min-height: 180px) {
+      .wx-days { display: flex; flex-direction: row; gap: 2px; overflow-x: auto; scrollbar-width: thin; padding-top: 8px; }
+      .wx-day { flex: 1 1 0; min-width: 44px; width: auto; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 2px; text-align: center; }
+      .wx-day .wx-dn { order: 1; } .wx-day svg { order: 2; width: 24px; height: 24px; } .wx-day .wx-dh { order: 3; } .wx-day .wx-dl { order: 4; text-align: center; }
+      .wx-day .wx-dp, .wx-day .wx-bar, .wx-days .wx-more { display: none; }
+    }
+    @container card (min-aspect-ratio: 1/1) and (min-width: 320px) and (min-height: 180px) and (max-height: 259px) { .wx-hours { display: none; } }
     /* Several places: one at a time with dots on a small card, one row each on a wide or tall one. */
     .wx-places:not(:has(.wx-dots)) .wx-list { display: none !important; }
     .wx-places[data-view="list"] .wx-cycle, .wx-places[data-view="list"] .wx-dots { display: none; }
@@ -390,7 +400,9 @@
     .w-time { flex: none; width: 58px; padding-top: 1px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .w-bar { flex: none; width: 3px; align-self: stretch; margin: 2px 0; border-radius: 2px; background: var(--ev, var(--accent)); opacity: 0.85; }
     /* World clock: one row per place; the time is ticked by the page (newtab-widgets.js). */
-    .w-card.worldclock .w-body { overflow-y: auto; }
+    /* The time is never scrolled or shrunk: rows that don't fit are hidden (fitClockRows in newtab-widgets.js). */
+    .w-card.worldclock .w-body { overflow: hidden; }
+    .wc-row[hidden] { display: none; }
     .wc-list { display: flex; flex-direction: column; gap: 2px; }
     .wc-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 2px; }
     .wc-row + .wc-row { border-top: 0.5px solid var(--hover); }
@@ -400,9 +412,10 @@
     .wc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
     .wc-city { font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .wc-sub { display: none; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
-    .wc-time { flex: none; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .wc-time { flex: none; overflow: hidden; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .wc-sun { display: none; flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     @container card (min-height: 120px) { .wc-sub { display: flex; } }
+    @container card (max-width: 190px) { .wc-icon { display: none; } }
     @container card (min-width: 330px) { .wc-row.has-sun .wc-sun { display: block; } }
     /* Colors setting (calendar, weather, todoist): "Match screen", "Accent only" and "Monochrome" tint the card from
        the page's own colours; the text colours are derived to stay at 4.5:1 or better on the tinted surface. */

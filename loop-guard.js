@@ -67,7 +67,7 @@ class RunBudget {
   // Note for a run_script result once the free calls are used up (null before that). Never blocks.
   scriptNote() {
     if (this.scripts <= this.scriptFree) return null;
-    return `NOTE: that is run_script call ${this.scripts} in this task. Scripts are a last resort: use read_page, find, click, type_text, navigate, read_urls, web_search or batch for anything they can do. Use another script only if nothing else can, and then do it in one call.`;
+    return `NOTE: that is run_script call ${this.scripts} in this task. Scripts are a last resort: use read_page (extract:"tables"|"links"|"lists" pulls data as JSON), find, click, type_text, navigate, read_urls, web_search or batch for anything they can do. Use another script only if nothing else can, and then do it in one call.`;
   }
 
   // Note for the tool results that follow step `step`, or null. Starts at ~75% of the ceiling, then

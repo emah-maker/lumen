@@ -30,7 +30,9 @@
 
   const stackedNow = () => WL.metrics(document.documentElement.clientWidth).cols === 1;
   const shown = (id) => (id === 'wsyshead' ? opts.header !== false : id === 'wsyssearch' ? true : Boolean(parts[KEY[id]]));
-  const isFree = (id) => shown(id) && !stackedNow() && (persisted.has(id) || origin.has(id));
+  // The clock and the search box stay where they always were (centred, the clock above the search box); widgets work around them.
+  const PINNED = new Set(['wsyshead', 'wsyssearch']);
+  const isFree = (id) => shown(id) && !PINNED.has(id) && !stackedNow() && (persisted.has(id) || origin.has(id));
   const layoutOf = (id) => persisted.get(id) || origin.get(id);
 
   function makeCard(id) {
@@ -51,8 +53,25 @@
     const body = document.createElement('div');
     body.className = 'w-body';
     card.append(head, body);
+    watchFit(body);
     window.widgetGrid?.attach(card);
     return card;
+  }
+  // A section card scrolls only when its content really is taller than the card: a few px of rounding or padding
+  // slack (the body is overflow-y: auto) must not show a scrollbar or let the wheel move a section that fits.
+  const SLACK = 8;
+  function watchFit(body) {
+    const check = () => {
+      if (!body.isConnected) return;
+      body.style.overflowY = 'hidden';
+      body.style.overflowY = body.scrollHeight - body.clientHeight > SLACK ? '' : 'hidden';
+    };
+    if (typeof ResizeObserver === 'function') {
+      const ro = new ResizeObserver(check);
+      ro.observe(body);
+      new MutationObserver(() => { requestAnimationFrame(check); ro.disconnect(); ro.observe(body); for (const c of body.children) ro.observe(c); }).observe(body, { childList: true });
+    }
+    requestAnimationFrame(check);
   }
   const bodyOf = (card) => card.querySelector('.w-body');
   // Move a node only when it isn't already there: a moved input loses focus.
@@ -126,7 +145,7 @@
     const boxes = {};
     const rectOfNode = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }; };
     for (const id of WS.IDS) {
-      if (isFree(id) || !shown(id)) continue;
+      if (isFree(id) || PINNED.has(id) || !shown(id)) continue;
       const node = id === 'wsyshead' ? headerEl : id === 'wsyssearch' ? formEl : parts[KEY[id]].section;
       boxes[id] = rectOfNode(node);
     }

@@ -1311,6 +1311,27 @@ async function pdfRuns() {
   const cut = pdfText.extractPdfText(pdf, { maxChars: 60 });
   check('pdf text: output is capped and says where to continue', cut.truncated && cut.next === 2 && cut.pages.join() === '1', JSON.stringify(cut));
   check('pdf text: ranges parse ("4-", "1-3,7", out of range)', pdfText.parsePageRange('3-', 5).join() === '3,4,5' && pdfText.parsePageRange('1-2,4', 9).join() === '1,2,4' && pdfText.parsePageRange('9', 3).length === 0, 'ranges');
+  const pages = ['Intro and overview', 'Budget\nsummary for 2025', 'Nothing here', 'The BUDGET summary again, and another budget line', ''];
+  const marked = pdfText.formatPages(pages, { pages: '2-3' });
+  check('pdf text: every page sits under a "--- Page N of M ---" marker', marked.text === '--- Page 2 of 5 ---\nBudget\nsummary for 2025\n\n--- Page 3 of 5 ---\nNothing here' && marked.pages.join() === '2,3', marked.text);
+  check('pdf text: a page without text says so', pdfText.formatPages(pages, { pages: '5' }).text.includes('--- Page 5 of 5 ---\n(no text'), '');
+  const q = pdfText.formatPages(pages, { query: 'budget SUMMARY' });
+  check('pdf query: case-insensitive, matches across a line break, lists page numbers with a snippet', q.hits.map((h) => h.page).join() === '2,4' && q.text.includes('Page 2 (1 match)') && q.text.includes('Budget summary for 2025') && q.pages.join() === '2,4', q.text);
+  check('pdf query: counts every hit on a page', pdfText.formatPages(pages, { query: 'budget' }).hits.find((h) => h.page === 4).count === 2, '');
+  check('pdf query: limited to a page range, and a miss says so', pdfText.formatPages(pages, { query: 'budget', pages: '1-3' }).hits.length === 1 && /not found in pages 3-5/.test(pdfText.formatPages(pages, { query: 'zebra', pages: '3-5' }).text), '');
+  check('pdf query: snippets carry context and are capped per page', pdfText.findInPage('x'.repeat(300) + ' needle ' + 'y'.repeat(300) + ' needle', 'Needle').snippets.length === 2 && pdfText.findInPage('abc', '').count === 0, '');
+  const long = Array.from({ length: 6 }, (_, k) => 'p'.repeat(40) + k);
+  const capped = pdfText.formatPages(long, { maxChars: 130 });
+  check('pdf text: truncation reports the pages included and where to continue', capped.truncated && capped.pages.join() === '1,2' && capped.next === 3, JSON.stringify(capped));
+  check('pdf text: bad ranges are refused, open ranges run to the end', (() => { try { pdfText.parsePageRange('x-y', 5); return false; } catch { return pdfText.parsePageRange('-2', 5).join() === '1,2' && pdfText.parsePageRange('4-', 5).join() === '4,5'; } })(), '');
+  const stamp = { calls: 0 };
+  const fakeSession = { fetch: async () => { stamp.calls++; return { ok: true, body: [pdf] }; } };
+  const first = await pdfText.loadPdfPages(fakeSession, 'https://x.test/cache.pdf?a=1');
+  const again = await pdfText.loadPdfPages(fakeSession, 'https://x.test/cache.pdf?a=2#page=2');
+  check('pdf cache: a second read of the same PDF is not downloaded or parsed again', stamp.calls === 1 && first === again && first.length === 2, String(stamp.calls));
+  const zoom = require('../features/pdf-zoom');
+  check('pdf zoom: the viewer script targets zoom in, out and reset; the viewer frame is found', zoom.zoomScript(1).includes('"in"') && zoom.zoomScript(-0.5).includes('"out"') && zoom.zoomScript(0).includes('"reset"') && zoom.viewerFrame({ mainFrame: { framesInSubtree: [{ url: 'https://a.test' }, { url: `${zoom.PDF_VIEWER}/index.html` }] } }) !== null && zoom.viewerFrame({ mainFrame: { framesInSubtree: [{ url: 'https://a.test' }] } }) === null, '');
+  check('pdf tool: agent and snapshot registries share the read_pdf description and query parameter', pdfText.READ_PDF_PROPERTIES.query && /--- Page N of M ---/.test(pdfText.READ_PDF_DESCRIPTION) && /pdfText\.READ_PDF_DESCRIPTION/.test(fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8')) && /pdfText\.READ_PDF_DESCRIPTION/.test(fs.readFileSync(path.join(__dirname, '..', 'snapshot.js'), 'utf8')), '');
   let bad = '';
   try { pdfText.extractPdfText(Buffer.from('hello')); } catch (err) { bad = err.message; }
   check('pdf text: a file that is not a PDF is refused', /not a PDF/.test(bad), bad);
@@ -1376,6 +1397,45 @@ async function usageShareRuns() {
 }
 
 // ---- sidebar speed: incremental markdown tail, cached CLI lookup, passive usage refresh
+async function fewerCallRuns() {
+    // Fewer-call options: navigate read/wait_for, observe on acting tools, read_page extract.
+    const snap = require('../snapshot');
+    const { requestFor, DEFAULT_MODEL } = require('../agent');
+    const m = Object.assign([{ role: 'user', content: 'hi' }], { settings: { model: DEFAULT_MODEL } });
+    const props = Object.fromEntries(requestFor(m.settings, m).tools.map((t) => [t.name, t.input_schema?.properties || {}]));
+    check('fewer calls: navigate takes read + wait_for, open_tab read, read_page extract + selector', props.navigate.read && props.navigate.wait_for && props.open_tab.read && props.read_page.extract?.enum.join() === 'tables,links,lists' && props.read_page.selector, '');
+    check('fewer calls: click, click_at, type_text and press_key take observe', ['click', 'click_at', 'type_text', 'press_key'].every((n) => props[n].observe && snap.OBSERVE_TOOLS.has(n)), '');
+    const agentSrc2 = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+    check('fewer calls: navigate / open_tab read:true counts as reading page content (taints the run)', /input\?\.read && \(name === 'navigate' \|\| name === 'open_tab'\)+ this\.markTainted/.test(agentSrc2), '');
+
+    // read_page extract runs in the page: a fake DOM with one table and some links.
+    const cell = (t) => ({ innerText: t });
+    const shown = { offsetWidth: 1, offsetHeight: 1, getClientRects: () => [1] };
+    const table = { ...shown, caption: { innerText: 'Prices' }, rows: [{ cells: [cell(' Item '), cell('Cost')] }, { cells: [cell('Tea'), cell('3')] }] };
+    const link = (text, href) => ({ ...shown, innerText: text, href, getAttribute: () => '' });
+    const root = { matches: () => false, querySelectorAll: (sel) => (sel === 'table' ? [table] : sel === 'a[href]' ? [link('Home', 'https://a.test/'), link('Home again', 'https://a.test/'), link('', 'https://b.test/'), link('Docs', 'https://a.test/d')] : []) };
+    global.document = { body: root, querySelector: (q) => (q === 'main' ? root : null) };
+    global.location = { href: 'https://a.test/' };
+    const tables = snap.extractData({ kind: 'tables', selector: '' });
+    const links = snap.extractData({ kind: 'links', selector: 'main' });
+    check('extract tables: rows of trimmed cell text with the caption', JSON.stringify(tables.data) === JSON.stringify([{ caption: 'Prices', rows: [['Item', 'Cost'], ['Tea', '3']] }]), JSON.stringify(tables));
+    check('extract links: [text, href], no duplicates, no empty text', JSON.stringify(links.data) === JSON.stringify([['Home', 'https://a.test/'], ['Docs', 'https://a.test/d']]), JSON.stringify(links));
+    check('extract: an unknown selector says so', snap.extractData({ kind: 'links', selector: 'nav' }).error === 'No element matches selector.', '');
+    delete global.document; delete global.location;
+
+    // observe: baseline read, the action, then only what changed.
+    let lines = ['[1] button "Add"'];
+    const wc = { id: 7, isDestroyed: () => false, getURL: () => 'https://a.test/' };
+    const fakeAgent = { requireTab: () => wc, browser: { aiOff: (u) => u.includes('off.test') } };
+    const h = { scripts: { readPage: () => '' }, runScript: async () => ({ lines: [...lines], totalLines: lines.length, elements: 1, startLine: 0, clipped: false }) };
+    const out = await snap.observe(fakeAgent, async () => { lines = ['[1] button "Add"', 'Cart: 1 item']; return 'Clicked element 1.'; }, h);
+    check('observe: the tool result plus only the lines that appeared', out.startsWith('Clicked element 1.') && out.includes('+1 / -0') && out.includes('Cart: 1 item') && !out.includes('button "Add"'), out);
+    const offTab = { ...wc, getURL: () => 'https://off.test/' };
+    const offOut = await snap.observe({ ...fakeAgent, requireTab: () => offTab }, async () => 'Clicked.', h);
+    check('observe / outline: a site with AI turned off gets no page content', offOut === 'Clicked.' && await snap.outline(fakeAgent, offTab, h) === '', offOut);
+    check('outline: navigate read:true returns the compact outline in untrusted markers', /<untrusted_page_content>[\s\S]*button "Add"/.test(await snap.outline(fakeAgent, wc, h)), '');
+}
+
 async function speedRuns() {
   const { render, stableLength } = require('../renderer/markdown');
   const src = 'Intro line\n\n- a\n- b\n\n```js\nx\n\ny\n```\n\nTail text';
@@ -2088,6 +2148,16 @@ async function organizeAiRuns() {
     L.learnRename(auto, 'Summer Trip', lg.candidates());
     lg.organizeByTopic(null);
     check('learner: Organize names the same kind of group the way the user renamed it', lg.state().length === 1 && lg.state()[0].name === 'Summer Trip', JSON.stringify([auto, lg.state()]));
+  }
+
+  {
+    // Organize counts sleeping / restored-unloaded tabs (no webContents): main.js reads sleepUrl / sleepTitle for them
+    let sl = [];
+    const alive = (t) => Boolean(t.view);
+    const sg = tg.createTabGroups({ getTabs: () => sl, setTabs: (l) => { sl = l; }, urlOf: (t) => (alive(t) ? t.view.url : t.sleepUrl || ''), titleOf: (t) => (alive(t) ? t.view.title : t.sleepTitle || ''), textOf: () => '', isWeb: (u) => /^https?:\/\//i.test(u), mode: () => 'topic', aiTopics: () => false });
+    sl.push({ id: 1, sleeping: true, sleepUrl: 'https://one.example/a', sleepTitle: 'Kayak rental Maine', groupId: null });
+    sl.push({ id: 2, sleeping: true, sleepUrl: 'https://two.example/b', sleepTitle: 'Kayak rental deals', groupId: null });
+    check('organize: sleeping tabs are candidates (stored URL and title)', sg.candidates().length === 2 && sg.candidates()[0].url === 'https://one.example/a' && sg.candidates()[0].title === 'Kayak rental Maine', JSON.stringify(sg.candidates()));
   }
 
   // duplicates
@@ -2887,7 +2957,109 @@ async function bgCliRuns() {
   check('sidebar overlay: the UI reports the closed width, main.js applies the override in layout() and drops it on navigation', /fullWidth/.test(appSrc) && /overlayParams\(\{ newTab: true/.test(mainSrc) && /enableDeviceEmulation\(params\)/.test(mainSrc) && /disableDeviceEmulation\(\)/.test(mainSrc) && /wc\.on\('did-navigate', \(\) => \{\s*if \(tab\.overlay\)/.test(mainSrc), '');
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => {
+// Research tabs: web_search / read_urls open what they look at in background tabs (pure logic, injected browser).
+{
+  const R = require('../features/research-tabs');
+  const make = (over = {}, opts) => {
+    const log = { opened: [], navigated: [], groups: [], reading: [], closed: new Set(), groupGone: false };
+    let nextId = 1;
+    const deps = {
+      enabled: () => true,
+      isAiOff: (url) => /blocked\.example/.test(url),
+      searchUrl: (q) => `https://search.example/?q=${encodeURIComponent(q)}`,
+      openTab: (url, o) => { const id = nextId++; log.opened.push({ id, url, groupId: o?.groupId ?? null, partition: o?.partition ?? null }); return id; },
+      navigateTab: (id, url) => log.navigated.push({ id, url }),
+      tabExists: (id) => !log.closed.has(id),
+      createGroup: (name, ids) => { log.groups.push({ name, ids }); return log.groups.length; },
+      groupExists: () => !log.groupGone,
+      setReading: (id, on) => log.reading.push([id, on]),
+      ...over,
+    };
+    return { r: R.createResearchTabs(deps, opts), log };
+  };
+  {
+    const { r, log } = make();
+    const run = {};
+    const end = r.begin(run, { query: 'best espresso machine 2026' });
+    check('research tabs: web_search opens the engine\'s results page in a group named "AI: <query>"', log.opened.length === 1 && log.opened[0].url === 'https://search.example/?q=best%20espresso%20machine%202026' && log.groups.length === 1 && log.groups[0].name === 'AI: best espresso machine 2026', JSON.stringify(log));
+    check('research tabs: the tab shows the reading marker until the call ends', log.reading.at(-1)[1] === true && (end(), log.reading.at(-1)[1] === false), JSON.stringify(log.reading));
+    r.begin(run, { urls: ['https://a.example/x', 'https://b.example/'] })();
+    check('research tabs: read_urls tabs join the run\'s group (one group per run)', log.opened.length === 3 && log.opened.slice(1).every((o) => o.groupId === 1) && log.groups.length === 1, JSON.stringify(log));
+    r.begin(run, { urls: ['https://a.example/x#frag', 'https://b.example'] })();
+    check('research tabs: the same URL twice in a run opens nothing new (fragment and trailing slash ignored)', log.opened.length === 3, JSON.stringify(log.opened));
+    r.begin({}, { urls: ['https://a.example/x'] })();
+    check('research tabs: another run opens its own tab and its own group', log.opened.length === 4 && log.groups.length === 2, JSON.stringify(log));
+    r.finish(run);
+    check('research tabs: finishing a run clears the marker and leaves the tabs open', !r.has(run) && log.closed.size === 0 && log.reading.every(([, on], i, a) => on || a.slice(0, i).some(([id, o]) => o)), '');
+  }
+  {
+    const { r, log } = make();
+    const run = {};
+    r.begin(run, { urls: Array.from({ length: 6 }, (_, i) => `https://p${i}.example/`) })();
+    check('research tabs: up to 6 research tabs per run', log.opened.length === 6, String(log.opened.length));
+    r.begin(run, { urls: ['https://p6.example/', 'https://p7.example/'] })();
+    check('research tabs: past the cap the oldest tabs are navigated, not more tabs opened', log.opened.length === 6 && log.navigated.length === 2 && log.navigated[0].id === 1 && log.navigated[1].id === 2 && log.navigated[0].url === 'https://p6.example/', JSON.stringify(log.navigated));
+    check('research tabs: never more than the cap open for a run', r.tabCount(run) === 6, String(r.tabCount(run)));
+  }
+  {
+    // Isolation: every research tab (the search page, first and later sources, in a group or not) is opened in the
+    // research partition: memory only (no "persist:"), so none of the user's cookies or storage go with it.
+    const { r, log } = make();
+    const run = {};
+    r.begin(run, { query: 'q' })();
+    r.begin(run, { urls: ['https://a.example/', 'https://b.example/'] })();
+    check('research tabs: every tab opens in the isolated research partition', log.opened.length === 3 && log.opened.every((o) => o.partition === R.RESEARCH_PARTITION), JSON.stringify(log.opened));
+    check('research tabs: that partition is memory-only, and neither the private windows\' nor the hidden reader\'s', typeof R.RESEARCH_PARTITION === 'string' && R.RESEARCH_PARTITION.length > 0 && !R.RESEARCH_PARTITION.startsWith('persist:') && !/^(lumen-private|claude-reader)/.test(R.RESEARCH_PARTITION), R.RESEARCH_PARTITION);
+    const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
+    check('research tabs: main.js honours only that partition, keeps such tabs out of History, the saved session and Reopen, and passes it to links opened from them',
+      /isolatedPartition = \(p\) => \(p === RESEARCH_PARTITION \? p : null\)/.test(src) && /partition: tab\.isolated \}\)\); \/\/ a link from a research tab/.test(src) && /!t\.isolated && \(isWebUrl/.test(src) && /!isInternal\(url\) && !tab\.isolated/.test(src) && /if \(!tab\.isolated\) recordVisit/.test(src), 'main.js wiring changed');
+  }
+  {
+    const { r, log } = make();
+    r.begin({}, { urls: ['https://blocked.example/a', 'https://ok.example/'] })();
+    check('research tabs: a site with AI turned off gets no tab, the others do', log.opened.length === 1 && log.opened[0].url === 'https://ok.example/', JSON.stringify(log.opened));
+    const aiOffSearch = make({ isAiOff: () => true });
+    aiOffSearch.r.begin({}, { query: 'x' })();
+    check('research tabs: an engine site with AI off gets no search tab', aiOffSearch.log.opened.length === 0, '');
+    const bad = make();
+    bad.r.begin({}, { urls: ['javascript:alert(1)', 'file:///etc/passwd', 'notaurl', 'chrome://settings'] })();
+    check('research tabs: only http(s) pages are ever opened', bad.log.opened.length === 0, JSON.stringify(bad.log.opened));
+  }
+  {
+    const off = make({ enabled: () => false });
+    off.r.begin({}, { query: 'q' })();
+    off.r.begin({}, { urls: ['https://a.example/'] })();
+    check('research tabs: with "Show AI research in tabs" off nothing opens and nothing is marked', off.log.opened.length === 0 && off.log.groups.length === 0 && off.log.reading.length === 0, JSON.stringify(off.log));
+    const boom = make({ openTab: () => { throw new Error('window gone'); } });
+    let threw = false;
+    try { boom.r.begin({}, { query: 'q' })(); } catch { threw = true; }
+    check('research tabs: a failing browser call never breaks the tool', !threw, '');
+  }
+  {
+    const { r, log } = make();
+    const run = {};
+    r.begin(run, { query: 'q' })();
+    log.closed.add(1); log.groupGone = true; // the user closed the research tab and its group
+    r.begin(run, { urls: ['https://a.example/'] })();
+    check('research tabs: after the user closes the group the next page starts a fresh group', log.opened.length === 2 && log.opened[1].groupId === null && log.groups.length === 2, JSON.stringify(log));
+    r.begin(run, { query: 'q' })();
+    check('research tabs: a page the user closed can be shown again', log.opened.length === 3, JSON.stringify(log.opened));
+  }
+  {
+    let t = 0;
+    const { r, log } = make({}, { now: () => t, idleMs: 1000 });
+    r.begin('external', { query: 'a' })();
+    t = 500; r.begin('external', { urls: ['https://a.example/'] })();
+    check('research tabs: an outside agent\'s calls in quick succession share one group', log.groups.length === 1 && log.opened[1].groupId === 1, JSON.stringify(log));
+    t = 5000; r.begin('external', { query: 'b' })();
+    check('research tabs: after it goes quiet a new question gets a new group', log.groups.length === 2, JSON.stringify(log.groups));
+  }
+  check('research tabs: group names shorten long queries on a word', R.groupName('  how do I  repot a very large monstera plant without killing it  ') === 'AI: how do I repot a very large…' && R.groupName('') === 'AI: research' && R.shortQuery('short') === 'short', R.groupName('  how do I  repot a very large monstera plant without killing it  '));
+  const SB = require('../settings-backend');
+  check('research tabs: the setting exists, on by default, and is a plain boolean', SB.DEFAULTS?.researchTabs === true || /researchTabs: true/.test(fs.readFileSync(path.join(__dirname, '..', 'settings-backend.js'), 'utf8')), '');
+}
+
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

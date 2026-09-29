@@ -26,6 +26,7 @@
 const COLS = 12;
 const ROW = 56; // px, one row of cells
 const GAP = 12; // px between cells
+const OB_MARGIN = 40; // px kept clear between side cards and the centre column
 const MAX_Y = 200;
 // Any size from 2x2 cells up to the whole grid width and 20 rows, for every kind of card: the
 // content adapts to the box it is given (container queries in newtab.html), it isn't cut.
@@ -38,7 +39,7 @@ const LIMITS = {
   slack: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   github: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   feed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
-  worldclock: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
+  worldclock: { minW: 3, minH: 2, maxW: 12, maxH: 20 },
   stocks: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   crypto: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   embed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
@@ -404,12 +405,12 @@ const flowOrder = (items) => flowSort(items);
 // starts. Pure, so tests can use the numbers the page does.
 function metrics(width) {
   const cols = width >= 900 ? COLS : 1;
-  const pad = width >= 1100 ? 32 : 16;
+  const pad = width >= 1100 ? 20 : 16; // outer gutter: side cards hug the window edge
   const cw = (width - pad * 2 - GAP * (cols - 1)) / cols;
   return { cols, pad, top: 16, cw, pitchX: cw + GAP, pitchY: ROW + GAP, width };
 }
 // The centre column's box (page px: left, right, bottom) -> an obstacle rect in cells.
-function obstacleFor(box, m, margin = 12) {
+function obstacleFor(box, m, margin = OB_MARGIN) {
   const rows = Math.max(0, Math.ceil((box.bottom - m.top + GAP) / m.pitchY));
   if (m.cols === 1) return { x: 0, y: 0, w: 1, h: rows };
   let first = -1;
@@ -442,7 +443,7 @@ const api = {
   COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, PRESETS, SPANS, SNAPS, FRAME_PX,
   limitsOf, cleanRect, cleanSnap, sizeFromLegacy, mirror, fromLegacy, flowPack, overlap, rectOf, same,
   resolve, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
-  metrics, obstacleFor, cellToPx, encode, decode,
+  OB_MARGIN, metrics, obstacleFor, cellToPx, encode, decode,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetLayout = api;

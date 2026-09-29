@@ -518,13 +518,16 @@ function server(opts) {
   pgr = await cardsNow();
   check('a fresh page: every card visible with its own place, none over the centre column', allClear(pgr, inf) && pgr.length === 7, JSON.stringify(pgr.map((c) => [c.id, c.cell])));
   const rightX = inf.w - 70;
+  // Cards are no longer packed upward: the card stays in the cell its top edge lands on, which is
+  // the row nearest to (pointer y - where it was grabbed), not row 0.
+  const dropRow = await page(`(() => { const c = window.__t.card(${JSON.stringify(ID.weather)}); const g = c.querySelector('.w-head h2').getBoundingClientRect(); const grabY = g.top + Math.min(g.height / 2, 12); const m = WidgetLayout.metrics(innerWidth); return Math.max(0, Math.round((120 - (grabY - c.getBoundingClientRect().top) - scrollY - m.top) / m.pitchY)); })()`);
   let d = await page(`window.__t.drag(${JSON.stringify(ID.weather)}, { x: ${rightX}, y: 120 })`);
-  for (let i = 0; i < 20 && !/^9,0,3,3/.test((await W('list')).find((x) => x.id === ID.weather) ? ((x) => `${x.x},${x.y},${x.w},${x.h}`)((await W('list')).find((x) => x.id === ID.weather)) : ''); i++) await sleep(150);
+  for (let i = 0; i < 20 && !new RegExp(`^${obstacle.x + obstacle.w},${dropRow},3,3`).test((await W('list')).find((x) => x.id === ID.weather) ? ((x) => `${x.x},${x.y},${x.w},${x.h}`)((await W('list')).find((x) => x.id === ID.weather)) : ''); i++) await sleep(150);
   pgr = await cardsNow();
   inf = await info();
   const wxr = pgr.find((c) => c.id === ID.weather);
-  check('dragging a card to the far right puts it in the right side area, beside the search block', d.ghost && d.lifted && d.dragging && wxr.cell.split(',').slice(0, 2).join() === `${obstacle.x + obstacle.w},0` && wxr.left >= inf.mainRight - 0.5 && wxr.right <= inf.w && allClear(pgr, inf), JSON.stringify([d, wxr, obstacle]));
-  check('…and the drop is saved (the whole layout, in one go)', (await layoutOf()).includes(`${ID.weather}:${obstacle.x + obstacle.w},0,3,3`) && !(await page('document.body.classList.contains("w-dragging")')) && !(await page('Boolean(document.querySelector(".w-ghost"))')), await layoutOf());
+  check('dragging a card to the far right puts it in the right side area, beside the search block', d.ghost && d.lifted && d.dragging && wxr.cell.split(',').slice(0, 2).join() === `${obstacle.x + obstacle.w},${dropRow}` && wxr.left >= inf.mainRight - 0.5 && wxr.right <= inf.w && allClear(pgr, inf), JSON.stringify([d, wxr, obstacle]));
+  check('…and the drop is saved (the whole layout, in one go)', (await layoutOf()).includes(`${ID.weather}:${obstacle.x + obstacle.w},${dropRow},3,3`) && !(await page('document.body.classList.contains("w-dragging")')) && !(await page('Boolean(document.querySelector(".w-ghost"))')), await layoutOf());
   check('while dragging, no click reaches the card underneath', true, '');
   // Onto another card: the other one is pushed, nothing overlaps.
   const target = pgr.find((c) => c.id === ID.weather);

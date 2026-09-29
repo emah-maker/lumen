@@ -52,7 +52,7 @@
     // The centre column is only an obstacle while something is docked in it (every section may have become a card).
     const docked = window.newtabSystem ? window.newtabSystem.dockedCount() > 0 : true;
     const obstacle = docked ? WL.obstacleFor({ left: mainEl.offsetLeft, right: mainEl.offsetLeft + mainEl.offsetWidth, bottom }, m) : null;
-    o = { cols: m.cols, obstacle, packed: body.dataset.wpack !== '0', rows: WL.pageRows(window.innerHeight, m) };
+    o = { cols: m.cols, obstacle, packed: body.dataset.wpack === '1', rows: WL.pageRows(window.innerHeight, m) };
     body.classList.toggle('w-stacked', m.cols === 1);
     if (m.cols === 1 && editing) setEditing(false);
     announceMode();
@@ -100,7 +100,9 @@
       setCell(card, it);
       if (it.id !== except) setBox(card, px);
     }
-    boxEl().style.height = list.length ? `${Math.ceil(bottom + 32)}px` : '';
+    // In Edit layout the page runs half a window past the lowest card, so a card can be dropped into a row far below the rest.
+    const slack = editing ? Math.round(window.innerHeight * 0.5) : 0;
+    boxEl().style.height = list.length ? `${Math.ceil(bottom + 32 + slack)}px` : '';
     shiftMain(WL.bannerRows(list, o));
   }
   function layoutNow() {
@@ -389,6 +391,7 @@
     if (on === editing || (on && stacked())) return;
     if (on) window.newtabSystem?.freeAll(); // every section becomes a card where it stands
     editing = on;
+    relayout(); // the page's extra room below the cards comes and goes with Edit layout
     body.classList.toggle('w-editing', on);
     for (const card of cardsById.values()) card.tabIndex = on ? 0 : -1;
     if (!on) window.newtabSystem?.settle(); // the sections nobody changed go back to the centre column
