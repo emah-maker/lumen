@@ -494,6 +494,7 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // none). Every other tool reads or acts on the task's tab, so a tab on a site where the user turned
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
+const ID_TOOLS = new Set(['click', 'type_text', 'hover']); // tools that take an element_id from a read
 const TAB_FREE_TOOLS = new Set(['list_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps' };
 const { siteOf } = require('./features/ai-sites');
@@ -770,7 +771,14 @@ class Agent {
   inTask(tabId, signal, fn, chat = null, log = null) {
     const scope = { tabId: tabId ?? null, signal, chat, log };
     this.scopes.add(scope);
-    return taskScope.run(scope, fn).finally(() => this.scopes.delete(scope));
+    if (chat) this.runScope = scope; // the sidebar run (runTabId): only one runs at a time
+    return taskScope.run(scope, fn).finally(() => { this.scopes.delete(scope); if (this.runScope === scope) this.runScope = null; });
+  }
+
+  // The tab the sidebar's running task works in (null: none running, or no tab yet). The sidebar shows it
+  // ("Working in: …") so the user can tell which tab the AI is using after switching away.
+  runTabId() {
+    return this.runScope ? this.runScope.tabId : null;
   }
 
   // Is a task working in this tab right now (so tab sleeping must leave it alone)?
@@ -791,7 +799,9 @@ class Agent {
   // switch_tab / open_tab move the task to another tab on purpose.
   pinTab(id) {
     const scope = taskScope.getStore();
-    if (scope) scope.tabId = id;
+    if (!scope) return;
+    if (scope.tabId !== id) scope.idsFresh = false; // element ids read in the tab left mean nothing in this one
+    scope.tabId = id;
   }
 
   // Is the task's tab the one on screen? A background tab gets DOM clicks instead of mouse events.
@@ -1800,6 +1810,13 @@ ${out.text}${note}
   }
 
   async executeGuarded(name, input) {
+    const scope = taskScope.getStore();
+    // After switch_tab / open_tab the ids the model holds came from another tab; applied here they would
+    // hit whatever element has that number in this page. A read (read_page, find) of this tab brings them back.
+    if (scope && scope.idsFresh === false && ID_TOOLS.has(name) && input && input.element_id !== undefined) {
+      throw new Error('The task moved to another tab, so element ids from before belong to the previous tab. Call read_page mode:"compact" (or find) in this tab first, or use visible text.');
+    }
+    if (scope && (name === 'read_page' || name === 'find' || name === 'batch' || name === 'fill_form')) scope.idsFresh = true;
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
@@ -2047,9 +2064,16 @@ ${same}
         await waitForLoad(wc);
         return `Now at ${wc.getURL()}.`;
       }
-      case 'list_tabs': // [ai controls] a tab on a site with AI off shows as its id only
+      case 'list_tabs': { // [ai controls] a tab on a site with AI off shows as its id only
+        // Inside a task, "active" is the tab the task's tools act on, which stays put when the user
+        // looks at another tab (in_front says which one they are looking at).
+        const pinned = taskScope.getStore()?.tabId ?? null;
         return JSON.stringify(agentTabList(this.browser.listTabs())
-          .map((t) => (this.browser.aiOff?.(t.url) ? { id: t.id, active: t.active, ai_off: true } : t)));
+          .map((t) => {
+            const view = pinned === null ? t : { ...t, active: t.id === pinned, ...(t.active && t.id !== pinned ? { in_front: true } : {}) };
+            return this.browser.aiOff?.(t.url) ? { id: t.id, active: view.active, ai_off: true } : view;
+          }));
+      }
       case 'open_tab': {
         const tab = this.browser.openTab(webUrl(input.url));
         this.pinTab(tab.id); // it opens in front; the task carries on there

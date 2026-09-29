@@ -1047,9 +1047,11 @@ function tabState() {
 }
 
 let sessionTimer = null;
+let agentTargetHook = null; // set where the agent exists: tells the sidebar which tab its task works in
 function sendTabs() {
   keepPinnedFirst();
   ui()?.send('tabs', tabState());
+  agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession(); }, 3000);
@@ -3100,8 +3102,17 @@ const noTabReason = () => {
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
 // is woken, since the agent is about to use it.
 const agentTabById = (id) => {
-  const t = tabs.find((x) => x.id === id);
-  if (t?.sleeping) wakeTab(t);
+  // A tab moved to another window while a task works in it is still that task's tab, not a closed one.
+  let owner = curRec;
+  let t = tabs.find((x) => x.id === id);
+  if (!t) {
+    for (const rec of winRecs) {
+      if (rec === curRec || !rcAlive(rec)) continue;
+      t = tabsOf(rec).find((x) => x.id === id);
+      if (t) { owner = rec; break; }
+    }
+  }
+  if (t?.sleeping) withWindow(owner, () => wakeTab(t));
   return t && alive(t) && !agentOffLimits(t) ? { id: t.id, webContents: t.view.webContents } : null;
 };
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
@@ -3131,6 +3142,28 @@ const agent = new Agent({
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+// The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
+// the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
+let lastAgentTarget = '';
+function pushAgentTarget() {
+  const rec = runRec && winRecs.has(runRec) ? runRec : curRec;
+  const id = agent.running ? agent.runTabId() : null;
+  let info = null;
+  if (id != null) {
+    const list = rec ? tabsOf(rec) : tabs;
+    const t = list.find((x) => x.id === id) || [...winRecs].flatMap((r) => tabsOf(r)).find((x) => x.id === id);
+    if (t) {
+      const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || '';
+      info = { id, title: tabTitle(t) || hostOf(url) || '', host: hostOf(url) || '', front: id === activeIdOf(rec || curRec) };
+    }
+  }
+  const key = info ? `${info.id}|${info.title}|${info.front}` : '';
+  if (key === lastAgentTarget) return;
+  lastAgentTarget = key;
+  const wc = rec && rcAlive(rec) ? rec.win.webContents : ui();
+  if (wc && !wc.isDestroyed()) wc.send('agent:target', info);
+}
+agentTargetHook = pushAgentTarget;
 // lumen://chat (features/chat-page.js): opens like the Bookmarks page, shares the agent's one chat with the sidebar.
 chatPageRt = chatPage.create({
   ipcMain,
@@ -3423,6 +3456,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
   runRec = curRec; // the window this run's tab tools act on (agent:ask came from its UI)
   chatPageRt.beginRun(event, { text: String(text || ''), runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
   agent.run(String(text || ''), (msg) => {
+    if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type === 'done' || msg.type === 'error') runRec = null;
     if (msg.type === 'done') chatPageRt.endRun();
     chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open
@@ -3433,6 +3467,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
   }, valid);
 });
 ipcMain.on('agent:stop', () => agent.stop());
+// "Working in: …" in the sidebar: jump to the tab the task works in.
+ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); if (id != null && agent.running) (runRec && winRecs.has(runRec) ? withWindow(runRec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.
 ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });
 

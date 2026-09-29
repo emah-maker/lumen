@@ -242,8 +242,29 @@ function append(el) {
   return el;
 }
 
+// "Working in: <site>": while a task runs, which tab it works in. The AI stays in the tab it started in
+// when the user switches away, so this says where it is and jumps there. Only the sidebar has it.
+let agentTarget = null; // { id, title, host, front } from main, or null
+function renderWorkingIn() {
+  const el = optional('working-in');
+  const show = Boolean(running && agentTarget);
+  el.hidden = !show;
+  document.body.classList.toggle('agent-away', show && !agentTarget.front);
+  const pill = $('agent-pill-text');
+  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = show && !agentTarget.front ? t('agent.usingOther', { name: assistantIdentity?.name || 'AI' }) : t('agent.usingTab', { name: assistantIdentity?.name || 'AI' });
+  if (!show) return;
+  const name = agentTarget.title || agentTarget.host || t('agent.workingIn.untitled');
+  el.replaceChildren(Object.assign(document.createElement('span'), { className: 'agent-dot' }), Object.assign(document.createElement('span'), { textContent: t('agent.workingIn', { name }) }));
+  el.title = t('agent.workingIn.jump');
+  el.setAttribute('aria-label', `${t('agent.workingIn', { name })}. ${t('agent.workingIn.jump')}`);
+}
+window.assistant.onAgentTarget?.((info) => { agentTarget = info || null; renderWorkingIn(); });
+optional('working-in').onclick = () => window.assistant.showAgentTarget?.();
+
 function setRunning(value) {
   running = value;
+  if (!value) agentTarget = null;
+  renderWorkingIn();
   document.body.classList.toggle('agent-active', value);
   chatHost.running?.(value); // the sidebar re-measures the page it frames (app.js)
   send.classList.toggle('stop', value);

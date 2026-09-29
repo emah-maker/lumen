@@ -331,6 +331,14 @@ browser-action-list { display: flex; align-items: center; min-height: 28px; --br
 .viewport { position: relative; overflow: hidden; flex: 1; min-width: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--hairline); }
 /* While the AI drives the tab, the page is inset 2px inside a solid accent frame. */
 body.agent-active .viewport { background: var(--accent); }
+/* The user is looking at a different tab than the one the AI works in: no frame around the wrong page. */
+body.agent-active.agent-away .viewport { background: var(--surface); }
+.working-in { flex-basis: 100%; display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 6px; padding: 3px 8px; border: none; border-radius: 8px; background: var(--accent-soft); color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.working-in[hidden] { display: none; }
+.working-in:hover { background: var(--hover); }
+.working-in:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.working-in .agent-dot { flex: none; }
+.working-in span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sidebar {
   position: relative; overflow: hidden;

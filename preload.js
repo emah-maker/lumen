@@ -121,6 +121,8 @@ contextBridge.exposeInMainWorld('assistant', {
   openFullPage: () => ipcRenderer.send('chat:open-page'),
   onRunStart: on('chat:run-start'), // a turn started in the chat page
   onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
+  onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null
+  showAgentTarget: () => ipcRenderer.send('agent:show-target'),
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
