@@ -10,7 +10,7 @@ const WL = require('../features/widget-layout');
 const WS = require('../features/widget-system');
 const WE = require('../features/widget-edit');
 const { createTrash } = require('../features/widget-trash');
-const { createWidgets, cleanList, cleanWidget, CONNECTORS } = require('../features/widgets');
+const { createWidgets, cleanList, cleanWidget, CONNECTORS, MAX_WIDGETS: CAP } = require('../features/widgets');
 
 const root = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
@@ -45,8 +45,8 @@ module.exports = async function widgetEditUnits(check) {
   check('system cards: they live in the same list, checked; entries without a rect (docked) or with garbage are dropped', mixed.length === 3 && mixed.filter(WS.isSystem).map((w) => w.id).join() === 'wsysfavs', JSON.stringify(mixed.map((w) => w.id)));
   check('system cards: no span or height is written for them (an older Lumen ignores the entry entirely)', !('span' in mixed.find(WS.isSystem)) && CONNECTORS['sys-favorites'] === undefined && cleanWidget(it('wsysfavs', 'sys-favorites', 0, 0, 2, 2)) !== null, '');
   check('system cards: an older Lumen (which only knows connector types) drops them and keeps the widgets', mixed.filter((w) => CONNECTORS[w.type]).length === 2, '');
-  const many = cleanList([...Array.from({ length: 14 }, (_, i) => ({ id: `wm${String(i).padStart(4, '0')}`, type: 'todoist' })), ...WS.IDS.map((id, i) => it(id, WS.typeOf(id), i * 2, 30, 2, 2))]);
-  check('system cards: the twelve-widget limit counts widgets only', many.filter((w) => !WS.isSystem(w)).length === 12 && many.filter(WS.isSystem).length === 5, `${many.length}`);
+  const many = cleanList([...Array.from({ length: 30 }, (_, i) => ({ id: `wm${String(i).padStart(4, '0')}`, type: 'todoist' })), ...WS.IDS.map((id, i) => it(id, WS.typeOf(id), i * 2, 30, 2, 2))]);
+  check('system cards: the widget limit counts widgets only', many.filter((w) => !WS.isSystem(w)).length === CAP && many.filter(WS.isSystem).length === 5, `${many.length}`);
   check('system cards: widgets and system cards never overlap once stored', noOverlap(cleanList([todo('wa0001', { x: 0, y: 0, w: 6, h: 5 }), it('wsysfavs', 'sys-favorites', 2, 1, 6, 4)])), '');
 
   // ---- what the browser does with the page's actions ----
@@ -158,8 +158,9 @@ module.exports = async function widgetEditUnits(check) {
   check('guides: none when nothing lines up, and never more than asked for', WE.guides({ x: 0, y: 0, w: 2, h: 2 }, [{ x: 5, y: 5, w: 3, h: 3 }]).length === 0 && WE.guides({ x: 0, y: 0, w: 2, h: 2 }, Array.from({ length: 20 }, (_, i) => ({ x: 0, y: i * 2, w: 2, h: 2 })), 4).length === 4, '');
 
   // ---- the picker ----
-  const pe = WE.pickerEntries({ types: ['weather', 'spotify'], hidden: [{ id: 'wsysfavs', label: 'Favorites' }] });
-  check('picker: sections that were hidden first, then every kind; unknown kinds get a name and a generic line', pe[0].kind === 'section' && pe[0].id === 'wsysfavs' && pe[1].label === 'Weather' && pe[2].label === 'Spotify' && pe[2].hint === WE.STRINGS['newtab.edit.type.other.hint'], JSON.stringify(pe));
+  check('picker: every connector kind has its own name and line, each listed once', Object.keys(CONNECTORS).every((t) => WE.TYPE_INFO[t] && WE.STRINGS[WE.TYPE_INFO[t][0]] && WE.STRINGS[WE.TYPE_INFO[t][1]]) && new Set(WE.pickerEntries({ types: Object.keys(CONNECTORS) }).map((e) => e.type)).size === Object.keys(CONNECTORS).length, Object.keys(CONNECTORS).filter((t) => !WE.TYPE_INFO[t]).join());
+  const pe = WE.pickerEntries({ types: ['weather', 'bogus'], hidden: [{ id: 'wsysfavs', label: 'Favorites' }] });
+  check('picker: sections that were hidden first, then every kind; unknown kinds get a name and a generic line', pe[0].kind === 'section' && pe[0].id === 'wsysfavs' && pe[1].label === 'Weather' && pe[2].label === 'Bogus' && pe[2].hint === WE.STRINGS['newtab.edit.type.other.hint'], JSON.stringify(pe));
   check('picker: a translation table wins over English', WE.pickerEntries({ types: ['weather'], table: { 'newtab.edit.type.weather': 'Wetter' } })[0].label === 'Wetter' && WE.text('newtab.edit.undone', { what: 'x' }) === 'Undone: x' && WE.text('nope.key') === 'nope.key', '');
 
   // ---- the page's files ----

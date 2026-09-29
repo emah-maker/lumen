@@ -468,6 +468,8 @@ const WIDGET_ICONS = {
   github: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.7"/><circle cx="4.5" cy="12.5" r="1.7"/><circle cx="11.5" cy="6" r="1.7"/><path d="M4.5 5.2v5.6M11.5 7.7c0 2.4-3.2 2-6 3.4"/></svg>',
   feed: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5a9.5 9.5 0 0 1 9.5 9.5M3 7.5a5.5 5.5 0 0 1 5.5 5.5"/><circle cx="3.8" cy="12.2" r="1"/></svg>',
   muse: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.7 3.8 1.5-3.8 1.5L8 12.2 6.6 8.5 2.8 7l3.8-1.5z"/><path d="M12.5 11.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/></svg>',
+  stocks: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5 6 8l2.6 2.6L14 4.5M10.5 4.5H14V8"/></svg>',
+  crypto: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.4 5v6M6.4 5h2.3a1.5 1.5 0 0 1 0 3H6.4m0 0h2.6a1.5 1.5 0 0 1 0 3H6.4M7.6 4v1M7.6 11v1"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -487,7 +489,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, what is playing on Spotify, your Gmail inbox, Slack, your GitHub reviews, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, a world clock, your calendar, your Todoist tasks, headlines, Spotify, Gmail, Slack, GitHub, stocks or crypto prices, Muse, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -851,6 +853,26 @@ async function buildWidgets(card) {
         plain(tr('widgets.muse.also', 'Also'), h('div', { class: 'widget-checks' }, inputs.search), tr('widgets.muse.searchHelp', 'Web search uses a different Meta endpoint and can cost more.')),
         field(tr('widgets.colors', 'Colors'), colors, tr('widgets.muse.colorsHelp', 'Only the card’s surface and title follow it.')));
     }
+    // ---- stocks and crypto: a watchlist, the data provider's key, the paper portfolio's starting cash ----
+    function marketFields(same) {
+      const crypto = type === 'crypto';
+      const provider = crypto ? 'CoinGecko' : 'Twelve Data';
+      const saved = ws.secrets[crypto ? 'coingecko' : 'twelvedata'];
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: saved ? 'Saved. Paste a new key to replace it.' : crypto ? 'Optional: a free Demo API key' : 'Paste your API key', 'aria-label': `${provider} API key` });
+      inputs.list = h('input', { type: 'text', id: 'widget-watchlist', maxlength: '400', placeholder: crypto ? 'bitcoin, ethereum, solana' : 'AAPL, MSFT, NVDA', 'aria-label': crypto ? 'Coin ids' : 'Stock symbols', value: crypto ? (same?.mk?.coins || []).map((c) => `${c.id}=${c.sym}`).join(', ') : (same?.mk?.symbols || []).join(', ') });
+      const hasTrades = Boolean(same?.pf?.trades?.length);
+      inputs.startCash = h('input', { type: 'number', id: 'widget-startcash', min: '1000', max: '1000000000', step: '1000', value: String(same?.pf?.cash0 || 100000), disabled: hasTrades, 'aria-label': 'Starting paper cash in dollars' });
+      fields.replaceChildren(
+        field(crypto ? 'CoinGecko API key (optional)' : 'Twelve Data API key', inputs.token, crypto
+          ? 'Works without a key at a lower request limit. A free Demo key (coingecko.com/en/api, Demo plan) raises it. Stored encrypted by your system; it never reaches the new-tab page.'
+          : 'Create a free account at twelvedata.com and copy the key from its dashboard. Stored encrypted by your system; it never reaches the new-tab page.'),
+        field(crypto ? 'Coins (up to 12)' : 'Symbols (up to 8)', inputs.list, crypto
+          ? 'CoinGecko ids, comma separated, like “bitcoin, ethereum”. Add =TICKER to name the ticker: “ethereum=ETH”. All coins are fetched in one request every 2 minutes.'
+          : 'Ticker symbols, comma separated. All are fetched in one request every 15 minutes (hourly while the market is closed); the free plan counts each symbol as a credit against 8 a minute and 800 a day.'),
+        field('Starting paper cash ($)', inputs.startCash, hasTrades ? 'Reset the portfolio on the card to change it.' : 'For the simulated portfolio. Default $100,000.'),
+        plain('About the data', h('span', { class: 'note', text: `The symbols on the watchlist are sent to ${provider}, from Lumen, to get prices${crypto ? '' : ' (along with your key)'}. Your use of the data is under ${provider}’s terms for your own ${crypto ? 'key or keyless access' : 'account and key'}, not Lumen’s. Paper trading is simulated: no real orders, nothing is bought or sold anywhere. Not investment advice. Quotes ${crypto ? 'can lag by a minute or more' : 'on the free plan are delayed'}.` })),
+        field('Colors', colors, 'Only the card’s surface and title follow it; up and down colors stay.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -893,6 +915,8 @@ async function buildWidgets(card) {
           field('Colors', colors));
       } else if (type === 'muse') {
         museFields(same);
+      } else if (type === 'stocks' || type === 'crypto') {
+        marketFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -933,6 +957,9 @@ async function buildWidgets(card) {
         return { ...base, token: inputs.token.value, gh: { reviews: val(inputs.reviews), assigned: val(inputs.assigned), notifications: val(inputs.notifications), hideDrafts: val(inputs.hideDrafts), max: Number(inputs.max.value) } };
       }
       if (type === 'feed') return { ...base, feed: inputs.preset.value, url: inputs.url.value, count: Number(inputs.count.value) };
+      if (type === 'stocks' || type === 'crypto') {
+        return { ...base, token: inputs.token.value, mk: { [type === 'crypto' ? 'coins' : 'symbols']: inputs.list.value, startCash: Number(inputs.startCash.value) } };
+      }
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
     const busy = (on) => { for (const b of form.querySelectorAll('button')) b.disabled = on; };
@@ -968,13 +995,13 @@ async function buildWidgets(card) {
     renderFields();
     syncWidth();
     renderList();
-    (inputs.city || inputs.url || inputs.token || inputs.clientId)?.focus();
+    (inputs.city || inputs.url || inputs.list || inputs.token || inputs.clientId)?.focus();
     form.scrollIntoView?.({ block: 'nearest' });
   }
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, Spotify (now playing, with play, pause, next and previous), Gmail (read-only), Slack (read-only), GitHub (review requests, assigned items, notifications; read-only), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, a world clock, news headlines (RSS or Atom), Spotify (now playing, with play, pause, next and previous), Gmail, Slack and GitHub (all read-only), stock and crypto prices with a paper portfolio, Muse (Meta’s model), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page

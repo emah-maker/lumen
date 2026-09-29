@@ -13,7 +13,7 @@
   const strings = window.lumenI18n?.strings;
   const T = (key, vars) => WE.text(key, vars, strings);
   const say = (message) => window.widgetAnnounce?.(message);
-  const MAX_WIDGETS = 12; // features/widgets.js
+  const MAX_WIDGETS = 24; // features/widgets.js
   const REMOVE_UNDO_MS = 25000; // how long the browser keeps a removed widget (features/widget-trash.js is 30 s)
 
   const CSS = `

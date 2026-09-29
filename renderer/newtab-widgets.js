@@ -777,6 +777,8 @@ const WIDGET_RENDERERS = {
     card.body.append(wrap, box);
     card.el.classList.add('muse-card');
   },
+  stocks: (w, card) => marketCard(w, card),
+  crypto: (w, card) => marketCard(w, card),
 
   embed(w, card) {
     const d = w.data;
@@ -829,6 +831,152 @@ function askBox(w, d) {
   box.append(row);
   return box;
 }
+// ---- Stocks and Crypto: a price table, and a SIMULATED paper portfolio (features/markets-view.js) ----
+const marketTab = new Map(); // card id -> 'prices' | 'paper' (a redraw keeps the tab)
+const usd = (v, small) => (Number.isFinite(v) ? v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: small && Math.abs(v) < 1 ? 6 : 2 }) : '–');
+const qtyText = (v) => (Number.isFinite(v) ? String(Math.round(v * 1e8) / 1e8) : '–');
+function change(v, cls = 'mk-chg') {
+  const e = el('span', cls);
+  if (!Number.isFinite(v)) { e.textContent = '–'; return e; }
+  const dir = v > 0 ? 'up' : v < 0 ? 'down' : 'flat';
+  e.classList.add(dir);
+  e.textContent = `${v > 0 ? '▲' : v < 0 ? '▼' : ''}${v === 0 ? '' : ' '}${Math.abs(v).toFixed(2)}%`;
+  e.setAttribute('aria-label', `${dir === 'flat' ? 'unchanged' : dir}${dir === 'flat' ? '' : ` ${Math.abs(v).toFixed(2)} percent`}`);
+  return e;
+}
+function marketCard(w, card) {
+  const d = w.data;
+  const crypto = d.kind === 'crypto';
+  const rows = (Array.isArray(d.rows) ? d.rows : []).filter((r) => r && typeof r.sym === 'string' && Number.isFinite(r.px)).slice(0, 12);
+  const pf = d.pf && typeof d.pf === 'object' ? d.pf : {};
+  const offline = d.offline === true;
+  card.el.classList.toggle('mk-offline', offline);
+  card.head.append(el('span', `mk-badge${d.badge === 'Live' ? ' live' : ''}`, d.badge === 'Live' ? 'Live' : 'Delayed'));
+  if (offline) card.head.append(el('span', 'mk-badge off', 'offline'));
+  else if (!crypto && d.marketOpen === false) card.head.append(el('span', 'mk-badge', 'Market closed'));
+  card.head.append(refreshButton(w));
+  if (typeof d.notice === 'string' && d.notice) { const n = el('p', 'w-note mk-notice', d.notice.slice(0, 200)); n.setAttribute('role', 'status'); card.body.append(n); }
+
+  const tabs = el('div', 'mk-tabs');
+  tabs.setAttribute('role', 'tablist');
+  const panels = { prices: el('div', 'mk-panel'), paper: el('div', 'mk-panel') };
+  const select = (name) => {
+    marketTab.set(w.id, name);
+    for (const [k, p] of Object.entries(panels)) p.hidden = k !== name;
+    for (const b of tabs.children) { const on = b.dataset.tab === name; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+  };
+  for (const [name, label] of [['prices', 'Prices'], ['paper', 'Paper trading']]) {
+    const b = el('button', 'mk-tab', label);
+    b.type = 'button';
+    b.dataset.tab = name;
+    b.setAttribute('role', 'tab');
+    b.addEventListener('click', () => select(name));
+    b.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); select(name === 'prices' ? 'paper' : 'prices'); tabs.querySelector('[aria-selected="true"]').focus(); } });
+    tabs.append(b);
+  }
+
+  // Prices: symbol, price, change.
+  const table = el('table', 'mk-table');
+  table.setAttribute('aria-label', crypto ? 'Crypto prices' : 'Stock prices');
+  const head = el('tr');
+  for (const t of ['Symbol', 'Price', crypto ? '24h' : 'Change']) { const th = el('th', null, t); th.scope = 'col'; head.append(th); }
+  const thead = el('thead');
+  thead.append(head);
+  const tbody = el('tbody');
+  for (const r of rows) {
+    const tr = el('tr');
+    const sym = el('th', 'mk-sym', text(r.sym, 12));
+    sym.scope = 'row';
+    if (text(r.name, 60) && !crypto) sym.title = text(r.name, 60);
+    tr.append(sym, el('td', 'mk-px', usd(r.px, true)), (() => { const td = el('td'); td.append(change(r.chg)); return td; })());
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  panels.prices.append(table);
+  const missing = (Array.isArray(d.missing) ? d.missing : []).filter((s) => typeof s === 'string').slice(0, 12).map((s) => text(s, 12));
+  if (missing.length) panels.prices.append(el('p', 'w-note small', `No quote for ${missing.join(', ')}.`));
+  const asOf = Number.isFinite(d.asOf) && d.asOf > 0 ? new Date(d.asOf).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  panels.prices.append(el('p', 'mk-foot', [asOf && `as of ${asOf}`, offline && 'offline (last known prices)', text(d.attribution, 60)].filter(Boolean).join(' · ')));
+
+  // Paper trading: equity, P/L, holdings, and a buy/sell form.
+  const paper = panels.paper;
+  paper.append(el('p', 'mk-paper-note', 'Paper trading — simulated. Not investment advice.'));
+  const sum = el('div', 'mk-sum');
+  const cell = (label, node) => { const c = el('div'); c.append(el('span', 'mk-k', label), node); return c; };
+  const plNode = el('span', 'mk-v');
+  plNode.append(change(pf.plPct));
+  const plMoney = Number.isFinite(pf.pl) ? `${pf.pl > 0 ? '+' : pf.pl < 0 ? '−' : ''}${usd(Math.abs(pf.pl))}` : '–';
+  plNode.prepend(`${plMoney} `);
+  sum.append(cell('Equity', el('span', 'mk-v', usd(pf.equity))), cell('P/L', plNode), cell('Cash', el('span', 'mk-v', usd(pf.cash))));
+  paper.append(sum);
+  const holdings = (Array.isArray(pf.positions) ? pf.positions : []).filter((p) => p && typeof p.sym === 'string').slice(0, 50);
+  if (holdings.length) {
+    const ht = el('table', 'mk-table mk-hold');
+    ht.setAttribute('aria-label', 'Paper holdings');
+    const hr = el('tr');
+    for (const t of ['Holding', 'Value', 'P/L']) { const th = el('th', null, t); th.scope = 'col'; hr.append(th); }
+    const hh = el('thead');
+    hh.append(hr);
+    const hb = el('tbody');
+    for (const p of holdings) {
+      const tr = el('tr');
+      const s = el('th', 'mk-sym', `${text(p.sym, 12)} ×${qtyText(p.qty)}`);
+      s.scope = 'row';
+      const td = el('td');
+      td.append(change(p.plPct));
+      tr.append(s, el('td', 'mk-px', usd(p.value)), td);
+      if (!Number.isFinite(p.px)) tr.title = 'No current price: valued at cost';
+      hb.append(tr);
+    }
+    ht.append(hh, hb);
+    paper.append(ht);
+  } else paper.append(el('p', 'w-note small', 'No holdings yet. Buy something with the simulated cash.'));
+
+  const trade = el('div', 'mk-trade');
+  const sel = document.createElement('select');
+  sel.setAttribute('aria-label', 'Symbol to trade');
+  const held = holdings.map((p) => p.sym);
+  const symbols = [...new Set([...rows.map((r) => r.sym), ...held])];
+  for (const s of symbols) { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.append(o); }
+  const qty = document.createElement('input');
+  qty.type = 'text';
+  qty.inputMode = 'decimal';
+  qty.maxLength = 17;
+  qty.placeholder = crypto ? 'Amount' : 'Shares';
+  qty.setAttribute('aria-label', crypto ? 'Amount to trade' : 'Number of shares');
+  const err = el('p', 'mk-err');
+  err.setAttribute('role', 'status');
+  const go = (side) => {
+    const q = qty.value.trim();
+    const ok = /^\d{1,8}(\.\d{1,8})?$/.test(q) && Number(q) > 0 && (crypto || /^\d+$/.test(q));
+    if (!ok) { err.textContent = crypto ? 'Enter an amount.' : 'Enter a whole number of shares.'; return; }
+    if (!sel.value) { err.textContent = 'Pick a symbol.'; return; }
+    for (const b of trade.querySelectorAll('button')) b.disabled = true;
+    widgetAct(w.id, side, { sym: sel.value, qty: q });
+  };
+  qty.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go('buy'); } e.stopPropagation(); });
+  const buy = el('button', 'w-btn primary', 'Buy');
+  const sell = el('button', 'w-btn', 'Sell');
+  for (const [b, side] of [[buy, 'buy'], [sell, 'sell']]) { b.type = 'button'; b.addEventListener('click', () => go(side)); }
+  const blocked = d.tradable !== true || !symbols.length;
+  for (const c of [sel, qty, buy, sell]) c.disabled = blocked;
+  trade.append(sel, qty, buy, sell);
+  paper.append(trade, err);
+  if (blocked) paper.append(el('p', 'w-note small', text(d.tradeBlock, 120) || 'Trading is paused.'));
+  else paper.append(el('p', 'w-note small', 'Trades fill at the last price shown.'));
+  const reset = el('button', 'w-btn mk-reset', 'Reset portfolio');
+  reset.type = 'button';
+  reset.addEventListener('click', () => {
+    if (reset.dataset.sure !== '1') { reset.dataset.sure = '1'; reset.textContent = 'Click again to erase all paper trades'; setTimeout(() => { reset.dataset.sure = ''; reset.textContent = 'Reset portfolio'; }, 4000); return; }
+    reset.disabled = true;
+    widgetAct(w.id, 'resetpf');
+  });
+  paper.append(el('p', 'mk-foot', `${int(pf.trades) || 0} of ${int(pf.tradesMax) || 200} trades · started with ${usd(pf.start)} · ${asOf ? `prices as of ${asOf} · ` : ''}${text(d.attribution, 60)}`), reset);
+
+  card.body.append(tabs, panels.prices, panels.paper);
+  select(marketTab.get(w.id) === 'paper' ? 'paper' : 'prices');
+}
+
 function dayLabel(date) {
   const start = new Date(new Date().setHours(0, 0, 0, 0));
   const diff = Math.round((new Date(date).setHours(0, 0, 0, 0) - start) / 86400e3);
@@ -994,11 +1142,12 @@ function tick() {
     if (s.el.classList.contains('calendar') || s.el.classList.contains('feed') || s.el.classList.contains('todoist')) shownWidgets.set(id, { key: '', el: s.el });
   }
   for (const w of lastList.current) {
-    const after = REFRESH_AFTER[w.type];
+    // Stocks and Crypto say how often they refresh (a closed market: hourly).
+    const after = (w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type];
     if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh'); return; }
   }
   const box = document.getElementById('widgets');
-  if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
+  if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !box.querySelector('.mk-trade :focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
 setInterval(tick, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
