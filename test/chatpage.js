@@ -237,6 +237,11 @@ const fakeClient = (app) => app.evaluate(() => {
   check('Ctrl+Shift+L opens the page', Boolean(await waitFor(chatTab)), JSON.stringify(await tabs()));
   await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'L', control: true, shift: true }));
   check('and Ctrl+Shift+L on the page goes back to the sidebar', await waitFor(async () => !(await chatTab())) && await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden'))), 'still open');
+  // Ctrl+Shift+K: a fresh sidebar chat, opening the sidebar if it was closed, with the prompt focused
+  await ui.click('#toggle-sidebar');
+  await waitFor(() => ui.evaluate(() => document.body.classList.contains('sidebar-hidden')));
+  await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'K', control: true, shift: true }));
+  check('Ctrl+Shift+K opens a closed sidebar with the prompt focused', await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden') && document.activeElement === document.getElementById('prompt'))), 'not open/focused');
   await ui.click('#open-chat-page');
   await waitFor(chatTab);
   const oneChatTab = (await tabs()).filter((t) => t.chat).length === 1;

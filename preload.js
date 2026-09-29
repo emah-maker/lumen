@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('browser', {
   onTabs: on('tabs'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
+  onNewSidebarChat: on('new-sidebar-chat'),
   onAskSelection: on('ask-selection'),
   onAttachImage: on('attach-image'), // a screenshot for the sidebar composer (features/screenshot.js)
   onAskFromHome: on('ask-from-home'),
