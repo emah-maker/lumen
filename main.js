@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, powerMonitor, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
@@ -723,6 +723,7 @@ function scheduleAutoGroup() {
   autoGroupTimer = setTimeout(() => {
     if (tabGroups.autoGroup()) sendTabs();
     if (groupingMode() === 'topic' && readSettings().topicAi === true) scheduleAiTopics();
+    scheduleAutoOrganize();
   }, groupingMode() === 'topic' ? 1500 : 400); // after the title usually arrives; by topic waits a little longer for the page text
 }
 
@@ -2028,21 +2029,31 @@ function closeDuplicateTabs() {
   for (const id of ids) requestCloseTab(id);
 }
 
-// "Organize tabs automatically when idle" (on by default): after N idle minutes (3), with 5 or more loose tabs,
-// the LOCAL organizer groups them (never the AI) and a toast offers Undo.
+// "Organize tabs automatically" (on by default): a few seconds after the tabs change (Settings, default 5),
+// the LOCAL organizer groups the loose tabs (never the AI) and a note offers Undo. A handful of tabs that
+// are all one topic is left alone (features/organize-learn.js shouldAutoOrganize).
 let idleOrganizeKey = null;
-function idleOrganizeTick() {
+let autoOrganizeTimer = null;
+function autoOrganizeNow() {
   const settings = readSettings();
-  if (settings.organizeWhenIdle === false) return;
+  if (settings.organizeWhenIdle === false) return false;
   try {
     const pool = tabGroups.loose();
     const key = organizeAi.setKey(pool);
-    if (!organizeLearn.shouldAutoOrganize({ enabled: true, idleSeconds: powerMonitor.getSystemIdleTime(), idleMinutes: Number(settings.organizeIdleMinutes) || 3, ungrouped: pool.length, key, lastKey: idleOrganizeKey, busy: organizing })) return;
+    const topics = pool.length >= 2 ? require('./tab-groups').topicClusters(pool).map((c) => c.ids) : [];
+    if (!organizeLearn.shouldAutoOrganize({ enabled: true, ungrouped: pool.length, topics, key, lastKey: idleOrganizeKey, busy: organizing })) return false;
     idleOrganizeKey = key;
-    if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); }
+    if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); return true; }
   } catch {}
+  return false;
 }
-if (!TEST) setInterval(idleOrganizeTick, 60000).unref();
+function scheduleAutoOrganize() {
+  if (TEST && global.__autoOrganizeInTest !== true) return;
+  clearTimeout(autoOrganizeTimer);
+  autoOrganizeTimer = setTimeout(autoOrganizeNow, organizeLearn.organizeDelay(readSettings().organizeDelaySeconds) * 1000);
+  autoOrganizeTimer.unref?.();
+}
+if (TEST) global.__autoOrganizeNow = autoOrganizeNow;
 
 const colorLabel = (c) => t(`color.${c}`);
 
@@ -4179,6 +4190,7 @@ ipcMain.handle('settings:get', () => {
     tabGrouping: groupingMode(),
     topicAi: readSettings().topicAi === true,
     organizeWhenIdle: readSettings().organizeWhenIdle !== false,
+    organizeDelaySeconds: organizeLearn.organizeDelay(readSettings().organizeDelaySeconds),
     organizeLearned: organizeLearner.size(),
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),

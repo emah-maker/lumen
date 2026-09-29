@@ -2181,9 +2181,12 @@ async function organizeAiRuns() {
   check('duplicates: an app\'s #/ routes differ, and non-web pages are never duplicates', dups.length === 2, JSON.stringify(dups));
 
   // idle rule
-  const idle = (o) => learn.shouldAutoOrganize({ enabled: true, idleSeconds: 700, idleMinutes: 10, ungrouped: 9, key: 'k1', lastKey: null, ...o });
-  check('idle: runs when enabled, idle long enough, with 5+ loose tabs and a new set', idle({}) === true);
-  check('idle: never when off, busy, too few tabs, not idle long enough, or already done for this set', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ ungrouped: 4 }) && idle({ ungrouped: 5 }) && !idle({ idleSeconds: 500 }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }));
+  const idle = (o) => learn.shouldAutoOrganize({ enabled: true, ungrouped: 6, topics: [[1, 2, 3], [4, 5]], key: 'k1', lastKey: null, ...o });
+  check('auto organize: runs when on, the loose tabs form a topic group, and the set is new', idle({}) === true);
+  check('auto organize: never when off, busy, already done for this set, or nothing would form a group', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }) && !idle({ topics: [] }) && !idle({ ungrouped: 1 }));
+  check('auto organize: 2-3 loose tabs all about one topic are left alone', !idle({ ungrouped: 3, topics: [[1, 2, 3]] }) && !idle({ ungrouped: 2, topics: [[1, 2]] }));
+  check('auto organize: a few tabs on different topics are grouped; many tabs on one topic are too', idle({ ungrouped: 3, topics: [[1, 2]] }) && idle({ ungrouped: 5, topics: [[1, 2, 3, 4, 5]] }));
+  check('auto organize: the delay is one of the Settings choices, else 5 seconds', learn.organizeDelay(10) === 10 && learn.organizeDelay('30') === 30 && learn.organizeDelay(7) === 5 && learn.organizeDelay(undefined) === 5);
 
   // recency order and colours
   {

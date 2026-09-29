@@ -142,15 +142,24 @@ function findDuplicates(tabs) {
   return out;
 }
 
-// ---------- "Organize tabs automatically when idle" ----------
+// ---------- "Organize tabs automatically" ----------
+// A few seconds after the tabs change (ORGANIZE_DELAYS, Settings), the loose tabs are grouped on this
+// computer, with Undo. A handful of tabs that are all one topic is left alone: grouping 2 or 3 tabs
+// about one thing adds nothing. Tabs on different topics are grouped.
 
-const IDLE_MIN_UNGROUPED = 5;
-// ungrouped: how many loose tabs there are; key: which loose tabs (so an unchanged set isn't organized twice).
-function shouldAutoOrganize({ enabled, idleSeconds, idleMinutes = 3, ungrouped, key: setKey, lastKey = null, busy = false }) {
-  if (!enabled || busy) return false;
-  if (!(idleMinutes >= 1) || idleSeconds < idleMinutes * 60) return false;
-  if (ungrouped < IDLE_MIN_UNGROUPED) return false;
-  return setKey !== lastKey;
+const ORGANIZE_DELAYS = [2, 5, 10, 30, 60]; // seconds after the last tab change
+const DEFAULT_ORGANIZE_DELAY = 5;
+const SMALL_SAME_TOPIC = 3; // this many loose tabs or fewer, all one topic: leave them
+const organizeDelay = (v) => (ORGANIZE_DELAYS.includes(Number(v)) ? Number(v) : DEFAULT_ORGANIZE_DELAY);
+// ungrouped: loose tab count; topics: the local topic groups those tabs would form ([[ids]]);
+// key: which loose tabs (so an unchanged set isn't organized twice).
+function shouldAutoOrganize({ enabled, ungrouped, topics = [], key: setKey, lastKey = null, busy = false }) {
+  if (!enabled || busy || setKey === lastKey) return false;
+  if (ungrouped < 2 || !topics.length) return false; // nothing would form a group
+  const oneTopic = topics.length === 1 && topics[0].length === ungrouped;
+  if (oneTopic && ungrouped <= SMALL_SAME_TOPIC) return false;
+  return true;
 }
+const IDLE_MIN_UNGROUPED = 2;
 
-module.exports = { createLearner, normalizeUrl, findDuplicates, shouldAutoOrganize, IDLE_MIN_UNGROUPED };
+module.exports = { createLearner, normalizeUrl, findDuplicates, shouldAutoOrganize, IDLE_MIN_UNGROUPED, ORGANIZE_DELAYS, DEFAULT_ORGANIZE_DELAY, SMALL_SAME_TOPIC, organizeDelay };
