@@ -440,6 +440,36 @@ const WIDGET_RENDERERS = {
     card.body.append(full);
   },
 
+  worldclock(w, card) {
+    const d = w.data;
+    const WCK = window.WorldClock;
+    card.head.append(refreshButton(w));
+    const show = d.show && typeof d.show === 'object' ? d.show : {};
+    const opts = { clock: ['12', '24'].includes(d.clock) ? d.clock : 'auto', seconds: d.seconds === true };
+    const places = (Array.isArray(d.places) ? d.places : []).map((p) => (p && typeof p === 'object' ? { label: text(p.label, 40), name: text(p.name, 80), tz: WCK?.cleanTz(p.tz), days: Array.isArray(p.days) ? p.days.slice(0, 3) : [] } : null)).filter((p) => p && p.tz).slice(0, 8);
+    if (!places.length) { card.body.append(el('p', 'w-note', 'No places to show. Add one in Settings.')); return; }
+    const list = el('div', 'wc-list');
+    for (const p of places) {
+      const row = el('div', 'wc-row');
+      row.title = p.name;
+      const icon = el('span', 'wc-icon');
+      const main = el('div', 'wc-main');
+      main.append(el('span', 'wc-city', p.label || p.name));
+      const sub = el('span', 'wc-sub');
+      if (show.date !== false) sub.append(el('span', 'wc-date'));
+      if (show.offset !== false) sub.append(el('span', 'wc-off'));
+      main.append(sub);
+      const sun = el('span', 'wc-sun');
+      const time = el('span', 'wc-time');
+      row.append(icon, main, time);
+      if (show.sun !== false) { row.append(sun); row.classList.add('has-sun'); }
+      list.append(row);
+      clockRows.set(row, { tz: p.tz, days: p.days, opts, icon, time, date: sub.querySelector('.wc-date'), off: sub.querySelector('.wc-off'), sun: show.sun !== false ? sun : null, sunKey: '', dayKey: '' });
+    }
+    card.body.append(list);
+    tickClocks();
+  },
+
   todoist(w, card) {
     const d = w.data;
     card.head.append(refreshButton(w));
@@ -877,9 +907,39 @@ function applyWidgetColors() {
 }
 window.applyWidgetColors = applyWidgetColors;
 
+// ---- World clock: the page ticks the times itself from time zone names (Intl); nothing is fetched to do it ----
+const clockRows = new Map(); // row element -> what it shows
+const sunTime = (v, opts) => { const m = /^(\d{2}):(\d{2})$/.exec(typeof v === 'string' ? v : ''); return m ? clockText(Number(m[1]), Number(m[2]), opts) : '–'; };
+function tickClocks() {
+  const WCK = window.WorldClock;
+  if (!WCK) return;
+  const now = Date.now();
+  for (const [row, c] of clockRows) {
+    if (!row.isConnected) { clockRows.delete(row); continue; }
+    try {
+      const t = WCK.timeText(now, c.tz, c.opts);
+      if (c.time.textContent !== t) c.time.textContent = t;
+      const parts = WCK.zoneParts(now, c.tz);
+      const day = WCK.dayFor(c.days, parts.date);
+      const up = WCK.isDaylight(parts, day);
+      const key = `${parts.date}|${up}`;
+      if (key === c.dayKey) continue;
+      c.dayKey = key;
+      row.dataset.day = up === null ? '' : up ? 'day' : 'night';
+      c.icon.replaceChildren(skyIcon(0, up !== false));
+      if (c.date) c.date.textContent = WCK.dateText(now, c.tz);
+      if (c.off) {
+        c.off.textContent = WCK.relativeLabel(WCK.offsetMinutes(now, c.tz) - WCK.offsetMinutes(now, Intl.DateTimeFormat().resolvedOptions().timeZone));
+      }
+      if (c.sun) c.sun.textContent = day ? `↑ ${sunTime(day.sunrise, c.opts)}  ↓ ${sunTime(day.sunset, c.opts)}` : '';
+    } catch (err) { console.error('world clock', err); clockRows.delete(row); }
+  }
+}
+setInterval(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 1000);
+
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;

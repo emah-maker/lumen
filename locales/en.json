@@ -779,5 +779,17 @@
   "settings.widgets.feed.pickHint": "Lumen fetches the feed itself; the new-tab page never goes online. Headlines open in a new tab.",
   "settings.widgets.feed.url": "Feed address (RSS or Atom)",
   "settings.widgets.feed.urlHint": "Only used with Custom address. Must be https://.",
-  "settings.widgets.feed.count": "Headlines shown"
+  "settings.widgets.feed.count": "Headlines shown",
+  "widgets.worldclock.date": "Date",
+  "widgets.worldclock.hint": "Sunrise and sunset come from Open-Meteo (free, no account); only the place goes to it. The time itself is worked out on the page and needs no network.",
+  "widgets.worldclock.nickname": "Nickname",
+  "widgets.worldclock.nicknameFor": "Nickname for {name}",
+  "widgets.worldclock.noPlaces": "No places yet: search below.",
+  "widgets.worldclock.offset": "Hours ahead or behind you",
+  "widgets.worldclock.places": "Places",
+  "widgets.worldclock.search": "City or ZIP code",
+  "widgets.worldclock.searchLabel": "Search for a place",
+  "widgets.worldclock.seconds": "Seconds",
+  "widgets.worldclock.show": "Show",
+  "widgets.worldclock.sun": "Sunrise and sunset"
 }

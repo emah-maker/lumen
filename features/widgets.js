@@ -49,6 +49,7 @@ const SV = require('./spotify-view');
 const GV = require('./gmail-view');
 const SL = require('./slack-view');
 const OA = require('./oauth');
+const WCK = require('./worldclock-view');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -99,7 +100,8 @@ async function searchPlaces(x, query) {
   for (const r of (await x.json(url)).results || []) {
     if (!r || num(r.latitude, -90, 90) === null || num(r.longitude, -180, 180) === null) continue;
     const name = [...new Set([r.name, r.admin1, r.country].map((p) => str(p, 60)).filter(Boolean))].join(', ');
-    if (name) out.push({ name, lat: r.latitude, lon: r.longitude });
+    const tz = WCK.cleanTz(r.timezone); // the World clock keeps it; the weather ignores it
+    if (name) out.push({ name, lat: r.latitude, lon: r.longitude, ...(tz ? { tz } : {}) });
   }
   return out;
 }
@@ -162,6 +164,48 @@ const CONNECTORS = {
         clock: wx.clock, view: wx.view, show: wx.show, days: wx.days, hours: wx.hours, service: LOCATE_SERVICE,
         hourLabels: Object.fromEntries([...Array(24).keys()].map((h) => [h, WX.hourLabel(h, wx.clock)])),
       };
+    },
+  },
+
+  // Places and options: c.wc (features/worldclock-view.js). Only sunrise and sunset come from the network
+  // (Open-Meteo, keyless); the page gets each place's time zone NAME and ticks the time itself.
+  worldclock: {
+    label: 'World clock',
+    ttl: 6 * 3600e3,
+    clean: (c) => {
+      const wc = WCK.cleanConfig(c.wc);
+      return wc ? { wc, colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      let places = WCK.cleanPlaces(input.wc?.places);
+      if (!places.length) { // a typed city
+        const query = str(input.city, 80);
+        if (!query) throw new Error('Type a city, or search for a place.');
+        const found = (await searchPlaces(x, query))[0];
+        if (!found) throw new Error(`No place called “${query}” was found.`);
+        places = WCK.cleanPlaces([found]);
+      }
+      const sun = await Promise.all(places.map((p) => sunFor(x, p)));
+      places = places.map((p, i) => ({ ...p, tz: sun[i].tz }));
+      const wc = WCK.cleanConfig({ ...input.wc, places });
+      return { config: { wc, colors: WC.cleanMode(input.colors) }, message: places.length === 1 ? `${places[0].name} is ready.` : `${places.length} places are ready.` };
+    },
+    title: () => 'World clock',
+    summary: (c) => c.wc.places.map(WCK.placeLabel).join(', '),
+    async fetch(c, x) {
+      const wc = c.wc;
+      const places = [];
+      for (const p of wc.places) {
+        try {
+          const s = await sunFor(x, p);
+          places.push({ label: WCK.placeLabel(p), name: p.name, tz: s.tz, days: s.days });
+        } catch (err) {
+          // Without a sun answer the clock still runs if the zone is known.
+          if (p.tz) places.push({ label: WCK.placeLabel(p), name: p.name, tz: p.tz, days: [], error: String(err?.message || err).slice(0, 200) });
+        }
+      }
+      if (!places.length) throw new Error('Couldn’t find the time zones. Check your internet connection.');
+      return { places, clock: wc.clock, seconds: wc.seconds, show: wc.show };
     },
   },
 
@@ -472,6 +516,15 @@ const CONNECTORS = {
   },
 };
 
+// One place's time zone and sunrise/sunset for the next days (shared for hours between clocks asking the same).
+function sunFor(x, place) {
+  return x.memo(`wc:${place.lat},${place.lon}`, 3 * 3600e3, async () => {
+    const s = WCK.shapeSun(await x.json(`${x.endpoint('forecast')}?${new URLSearchParams(WCK.sunParams(place))}`), place);
+    if (!s) throw new Error('The service didn’t say which time zone this is.');
+    return s;
+  });
+}
+
 // Todoist's tasks for a widget's question (a filter query, or a project's own list; the unified API,
 // paged by cursor). Shared for a minute between widgets asking the same thing.
 async function todoistTasks(x, token, cfg) {
@@ -664,7 +717,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, wc: i.wc, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -983,7 +1036,7 @@ function createWidgets(deps) {
     const age = now() - entry.at;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : c.ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
-    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); }
+    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
       .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
