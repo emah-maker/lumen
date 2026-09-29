@@ -144,7 +144,7 @@ async function connectorChecks(check) {
   const id = saved.widget.id;
   const settle = async () => { await w.cache.get(id)?.pending; }; // a save starts a fetch of its own
   await settle();
-  check('spotify Settings: saved with the Client ID, art switch and colours; its size is the default', saved.widget.type === 'spotify' && saved.widget.clientId === CLIENT && saved.widget.art === true && saved.widget.colors === 'match' && saved.widget.w === 4 && saved.widget.h === 3 && w.state().widgets[0].label === 'Spotify' && w.state().types.some((t) => t.type === 'spotify') && w.state().secrets.spotify === true, plain(saved.widget));
+  check('spotify Settings: saved with the Client ID, art switch and colours; its size is the default', saved.widget.type === 'spotify' && saved.widget.clientId === CLIENT && saved.widget.art === true && saved.widget.colors === 'match' && saved.widget.w === 3 && saved.widget.h === 3 && w.state().widgets[0].label === 'Spotify' && w.state().types.some((t) => t.type === 'spotify') && w.state().secrets.spotify === true, plain(saved.widget));
 
   // fetching
   await w.refresh(w.list()[0], { force: true });

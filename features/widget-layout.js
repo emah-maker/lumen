@@ -54,6 +54,14 @@ const LIMITS = {
 };
 const FALLBACK_LIMITS = { minW: 2, minH: 2, maxW: 12, maxH: 20 };
 const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, spotify: { w: 4, h: 3 }, gmail: { w: 4, h: 4 }, slack: { w: 4, h: 4 }, github: { w: 6, h: 4 }, feed: { w: 4, h: 4 }, worldclock: { w: 4, h: 3 }, muse: { w: 4, h: 4 }, stocks: { w: 4, h: 3 }, crypto: { w: 4, h: 3 }, embed: { w: 12, h: 6 } };
+// A new card's width is capped to the free side area beside the centre column (3 columns of 12 with a 6-column
+// centre), so it lands beside the search bar instead of below it. A web page (embed) keeps its full-width default.
+const SIDE_DEFAULT = 3;
+function defaultSize(type, side = SIDE_DEFAULT) {
+  const size = DEFAULT_SIZE[type] || { w: 4, h: 3 };
+  if (type === 'embed' || !Number.isFinite(side)) return { ...size };
+  return { w: Math.min(size.w, Math.max(limitsOf(type).minW, Math.floor(side))), h: size.h };
+}
 // Quick sizes in edit mode.
 const PRESETS = { small: { w: 3, h: 2 }, medium: { w: 4, h: 3 }, large: { w: 6, h: 5 }, wide: { w: 8, h: 3 }, tall: { w: 3, h: 7 } };
 // What older Lumens stored: a width of 2, 3, 4 or 6 of six columns and, for a web page, a frame height.
@@ -458,7 +466,7 @@ function decode(text) {
 }
 
 const api = {
-  COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, PRESETS, SPANS, SNAPS, FRAME_PX,
+  COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, SIDE_DEFAULT, defaultSize, PRESETS, SPANS, SNAPS, FRAME_PX,
   limitsOf, cleanRect, cleanSnap, sizeFromLegacy, mirror, fromLegacy, flowPack, overlap, rectOf, same,
   resolve, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
   MARGIN, MARGIN_WIDE, WIDE_AT, MIN_CENTRE, metrics, centreSpan, spanPx, obstacleFor, cellToPx, encode, decode,

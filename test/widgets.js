@@ -664,7 +664,7 @@ function server(opts) {
   await sp("document.getElementById('widget-reset').click()").catch(() => {});
   const okReset = await waitFor("/Layout reset/.test(document.getElementById('widget-list-note').textContent)");
   const afterReset = await W('list');
-  check('Settings → Reset layout: every card back to its default size, packed in order', okReset && afterReset.every((x) => !x.snap) && afterReset.find((x) => x.type === 'embed').w === 12 && afterReset.find((x) => x.type === 'calendar').w === 6 && afterReset.find((x) => x.id === ID.weather).w === 4, JSON.stringify(afterReset.map((x) => [x.type, x.w, x.h, x.snap])));
+  check('Settings → Reset layout: every card back to its default size (capped to the 3-column side area; embeds stay full width), packed in order', okReset && afterReset.every((x) => !x.snap) && afterReset.find((x) => x.type === 'embed').w === 12 && afterReset.find((x) => x.type === 'calendar').w === 3 && afterReset.find((x) => x.id === ID.weather).w === 3, JSON.stringify(afterReset.map((x) => [x.type, x.w, x.h, x.snap])));
   await sleep(600);
   check('…and the page follows without reloading the frame', await page('document.querySelector("#widgets iframe") === window.__frame && window.__loads === 0'), '');
   check('an older Lumen can still read the list: span and height mirrored, in reading order', afterReset.every((x) => [2, 3, 4, 6].includes(x.span)) && afterReset.filter((x) => x.type === 'embed').every((x) => ['small', 'medium', 'large', 'tall'].includes(x.height)) && afterReset.every((x, i, a) => i === 0 || a[i - 1].y < x.y || (a[i - 1].y === x.y && a[i - 1].x <= x.x)), JSON.stringify(afterReset.map((x) => [x.y, x.x, x.span])));

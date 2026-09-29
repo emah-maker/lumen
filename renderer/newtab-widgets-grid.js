@@ -145,7 +145,7 @@
     const incoming = valid.map((w) => {
       const r = WL.cleanRect(w.type, w.layout);
       let rect = r;
-      if (!rect) { const size = WL.DEFAULT_SIZE[w.type] || { w: 4, h: 3 }; rect = { ...WL.firstFit(taken, size), ...size }; }
+      if (!rect) { const size = WL.defaultSize(w.type, m && m.cols > 1 ? Math.floor((m.cols - WL.centreSpan(m, mainEl.offsetWidth)) / 2) : undefined); rect = { ...WL.firstFit(taken, size), ...size }; }
       taken.push(rect);
       const snap = r ? WL.cleanSnap(w.layout?.snap) : undefined;
       return { id: w.id, type: w.type, title: w.title, ...rect, ...(snap ? { snap } : {}) };

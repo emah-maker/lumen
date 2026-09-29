@@ -148,7 +148,7 @@ module.exports = async function slackUnits(check) {
   check('slack: Check confirms the workspace and what will show', checkOut.ok && /Connected to Muse/.test(checkOut.message) && /1 channel/.test(checkOut.message), JSON.stringify(checkOut));
   const saved = await w.save({ type: 'slack', slack: { channels: [{ id: 'C111', name: 'general' }], dms: true, mentions: true, count: 5 } });
   const id = saved.widget.id;
-  check('slack: the widget is saved with 4x4 as its default size and only its display config', saved.widget.w === 4 && saved.widget.h === 4 && !JSON.stringify(store.settings).includes('xox') && store.settings.homeWidgets[0].slack.channels[0].id === 'C111', JSON.stringify(store.settings.homeWidgets[0]));
+  check('slack: the widget is saved with its default size (4 wide capped to the 3-column side area, 4 high) and only its display config', saved.widget.w === 3 && saved.widget.h === 4 && !JSON.stringify(store.settings).includes('xox') && store.settings.homeWidgets[0].slack.channels[0].id === 'C111', JSON.stringify(store.settings.homeWidgets[0]));
   check('slack: the widget is a checked type (garbage config falls back)', cleanWidget({ id: 'wslack1', type: 'slack', slack: 'x', colors: 'zz' }).slack.count === 5, '');
   await w.refresh(w.list()[0], { force: true });
   let page = w.forPage()[0];

@@ -249,7 +249,7 @@ async function connectorRuns(check) {
   check('gmail settings: a client secret that is not one is refused', /client secret/i.test((await w.test({ type: 'gmail', clientId: CLIENT, clientSecret: 'x y' })).message), '');
   const added = await w.save({ type: 'gmail', clientId: CLIENT, count: 5, snippets: false });
   const listed = w.list().find((x) => x.id === added.widget.id);
-  check('gmail settings: Save keeps the count and snippets choice and the sign-in, with the default 4x4 size', listed.count === 5 && listed.snippets === false && listed.w === 4 && listed.h === 4 && OA.decodeCreds(secrets.gmail).refresh === 'REFRESH-TOKEN-2', `${listed.w}x${listed.h}`);
+  check('gmail settings: Save keeps the count and snippets choice and the sign-in, with the default size (4 wide, capped to the 3-column side area)', listed.count === 5 && listed.snippets === false && listed.w === 3 && listed.h === 4 && OA.decodeCreds(secrets.gmail).refresh === 'REFRESH-TOKEN-2', `${listed.w}x${listed.h}`);
   check('gmail settings: the widget in settings.json holds the Client ID only', !/GOCSPX|REFRESH-TOKEN|ACCESS-TOKEN|clientSecret/.test(JSON.stringify(settings)), JSON.stringify(settings).slice(0, 200));
 
   // Disconnect and removal.

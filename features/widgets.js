@@ -1015,7 +1015,7 @@ function createWidgets(deps) {
   const save = (widgets, extra = {}, sys = sysList()) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList([...widgets, ...sys]), ...extra });
   const trash = createTrash({ now, ttl: deps.trashMs ?? 30000 });
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
-  const sizeFor = (type) => sizes()[type] || WL.DEFAULT_SIZE[type] || { w: 4, h: 3 };
+  const sizeFor = (type) => sizes()[type] || WL.defaultSize(type); // a size the person used stays; a first card fits beside the centre column
   // A changed config invalidates its cached data; its size, place and paper trades don't.
   const keyOf = ({ span, height, x, y, w, h, snap, colors, pf, ...rest }) => JSON.stringify(rest);
 
@@ -1399,7 +1399,7 @@ function createWidgets(deps) {
   // Settings' "Reset layout": every card its default size, packed in reading order.
   function resetLayout() {
     const widgets = list();
-    const rects = WL.flowPack(widgets.map((w) => WL.DEFAULT_SIZE[w.type] || { w: 4, h: 3 }));
+    const rects = WL.flowPack(widgets.map((w) => WL.defaultSize(w.type)));
     widgets.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
     save(widgets, { homeWidgetSizes: {}, newTabClockSize: SYS.CLOCK_DEFAULT, newTabSearchWidth: SYS.SEARCH_DEFAULT }, []); // and every section back in the centre column, at its default clock and search size
     deps.onUpdate?.();
