@@ -1295,7 +1295,110 @@ async function speedRuns() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+// ---- lumen://chat (features/chat-page.js): the URL guard, who may call what, and which tab the AI works in
+async function chatPageRuns() {
+  const { EventEmitter } = require('events');
+  const chatPage = require('../features/chat-page');
+  const { pathToFileURL } = require('url');
+  const CHAT = chatPage.CHAT_URL;
+  check('chat page: its own URL is recognised, with a hash or query', chatPage.isChatUrl(CHAT) && chatPage.isChatUrl(`${CHAT}#x`) && chatPage.isChatUrl(`${CHAT}?a=1`), CHAT);
+  check('chat page: the path compares without case (Windows)', chatPage.isChatUrl(CHAT.replace('chat-page.html', 'CHAT-Page.HTML')), CHAT);
+  check('chat page: web pages, other local pages and script URLs are not it',
+    ['https://example.com/', 'http://127.0.0.1/renderer/chat-page.html', 'javascript:1', '', null, undefined, 42, 'file:///etc/passwd',
+      pathToFileURL(path.join(__dirname, '..', 'renderer', 'chat-page.html.evil')).href,
+      pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href,
+      pathToFileURL(path.join(__dirname, '..', 'renderer', 'chat-page.htmlx')).href,
+      `https://x.test/?u=${CHAT}`].every((u) => !chatPage.isChatUrl(u)), 'lookalike accepted');
+  check('chat page: lumen://chat and chrome://chat are typed forms of it, nothing near them is',
+    Boolean(chatPage.parseChatInput('lumen://chat')) && Boolean(chatPage.parseChatInput(' chrome://CHAT/ ')) && ['lumen://chats', 'lumen://chat/x', 'chat', 'https://chat.example', 'lumen://settings', '', null].every((x) => !chatPage.parseChatInput(x)), 'parse');
+  check('chat page: it shows as lumen://chat in the address bar', chatPage.displayUrl(CHAT) === 'lumen://chat', chatPage.displayUrl(CHAT));
+
+  // Every other tab: nothing can navigate, redirect or load a frame there.
+  const other = new EventEmitter();
+  chatPage.guardOthers(other);
+  const tryNav = (wc, name, url, extra = {}) => { let stopped = false; wc.emit(name, { url, preventDefault: () => { stopped = true; }, ...extra }); return stopped; };
+  check('chat page guard: a web page navigating to the chat page is stopped (navigate, redirect, frame)', ['will-navigate', 'will-redirect', 'will-frame-navigate'].every((n) => tryNav(other, n, CHAT)), 'not stopped');
+  check('chat page guard: ordinary navigation is left alone', ['will-navigate', 'will-redirect', 'will-frame-navigate'].every((n) => !tryNav(other, n, 'https://example.com/')), 'blocked');
+  // The chat tab itself is locked to its page.
+  const own = new EventEmitter();
+  let left = null;
+  own.setWindowOpenHandler = (fn) => { own.open = fn; };
+  chatPage.guardTab(own, (url) => { left = url; });
+  check('chat page guard: the chat tab refuses other pages, redirects and popups', tryNav(own, 'will-navigate', 'https://example.com/') && tryNav(own, 'will-redirect', CHAT) && tryNav(own, 'will-frame-navigate', CHAT, { isMainFrame: false }) && own.open().action === 'deny', 'open');
+  check('chat page guard: the chat page can reload itself', !tryNav(own, 'will-navigate', CHAT) && !tryNav(own, 'will-frame-navigate', `${CHAT}#x`, { isMainFrame: true }), 'blocked');
+  own.emit('did-navigate', {}, 'https://example.com/');
+  await new Promise((r) => setImmediate(r));
+  check('chat page guard: a page that still commits in the chat tab moves to an ordinary tab', left === 'https://example.com/', String(left));
+
+  // What the page's preload may send: only chat calls, checked against the allowlist main enforces.
+  const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'features', 'chat-preload.js'), 'utf8');
+  const channels = [...preloadSrc.matchAll(/ipcRenderer\.(?:send|invoke|sendSync)\('([^']+)'/g)].map((m) => m[1]);
+  check('chat page preload: every call it can make is on the allowlist', channels.length > 10 && channels.every((c) => chatPage.CHAT_IPC.has(c)), channels.filter((c) => !chatPage.CHAT_IPC.has(c)).join(', '));
+  const risky = [...chatPage.CHAT_IPC].filter((c) => /^(mcp|automation|import|cli|claudecode):|set-provider-key|sign-in|prefs:(?!ui)|set-ai-site|updates|:clear|relaunch/.test(c));
+  check('chat page allowlist: no keys, sign-in, MCP, automation, import, CLI or data-clearing calls', risky.length === 0, risky.join(', '));
+  check('chat page allowlist: settings calls are the model list and the model pick only', [...chatPage.CHAT_IPC].filter((c) => c.startsWith('settings:')).sort().join() === 'settings:get,settings:set-model', [...chatPage.CHAT_IPC].join(','));
+
+  // Which tab the AI works in when a run starts on the chat page.
+  const tab = (id, more = {}) => ({ id, chat: false, offLimits: false, closing: false, viewedAt: 0, lastActiveAt: 0, ...more });
+  check('target tab: the one looked at last, not the chat tab in front', chatPage.pickTargetTab([tab(1, { viewedAt: 100 }), tab(2, { viewedAt: 300 }), tab(3, { chat: true, viewedAt: 900 })]) === 2, 'pick');
+  check('target tab: Settings, Bookmarks and other off-limits tabs and closing tabs are skipped', chatPage.pickTargetTab([tab(1, { viewedAt: 100 }), tab(2, { viewedAt: 500, offLimits: true }), tab(3, { viewedAt: 400, closing: true })]) === 1, 'pick');
+  check('target tab: no ordinary tab means none (main opens one)', chatPage.pickTargetTab([tab(1, { chat: true }), tab(2, { offLimits: true })]) === null && chatPage.pickTargetTab([]) === null && chatPage.pickTargetTab(undefined) === null, 'pick');
+  check('target tab: a tab never looked at falls back to when it was last left; the newer view wins ties', chatPage.pickTargetTab([tab(1, { lastActiveAt: 10 }), tab(2, { lastActiveAt: 20 })]) === 2 && chatPage.pickTargetTab([tab(1, { viewedAt: 50, lastActiveAt: 60 }), tab(2, { viewedAt: 50, lastActiveAt: 10 })]) === 1, 'pick');
+
+  // The run both views share.
+  const tracker = chatPage.createRunTracker();
+  check('run tracker: idle until a run starts', !tracker.running() && tracker.get() === null, 'idle');
+  tracker.start({ runId: 7, text: 'hi', fromChat: true, target: 4 });
+  tracker.setTarget(9);
+  check('run tracker: remembers the run, who started it and its tab', tracker.running() && tracker.get().runId === 7 && tracker.get().fromChat === true && tracker.get().target === 9, JSON.stringify(tracker.get()));
+  tracker.end();
+  tracker.setTarget(3);
+  check('run tracker: ends cleanly and ignores a late retarget', !tracker.running() && tracker.get() === null, JSON.stringify(tracker.get()));
+
+  // The runtime: who hears what, and pinning, with stand-in tabs.
+  const wcs = () => { const wc = new EventEmitter(); wc.sent = []; wc.send = (...a) => wc.sent.push(a); wc.isDestroyed = () => false; wc.mainFrame = { url: CHAT }; return wc; };
+  const uiWc = wcs();
+  const chatWc = wcs();
+  let tabsList = [
+    { id: 1, view: { webContents: wcs() }, viewedAt: 100, lastActiveAt: 50 },
+    { id: 2, view: { webContents: wcs() }, viewedAt: 300, lastActiveAt: 90 },
+  ];
+  const opened = [];
+  const ipc = { on() {}, handle() {} };
+  const rt = chatPage.create({
+    ipcMain: ipc, tabs: () => tabsList, alive: () => true, ui: () => uiWc,
+    openTab: (url, opts) => { const t = { id: 50 + opened.length, view: { webContents: wcs() }, viewedAt: 0 }; opened.push({ url, opts }); tabsList = [...tabsList, t]; return t; },
+    switchTab() {}, requestCloseTab() {}, managersOpen: () => 0, isPrivateSender: () => false, chatView: () => ({ items: [] }), agentOffLimits: () => false,
+    tabInfo: (t) => ({ id: t.id, title: `tab ${t.id}`, url: '', favicon: null }),
+  });
+  check('chat runtime: with no chat page open nothing is broadcast (the sidebar behaves as before)', rt.surfaces().length === 0, String(rt.surfaces().length));
+  const sidebarAsk = { sender: uiWc, senderFrame: { url: 'file:///x/index.html' } };
+  check('chat runtime: a run from the sidebar is not pinned to a tab', rt.beginRun(sidebarAsk, { text: 'a', runId: 1, images: [] }) === false && rt.runTarget() === null, String(rt.runTarget()));
+  rt.endRun();
+  tabsList = [...tabsList, { id: 9, managerPage: 'chat', view: { webContents: chatWc }, viewedAt: 900 }];
+  const pageAsk = { sender: chatWc, senderFrame: chatWc.mainFrame };
+  check('chat runtime: the sidebar and every chat page are views of the one chat', rt.surfaces().length === 2 && rt.isChatSender(pageAsk) && !rt.isChatSender(sidebarAsk), String(rt.surfaces().length));
+  check('chat runtime: a frame that is not the chat page\'s top frame (a subframe, another URL) is not trusted', !rt.isChatSender({ sender: chatWc, senderFrame: { url: CHAT } }) && !rt.isChatSender({ sender: chatWc, senderFrame: { url: 'https://x.test/' } }), 'trusted');
+  check('chat runtime: the allowlist applies only to the chat page', rt.allows(pageAsk, 'agent:ask') && !rt.allows(pageAsk, 'settings:set-provider-key') && !rt.allows(sidebarAsk, 'agent:ask'), 'allows');
+  const fromChat = rt.beginRun(pageAsk, { text: 'go', runId: 3, images: [{ media_type: 'image/png', data: 'AAA' }] });
+  check('chat runtime: a run from the chat page works in the tab last looked at, never the chat tab', fromChat && rt.runTarget() === 2, String(rt.runTarget()));
+  check('chat runtime: the sidebar hears a page run start (with its images), the page does not echo it', uiWc.sent.some(([c, p]) => c === 'chat:run-start' && p.runId === 3 && p.text === 'go' && p.images[0].data === 'AAA') && !chatWc.sent.some(([c]) => c === 'chat:run-start'), JSON.stringify(uiWc.sent));
+  check('chat runtime: the page shows which tab it works in', chatWc.sent.some(([c, p]) => c === 'chat:target' && p.id === 2), JSON.stringify(chatWc.sent.map((s) => s[0])));
+  rt.emit(chatWc, 'agent:event', { type: 'text', runId: 3 });
+  check('chat runtime: a run\'s events reach both views', uiWc.sent.some(([c, p]) => c === 'agent:event' && p.type === 'text') && chatWc.sent.some(([c, p]) => c === 'agent:event' && p.type === 'text'), 'events');
+  rt.retarget(1);
+  check('chat runtime: switching tabs during a run re-pins it', rt.runTarget() === 1, String(rt.runTarget()));
+  rt.endRun();
+  check('chat runtime: after the run there is no pin', rt.runTarget() === null, String(rt.runTarget()));
+  tabsList = tabsList.filter((t) => t.managerPage === 'chat');
+  const alone = rt.beginRun(pageAsk, { text: 'again', runId: 4, images: [] });
+  check('chat runtime: with no ordinary tab a run from the page opens one, out of sight', alone && opened.length === 1 && opened[0].opts.background === true && rt.runTarget() === 50, JSON.stringify(opened));
+  rt.endRun();
+  rt.broadcast('chat:sync', { view: { items: [] } }, chatWc);
+  check('chat runtime: a chat switch reaches the other view, not the one that made it', uiWc.sent.some(([c]) => c === 'chat:sync') && !chatWc.sent.some(([c]) => c === 'chat:sync'), 'sync');
+}
+
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

@@ -49,6 +49,8 @@ const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html'
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
 const settingsPage = require('./settings-backend'); // [settings] lumen://settings
+const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
+let chatPageRt = null; // its runtime (created below, with the agent)
 // Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
 const pageTools = require('./features/page-tools').createPageTools({
   openTab: (...args) => openTab(...args),
@@ -129,6 +131,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
+  'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:drop',
 ]);
@@ -141,7 +144,8 @@ const { webContents: webContentsModule } = require('electron');
 const syntheticTestEvent = (event) => TEST
   && !(event?.sender && typeof event.sender.id === 'number' && webContentsModule.fromId(event.sender.id) === event.sender);
 const trustedSender = (event, channel) => syntheticTestEvent(event) || isUiSender(event)
-  || (PRIVILEGED_IPC.test(channel) && isSettingsSender(event));
+  || (PRIVILEGED_IPC.test(channel) && isSettingsSender(event))
+  || Boolean(chatPageRt?.allows(event, channel)); // the chat page: only the chat calls (features/chat-page.js CHAT_IPC)
 const gatedChannel = (channel) => PRIVILEGED_IPC.test(channel) || UI_ONLY_IPC.has(channel);
 if (TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: gatedChannel, uiUrl: UI_URL };
 
@@ -775,6 +779,7 @@ function showAppMenu({ x, y }) {
     { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
     { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
     { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
+    { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
     { type: 'separator' },
     { label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
     { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
@@ -1014,7 +1019,7 @@ function tabState() {
       return {
         id: t.id,
         title: wc.getTitle() || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
@@ -1041,6 +1046,7 @@ let sessionTimer = null;
 function sendTabs() {
   keepPinnedFirst();
   ui()?.send('tabs', tabState());
+  chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession(); }, 3000);
 }
@@ -1087,7 +1093,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings),
       ...(historyPage ? { preload: path.join(__dirname, 'history-preload.js') } : {}),
-      ...(managerPage ? { preload: managers.PRELOAD } : {}), // the Bookmarks or Downloads page
+      ...(managerPage ? { preload: managers.preloadFor(managerPage) } : {}), // the Bookmarks, Downloads or chat page
     },
   });
   const id = nextTabId++;
@@ -1276,6 +1282,8 @@ function wireView(tab, url, history = null) {
   // [settings] the settings tab is locked to the settings page; other tabs get default zoom and HTTPS-only
   if (settings) settingsBackend.guardSettingsTab(wc, (target) => replaceTab(id, target));
   else settingsBackend.attachTab(wc);
+  if (tab.managerPage === 'chat') chatPage.guardTab(wc, (target) => replaceTab(id, target)); // lumen://chat is locked to its page
+  else chatPage.guardOthers(wc); // and no other tab can navigate to it
 
   // If the page closes itself, drop the tab instead of keeping a dead one around. sleepTab() (below)
   // removes this exact listener first, so a deliberate sleep is never mistaken for the page closing.
@@ -1352,7 +1360,7 @@ function wakeTab(tab) {
   const view = new WebContentsView({
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
-      ...(tab.managerPage ? { preload: managers.PRELOAD } : {}),
+      ...(tab.managerPage ? { preload: managers.preloadFor(tab.managerPage) } : {}),
     },
   });
   tab.view = view;
@@ -1375,6 +1383,7 @@ function addRestoredTab(url, title, favicon = null) {
     id: nextTabId++, view: null, rec: curRec, favicon: icon, favicons: icon ? [icon] : [], groupId: null,
     userRemoved: false, settings: false, lastActiveAt: Date.now(),
     sleeping: true, sleepUrl: url, sleepTitle: title || hostOf(url) || 'New Tab', sleepHistory: null,
+    ...(chatPage.isChatUrl(url) ? { managerPage: 'chat' } : {}), // wakes with the chat preload
   };
   tabs.push(tab);
   return tab;
@@ -1484,6 +1493,7 @@ function switchTab(id) {
   }
   if (tab.sleeping) wakeTab(tab);
   activeId = id;
+  tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
   const current = activeTab();
   if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
   layout();
@@ -2355,6 +2365,7 @@ function handleShortcut(event, input) {
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && input.shift && key === 'a') openTabSearch();
+  else if (mod && input.shift && !input.alt && key === 'l') toggleChatPage(); // the sidebar's chat as a full page, and back
   else if (mod && key === 't') openTab();
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
@@ -2394,6 +2405,12 @@ function handleShortcut(event, input) {
   else if (key === 'f12') wc?.toggleDevTools();
   else handled = false;
   if (handled) event.preventDefault();
+}
+
+// Ctrl+Shift+L / the menu: open the chat as a full page, or from the page go back to the sidebar.
+function toggleChatPage() {
+  if (tabs.find((t) => t.id === activeId)?.managerPage === 'chat') chatPageRt.back();
+  else chatPageRt.open();
 }
 
 function focusAddress() {
@@ -2516,7 +2533,7 @@ function sessionEntry() {
   // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
   // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
   const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
-  const saved = tabs.filter((t) => isWebUrl(urlOf(t)));
+  const saved = tabs.filter((t) => isWebUrl(urlOf(t)) || chatPage.isChatUrl(urlOf(t))); // web pages, and lumen://chat
   const urls = saved.map(urlOf);
   const titleOf = (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '');
   return {
@@ -2568,7 +2585,7 @@ function restoreTabsFrom(saved) {
   let activeTabId = null;
   saved.urls.forEach((url, i) => {
     // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
-    if (i === active) activeTabId = openTab(url, { background: true }).id;
+    if (i === active) activeTabId = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null }).id;
     const tab = i === active ? tabs.find((t) => t.id === activeTabId) : addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
     const groupId = saved.groupIds?.[i];
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
@@ -2619,6 +2636,7 @@ function macMenu() {
         { label: t('menu.actualSize'), ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
         { type: 'separator' },
         { label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
+        { label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage },
         { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
         { type: 'separator' },
         { role: 'togglefullscreen' },
@@ -3033,12 +3051,31 @@ function ungroupTabsFor(ids) {
 // [settings] the AI agent (and MCP clients, which use it) never gets the settings tab as its page,
 // nor the Bookmarks or Downloads page (their page API can edit bookmarks and open downloaded files).
 const agentOffLimits = (t) => Boolean(t && (t.settings || (alive(t) && managerPageOf(t.view.webContents.getURL()))));
-const agentActiveTab = () => { const t = activeTab(); return t && agentOffLimits(tabs.find((x) => x.id === t.id)) ? null : t; };
+// A run started from the chat page works in the tab the user last looked at, not in the chat tab in front.
+const agentActiveTab = () => {
+  const pinned = chatPageRt?.runTarget();
+  if (pinned != null) return agentTabById(pinned);
+  const t = activeTab();
+  return t && agentOffLimits(tabs.find((x) => x.id === t.id)) ? null : t;
+};
+// ...and its tabs open and switch out of sight, so the user stays on the chat page.
+const agentOpenTab = (url, opts) => {
+  const tab = openTab(url, chatPageRt?.runTarget() != null ? { ...opts, background: true } : opts);
+  if (chatPageRt?.runTarget() != null) chatPageRt.retarget(tab.id);
+  return tab;
+};
+const agentSwitchTab = (id) => {
+  if (chatPageRt?.runTarget() == null) return switchTab(id);
+  const t = tabs.find((x) => x.id === id);
+  if (!t || agentOffLimits(t)) return false;
+  chatPageRt.retarget(id);
+  return true;
+};
 // Why there's no page to work on while one of those is in front (instead of "No tab is open").
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
   if (!agentOffLimits(t)) return null;
-  const name = t.settings ? 'Lumen Settings' : `Lumen's ${managerPageOf(t.view.webContents.getURL()) === 'bookmarks' ? 'Bookmarks' : 'Downloads'} page`;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
   return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
 };
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
@@ -3069,11 +3106,31 @@ let runRec = null;
 const inRun = (fn) => (...args) => (runRec && winRecs.has(runRec) ? withWindow(runRec, () => fn(...args)) : fn(...args));
 const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
-  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(openTab), switchTab: inRun(switchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
+  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+// lumen://chat (features/chat-page.js): opens like the Bookmarks page, shares the agent's one chat with the sidebar.
+chatPageRt = chatPage.create({
+  ipcMain,
+  tabs: () => tabs,
+  alive,
+  ui,
+  openTab: (url, opts) => openTab(url, opts),
+  switchTab: (id) => switchTab(id),
+  requestCloseTab: (id) => requestCloseTab(id),
+  managersOpen: () => managers.open('chat'),
+  isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
+  chatView: () => chatView(),
+  agentOffLimits,
+  tabInfo: (t) => {
+    const live = alive(t);
+    return { id: t.id, title: live ? t.view.webContents.getTitle() : t.sleepTitle || '', url: live ? realUrl(t.view.webContents) : t.sleepUrl || '', favicon: t.favicon || null };
+  },
+});
+chatPageRt.register();
+if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId };
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 const usage = createUsage({ app, claudeBin: () => require('./claude-code').findClaude() });
@@ -3231,6 +3288,7 @@ ipcMain.on('files:open', (_e, paths) => { if (Array.isArray(paths)) openLinksFro
 ipcMain.on('tab:new', (_e, url) => {
   const internal = url && settingsPage.parseSettingsInput(url); // [settings] lumen://settings
   if (internal) openSettingsPage(internal.section);
+  else if (chatPage.parseChatInput(url)) chatPageRt.open(); // lumen://chat
   else openTab(url ? resolveInput(url) : undefined);
 });
 // The UI's and Settings' strings in the system's language (features/i18n.js).
@@ -3302,7 +3360,8 @@ ipcMain.on('nav:go', (_e, text) => {
   const current = tabs.find((t) => t.id === activeId);
   const internal = settingsPage.parseSettingsInput(text);
   if (internal) { openSettingsPage(internal.section, { replace: !current?.settings && isNewTab(wc.getURL()) ? activeId : null }); return; }
-  if (current?.settings) { replaceTab(activeId, resolveInput(text)); return; }
+  if (chatPage.parseChatInput(text)) { chatPageRt.open(); return; } // lumen://chat
+  if (current?.settings || current?.managerPage === 'chat') { replaceTab(activeId, resolveInput(text)); return; } // the chat page is locked like Settings
   const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
   if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }
   wc.loadURL(resolveInput(text)).catch(() => {});
@@ -3342,18 +3401,20 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
     .slice(0, 5);
   const generation = chatGeneration;
   runRec = curRec; // the window this run's tab tools act on (agent:ask came from its UI)
+  chatPageRt.beginRun(event, { text: String(text || ''), runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
   agent.run(String(text || ''), (msg) => {
     if (msg.type === 'done' || msg.type === 'error') runRec = null;
-    if (!event.sender.isDestroyed()) event.sender.send('agent:event', { ...msg, runId });
+    if (msg.type === 'done') chatPageRt.endRun();
+    chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open
     if (msg.type === 'done') saveChat(generation);
     else if (msg.type === 'tool_done') saveChatSoon(generation);
-    else if (msg.type === 'usage' && generation === chatGeneration) ui()?.send('chats:usage', describeUsage(msg.usage));
+    else if (msg.type === 'usage' && generation === chatGeneration) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
   }, valid);
 });
 ipcMain.on('agent:stop', () => agent.stop());
 // New chat: the open chat stays in the history list.
-ipcMain.on('agent:reset', () => { switchChat(null); });
+ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });
 
 // ---- the sidebar's chat history list (features/chat-store.js)
 ipcMain.handle('chats:list', () => ({
@@ -3361,10 +3422,14 @@ ipcMain.handle('chats:list', () => ({
   currentUsage: describeUsage(agent.messages.settings?.usage),
   chats: chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage) })),
 }));
-ipcMain.handle('chats:open', (_e, id) => switchChat(String(id)));
+ipcMain.handle('chats:open', (event, id) => {
+  const view = switchChat(String(id));
+  if (view) chatPageRt.broadcast('chat:sync', { view }, event.sender); // the other view shows the chat that was opened
+  return view;
+});
 ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
 // Deleting the open chat leaves an empty one in its place.
-ipcMain.handle('chats:delete', (_e, id) => {
+ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
   approvedByChat.delete(id);
   if (id === chatId) {
@@ -3373,6 +3438,7 @@ ipcMain.handle('chats:delete', (_e, id) => {
     agent.reset();
     chatId = chats().newId();
     chats().remove(id);
+    chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
     return { cleared: true, view: chatView() };
   }
   return { cleared: false, removed: chats().remove(id) };

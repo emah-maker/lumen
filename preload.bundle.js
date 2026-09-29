@@ -541,6 +541,11 @@ contextBridge.exposeInMainWorld('assistant', {
   onMcpEvent: on('mcp:event'),
   stopMcp: () => ipcRenderer.send('mcp:stop'),
   onHistory: on('agent:history'),
+  // The chat as a full page (lumen://chat, features/chat-page.js): open it, and hear about the other view
+  openFullPage: () => ipcRenderer.send('chat:open-page'),
+  onRunStart: on('chat:run-start'), // a turn started in the chat page
+  onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
+  onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it

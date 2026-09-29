@@ -98,7 +98,7 @@
   <main class="body">
     <div id="viewport" class="viewport"></div>
 
-    <aside id="sidebar" class="sidebar" aria-label="AI assistant" data-i18n-aria-label="toolbar.ai">
+    <aside id="sidebar" class="sidebar" data-chat-root aria-label="AI assistant" data-i18n-aria-label="toolbar.ai">
       <div class="sidebar-resize" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" data-i18n-aria-label="sidebar.resize" tabindex="0"></div>
       <div class="sidebar-head">
         <div class="model-picker">
@@ -108,6 +108,9 @@
         <div class="sidebar-actions">
           <button class="icon-btn" id="dock-to-side" title="Dock to side" aria-label="Dock to side" data-i18n-title="sidebar.dock" data-i18n-aria-label="sidebar.dock">
             <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
+          </button>
+          <button class="icon-btn" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
+            <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
           </button>
           <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
@@ -165,9 +168,13 @@
   <script src="i18n.js"></script>
   <script src="markdown.js"></script>
   <script src="picker.js"></script>
+  <script src="chat-core.js"></script>
+  <script src="chat-items.js"></script>
   <script src="app.js"></script>
   <script src="chats.js"></script>
   <script src="extras.js"></script>
+  <script src="chat-extras.js"></script>
+  <script src="ui-prefs.js"></script>
   <script src="tab-search-match.js"></script>
   <script src="tab-search.js"></script>
   <script src="updates.js"></script>

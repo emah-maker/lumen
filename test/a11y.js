@@ -62,8 +62,8 @@ const AUDIT = `(() => {
   // Every key the code and pages use exists in en.json.
   const missing = [];
   const scan = (file, pattern) => { const src = fs.readFileSync(path.join(root, file), 'utf8'); for (const m of src.matchAll(pattern)) if (!(m[1] in EN)) missing.push(`${file}: ${m[1]}`); };
-  for (const f of ['main.js', 'renderer/app.js', 'renderer/extras.js', 'renderer/updates.js', 'renderer/settings.js', 'features/downloads.js', 'features/adblock.js']) scan(f, /\b(?:t|tr)\('([^'`]+)'/g);
-  for (const f of ['renderer/index.html', 'renderer/settings.html']) scan(f, /data-i18n[a-z-]*="([^"]+)"/g);
+  for (const f of ['main.js', 'renderer/app.js', 'renderer/extras.js', 'renderer/chat-core.js', 'renderer/chat-extras.js', 'renderer/chat-items.js', 'renderer/chat-page.js', 'renderer/updates.js', 'renderer/settings.js', 'features/downloads.js', 'features/adblock.js']) scan(f, /\b(?:t|tr|chatTr)\('([^'`]+)'/g);
+  for (const f of ['renderer/index.html', 'renderer/settings.html', 'renderer/chat-page.html']) scan(f, /data-i18n[a-z-]*="([^"]+)"/g);
   check('i18n: every key in use is in locales/en.json', missing.length === 0, missing.join(', '));
 
   // ---- 2. the browser UI, in English ----
