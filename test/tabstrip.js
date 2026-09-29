@@ -322,6 +322,8 @@ const os = require('os');
   check('a woken tab can still go back', nav.url.endsWith('/h2') && nav.back, JSON.stringify(nav));
 
   // ---- 10. under memory pressure a background tab sleeps after minutes, not 20 minutes ----
+  // Performance mode (auto-on for a throttled laptop) sleeps tabs after 5 minutes and keeps only 4 background tabs live: pin it off so the timing below is the normal mode's.
+  await app.evaluate(() => global.__patchSettings({ performanceMode: 'off' }));
   await open(`${base}/pressure`);
   const pid = await app.evaluate(() => global.__agent.browser.activeTab().id);
   await open(`${base}/front`);
