@@ -788,7 +788,11 @@ class Agent {
     const scope = { tabId: tabId ?? null, signal, chat, log };
     this.scopes.add(scope);
     if (chat) this.runScope = scope; // the sidebar run (runTabId): only one runs at a time
-    return taskScope.run(scope, fn).finally(() => { this.scopes.delete(scope); if (this.runScope === scope) this.runScope = null; });
+    return taskScope.run(scope, fn).finally(() => {
+      this.scopes.delete(scope);
+      if (this.runScope === scope) this.runScope = null;
+      try { this.browser.research?.finish(scope); } catch {} // research tabs stay open; only the "reading" marker goes
+    });
   }
 
   // The tab the sidebar's running task works in (null: none running, or no tab yet). The sidebar shows it
@@ -1901,6 +1905,12 @@ ${out.text}${note}
     return result;
   }
 
+  // [research tabs] features/research-tabs.js: web_search / read_urls also open what they look at as
+  // background tabs (Settings > Show AI research in tabs). Returns the function that ends the "reading" marker.
+  showResearch(what) {
+    try { return this.browser.research?.begin(taskScope.getStore() || 'external', what) || (() => {}); } catch { return () => {}; }
+  }
+
   async executeGuarded(name, input) {
     const scope = taskScope.getStore();
     // After switch_tab / open_tab the ids the model holds came from another tab; applied here they would
@@ -2036,7 +2046,9 @@ ${same}
         return report.join('\n');
       }
       case 'web_search': {
-        const results = await searchWeb(input.query);
+        const shown = this.showResearch({ query: String(input.query ?? '') }); // the results page, in a background tab
+        let results;
+        try { results = await searchWeb(input.query); } finally { shown(); }
         if (!results.length) return 'No results.';
         return `<untrusted_page_content>\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n')}\n</untrusted_page_content>`;
       }
@@ -2044,7 +2056,9 @@ ${same}
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }))));
+        const shown = this.showResearch({ urls }); // each page, in a background tab (a side effect: what is read is fetched below)
+        let pages;
+        try { pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true })))); } finally { shown(); }
         return pages.map((p) => (this.browser.aiOff?.(p.url) // [ai controls] it redirected to such a site
           ? `(${siteOf(p.url)}: the user turned off AI on this site, so its content is not shown.)`
           : `<untrusted_page_content url="${p.url}">\nTitle: ${p.title}\n${p.text}\n</untrusted_page_content>`)).join('\n\n');

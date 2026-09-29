@@ -88,6 +88,7 @@ const DEFAULTS = {
   keepRunningInBackground: true, // macOS: keep running with no windows
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
+  researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
   translateNever: [], // sites where the offer stays away
