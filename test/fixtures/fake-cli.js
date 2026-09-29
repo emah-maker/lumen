@@ -56,7 +56,6 @@ async function main() {
 
   // ---- talking to Lumen
   let bridge = null;
-  const pending = new Map();
   let nextId = 1;
   const openBridge = (env) => {
     const cfg = JSON.parse(fs.readFileSync(flag('--mcp-config'), 'utf8')).mcpServers.lumen;
