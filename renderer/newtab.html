@@ -428,6 +428,19 @@
     .td-toast span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .td-toast .w-btn { margin: 0; padding: 2px 10px; background: rgba(128, 128, 128, 0.3); color: inherit; }
 
+    /* Gmail (read-only): the unread count, then the latest messages; a small card shows the count and the newest one. */
+    .gm-head { display: flex; align-items: baseline; gap: 6px; margin: 0 0 4px; }
+    .gm-count { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .gm-of { color: var(--muted); font-size: 11.5px; }
+    .gm-row .w-main { min-width: 0; }
+    .gm-from { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11.5px; color: var(--muted); }
+    .gm-row.unread .gm-from { color: var(--text); font-weight: 600; }
+    .gm-row .w-title, .gm-row a { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .gm-snip { display: none; color: var(--muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .gm-row .gm-when { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; padding-top: 1px; }
+    @container card (min-width: 260px) and (min-height: 200px) { .gm-snip { display: block; } }
+    @container card (max-height: 149px) { .gm-row.later { display: none; } }
+
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
     .w-card.embed { padding-bottom: 10px; }

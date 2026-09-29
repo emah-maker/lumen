@@ -23,12 +23,22 @@
 //   fetch(c, x)       -> the card's data: plain JSON (strings, numbers, arrays). renderer/newtab.js
 //                     draws it with textContent only, so nothing from the network is ever markup.
 //   act(c, action, x) (optional) a page action (the Todoist checkbox): see actionFrom() below
-// and a renderer with the same type in renderer/newtab.js's WIDGET_RENDERERS.
+// and a renderer with the same type in renderer/newtab-widgets.js's WIDGET_RENDERERS.
+//
+// A connector with `secret` keeps one encrypted string under that name (main.js widgetSecret). For a
+// token (Todoist) that is the token itself. For an OAuth sign-in (Gmail) it is a small JSON blob of
+// client id, client secret and refresh token (features/oauth.js encodeCreds), written by the sign-in
+// and the token refresh, and never read by anything but this file: the access token lives only in
+// memory (x.session()), and none of it ever reaches the page, the hash or settings.json in plain text.
+//   x.session(creds?)   the OAuth account for this connector's secret (or for creds, to check them)
+//   x.backoff(ms)       no requests for a while (a service's own rate-limit answer)
 const ics = require('./ics');
 const WL = require('./widget-layout');
 const TV = require('./todoist-view');
 const WX = require('./weather-view');
 const WC = require('./widget-colors');
+const GV = require('./gmail-view');
+const OA = require('./oauth');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -37,6 +47,10 @@ const ENDPOINTS = {
   // from this process; it sees the IP address and nothing else of ours is sent.
   locate: 'https://ipapi.co/json/',
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
+  googleAuth: 'https://accounts.google.com/o/oauth2/v2/auth', // opened in the user's own browser, never in Lumen
+  googleToken: 'https://oauth2.googleapis.com/token',
+  googleRevoke: 'https://oauth2.googleapis.com/revoke',
+  gmail: 'https://gmail.googleapis.com/gmail/v1',
 };
 const MAX_WIDGETS = 12;
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -228,6 +242,42 @@ const CONNECTORS = {
     },
   },
 
+  // Read-only inbox summary: the unread count and the latest few subjects, senders and snippets. Signs
+  // in with the user's own Google Cloud OAuth client (features/oauth.js); see features/gmail-view.js.
+  gmail: {
+    label: 'Gmail',
+    ttl: 5 * 60e3,
+    secret: 'gmail',
+    clean: (c) => { const g = GV.cleanConfig(c); return g ? { ...g, colors: WC.cleanMode(c.colors) } : null; },
+    async resolve(input, x) {
+      const clientId = GV.cleanClientId(input.clientId);
+      if (!clientId) throw new Error('Paste the Client ID of your Google Cloud OAuth client (it ends in .apps.googleusercontent.com).');
+      const typed = typeof input.clientSecret === 'string' ? input.clientSecret.trim() : '';
+      if (typed && !GV.cleanClientSecret(typed)) throw new Error('That doesn’t look like a Google client secret.');
+      const stored = OA.decodeCreds(x.secret());
+      const same = stored?.clientId === clientId;
+      const creds = { clientId, clientSecret: typed || (same ? stored.clientSecret : ''), refresh: same ? stored.refresh : '' };
+      if (!creds.clientSecret) throw new Error('Paste the client secret shown next to the Client ID in Google Cloud.');
+      if (!creds.refresh) throw new Error('Connect your Google account first: use Connect Gmail.');
+      const cfg = GV.cleanConfig({ ...input, clientId });
+      const data = await gmailData(x, x.session(creds), { ...cfg, count: 3 });
+      const changed = !stored || stored.clientId !== creds.clientId || stored.clientSecret !== creds.clientSecret || stored.refresh !== creds.refresh;
+      return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, secret: changed ? OA.encodeCreds(creds) : undefined, message: `Connected. ${data.unread === 1 ? '1 unread message' : `${data.unread} unread messages`} in the inbox.` };
+    },
+    title: () => 'Gmail',
+    summary: (c) => `Inbox · ${c.count} latest`,
+    async fetch(c, x) {
+      const session = x.session();
+      if (!session.connected()) return GV.reconnect('Connect Gmail in Settings.');
+      try {
+        return await gmailData(x, session, c);
+      } catch (err) {
+        if (err?.reconnect) return GV.reconnect(err.message); // a revoked grant is a state the card shows, not an error
+        throw err;
+      }
+    },
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -305,6 +355,36 @@ async function completedToday(x) {
   });
 }
 
+// Gmail's inbox: the label (unread count), the newest ids, then each message's headers (in parallel).
+async function gmailData(x, session, cfg) {
+  try {
+    const label = await gmailGet(x, session, GV.labelPath());
+    const ids = GV.messageIds(await gmailGet(x, session, GV.listPath(cfg.count)), cfg.count);
+    const failed = [];
+    const got = await Promise.all(ids.map((id) => gmailGet(x, session, GV.messagePath(id)).catch((err) => { failed.push(err); return null; })));
+    const messages = got.filter(Boolean);
+    if (ids.length && !messages.length) throw failed[0];
+    return GV.shape(label, messages, cfg);
+  } catch (err) {
+    if (err?.retryAfter) x.backoff(err.retryAfter);
+    throw err;
+  }
+}
+// One GET with the bearer token. A 401 gets a fresh token and one more try; what still fails is
+// explained by GV.apiError (revoked grant -> err.reconnect, rate limit -> err.retryAfter).
+async function gmailGet(x, session, path) {
+  for (let attempt = 0; ; attempt++) {
+    const access = await session.access({ force: attempt > 0 });
+    const res = await x.raw(`${x.endpoint('gmail')}${path}`, { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json' }, max: 1e6 });
+    if (res.status === 401 && attempt === 0) { session.invalidate(); continue; }
+    if (res.ok) {
+      try { return JSON.parse(res.body); } catch { throw new Error('Gmail sent something unexpected.'); }
+    }
+    const e = GV.apiError(res.status, res.body);
+    throw new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other', retryAfter: e.rate ? OA.classifyTokenFailure(429, '', res.headers.get('retry-after')).retryAfter : 0 });
+  }
+}
+
 // Whether a page lets itself be shown in a frame on the new-tab page, and its title. The new-tab
 // page is a file: page, so X-Frame-Options (any value) and a CSP frame-ancestors directive (any
 // list: even "*" doesn't match file:, as test/widgets.js checks) always refuse it.
@@ -324,7 +404,8 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx,
+    clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', count: i.count, snippets: i.snippets };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -398,7 +479,8 @@ function applyRects(widgets, items) {
 }
 
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
-//         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs? }
+//         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
+//         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo }
   const recent = []; // times of recent network requests (the rate limit)
@@ -470,6 +552,25 @@ function createWidgets(deps) {
       clearTimeout(timer);
     }
   }
+  // A form POST to an OAuth token endpoint: { ok, status, body, retryAfter } (a failure is an answer, not a throw).
+  async function formPost(url, body) {
+    const res = await request(url, { method: 'POST', max: 65536, body, headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } });
+    return { ok: res.ok, status: res.status, body: res.body, retryAfter: res.headers.get('retry-after') };
+  }
+  // OAuth accounts by secret name: the access token is kept here, in memory, and the refresh token in
+  // the encrypted secret (a JSON blob, see features/oauth.js).
+  const sessions = new Map();
+  const tokenUrl = () => deps.endpoints?.().googleToken || ENDPOINTS.googleToken;
+  function sessionFor(name) {
+    if (!sessions.has(name)) {
+      sessions.set(name, OA.createSession({
+        tokenUrl, post: formPost, now,
+        load: () => OA.decodeCreds(deps.getSecret(name)),
+        save: (c) => deps.setSecret(name, c ? OA.encodeCreds(c) : null),
+      }));
+    }
+    return sessions.get(name);
+  }
   const failure = (res) => {
     if (res.status === 401 || res.status === 403) return new Error('The token was refused. Check it in Settings.');
     if (res.status === 404) return new Error('Nothing was found at that address.');
@@ -480,6 +581,13 @@ function createWidgets(deps) {
     const x = {
       endpoint: (name) => deps.endpoints?.()[name] || ENDPOINTS[name],
       secret: () => secretOverride || (secretName ? deps.getSecret(secretName) : null),
+      // The OAuth account behind this connector's secret; or one built from creds not stored yet (Check).
+      session(creds) {
+        if (!creds) return sessionFor(secretName);
+        let held = creds;
+        return OA.createSession({ tokenUrl, post: formPost, now, load: () => held, save: (c) => { held = c; } });
+      },
+      backoff(ms) { backoffUntil = Math.max(backoffUntil, now() + Math.min(120e3, Math.max(1e3, ms))); },
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -625,7 +733,11 @@ function createWidgets(deps) {
     cache.delete(id);
     // The last widget that used a token takes the token with it.
     const secret = gone && CONNECTORS[gone.type].secret;
-    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) deps.setSecret(secret, null);
+    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) {
+      if (secret === 'gmail') revokeGoogle(OA.decodeCreds(deps.getSecret(secret)));
+      deps.setSecret(secret, null);
+      sessions.get(secret)?.invalidate();
+    }
     deps.onUpdate?.();
     return true;
   }
@@ -695,6 +807,53 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // ---- Gmail: sign-in from Settings ----
+  // The consent page opens in the user's default browser (deps.openExternal, https only); Google
+  // redirects to a one-shot listener on 127.0.0.1 (features/oauth.js). Only this process sees the code,
+  // the tokens and the client secret; Settings gets a message, never a token.
+  let signIn = null;
+  const staleGmail = () => { sessions.get('gmail')?.invalidate(); for (const w of list()) if (w.type === 'gmail') cache.delete(w.id); deps.onUpdate?.(); };
+  async function gmailConnect(input) {
+    const clientId = GV.cleanClientId(input?.clientId);
+    if (!clientId) throw new Error('Paste the Client ID of your Google Cloud OAuth client (it ends in .apps.googleusercontent.com).');
+    const typed = typeof input?.clientSecret === 'string' ? input.clientSecret.trim() : '';
+    if (typed && !GV.cleanClientSecret(typed)) throw new Error('That doesn’t look like a Google client secret.');
+    const stored = OA.decodeCreds(deps.getSecret('gmail'));
+    const clientSecret = typed || (stored?.clientId === clientId ? stored.clientSecret : '');
+    if (!clientSecret) throw new Error('Paste the client secret shown next to the Client ID in Google Cloud.');
+    if (!deps.openExternal) throw new Error('Lumen can’t open your browser here.');
+    const authBase = deps.endpoints?.().googleAuth || ENDPOINTS.googleAuth;
+    signIn?.cancel(); // one sign-in at a time
+    const flow = await OA.beginSignIn({
+      authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: GV.SCOPE, extra: GV.AUTH_EXTRA, post: formPost, now, timeoutMs: deps.signInMs,
+      openExternal: (url) => { if (!url.startsWith(`${authBase}?`)) throw new Error('Refusing to open that address.'); return deps.openExternal(url); },
+      messages: { title: 'Lumen', done: 'Gmail is connected to Lumen. You can close this tab.', denied: 'Gmail was not connected. You can close this tab.' },
+    });
+    signIn = flow;
+    try {
+      const t = await flow.done;
+      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh }));
+      staleGmail();
+      return { message: 'Gmail is connected.' };
+    } finally {
+      if (signIn === flow) signIn = null;
+    }
+  }
+  const gmailCancel = () => { signIn?.cancel(); return true; };
+  // Best effort: tell Google the refresh token is no longer wanted.
+  function revokeGoogle(creds) {
+    if (!creds?.refresh) return Promise.resolve(false);
+    return formPost(deps.endpoints?.().googleRevoke || ENDPOINTS.googleRevoke, new URLSearchParams({ token: creds.refresh }).toString()).then(() => true, () => false);
+  }
+  // Forget the sign-in (the client id and secret stay, so connecting again is one click).
+  async function gmailDisconnect() {
+    const creds = OA.decodeCreds(deps.getSecret('gmail'));
+    signIn?.cancel();
+    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '' }));
+    staleGmail();
+    await revokeGoogle(creds);
+    return true;
+  }
   // Settings' project picker for a Todoist widget (a token typed but not saved yet may be given).
   async function projects(token) {
     const t = typeof token === 'string' ? token.trim() : '';
@@ -749,6 +908,7 @@ function createWidgets(deps) {
       location: locationState(),
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
+      connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       max: MAX_WIDGETS,
       spans: SPANS,
@@ -830,7 +990,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, gmailConnect, gmailCancel, gmailDisconnect, state, actionFrom, act, cache };
 }
 
 module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };

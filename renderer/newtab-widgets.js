@@ -401,6 +401,46 @@ const WIDGET_RENDERERS = {
     card.body.append(list);
   },
 
+  // Gmail (read-only): only text from the API arrives here, and it is set with textContent. The
+  // message links are https://mail.google.com addresses built by the browser from a checked id.
+  gmail(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    if (d.state === 'reconnect') {
+      const note = el('p', 'w-note');
+      note.append(el('strong', null, 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
+      const fix = el('button', 'w-btn primary', 'Open Settings');
+      fix.type = 'button';
+      fix.setAttribute('aria-label', `Open settings to reconnect ${text(w.title, 60)}`);
+      fix.addEventListener('click', () => widgetAct(w.id, 'configure'));
+      const wrap = el('div');
+      wrap.append(fix);
+      card.body.append(note, wrap);
+      return;
+    }
+    const open = safeUrl(d.open);
+    if (open && /^https:\/\/mail\.google\.com\//.test(open)) card.head.append(openLink(open, 'Open Gmail'));
+    const unread = int(d.unread) ?? 0;
+    const head = el('div', 'gm-head');
+    head.append(el('span', 'gm-count', String(unread)), el('span', 'gm-of', 'unread'));
+    card.body.append(head);
+    const messages = (Array.isArray(d.messages) ? d.messages : []).filter((m) => m && typeof m.id === 'string' && /^[0-9a-f]{6,32}$/i.test(m.id)).slice(0, 10);
+    if (!messages.length) { card.body.append(el('p', 'w-empty', 'The inbox is empty.')); return; }
+    const list = el('div', 'w-list');
+    messages.forEach((m, i) => {
+      const row = el('div', `w-row gm-row${m.unread ? ' unread' : ''}${i > 0 ? ' later' : ''}`);
+      const main = el('div', 'w-main');
+      const subject = text(m.subject, 200) || '(no subject)';
+      const a = link(`https://mail.google.com/mail/u/0/#inbox/${m.id}`, subject, '');
+      main.append(el('span', 'gm-from', text(m.from, 100) || 'Unknown sender'), a);
+      if (m.snippet) main.append(el('span', 'gm-snip', text(m.snippet, 160)));
+      row.append(main);
+      if (Number.isFinite(m.at) && m.at > 0) row.append(el('span', 'gm-when', gmailWhen(m.at)));
+      list.append(row);
+    });
+    card.body.append(list);
+  },
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -430,6 +470,11 @@ const WIDGET_RENDERERS = {
   },
 };
 
+// Today: the time; earlier: the day.
+function gmailWhen(ms) {
+  const d = new Date(ms);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 // Ask before "My location": what is sent, to whom. Nothing goes anywhere until Allow.
 function askBox(w, d) {
   const box = el('div', 'wx-ask');
@@ -570,7 +615,7 @@ window.applyWidgetColors = applyWidgetColors;
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, gmail: 5 * 60e3, calendar: 15 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;

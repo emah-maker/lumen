@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab Gmail widget (read-only): your unread count and the latest inbox senders, subjects and previews. It signs in with your own Google Cloud OAuth client (Client ID and secret from Settings, gmail.readonly only): Google's sign-in opens in your normal browser, a one-time listener on 127.0.0.1 receives the result, and the tokens stay encrypted in Lumen and never reach the new-tab page. A revoked or expired sign-in shows a Reconnect card, and rate limits back off. Google's limits for unverified apps apply (in Testing status only test users can connect, and the connection ends every 7 days). The sign-in code is a shared OAuth helper (PKCE, loopback redirect, token refresh) that other widgets can reuse.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.
