@@ -4,6 +4,7 @@
 //   node scripts/measure-perf.js --throttle 6    also: sidebar / send / tab switch / Settings with the UI and tabs
 //                                                slowed by that CPU factor (CDP Emulation.setCPUThrottlingRate)
 //   node scripts/measure-perf.js --gpu-off       launch with --disable-gpu (a machine with no usable GPU)
+//   node scripts/measure-perf.js --lite          force Performance mode on
 //   node scripts/measure-perf.js --json          machine-readable output
 // Runs the development copy in a throwaway profile with an invisible window (LUMEN_TEST_BACKGROUND). If a
 // real profile's adblock-engine.bin exists it is copied in, so startup includes loading a cached filter
@@ -56,6 +57,7 @@ async function idleCpu(app, seconds) {
   const haveEngine = fs.existsSync(engine);
   if (haveEngine) fs.copyFileSync(engine, path.join(profile, 'adblock-engine.bin'));
 
+  if (flag('lite')) fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ performanceMode: 'on' })); // Performance mode forced on
   const launchedAt = Date.now();
   const app = await electron.launch({
     args: [path.join(__dirname, '..'), ...(flag('gpu-off') ? ['--disable-gpu'] : [])],
