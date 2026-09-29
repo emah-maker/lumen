@@ -17,13 +17,13 @@ const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user wh
 // Models the user can pick. Request shapes differ: Haiku 4.5 predates adaptive thinking and the
 // dynamic-filtering web search; Opus 5.5 defaults to medium effort, so ask for high explicitly.
 const MODELS = {
-  'claude-opus-5': { label: 'Opus 5', detail: 'Default. Best balance for browsing tasks.', fallbacks: true },
-  'claude-opus-5-5': { label: 'Opus 5.5', detail: 'Newest Opus. Cheaper than Opus 5.', fallbacks: true, effort: 'high' },
+  'claude-opus-5': { label: 'Opus 5', detail: 'Best balance for browsing tasks.', fallbacks: true },
+  'claude-opus-5-5': { label: 'Opus 5.5', detail: 'Default. Newest Opus, and cheaper than Opus 5.', fallbacks: true, effort: 'high' },
   'claude-fable-5-1': { label: 'Fable 5.1', detail: 'Most capable. Slowest and most expensive.', fallbacks: true },
   'claude-sonnet-5': { label: 'Sonnet 5', detail: 'Faster and cheaper.' },
   'claude-haiku-4-5': { label: 'Haiku 4.5', detail: 'Fastest and cheapest. Best for simple pages.', legacyThinking: true, basicWebSearch: true },
 };
-const DEFAULT_MODEL = 'claude-opus-5';
+const DEFAULT_MODEL = 'claude-opus-5-5'; // the newest Opus
 
 // ADHD-friendly answer shape (from the i-have-adhd skill), adapted to a browser sidebar.
 const ADHD_STYLE = `

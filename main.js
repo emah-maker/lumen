@@ -1076,7 +1076,7 @@ function layout() {
   }
 }
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null } = {}) {
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null } = {}) {
   const view = new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
@@ -1091,7 +1091,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
-  const wc = wireView(tab, url);
+  const wc = wireView(tab, url, history); // `history`: Duplicate's copy of back/forward
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
@@ -1745,6 +1745,7 @@ function pinTab(id, on) {
 
 // ---- [tab audio + tab search] (features/tab-tools.js)
 const tabUrl = (tab) => (alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
+const tabTitle = (tab) => (alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '');
 function audioMenuItems(tab) {
   const muted = tabTools.state(tab, alive(tab)).muted;
   const host = tabTools.siteOf(tabUrl(tab));
@@ -1767,38 +1768,126 @@ function reopenClosed(index, url) {
 }
 // ---- [/tab audio + tab search]
 
-function tabMenu(id, { x, y }) {
+// The tab strip's right-click menu, in Chrome's order. Close Other Tabs / Close Tabs to the Right
+// leave pinned tabs alone, as Chrome does.
+function tabMenuTemplate(id) {
   const tab = tabs.find((t) => t.id === id);
-  if (!tab) return;
-  if (tab.pinned) {
-    Menu.buildFromTemplate([
-      { label: t('menu.unpinTab'), click: () => pinTab(id, false) },
-      ...audioMenuItems(tab),
-      { type: 'separator' },
-      ...aiSiteMenu(tab),
-      { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
-    ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
-    return;
+  if (!tab) return null;
+  const url = tabUrl(tab);
+  const closable = (t) => t.id !== id && !t.pinned && !t.closing;
+  const toRight = () => tabs.slice(tabs.indexOf(tab) + 1).filter(closable);
+  const marked = isWebUrl(url) && bookmarks().some((b) => b.url === url);
+  const items = [{ label: t('menu.newTabRight'), click: () => newTabRightOf(id) }];
+  if (!tab.pinned) {
+    const others = tabGroups.state().filter((g) => g.id !== tab.groupId);
+    items.push({
+      label: t('menu.addToNewGroup'),
+      click: () => {
+        if (tab.groupId) tabGroups.remove(id, { byUser: true });
+        // A sleeping tab has no webContents to read; its sleep snapshot has the same info.
+        const title = alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '';
+        const group = tabGroups.create(isWebUrl(url) ? siteName(url, title) : 'New Group', [id]);
+        sendTabs();
+        ui()?.send('group:rename-start', group.id);
+      },
+    });
+    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
+    if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
+    items.push({ label: t('menu.organizeByTopic'), click: organizeByTopic });
+    if (tabGroups.canUndo()) items.push({ label: t('menu.undoOrganize'), click: undoOrganize });
   }
-  const others = tabGroups.state().filter((g) => g.id !== tab.groupId);
-  const items = [{ label: t('menu.pinTab'), click: () => pinTab(id, true) }, ...audioMenuItems(tab), { type: 'separator' }, {
-    label: t('menu.addToNewGroup'),
-    click: () => {
-      if (tab.groupId) tabGroups.remove(id, { byUser: true });
-      // A sleeping tab has no webContents to read; its sleep snapshot has the same info.
-      const url = alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '';
-      const title = alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '';
-      const group = tabGroups.create(isWebUrl(url) ? siteName(url, title) : 'New Group', [id]);
-      sendTabs();
-      ui()?.send('group:rename-start', group.id);
-    },
-  }];
-  if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
-  if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
-  items.push({ type: 'separator' }, { label: t('menu.organizeByTopic'), click: organizeByTopic });
-  if (tabGroups.canUndo()) items.push({ label: t('menu.undoOrganize'), click: undoOrganize });
-  items.push({ type: 'separator' }, ...aiSiteMenu(tab), { label: t('menu.closeTab'), click: () => requestCloseTab(id) });
-  Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) });
+  items.push(
+    { type: 'separator' },
+    { label: t('menu.reload'), click: () => reloadTab(tab) },
+    { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
+    tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
+    ...audioMenuItems(tab),
+    { type: 'separator' },
+    { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => clipboard.writeText(url) },
+    { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
+    { label: t('menu.bookmarkAllTabs'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
+    { type: 'separator' },
+    ...aiSiteMenu(tab),
+    { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
+    { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
+    { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
+    { type: 'separator' },
+    { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
+  );
+  return items;
+}
+
+function tabMenu(id, { x, y }) {
+  const items = tabMenuTemplate(id);
+  if (items) Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) });
+}
+
+// Close Other Tabs / Close Tabs to the Right: the tab the menu was opened on comes to the front
+// first (Chrome does too), then each one goes through requestCloseTab, so "Leave site?" is asked
+// and Reopen Closed Tab gets them back.
+function closeTabs(keepId, list) {
+  if (list.some((t) => t.id === activeId)) switchTab(keepId);
+  for (const t of list) requestCloseTab(t.id);
+}
+
+function reopenLastClosed() {
+  if (closedTabs.length) openTab(closedTabs.pop());
+}
+
+// Puts `tab` right after `anchor`, in anchor's group. An unpinned tab next to a pinned one goes
+// after the pinned tabs (they stay first).
+function placeAfter(tab, anchor) {
+  const list = tabs.filter((t) => t !== tab);
+  const at = anchor.pinned && !tab.pinned ? list.filter((t) => t.pinned).length : list.indexOf(anchor) + 1;
+  list.splice(at, 0, tab);
+  tabs = list;
+  if (anchor.groupId && !tab.pinned) { tab.groupId = anchor.groupId; tab.userRemoved = false; }
+  tabGroups.arrange();
+  sendTabs();
+}
+
+function newTabRightOf(id) {
+  const anchor = tabs.find((t) => t.id === id);
+  if (!anchor) return null;
+  const { id: newId } = openTab();
+  placeAfter(tabs.find((t) => t.id === newId), anchor);
+  return newId;
+}
+
+// Duplicate: the same page with its back/forward list, right after the original (pinned if it is,
+// in its group), and shown, as in Chrome.
+function duplicateTab(id) {
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab || tab.settings) return null;
+  let history = tab.sleepHistory || null;
+  if (alive(tab)) {
+    try {
+      const nav = tab.view.webContents.navigationHistory;
+      history = { entries: nav.getAllEntries(), index: nav.getActiveIndex() };
+    } catch {
+      history = null; // loads the URL instead
+    }
+  }
+  const url = tabUrl(tab) || newTabUrl();
+  const { id: newId } = openTab(url, { background: true, history, historyPage: url.startsWith(HISTORY_URL), managerPage: tab.managerPage || null });
+  const copy = tabs.find((t) => t.id === newId);
+  copy.pinned = Boolean(tab.pinned);
+  placeAfter(copy, tab);
+  switchTab(newId);
+  return newId;
+}
+
+// A tab's Reload (and Cmd+Shift+R for the one in front, bypassing the cache). A sleeping tab is
+// woken, which loads it.
+function reloadTab(tab, { ignoreCache = false } = {}) {
+  if (!tab) return;
+  if (tab.sleeping) { wakeTab(tab); layout(); sendTabs(); return; }
+  if (!alive(tab)) return;
+  const wc = tab.view.webContents;
+  if (wc.isLoading() && !ignoreCache) wc.stop();
+  else if (isErrorPage(wc.getURL())) wc.loadURL(realUrl(wc)).catch(() => {});
+  else if (ignoreCache) wc.reloadIgnoringCache();
+  else wc.reload();
 }
 
 // [ai controls] "Turn off AI on <site>" for a web tab (features/ai-sites.js).
@@ -2037,16 +2126,36 @@ async function cacheFavicon(pageUrl, iconUrls) {
 }
 
 function toggleBookmark() {
-  const wc = activeTab()?.webContents;
-  const url = wc ? realUrl(wc) : '';
+  toggleBookmarkFor(tabs.find((t) => t.id === activeId));
+}
+
+// The tab menu's Bookmark Tab works on any tab, sleeping ones too (from their sleep snapshot).
+function toggleBookmarkFor(tab) {
+  const url = tab ? tabUrl(tab) : '';
   if (!isWebUrl(url)) return;
   const list = bookmarks();
   const index = list.findIndex((b) => b.url === url);
   if (index >= 0) list.splice(index, 1);
-  else list.push({ url, title: wc.getTitle() || hostOf(url) });
+  else list.push({ url, title: tabTitle(tab) || hostOf(url) });
   writeSettings({ ...readSettings(), bookmarks: list });
   sendTabs();
   managers.pushBookmarks(); // an open Bookmarks page
+}
+
+// Bookmark All Tabs (tab menu, Cmd+Shift+D): every web tab, in strip order, into a new folder named
+// for the day. Chrome asks for the name in a dialog; this names it, and the Bookmarks page renames.
+function bookmarkAllTabs() {
+  const pages = [...new Set(tabs.map(tabUrl).filter(isWebUrl))];
+  if (!pages.length) return null;
+  const list = bookmarks();
+  const base = t('bookmark.savedTabs', { date: new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) });
+  let folder = base;
+  for (let n = 2; list.some((b) => b.folder === folder); n++) folder = `${base} (${n})`;
+  for (const url of pages) list.push({ url, title: tabTitle(tabs.find((x) => tabUrl(x) === url)) || hostOf(url), folder });
+  writeSettings({ ...readSettings(), bookmarks: list });
+  sendTabs();
+  managers.pushBookmarks();
+  return folder;
 }
 
 function bookmarksMenu() {
@@ -2236,7 +2345,10 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
-  else if (mod && key === 'r') reloadActive();
+  // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
+  else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
+  else if (process.platform === 'darwin' && input.meta && input.shift && ['[', ']', '{', '}'].includes(key)) cycleTab(key === ']' || key === '}' ? 1 : -1);
+  else if (mod && key === 'r') reloadActive({ ignoreCache: input.shift }); // Shift: Force Reload, past the cache
   else if (mod && key === 'tab') cycleTab(input.shift ? -1 : 1);
   else if (mod && input.shift && (key === 'pageup' || key === 'pagedown')) { const i = tabs.findIndex((t) => t.id === activeId); if (i !== -1) moveTab(activeId, i + (key === 'pageup' ? -1 : 1)); }
   else if (mod && (key === 'pageup' || key === 'pagedown')) cycleTab(key === 'pageup' ? -1 : 1);
@@ -2244,6 +2356,7 @@ function handleShortcut(event, input) {
   else if (mod && (key === '=' || key === '+')) zoomBy(wc, 0.5);
   else if (mod && key === '-') zoomBy(wc, -0.5);
   else if (mod && key === '0') zoomBy(wc, 0);
+  else if (mod && input.shift && key === 'd') bookmarkAllTabs();
   else if (mod && key === 'd') toggleBookmark();
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
@@ -2256,7 +2369,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
   else if (input.alt && key === 'arrowleft') wc?.navigationHistory.goBack();
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
-  else if (key === 'f5') reloadActive();
+  else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
   else if (key === 'f12') wc?.toggleDevTools();
   else handled = false;
@@ -2273,12 +2386,8 @@ function cycleTab(direction) {
   switchTab(tabs[(index + direction + tabs.length) % tabs.length].id);
 }
 
-function reloadActive() {
-  const wc = activeTab()?.webContents;
-  if (!wc) return;
-  if (wc.isLoading()) wc.stop();
-  else if (isErrorPage(wc.getURL())) wc.loadURL(realUrl(wc)).catch(() => {});
-  else wc.reload();
+function reloadActive({ ignoreCache = false } = {}) {
+  reloadTab(tabs.find((t) => t.id === activeId), { ignoreCache });
 }
 
 // ---------- saved chats (survive restarts; the sidebar's history list) ----------
@@ -2444,7 +2553,7 @@ function macMenu() {
       submenu: [
         { label: t('menu.newTab'), ...shown('Cmd+T'), click: () => openTab() },
         { label: t('menu.newPrivateWindow'), ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
-        { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
+        { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: reopenLastClosed },
         { label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch },
         { label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog },
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: focusAddress },
@@ -2459,7 +2568,8 @@ function macMenu() {
     {
       label: t('menu.view'),
       submenu: [
-        { label: t('menu.reload'), ...shown('Cmd+R'), click: reloadActive },
+        { label: t('menu.reload'), ...shown('Cmd+R'), click: () => reloadActive() },
+        { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: () => reloadActive({ ignoreCache: true }) },
         { label: t('menu.find'), ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
         { label: t('menu.readerMode'), click: () => toggleReaderActive() },
         { label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
@@ -2482,7 +2592,18 @@ function macMenu() {
         { label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage },
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [{ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }, { label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }] },
+    { label: t('menu.bookmarks'), submenu: [{ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }, { label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }, { label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }] },
+    // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
+    {
+      label: t('menu.tab'),
+      submenu: [
+        { label: t('menu.nextTab'), ...shown('Alt+Cmd+Right'), click: () => cycleTab(1) },
+        { label: t('menu.previousTab'), ...shown('Alt+Cmd+Left'), click: () => cycleTab(-1) },
+        { type: 'separator' },
+        { label: t('menu.newTabRight'), click: () => { if (activeId) newTabRightOf(activeId); } },
+        { label: t('menu.duplicateTab'), click: () => { if (activeId) duplicateTab(activeId); } },
+      ],
+    },
     { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
     { role: 'windowMenu' },
     { role: 'help', submenu: [{ label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
@@ -2742,6 +2863,14 @@ if (TEST) {
     return items.map((i) => i.label);
   };
   global.__closedTabs = () => closedTabs.slice();
+  // The tab strip's right-click menu (test/tabmenu.js): its items as { label, enabled }, and with
+  // `label`, that item clicked.
+  global.__tabMenu = (id, label) => {
+    const items = (tabMenuTemplate(id) || []).filter((i) => i.label);
+    if (label) items.find((i) => i.label === label)?.click();
+    return items.map((i) => ({ label: i.label, enabled: i.enabled !== false }));
+  };
+  global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
 }
 
@@ -3041,7 +3170,8 @@ function effectiveModel(preferred = readSettings().model) {
   // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
   const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
   if (options.some((o) => o.id === preferred) || openRouterPick || aiAgents.engineDetecting(preferred)) return preferred;
-  return options[0]?.id || null;
+  // Nothing picked yet (or it's gone): the default model when it's connected, else the first one.
+  return options.find((o) => o.id === DEFAULT_MODEL)?.id || options[0]?.id || null;
 }
 
 ipcMain.handle('settings:get', () => {

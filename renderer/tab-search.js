@@ -16,11 +16,14 @@ function updateTabAudio(el, tab) {
   if (!button) {
     button = Object.assign(document.createElement('button'), { className: 'tab-audio', type: 'button', innerHTML: SPEAKER });
     button.addEventListener('pointerdown', (e) => e.stopPropagation()); // not a tab drag or ✕ press
+    button.addEventListener('mousedown', (e) => e.preventDefault()); // a click doesn't take focus (or leave a ring)
     button.onclick = (e) => { e.stopPropagation(); window.browser.toggleMute(Number(el.dataset.id)); };
-    el.querySelector('.tab-title').before(button);
+    el.querySelector('.tab-title').after(button); // after the title, beside the ✕ (Chrome)
   }
   button.classList.toggle('muted', Boolean(tab.muted));
-  const label = tab.muted ? 'Unmute tab' : 'Mute tab';
+  // The context menu's strings (locales/en.json); the English stands in without a table.
+  const key = tab.muted ? 'menu.unmuteTab' : 'menu.muteTab';
+  const label = window.t?.(key) && window.t(key) !== key ? window.t(key) : tab.muted ? 'Unmute Tab' : 'Mute Tab';
   button.title = label;
   button.setAttribute('aria-label', `${label}: ${tab.title}`);
 }

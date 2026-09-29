@@ -132,6 +132,9 @@ function showAddress() {
 let drag = null; // { el, id, startX, dx, moved, rects, from, to }
 let pendingState = null; // tab updates that arrive mid-drag are applied on release
 let suppressClick = false;
+// A multi-selection (Shift+click, Ctrl/Cmd+click, as in Chrome): the tab ids in it, the active tab
+// among them. Empty means only the active tab is selected. See "multi-select" below.
+let selectedTabs = new Set();
 
 function startTabDrag(e, el, id) {
   if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
@@ -147,6 +150,7 @@ function moveTabDrag(e) {
   if (!drag.moved && Math.abs(drag.dx) < 5) return;
   if (!drag.moved) {
     drag.moved = true;
+    hideHoverCard();
     drag.el.classList.add('dragging');
     $('tabs').classList.add('reordering');
   }
@@ -286,16 +290,17 @@ function createTabEl(id) {
     closePressed = false;
     closedByPress = true; // the click that follows is this close, not a tab switch
     setTimeout(() => { closedByPress = false; }, 0);
+    holdTabWidths();
     window.browser.closeTab(id);
   });
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
   inner.append(globeIcon(), title, close);
   el.append(inner);
-  el.onclick = () => { if (!suppressClick && !closedByPress) window.browser.switchTab(id); };
+  el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
   el.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
-  el.onauxclick = (e) => { if (e.button === 1) window.browser.closeTab(id); };
+  el.onauxclick = (e) => { if (e.button === 1) { holdTabWidths(); window.browser.closeTab(id); } };
   el.oncontextmenu = (e) => { e.preventDefault(); window.browser.tabMenu(id, { x: e.clientX, y: e.clientY }); };
   el.addEventListener('pointerdown', (e) => startTabDrag(e, el, id));
   el.addEventListener('pointermove', moveTabDrag);
@@ -332,11 +337,12 @@ function faviconImg(el, key, urls, retried = false) {
 
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
-  el.className = 'tab' + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '');
+  el.className = 'tab' + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '')
+    + (selectedTabs.has(tab.id) && !active ? ' selected' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
   el.setAttribute('aria-selected', String(active));
-  el.title = tab.title;
+  // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   el.setAttribute('aria-label', tab.title);
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
@@ -357,7 +363,6 @@ function updateTabEl(el, tab, group, activeId) {
   const title = el.querySelector('.tab-title');
   if (title.textContent !== tab.title) title.textContent = tab.title;
   el.querySelector('.tab-close').setAttribute('aria-label', t('tabs.close', { title: tab.title }));
-  el.querySelector('.tab-close').title = t('tabs.close', { title: tab.title });
   if (typeof updateTabAudio === 'function') updateTabAudio(el, tab); // tab-search.js: the speaker button
   return el;
 }
@@ -504,6 +509,214 @@ $('tabs').addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 
+// ---------- multi-select (Chrome) ----------
+// Shift+click selects the run of tabs from the anchor (the tab last clicked, else the active tab) to
+// the clicked one; Ctrl+click (Cmd+click on macOS) adds a tab to the selection or takes it out. The
+// clicked tab becomes the active one, as in Chrome, and a plain click (or switching tabs any other
+// way, to a tab outside the selection) ends it. Main hears the selection (setTabSelection) so the
+// tab menu and Ctrl+W can act on all of it; until it listens, the selection is only shown.
+
+let selectionAnchor = null;
+const isMac = navigator.platform.startsWith('Mac');
+const stripOrder = () => [...$('tabs').querySelectorAll('.tab:not(.tab-ghost)')].map((el) => Number(el.dataset.id));
+
+function setSelection(ids) {
+  const next = new Set(ids.length > 1 ? ids : []);
+  if (next.size === selectedTabs.size && [...next].every((id) => selectedTabs.has(id))) return;
+  selectedTabs = next;
+  const activeId = lastTabState?.activeId;
+  for (const el of $('tabs').querySelectorAll('.tab:not(.tab-ghost)')) {
+    const id = Number(el.dataset.id);
+    el.classList.toggle('selected', selectedTabs.has(id) && id !== activeId);
+  }
+  window.browser.setTabSelection?.([...selectedTabs]);
+}
+
+function clickTab(e, id) {
+  const activeId = lastTabState?.activeId;
+  const order = stripOrder();
+  if (e.shiftKey) {
+    const anchor = order.includes(selectionAnchor) ? selectionAnchor : activeId;
+    const a = order.indexOf(anchor), b = order.indexOf(id);
+    if (a !== -1 && b !== -1) {
+      selectionAnchor = anchor;
+      setSelection(order.slice(Math.min(a, b), Math.max(a, b) + 1));
+    }
+  } else if (isMac ? e.metaKey : e.ctrlKey) {
+    const current = new Set(selectedTabs.size ? selectedTabs : [activeId]);
+    if (current.has(id)) {
+      if (current.size === 1) return; // the last selected tab stays selected
+      current.delete(id);
+      setSelection([...current]);
+      if (id !== activeId) return;
+      // Taking the active tab out: the next selected tab along (else the one before) takes over.
+      const i = order.indexOf(id);
+      id = order.slice(i + 1).find((x) => current.has(x)) ?? order.slice(0, i).reverse().find((x) => current.has(x)) ?? id;
+    } else {
+      current.add(id);
+      setSelection([...current]);
+    }
+    selectionAnchor = id;
+  } else {
+    selectionAnchor = id;
+    setSelection([]);
+  }
+  window.browser.switchTab(id);
+}
+
+// Tabs that closed leave the selection; so does everything, when another tab becomes active some
+// other way (the keyboard, a link opening a tab, the tab search).
+function pruneSelection(state) {
+  if (!selectedTabs.size) return;
+  const ids = new Set(state.tabs.map((tab) => tab.id));
+  const kept = [...selectedTabs].filter((id) => ids.has(id));
+  setSelection(kept.includes(state.activeId) ? kept : []);
+}
+
+// ---------- tab hover cards (Chrome) ----------
+// Resting on a tab for a moment shows its title and site in a card under it; while one is up,
+// moving along the strip carries it from tab to tab at once. A press, a drag, a scroll or leaving
+// the strip puts it away. The page view is a native view drawn over this document, so the card has
+// to fit in the toolbar row under the strip: the title gets one line here, where Chrome gives two.
+
+const HOVER_CARD_DELAY_MS = 500;
+const HOVER_CARD_WARM_MS = 300; // back on the strip within this long: the next card shows at once
+let hoverCardEl = null;
+let hoverCardTab = null; // the tab element the card is for (or is waiting to show for)
+let hoverCardTimer = 0;
+let hoverCardWarmUntil = 0;
+let hoverCardPressed = null; // a tab pressed while hovered: no card for it until the pointer leaves it
+
+function hoverCardHost(url) {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.host.replace(/^www\./, '');
+    if (u.protocol === 'file:') return decodeURIComponent(u.pathname);
+    return `${u.protocol}//${u.host}`; // lumen://settings and the like
+  } catch {
+    return url;
+  }
+}
+
+function fillHoverCard(el) {
+  const tab = lastTabState?.tabs.find((x) => String(x.id) === el.dataset.id);
+  if (!tab) return false;
+  hoverCardEl.querySelector('.hover-card-title').textContent = tab.title;
+  const host = hoverCardHost(tab.url);
+  const hostEl = hoverCardEl.querySelector('.hover-card-host');
+  hostEl.textContent = host;
+  hostEl.hidden = !host;
+  return true;
+}
+
+function placeHoverCard(el) {
+  const r = el.getBoundingClientRect();
+  const width = hoverCardEl.offsetWidth;
+  const x = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+  // Under the tab, but never past the top of the page view, which would cover it.
+  const y = Math.min(r.bottom + 4, viewport.getBoundingClientRect().top - hoverCardEl.offsetHeight - 2);
+  hoverCardEl.style.left = `${Math.round(x)}px`;
+  hoverCardEl.style.top = `${Math.round(y)}px`;
+}
+
+function showHoverCard(el) {
+  if (!hoverCardEl) {
+    hoverCardEl = Object.assign(document.createElement('div'), { className: 'tab-hover-card', hidden: true });
+    hoverCardEl.setAttribute('aria-hidden', 'true'); // the tab's own label already says all this
+    hoverCardEl.append(Object.assign(document.createElement('div'), { className: 'hover-card-title' }), Object.assign(document.createElement('div'), { className: 'hover-card-host' }));
+    document.body.append(hoverCardEl);
+  }
+  if (!el.isConnected || !fillHoverCard(el)) return;
+  const moving = !hoverCardEl.hidden;
+  hoverCardEl.classList.toggle('moving', moving && !motionReduced()); // slides along the strip
+  hoverCardEl.hidden = false;
+  placeHoverCard(el);
+  if (!moving) hoverCardEl.animate(motionReduced() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' });
+}
+
+function hideHoverCard() {
+  clearTimeout(hoverCardTimer);
+  if (hoverCardEl && !hoverCardEl.hidden) {
+    hoverCardEl.hidden = true;
+    hoverCardWarmUntil = Date.now() + HOVER_CARD_WARM_MS;
+  }
+  hoverCardTab = null;
+}
+
+function hoverTab(el) {
+  if (el === hoverCardTab || drag?.moved || renamingGroup !== null) return;
+  if (el !== hoverCardPressed) hoverCardPressed = null;
+  if (hoverCardPressed) return;
+  const shown = hoverCardEl && !hoverCardEl.hidden;
+  clearTimeout(hoverCardTimer);
+  hoverCardTab = el;
+  if (shown || Date.now() < hoverCardWarmUntil) showHoverCard(el);
+  else hoverCardTimer = setTimeout(() => { if (hoverCardTab === el) showHoverCard(el); }, HOVER_CARD_DELAY_MS);
+}
+
+// After a strip update: the card follows its tab's new title and place, or goes with the tab.
+function updateHoverCard() {
+  if (!hoverCardTab) return;
+  if (!hoverCardTab.isConnected) { hideHoverCard(); return; }
+  if (hoverCardEl && !hoverCardEl.hidden) {
+    hoverCardEl.classList.remove('moving');
+    if (fillHoverCard(hoverCardTab)) placeHoverCard(hoverCardTab);
+    else hideHoverCard();
+  }
+}
+
+$('tabs').addEventListener('pointerover', (e) => {
+  if (e.pointerType === 'touch') return;
+  const el = e.target.closest('.tab');
+  // Over the speaker, its own tooltip says what a click does; the card would sit on top of it.
+  if (!el || e.target.closest('.tab-audio')) { if (hoverCardTab) hideHoverCard(); return; }
+  hoverTab(el);
+});
+$('tabs').addEventListener('pointerleave', () => { hoverCardPressed = null; hideHoverCard(); });
+$('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.closest('.tab'); hideHoverCard(); }, true);
+$('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
+// Backstop for a leave that isn't reported (the window-drag area around the strip takes the mouse).
+document.addEventListener('pointermove', (e) => { if (hoverCardTab && !$('tabs').contains(e.target)) hideHoverCard(); }, { passive: true });
+window.addEventListener('blur', hideHoverCard);
+window.addEventListener('resize', hideHoverCard);
+
+// ---------- closing tabs in a row (Chrome) ----------
+// A tab closed with its ✕ (or a middle-click) leaves the other tabs at the widths they had until the
+// pointer leaves the strip: the next tab slides in under the pointer, its ✕ where the last one was,
+// so a run of tabs can be closed by clicking in one place. Then they widen into the freed room.
+
+let widthsHeld = false;
+let widthsFrame = 0;
+
+function holdTabWidths() {
+  for (const el of $('tabs').querySelectorAll('.tab:not(.pinned):not(.tab-ghost)')) el.style.flex = `0 0 ${getComputedStyle(el).width}`;
+  widthsHeld = true;
+}
+
+function releaseTabWidths(animate = !motionReduced()) {
+  if (!widthsHeld) return;
+  widthsHeld = false;
+  const strip = $('tabs');
+  cancelAnimationFrame(widthsFrame);
+  strip.classList.toggle('reflowing', animate);
+  for (const el of strip.querySelectorAll('.tab')) el.style.flex = '';
+  if (!animate) { placeIndicator(false); updateOverflow(); return; }
+  // The active tab's surface is placed from layout, so it follows the tabs while they widen.
+  const end = performance.now() + 460;
+  const follow = (now) => {
+    placeIndicator(false);
+    if (now < end) { widthsFrame = requestAnimationFrame(follow); return; }
+    strip.classList.remove('reflowing');
+    placeIndicator(false);
+    updateOverflow();
+  };
+  widthsFrame = requestAnimationFrame(follow);
+}
+$('tabs').addEventListener('pointerleave', () => releaseTabWidths());
+document.addEventListener('pointermove', (e) => { if (widthsHeld && !$('tabs').contains(e.target)) releaseTabWidths(); }, { passive: true });
+window.addEventListener('resize', () => releaseTabWidths(false));
+
 const organizeBtn = $('organize-tabs');
 organizeBtn.onclick = () => window.browser.organizeTabs();
 window.browser.onOrganizing?.((busy) => {
@@ -518,6 +731,7 @@ function renderTabs(state) {
     return;
   }
   lastTabState = state;
+  pruneSelection(state);
   const container = $('tabs');
   const before = new Map();
   for (const el of container.querySelectorAll('.tab, .group-label')) before.set(el.dataset.id, { el, rect: el.getBoundingClientRect() });
@@ -554,7 +768,10 @@ function renderTabs(state) {
     else container.insertBefore(el, cursor);
   }
 
+  // A tab arriving while widths are held (see holdTabWidths) would be squeezed in beside them.
+  if (widthsHeld && wanted.some((el) => el.classList.contains('tab') && !before.has(el.dataset.id))) releaseTabWidths(false);
   animateTabs(before, container);
+  updateHoverCard();
   const activeId = container.querySelector('.tab.active')?.dataset.id;
   placeIndicator(tabsRendered && !motionReduced() && [...before.keys()].includes(activeId));
   tabsRendered = true;
