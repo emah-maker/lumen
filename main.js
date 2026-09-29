@@ -362,14 +362,16 @@ ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.se
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
 // overlay per window (features/tool-overlay.js). Loaded on first use.
 const toolOverlay = lazy(() => require('./features/tool-overlay').createToolOverlay({ ipcMain, WebContentsView }));
+// This Electron's clipboard has no writeImage: images go through the web ClipboardItem API.
+const copyImage = (image) => clipboard.write([new (require('electron').ClipboardItem)({ 'image/png': new Blob([image.toPNG()], { type: 'image/png' }) })]);
 const screenshotTool = lazy(() => require('./features/screenshot').createScreenshot({
-  overlay: toolOverlay, clipboard, nativeImage: require('electron').nativeImage, shell, screen, app, t,
+  overlay: toolOverlay, copyImage, nativeImage: require('electron').nativeImage, shell, screen, app, t,
   downloadDir: () => settingsBackend.downloadDir(),
   saveDir: () => (TEST && global.__screenshotDir) || null, // tests: a temp folder instead of Pictures
   showSaveDialog: (options, w) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(w || win, options)),
 }));
 const qrTool = lazy(() => require('./features/qr').createQr({
-  overlay: toolOverlay, clipboard, nativeImage: require('electron').nativeImage, t,
+  overlay: toolOverlay, copyImage, nativeImage: require('electron').nativeImage, t,
   downloadDir: () => settingsBackend.downloadDir(),
   showSaveDialog: (options, w) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(w || win, options)),
 }));

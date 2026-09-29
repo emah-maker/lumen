@@ -88,7 +88,7 @@ function fileNameFor(text, date = new Date()) {
   return `Lumen QR ${site} ${stamp}.png`;
 }
 
-// deps: { overlay, clipboard, nativeImage, t, downloadDir(), showSaveDialog(options) }
+// deps: { overlay, copyImage(nativeImage) -> Promise, nativeImage, t, downloadDir(), showSaveDialog(options) }
 function createQr(deps) {
   const { t } = deps;
 
@@ -133,8 +133,10 @@ function createQr(deps) {
       onAction: async (action, data, sess) => {
         if (action !== 'button') return;
         if (data.id === 'copy') {
-          deps.clipboard.writeImage(image());
-          deps.overlay.update(win, sess, { status: t('qr.copied') });
+          try {
+            await deps.copyImage(image());
+            deps.overlay.update(win, sess, { status: t('qr.copied') });
+          } catch { deps.overlay.update(win, sess, { status: t('qr.failed') }); }
         } else if (data.id === 'save') {
           const { canceled, filePath } = await deps.showSaveDialog({
             title: t('qr.save'),

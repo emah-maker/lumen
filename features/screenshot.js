@@ -74,7 +74,7 @@ function capSize(css, scale, max = MAX_PIXELS) {
 
 // ---------- the tool ----------
 
-// deps: { overlay, clipboard, nativeImage, shell, screen, app, t, downloadDir(), saveDir() (test override),
+// deps: { overlay, copyImage(nativeImage) -> Promise, nativeImage, shell, screen, app, t, downloadDir(), saveDir() (test override),
 //         showSaveDialog(options) }
 function createScreenshot(deps) {
   const { t } = deps;
@@ -153,7 +153,7 @@ function createScreenshot(deps) {
   async function deliver(ctx, shot) {
     const png = shot.image.toPNG();
     const size = shot.image.getSize();
-    deps.clipboard.writeImage(shot.image);
+    await deps.copyImage(shot.image).catch(() => {});
     const name = fileNameFor(ctx.wc.getURL());
     const note = shot.cut ? t('shot.cut', { px: MAX_PIXELS }) : shot.fellBack ? t('shot.fellBack') : '';
     const dims = t('shot.size', { w: size.width, h: size.height });
