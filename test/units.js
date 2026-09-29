@@ -1901,6 +1901,229 @@ async function inprocRuns() {
   up.close();
 }
 
+// ---- Organize with AI: local first, the model refines (features/organize-ai.js, organize-learn.js)
+async function organizeAiRuns() {
+  const tg = require('../tab-groups');
+  const oai = require('../features/organize-ai');
+  const learn = require('../features/organize-learn');
+  const { harness } = require('./topics-bench');
+  const BASE = [
+    ['Easy Sourdough Bread Recipe', 'https://a.example/sourdough-bread'], ['Sourdough Starter Guide - Bakery', 'https://b.example/sourdough-starter'], ['How to Feed a Sourdough Starter', 'https://c.example/feed-sourdough-starter'],
+    ['useEffect Reference - React', 'https://react.dev/reference/useEffect'], ['React useState Hook Guide', 'https://d.example/react-usestate'], ['Managing State in React Apps', 'https://e.example/react-state'],
+  ];
+  const make = (extra = [], { base = BASE, learned = null } = {}) => {
+    const h = harness(tg, { withText: false });
+    for (const [title, url] of [...base, ...extra]) h.addTab({ title, url });
+    return h;
+  };
+  const LEFT = [['Marathon Training Schedule for Beginners', 'https://runners.example/marathon-training-schedule?utm_source=x&token=secret123'], ['Inbox (3)', 'https://mail.google.com/mail/u/0/#inbox']];
+  const fresh = (extra = LEFT) => { const h = make(extra); h.tg.organizeByTopic(null); return { h, view: h.tg.organizeView() }; };
+
+  // summaries and the compact wire format
+  const { view: v1 } = fresh();
+  const wire = oai.buildWire(v1);
+  const wireText = JSON.stringify(wire);
+  check('organize-ai: a group summary has an id, size, current name, hosts, top words and a few [id, title] samples', wire.g.length === 2 && wire.g.every((g) => Number.isInteger(g.i) && g.n === 3 && g.x && g.h && g.w && g.t.length >= 3 && Array.isArray(g.t[0])), wireText);
+  check('organize-ai: leftovers are grouped by host, each host written once', Object.keys(wire.u).length === 2 && wire.u['runners.example'][0][0] > 0 && !JSON.stringify(wire.u).includes('runners.example/'), JSON.stringify(wire.u));
+  check('organize-ai: no address path, query string or token reaches the model', !/utm_source|secret123|\/marathon|https?:/.test(wireText), wireText);
+  const withDesc = oai.buildWire({ groups: [], leftovers: [{ id: 9, title: 'Some page', url: 'https://x.example/p', text: 'd'.repeat(300) }] });
+  check('organize-ai: a leftover carries at most ~80 characters of description', withDesc.u['x.example'][0][2].length === 80, JSON.stringify(withDesc));
+  const many = make(Array.from({ length: 34 }, (_v, i) => [`${['Kayak rental prices', 'Tokyo hotel guide', 'Espresso machine review', 'Piano chords lesson'][i % 4]} tips ${i}`, `https://site${i % 9}.example/${i}-${['kayak', 'tokyo', 'espresso', 'piano'][i % 4]}`]));
+  many.tg.organizeByTopic(null);
+  const vm = many.tg.organizeView();
+  const legacy = JSON.stringify(oai.legacyWire(many.tg.candidates()));
+  check('organize-ai: the summary of a 40-tab session is well under the old every-tab list', JSON.stringify(oai.buildWire(vm)).length < legacy.length * 0.6, `${JSON.stringify(oai.buildWire(vm)).length} vs ${legacy.length}`);
+  check('organize-ai: the answer schema is strict (no extra keys, all four lists required)', oai.REFINE_SCHEMA.additionalProperties === false && oai.REFINE_SCHEMA.required.join() === 'n,p,g,m' && oai.REFINE_MAX_TOKENS <= 800);
+
+  // reading an answer
+  const ctx = { groupIds: [1, 2, 3], leftoverIds: [7, 8, 9, 10] };
+  const parsed = oai.parseRefinement({ n: [{ i: 1, s: '<b>Baking</b> Sourdough Bread Tips Extra' }, { i: 99, s: 'Ghost' }, { i: 2, s: '' }], p: [{ t: 7, i: 2 }, { t: 7, i: 3 }, { t: 55, i: 1 }, { t: 8, i: 42 }], g: [{ s: 'Running', t: [9, 10, 9, 77] }, { s: 'Solo', t: [8] }], m: [{ a: 1, b: 3 }, { a: 3, b: 1 }, { a: 2, b: 2 }] }, ctx);
+  check('organize-ai: names are cleaned, unknown ids dropped', parsed.names.size === 1 && parsed.names.get(1) === 'Baking Sourdough Bread' && !parsed.names.has(99), JSON.stringify([...parsed.names]));
+  check('organize-ai: a tab is placed once, only leftovers into known groups', parsed.place.size === 1 && parsed.place.get(7) === 2, JSON.stringify([...parsed.place]));
+  check('organize-ai: new groups need 2+ known leftovers; merges are one-way and never loop', parsed.groups.length === 1 && parsed.groups[0].ids.join() === '9,10' && parsed.merges.length === 1 && parsed.merges[0].join() === '1,3', JSON.stringify([parsed.groups, parsed.merges]));
+  check('organize-ai: a non-object answer is rejected', oai.parseRefinement('nope', ctx) === null && oai.parseRefinement([], ctx) === null && oai.parseRefinement({}, ctx).names.size === 0);
+
+  // is the local result good enough to skip the model?
+  const { view: vConfident } = fresh([['Inbox (3)', 'https://mail.google.com/mail/u/0/#inbox'], ['Spotify - Web Player', 'https://open.spotify.com/']]);
+  check('organize-ai: clear groups and only app/search leftovers need no model', !oai.assess(vConfident).needsAi, JSON.stringify(oai.assess(vConfident)));
+  check('organize-ai: a leftover with a real title is worth asking about', oai.assess(v1).needsAi && oai.assess(v1).askableLeftovers.length === 1);
+  check('organize-ai: a login wall or loading screen is never asked about', !oai.askable({ title: 'Sign in to your account', url: 'https://login.example.com/' }) && !oai.askable({ title: 'Just a moment...', url: 'https://x.example/' }) && !oai.askable({ title: 'Loading…', url: 'https://x.example/' }));
+  check('organize-ai: a vague or loose group name is not clear', !oai.clearName({ name: 'Group' }) && !oai.clearName({ name: 'Core Concepts' }) && !oai.clearName({ name: 'Tokyo', cohesion: 0.1 }) && oai.clearName({ name: 'Tokyo Trip', cohesion: 0.6 }));
+
+  // keys and the cache
+  const e = (id, title, url) => ({ id, title, url });
+  check('organize-ai: keys ignore tab ids and order but notice a changed title or host', oai.setKey([e(1, 'A page', 'https://x.example/a'), e(2, 'B page', 'https://y.example/b')]) === oai.setKey([e(9, 'B page', 'https://y.example/b?x=1'), e(4, 'A page', 'https://x.example/zzz')]) && oai.setKey([e(1, 'A page', 'https://x.example/a')]) !== oai.setKey([e(1, 'A page 2', 'https://x.example/a')]) && oai.setKey([e(1, 'A page', 'https://x.example/a')]) !== oai.setKey([e(1, 'A page', 'https://z.example/a')]));
+  const cache = oai.createRefineCache();
+  const view = { groups: [{ id: 1, name: 'Sourdough', entries: [e(1, 'Sourdough bread', 'https://a.example/1'), e(2, 'Sourdough starter', 'https://b.example/2')] }, { id: 2, name: 'React', entries: [e(3, 'React hooks', 'https://c.example/3'), e(4, 'React state', 'https://d.example/4')] }], leftovers: [e(5, 'Marathon training plan', 'https://r.example/5'), e(6, 'Marathon shoes review', 'https://s.example/6')] };
+  cache.remember(view, view, { names: new Map([[1, 'Sourdough Baking']]), place: new Map(), groups: [{ name: 'Marathon', ids: [5, 6] }], merges: [] });
+  const renumbered = { groups: [{ id: 11, name: 'Sourdough', entries: [e(21, 'Sourdough bread', 'https://a.example/1'), e(22, 'Sourdough starter', 'https://b.example/2')] }, { id: 12, name: 'React', entries: [e(23, 'React hooks', 'https://c.example/3'), e(24, 'React state', 'https://d.example/4')] }], leftovers: [e(25, 'Marathon training plan', 'https://r.example/5'), e(26, 'Marathon shoes review', 'https://s.example/6')] };
+  const hit = cache.lookup(renumbered);
+  check('organize-ai cache: the same tabs under new ids get the remembered names and groups back', hit.plan.names.get(11) === 'Sourdough Baking' && hit.plan.groups.length === 1 && hit.plan.groups[0].ids.join() === '25,26' && !hit.pending.groups.length && !hit.pending.leftovers.length, JSON.stringify([[...hit.plan.names], hit.plan.groups, hit.pending]));
+  renumbered.groups[1].entries[1] = e(24, 'React server components', 'https://d.example/4');
+  renumbered.leftovers.push(e(27, 'Brand new page about kayaks', 'https://k.example/1'));
+  const part = cache.lookup(renumbered);
+  check('organize-ai cache: only a changed group and a new tab are left for the model', part.pending.groups.map((g) => g.id).join() === '12' && part.pending.leftovers.map((x) => x.id).join() === '27', JSON.stringify(part.pending));
+
+  // chunking
+  const big = { groups: Array.from({ length: 60 }, (_v, i) => ({ id: i + 1, name: `G${i}`, entries: [e(i * 10 + 1, `t${i}`, `https://h${i % 7}.example/a`), e(i * 10 + 2, `u${i}`, `https://h${i % 7}.example/b`)] })), leftovers: Array.from({ length: 40 }, (_v, i) => e(1000 + i, `left ${i}`, `https://h${i % 7}.example/x${i}`)) };
+  const chunks = oai.chunkView(big, { tabs: 300 });
+  check('organize-ai: a huge session is split into at most 3 chunks that hold every group and leftover once', chunks.length === 3 && chunks.reduce((n, c) => n + c.groups.length, 0) === 60 && chunks.reduce((n, c) => n + c.leftovers.length, 0) === 40, chunks.map((c) => `${c.groups.length}/${c.leftovers.length}`).join(' '));
+  check('organize-ai: up to 120 tabs is one request', oai.chunkView(big, { tabs: 120 }).length === 1);
+
+  // applying: the plan
+  const plan = { names: new Map([[1, 'Sourdough Baking'], [2, 'react'], [3, 'Gone']]), place: new Map([[7, 3], [8, 2]]), groups: [{ name: 'Running', ids: [9, 10, 7] }], merges: [[1, 3]] };
+  const ops = oai.planApply({ groups: [{ id: 1, name: 'Sourdough' }, { id: 2, name: 'React' }, { id: 3, name: 'Bread' }], leftovers: [{ id: 7 }, { id: 8 }, { id: 9 }, { id: 10 }] }, plan);
+  check('organize-ai planApply: renames in place (not a no-op, not a group merged away), placements follow merges, new groups skip placed tabs', ops.renames.length === 1 && ops.renames[0].id === 1 && ops.places.find((p) => p.tab === 7).group === 1 && ops.groups[0].ids.join() === '9,10' && ops.merges[0].into === 1, JSON.stringify(ops));
+
+  // a full run against a fake model
+  const asks = [];
+  const run = async (h, ask, extra = {}) => { const phases = []; const stats = await oai.organizeProgressive({ tabGroups: h.tg, ask: async (w, o) => { asks.push(w); return ask(w, o); }, onPhase: (n) => phases.push(n), ...extra }); return { stats, phases }; };
+  {
+    const h = make(LEFT);
+    const { stats, phases } = await run(h, (w) => ({ n: [{ i: w.g[0].i, s: 'Bread Baking' }], p: [], g: [], m: [] }));
+    const names = h.tg.state().map((g) => g.name);
+    check('organize-ai run: local groups first, then the model renames one in place', phases[0] === 'local' && phases.includes('refined') && stats.aiUsed && names.includes('Bread Baking') && names.length === 2 && stats.renamed === 1, JSON.stringify([phases, names, stats]));
+    check('organize-ai run: the request holds only the group summaries and the one askable leftover', asks.length === 1 && Object.keys(asks[0].u).join() === 'runners.example', JSON.stringify(asks[0].u));
+    h.tg.undoOrganize();
+    check('organize-ai run: one undo reverts both phases', h.tabs().every((t) => t.groupId == null) && h.tg.state().length === 0);
+  }
+  {
+    const h = make(LEFT.slice(1));
+    const n0 = asks.length;
+    const { stats } = await run(h, () => { throw new Error('must not be called'); });
+    check('organize-ai run: clear groups and nothing askable: no model call', asks.length === n0 + 0 && !stats.aiUsed && stats.reason === 'confident' && h.tg.state().length === 2, JSON.stringify(stats));
+  }
+  {
+    const h = make(LEFT);
+    const cache2 = oai.createRefineCache();
+    await run(h, () => ({ n: [], p: [], g: [], m: [] }), { cache: cache2 });
+    const n1 = asks.length;
+    const again = await run(h, () => { throw new Error('cached: must not be called'); }, { cache: cache2 });
+    check('organize-ai run: organizing the same tabs again is answered from the cache', asks.length === n1 && again.stats.aiUsed === false, JSON.stringify(again.stats));
+  }
+  {
+    const h = make(LEFT);
+    const { stats } = await run(h, () => { throw new Error('offline'); });
+    check('organize-ai run: a failing model keeps the local result', stats.failed === 'offline' && /kept local/.test(stats.reason) && h.tg.state().length === 2, JSON.stringify(stats));
+  }
+  {
+    const h = make(LEFT);
+    const t0 = Date.now();
+    const { stats } = await run(h, () => new Promise(() => {}), { timeoutMs: 60 });
+    check('organize-ai run: a model that never answers times out and keeps the local result', Date.now() - t0 < 2000 && stats.failed === 'timeout' && h.tg.state().length === 2, JSON.stringify(stats));
+  }
+  {
+    const h = make(LEFT);
+    const ac = new AbortController();
+    const p = run(h, () => new Promise(() => {}), { signal: ac.signal, timeoutMs: 5000 });
+    setTimeout(() => ac.abort(), 30);
+    const { stats } = await p;
+    check('organize-ai run: cancelling keeps the local result and stops waiting', stats.reason === 'cancelled' && h.tg.state().length === 2, JSON.stringify(stats));
+  }
+  {
+    const h = make(LEFT);
+    const { stats } = await run(h, (w) => { h.tg.undoOrganize(); return { n: [{ i: w.g[0].i, s: 'Too Late' }], p: [], g: [], m: [] }; });
+    check('organize-ai run: an answer that arrives after the user undid the organize changes nothing', stats.renamed === 0 && h.tg.state().length === 0, JSON.stringify(stats));
+  }
+  {
+    const h = make(LEFT);
+    const { stats } = await run(h, (w) => {
+      const gid = h.tg.state()[0].id;
+      Object.assign(h.tg.groups.get(gid), { name: 'Mine', userNamed: true, auto: false }); // the user renamed it meanwhile
+      return { n: w.g.map((g) => ({ i: g.i, s: 'Robot Name' })), p: [], g: [], m: [] };
+    });
+    check('organize-ai run: a group the user renamed meanwhile is left alone', h.tg.state().some((g) => g.name === 'Mine') && stats.renamed === 1, JSON.stringify([h.tg.state(), stats]));
+  }
+  {
+    const h = make(LEFT);
+    const { stats } = await run(h, (w) => ({ n: [], p: [{ t: w.u['runners.example'][0][0], i: w.g[0].i }], g: [], m: [] }));
+    const moved = h.tabs().find((t) => t.title.startsWith('Marathon'));
+    check('organize-ai run: a leftover the model places joins that group', stats.placed === 1 && moved.groupId === h.tabs()[0].groupId, JSON.stringify(stats));
+  }
+  {
+    const topics = ['Kayak rental prices', 'Tokyo hotel guide', 'Espresso machine review', 'Piano chords lesson', 'Sourdough starter tips', 'Marathon training plan', 'Solar panel cost', 'Linear algebra notes', 'Bird watching gear', 'Watercolor painting basics'];
+    const tabsN = Array.from({ length: 130 }, (_v, i) => (i % 6 === 0 ? [`Qwertyword${i}x Zxcvbnmlk${i}y Plumbob${i}z`, `https://odd${i}.example/${i}`] : [`${topics[i % 10]} part ${i}`, `https://s${i % 11}.example/${i}-${i % 10}`]));
+    const h = make(tabsN, { base: [] });
+    let live = 0; let peak = 0; let calls = 0;
+    const { stats } = await run(h, async () => { calls++; live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 25)); live--; return { n: [], p: [], g: [], m: [] }; });
+    check('organize-ai run: a 130-tab session is asked in parallel chunks, at most 3 requests', calls >= 1 && calls <= 3 && peak <= 3 && stats.chunks === calls, JSON.stringify([calls, peak, stats.chunks]));
+  }
+  {
+    const h = make(LEFT);
+    const seen = [];
+    await oai.organizeProgressive({ tabGroups: h.tg, skipId: (id) => id === h.tabs()[6].id, ask: async (w) => { seen.push(JSON.stringify(w)); return { n: [], p: [], g: [], m: [] }; } });
+    check('organize-ai run: a tab on a site with AI turned off is never described to the model', seen.every((s) => !/Marathon|runners/.test(s)), seen.join());
+  }
+
+  // the learner
+  {
+    const store = { saved: null };
+    const L = learn.createLearner({ load: () => store.saved, save: (s) => { store.saved = JSON.parse(JSON.stringify(s)); } });
+    const tab = { id: 1, title: 'Kayak rental prices in Maine', url: 'https://www.kayakhire.example/maine' };
+    check('learner: nothing learned means no preference', L.affinity(tab, 'Kayaks') === 0 && L.nameFor([tab], 'Rental') === 'Rental');
+    L.learnPlacement(tab, 'Kayaks');
+    L.learnPlacement({ ...tab, id: 2, title: 'Kayak safety basics' }, 'Kayaks');
+    check('learner: dragging tabs into a group makes that host and those words prefer it', L.affinity({ id: 3, title: 'Something else', url: 'https://kayakhire.example/other' }, 'Kayaks') >= 0.3 && L.affinity({ id: 4, title: 'Kayak paddles', url: 'https://elsewhere.example/p' }, 'kayaks') > 0 && L.affinity(tab, 'Cooking') === 0 && Boolean(store.saved.hosts['kayakhire.example']), JSON.stringify(store.saved));
+    L.learnRemoval(tab, 'Kayaks'); L.learnRemoval(tab, 'Kayaks');
+    check('learner: dragging a tab out withdraws that evidence', L.affinity({ id: 3, title: 'x', url: 'https://kayakhire.example/other' }, 'Kayaks') < 0.3);
+    L.learnRename('Rental', 'Summer Trip', [tab]);
+    check('learner: a renamed group is remembered: the automatic name maps to the user\'s', L.nameFor([tab], 'Rental') === 'Summer Trip' && L.nameFor([tab], 'Rental') !== 'Rental');
+    const again = learn.createLearner({ load: () => store.saved, save: (s) => { store.saved = JSON.parse(JSON.stringify(s)); } });
+    check('learner: it survives a restart (loaded from the profile) and reset clears it', again.size() > 0 && (again.reset(), again.size() === 0) && store.saved.renames && !Object.keys(store.saved.renames).length);
+    const cap = learn.createLearner();
+    for (let i = 0; i < 500; i++) cap.learnPlacement({ id: i, title: `word${i}alpha word${i}beta gamma${i}zed`, url: `https://h${i}.example/` }, `Group ${i % 7}`);
+    const snap = cap.snapshot();
+    check('learner: it is capped', Object.keys(snap.hosts).length <= 200 && Object.keys(snap.words).length <= 300, `${Object.keys(snap.hosts).length}/${Object.keys(snap.words).length}`);
+  }
+  {
+    // the tab groups use it: the automatic name of a group the user renamed once becomes the user's name
+    const L = learn.createLearner();
+    let tabsArr = [];
+    const lg = tg.createTabGroups({ getTabs: () => tabsArr, setTabs: (l) => { tabsArr = l; }, urlOf: (t) => t.url, titleOf: (t) => t.title, textOf: () => '', isWeb: () => true, mode: () => 'topic', aiTopics: () => false, learned: L });
+    const add = (title, url) => tabsArr.push({ id: tabsArr.length + 1, title, url, groupId: null });
+    add('Kayak rental prices Maine', 'https://one.example/kayak-rental'); add('Kayak rental deals Maine', 'https://two.example/kayak-rental-deals'); add('Best kayak rental spots Maine', 'https://three.example/kayak-rental-spots');
+    lg.organizeByTopic(null);
+    const auto = lg.state()[0].name;
+    lg.undoOrganize();
+    L.learnRename(auto, 'Summer Trip', lg.candidates());
+    lg.organizeByTopic(null);
+    check('learner: Organize names the same kind of group the way the user renamed it', lg.state().length === 1 && lg.state()[0].name === 'Summer Trip', JSON.stringify([auto, lg.state()]));
+  }
+
+  // duplicates
+  const dups = learn.findDuplicates([
+    { id: 1, url: 'https://www.example.com/a/?utm_source=news&b=2&a=1' }, { id: 2, url: 'https://example.com/a?a=1&b=2#top', active: true }, { id: 3, url: 'https://example.com/a?a=1&b=3' },
+    { id: 4, url: 'https://x.example/p' }, { id: 5, url: 'https://x.example/p', pinned: true }, { id: 6, url: 'https://x.example/p' },
+    { id: 7, url: 'https://app.example/#/inbox' }, { id: 8, url: 'https://app.example/#/sent' }, { id: 9, url: 'about:blank' }, { id: 10, url: 'about:blank' }, { id: 11, url: 'lumen://settings' }, { id: 12, url: 'lumen://settings' },
+  ]);
+  check('duplicates: same page ignoring tracking parameters, fragments, www and slashes; the active tab is kept', dups.some((d) => d.keep === 2 && d.close.join() === '1'), JSON.stringify(dups));
+  check('duplicates: a pinned tab is kept and never closed; a different query is a different page', dups.some((d) => d.keep === 5 && d.close.join() === '4,6') && !dups.some((d) => d.close.includes(3) || d.close.includes(5)), JSON.stringify(dups));
+  check('duplicates: an app\'s #/ routes differ, and non-web pages are never duplicates', dups.length === 2, JSON.stringify(dups));
+
+  // idle rule
+  const idle = (o) => learn.shouldAutoOrganize({ enabled: true, idleSeconds: 700, idleMinutes: 10, ungrouped: 9, key: 'k1', lastKey: null, ...o });
+  check('idle: runs when enabled, idle long enough, with 8+ loose tabs and a new set', idle({}) === true);
+  check('idle: never when off, busy, too few tabs, not idle long enough, or already done for this set', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ ungrouped: 7 }) && !idle({ idleSeconds: 500 }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }));
+
+  // recency order and colours
+  {
+    const h = make([], { base: [] });
+    for (const [topic, hosts] of [['sourdough starter', 'a'], ['react hooks', 'b'], ['kayak rental', 'c'], ['piano chords', 'd']]) {
+      for (let i = 0; i < 3; i++) h.addTab({ title: `${topic} ${['guide', 'tips', 'basics'][i]} for ${topic} fans`, url: `https://${hosts}${i}.example/${topic.replace(' ', '-')}-${i}` });
+    }
+    const now = Date.now();
+    h.tabs().forEach((t, i) => { t.lastActiveAt = now - (Math.floor(i / 3) === 2 ? 1000 : Math.floor(i / 3) === 0 ? 5000 : 900000); });
+    h.tg.organizeByTopic(null);
+    const order = h.tg.state();
+    const first = h.tabs().find((t) => t.groupId === order[0].id);
+    check('organize order: groups are ordered by how recently their tabs were used', order.length === 4 && /kayak/i.test(first.title), JSON.stringify(order.map((g) => g.name)));
+    check('organize colours: neighbouring new groups never share a colour', order.every((g, i) => i === 0 || g.color !== order[i - 1].color), JSON.stringify(order.map((g) => g.color)));
+  }
+
+  // transient titles
+  check('transient titles: loading, bot checks and login walls are recognised; real titles are not', ['Loading…', 'Just a moment...', 'Sign in - IRS', 'New Tab', 'https://x.example/a', ''].every(tg.isTransientTitle) && !tg.isTransientTitle('Signing bonus negotiation tips') && !tg.isTransientTitle('Kombucha Recipe'));
+}
+
 // ---- the Windows swap helper's quit-apply mode (features/swap-helper.js)
 async function swapHelperRuns() {
   const { swap } = require('../features/swap-helper');
@@ -2348,7 +2571,7 @@ async function bgTaskRuns() {
   fs.rmSync(dir2, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(() => {
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
