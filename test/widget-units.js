@@ -86,26 +86,64 @@ module.exports = async function widgetUnits(check) {
   // ---- layout: narrow windows ----
   const m = WL.metrics(1440);
   check('widgets layout: 12 columns from 900 px, one column below', m.cols === 12 && WL.metrics(900).cols === 12 && WL.metrics(899).cols === 1 && WL.metrics(600).cols === 1, '');
-  const box = { left: 400, right: 1040, bottom: 800 };
-  const obs = WL.obstacleFor(box, m);
-  check('widgets layout: the centre column\'s box becomes the obstacle in cells', obs && obs.x >= 2 && obs.x + obs.w <= 10 && obs.h > 5 && obs.y === 0, JSON.stringify(obs));
-  // The centre column keeps a clear gap (>= OB_MARGIN px) from cards beside it, at any window width, and stays centred.
-  for (const width of [1000, 1280, 1440, 2000, 2560]) {
-    const mw = WL.metrics(width);
-    const bx = { left: (width - 640) / 2, right: (width + 640) / 2, bottom: 600 };
-    const ob = WL.obstacleFor(bx, mw);
-    const leftPx = WL.cellToPx({ x: ob.x - 1, y: 0, w: 1, h: 1 }, mw);
-    const rightPx = WL.cellToPx({ x: ob.x + ob.w, y: 0, w: 1, h: 1 }, mw);
-    const okL = ob.x === 0 || bx.left - (leftPx.left + leftPx.width) >= WL.OB_MARGIN - 1e-6;
-    const okR = ob.x + ob.w >= mw.cols || rightPx.left - bx.right >= WL.OB_MARGIN - 1e-6;
-    check(`widgets layout: ${width}px wide, cards beside the centre column leave >= ${WL.OB_MARGIN}px`, okL && okR && mw.pad <= 20, JSON.stringify({ ob, okL, okR }));
+  check('widgets grid: 24 px gutters, 24 px margins (32 px from 1240 px) and 72 px row pitch on the 8pt scale', WL.GAP === 24 && WL.metrics(1000).pad === 24 && WL.metrics(1239).pad === 24 && WL.metrics(1240).pad === 32 && WL.metrics(2000).pad === 32 && WL.ROW + WL.GAP === 72 && WL.ROW % 8 === 0 && Math.abs(WL.metrics(1440).pitchX - WL.metrics(1440).cw - 24) < 1e-9, JSON.stringify(WL.metrics(2000)));
+  check('widgets grid: the columns exactly fill the page between the margins', [900, 1000, 1280, 1440, 2000, 2560].every((w) => { const g = WL.metrics(w); return Math.abs(g.cols * g.cw + (g.cols - 1) * WL.GAP + 2 * g.pad - w) < 1e-6; }), '');
+  check('widgets grid: breakpoints name the Material tiers', WL.metrics(500).tier === 'compact' && WL.metrics(800).tier === 'medium' && WL.metrics(1239).tier === 'medium' && WL.metrics(1240).tier === 'expanded', '');
+  // Row 0 starts 24..95 px down, chosen so the row under the search block starts exactly one gutter below it.
+  for (const formBottom of [300, 337, 380, 421, 500, 655]) {
+    const g = WL.metrics(1440, formBottom);
+    const below = WL.cellToPx({ x: 0, y: WL.obstacleFor(formBottom, g).h, w: 1, h: 1 }, g).top;
+    check(`widgets grid: a row starts exactly one gutter under a search block ending at ${formBottom} px`, g.top >= 24 && g.top < 96 && Math.abs(below - (formBottom + WL.GAP)) < 1e-6, JSON.stringify({ top: g.top, below }));
   }
-  check('widgets layout: the outer gutter is narrow (side cards near the window edge)', WL.metrics(2000).pad === 20 && WL.metrics(1000).pad === 16, '');
+  const obs = WL.obstacleFor(600, WL.metrics(1440, 600), 6);
+  check('widgets layout: the centre column becomes a rect of whole columns, centred, from the top', obs && obs.x === 3 && obs.w === 6 && obs.y === 0 && obs.h > 5, JSON.stringify(obs));
+  // The centre span follows the column's real width: the smallest even number of columns that holds it.
+  check('widgets grid: the centre span is the smallest even column count that holds the column (4..10)', WL.centreSpan(WL.metrics(2000), 640) === 6 && WL.centreSpan(WL.metrics(2000), 950) === 6 && WL.centreSpan(WL.metrics(2000), 960) === 8 && WL.centreSpan(WL.metrics(2000), 480) === 4 && WL.centreSpan(WL.metrics(2000), 5000) === 10 && WL.centreSpan(WL.metrics(600), 500) === 1, [WL.centreSpan(WL.metrics(2000), 640), WL.centreSpan(WL.metrics(2000), 960), WL.centreSpan(WL.metrics(2000), 480)].join());
+  for (const width of [900, 1000, 1280, 1440, 2000, 2560]) {
+    const mw = WL.metrics(width, 400);
+    const span = WL.centreSpan(mw, 640);
+    const ob = WL.obstacleFor(400, mw, span);
+    const rectPx = WL.cellToPx(ob, mw);
+    const leftPx = ob.x ? WL.cellToPx({ x: ob.x - 1, y: 0, w: 1, h: 1 }, mw) : null;
+    const rightPx = ob.x + ob.w < mw.cols ? WL.cellToPx({ x: ob.x + ob.w, y: 0, w: 1, h: 1 }, mw) : null;
+    const centred = Math.abs(rectPx.left + rectPx.width / 2 - width / 2) < 1e-6 && ob.x * 2 + ob.w === mw.cols;
+    const gapL = leftPx ? rectPx.left - (leftPx.left + leftPx.width) : WL.GAP;
+    const gapR = rightPx ? rightPx.left - (rectPx.left + rectPx.width) : WL.GAP;
+    check(`widgets grid: ${width}px wide, the centre rect is centred, holds 640 px (or the minimum) and the gutter is the gap to the cards beside it`, centred && rectPx.width >= Math.min(640, WL.MIN_CENTRE) - 1e-6 && Math.abs(gapL - WL.GAP) < 1e-6 && Math.abs(gapR - WL.GAP) < 1e-6 && (ob.w === 10 || rectPx.width >= 640 - 1e-6), JSON.stringify({ ob, centred, gapL, gapR }));
+  }
+  // Both sides get the same columns, at the top and lower down: a weather card can come out as far as a Todoist card.
+  {
+    const m2k = WL.metrics(2000, 420);
+    const span = WL.centreSpan(m2k, 640);
+    const o = { obstacle: WL.obstacleFor(500, m2k, span), packed: false };
+    const grow = (id, type, y) => {
+      const start = [it(id, type, 0, y, 3, 3)];
+      const r = WL.resize(start, id, { x: 0, y, w: 12, h: 3 }, o);
+      return WL.cellToPx(r[0], m2k).width;
+    };
+    const top = grow('waaaa1', 'weather', 0);
+    const low = grow('wbbbb1', 'todoist', 0 + o.obstacle.h - 2);
+    check('widgets grid: at 2000 px a weather card at the top can be as wide as a Todoist card beside the centre column', top === low && top > 440 && top === (m2k.cw * ((12 - span) / 2) + WL.GAP * ((12 - span) / 2 - 1)), `${top} vs ${low}`);
+    const below = WL.resize([it('wbbbb1', 'todoist', 0, o.obstacle.h, 3, 3)], 'wbbbb1', { x: 0, y: o.obstacle.h, w: 12, h: 3 }, o);
+    check('widgets grid: under the centre column a card can span the whole page', below[0].w === 12, enc(below));
+    // A card dropped right under another one sits exactly one gutter below it, on any row, and stays there.
+    const wx = it('waaaa1', 'weather', 0, 0, 3, 3);
+    const td = it('wbbbb1', 'todoist', 0, 9, 3, 4);
+    const px = WL.cellToPx(wx, m2k);
+    const drop = WL.cellToPx({ x: 0, y: wx.y + wx.h, w: 3, h: 4 }, m2k);
+    const dropped = WL.move([wx, td], 'wbbbb1', { x: 0, y: Math.round((drop.top - m2k.top + 20) / m2k.pitchY) }, o);
+    const tdPx = WL.cellToPx(dropped[1], m2k);
+    check('widgets grid: Todoist dropped just under Weather ends at weather.bottom + gutter, and stays (no packing)', dropped[1].y === 3 && Math.abs(tdPx.top - (px.top + px.height + WL.GAP)) < 1e-6, enc(dropped));
+    const keys = WL.move([wx, td], 'wbbbb1', { x: 0, y: 8 }, o);
+    let up = keys;
+    for (let i = 0; i < 5; i++) up = WL.move(up, 'wbbbb1', { x: 0, y: up[1].y - 1 }, o);
+    check('widgets grid: keyboard moves (one row up each) reach the row right under Weather and stop there', up[1].y === 3 && up[0].y === 0, enc(up));
+  }
   const narrow = WL.resolve([it('wbbbb1', 'weather', 6, 0, 4, 3), it('waaaa1', 'weather', 0, 0, 4, 3), it('wcccc1', 'weather', 0, 6, 4, 3)], { cols: 1, obstacle: { x: 0, y: 0, w: 1, h: 8 } });
   check('widgets layout: a narrow window stacks one column ordered by (y, x), below the centre column', narrow[1].y === 8 && narrow[0].y === 11 && narrow[2].y === 14 && narrow.every((c) => c.x === 0 && c.w === 1), enc(narrow));
   check('widgets layout: dragging in a stacked window does nothing (saved places stay)', enc(WL.move(narrow, 'waaaa1', { x: 5, y: 5 }, { cols: 1 })) === enc(narrow), '');
   const px = WL.cellToPx({ x: 1, y: 2, w: 2, h: 3 }, m);
-  check('widgets layout: cells become pixels', Math.abs(px.left - (m.pad + m.pitchX)) < 1e-6 && Math.abs(px.width - (2 * m.cw + 12)) < 1e-6 && px.height === 3 * 56 + 2 * 12, JSON.stringify(px));
+  check('widgets layout: cells become pixels', Math.abs(px.left - (m.pad + m.pitchX)) < 1e-6 && Math.abs(px.width - (2 * m.cw + 24)) < 1e-6 && px.height === 3 * 48 + 2 * 24, JSON.stringify(px));
 
   // ---- layout: garbage and encoding ----
   check('widgets layout: a stored rect must be four integers', WL.cleanRect('weather', { x: 1.5, y: 0, w: 4, h: 3 }) === null && WL.cleanRect('weather', { x: '1', y: 0, w: 4, h: 3 }) === null && WL.cleanRect('weather', null) === null && WL.cleanRect('weather', { x: 0, y: 0, w: NaN, h: 3 }) === null, '');
@@ -146,7 +184,7 @@ module.exports = async function widgetUnits(check) {
   check('widgets snap: near an edge and a corner is a quarter', D(5, 5) === 'tl' && D(1435, 5) === 'tr' && D(5, 795) === 'bl' && D(1435, 795) === 'br' && D(60, 8) === 'tl' && D(10, 60) === 'tl' && D(10, 300) === 'left', [D(5, 5), D(60, 8), D(10, 300)].join());
   check('widgets snap: nothing in the middle of the window or with a bad pointer', D(700, 400) === null && WL.detectSnap(null, view) === null && WL.detectSnap({ x: NaN, y: 1 }, view) === null && D(700, 795) === null, '');
   const m2 = WL.metrics(1440);
-  const o2 = { obstacle: WL.obstacleFor({ left: 400, right: 1040, bottom: 800 }, m2), rows: WL.pageRows(800, m2), packed: true };
+  const o2 = { obstacle: WL.obstacleFor(800, m2, 6), rows: WL.pageRows(800, m2), packed: true };
   const wx1 = it('waaaa1', 'weather', 0, 20, 4, 3);
   const left = WL.snapRectFor('left', wx1, o2);
   const right = WL.snapRectFor('right', wx1, o2);
@@ -155,7 +193,7 @@ module.exports = async function widgetUnits(check) {
   check('widgets snap: the banner is full width above the centre column', JSON.stringify(WL.snapRectFor('top', it('e', 'embed', 0, 0, 4, 3), o2)) === '{"x":0,"y":0,"w":12,"h":2}', JSON.stringify(WL.snapRectFor('top', it('e', 'embed', 0, 0, 4, 3), o2)));
   for (const width of [1000, 1200, 1440, 1800, 2560]) {
     const mm = WL.metrics(width);
-    const oo = { obstacle: WL.obstacleFor({ left: (width - 640) / 2, right: (width + 640) / 2, bottom: 700 }, mm), rows: 10, packed: true };
+    const oo = { obstacle: WL.obstacleFor(700, mm, WL.centreSpan(mm, 640)), rows: 10, packed: true };
     const rect = WL.snapRectFor('left', wx1, oo);
     const rr = WL.snapRectFor('right', wx1, oo);
     check(`widgets snap: at ${width} px wide the docks fit the side areas (or are refused when the side is too narrow)`, (rect === null || (rect.x === 0 && rect.x + rect.w <= oo.obstacle.x)) && (rr === null || (rr.x >= oo.obstacle.x + oo.obstacle.w && rr.x + rr.w === 12)) && (width < 1400 || rect !== null), JSON.stringify({ rect, rr, ob: oo.obstacle }));
@@ -173,7 +211,7 @@ module.exports = async function widgetUnits(check) {
   check('widgets snap: a banner pushes the centre column down (bannerRows)', s4[0].snap === 'top' && s4[0].y === 0 && s4[0].w === 12 && WL.bannerRows(s4, o2) === s4[0].h, enc(s4));
   const s5 = WL.resolve(s4, { ...o2, obstacle: { ...o2.obstacle } });
   check('widgets snap: the obstacle sits below the banner, so nothing overlaps', noOverlap(s5) && !WL.overlap(s5[0], { ...o2.obstacle, y: o2.obstacle.y + WL.bannerRows(s4, o2) }), enc(s5));
-  const wide = { ...o2, obstacle: WL.obstacleFor({ left: 900, right: 1540, bottom: 800 }, WL.metrics(2440)), rows: 12 };
+  const wide = { ...o2, obstacle: WL.obstacleFor(800, WL.metrics(2440), 6), rows: 16 };
   const followed = WL.resolve([{ ...s1[0] }], { ...wide, cols: 12 });
   check('widgets snap: a snapped card keeps hugging its side when the window changes size', followed[0].snap === 'left' && followed[0].x === 0 && followed[0].w >= s1[0].w && followed[0].h !== s1[0].h, `${enc(s1)} -> ${enc(followed)}`);
   check('widgets snap: moving or resizing a snapped card by hand drops the snap', !('snap' in WL.move(s1, 'waaaa1', { x: 0, y: 20 }, o2)[0]) && !('snap' in WL.resize(s1, 'waaaa1', { x: 0, y: 0, w: 3, h: 6 }, o2)[0]), '');

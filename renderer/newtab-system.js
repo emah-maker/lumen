@@ -141,7 +141,7 @@
   // Edit layout on: every shown section becomes a card where it stands.
   function freeAll() {
     if (stackedNow()) return;
-    const m = WL.metrics(document.documentElement.clientWidth);
+    const m = window.widgetGrid?.metrics() || WL.metrics(document.documentElement.clientWidth); // rows lined up with the centre column
     const boxes = {};
     const rectOfNode = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }; };
     for (const id of WS.IDS) {

@@ -321,9 +321,9 @@ function server(opts) {
     },
     info() {
       const main = document.querySelector('main');
-      const m = WidgetLayout.metrics(document.documentElement.clientWidth);
+      const m = window.widgetGrid.geometry().m;
       const top = document.getElementById('widgets');
-      return { w: innerWidth, h: innerHeight, mainLeft: main.offsetLeft, mainRight: main.offsetLeft + main.offsetWidth, mainBottom: main.offsetTop + main.offsetHeight - 32, mainTop: main.getBoundingClientRect().top + scrollY + parseFloat(getComputedStyle(main).paddingTop), margin: main.style.marginTop, cols: m.cols, boxH: top.style.height };
+      return { w: innerWidth, h: innerHeight, mainLeft: main.offsetLeft, mainRight: main.offsetLeft + main.offsetWidth, mainBottom: (() => { const s = document.getElementById('sections'); const f = main.querySelector('form'); const n = s && s.offsetHeight > 0 ? s : f; return n.offsetTop + n.offsetHeight - (parseFloat(main.style.marginTop) || 0); })(), mainTop: main.getBoundingClientRect().top + scrollY + parseFloat(getComputedStyle(main).paddingTop), margin: main.style.marginTop, cols: m.cols, boxH: top.style.height };
     },
     rects() { return [...document.querySelectorAll('.w-card')].map((c) => { const r = c.getBoundingClientRect(); return { id: c.dataset.id, cell: c.dataset.cell, snap: c.dataset.snap || '', left: r.left, right: r.right, top: r.top + scrollY, bottom: r.bottom + scrollY }; }); },
   }; 1`);
@@ -514,13 +514,13 @@ function server(opts) {
   await page(`(() => { const f = document.querySelector('#widgets iframe'); window.__frame = f; window.__loads = 0; f.addEventListener('load', () => { window.__loads++; }); window.__domOrder = [...document.querySelectorAll('.w-card')].map((c) => c.dataset.id).join(); return 1; })()`);
   const layoutOf = async () => (await W('list')).map((x) => `${x.id}:${x.x},${x.y},${x.w},${x.h}${x.snap ? `,${x.snap}` : ''}`).join(';');
   inf = await info();
-  const obstacle = await page('(() => { const i = window.__t.info(); const m = WidgetLayout.metrics(innerWidth); return WidgetLayout.obstacleFor({ left: i.mainLeft, right: i.mainRight, bottom: i.mainBottom }, m); })()');
+  const obstacle = await page('window.widgetGrid.geometry().o.obstacle');
   pgr = await cardsNow();
   check('a fresh page: every card visible with its own place, none over the centre column', allClear(pgr, inf) && pgr.length === 7, JSON.stringify(pgr.map((c) => [c.id, c.cell])));
   const rightX = inf.w - 70;
   // Cards are no longer packed upward: the card stays in the cell its top edge lands on, which is
   // the row nearest to (pointer y - where it was grabbed), not row 0.
-  const dropRow = await page(`(() => { const c = window.__t.card(${JSON.stringify(ID.weather)}); const g = c.querySelector('.w-head h2').getBoundingClientRect(); const grabY = g.top + Math.min(g.height / 2, 12); const m = WidgetLayout.metrics(innerWidth); return Math.max(0, Math.round((120 - (grabY - c.getBoundingClientRect().top) - scrollY - m.top) / m.pitchY)); })()`);
+  const dropRow = await page(`(() => { const c = window.__t.card(${JSON.stringify(ID.weather)}); const g = c.querySelector('.w-head h2').getBoundingClientRect(); const grabY = g.top + Math.min(g.height / 2, 12); const m = window.widgetGrid.geometry().m; return Math.max(0, Math.round((120 - (grabY - c.getBoundingClientRect().top) - scrollY - m.top) / m.pitchY)); })()`);
   let d = await page(`window.__t.drag(${JSON.stringify(ID.weather)}, { x: ${rightX}, y: 120 })`);
   for (let i = 0; i < 20 && !new RegExp(`^${obstacle.x + obstacle.w},${dropRow},3,3`).test((await W('list')).find((x) => x.id === ID.weather) ? ((x) => `${x.x},${x.y},${x.w},${x.h}`)((await W('list')).find((x) => x.id === ID.weather)) : ''); i++) await sleep(150);
   pgr = await cardsNow();

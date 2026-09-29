@@ -33,6 +33,7 @@
   let suppress = false;
   let resyncTimer = 0;
   const layoutHooks = [];
+  const centreBottom = () => { const f = mainEl.querySelector('form'); return f.offsetTop + f.offsetHeight - mainMargin; };
 
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -47,11 +48,19 @@
 
   // ---- drawing ----
   function measure() {
-    m = WL.metrics(document.documentElement.clientWidth);
-    const bottom = mainEl.offsetTop + mainEl.offsetHeight - mainMargin - 32;
+    const width = document.documentElement.clientWidth;
+    // The centre column's blocks, measured on the page (offsetTop is the page's, not the transform-animated box): the
+    // search block (header, search box, its mode row) sets where the rows start, the sections docked below add to the
+    // obstacle only while they are docked. mainMargin is the banner's shift, which is whole rows.
+    const formEl = mainEl.querySelector('form');
+    const bottomOf = (n) => n.offsetTop + n.offsetHeight - mainMargin;
+    const formBottom = bottomOf(formEl);
+    const sectionsEl = document.getElementById('sections');
+    const contentBottom = sectionsEl && sectionsEl.offsetHeight > 0 ? bottomOf(sectionsEl) : formBottom;
+    m = WL.metrics(width, formBottom);
     // The centre column is only an obstacle while something is docked in it (every section may have become a card).
     const docked = window.newtabSystem ? window.newtabSystem.dockedCount() > 0 : true;
-    const obstacle = docked ? WL.obstacleFor({ left: mainEl.offsetLeft, right: mainEl.offsetLeft + mainEl.offsetWidth, bottom }, m) : null;
+    const obstacle = docked ? WL.obstacleFor(contentBottom, m, WL.centreSpan(m, mainEl.offsetWidth)) : null;
     o = { cols: m.cols, obstacle, packed: body.dataset.wpack === '1', rows: WL.pageRows(window.innerHeight, m) };
     body.classList.toggle('w-stacked', m.cols === 1);
     if (m.cols === 1 && editing) setEditing(false);
@@ -531,5 +540,5 @@
     }
   }
 
-  window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
+  window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, centreBottom()), items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();
