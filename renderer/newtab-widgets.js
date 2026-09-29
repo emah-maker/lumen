@@ -3,6 +3,9 @@
 // be https, and each field is checked before use. Buttons act by loading this page with
 // ?widget=<id>&do=… (the browser cancels that navigation and does it), like the Ask AI box.
 // Cards whose data didn't change are kept as they are, so a web page in a frame never reloads.
+// Cards move by dragging their title bar (or the grip with the arrow keys) and resize from their
+// bottom-right corner: a width of 2, 3, 4 or 6 of the grid's six columns and, for a web page, a
+// frame height. The page shows the change at once and asks the browser to keep it (do=place, size).
 
 const WMO = {
   0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Freezing fog',
@@ -37,6 +40,8 @@ function skyIcon(code, day = true) {
   return wrap.firstChild;
 }
 const ICON_OPEN = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5h5v5M9.5 2.5 3 9"/></svg>';
+const ICON_GRIP = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3h.01M7.5 3h.01M4.5 6h.01M7.5 6h.01M4.5 9h.01M7.5 9h.01"/></svg>';
+const ICON_RESIZE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 5.5 5.5 10M10 8.5 8.5 10"/></svg>';
 const ICON_REFRESH = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 6a4 4 0 1 1-1.2-2.85M9.6 1.6v2.2H7.4"/></svg>';
 
 const el = (tag, cls, text) => {
@@ -182,7 +187,7 @@ const WIDGET_RENDERERS = {
     if (!url) { card.body.append(el('p', 'w-note', 'This address can’t be shown.')); return; }
     const name = text(d.name, 80) || text(d.host, 80) || 'Web page';
     card.head.append(openLink(url, 'Open', name));
-    card.el.classList.add('wide', 'embed');
+    card.el.classList.add('embed');
     if (d.frameable === false) {
       const box = el('div', 'w-fallback');
       const note = el('p', 'w-note');
@@ -195,7 +200,7 @@ const WIDGET_RENDERERS = {
     }
     const frame = document.createElement('iframe');
     frame.className = 'w-frame';
-    frame.dataset.h = ['small', 'medium', 'large', 'tall'].includes(d.height) ? d.height : 'medium';
+    frame.dataset.h = FRAME_HEIGHTS.includes(w.height) ? w.height : FRAME_HEIGHTS.includes(d.height) ? d.height : 'medium';
     // A page like any other tab's: its own origin, no Lumen privileges, no referrer, no top navigation.
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms');
     frame.referrerPolicy = 'no-referrer';
@@ -226,32 +231,60 @@ function dueText(t, today) {
 // ---- the grid ----
 const shownWidgets = new Map(); // id -> { key, el }
 function renderWidgets(list) {
+  if (drag) { drag.pending = list; return; } // redrawing mid-gesture would move the card under the pointer
   const box = document.getElementById('widgets');
   const valid = (Array.isArray(list) ? list : []).filter((w) => w && widgetId(w.id) && WIDGET_RENDERERS[w.type]).slice(0, 12);
   const cards = valid.map((w) => {
-    const key = JSON.stringify(w);
+    const { span, height, ...rest } = w; // a new size is applied to the card as it is
+    const key = JSON.stringify(rest);
     const kept = shownWidgets.get(w.id);
-    if (kept && kept.key === key) return kept.el;
-    const card = buildCard(w);
-    shownWidgets.set(w.id, { key, el: card });
+    const card = kept && kept.key === key ? kept.el : buildCard(w);
+    if (card !== kept?.el) shownWidgets.set(w.id, { key, el: card });
+    applySize(card, SPANS.includes(span) ? span : w.type === 'embed' ? 6 : 3, height);
     return card;
   });
   for (const id of shownWidgets.keys()) if (!valid.some((w) => w.id === id)) shownWidgets.delete(id);
   // Put cards in order, moving only the ones out of place (moving a frame would reload it).
+  const focused = box.contains(document.activeElement) ? document.activeElement : null;
   cards.forEach((card, i) => { if (box.children[i] !== card) box.insertBefore(card, box.children[i] || null); });
   while (box.children.length > cards.length) box.lastChild.remove();
+  for (const card of cards) card.style.order = '';
+  if (focused && focused.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+}
+const SPANS = [2, 3, 4, 6];
+const FRAME_HEIGHTS = ['small', 'medium', 'large', 'tall'];
+const SPAN_NAMES = { 2: 'a third', 3: 'half', 4: 'two thirds', 6: 'full width' };
+function applySize(card, span, height) {
+  card.dataset.span = String(span);
+  const frame = card.querySelector('.w-frame');
+  if (frame && FRAME_HEIGHTS.includes(height)) frame.dataset.h = height;
+  const handle = card.querySelector('.w-resize');
+  if (handle) handle.setAttribute('aria-label', `Resize ${card.getAttribute('aria-label')}: ${SPAN_NAMES[span]}${frame ? `, ${frame.dataset.h}` : ''}. Arrow keys change it.`);
 }
 function buildCard(w) {
   const title = text(w.title, 60) || 'Widget';
   const cardEl = el('article', `w-card ${w.type}`);
   cardEl.setAttribute('aria-label', title);
   const head = el('div', 'w-head');
-  head.append(el('h2', null, title));
+  const grip = el('button', 'w-grip');
+  grip.type = 'button';
+  grip.innerHTML = ICON_GRIP;
+  grip.setAttribute('aria-label', `Move ${title}. Arrow keys move it.`);
+  grip.title = 'Drag to move';
+  grip.addEventListener('keydown', (e) => keyMove(e, cardEl));
+  head.append(grip, el('h2', null, title));
+  head.addEventListener('pointerdown', (e) => startMove(e, cardEl));
   const body = el('div', 'w-body');
   body.style.cssText = 'display:flex;flex-direction:column;flex:1 1 auto;min-height:0';
-  cardEl.append(head, body);
+  const resize = el('button', 'w-resize');
+  resize.type = 'button';
+  resize.innerHTML = ICON_RESIZE;
+  resize.title = 'Drag to resize';
+  resize.addEventListener('pointerdown', (e) => startResize(e, cardEl));
+  resize.addEventListener('keydown', (e) => keyResize(e, cardEl));
+  cardEl.dataset.id = w.id;
+  cardEl.append(head, body, resize);
   const card = { el: cardEl, head, body };
-  if (w.type === 'embed') cardEl.classList.add('wide');
   if (w.data && typeof w.data === 'object') {
     try {
       WIDGET_RENDERERS[w.type]({ ...w, title }, card);
@@ -279,6 +312,143 @@ function buildCard(w) {
   }
   return cardEl;
 }
+// ---- moving and resizing ----
+// A drag shows the new order with CSS order (moving a frame in the page would reload it) and lets
+// the browser store it; the list that comes back puts the cards in that order for real.
+let drag = null; // { pending }: the list that arrived during a move or resize
+// The gesture is over: draw what arrived meanwhile, unless the browser is about to send a newer list.
+function endGesture(sent) {
+  const { pending } = drag || {};
+  drag = null;
+  document.body.classList.remove('w-dragging');
+  if (pending && !sent) renderWidgets(pending);
+}
+const cardsNow = () => [...document.querySelectorAll('#widgets > .w-card')];
+const visualOrder = () => cardsNow().sort((a, b) => (Number(a.style.order) || 0) - (Number(b.style.order) || 0));
+function startMove(e, card) {
+  if (e.button !== 0 || (e.target.closest('a, button') && !e.target.closest('.w-grip'))) return;
+  const box = document.getElementById('widgets');
+  const order = cardsNow();
+  const from = order.indexOf(card);
+  const start = { x: e.clientX, y: e.clientY };
+  const head = e.currentTarget;
+  head.setPointerCapture(e.pointerId);
+  let moving = false;
+  let at = from;
+  let lastOver = null; // after taking a card's place, wait until the pointer leaves it
+  const place = () => {
+    const list = visualOrder().filter((c) => c !== card);
+    list.splice(at, 0, card);
+    list.forEach((c, i) => { c.style.order = String(i); });
+  };
+  const follow = (ev) => {
+    card.style.transform = '';
+    const r = card.getBoundingClientRect();
+    card.style.transform = `translate(${ev.clientX - start.x - (r.left - start.left)}px, ${ev.clientY - start.y - (r.top - start.top)}px)`;
+  };
+  const onMove = (ev) => {
+    if (!ev.buttons) { onUp(); return; } // released where the page didn't see it
+    if (!moving) {
+      if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 5) return;
+      moving = true;
+      const r = card.getBoundingClientRect();
+      Object.assign(start, { left: r.left, top: r.top });
+      drag = {};
+      document.body.classList.add('w-dragging');
+      card.classList.add('lifted');
+      place();
+    }
+    // Over another card: take its place.
+    const over = order.find((c) => { const r = c.getBoundingClientRect(); return c !== card && ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom; }) || null;
+    if (over && over !== lastOver) { at = visualOrder().indexOf(over); place(); }
+    lastOver = over;
+    follow(ev);
+  };
+  const onUp = () => {
+    head.removeEventListener('pointermove', onMove);
+    head.removeEventListener('pointerup', onUp);
+    head.removeEventListener('lostpointercapture', onUp);
+    if (!moving) return;
+    moving = false;
+    card.style.transform = '';
+    card.classList.remove('lifted');
+    if (at === from) for (const c of box.children) c.style.order = '';
+    endGesture(at !== from);
+    if (at !== from) widgetAct(card.dataset.id, 'place', { to: String(at) });
+  };
+  head.addEventListener('pointermove', onMove);
+  head.addEventListener('pointerup', onUp);
+  head.addEventListener('lostpointercapture', onUp); // also after pointercancel
+}
+function keyMove(e, card) {
+  const delta = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+  if (!delta) return;
+  e.preventDefault();
+  const order = cardsNow();
+  const to = order.indexOf(card) + delta;
+  if (to < 0 || to >= order.length) return;
+  widgetAct(card.dataset.id, 'place', { to: String(to) });
+}
+
+// Resizing snaps to the grid: the width to 2, 3, 4 or 6 columns, a frame to its four heights.
+const FRAME_PX = { small: 200, medium: 340, large: 500, tall: 720 };
+const nearest = (list, value, of = (x) => x) => list.reduce((best, x) => (Math.abs(of(x) - value) < Math.abs(of(best) - value) ? x : best));
+function startResize(e, card) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const handle = e.currentTarget;
+  handle.setPointerCapture(e.pointerId);
+  const box = document.getElementById('widgets');
+  const gap = parseFloat(getComputedStyle(box).columnGap) || 0;
+  const cols = getComputedStyle(box).gridTemplateColumns.split(' ').length;
+  const col = (box.clientWidth - gap * (cols - 1)) / cols;
+  const frame = card.querySelector('.w-frame');
+  const first = { span: Number(card.dataset.span), height: frame?.dataset.h };
+  drag = {};
+  document.body.classList.add('w-dragging');
+  card.classList.add('resizing');
+  let done = false;
+  const onMove = (ev) => {
+    if (!ev.buttons) { onUp(); return; }
+    if (cols > 1) {
+      const width = ev.clientX - card.getBoundingClientRect().left;
+      card.dataset.span = String(nearest(SPANS, width, (s) => s * col + (s - 1) * gap));
+    }
+    if (frame) frame.dataset.h = nearest(FRAME_HEIGHTS, ev.clientY - frame.getBoundingClientRect().top, (h) => FRAME_PX[h]);
+  };
+  const onUp = () => {
+    if (done) return;
+    done = true;
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+    handle.removeEventListener('lostpointercapture', onUp);
+    card.classList.remove('resizing');
+    const span = Number(card.dataset.span);
+    const height = frame?.dataset.h;
+    const changed = span !== first.span || height !== first.height;
+    endGesture(changed);
+    if (changed) sendSize(card, span, height);
+  };
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
+  handle.addEventListener('lostpointercapture', onUp);
+}
+function keyResize(e, card) {
+  const frame = card.querySelector('.w-frame');
+  let span = Number(card.dataset.span);
+  let height = frame?.dataset.h;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') span = SPANS[Math.max(0, Math.min(SPANS.length - 1, SPANS.indexOf(span) + (e.key === 'ArrowLeft' ? -1 : 1)))] ?? span;
+  else if (frame && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) height = FRAME_HEIGHTS[Math.max(0, Math.min(FRAME_HEIGHTS.length - 1, FRAME_HEIGHTS.indexOf(height) + (e.key === 'ArrowUp' ? -1 : 1)))];
+  else return;
+  e.preventDefault();
+  if (span === Number(card.dataset.span) && height === frame?.dataset.h) return;
+  sendSize(card, span, height);
+}
+function sendSize(card, span, height) {
+  applySize(card, span, height);
+  widgetAct(card.dataset.id, 'size', height ? { span: String(span), height } : { span: String(span) });
+}
+
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute.
 setInterval(() => {
   for (const [id, s] of shownWidgets) {

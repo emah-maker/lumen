@@ -3,7 +3,9 @@
 // its hash: widgets: [{ id, type, title, data, error, loading }]. Tokens stay in main.js (encrypted
 // with safeStorage) and never reach the page, the hash or settings.json in plain text.
 //
-// The list is the `homeWidgets` setting: [{ id, type, title, ...config }], in the order shown.
+// The list is the `homeWidgets` setting: [{ id, type, title, span, ...config }], in the order shown.
+// span is the card's width in the page's six-column grid (SPANS); the page moves cards by dragging
+// and resizes them from their corner (place() and resize(), through actionFrom()).
 // Opening a new tab shows what is cached at once, fetches whatever is stale in the background, and
 // the fresh data reaches every open new-tab page through deps.onUpdate (main.js refreshNewTabs).
 //
@@ -28,6 +30,9 @@ const ENDPOINTS = {
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
 };
 const MAX_WIDGETS = 12;
+const SPANS = [2, 3, 4, 6]; // a third, half, two thirds, the full width
+const HEIGHTS = ['small', 'medium', 'large', 'tall']; // a web page's frame
+const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
 const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when asked
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
@@ -191,14 +196,14 @@ const CONNECTORS = {
     clean: (c) => {
       const url = httpsUrl(c.url);
       if (!url) return null;
-      return { url, height: pick(c.height, ['small', 'medium', 'large', 'tall'], 'medium'), name: str(c.name, 80) || hostOf(url), frameable: c.frameable !== false, reason: str(c.reason, 120) };
+      return { url, height: pick(c.height, HEIGHTS, 'medium'), name: str(c.name, 80) || hostOf(url), frameable: c.frameable !== false, reason: str(c.reason, 120) };
     },
     async resolve(input, x) {
       const url = httpsUrl(input.url);
       if (!url) throw new Error('Paste an https:// address.');
       const check = await framing(url, x);
       return {
-        config: { url, height: pick(input.height, ['small', 'medium', 'large', 'tall'], 'medium'), name: check.name, frameable: check.frameable, reason: check.reason },
+        config: { url, height: pick(input.height, HEIGHTS, 'medium'), name: check.name, frameable: check.frameable, reason: check.reason },
         message: check.frameable ? `${check.name} can be embedded.` : `${check.name} can’t be embedded (${check.reason}). The card shows an Open button instead.`,
         frameable: check.frameable,
       };
@@ -249,14 +254,14 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, token: typeof i.token === 'string' ? i.token.slice(0, 200) : '' };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '' };
 }
 
 // A stored widget -> { id, type, title, ...config } with every field checked, or null.
 function cleanWidget(w) {
   if (!w || typeof w !== 'object' || !CONNECTORS[w.type] || typeof w.id !== 'string' || !/^w[0-9a-z]{4,20}$/.test(w.id)) return null;
   const config = CONNECTORS[w.type].clean(w);
-  return config ? { id: w.id, type: w.type, title: str(w.title, 60), ...config } : null;
+  return config ? { id: w.id, type: w.type, title: str(w.title, 60), span: pick(w.span, SPANS, defaultSpan(w.type)), ...config } : null;
 }
 // The homeWidgets setting, checked (settings-backend.js validate()).
 function cleanList(list) {
@@ -274,7 +279,8 @@ function createWidgets(deps) {
 
   const list = () => cleanList(deps.readSettings().homeWidgets) || [];
   const save = (widgets) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: widgets });
-  const keyOf = (w) => JSON.stringify(w); // a changed config invalidates its cached data
+  // A changed config invalidates its cached data; its size on the page doesn't.
+  const keyOf = ({ span, height, ...w }) => JSON.stringify(w);
 
   // ---- network helpers handed to connectors (x) ----
   function spend() {
@@ -365,7 +371,7 @@ function createWidgets(deps) {
       const entry = cache.get(w.id);
       const current = entry && entry.key === keyOf(w) ? entry : null;
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), data: current?.data ?? null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, data: current?.data ?? null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
     });
   }
   function refreshAll({ force = false } = {}) {
@@ -380,7 +386,7 @@ function createWidgets(deps) {
     const out = await c.resolve(i, helpers(c.secret));
     const config = c.clean(out.config);
     if (!config) throw new Error('That didn’t check out. Try again.');
-    return { widget: { id: id || newId(), type: i.type, title: i.title, ...config }, secret: out.secret, message: out.message, ok: out.frameable !== false };
+    return { widget: { id: id || newId(), type: i.type, title: i.title, span: i.span || defaultSpan(i.type), ...config }, secret: out.secret, message: out.message, ok: out.frameable !== false };
   }
   const newId = () => `w${now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   // "Check": look the input up without saving anything.
@@ -398,6 +404,7 @@ function createWidgets(deps) {
     if (id && !widgets.some((w) => w.id === id)) throw new Error('That widget is gone.');
     if (!id && widgets.length >= MAX_WIDGETS) throw new Error(`Up to ${MAX_WIDGETS} widgets.`);
     const { widget, secret, message } = await resolveInput(input, id);
+    if (id && !cleanInput(input).span) widget.span = widgets.find((w) => w.id === id).span; // an edit keeps its size
     if (secret && CONNECTORS[widget.type].secret) deps.setSecret(CONNECTORS[widget.type].secret, secret);
     const next = id ? widgets.map((w) => (w.id === id ? widget : w)) : [...widgets, widget];
     save(next);
@@ -429,6 +436,29 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // The page's drag and drop: put a widget at a position in the list.
+  function place(id, to) {
+    const widgets = list();
+    const i = widgets.findIndex((w) => w.id === id);
+    const j = Math.max(0, Math.min(widgets.length - 1, Math.trunc(to)));
+    if (i < 0 || !Number.isFinite(to) || i === j) return false;
+    widgets.splice(j, 0, ...widgets.splice(i, 1));
+    save(widgets);
+    deps.onUpdate?.();
+    return true;
+  }
+  // The page's resize corner: a width (SPANS) and, for a web page, a frame height (HEIGHTS).
+  function resize(id, { span, height } = {}) {
+    const widgets = list();
+    const w = widgets.find((x) => x.id === id);
+    if (!w) return false;
+    const next = { ...w, span: pick(span, SPANS, w.span) };
+    if (w.type === 'embed') next.height = pick(height, HEIGHTS, w.height);
+    if (next.span === w.span && next.height === w.height) return false;
+    save(widgets.map((x) => (x.id === id ? next : x)));
+    deps.onUpdate?.();
+    return true;
+  }
   // For Settings: the list with a line each, and which secrets are stored (never their values).
   function state() {
     return {
@@ -436,25 +466,38 @@ function createWidgets(deps) {
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       max: MAX_WIDGETS,
+      spans: SPANS,
     };
   }
 
   // ---- page actions ----
   // The new-tab page asks by loading itself with ?widget=<id>&do=<action>[&task=<id>] (like its Ask
-  // AI box); main.js cancels that navigation and passes the URL here. True when it was one.
+  // AI box), or &do=place&to=<index>, or &do=size&span=<2|3|4|6>[&height=<name>]; main.js cancels
+  // that navigation and passes the URL here. True when it was one.
   function actionFrom(url) {
     let params;
     try { params = new URL(url).searchParams; } catch { return null; }
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|place|size)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (action.do === 'place') {
+      if (!/^\d{1,2}$/.test(params.get('to') || '')) return { invalid: true };
+      action.to = Number(params.get('to'));
+    }
+    if (action.do === 'size') {
+      action.span = pick(Number(params.get('span')), SPANS, null);
+      action.height = params.has('height') ? pick(params.get('height'), HEIGHTS, null) : undefined;
+      if (!action.span || action.height === null) return { invalid: true };
+    }
     return action;
   }
   async function act(action) {
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
     if (action.do === 'refresh') return refresh(w, { force: true });
+    if (action.do === 'place') return place(w.id, action.to);
+    if (action.do === 'size') return resize(w.id, { span: action.span, height: action.height });
     const c = connector(w);
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;
@@ -473,7 +516,7 @@ function createWidgets(deps) {
     }
   }
 
-  return { list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, state, actionFrom, act, cache };
+  return { list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, state, actionFrom, act, cache };
 }
 
-module.exports = { createWidgets, cleanList, cleanWidget, httpsUrl, CONNECTORS, ENDPOINTS };
+module.exports = { createWidgets, cleanList, cleanWidget, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };
