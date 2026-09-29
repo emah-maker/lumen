@@ -1295,6 +1295,131 @@ async function speedRuns() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ---- tab groups: incremental placement, proposals, undo (pure Node: tab-groups.js on plain arrays)
+{
+  const tg = require('../tab-groups');
+  const { harness } = require('./topics-bench');
+  const { sessions } = require('./topics-sessions');
+  const recipes = ['Easy Banana Bread Recipe', 'Chocolate Chip Cookie Recipes', 'Classic Pancake Recipe'];
+  const setup = (extra = []) => {
+    const h = harness(tg, { withText: false });
+    const tabs = recipes.map((title, i) => h.addTab({ title, url: `https://site${i}.example/${encodeURIComponent(title)}` }));
+    for (const t of extra) tabs.push(h.addTab(t));
+    return { h, tabs };
+  };
+  const gid = (t) => t.groupId || null;
+
+  // A tab that loads later joins the group it fits, and stays loose when nothing fits.
+  let { h, tabs } = setup();
+  h.tg.organizeByTopic();
+  const recipeGroup = gid(tabs[0]);
+  check('groups: three recipe tabs form one group', recipeGroup && tabs.every((t) => gid(t) === recipeGroup), JSON.stringify(tabs.map(gid)));
+  const cake = h.addTab({ title: 'Lemon Drizzle Cake Recipe', url: 'https://cakes.example/lemon-drizzle-cake-recipe' });
+  const weather = h.addTab({ title: 'Weather forecast Boston', url: 'https://weather.example/boston' });
+  h.tg.autoGroup();
+  check('incremental: a new recipe tab joins the recipe group', gid(cake) === recipeGroup, String(gid(cake)));
+  check('incremental: an unrelated tab stays loose', gid(weather) === null, String(gid(weather)));
+  check('incremental: the placement is undoable, and the tab is then left alone', h.tg.canUndo() && h.tg.undoOrganize() && gid(cake) === null && (h.tg.autoGroup(), gid(cake) === null), String(gid(cake)));
+
+  // Two related loose tabs form a group of their own; a third later joins it.
+  const p1 = h.addTab({ title: 'Kyoto Temple Guide', url: 'https://travel.example/kyoto-temple-guide' });
+  const p2 = h.addTab({ title: 'Best Kyoto Temples to Visit', url: 'https://other.example/best-kyoto-temples' });
+  h.tg.autoGroup();
+  check('incremental: two related loose tabs form a new group', gid(p1) && gid(p1) === gid(p2) && gid(p1) !== recipeGroup, `${gid(p1)} ${gid(p2)}`);
+  const p3 = h.addTab({ title: 'Kyoto Temple Map', url: 'https://maps.example/kyoto-temple-map' });
+  h.tg.autoGroup();
+  check('incremental: a later tab joins that group', gid(p3) === gid(p1), `${gid(p3)} ${gid(p1)}`);
+
+  // Manual placement, pins and the move cap are respected.
+  ({ h, tabs } = setup());
+  h.tg.organizeByTopic();
+  const mine = h.addTab({ title: 'Lemon Tart Recipe', url: 'https://tarts.example/lemon-tart-recipe' });
+  mine.userMoved = true;
+  const placed = h.addTab({ title: 'Apple Pie Recipe', url: 'https://pies.example/apple-pie-recipe' });
+  placed.userPlaced = true;
+  const pin = h.addTab({ title: 'Sourdough Bread Recipe', url: 'https://bread.example/sourdough-bread-recipe' });
+  pin.pinned = true;
+  const capped = h.addTab({ title: 'Blueberry Muffin Recipe', url: 'https://muffins.example/blueberry-muffin-recipe' });
+  capped.autoMoves = tg.MAX_AUTO_MOVES;
+  h.tg.autoGroup();
+  check('incremental: dragged, hand-placed, pinned and move-capped tabs are not grouped', [mine, placed, pin, capped].every((t) => gid(t) === null), JSON.stringify([mine, placed, pin, capped].map(gid)));
+
+  // A grouped tab moves only for a clearly better group, once its title changes.
+  ({ h, tabs } = setup([
+    { title: 'Kyoto Temple Guide', url: 'https://travel.example/kyoto-temple-guide' },
+    { title: 'Best Kyoto Temples to Visit', url: 'https://other.example/best-kyoto-temples' },
+    { title: 'Kyoto Temple Map', url: 'https://maps.example/kyoto-temple-map' },
+  ]));
+  h.tg.organizeByTopic();
+  const stray = h.addTab({ title: 'New Tab', url: 'https://travel.example/page' });
+  h.tg.add(stray.id, gid(tabs[0]), { auto: true });
+  stray.autoMoves = 1;
+  h.tg.autoGroup();
+  check('incremental: an untitled tab in a group stays where it is', gid(stray) === gid(tabs[0]), String(gid(stray)));
+  stray.title = 'Kyoto Temple Opening Hours';
+  h.tg.autoGroup();
+  check('incremental: once titled, it moves to the group it fits', gid(stray) === gid(tabs[3]) && gid(stray) !== gid(tabs[0]), `${gid(stray)} ${gid(tabs[3])} ${gid(tabs[0])}`);
+  stray.title = 'Kyoto Temple Tickets';
+  h.tg.autoGroup();
+  stray.title = 'Chocolate Chip Cookie Recipes Again';
+  h.tg.autoGroup();
+  check('incremental: moves per tab are capped', stray.autoMoves <= tg.MAX_AUTO_MOVES, String(stray.autoMoves));
+
+  // placeTabs directly: unknown domains work from words alone.
+  const e = (id, title, url) => ({ id, title, url, text: '', hint: '' });
+  const zod = [e(1, 'Zod schema validation basics', 'https://zod.dev/basics'), e(2, 'Zod optional vs nullable', 'https://stackoverflow.com/q/1/zod-optional-nullable')];
+  const bread = [e(3, 'Sourdough starter tips', 'https://bread.example/starter'), e(4, 'Sourdough bread recipe', 'https://bread.example/recipe')];
+  const res = tg.placeTabs([{ entry: e(9, 'Zod refine and transform', 'https://newsite.example/zod-refine'), current: null }, { entry: e(10, 'Best hiking boots', 'https://boots.example/best'), current: null }], [{ id: 1, domain: null, members: zod }, { id: 2, domain: null, members: bread }]);
+  check('placeTabs: a never-seen domain is placed by its words; an unrelated tab is not', res[0] === 1 && res[1] === null, JSON.stringify(res));
+
+  // Proposals from a model are validated.
+  const okIds = new Set([1, 2, 3, 4, 5, 6]);
+  check('proposal: unknown and duplicate ids and singleton groups are dropped', JSON.stringify(tg.sanitizeProposal([{ name: 'A', tab_ids: [1, 2, 99, 2] }, { name: 'B', tab_ids: [2, 3] }, { name: 'Solo', tab_ids: [4] }, { name: 'C', tab_ids: [3, 4] }], okIds)) === JSON.stringify([{ name: 'A', ids: [1, 2] }, { name: 'C', ids: [3, 4] }]));
+  check('proposal: garbage or one group holding nearly every tab is refused', tg.sanitizeProposal('nope', okIds) === null && tg.sanitizeProposal([{ name: 'All', tab_ids: [1, 2, 3, 4, 5, 6] }], okIds) === null && tg.sanitizeProposal([{ name: '', tab_ids: [1, 2] }], okIds) === null);
+  const cut = tg.sanitizeProposal([{ name: '<b>Reading List Stuff Extra</b>', tab_ids: [1, 2] }], okIds);
+  check('proposal: names are cut to 3 words and stripped of markup', cut?.[0].name === 'Reading List Stuff', JSON.stringify(cut));
+  const many = Array.from({ length: 20 }, (_v, i) => ({ name: `G${i}`, tab_ids: [i * 2 + 1, i * 2 + 2] }));
+  check('proposal: at most 8 groups', tg.sanitizeProposal(many, new Set(Array.from({ length: 40 }, (_v, i) => i + 1))).length === 8);
+  const words = tg.pathWords('https://x.example/docs/react/hooks/use-state/3f9a8b7c1d2e4f5a6b7c?token=SECRET#frag');
+  check('pathWords: path words only, no query, fragment, ids or tokens', words === 'react hooks state', words);
+
+  // Organize with a proposal: merges into a same-named group, keeps pins out, and undoes.
+  ({ h, tabs } = setup([{ title: 'Kyoto Temple Guide', url: 'https://travel.example/kyoto-temple-guide' }, { title: 'Best Kyoto Temples', url: 'https://other.example/best-kyoto-temples' }]));
+  const pinnedTab = h.addTab({ title: 'Inbox', url: 'https://mail.example/inbox' });
+  pinnedTab.pinned = true;
+  const snap = () => h.tabs().map((t) => [t.id, t.groupId || null].join(':')).join();
+  const before = snap();
+  const n = h.tg.applyProposal([{ name: 'Baking', tab_ids: [tabs[0].id, tabs[1].id, pinnedTab.id] }, { name: 'baking', tab_ids: [tabs[2].id, tabs[3].id] }]);
+  const names = h.tg.state().map((x) => x.name);
+  check('AI organize: a group named like an existing one is merged, not duplicated; pinned tabs stay out', n === 2 && names.length === 1 && gid(pinnedTab) === null, JSON.stringify(names));
+  check('AI organize: undo restores every tab', h.tg.undoOrganize() && snap() === before && h.tg.state().length === 0);
+  h.tg.applyProposal(null);
+  check('AI organize: no proposal falls back to the local topics', h.tg.state().length >= 1 && gid(pinnedTab) === null);
+  check('undo works after the fallback too, and only once', h.tg.undoOrganize() && !h.tg.canUndo() && !h.tg.undoOrganize());
+
+  // Organizing again keeps a group's colour and name.
+  ({ h, tabs } = setup());
+  h.tg.organizeByTopic();
+  const first = h.tg.state()[0];
+  h.tg.organizeByTopic();
+  const second = h.tg.state()[0];
+  check('organize again: same tabs keep the group name and colour', first.name === second.name && first.color === second.color, JSON.stringify([first, second]));
+
+  // Two groups with one name become "X" and "X (2)".
+  const dup = harness(tg, { withText: false });
+  const dtabs = ['a', 'b', 'c', 'd'].map((k) => dup.addTab({ title: `Doc ${k}`, url: `https://${k}.example/${k}` }));
+  dup.tg.create('Docs', [dtabs[0].id, dtabs[1].id]);
+  dup.tg.applyProposal([{ name: 'Docs', tab_ids: [dtabs[2].id, dtabs[3].id] }]);
+  check('groups: a proposal group named like an existing one joins it', dup.tg.state().filter((x) => x.name === 'Docs').length === 1);
+
+  // Mixed sessions: the local organizer names project, doc and video groups sensibly.
+  const hs = harness(tg, { withText: false });
+  sessions[0].tabs.forEach((t) => hs.addTab(t));
+  hs.tg.groupLoose();
+  const gnames = hs.tg.state().map((x) => x.name);
+  check('sessions: a repo\'s tabs are named for the repo, its docs for the library', gnames.includes('Lumen') && gnames.includes('Next.js'), JSON.stringify(gnames));
+}
+
 schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
