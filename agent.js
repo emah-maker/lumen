@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
 const { addUsage } = require('./features/chat-usage');
+const { RepeatDetector, withNote, trimToolResults, cacheLastTool } = require('./loop-guard');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -45,9 +46,14 @@ const SYSTEM = `You are Claude, the assistant built into a web browser. You sit 
 You have full control of the browser: tabs, navigation, clicking, typing, hovering, keyboard shortcuts, and clicking any point on a screenshot.
 
 How to work:
-- Questions about the current page: read_page mode:"compact" first (or find for one fact or field), then answer from its content.
+- Plan in one line, then act. Don't ask clarifying questions you can resolve yourself (pick a sensible default and say so); ask only when the answer changes what you would do and you can't tell.
+- Questions about the current page: read_page mode:"compact" first (or find for one fact or field), then answer from its content. Don't re-read a page you already have unless it changed.
+- Prefer direct navigation: if you know or can build the URL (a search URL, a site's known path), navigate there instead of hunting through menus. For facts, web_search or read_urls beats browsing site by site.
 - Prefer high-level tools: batch for several actions in one call, fill_form for forms, click with text for obvious buttons and links, read_urls to research several pages at once without disturbing the user's tabs, run_script to extract tables/lists, wait_for instead of fixed waits.
-- Tasks ("book", "find", "fill in", "compare"): act step by step. Check results with read_page since_last:true (only what changed) or screenshot (for visual layout, images, charts).
+- Tasks ("book", "find", "fill in", "compare"): act step by step. Chain the steps you already know into one batch call instead of one call per click, and check the result with read_page since_last:true (only what changed) or screenshot (for visual layout, images, charts). When several lookups are independent, issue their tool calls together in one turn.
+- Verify: after an action that matters, confirm it worked (URL, confirmation text, changed field) before saying it is done. Report failures plainly.
+- If a click or type fails or the ref is gone, don't retry the same call: re-read with read_page mode:"compact" (or find), or click by visible text. If the same approach fails twice, change strategy (another route, direct URL, run_script) or tell the user what blocks you.
+- Stop as soon as the task is done and give the answer; no extra checks or offers.
 - General questions that do not need the user's page: answer directly, or use web_search for current facts.
 - If a site shows a CAPTCHA or "unusual traffic" page, do not try to solve it: use web_search (or another site) instead and tell the user.
 - Element ids from read_page are only valid until the page changes. Call read_page again after navigation or large page updates.
@@ -426,11 +432,12 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
     betas: ['context-management-2025-06-27', ...(cfg.fallbacks ? ['server-side-fallback-2026-07-01'] : [])],
     thinking: cfg.legacyThinking ? { type: 'enabled', budget_tokens: 8000 } : { type: 'adaptive', display: 'summarized' },
     cache_control: { type: 'ephemeral' }, // auto-places a 2nd breakpoint on the growing message tail
-    context_management: { edits: [{ type: 'clear_tool_uses_20250919' }] },
+    // Old tool results are the bulk of a long task's input: clear all but the newest few once the prompt is big.
+    context_management: { edits: [{ type: 'clear_tool_uses_20250919', trigger: { type: 'input_tokens', value: 60000 }, keep: { type: 'tool_uses', value: 6 }, clear_at_least: { type: 'input_tokens', value: 15000 } }] },
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
-    tools: cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS,
+    tools: cacheLastTool(cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS),
     messages: historyFor(fitContext(messages, budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -1047,7 +1054,7 @@ class Agent {
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic) {
     const params = requestFor(messages.settings, messages, budget);
     const extra = await this.externalToolDefs(emit); // [mcp client]
-    if (extra.length) params.tools = [...params.tools, ...extra];
+    if (extra.length) params.tools = cacheLastTool([...params.tools, ...extra]);
     const stream = this.getClient().beta.messages.stream(params, { signal });
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {
@@ -1079,7 +1086,7 @@ class Agent {
       model,
       apiKey,
       system: systemFor(messages.settings) + (toolsOk ? '' : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
-      messages: historyFor(fitContext(messages, budget), messages.settings.model),
+      messages: trimToolResults(historyFor(fitContext(messages, budget), messages.settings.model)),
       tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
@@ -1088,6 +1095,7 @@ class Agent {
 
   async loop(messages, signal, emit) {
     let jsonRetries = 0;
+    const repeats = new RepeatDetector(); // a run of the same failing call gets a "change strategy" note
     let budgetScale = 1; // halved once if the model still says the request is too long (see fitContext)
 
     for (let step = 0; step < 60; step++) {
@@ -1184,7 +1192,7 @@ class Agent {
         try {
           await this.ensureAllowed(use.name, emit, signal, { input: use.input, who: onClaude ? 'Claude' : providers.PROVIDERS[providers.splitModel(model).provider]?.label || 'The AI' });
           const content = await abortable(this.execute(use.name, use.input), signal);
-          results.push({ type: 'tool_result', tool_use_id: use.id, content });
+          results.push({ type: 'tool_result', tool_use_id: use.id, content: withNote(content, repeats.record(use.name, use.input, true)) });
           emit({ type: 'tool_done', id: use.id, ok: true });
         } catch (err) {
           if (signal.aborted) {
@@ -1199,7 +1207,7 @@ class Agent {
           }
           const text = toolError(err);
           tabClosed = text === TAB_CLOSED;
-          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: text });
+          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: withNote(text, repeats.record(use.name, use.input, false)) });
           emit({ type: 'tool_done', id: use.id, ok: false, error: text.split('\n')[0] });
         }
       }
@@ -1741,7 +1749,7 @@ class Agent {
         const wc = this.requireTab();
         const id = input.element_id ?? await this.resolveTarget(wc, input.text, 'click');
         const target = await runScript(wc, scripts.locate(id));
-        if (!target) throw new Error(`No element with id ${id}. Call read_page to refresh ids.`);
+        if (!target) throw new Error(`No element with id ${id}: the page changed since ids were read. Call read_page mode:"compact" (or find) for fresh ids, or click by visible text.`);
         const urlBefore = wc.getURL();
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
