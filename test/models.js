@@ -74,9 +74,12 @@ const path = require('path');
 
   await ui.selectOption('#model', 'claude-opus-5-5');
   await ui.waitForTimeout(300);
-  await sendFromUi('opus 5.5');
+  await sendFromUi('summarize this page for me');
   p = await lastParams();
   check('Opus 5.5: adaptive + effort high + fallbacks', p.model === 'claude-opus-5-5' && p.thinking.type === 'adaptive' && p.output_config?.effort === 'high' && p.fallbacks === 'default', JSON.stringify({ ...p, messages: undefined }).slice(0, 300));
+  await sendFromUi('what is the capital of France');
+  p = await lastParams();
+  check('Opus 5.5: a short plain question uses low effort and a small cap', p.model === 'claude-opus-5-5' && p.output_config?.effort === 'low' && p.max_tokens === 8000, JSON.stringify({ ...p, messages: undefined }).slice(0, 300));
 
   await ui.selectOption('#model', 'claude-sonnet-5');
   await ui.waitForTimeout(300);

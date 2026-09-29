@@ -4,7 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-## 0.2.10 (2026-09-29)
+## 0.2.11 (2026-09-29)
+
+0.2.10 was tagged but its build stopped at a failing test and was never published; its changes ship here.
+
 
 - Open the sidebar chat as a full page (button in the sidebar, or Ctrl+Shift+L) with your saved chats alongside; the sidebar and the page share one chat.
 - A downloaded update installs by itself when you quit Lumen, and one downloaded earlier is reused instead of fetched again.
