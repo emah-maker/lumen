@@ -13,7 +13,7 @@
 //
 // Adding a connector is one entry in CONNECTORS below:
 //   label             its name in Settings' type picker
-//   ttl               how long fetched data stays fresh, in ms
+//   ttl               how long fetched data stays fresh, in ms (or a function of the data cached so far)
 //   secret            (optional) the name of the encrypted key it needs; resolve() may return one to save
 //   clean(c)          a stored config -> its checked fields (plain values), or null. Runs on every read.
 //   resolve(input, x) Settings' form input -> { config, secret?, message } to store; may look things up
@@ -22,13 +22,18 @@
 //   summary(c)        one line for Settings' list
 //   fetch(c, x)       -> the card's data: plain JSON (strings, numbers, arrays). renderer/newtab.js
 //                     draws it with textContent only, so nothing from the network is ever markup.
-//   act(c, action, x) (optional) a page action (the Todoist checkbox): see actionFrom() below
+//   act(c, action, x, cached, ctx) (optional) a page action (the Todoist checkbox): see actionFrom() below.
+//                     It may return { config } (fields merged into the stored widget), { notice } (a line
+//                     the card shows for a few seconds) and { local: true } (nothing to fetch again).
+//   present(c, data, ctx) (optional) the cached data -> what the page gets, worked out on every read
+//                     (Stocks and Crypto value the paper portfolio at the last quotes here)
 // and a renderer with the same type in renderer/newtab.js's WIDGET_RENDERERS.
 const ics = require('./ics');
 const WL = require('./widget-layout');
 const TV = require('./todoist-view');
 const WX = require('./weather-view');
 const WC = require('./widget-colors');
+const MV = require('./markets-view');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -37,6 +42,8 @@ const ENDPOINTS = {
   // from this process; it sees the IP address and nothing else of ours is sent.
   locate: 'https://ipapi.co/json/',
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
+  twelvedata: 'https://api.twelvedata.com', // Stocks: the user's own free key
+  coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
 };
 const MAX_WIDGETS = 12;
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -228,6 +235,71 @@ const CONNECTORS = {
     },
   },
 
+  // Stocks and Crypto: a watchlist and a SIMULATED paper portfolio (features/markets-view.js). Lumen never
+  // places an order anywhere; the trades are entries in this widget's own config, filled at the last quote.
+  stocks: {
+    label: 'Stocks',
+    ttl: (data) => (data?.rows?.length && !data.anyOpen ? 60 * 60e3 : 15 * 60e3), // market closed: quotes can't change
+    secret: 'twelvedata',
+    portfolio: true,
+    clean: (c) => {
+      const symbols = MV.cleanSymbols(c.mk?.symbols, MV.MAX_STOCKS);
+      return symbols.length ? { mk: { symbols }, pf: MV.cleanPortfolio(c.pf, { fractional: false }), colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const token = keyFrom(input.token, 'Twelve Data');
+      if (!token && !x.secret()) throw new Error('Paste your Twelve Data API key (twelvedata.com, free plan).');
+      const symbols = MV.cleanSymbols(input.mk?.symbols, MV.MAX_STOCKS);
+      if (!symbols.length) throw new Error('Add at least one symbol, like AAPL.');
+      const { rows, missing } = await twelveQuotes(x, symbols, token || x.secret());
+      return {
+        config: { mk: { symbols }, pf: { cash0: MV.cleanCash(input.mk?.startCash) }, colors: WC.cleanMode(input.colors) }, secret: token || undefined,
+        message: `Connected. ${rows.length} of ${symbols.length} symbols found${missing.length ? ` (no quote for ${missing.join(', ')})` : ''}.`,
+      };
+    },
+    title: () => 'Stocks',
+    summary: (c) => c.mk.symbols.join(', '),
+    async fetch(c, x) {
+      if (!x.secret()) throw new Error('Add your Twelve Data API key in Settings.');
+      const { rows, missing } = await twelveQuotes(x, c.mk.symbols, x.secret());
+      if (!rows.length) throw new Error(`Twelve Data has no quote for ${missing.join(', ')}.`);
+      const anyOpen = rows.some((r) => r.open);
+      return marketData(rows, missing, x.now(), { anyOpen, refreshMs: anyOpen ? 15 * 60e3 : 60 * 60e3 });
+    },
+    present: (c, d, ctx) => presentMarket('stocks', c, d, ctx),
+    act: (c, action, x, cached, ctx) => marketAct(c, action, cached, ctx, false),
+  },
+
+  crypto: {
+    label: 'Crypto',
+    ttl: 2 * 60e3,
+    secret: 'coingecko', // optional: a free Demo key allows more requests than going without
+    portfolio: true,
+    clean: (c) => {
+      const coins = MV.cleanCoins(c.mk?.coins, MV.MAX_COINS);
+      return coins.length ? { mk: { coins }, pf: MV.cleanPortfolio(c.pf, { fractional: true }), colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const token = keyFrom(input.token, 'CoinGecko');
+      const coins = MV.cleanCoins(input.mk?.coins, MV.MAX_COINS);
+      if (!coins.length) throw new Error('Add at least one coin, like bitcoin (CoinGecko’s id for it).');
+      const { rows, missing } = await geckoQuotes(x, coins, token || x.secret());
+      return {
+        config: { mk: { coins }, pf: { cash0: MV.cleanCash(input.mk?.startCash) }, colors: WC.cleanMode(input.colors) }, secret: token || undefined,
+        message: `Connected${token || x.secret() ? '' : ' without a key'}. ${rows.length} of ${coins.length} coins found${missing.length ? ` (no price for ${missing.join(', ')})` : ''}.`,
+      };
+    },
+    title: () => 'Crypto',
+    summary: (c) => c.mk.coins.map((k) => k.sym).join(', '),
+    async fetch(c, x) {
+      const { rows, missing } = await geckoQuotes(x, c.mk.coins, x.secret());
+      if (!rows.length) throw new Error(`CoinGecko has no price for ${missing.join(', ')}.`);
+      return marketData(rows, missing, x.now(), { anyOpen: true, refreshMs: 2 * 60e3 });
+    },
+    present: (c, d, ctx) => presentMarket('crypto', c, d, ctx),
+    act: (c, action, x, cached, ctx) => marketAct(c, action, cached, ctx, true),
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -254,6 +326,62 @@ const CONNECTORS = {
     },
   },
 };
+
+// ---- Stocks and Crypto ----
+// An API key typed in Settings, or '' when none was ("" keeps the saved one); throws when it can't be one.
+function keyFrom(value, who) {
+  const key = typeof value === 'string' ? value.trim() : '';
+  if (key && !/^[A-Za-z0-9_-]{8,80}$/.test(key)) throw new Error(`That doesn’t look like a ${who} API key.`);
+  return key;
+}
+// Twelve Data /quote for the watchlist in ONE request (an error may come as HTTP 200, or with the status).
+async function twelveQuotes(x, symbols, key) {
+  const url = `${x.endpoint('twelvedata')}/quote?${new URLSearchParams({ symbol: symbols.join(',') })}`;
+  const res = await x.raw(url, { headers: { Authorization: `apikey ${key}`, Accept: 'application/json' } });
+  let body = null;
+  try { body = JSON.parse(res.body); } catch { /* handled below */ }
+  if (!res.ok) throw new Error(MV.twelveError(res.status, body && typeof body === 'object' ? body : null));
+  return MV.parseTwelve(body, symbols, x.now(), res.status);
+}
+// CoinGecko /simple/price for all coins in ONE request; the Demo key (if any) goes in a header.
+async function geckoQuotes(x, coins, key) {
+  const params = new URLSearchParams({ ids: coins.map((c) => c.id).join(','), vs_currencies: 'usd', include_24hr_change: 'true', include_last_updated_at: 'true' });
+  const res = await x.raw(`${x.endpoint('coingecko')}/simple/price?${params}`, { headers: { Accept: 'application/json', ...(key ? { 'x-cg-demo-api-key': key } : {}) } });
+  let body = null;
+  try { body = JSON.parse(res.body); } catch { /* handled below */ }
+  if (!res.ok) throw new Error(MV.geckoError(res.status, body && typeof body === 'object' ? body : null));
+  return MV.parseGecko(body, coins, x.now());
+}
+const marketData = (rows, missing, fetchedAt, extra) => ({ rows, missing, fetchedAt, asOf: Math.max(0, ...rows.map((r) => r.at || 0)) || fetchedAt, ...extra });
+const MARKET_INFO = {
+  stocks: { source: 'Twelve Data', attribution: 'Data: Twelve Data', badge: 'Delayed' },
+  crypto: { source: 'CoinGecko', attribution: 'Data: CoinGecko', badge: 'Live' },
+};
+// What the page gets: the cached quotes plus the paper portfolio worked out from the trades, now.
+function presentMarket(kind, c, d, ctx) {
+  const fractional = kind === 'crypto';
+  const quotes = Object.fromEntries(d.rows.map((r) => [r.sym, r.px]));
+  const offline = Boolean(ctx.offline);
+  const stale = MV.isStale({ fetchedAt: d.fetchedAt, now: ctx.now, refreshMs: d.refreshMs, offline });
+  return {
+    kind, ...MARKET_INFO[kind], rows: d.rows, missing: d.missing, asOf: d.asOf, fetchedAt: d.fetchedAt, refreshMs: d.refreshMs,
+    marketOpen: kind === 'stocks' ? d.anyOpen : true, offline, fractional,
+    tradable: !stale, tradeBlock: offline ? 'Offline: trading is paused.' : stale ? 'Prices are out of date: trading is paused.' : '',
+    pf: MV.present(c.pf, quotes, { fractional }),
+  };
+}
+// Page actions of Stocks and Crypto: buy and sell at the last fetched quote (simulated), reset the portfolio.
+function marketAct(c, action, cached, ctx, fractional) {
+  if (action.do === 'resetpf') return { config: { pf: { cash0: c.pf.cash0, trades: [] } }, local: true, notice: 'Paper portfolio reset.' };
+  if (action.do !== 'buy' && action.do !== 'sell') return false;
+  const stale = MV.isStale({ fetchedAt: cached.fetchedAt, now: ctx.now, refreshMs: cached.refreshMs, offline: ctx.offline });
+  if (stale) return { local: true, notice: ctx.offline ? 'Offline: trading is paused.' : 'Prices are out of date: trading is paused.' };
+  const row = cached.rows.find((r) => r.sym === action.sym);
+  const r = MV.attempt(c.pf, { side: action.do, sym: action.sym, qty: action.qty, px: row?.px, now: ctx.now, fractional });
+  if (!r.ok) return { local: true, notice: r.error };
+  const t = r.trade;
+  return { config: { pf: r.pf }, local: true, notice: `Paper ${t.qty > 0 ? 'bought' : 'sold'} ${Math.abs(t.qty)} ${t.sym} at ${t.px.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 6 })}.` };
+}
 
 // Todoist's tasks for a widget's question (a filter query, or a project's own list; the unified API,
 // paged by cursor). Shared for a minute between widgets asking the same thing.
@@ -324,7 +452,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx, mk: i.mk };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -400,7 +528,7 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs? }
 function createWidgets(deps) {
-  const cache = new Map(); // id -> { data, error, at, key, pending, undo }
+  const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
   const recent = []; // times of recent network requests (the rate limit)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
   let backoffUntil = 0; // after a 429: no requests until then
@@ -412,8 +540,8 @@ function createWidgets(deps) {
   const save = (widgets, extra = {}) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList(widgets), ...extra });
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.DEFAULT_SIZE[type] || { w: 4, h: 3 };
-  // A changed config invalidates its cached data; its size and place on the page don't.
-  const keyOf = ({ span, height, x, y, w, h, snap, colors, ...rest }) => JSON.stringify(rest);
+  // A changed config invalidates its cached data; its size, place and paper trades don't.
+  const keyOf = ({ span, height, x, y, w, h, snap, colors, pf, ...rest }) => JSON.stringify(rest);
 
   let epoch = 0; // flush() bumps it: an answer that was in flight is not kept
   async function memo(key, ttl, fn) {
@@ -479,6 +607,7 @@ function createWidgets(deps) {
   function helpers(secretName, secretOverride) {
     const x = {
       endpoint: (name) => deps.endpoints?.()[name] || ENDPOINTS[name],
+      now,
       secret: () => secretOverride || (secretName ? deps.getSecret(secretName) : null),
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
@@ -538,7 +667,8 @@ function createWidgets(deps) {
     if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, undo: entry?.undo }; cache.set(w.id, entry); }
     if (entry.pending) return entry.pending;
     const age = now() - entry.at;
-    const fresh = entry.at && age < (entry.error ? ERROR_TTL : c.ttl);
+    const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
+    const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
     if (force) { forget('tasks:'); forget('done:'); forget('wx:'); }
     entry.pending = Promise.resolve()
@@ -555,7 +685,9 @@ function createWidgets(deps) {
       const current = entry && entry.key === keyOf(w) ? entry : null;
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
-      const data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
+      let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error) });
+      if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
@@ -593,6 +725,8 @@ function createWidgets(deps) {
     if (id && !prev) throw new Error('That widget is gone.');
     if (!id && widgets.length >= MAX_WIDGETS) throw new Error(`Up to ${MAX_WIDGETS} widgets.`);
     const { widget, secret, message } = await resolveInput(input, id);
+    // Paper trades survive an edit; the starting cash can only change while there are none (Reset first).
+    if (prev?.pf && CONNECTORS[widget.type].portfolio) widget.pf = { cash0: prev.pf.trades.length ? prev.pf.cash0 : widget.pf?.cash0, trades: prev.pf.trades };
     const ci = cleanInput(input);
     if (prev) {
       // An edit keeps its place and size; the width and height pickers only count when they changed.
@@ -767,11 +901,17 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|buy|sell|resetpf)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
       if (!action.text) return { invalid: true };
+    }
+    if (action.do === 'buy' || action.do === 'sell') {
+      action.sym = params.get('sym');
+      const qty = params.get('qty') || '';
+      if (!MV.SYM_RE.test(action.sym || '') || !/^\d{1,8}(\.\d{1,8})?$/.test(qty) || !(Number(qty) > 0) || Number(qty) > MV.MAX_QTY) return { invalid: true };
+      action.qty = Number(qty);
     }
     if (action.do === 'consent') {
       action.arg = params.get('arg');
@@ -807,10 +947,16 @@ function createWidgets(deps) {
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;
     try {
-      const done = await c.act(w, action, helpers(c.secret), entry.data);
+      const done = await c.act(w, action, helpers(c.secret), entry.data, { now: now(), offline: Boolean(entry.error) });
       if (!done) return false;
       forget('tasks:');
       forget('done:');
+      if (done.config) save(list().map((x) => (x.id === w.id ? { ...x, ...done.config } : x)));
+      if (done.notice) {
+        entry.notice = { text: String(done.notice).slice(0, 200), until: now() + 8000 };
+        setTimeout(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+      }
+      if (done.local) { deps.onUpdate?.(); return true; }
       if (done.undo) {
         entry.undo = { ...done.undo, until: now() + UNDO_MS };
         setTimeout(() => { if (entry.undo && entry.undo.until <= now()) { entry.undo = null; deps.onUpdate?.(); } }, UNDO_MS + 50);

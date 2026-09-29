@@ -460,6 +460,8 @@ const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
+  stocks: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5 6 8l2.6 2.6L14 4.5M10.5 4.5H14V8"/></svg>',
+  crypto: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.4 5v6M6.4 5h2.3a1.5 1.5 0 0 1 0 3H6.4m0 0h2.6a1.5 1.5 0 0 1 0 3H6.4M7.6 4v1M7.6 11v1"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -479,7 +481,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, stock or crypto prices, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -619,6 +621,26 @@ async function buildWidgets(card) {
         field('Add-task field', inputs.quick, 'Typed like in Todoist’s quick add: “Pay rent tomorrow 9am”.'), field('New tasks go to', inputs.quickProject, 'Load projects above to pick one.'),
         field('Colors', colors, 'Only the card’s surface and title follow it; priority colors stay.'));
     }
+    // ---- stocks and crypto: a watchlist, the data provider's key, the paper portfolio's starting cash ----
+    function marketFields(same) {
+      const crypto = type === 'crypto';
+      const provider = crypto ? 'CoinGecko' : 'Twelve Data';
+      const saved = ws.secrets[crypto ? 'coingecko' : 'twelvedata'];
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: saved ? 'Saved. Paste a new key to replace it.' : crypto ? 'Optional: a free Demo API key' : 'Paste your API key', 'aria-label': `${provider} API key` });
+      inputs.list = h('input', { type: 'text', id: 'widget-watchlist', maxlength: '400', placeholder: crypto ? 'bitcoin, ethereum, solana' : 'AAPL, MSFT, NVDA', 'aria-label': crypto ? 'Coin ids' : 'Stock symbols', value: crypto ? (same?.mk?.coins || []).map((c) => `${c.id}=${c.sym}`).join(', ') : (same?.mk?.symbols || []).join(', ') });
+      const hasTrades = Boolean(same?.pf?.trades?.length);
+      inputs.startCash = h('input', { type: 'number', id: 'widget-startcash', min: '1000', max: '1000000000', step: '1000', value: String(same?.pf?.cash0 || 100000), disabled: hasTrades, 'aria-label': 'Starting paper cash in dollars' });
+      fields.replaceChildren(
+        field(crypto ? 'CoinGecko API key (optional)' : 'Twelve Data API key', inputs.token, crypto
+          ? 'Works without a key at a lower request limit. A free Demo key (coingecko.com/en/api, Demo plan) raises it. Stored encrypted by your system; it never reaches the new-tab page.'
+          : 'Create a free account at twelvedata.com and copy the key from its dashboard. Stored encrypted by your system; it never reaches the new-tab page.'),
+        field(crypto ? 'Coins (up to 12)' : 'Symbols (up to 8)', inputs.list, crypto
+          ? 'CoinGecko ids, comma separated, like “bitcoin, ethereum”. Add =TICKER to name the ticker: “ethereum=ETH”. All coins are fetched in one request every 2 minutes.'
+          : 'Ticker symbols, comma separated. All are fetched in one request every 15 minutes (hourly while the market is closed); the free plan counts each symbol as a credit against 8 a minute and 800 a day.'),
+        field('Starting paper cash ($)', inputs.startCash, hasTrades ? 'Reset the portfolio on the card to change it.' : 'For the simulated portfolio. Default $100,000.'),
+        plain('About the data', h('span', { class: 'note', text: `The symbols on the watchlist are sent to ${provider}, from Lumen, to get prices${crypto ? '' : ' (along with your key)'}. Your use of the data is under ${provider}’s terms for your own ${crypto ? 'key or keyless access' : 'account and key'}, not Lumen’s. Paper trading is simulated: no real orders, nothing is bought or sold anywhere. Not investment advice. Quotes ${crypto ? 'can lag by a minute or more' : 'on the free plan are delayed'}.` })),
+        field('Colors', colors, 'Only the card’s surface and title follow it; up and down colors stay.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -634,6 +656,8 @@ async function buildWidgets(card) {
           field('Colors', colors, '“Calendar colors” uses the color the feed gives each event; “Match screen” follows your accent color and background.'));
       } else if (type === 'todoist') {
         todoFields(same);
+      } else if (type === 'stocks' || type === 'crypto') {
+        marketFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -658,6 +682,9 @@ async function buildWidgets(card) {
           group: inputs.group.value, sort: inputs.sort.value, density: inputs.density.value, max: Number(inputs.max.value), fields: Object.fromEntries(Object.entries(inputs.fields).map(([k, c]) => [k, val(c)])),
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
+      }
+      if (type === 'stocks' || type === 'crypto') {
+        return { ...base, token: inputs.token.value, mk: { [type === 'crypto' ? 'coins' : 'symbols']: inputs.list.value, startCash: Number(inputs.startCash.value) } };
       }
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
@@ -694,13 +721,13 @@ async function buildWidgets(card) {
     renderFields();
     syncWidth();
     renderList();
-    (inputs.city || inputs.url || inputs.token)?.focus();
+    (inputs.city || inputs.url || inputs.list || inputs.token)?.focus();
     form.scrollIntoView?.({ block: 'nearest' });
   }
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every card its default size, packed in order', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, stock and crypto prices (with a simulated paper portfolio), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page

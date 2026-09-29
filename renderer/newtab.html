@@ -428,6 +428,40 @@
     .td-toast span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .td-toast .w-btn { margin: 0; padding: 2px 10px; background: rgba(128, 128, 128, 0.3); color: inherit; }
 
+    /* Stocks and Crypto: a price table and a simulated paper portfolio. Direction is always shown with ▲/▼ as well as colour. */
+    .w-card.stocks, .w-card.crypto { --up: #17772f; --down: #c4262e; }
+    @media (prefers-color-scheme: dark) { .w-card.stocks, .w-card.crypto { --up: #4bd166; --down: #ff7a72; } }
+    body.on-media .w-card.stocks, body.on-media .w-card.crypto { --up: #6ce085; --down: #ff9a94; }
+    .w-card.stocks .w-body, .w-card.crypto .w-body { overflow: auto; }
+    .mk-badge { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: 10.5px; font-weight: 600; }
+    .mk-badge.live { color: var(--up); } .mk-badge.off { color: var(--warn); }
+    .mk-tabs { display: flex; gap: 2px; margin: 0 0 6px; }
+    .mk-tab { appearance: none; border: 0; padding: 2px 9px; border-radius: 7px; background: transparent; color: var(--muted); font: 600 11px/18px system-ui, sans-serif; cursor: default; outline: none; }
+    .mk-tab[aria-selected="true"] { background: var(--field); color: var(--text); }
+    .mk-tab:focus-visible, .mk-trade select:focus-visible, .mk-trade input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .mk-panel[hidden] { display: none; }
+    .mk-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .mk-table th, .mk-table td { padding: 3px 4px; text-align: right; font-weight: 400; white-space: nowrap; }
+    .mk-table thead th { color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+    .mk-table th:first-child { text-align: left; }
+    .mk-table tbody th.mk-sym { font-weight: 650; color: var(--text); }
+    .mk-chg.up { color: var(--up); } .mk-chg.down { color: var(--down); } .mk-chg.flat { color: var(--muted); }
+    .mk-foot { margin: 6px 0 0; color: var(--muted); font-size: 10.5px; }
+    .mk-paper-note { margin: 0 0 6px; color: var(--muted); font-size: 10.5px; font-weight: 600; }
+    .mk-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 6px; }
+    .mk-sum > div { display: flex; flex-direction: column; }
+    .mk-k { color: var(--muted); font-size: 10.5px; } .mk-v { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .mk-hold { margin-bottom: 6px; }
+    .mk-trade { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .mk-trade select, .mk-trade input { height: 28px; padding: 0 8px; border-radius: 8px; border: 0; background: var(--field); color: var(--text); font: 12.5px system-ui, sans-serif; outline: none; }
+    .mk-trade input { width: 84px; min-width: 0; }
+    .mk-trade .w-btn { margin: 0; }
+    .mk-trade :disabled, .mk-trade .w-btn:disabled { opacity: 0.5; }
+    .mk-err { min-height: 0; margin: 4px 0 0; color: var(--warn); font-size: 11.5px; } .mk-err:empty { display: none; }
+    .mk-reset { margin-top: 8px; font-size: 11px; padding: 3px 10px; }
+    .w-card.mk-offline .mk-table, .w-card.mk-offline .mk-sum { opacity: 0.55; }
+    .mk-notice { margin: 0 0 6px; padding: 0; }
+
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
     .w-card.embed { padding-bottom: 10px; }

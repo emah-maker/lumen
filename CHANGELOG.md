@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab widgets: Stocks (Twelve Data, with your own free API key) and Crypto (CoinGecko, key optional). A compact price table with change, "as of" time and a Delayed/Live badge; offline they show the last prices dimmed and say so. Each has a Paper trading tab: a simulated portfolio (default $100,000) you buy and sell at the last shown price. Nothing is ever ordered anywhere, it is not investment advice, and the trades live only in the widget's settings. The watchlist symbols are sent to the data provider you chose.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.
