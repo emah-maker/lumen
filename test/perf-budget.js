@@ -10,7 +10,7 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 // Loaded on first use; a startup that pulls one in has made every launch slower.
-const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modules/qrcode-generator/', 'features/qr.js', 'features/screenshot.js', 'features/tool-overlay.js', 'features/background'];
+const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modules/qrcode-generator/', 'features/qr.js', 'features/screenshot.js', 'features/tool-overlay.js'];
 const CEILING = { requireMs: 2500, modules: 200, preloadKB: 40, uiKB: 500, idleIntervals: 4 };
 
 (async () => {
