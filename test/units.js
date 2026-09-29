@@ -2007,6 +2007,16 @@ async function organizeAiRuns() {
   const { view: vConfident } = fresh([['Inbox (3)', 'https://mail.google.com/mail/u/0/#inbox'], ['Spotify - Web Player', 'https://open.spotify.com/']]);
   check('organize-ai: clear groups and only app/search leftovers need no model', !oai.assess(vConfident).needsAi, JSON.stringify(oai.assess(vConfident)));
   check('organize-ai: a leftover with a real title is worth asking about', oai.assess(v1).needsAi && oai.assess(v1).askableLeftovers.length === 1);
+  {
+    const E = (id, title, url) => ({ id, title, url });
+    const sour = { id: 1, name: 'Sourdough', cohesion: 0.5, entries: [E(1, 'Sourdough starter recipe', 'https://www.kingarthurbaking.com/a'), E(2, 'Beginner sourdough bread', 'https://www.theclevercarrot.com/b')] };
+    const loaf = { id: 2, name: 'Dutch Oven', cohesion: 0.5, entries: [E(3, 'Dutch oven sourdough loaf temperature', 'https://www.bonappetit.com/c'), E(4, 'Sourdough crumb too dense', 'https://www.reddit.com/r/Sourdough/d')] };
+    const desk = { id: 3, name: 'Standing Desk', cohesion: 0.5, entries: [E(5, 'Best standing desk 2026', 'https://www.rtings.com/e'), E(6, 'Uplift V2 standing desk review', 'https://www.wirecutter.com/f')] };
+    const f = oai.fragments([sour, loaf, desk]);
+    check('organize-ai: two groups sharing a topic word are flagged as likely fragments, unrelated ones are not', f.length === 1 && f[0].join() === '1,2', JSON.stringify(f));
+    check('organize-ai: likely fragments are worth asking the model about (to merge)', oai.assess({ groups: [sour, loaf], leftovers: [] }).needsAi && !oai.assess({ groups: [sour, desk], leftovers: [] }).needsAi);
+    check('organize-ai: the model gets 8 seconds before the quick grouping is kept', oai.TIMEOUT_MS === 8000);
+  }
   check('organize-ai: a login wall or loading screen is never asked about', !oai.askable({ title: 'Sign in to your account', url: 'https://login.example.com/' }) && !oai.askable({ title: 'Just a moment...', url: 'https://x.example/' }) && !oai.askable({ title: 'Loading…', url: 'https://x.example/' }));
   check('organize-ai: a vague or loose group name is not clear', !oai.clearName({ name: 'Group' }) && !oai.clearName({ name: 'Core Concepts' }) && !oai.clearName({ name: 'Tokyo', cohesion: 0.1 }) && oai.clearName({ name: 'Tokyo Trip', cohesion: 0.6 }));
 
@@ -2171,9 +2181,13 @@ async function organizeAiRuns() {
   check('duplicates: an app\'s #/ routes differ, and non-web pages are never duplicates', dups.length === 2, JSON.stringify(dups));
 
   // idle rule
-  const idle = (o) => learn.shouldAutoOrganize({ enabled: true, idleSeconds: 700, idleMinutes: 10, ungrouped: 9, key: 'k1', lastKey: null, ...o });
-  check('idle: runs when enabled, idle long enough, with 8+ loose tabs and a new set', idle({}) === true);
-  check('idle: never when off, busy, too few tabs, not idle long enough, or already done for this set', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ ungrouped: 7 }) && !idle({ idleSeconds: 500 }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }));
+  const idle = (o) => learn.shouldAutoOrganize({ enabled: true, ungrouped: 6, topics: [[1, 2, 3], [4, 5]], key: 'k1', lastKey: null, ...o });
+  check('auto organize: runs when on, the loose tabs form a topic group, and the set is new', idle({}) === true);
+  check('auto organize: never when off, busy, already done for this set, or nothing would form a group', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }) && !idle({ topics: [] }) && !idle({ ungrouped: 1 }));
+  check('auto organize: loose tabs that are all one topic are left alone, however many', !idle({ ungrouped: 3, topics: [[1, 2, 3]] }) && !idle({ ungrouped: 2, topics: [[1, 2]] }) && !idle({ ungrouped: 9, topics: [[1, 2, 3, 4, 5, 6, 7, 8, 9]] }));
+  check('auto organize: with "Only when topics are mixed" off, one topic is grouped too', idle({ ungrouped: 3, topics: [[1, 2, 3]], onlyMixed: false }) && !idle({ ungrouped: 3, topics: [], onlyMixed: false }));
+  check('auto organize: only a mix is organized (2 related + 1 other, two topics)', idle({ ungrouped: 3, topics: [[1, 2]] }) && idle({ ungrouped: 4, topics: [[1, 2], [3, 4]] }));
+  check('auto organize: the delay is one of the Settings choices, else 5 seconds', learn.organizeDelay(10) === 10 && learn.organizeDelay('30') === 30 && learn.organizeDelay(7) === 5 && learn.organizeDelay(undefined) === 5);
 
   // recency order and colours
   {
