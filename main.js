@@ -48,6 +48,7 @@ const { createSafeBrowsing } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
+const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -61,6 +62,18 @@ const pageTools = require('./features/page-tools').createPageTools({
   sendTabs: () => sendTabs(),
   downloadDir: () => settingsBackend.downloadDir(),
   showSaveDialog: (options) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(win, options)),
+});
+// Page translation (features/translate.js): user-initiated, with the user's own connected AI.
+const translate = require('./features/translate').createTranslate({
+  readSettings: () => readSettings(),
+  writeSettings: (s) => writeSettings(s),
+  t: (...a) => t(...a),
+  uiLocale: () => app.getLocale(),
+  engine: () => translateEngine(),
+  aiAllowed: (url) => !aiSites.isOff(url),
+  sendTabs: () => sendTabs(),
+  popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
+  openUrl: (tab, url) => tab.view.webContents.loadURL(url).catch(() => {}),
 });
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
@@ -121,7 +134,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -133,11 +146,11 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
+  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -275,6 +288,25 @@ function safeBrowsingKey() {
   return process.env.GOOGLE_SAFE_BROWSING_API_KEY || null;
 }
 
+// [widgets] tokens for new-tab widgets (Todoist): settings.keys[`widget:${name}`], encrypted like
+// the others. Only features/widgets.js asks for them, in this process; the page never sees them.
+function widgetSecret(name) {
+  const enc = readSettings().keys?.[`widget:${name}`];
+  if (!enc || !safeStorage.isEncryptionAvailable()) return null;
+  try { return decryptKey(enc); } catch { return null; }
+}
+function setWidgetSecret(name, value) {
+  const settings = readSettings();
+  const keys = { ...(settings.keys || {}) };
+  if (value) {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable, so Lumen can’t store the token safely.');
+    keys[`widget:${name}`] = safeStorage.encryptString(String(value)).toString('base64');
+  } else {
+    delete keys[`widget:${name}`];
+  }
+  writeSettings({ ...settings, keys });
+}
+
 function providerKey(provider) {
   const enc = readSettings().keys?.[provider];
   if (enc && safeStorage.isEncryptionAvailable()) {
@@ -370,6 +402,36 @@ if (TEST) {
   global.__closeTabInteractive = (id) => requestCloseTab(id);
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
+
+// Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
+// overlay per window (features/tool-overlay.js). Loaded on first use.
+const toolOverlay = lazy(() => require('./features/tool-overlay').createToolOverlay({ ipcMain, WebContentsView }));
+// This Electron's clipboard has no writeImage: images go through the web ClipboardItem API.
+const copyImage = (image) => clipboard.write([new (require('electron').ClipboardItem)({ 'image/png': new Blob([image.toPNG()], { type: 'image/png' }) })]);
+const screenshotTool = lazy(() => require('./features/screenshot').createScreenshot({
+  overlay: toolOverlay, copyImage, nativeImage: require('electron').nativeImage, shell, screen, app, t,
+  downloadDir: () => settingsBackend.downloadDir(),
+  saveDir: () => (TEST && global.__screenshotDir) || null, // tests: a temp folder instead of Pictures
+  showSaveDialog: (options, w) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(w || win, options)),
+}));
+const qrTool = lazy(() => require('./features/qr').createQr({
+  overlay: toolOverlay, copyImage, nativeImage: require('electron').nativeImage, t,
+  downloadDir: () => settingsBackend.downloadDir(),
+  showSaveDialog: (options, w) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(w || win, options)),
+}));
+// What the tools need to know about a tab of this window (null when there is none).
+function pageToolCtx(wc = activeTab()?.webContents) {
+  const tab = wc && tabByContents(wc);
+  if (!tab || !win || win.isDestroyed()) return null;
+  return {
+    wc, win, view: tab.view, isPrivate: false,
+    restoreFocus: () => { if (!wc.isDestroyed()) wc.focus(); },
+    askAi: (png) => { ui()?.send('attach-image', png.toString('base64')); }, // into the sidebar's composer
+  };
+}
+const takeScreenshot = (wc) => { const ctx = pageToolCtx(wc); if (ctx) screenshotTool.open(ctx).catch(() => {}); };
+const showQrCode = (wc, text, kind) => { const ctx = pageToolCtx(wc); if (ctx) qrTool.open(ctx, text ?? ctx.wc.getURL(), kind).catch(() => {}); };
+if (TEST) global.__screenshot = { tool: screenshotTool, qr: qrTool, overlay: toolOverlay, ctx: pageToolCtx };
 
 // Certificate errors and mixed content (features/site-security.js). Going past a bad certificate is
 // only ever the user's answer in Lumen's own dialog, never a page's or the AI's.
@@ -672,6 +734,7 @@ const adblock = createAdblock({
 const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
   resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
+  screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
 });
 if (TEST) global.__private = privateWindows;
 
@@ -804,7 +867,10 @@ function showAppMenu({ x, y }) {
     { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
     { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
     { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
+    { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: isWebUrl(wc?.getURL()), click: () => takeScreenshot(wc) },
+    { label: t('menu.qrCode'), enabled: isWebUrl(wc?.getURL()), click: () => showQrCode(wc) },
     { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
+    ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
     ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
     { type: 'separator' },
     { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
@@ -1041,6 +1107,7 @@ function tabState() {
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url) || managerPageOf(url), // Lumen's own pages get their own icon
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
+        translate: translate.stateOf(t), // the translate button and infobar (features/translate.js)
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
@@ -1059,9 +1126,11 @@ function tabState() {
 }
 
 let sessionTimer = null;
+let agentTargetHook = null; // set where the agent exists: tells the sidebar which tab its task works in
 function sendTabs() {
   keepPinnedFirst();
   ui()?.send('tabs', tabState());
+  agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession(); }, 3000);
@@ -1188,7 +1257,7 @@ function wireView(tab, url, history = null) {
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
     tab.favicon = tab.favicons[0] || null;
   });
-  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id); });
+  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url); });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
@@ -1256,6 +1325,7 @@ function wireView(tab, url, history = null) {
   });
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
+  translate.attach(tab);
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
@@ -1688,6 +1758,38 @@ async function proposeGroups(model, list) {
 function aiOffTab(id) {
   const tab = tabs.find((t) => t.id === id);
   return Boolean(tab) && aiSites.isOff(alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
+}
+
+// ---- page translation engine: the cheapest fast model of the user's connected API provider.
+// CLI engines (Claude Code, Grok Build) aren't used: one agent run per chunk is too slow and costly;
+// with only those connected, the menu offers Google Translate instead.
+function translateEngine() {
+  const chosen = cheapTopicModel();
+  const base = LOCAL_ENGINE.test(chosen) ? modelOptions().find((o) => !LOCAL_ENGINE.test(o.id) && !o.id.endsWith(':__more'))?.id : chosen;
+  if (!base) return null;
+  const { provider } = providers.splitModel(base);
+  if (provider === 'anthropic' ? !anthropicUsable() : !providerKey(provider)) return null;
+  let model = 'claude-haiku-4-5';
+  if (provider !== 'anthropic') {
+    const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
+    model = `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
+  }
+  const label = provider === 'anthropic' ? 'Anthropic' : providers.PROVIDERS[provider].label;
+  return { id: provider === 'anthropic' ? 'anthropic' : provider, label, run: (system, user) => translateComplete(model, system, user) };
+}
+const TRANSLATE_SCHEMA = { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { id: { type: 'integer' }, text: { type: 'string' } }, required: ['id', 'text'], additionalProperties: false } } }, required: ['items'], additionalProperties: false };
+async function translateComplete(model, system, user) {
+  const { provider, model: id } = providers.splitModel(model);
+  if (provider !== 'anthropic') return providers.completeJSON({ provider, model: id, apiKey: providerKey(provider), system, user });
+  const res = await agent.getClient().messages.create({
+    model: id,
+    max_tokens: 8000,
+    system,
+    output_config: { format: { type: 'json_schema', schema: TRANSLATE_SCHEMA } },
+    messages: [{ role: 'user', content: user }],
+  });
+  if (res.stop_reason === 'refusal') throw new Error('The model declined to translate this page.');
+  return JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
 }
 
 let organizing = false;
@@ -2146,6 +2248,7 @@ function newTabUrl() {
     search: engineFor(readSettings().searchEngine),
     assistant: homeAssistant(),
     look: settingsBackend.newTabLook(), // [look] background, accent, clock, name, which sections show
+    widgets: widgets.forPage(), // [widgets] display data only (cached; stale ones refresh in the background)
   };
   return `${NEW_TAB_URL}#${encodeURIComponent(JSON.stringify(data))}`;
 }
@@ -2175,6 +2278,17 @@ function askFromHome(event, url, tabId) {
   text = text.trim().slice(0, 20000);
   if (!text) return true;
   ui()?.send('ask-from-home', { text, tabId });
+  return true;
+}
+
+// [widgets] The new-tab page's widget buttons (a Todoist checkbox, Refresh) load the page itself
+// with ?widget=<id>&do=…, the same way Ask AI does: cancel that and do it here.
+function widgetAction(event, url) {
+  if (!isNewTab(url)) return false;
+  const action = widgets.actionFrom(url);
+  if (!action) return false;
+  event.preventDefault();
+  if (!action.invalid) widgets.act(action).catch((err) => console.error('[lumen] widget action:', err.message));
   return true;
 }
 
@@ -2351,6 +2465,13 @@ function applyChromeIdentity(wc) {
 
 // ---------- context menu ----------
 
+// "Run skill ▸" for selected text: the skills that read a selection, run in the sidebar.
+function skillMenuItems(selection) {
+  const items = skillsFeature.menuTemplate(selection, (id, text) => ui()?.send('skill:run', { id, selection: text }));
+  if (!items.length) return [];
+  return [{ label: t('menu.runSkill'), submenu: [...items, { type: 'separator' }, { label: t('menu.manageSkills'), click: () => openSettingsPage('skills') }] }];
+}
+
 function showContextMenu(wc, p) {
   const items = [...settingsBackend.spellingItems(wc, p)]; // [settings] spelling suggestions first
   const selection = p.selectionText.trim();
@@ -2374,6 +2495,8 @@ function showContextMenu(wc, p) {
       { role: 'copy' },
       { label: t('menu.searchFor', { engine: engineFor(readSettings().searchEngine).label, text: short }), click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
       { label: t('menu.askAboutSelection'), click: () => ui()?.send('ask-selection', selection) },
+      { label: t('menu.qrSelection'), enabled: selection.length <= 500, click: () => showQrCode(wc, selection, 'text') },
+      ...skillMenuItems(selection),
       { type: 'separator' },
     );
   }
@@ -2388,6 +2511,9 @@ function showContextMenu(wc, p) {
       items.push(
         { label: 'Save Page As…', click: () => pageTools.savePage(wc).catch(() => {}) },
         { label: 'View Page Source', click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
+        { label: t('menu.screenshot'), click: () => takeScreenshot(wc) },
+        { label: t('menu.qrCode'), click: () => showQrCode(wc) },
+        ...translate.pageMenuItem(tabByContents(wc)),
         { type: 'separator' },
       );
     }
@@ -2436,6 +2562,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
   else if (mod && key === 'p') wc?.print({}, () => {});
+  else if (mod && input.shift && !input.alt && key === 's') { if (wc) takeScreenshot(wc); }
   else if (mod && key === 's') { if (wc) pageTools.savePage(wc).catch(() => {}); }
   else if (mod && key === 'u') { if (wc) pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }); }
   else if (mod && key === ',') openSettingsPage(); // [settings]
@@ -2660,6 +2787,8 @@ function macMenu() {
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
         { label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
+        { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: () => takeScreenshot(wc()) },
+        { label: t('menu.qrCode'), click: () => showQrCode(wc()) },
         { label: t('menu.print'), ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
         { type: 'separator' },
         { label: t('menu.closeTab'), ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
@@ -2673,6 +2802,7 @@ function macMenu() {
         { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: () => reloadActive({ ignoreCache: true }) },
         { label: t('menu.find'), ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
         { label: t('menu.readerMode'), click: () => toggleReaderActive() },
+        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
         { label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
         { type: 'separator' },
         { label: t('menu.zoomIn'), ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
@@ -3266,10 +3396,26 @@ const noTabReason = () => {
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
 // is woken, since the agent is about to use it.
 const agentTabById = (id) => {
-  const t = tabs.find((x) => x.id === id);
-  if (t?.sleeping) wakeTab(t);
+  // A tab moved to another window while a task works in it is still that task's tab, not a closed one.
+  let owner = curRec;
+  let t = tabs.find((x) => x.id === id);
+  if (!t) {
+    for (const rec of winRecs) {
+      if (rec === curRec || !rcAlive(rec)) continue;
+      t = tabsOf(rec).find((x) => x.id === id);
+      if (t) { owner = rec; break; }
+    }
+  }
+  if (t?.sleeping) withWindow(owner, () => wakeTab(t));
   return t && alive(t) && !agentOffLimits(t) ? { id: t.id, webContents: t.view.webContents } : null;
 };
+// [ask across tabs] This window's tabs as read_tabs and the "@" picker see them (features/tabs-ask.js
+// decides which may be read). A private window's tabs are never in here: it keeps its own.
+const askTabsList = () => tabs.filter((t) => !t.closing && (alive(t) || t.sleeping)).map((t) => {
+  const live = alive(t);
+  const url = live ? realUrl(t.view.webContents) : t.sleepUrl || '';
+  return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping), active: t.id === activeId, offLimits: agentOffLimits(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
+});
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
 const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_KEY ? 'env' : cliAuth.profileState().signedIn ? 'cli' : null);
@@ -3292,11 +3438,33 @@ const inRun = (fn) => (...args) => (runRec && winRecs.has(runRec) ? withWindow(r
 const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
-  hasUnsavedInput: inRun(agentHasUnsavedInput), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
+  hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+// The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
+// the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
+let lastAgentTarget = '';
+function pushAgentTarget() {
+  const rec = runRec && winRecs.has(runRec) ? runRec : curRec;
+  const id = agent.running ? agent.runTabId() : null;
+  let info = null;
+  if (id != null) {
+    const list = rec ? tabsOf(rec) : tabs;
+    const t = list.find((x) => x.id === id) || [...winRecs].flatMap((r) => tabsOf(r)).find((x) => x.id === id);
+    if (t) {
+      const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || '';
+      info = { id, title: tabTitle(t) || hostOf(url) || '', host: hostOf(url) || '', front: id === activeIdOf(rec || curRec) };
+    }
+  }
+  const key = info ? `${info.id}|${info.title}|${info.front}` : '';
+  if (key === lastAgentTarget) return;
+  lastAgentTarget = key;
+  const wc = rec && rcAlive(rec) ? rec.win.webContents : ui();
+  if (wc && !wc.isDestroyed()) wc.send('agent:target', info);
+}
+agentTargetHook = pushAgentTarget;
 // lumen://chat (features/chat-page.js): opens like the Bookmarks page, shares the agent's one chat with the sidebar.
 chatPageRt = chatPage.create({
   ipcMain,
@@ -3367,13 +3535,96 @@ if (TEST) {
   global.__mcpClient = mcpClient;
 }
 
+// ---------- skills (features/skills.js): /summarize and friends; managed in Settings → Skills ----------
+// Saved prompts run from the composer's "/" menu. A run is an ordinary chat message (the expanded
+// prompt), so usage, the approval gate and the taint rules apply unchanged; agent:ask above picks up
+// the prepared run's options (tools off, own model, page text counted as read).
+const skillPageScripts = require('./page-scripts');
+const SKILL_WORLD = 1002; // a JavaScript world of our own, apart from the page's and the agent's
+const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
+const skillSurfaces = () => [ui(), ...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)].filter((wc) => wc && !wc.isDestroyed());
+// One model call outside the chat (the proposal for "Create a skill from this chat"): same routes as tab grouping.
+async function completeSkillJson({ system, user, schema }) {
+  const model = String(cheapTopicModel());
+  const route = await groupingRoute(model);
+  if (route.engine) {
+    const bin = await agent.engines[route.engine].detect();
+    if (!bin) throw new Error(route.engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+    return cliJson.completeJSON({ engine: route.engine, bin, model: route.model, system, user, schema, userData: app.getPath('userData') });
+  }
+  const { provider, model: id } = providers.splitModel(model);
+  if (provider === 'anthropic') {
+    const res = await agent.getClient().messages.create({ model: id, max_tokens: 2000, system, output_config: { format: { type: 'json_schema', schema } }, messages: [{ role: 'user', content: user }] });
+    if (res.stop_reason === 'refusal') throw new Error('The model declined.');
+    return JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  }
+  const apiKey = providerKey(provider);
+  if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key in Settings first.`);
+  return providers.completeJSON({ provider, model: id, apiKey, system, user });
+}
+const skillsFeature = require('./features/skills').create({
+  ipcMain,
+  dialog: electronDialog,
+  win: () => win,
+  file: path.join(app.getPath('userData'), 'skills.json'),
+  documentsDir: () => app.getPath('documents'),
+  language: () => { try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(app.getLocale().split('-')[0]) || 'English'; } catch { return 'English'; } },
+  clipboardText: async () => String(await clipboard.readText()).slice(0, 50000), // (a Promise in this Electron)
+  // The tab a sender's skills read: the sidebar's active tab, or the chat page's target tab. Never
+  // Settings, the chat page, a non-web page or a site the user turned AI off on.
+  tabFor: (event) => {
+    const tab = tabs.find((t) => t.id === (chatPageRt.isChatSender(event) ? chatPageRt.pick() : activeId));
+    return tab && skillTabOk(tab) ? tab.view.webContents : null;
+  },
+  readPage: async (wc) => {
+    const page = await skillWithin(wc.executeJavaScriptInIsolatedWorld(1001, [{ code: skillPageScripts.readPage(0, 0) }]));
+    return { title: page.title, url: page.url, text: page.text };
+  },
+  readSelection: async (wc) => String(await skillWithin(wc.executeJavaScriptInIsolatedWorld(SKILL_WORLD, [{ code: 'String(getSelection())' }]))),
+  tabText: async (id) => {
+    const tab = Number.isInteger(id) ? tabs.find((t) => t.id === id) : null;
+    if (!tab || !skillTabOk(tab)) return null;
+    const page = await skillWithin(tab.view.webContents.executeJavaScriptInIsolatedWorld(1001, [{ code: skillPageScripts.readPage(0, 0) }]));
+    return { title: page.title, url: page.url, text: page.text };
+  },
+  broadcast: (channel, payload) => { for (const wc of skillSurfaces()) wc.send(channel, payload); },
+  openSettings: (section) => openSettingsPage(section),
+  emitDraft: (draft) => { for (const t of tabs) if (t.settings && alive(t)) t.view.webContents.send('skills:draft', draft); },
+  transcript: () => agent.transcript(),
+  complete: (args) => (TEST && global.__skillsComplete ? global.__skillsComplete(args) : completeSkillJson(args)),
+});
+skillsFeature.register();
+if (TEST) global.__skills = skillsFeature;
+
 // ---------- [settings] lumen://settings ----------
+
+// [look] New-tab pages already open take a new background, accent or layout at once (the page
+// reads its design from its hash, so a hash change is enough: no reload, nothing typed is lost).
+function refreshNewTabs() {
+  const open = tabs.filter((t) => alive(t) && isNewTab(t.view.webContents.getURL()));
+  if (!open.length) return;
+  const url = newTabUrl();
+  for (const t of open) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {});
+}
+// [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as
+// several widgets often finish together).
+let widgetRefreshTimer = null;
+const widgets = createWidgets({
+  readSettings, writeSettings,
+  fetch: (url, options) => net.fetch(url, options),
+  getSecret: widgetSecret,
+  setSecret: setWidgetSecret,
+  onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  // Tests point the connectors at a local server (global.__widgetEndpoints); nothing else can.
+  endpoints: () => (TEST && global.__widgetEndpoints) || {},
+});
+if (TEST) global.__widgets = widgets;
 
 const settingsBackend = settingsPage.create({
   usage, // [usage] You and AI → Usage
-  // [look] New-tab pages already open take a new background, accent or layout at once (the page
-  // reads its design from its hash, so a hash change is enough: no reload, nothing typed is lost).
-  refreshNewTabs: () => { for (const t of tabs) if (alive(t) && isNewTab(t.view.webContents.getURL())) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(newTabUrl())}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {}); },
+  refreshNewTabs,
+  widgets, // [widgets] Settings → Appearance → Widgets
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
@@ -3558,6 +3809,8 @@ function toggleReaderActive() {
   return pageTools.toggleReader(tabs.find((t) => t.id === activeId && alive(t)));
 }
 ipcMain.on('page:reader', () => { toggleReaderActive(); });
+ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
+if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
 ipcMain.on('nav:back', () => activeTab()?.webContents.navigationHistory.goBack());
 ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());
@@ -3581,8 +3834,9 @@ ipcMain.on('find:start', (_e, text, options = {}) => {
 });
 ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSelection'));
 
+const tabsAsk = require('./features/tabs-ask');
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-ipcMain.on('agent:ask', (event, text, runId, images = []) => {
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   const valid = (Array.isArray(images) ? images : [])
     .filter((img) => IMAGE_TYPES.has(img?.media_type) && typeof img.data === 'string' && img.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(img.data))
     .slice(0, 5);
@@ -3590,6 +3844,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
   runRec = curRec; // the window this run's tab tools act on (agent:ask came from its UI)
   chatPageRt.beginRun(event, { text: String(text || ''), runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
   agent.run(String(text || ''), (msg) => {
+    if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type === 'done' || msg.type === 'error') runRec = null;
     if (msg.type === 'done') chatPageRt.endRun();
     chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open
@@ -3597,9 +3852,19 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
     else if (msg.type === 'tool_done') saveChatSoon(generation);
     else if (msg.type === 'usage' && generation === chatGeneration) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
-  }, valid);
+  // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
+  }, valid, { tabs: tabsAsk.cleanIds(tabIds) }, skillsFeature.takeRun(String(text || '')));
+});
+// The tabs the "@" picker offers: this window's readable tabs, never a private window's.
+ipcMain.handle('tabs:ask-list', (event) => {
+  if (!syntheticTestEvent(event) && !recOfSender(event?.sender)) return []; // a private window's UI is in no window record
+  return askTabsList()
+    .filter((t) => tabsAsk.ineligible({ ...t, aiOff: aiSites.isOff(t.url) }) === null)
+    .map((t) => ({ id: t.id, title: t.title, host: hostOf(t.url) || t.url, favicon: t.favicon, active: t.active, sleeping: t.sleeping }));
 });
 ipcMain.on('agent:stop', () => agent.stop());
+// "Working in: …" in the sidebar: jump to the tab the task works in.
+ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); if (id != null && agent.running) (runRec && winRecs.has(runRec) ? withWindow(runRec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.
 ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });
 

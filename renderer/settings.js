@@ -80,6 +80,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 
 const SECTIONS = [
   { id: 'you-and-ai', title: 'You and AI', build: buildAi },
+  { id: 'skills', title: 'Skills', build: buildSkills }, // settings-skills.js
   { id: 'usage', title: 'Usage', build: buildUsage }, // [usage]
   { id: 'appearance', title: 'Appearance', build: buildAppearance },
   { id: 'search', title: 'Search engine', build: buildSearch },
@@ -402,6 +403,118 @@ function buildLook(card) {
   );
   renderSwatches();
   renderTiles();
+  buildWidgets(card).catch((err) => card.append(row('Widgets', String(err?.message || err))));
+}
+
+// ---------- [widgets] cards on the new-tab page (features/widgets.js) ----------
+// Lumen fetches their data itself; the page gets display data only, and tokens stay encrypted in
+// the browser (they are sent in, never read back).
+const WIDGET_ICONS = {
+  weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
+  calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
+  todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
+  embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
+};
+const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
+function widgetIcon(type) {
+  const span = h('span', { class: `widget-icon wi-${type}` });
+  span.innerHTML = WIDGET_ICONS[type] || ''; // constant markup
+  return span;
+}
+async function buildWidgets(card) {
+  let ws = await S.widgets.state();
+  const list = h('div', { class: 'list widget-list', id: 'widget-list' });
+  const formHost = h('div', { class: 'widget-form-host' });
+  const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
+  const renderList = () => {
+    add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
+      widgetIcon(w.type),
+      h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
+      h('div', { class: 'widget-actions' },
+        h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${w.title} up`, title: 'Move up', disabled: i === 0, onclick: async () => { ws = await S.widgets.move(w.id, -1); renderList(); } }),
+        h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${w.title} down`, title: 'Move down', disabled: i === ws.widgets.length - 1, onclick: async () => { ws = await S.widgets.move(w.id, 1); renderList(); } }),
+        h('button', { text: 'Edit', 'aria-label': `Edit ${w.title}`, onclick: () => openForm(w) }),
+        h('button', { class: 'danger', text: 'Remove', 'aria-label': `Remove ${w.title}`, onclick: async () => { ws = await S.widgets.remove(w.id); closeForm(); } }),
+      ))));
+  };
+  const closeForm = () => { formHost.replaceChildren(); renderList(); };
+
+  // Add or edit: a type, its fields, and Check before Save.
+  function openForm(existing = null) {
+    let type = existing?.type || 'weather';
+    const note = h('span', { class: 'note', role: 'status', id: 'widget-note' });
+    const fields = h('div', { class: 'widget-fields' });
+    const title = h('input', { type: 'text', id: 'widget-title', placeholder: 'Automatic', maxlength: '60', 'aria-label': 'Card title' });
+    title.value = existing?.customTitle || '';
+    const inputs = {};
+    const field = (label, control, hint) => h('label', { class: 'widget-field' }, h('span', { class: 'label', text: label }), control, hint ? h('span', { class: 'note', text: hint }) : null);
+    const renderFields = () => {
+      for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
+      note.textContent = '';
+      note.className = 'note';
+      const same = existing?.type === type ? existing : null;
+      if (type === 'weather') {
+        inputs.city = h('input', { type: 'text', id: 'widget-city', placeholder: 'Boston', maxlength: '80', 'aria-label': 'City' });
+        inputs.city.value = same?.place || '';
+        inputs.units = h('select', { id: 'widget-units', 'aria-label': 'Temperature units' }, h('option', { value: 'f', text: '°F (Fahrenheit)' }), h('option', { value: 'c', text: '°C (Celsius)' }));
+        inputs.units.value = same?.units || (/^en-US$/i.test(navigator.language) ? 'f' : 'c');
+        fields.replaceChildren(field('City', inputs.city, 'Forecasts from Open-Meteo (free, no account). Only the place goes to it.'), field('Units', inputs.units));
+      } else if (type === 'calendar') {
+        inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'webcal://… or https://….ics', 'aria-label': 'Calendar address (ICS)' });
+        inputs.url.value = same?.url || '';
+        fields.replaceChildren(field('Calendar address', inputs.url, 'The subscribe or “secret address in iCal format” link from Muse, Google Calendar, Outlook, iCloud or Fantastical. Today’s and upcoming events show.'));
+      } else if (type === 'todoist') {
+        inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.todoist ? 'Saved. Paste a new token to replace it.' : 'Paste your API token', 'aria-label': 'Todoist API token' });
+        fields.replaceChildren(field('API token', inputs.token, 'In Todoist: Settings → Integrations → Developer. Stored encrypted by your system; it never reaches the new-tab page.'));
+      } else {
+        inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
+        inputs.url.value = same?.url || '';
+        inputs.height = h('select', { id: 'widget-height', 'aria-label': 'Card height' }, WIDGET_HEIGHTS.map(([v, t]) => h('option', { value: v, text: t })));
+        inputs.height.value = same?.height || 'medium';
+        fields.replaceChildren(field('Address', inputs.url, 'Any https page, like your Muse board or a dashboard. Sites that refuse to be framed get an Open button instead.'), field('Height', inputs.height));
+      }
+    };
+    const input = () => ({ type, title: title.value, city: inputs.city?.value, units: inputs.units?.value, url: inputs.url?.value, height: inputs.height?.value, token: inputs.token?.value });
+    const busy = (on) => { for (const b of form.querySelectorAll('button')) b.disabled = on; };
+    const check = h('button', { id: 'widget-check', text: 'Check', onclick: async () => {
+      busy(true);
+      note.textContent = 'Checking…';
+      note.className = 'note';
+      const r = await S.widgets.test(input()).catch((err) => ({ ok: false, error: true, message: err.message }));
+      busy(false);
+      flash(note, r.message, r.ok ? 'ok' : r.error ? 'err' : 'warn');
+    } });
+    const save = h('button', { class: 'primary', id: 'widget-save', text: existing ? 'Save' : 'Add', onclick: async () => {
+      busy(true);
+      note.textContent = 'Checking…';
+      note.className = 'note';
+      try {
+        const r = await S.widgets.save(input(), existing?.id || null);
+        ws = r.state;
+        closeForm();
+        flash(listNote, r.message, 'ok');
+      } catch (err) {
+        busy(false);
+        flash(note, String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err');
+      }
+    } });
+    const types = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Kind of widget' },
+      ws.types.map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, disabled: Boolean(existing) && t.type !== existing.type, onclick: () => { type = t.type; renderFields(); } }, widgetIcon(t.type), t.label)));
+    const form = h('div', { class: 'widget-form', id: 'widget-form' },
+      h('div', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
+      types, fields, field('Title', title),
+      h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: closeForm }), check, save));
+    formHost.replaceChildren(form);
+    renderFields();
+    renderList();
+    (inputs.city || inputs.url || inputs.token)?.focus();
+  }
+
+  const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
+  card.append(stackRow('Widgets', 'Cards under the search box on the new-tab page: weather, a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online.', list, formHost, h('div', { class: 'controls start' }, add, listNote)));
+  renderList();
 }
 function alertLine(host, text) {
   host.querySelector('.note.error')?.remove();
@@ -660,6 +773,28 @@ function buildLanguages(card) {
   };
   renderSpell();
   card.append(stackRow('Spell check languages', null, spell));
+  buildTranslate(card);
+}
+
+// Page translation (features/translate.js): offer, target language, and what the user allowed.
+function buildTranslate(card) {
+  const TARGETS = [['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'], ['nl', 'Dutch'], ['sv', 'Swedish'], ['pl', 'Polish'], ['tr', 'Turkish'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['ar', 'Arabic'], ['he', 'Hebrew'], ['hi', 'Hindi'], ['zh-CN', 'Chinese (Simplified)'], ['zh-TW', 'Chinese (Traditional)'], ['ja', 'Japanese'], ['ko', 'Korean'], ['vi', 'Vietnamese'], ['id', 'Indonesian'], ['th', 'Thai'], ['el', 'Greek']];
+  const listRow = (key, title, none, label = (v) => v) => {
+    const list = h('div', { class: 'list', id: `pref-${key}` });
+    const render = () => list.replaceChildren(...(st.prefs[key].length ? st.prefs[key].map((value) => h('div', { class: 'item' },
+      h('span', { class: 'grow', text: label(value) }),
+      h('button', { text: 'Remove', onclick: async () => { await save(key, st.prefs[key].filter((x) => x !== value)); render(); } })))
+      : [h('span', { class: 'note', text: none })]));
+    render();
+    return stackRow(title, null, list);
+  };
+  card.append(
+    toggle('translateOffer', tr('settings.translate.offer', 'Offer to translate pages'), tr('settings.translate.offerDesc', 'When a page is in another language than yours, show a translate button and a bar. Nothing is sent anywhere until you click Translate, and the first time Lumen asks before sending a page’s text to your AI provider.')),
+    select('translateTarget', tr('settings.translate.target', 'Translate pages into'), null,
+      [['', tr('settings.translate.targetDefault', 'Lumen’s language')], ...TARGETS.map(([code, name]) => [code, `${langName(code)}` === code ? name : langName(code)])]),
+    listRow('translateNever', tr('settings.translate.never', 'Sites never offered translation'), tr('settings.translate.neverNone', 'No sites.')),
+    listRow('translateConsent', tr('settings.translate.consent', 'Allowed to receive page text'), tr('settings.translate.consentNone', 'None yet: Lumen asks the first time you translate.'), (v) => (v === 'google' ? 'Google Translate' : v)),
+  );
 }
 
 function buildAccessibility(card) {

@@ -9,11 +9,12 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { registrableDomain } = require('./tab-groups');
 const { related } = require('./features/site-activity');
+const { cleanList: cleanWidgets } = require('./features/widgets');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
 const SETTINGS_PRELOAD = path.join(__dirname, 'settings-preload.js');
-const SECTIONS = ['you-and-ai', 'usage', 'appearance', 'search', 'startup', 'privacy', 'downloads', 'languages', 'accessibility', 'system', 'extensions', 'reset', 'about', 'internals'];
+const SECTIONS = ['you-and-ai', 'skills', 'usage', 'appearance', 'search', 'startup', 'privacy', 'downloads', 'languages', 'accessibility', 'system', 'extensions', 'reset', 'about', 'internals'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -40,6 +41,7 @@ const DEFAULTS = {
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
+  homeWidgets: [], // [widgets] [{ id, type, title, ...config }], in order (features/widgets.js); changed through prefs:widget-*
   forceDarkWebsites: false, // Chromium's auto dark mode (restart)
   defaultZoom: 1,
   fontSize: 16,
@@ -69,6 +71,10 @@ const DEFAULTS = {
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
+  translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
+  translateTarget: '', // '' = Lumen's language
+  translateNever: [], // sites where the offer stays away
+  translateConsent: [], // providers the user allowed to receive page text
   autoDownloadUpdates: true, // Windows setup installs: fetch new versions in the background (features/updates.js)
 };
 const RESTART_KEYS = ['hardwareAcceleration', 'forceDarkWebsites'];
@@ -87,6 +93,7 @@ const HEX = /^#[0-9a-f]{6}$/i;
 const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
+const translate = require('./features/translate');
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const bool = (v) => v === true;
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
@@ -109,6 +116,9 @@ function validate(key, value) {
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
+    case 'translateNever': return translate.cleanHosts(value);
+    case 'translateConsent': return translate.cleanConsent(value);
+    case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
     case 'adblockAllow':
       return Array.isArray(value) ? [...new Set(value.map((h) => String(h).trim().toLowerCase().replace(/^www\./, '')).filter((h) => /^[a-z0-9.-]+$/.test(h)))] : null;
     case 'permissionDefaults':
@@ -121,6 +131,7 @@ function validate(key, value) {
     case 'spellcheckLanguages':
     case 'languages':
       return Array.isArray(value) ? [...new Set(value.map(String).filter(langTag))].slice(0, 12) : null;
+    case 'homeWidgets': return cleanWidgets(value);
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -447,12 +458,13 @@ function create(deps) {
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());
-    if (key === 'accentColor' || key.startsWith('newTab')) deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
+    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
   async function set(key, value) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
+    if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
     writeSettings({ ...readSettings(), [key]: valid });
@@ -654,6 +666,12 @@ function create(deps) {
     });
     handle('prefs:pick-wallpaper', pickWallpaper); // [look]
     handle('prefs:remove-wallpaper', removeWallpaper);
+    // [widgets] the new-tab page's widgets (features/widgets.js): tokens go in, never come back out
+    handle('prefs:widgets', () => deps.widgets.state());
+    handle('prefs:widget-test', (input) => deps.widgets.test(input));
+    handle('prefs:widget-save', async (input, id) => { const out = await deps.widgets.save(input, typeof id === 'string' ? id : null); return { message: out.message, state: deps.widgets.state() }; });
+    handle('prefs:widget-remove', (id) => { deps.widgets.remove(String(id)); return deps.widgets.state(); });
+    handle('prefs:widget-move', (id, delta) => { deps.widgets.move(String(id), Number(delta)); return deps.widgets.state(); });
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
       return canceled || !filePaths[0] ? state() : set('downloadDir', filePaths[0]);

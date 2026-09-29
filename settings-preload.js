@@ -14,6 +14,14 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     pickDownloadDir: call('prefs:pick-download-dir'),
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
+    // [widgets] Appearance → Widgets
+    widgets: {
+      state: call('prefs:widgets'),
+      test: call('prefs:widget-test'),
+      save: call('prefs:widget-save'),
+      remove: call('prefs:widget-remove'),
+      move: call('prefs:widget-move'),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     extensions: call('prefs:extensions'),
@@ -35,6 +43,21 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       state: call('settings:updates-state'),
       check: call('settings:updates-check'),
       apply: call('settings:updates-apply'),
+    },
+    // Skills (features/skills.js)
+    skills: {
+      list: call('skills:list'),
+      save: call('skills:save'),
+      remove: call('skills:delete'),
+      reset: call('skills:reset'), // one built-in (id) or all of them
+      preview: call('skills:preview'),
+      exportAll: call('skills:export'),
+      importPick: call('skills:import-pick'),
+      importText: call('skills:import-text'),
+      importCommit: call('skills:import-commit'),
+      takeDraft: call('skills:take-draft'),
+      onDraft: (cb) => ipcRenderer.on('skills:draft', (_e, draft) => cb(draft)),
+      onChanged: (cb) => ipcRenderer.on('skills:changed', (_e, list) => cb(list)),
     },
     // "You and AI" reuses the sidebar's settings calls.
     ai: {

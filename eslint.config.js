@@ -29,15 +29,21 @@ module.exports = [
   },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', current: 'readonly' } } },
-  { files: ['renderer/settings.js'], languageOptions: { globals: { buildUpdates: 'readonly', buildMcpServers: 'readonly' } } },
+  { files: ['renderer/settings.js'], languageOptions: { globals: { buildUpdates: 'readonly', buildMcpServers: 'readonly', buildSkills: 'readonly' } } },
+  // settings-skills.js is loaded before settings.js and uses its helpers.
+  { files: ['renderer/settings-skills.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-mcp-servers.js is loaded after settings.js and uses its helpers.
   { files: ['renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
+  // newtab-widgets.js draws favicon tiles with newtab.js's tile() (loaded after it, called later).
+  { files: ['renderer/newtab-widgets.js'], languageOptions: { globals: { tile: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.
   // The chat itself (chat-core.js) is loaded before app.js, which uses it (and sets its chatHost hooks).
-  { files: ['renderer/app.js'], languageOptions: { globals: { t: 'readonly', updateTabAudio: 'readonly', $: 'readonly', ask: 'readonly', chatHost: 'readonly', startChat: 'readonly', TOOL_LABELS: 'readonly', append: 'readonly', showApproval: 'readonly', approvals: 'readonly', resolveApproval: 'readonly', running: 'readonly' } } },
+  { files: ['renderer/app.js'], languageOptions: { globals: { t: 'readonly', updateTabAudio: 'readonly', $: 'readonly', ask: 'readonly', addImages: 'readonly', chatHost: 'readonly', startChat: 'readonly', TOOL_LABELS: 'readonly', append: 'readonly', showApproval: 'readonly', approvals: 'readonly', resolveApproval: 'readonly', running: 'readonly' } } },
   { files: ['renderer/chat-core.js'], languageOptions: { globals: { t: 'readonly' } } },
   // chat-page.js (the full-page chat) is loaded after chat-core.js and uses its helpers; chat-items.js and chat-extras.js use t.
   { files: ['renderer/chat-page.js'], languageOptions: { globals: { t: 'readonly', $: 'readonly', chatHost: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', loadModels: 'readonly', refreshSetup: 'readonly', startChat: 'readonly', beginTurn: 'readonly', turn: 'readonly', runId: 'writable' } } },
+  // tabs-ask.js ("@" tabs in the composer) is loaded after chat-core.js and uses t and updateSend.
+  { files: ['renderer/tabs-ask.js'], languageOptions: { globals: { t: 'readonly', updateSend: 'readonly' } } },
   // chats.js is loaded after app.js and uses its helpers.
   { files: ['renderer/chats.js'], languageOptions: { globals: { $: 'readonly', clearChatView: 'readonly', showHistory: 'readonly' } } },
   // tab-search-match.js and app.js are loaded before tab-search.js and are used by it.

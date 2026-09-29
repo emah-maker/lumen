@@ -1390,6 +1390,16 @@ window.browser.onAskSelection((text) => {
   ask(t('ask.selection', { text }));
 });
 
+// "Ask AI about this" on a screenshot: the PNG (base64) goes into the sidebar's composer.
+window.browser.onAttachImage?.(async (base64) => {
+  showSidebar(true);
+  try {
+    const bytes = Uint8Array.from(atob(String(base64)), (c) => c.charCodeAt(0));
+    await addImages([new File([bytes], 'screenshot.png', { type: 'image/png' })]);
+    prompt.focus();
+  } catch { /* an unreadable image is skipped, as with a pasted one */ }
+});
+
 // ---------- settings: in lumen://settings; the sidebar keeps the search engine in sync ----------
 
 window.assistant.onSearchEngine?.((engine) => { searchEngine = engine; });

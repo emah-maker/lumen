@@ -146,6 +146,18 @@ const TOOLS = [
     },
   },
   {
+    name: 'read_tabs',
+    description: 'Read the text of several open tabs at once without switching to them (ids from list_tabs; web and file pages of this window; a sleeping tab gives only its address). Each tab is cut to max_chars_each (default 6000), 40,000 in all split evenly; the result says when a tab was cut. Untrusted content.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ids: { type: 'array', items: { type: 'integer' } },
+        max_chars_each: { type: 'integer' },
+      },
+      required: ['ids'],
+    },
+  },
+  {
     name: 'run_script',
     description: 'LAST RESORT. Run JavaScript in the active tab and return its result (use `return`; async/await allowed). Use it only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do the job, e.g. extracting a large table or list as structured data, and do it in one call. Never use it to click, type or navigate, and never to get around the confirmation rules. The result is JSON-serialized.',
     input_schema: {
@@ -485,7 +497,7 @@ const ONE_OF = { click: [['element_id', 'text']] };
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', ...snapshot.ACTING]);
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
-const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'list_tabs', 'run_script', 'batch', 'read_pdf']);
+const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf']);
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
 // as ACTING_TOOLS).
@@ -495,9 +507,11 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // none). Every other tool reads or acts on the task's tab, so a tab on a site where the user turned
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
-const TAB_FREE_TOOLS = new Set(['list_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
+const ID_TOOLS = new Set(['click', 'type_text', 'hover']); // tools that take an element_id from a read
+const TAB_FREE_TOOLS = new Set(['list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps' };
 const { siteOf } = require('./features/ai-sites');
+const tabsAsk = require('./features/tabs-ask');
 // ---- [/ai controls]
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
@@ -771,7 +785,14 @@ class Agent {
   inTask(tabId, signal, fn, chat = null, log = null) {
     const scope = { tabId: tabId ?? null, signal, chat, log };
     this.scopes.add(scope);
-    return taskScope.run(scope, fn).finally(() => this.scopes.delete(scope));
+    if (chat) this.runScope = scope; // the sidebar run (runTabId): only one runs at a time
+    return taskScope.run(scope, fn).finally(() => { this.scopes.delete(scope); if (this.runScope === scope) this.runScope = null; });
+  }
+
+  // The tab the sidebar's running task works in (null: none running, or no tab yet). The sidebar shows it
+  // ("Working in: …") so the user can tell which tab the AI is using after switching away.
+  runTabId() {
+    return this.runScope ? this.runScope.tabId : null;
   }
 
   // Is a task working in this tab right now (so tab sleeping must leave it alone)?
@@ -792,7 +813,9 @@ class Agent {
   // switch_tab / open_tab move the task to another tab on purpose.
   pinTab(id) {
     const scope = taskScope.getStore();
-    if (scope) scope.tabId = id;
+    if (!scope) return;
+    if (scope.tabId !== id) scope.idsFresh = false; // element ids read in the tab left mean nothing in this one
+    scope.tabId = id;
   }
 
   // Is the task's tab the one on screen? A background tab gets DOM clicks instead of mouse events.
@@ -858,14 +881,16 @@ class Agent {
   }
 
   // A new run waits for any previous run to finish stopping, so runs never overlap.
-  run(userText, emit, images = []) {
+  // `extra.tabs`: ids of open tabs whose text the user attached to this message (features/tabs-ask.js).
+  // `skill`: options of a prepared skill run { mode, model, tainted } (features/skills.js), or null.
+  run(userText, emit, images = [], extra = {}, skill = null) {
     const previous = this.current;
     const next = (async () => {
       if (previous) {
         this.stop();
         await previous.catch(() => {});
       }
-      await this.runOnce(userText, emit, images);
+      await this.runOnce(userText, emit, images, extra, skill);
     })();
     this.current = next;
     const clear = () => { if (this.current === next) this.current = null; };
@@ -875,7 +900,9 @@ class Agent {
 
   // Never throws, and always ends with a 'done' event: anything that goes wrong before the model is
   // even asked (a tab destroyed mid-read, say) used to leave the sidebar "running" forever.
-  async runOnce(userText, emit, images = []) {
+  async runOnce(userText, emit, images = [], extra = {}, skill = null) {
+    this.skillRun = skill; // read by runTask and loop; cleared below
+    let modelBefore = null; // a skill's own model applies to this run only
     const controller = new AbortController();
     this.controller = controller;
     const messages = this.messages; // reset() swaps in a new array; this run keeps writing to its own
@@ -888,9 +915,10 @@ class Agent {
       // The model the picker shows: a saved model that isn't connected anymore falls back the same way.
       // (Nothing connected at all: keep it, and the request fails with the "set up an AI" message.)
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
+      if (skill?.model && this.browser.effectiveModel?.(skill.model) === skill.model) { modelBefore = messages.settings.model; messages.settings.model = skill.model; }
 
       const tab = this.browser.activeTab();
-      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit), messages, log);
+      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log);
     } catch (err) {
       if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
@@ -899,10 +927,12 @@ class Agent {
       if (this.controller === controller) this.controller = null;
       const undo = this.undoSummary(log);
       emit({ type: 'done', model: messages.settings?.model, ...(undo ? { undo } : {}) });
+      this.skillRun = null;
+      if (modelBefore && messages.settings) messages.settings.model = modelBefore;
     }
   }
 
-  async runTask(messages, tab, userText, images, controller, emit) {
+  async runTask(messages, tab, userText, images, controller, emit, extra = {}) {
     const aiOff = tab && this.browser.aiOff?.(tab.webContents.getURL()); // [ai controls] no title or address either
     const state = aiOff
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
@@ -922,26 +952,32 @@ class Agent {
       delete messages.settings.gbModel;
     }
     // Stop works while the page is being read, too (it can take a few seconds on a heavy page).
-    const page = await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
-    if (page) this.markTainted(); // the attached page text counts as reading the page (see ensureAllowed)
+    // Tabs the user picked with "@" are attached too (read where they are, never switched to); the
+    // current tab's own text is not sent twice when it is one of them.
+    const wanted = tabsAsk.cleanIds(extra.tabs);
+    const attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
+    if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
+    const page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+    // The attached page text (or a skill's page, selection or clipboard text) counts as reading the page (see ensureAllowed).
+    if (page || attached.block || this.skillRun?.tainted) this.markTainted();
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
-      { type: 'text', text: state + page + note },
+      { type: 'text', text: state + page + attached.block + note },
     ];
     const last = messages[messages.length - 1];
     // After a stop, history can end on a user turn (tool results); extend it instead of stacking two.
     if (last?.role === 'user') last.content = [...(Array.isArray(last.content) ? last.content : [{ type: 'text', text: last.content }]), ...blocks];
     else messages.push({ role: 'user', content: blocks });
-    messages.simpleTurn = isSimpleQuestion(userText, images.length) ? messages[messages.length - 1] : null;
+    messages.simpleTurn = isSimpleQuestion(userText, images.length + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
 
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
     // Its tool calls arrive over MCP, outside this async context: engineScope() hands them this pin.
     if (viaClaudeCode || viaGrokBuild) {
       this.engineRunScope = taskScope.getStore();
       try {
-        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + note, images, controller.signal, emit);
-        else await this.grokBuildTurn(messages, state + page + note, images, controller.signal, emit);
+        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, emit);
+        else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, emit);
       } finally {
         this.engineRunScope = null;
       }
@@ -1132,6 +1168,7 @@ class Agent {
 
     for (let step = 0; step < budget.max; step++) {
       const finalTurn = Boolean(wrap) || budget.isFinal(step);
+      const toolsOff = finalTurn || this.skillRun?.mode === 'no-tools'; // a skill in no-tools mode answers in text only
       const wrapReason = wrap || 'limit';
       emit({ type: 'turn_start' });
       const model = messages.settings.model;
@@ -1149,8 +1186,8 @@ class Agent {
       let message;
       try {
         message = onClaude
-          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale), finalTurn)
-          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale), finalTurn).catch((err) => {
+          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale), toolsOff)
+          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale), toolsOff).catch((err) => {
             err.__provider = providers.splitModel(model).provider;
             throw err;
           });
@@ -1206,6 +1243,10 @@ class Agent {
       }
       if (toolUses.length === 0) {
         if (finalTurn) emit({ type: 'notice', text: wrapReason === 'stalled' ? STALL_NOTICE : LIMIT_NOTICE, action: 'continue' });
+        return;
+      }
+      if (toolsOff && !finalTurn) { // no-tools skill: a tool call is answered as not run and the reply ends
+        messages.push({ role: 'user', content: toolUses.map((use) => ({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: 'Not run: this skill answers without tools.' })) });
         return;
       }
       if (finalTurn) {
@@ -1297,6 +1338,7 @@ class Agent {
       if (name === 'find') return `Looking for ${quote(input.query || '')} on the page`;
       if (name === 'batch') return `Doing ${input.steps.length} step${input.steps.length === 1 ? '' : 's'} on the page`;
       if (name === 'read_pdf') return 'Reading the PDF';
+      if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
       if (name === 'hover') return 'Pointing at an element';
@@ -1683,6 +1725,46 @@ class Agent {
   }
   // ---- [/mcp client]
 
+  // ---- read_tabs / tabs a message attaches (features/tabs-ask.js): the text of open tabs of this window,
+  // read where they are (no switching), a sleeping tab only by its address. browser.askTabs() lists
+  // this window's tabs with their state; anything the rules refuse is named, not read.
+  async readTabEntries(ids) {
+    const open = this.browser.askTabs?.() || [];
+    const ctx = { windowId: undefined, isPrivate: false };
+    const entries = await Promise.all(tabsAsk.cleanIds(ids).map(async (id) => {
+      const tab = open.find((t) => t.id === id);
+      if (!tab) return { id, title: '', url: '', skipped: 'no open tab of this window has that id' };
+      const why = tabsAsk.ineligible({ ...tab, aiOff: this.browser.aiOff?.(tab.url) }, ctx);
+      if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
+      if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
+      try {
+        const page = await runScript(tab.webContents, scripts.readPage(0, 0), 4000);
+        return { id, title: tab.webContents.getTitle() || tab.title, url: tab.webContents.getURL() || tab.url, text: String(page?.text || ''), totalChars: page?.totalTextChars };
+      } catch {
+        return { id, title: tab.title, url: tab.url, skipped: 'the page did not answer' };
+      }
+    }));
+    return entries;
+  }
+
+  async readTabs(input) {
+    const ids = tabsAsk.cleanIds(input.ids);
+    if (!ids.length) throw new Error('Give at least one tab id from list_tabs.');
+    const perTab = Math.min(Math.max(Number(input.max_chars_each) || tabsAsk.PER_TAB_CHARS, 500), 12000);
+    const rendered = tabsAsk.renderTabs(await this.readTabEntries(ids), { perTab });
+    return `<untrusted_page_content>
+${rendered.text}
+</untrusted_page_content>`;
+  }
+
+  // The block for the tabs the user attached to a message (or '' for none), and what happened to each.
+  async tabsContextFor(ids) {
+    const list = tabsAsk.cleanIds(ids);
+    if (!list.length) return { block: '', tabs: [] };
+    const rendered = tabsAsk.renderTabs(await this.readTabEntries(list));
+    return { block: tabsAsk.messageBlock(rendered), tabs: rendered.tabs };
+  }
+
   // ---- read_pdf (features/pdf-text.js): the tab's PDF, only after the user allowed that PDF in this
   // chat. Never asked for a tab that isn't a PDF. Auto-allow doesn't cover it. The local path never
   // leaves this method: the card and the result use the file name.
@@ -1801,6 +1883,13 @@ ${out.text}${note}
   }
 
   async executeGuarded(name, input) {
+    const scope = taskScope.getStore();
+    // After switch_tab / open_tab the ids the model holds came from another tab; applied here they would
+    // hit whatever element has that number in this page. A read (read_page, find) of this tab brings them back.
+    if (scope && scope.idsFresh === false && ID_TOOLS.has(name) && input && input.element_id !== undefined) {
+      throw new Error('The task moved to another tab, so element ids from before belong to the previous tab. Call read_page mode:"compact" (or find) in this tab first, or use visible text.');
+    }
+    if (scope && (name === 'read_page' || name === 'find' || name === 'batch' || name === 'fill_form')) scope.idsFresh = true;
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
@@ -1924,6 +2013,7 @@ ${same}
         return `<untrusted_page_content>\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n')}\n</untrusted_page_content>`;
       }
       case 'read_pdf': return this.readPdf(input);
+      case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
         const pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }))));
@@ -2048,9 +2138,16 @@ ${same}
         await waitForLoad(wc);
         return `Now at ${wc.getURL()}.`;
       }
-      case 'list_tabs': // [ai controls] a tab on a site with AI off shows as its id only
+      case 'list_tabs': { // [ai controls] a tab on a site with AI off shows as its id only
+        // Inside a task, "active" is the tab the task's tools act on, which stays put when the user
+        // looks at another tab (in_front says which one they are looking at).
+        const pinned = taskScope.getStore()?.tabId ?? null;
         return JSON.stringify(agentTabList(this.browser.listTabs())
-          .map((t) => (this.browser.aiOff?.(t.url) ? { id: t.id, active: t.active, ai_off: true } : t)));
+          .map((t) => {
+            const view = pinned === null ? t : { ...t, active: t.id === pinned, ...(t.active && t.id !== pinned ? { in_front: true } : {}) };
+            return this.browser.aiOff?.(t.url) ? { id: t.id, active: view.active, ai_off: true } : view;
+          }));
+      }
       case 'open_tab': {
         const tab = this.browser.openTab(webUrl(input.url));
         this.pinTab(tab.id); // it opens in front; the task carries on there

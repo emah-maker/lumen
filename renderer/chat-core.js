@@ -242,8 +242,29 @@ function append(el) {
   return el;
 }
 
+// "Working in: <site>": while a task runs, which tab it works in. The AI stays in the tab it started in
+// when the user switches away, so this says where it is and jumps there. Only the sidebar has it.
+let agentTarget = null; // { id, title, host, front } from main, or null
+function renderWorkingIn() {
+  const el = optional('working-in');
+  const show = Boolean(running && agentTarget);
+  el.hidden = !show;
+  document.body.classList.toggle('agent-away', show && !agentTarget.front);
+  const pill = $('agent-pill-text');
+  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = show && !agentTarget.front ? t('agent.usingOther', { name: assistantIdentity?.name || 'AI' }) : t('agent.usingTab', { name: assistantIdentity?.name || 'AI' });
+  if (!show) return;
+  const name = agentTarget.title || agentTarget.host || t('agent.workingIn.untitled');
+  el.replaceChildren(Object.assign(document.createElement('span'), { className: 'agent-dot' }), Object.assign(document.createElement('span'), { textContent: t('agent.workingIn', { name }) }));
+  el.title = t('agent.workingIn.jump');
+  el.setAttribute('aria-label', `${t('agent.workingIn', { name })}. ${t('agent.workingIn.jump')}`);
+}
+window.assistant.onAgentTarget?.((info) => { agentTarget = info || null; renderWorkingIn(); });
+optional('working-in').onclick = () => window.assistant.showAgentTarget?.();
+
 function setRunning(value) {
   running = value;
+  if (!value) agentTarget = null;
+  renderWorkingIn();
   document.body.classList.toggle('agent-active', value);
   chatHost.running?.(value); // the sidebar re-measures the page it frames (app.js)
   send.classList.toggle('stop', value);
@@ -356,13 +377,14 @@ function sendQueued() {
   const next = queued.shift();
   if (!next) return;
   next.notice.remove();
-  ask(next.text, next.images);
+  ask(next.text, next.images, next.tabs);
 }
 
-function ask(text, images = []) {
+// `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
+function ask(text, images = [], tabs = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t('chat.image') }) }));
-    queued.push({ text, images, notice });
+    queued.push({ text, images, tabs, notice });
     return;
   }
   // Nothing connected: show the setup card instead of sending a message that can only error.
@@ -371,12 +393,13 @@ function ask(text, images = []) {
     append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') }));
     return;
   }
-  startTurn(text, images);
-  window.assistant.ask(text, ++runId, images.map(({ media_type, data }) => ({ media_type, data })));
+  if (tabs?.gone?.length) append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('tabs.gone', { names: tabs.gone.join(', ') }) }));
+  startTurn(text, images, tabs);
+  window.assistant.ask(text, ++runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
 }
 
 // The user's bubble and the working line for a turn that is now running.
-function startTurn(text, images) {
+function startTurn(text, images, tabs = null) {
   const bubble = document.createElement('div');
   bubble.className = 'msg user';
   if (images.length) {
@@ -391,6 +414,7 @@ function startTurn(text, images) {
     bubble.append(row);
   }
   if (text) bubble.append(document.createTextNode(text));
+  if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   append(bubble);
   beginTurn();
 }
@@ -434,6 +458,7 @@ const TOOL_LABELS = {
   ungroup_tabs: () => t('tool.ungroup_tabs'),
   read_urls: () => t('tool.read_urls'),
   read_pdf: () => t('tool.read_pdf'),
+  read_tabs: (i) => t(i.ids?.length === 1 ? 'tool.read_tabs.one' : 'tool.read_tabs.other', { count: i.ids?.length || 0 }),
   run_script: () => t('tool.run_script'),
   wait_for: (i) => t('tool.wait_for', { text: i.text ?? '' }),
 };
@@ -560,6 +585,9 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'tabs_attached': // main read the picked tabs: what actually went along (a sleeping tab only by address)
+      window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
+      break;
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted });
@@ -877,7 +905,7 @@ prompt.addEventListener('keydown', (e) => {
     $('composer').requestSubmit();
   }
 });
-$('composer').addEventListener('submit', (e) => {
+$('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (running) { window.assistant.stop(); return; }
   const text = prompt.value.trim();
@@ -887,12 +915,14 @@ $('composer').addEventListener('submit', (e) => {
   renderAttachments();
   prompt.value = '';
   autosize();
-  ask(text, images);
+  const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
+  ask(text, images, tabs);
   updateSend();
 });
 
 document.querySelectorAll('.chip').forEach((chip) => {
-  chip.onclick = () => ask(chip.dataset.prompt);
+  // A starter that works on all open tabs sends them along (after the once-per-chat confirm when there are many).
+  chip.onclick = () => (chip.dataset.allTabs && window.tabsAsk ? window.tabsAsk.askAll(chip.dataset.prompt) : ask(chip.dataset.prompt));
 });
 
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
@@ -902,6 +932,7 @@ function clearChatView() {
   approvals.clear();
   for (const q of queued.splice(0)) q.notice.remove();
   messages.querySelectorAll(':scope > :not(#empty)').forEach((el) => el.remove());
+  window.tabsAsk?.reset(); // "@" chips and the once-per-chat "all tabs" confirm start over
   $('empty').hidden = false;
   turn = null;
   setRunning(false);

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data: file:; form-action https:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data: file:; frame-src https:; form-action https:" />
   <title>New Tab</title>
   <style>
     :root {
@@ -55,12 +55,12 @@
       --mono-l: 30%; --mono-t: 88%;
       background: #000; text-shadow: 0 1px 12px rgba(0, 0, 0, 0.25);
     }
-    body.on-media input, body.on-media .frequent a, body.on-media .privacy, body.on-media .mode, body.on-media .empty {
+    body.on-media input, body.on-media .frequent a, body.on-media .privacy, body.on-media .mode, body.on-media .empty, body.on-media .w-card {
       -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
     }
     body.on-media input { background: rgba(255, 255, 255, 0.16); color: #fff; box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.22); }
     body.on-media input:focus { background: rgba(20, 20, 24, 0.62); }
-    body.on-media .frequent a, body.on-media .privacy { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
+    body.on-media .frequent a, body.on-media .privacy, body.on-media .w-card { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
     /* The clock: large, light, and steady (tabular digits don't jitter as minutes change). */
     .clock { margin: 0 0 4px; font-size: clamp(56px, 9vw, 88px); line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .clock[hidden] { display: none; }
@@ -161,7 +161,108 @@
       .grid a:hover .tile, .frequent a:active, .grid a:active .tile { transform: none; }
       @keyframes fade { from { opacity: 0; } }
     }
+
+    /* [widgets] Cards fed by the browser (features/widgets.js): weather, tasks, a calendar, a web
+       page. Two columns; a web page takes the full width. Everything in them is set as text. */
+    .widgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0 0 32px; animation: rise 480ms var(--ease) 60ms backwards; }
+    .widgets:empty { display: none; }
+    .w-card {
+      --cloud: #c5cbd3; --drop: #2f8cff; --sun: #ffb21a; --moon: #b8b5ff; --warn: #d70015;
+      position: relative; display: flex; flex-direction: column; min-width: 0; padding: 12px 14px 14px; border-radius: 16px;
+      background: var(--card); box-shadow: 0 0 0 0.5px var(--border);
+    }
+    @media (prefers-color-scheme: dark) { .w-card { --cloud: #9aa1ab; --drop: #64b5ff; --moon: #c9c7ff; --warn: #ff6961; } }
+    body.on-media .w-card { --cloud: #eef1f5; --drop: #8fd0ff; --warn: #ff8a80; }
+    .w-card.wide { grid-column: 1 / -1; }
+    .w-head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 8px; }
+    .w-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; font-weight: 600; color: var(--muted); }
+    .w-link { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 7px; color: var(--muted); font-size: 11.5px; font-weight: 500; text-decoration: none; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
+    .w-link:hover { background: var(--hover); color: var(--text); }
+    .w-link svg, .w-icon-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+    .w-card:hover .w-icon-btn, .w-icon-btn:focus-visible { opacity: 1; }
+    .w-icon-btn:hover { background: var(--hover); color: var(--text); }
+    .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-note { margin: auto 0; padding: 6px 0 2px; color: var(--muted); font-size: 12.5px; }
+    .w-note strong { display: block; color: var(--text); font-weight: 550; font-size: 13px; margin-bottom: 2px; }
+    .w-btn { appearance: none; display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 5px 12px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: 500 12px/18px system-ui, sans-serif; text-decoration: none; cursor: default; outline: none; transition: background-color 150ms ease-out; }
+    .w-btn:hover { background: var(--hover); }
+    .w-btn.primary { background: var(--accent); color: var(--on-accent); }
+    .w-empty { margin: auto 0; color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+
+    /* Loading: quiet placeholder bars. */
+    .w-skel { display: flex; flex-direction: column; gap: 9px; padding: 4px 0; }
+    .w-skel i { display: block; height: 10px; border-radius: 5px; background: var(--field); background-image: linear-gradient(90deg, transparent, var(--hover), transparent); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+    .w-skel i:nth-child(1) { width: 46%; height: 26px; border-radius: 8px; }
+    .w-skel i:nth-child(2) { width: 78%; }
+    .w-skel i:nth-child(3) { width: 62%; }
+    @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+    /* Weather */
+    .wx-now { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .wx-now svg { flex: none; width: 46px; height: 46px; }
+    .wx-temp { font-size: 38px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .wx-text { min-width: 0; display: flex; flex-direction: column; }
+    .wx-label { font-weight: 550; font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .wx-range { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+    .wx-hours { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; margin-top: auto; padding-top: 12px; border-top: 0.5px solid var(--border); }
+    .wx-hours > div { display: flex; flex-direction: column; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+    .wx-hours span:first-child { color: var(--muted); font-size: 11px; }
+    .wx-hours svg { width: 22px; height: 22px; }
+    .wx-hours span:last-child { font-size: 12px; font-weight: 550; }
+    .wx-icon .cloud { fill: var(--cloud); }
+    .wx-icon .sun { fill: var(--sun); }
+    .wx-icon .ray { stroke: var(--sun); stroke-width: 2; stroke-linecap: round; }
+    .wx-icon .moon { fill: var(--moon); }
+    .wx-icon .drop { stroke: var(--drop); stroke-width: 2; stroke-linecap: round; }
+    .wx-icon .flake { fill: var(--drop); }
+    .wx-icon .bolt { fill: var(--sun); }
+    .wx-icon .fog { stroke: var(--cloud); stroke-width: 2.2; stroke-linecap: round; }
+
+    /* Tasks and events: one row each. */
+    .w-list { display: flex; flex-direction: column; margin: 0 -6px; }
+    .w-row { display: flex; align-items: flex-start; gap: 9px; min-width: 0; padding: 5px 6px; border-radius: 9px; transition: background-color 150ms ease-out, opacity 240ms var(--ease); }
+    .w-row:hover { background: var(--hover); }
+    .w-row .w-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
+    .w-row a, .w-row .w-title { color: var(--text); text-decoration: none; outline: none; border-radius: 4px; font-size: 12.5px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .w-row a:hover { text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; }
+    .w-sub { color: var(--muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+    .w-sub.late { color: var(--warn); }
+    .w-more { padding: 4px 0 0; color: var(--muted); font-size: 11.5px; }
+    .w-check {
+      --p: var(--faint); appearance: none; flex: none; width: 17px; height: 17px; margin: 1px 0 0; padding: 0; border: 1.5px solid var(--p); border-radius: 50%;
+      background: transparent; cursor: default; outline: none; position: relative; transition: background-color 160ms ease-out, transform 160ms var(--ease);
+    }
+    .w-check[data-p="4"] { --p: #d1453b; } .w-check[data-p="3"] { --p: #eb8909; } .w-check[data-p="2"] { --p: #246fe0; }
+    .w-check[data-p="4"], .w-check[data-p="3"], .w-check[data-p="2"] { background: color-mix(in srgb, var(--p) 12%, transparent); }
+    .w-check::after { content: ""; position: absolute; left: 4.5px; top: 1.5px; width: 3.5px; height: 7px; border: solid var(--p); border-width: 0 1.6px 1.6px 0; transform: rotate(45deg); opacity: 0; transition: opacity 150ms ease-out; }
+    .w-check:hover::after { opacity: 0.6; }
+    .w-check[aria-checked="true"] { background: var(--p); }
+    .w-check[aria-checked="true"]::after { border-color: #fff; opacity: 1; }
+    .w-row.done { opacity: 0.45; }
+    .w-row.done a, .w-row.done .w-title { text-decoration: line-through; }
+    .w-day { padding: 8px 6px 2px; color: var(--muted); font-size: 10.5px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+    .w-day:first-child { padding-top: 0; }
+    .w-time { flex: none; width: 58px; padding-top: 1px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .w-bar { flex: none; width: 3px; align-self: stretch; margin: 2px 0; border-radius: 2px; background: var(--accent); opacity: 0.8; }
+
+    /* A web page in a frame (no Lumen privileges: sandboxed, no referrer), or a card that opens it. */
+    .w-frame { display: block; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
+    .w-frame[data-h="small"] { height: 200px; } .w-frame[data-h="medium"] { height: 340px; }
+    .w-frame[data-h="large"] { height: 500px; } .w-frame[data-h="tall"] { height: 720px; }
+    .w-card.embed { padding-bottom: 10px; }
+    .w-fallback { display: flex; align-items: center; gap: 12px; padding: 4px 0 2px; }
+    .w-fallback .tile { flex: none; width: 42px; height: 42px; border-radius: 11px; font-size: 17px; }
+    .w-fallback .w-note { margin: 0; padding: 0; flex: 1 1 auto; min-width: 0; }
+    .w-fallback .w-btn { margin: 0; flex: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .w-skel i { animation: none; }
+      .widgets { animation: fade 160ms ease-out backwards !important; }
+      .w-check, .w-row { transition: none; }
+    }
+
     @media (max-width: 560px) {
+      .widgets { grid-template-columns: minmax(0, 1fr); }
       .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .frequent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -184,9 +285,11 @@
         <button type="button" role="radio" id="mode-ask" data-mode="ask" aria-checked="false" tabindex="-1">Ask AI</button>
       </div><span class="mode-hint" id="mode-hint">Ctrl+/ to switch</span>
     </form>
+    <div id="widgets" class="widgets" role="region" aria-label="Widgets"></div>
     <div id="sections"></div>
   </main>
   <script src="favicons.js"></script>
+  <script src="newtab-widgets.js"></script>
   <script src="newtab.js"></script>
 </body>
 </html>

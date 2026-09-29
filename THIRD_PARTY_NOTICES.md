@@ -24,6 +24,7 @@ full license texts are in the linked projects and, for npm packages, in each pac
 | electron-updater, builder-util-runtime (electron-builder's updater and its runtime) | MIT | https://github.com/electron-userland/electron-builder |
 | openai | Apache-2.0 | https://github.com/openai/openai-node |
 | tldts-experimental (includes data from the Public Suffix List, MPL-2.0) | MIT | https://github.com/remusao/tldts |
+| qrcode-generator (makes the QR codes in features/qr.js, loaded on first use; MIT is compatible with GPL-3.0-or-later) | MIT | https://github.com/kazuhikoarase/qrcode-generator |
 | @mozilla/readability 0.6.0 (Readability.js and Readability-readerable.js, copied unmodified into `vendor/readability/` with its license) | Apache-2.0 | https://github.com/mozilla/readability |
 | Other transitive dependencies | MIT, ISC, BSD-2-Clause, BSD-3-Clause, Apache-2.0, Unlicense | run `npx license-checker --production` for the full list |
 
