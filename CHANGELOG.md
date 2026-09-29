@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.
+- Weather: several places, My location (asks first), hourly and by-day views. Todoist: choose the filter, grouping, sort and fields, undo completing, quick add. Calendar, weather and Todoist can match the screen colors.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab animated backgrounds (particles, stars, bubbles, snow) that stop when Reduce motion or Performance mode is on, and while the tab is hidden.

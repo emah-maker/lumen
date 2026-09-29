@@ -49,6 +49,8 @@ function lookOf(l) {
     clock: look.clock !== false,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
     sections: { favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
+    packed: look.widgetsPacked !== false, // [widgets] Keep widgets packed
+    imageColors: Array.isArray(look.imageColors) ? look.imageColors.filter((c) => hex(c)).slice(0, 3) : [], // [widgets] Match screen colours
   };
 }
 function effectStyleOf(s) {
@@ -75,7 +77,10 @@ function applyLook(look) {
     root.setProperty('--ring', `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, 0.3)`);
   } else { root.removeProperty('--accent'); root.removeProperty('--ring'); }
   document.getElementById('clock').hidden = !look.clock;
+  document.body.dataset.wpack = look.packed ? '1' : '0';
+  document.body.classList.toggle('calm', look.still || look.lite); // [widgets] no wiggle or sliding with Reduce motion or Performance mode
   applyEffect(look);
+  window.applyWidgetColors?.(); // [widgets] cards set to Match screen follow the accent, background and theme
 }
 // The animated effect's script is loaded the first time one is on, never otherwise.
 let effectScript = null;
@@ -89,6 +94,11 @@ function applyEffect(look) {
   document.head.append(effectScript);
 }
 dark.addEventListener('change', () => applyLook(currentLook));
+// [widgets] what newtab-widgets.js needs to tint cards from the page's own look
+window.widgetLook = () => ({
+  accent: (dark.matches || currentLook.background !== 'plain' ? currentLook.accent.dark : currentLook.accent.light) || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+  background: currentLook.background, dark: dark.matches, imageColors: currentLook.imageColors,
+});
 function tickClock() {
   const el = document.getElementById('clock');
   if (!el.hidden) el.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '');

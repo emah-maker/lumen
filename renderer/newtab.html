@@ -180,56 +180,100 @@
     }
 
     /* [widgets] Cards fed by the browser (features/widgets.js): weather, tasks, a calendar, a web
-       page. A six-column grid: each card spans 2, 3, 4 or 6 of it (data-span; a web page starts at
-       the full width, the rest at half). Drag a card's title bar to move it, its corner to resize it.
-       Everything in them is set as text. */
-    .widgets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 0 0 32px; animation: rise 480ms var(--ease) 60ms backwards; }
-    .widgets:empty { display: none; }
+       page. They sit on a 12-column grid over the whole page (newtab-widgets-grid.js positions them
+       with transforms; the centre column stays clear), and each card is a size container: what it
+       shows depends on the room it has. Everything in them is set as text. */
+    body { position: relative; display: flow-root; } /* flow-root: the centre column's margin (a banner above it) must not slide the whole page */
+    main { transition: margin-top 260ms var(--ease); }
+    .widgets { position: absolute; top: 0; left: 0; width: 100%; height: 0; pointer-events: none; z-index: 1; }
+    .widgets.empty { display: none; }
     .w-card {
       --cloud: #c5cbd3; --drop: #2f8cff; --sun: #ffb21a; --moon: #b8b5ff; --warn: #d70015;
-      position: relative; display: flex; flex-direction: column; min-width: 0; padding: 12px 14px 14px; border-radius: 16px;
-      background: var(--card); box-shadow: 0 0 0 0.5px var(--border); grid-column: span 3; container-type: inline-size;
-      transition: box-shadow 200ms var(--ease), transform 200ms var(--ease);
+      position: absolute; left: 0; top: 0; box-sizing: border-box; display: flex; flex-direction: column; min-width: 0; padding: 12px 14px 14px; border-radius: 16px;
+      background: var(--card); box-shadow: 0 0 0 0.5px var(--border); container-type: size; container-name: card; pointer-events: auto;
+      transition: transform 260ms var(--ease), box-shadow 200ms var(--ease), scale 200ms var(--ease);
     }
-    .w-card[data-span="2"] { grid-column: span 2; } .w-card[data-span="4"] { grid-column: span 4; } .w-card[data-span="6"] { grid-column: 1 / -1; }
+    .w-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     @media (prefers-color-scheme: dark) { .w-card { --cloud: #9aa1ab; --drop: #64b5ff; --moon: #c9c7ff; --warn: #ff6961; } }
     body.on-media .w-card { --cloud: #eef1f5; --drop: #8fd0ff; --warn: #ff8a80; }
-    .w-head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 8px; cursor: grab; touch-action: none; user-select: none; }
+    .w-instant .w-card, .w-instant .w-ghost, body.calm .w-card, body.calm .w-ghost, body.calm main { transition: none; }
+    .w-head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 8px; touch-action: none; user-select: none; flex: none; }
     .w-head a, .w-head button:not(.w-grip) { cursor: default; }
-    /* Moving and resizing: a grip before the title and a corner handle, both shown on hover. */
-    .w-grip, .w-resize { appearance: none; flex: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--faint); opacity: 0; outline: none; transition: opacity 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out; }
-    .w-grip { display: grid; place-items: center; width: 14px; height: 22px; margin: 0 -4px 0 -8px; border-radius: 5px; cursor: grab; }
+    .w-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+    .w-card.weather .w-body, .w-card.embed .w-body { overflow: hidden; }
+    .w-foot { flex: none; display: none; margin-top: 6px; color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .w-foot.warn { color: var(--warn); }
+    .w-foot:empty { display: none !important; }
+    @container card (min-height: 190px) { .w-foot { display: block; } }
+    /* Moving and resizing: a grip before the title and a corner handle, shown on hover; edit mode
+       adds a handle on every corner and edge, a remove badge, a gear and size presets. */
+    .w-grip, .w-resize { appearance: none; flex: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--faint); opacity: 0; outline: none; transition: opacity 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out; cursor: grab; }
+    .w-grip { display: grid; place-items: center; width: 14px; height: 22px; margin: 0 -4px 0 -8px; border-radius: 5px; }
     .w-grip svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
-    .w-resize { position: absolute; right: 2px; bottom: 2px; width: 18px; height: 18px; border-radius: 0 0 14px 4px; cursor: nwse-resize; touch-action: none; }
+    .w-resize { position: absolute; right: 2px; bottom: 2px; width: 18px; height: 18px; border-radius: 0 0 14px 4px; cursor: nwse-resize; touch-action: none; z-index: 2; }
     .w-resize svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
-    .w-card:hover .w-grip, .w-card:hover .w-resize, .w-grip:focus-visible, .w-resize:focus-visible, .w-card.resizing .w-resize { opacity: 1; }
+    .w-card:hover .w-grip, .w-card:hover .w-resize, .w-grip:focus-visible, .w-resize:focus-visible, .w-card.resizing .w-resize, body.w-editing .w-resize { opacity: 1; }
     .w-grip:hover, .w-resize:hover, .w-card.resizing .w-resize { color: var(--text); }
     .w-grip:focus-visible, .w-resize:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+    .w-h, .w-remove, .w-gear, .w-presets { display: none; }
+    .w-h { position: absolute; z-index: 2; touch-action: none; }
+    .w-h[data-dir="n"], .w-h[data-dir="s"] { left: 16px; right: 16px; height: 10px; cursor: ns-resize; }
+    .w-h[data-dir="e"], .w-h[data-dir="w"] { top: 16px; bottom: 16px; width: 10px; cursor: ew-resize; }
+    .w-h[data-dir="n"] { top: -5px; } .w-h[data-dir="s"] { bottom: -5px; } .w-h[data-dir="e"] { right: -5px; } .w-h[data-dir="w"] { left: -5px; }
+    .w-h[data-dir="ne"], .w-h[data-dir="nw"], .w-h[data-dir="sw"] { width: 14px; height: 14px; }
+    .w-h[data-dir="ne"] { right: -6px; top: -6px; cursor: nesw-resize; } .w-h[data-dir="nw"] { left: -6px; top: -6px; cursor: nwse-resize; } .w-h[data-dir="sw"] { left: -6px; bottom: -6px; cursor: nesw-resize; }
+    .w-h::after { content: ""; position: absolute; inset: 0; margin: auto; border-radius: 999px; background: var(--accent); opacity: 0.85; }
+    .w-h[data-dir="n"]::after, .w-h[data-dir="s"]::after { width: 28px; height: 4px; }
+    .w-h[data-dir="e"]::after, .w-h[data-dir="w"]::after { width: 4px; height: 28px; }
+    .w-h[data-dir="ne"]::after, .w-h[data-dir="nw"]::after, .w-h[data-dir="sw"]::after { width: 9px; height: 9px; }
+    body.w-editing .w-h { display: block; }
+    body.w-editing .w-remove, body.w-editing .w-gear { display: grid; }
+    body.w-editing .w-presets { display: none; }
+    body.w-editing .w-card:hover .w-presets, body.w-editing .w-card:focus-within .w-presets { display: flex; }
+    .w-remove, .w-gear { position: absolute; z-index: 3; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--shadow); cursor: default; outline: none; }
+    .w-remove { left: -8px; top: -8px; } .w-gear { right: -8px; top: -8px; }
+    .w-remove svg, .w-gear svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+    .w-remove:hover, .w-gear:hover { background: var(--hover); }
+    .w-remove.armed { background: #d70015; color: #fff; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px #d70015; }
+    .w-remove:focus-visible, .w-gear:focus-visible, .w-presets button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-presets { position: absolute; z-index: 3; left: 10px; bottom: 8px; gap: 3px; padding: 3px; border-radius: 10px; background: var(--bg); box-shadow: 0 0 0 1px var(--border), 0 4px 14px var(--shadow); }
+    .w-presets button { appearance: none; margin: 0; padding: 2px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: 500 11px/16px system-ui, sans-serif; cursor: default; outline: none; }
+    .w-presets button:hover { background: var(--hover); }
+    body.w-editing .w-card { touch-action: none; cursor: grab; user-select: none; }
+    body.w-editing .w-card * { pointer-events: none; }
+    body.w-editing .w-card .w-h, body.w-editing .w-card .w-resize, body.w-editing .w-card .w-remove, body.w-editing .w-card .w-gear, body.w-editing .w-card .w-presets, body.w-editing .w-card .w-presets * { pointer-events: auto; }
+    /* Wiggle like a home screen; a plain outline instead with Reduce motion or Performance mode. */
+    @keyframes wiggle { from { rotate: -0.45deg; } to { rotate: 0.45deg; } }
+    @media (prefers-reduced-motion: no-preference) {
+      body.w-editing:not(.calm) .w-card:not(.lifted):not(.resizing) { animation: wiggle 170ms ease-in-out infinite alternate; }
+      body.w-editing:not(.calm) .w-card:nth-child(2n):not(.lifted):not(.resizing) { animation-delay: -85ms; animation-direction: alternate-reverse; }
+    }
+    body.w-editing.calm .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+    @media (prefers-reduced-motion: reduce) { body.w-editing .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; } }
+    .w-card.pressing { scale: 0.97; transition: scale 380ms ease-out, transform 260ms var(--ease); }
     body.w-dragging, body.w-dragging * { user-select: none; }
     body.w-dragging iframe { pointer-events: none; } /* a frame under the pointer would swallow the drag */
-    .w-card.lifted { z-index: 2; cursor: grabbing; transition: box-shadow 200ms var(--ease); box-shadow: 0 0 0 1px var(--accent), 0 18px 40px -14px var(--shadow); }
-    .w-card.lifted .w-head { cursor: grabbing; }
-    .w-card.resizing { box-shadow: 0 0 0 1px var(--accent); }
-    /* Small cards keep to the essentials. */
-    @container (max-width: 240px) {
-      .wx-now { gap: 8px; margin-bottom: 10px; }
-      .wx-now svg { width: 34px; height: 34px; }
-      .wx-temp { font-size: 30px; }
-      .wx-range { white-space: normal; }
-      .wx-hours { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .wx-hours > div:nth-child(n + 4) { display: none; }
-      .w-time { width: 48px; }
-      .w-fallback { flex-wrap: wrap; }
-    }
+    .w-card.lifted { z-index: 4; cursor: grabbing; transition: box-shadow 200ms var(--ease); box-shadow: 0 0 0 1px var(--accent), 0 18px 40px -14px var(--shadow); }
+    .w-card.resizing { z-index: 4; transition: none; box-shadow: 0 0 0 1px var(--accent); }
+    .w-ghost { position: absolute; left: 0; top: 0; z-index: 2; box-sizing: border-box; border-radius: 16px; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; transition: transform 160ms var(--ease), width 160ms var(--ease), height 160ms var(--ease); }
+    .w-ghost.snap { border-style: solid; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+    .w-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    header { position: relative; }
+    .w-edit-btn { position: absolute; right: 0; top: 4px; appearance: none; margin: 0; padding: 4px 12px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; transition: background-color 150ms ease-out; }
+    .w-edit-btn[hidden] { display: none; }
+    .w-edit-btn:hover { background: var(--hover); }
+    .w-edit-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+    .w-edit-btn:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .w-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; font-weight: 600; color: var(--muted); }
     .w-link { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 7px; color: var(--muted); font-size: 11.5px; font-weight: 500; text-decoration: none; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
     .w-link:hover { background: var(--hover); color: var(--text); }
     .w-link svg, .w-icon-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-    .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+    .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
     .w-card:hover .w-icon-btn, .w-icon-btn:focus-visible { opacity: 1; }
     .w-icon-btn:hover { background: var(--hover); color: var(--text); }
-    .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible, .wx-day:focus-visible, .wx-dot:focus-visible, .td-add input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .w-note { margin: auto 0; padding: 6px 0 2px; color: var(--muted); font-size: 12.5px; }
+    .w-note.small { margin: 4px 0 0; padding: 0; font-size: 11.5px; }
     .w-note strong { display: block; color: var(--text); font-weight: 550; font-size: 13px; margin-bottom: 2px; }
     .w-btn { appearance: none; display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 5px 12px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: 500 12px/18px system-ui, sans-serif; text-decoration: none; cursor: default; outline: none; transition: background-color 150ms ease-out; }
     .w-btn:hover { background: var(--hover); }
@@ -244,18 +288,70 @@
     .w-skel i:nth-child(3) { width: 62%; }
     @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
-    /* Weather */
-    .wx-now { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-    .wx-now svg { flex: none; width: 46px; height: 46px; }
-    .wx-temp { font-size: 38px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    /* Weather: now is always there; the hourly strip, the details, the days and a multi-place list
+       come in as the card grows (and each can be switched off in Settings). */
+    .wx-places { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+    .wx-cycle { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+    .wx-place { display: none; flex-direction: column; min-height: 100%; }
+    .wx-place.active { display: flex; }
+    .wx-name { display: none; align-items: center; gap: 6px; margin-bottom: 4px; min-width: 0; }
+    .wx-city { font-size: 12.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .wx-approx { flex: none; padding: 0 6px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: 10.5px; }
+    .wx-now { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .wx-now svg { flex: none; width: 40px; height: 40px; }
+    .wx-temp { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .wx-text { min-width: 0; display: flex; flex-direction: column; }
     .wx-label { font-weight: 550; font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-    .wx-range { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-    .wx-hours { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; margin-top: auto; padding-top: 12px; border-top: 0.5px solid var(--border); }
-    .wx-hours > div { display: flex; flex-direction: column; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+    .wx-range { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .wx-details, .wx-hours, .wx-days, .wx-list { display: none; }
+    .wx-details { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px 10px; margin: 0 0 10px; padding: 8px 0; border-top: 0.5px solid var(--border); }
+    .wx-details > div { min-width: 0; }
+    .wx-details dt { color: var(--muted); font-size: 10.5px; }
+    .wx-details dd { margin: 0; font-size: 12.5px; font-weight: 550; font-variant-numeric: tabular-nums; }
+    .wx-hours { gap: 2px; overflow-x: auto; scrollbar-width: thin; margin-bottom: 8px; padding-top: 8px; border-top: 0.5px solid var(--border); }
+    .wx-hours > div { flex: 1 0 44px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
     .wx-hours span:first-child { color: var(--muted); font-size: 11px; }
     .wx-hours svg { width: 22px; height: 22px; }
-    .wx-hours span:last-child { font-size: 12px; font-weight: 550; }
+    .wx-hours span:nth-child(3) { font-size: 12px; font-weight: 550; }
+    .wx-pop { display: block; width: 70%; height: 3px; border-radius: 2px; background: var(--field); position: relative; overflow: hidden; }
+    .wx-pop::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--p, 0%); background: var(--drop); }
+    .wx-days { flex-direction: column; border-top: 0.5px solid var(--border); padding-top: 4px; }
+    .wx-day { appearance: none; display: grid; grid-template-columns: 46px 22px 32px 28px minmax(40px, 1fr) 28px; align-items: center; gap: 6px; width: 100%; margin: 0; padding: 4px 4px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: default; outline: none; font-variant-numeric: tabular-nums; }
+    .wx-day:hover { background: var(--hover); }
+    .wx-day svg { width: 20px; height: 20px; }
+    .wx-dn { font-weight: 550; } .wx-dp { color: var(--drop); font-size: 11px; } .wx-dl { color: var(--muted); text-align: right; } .wx-dh { font-weight: 550; }
+    .wx-bar { position: relative; height: 4px; border-radius: 2px; background: var(--field); }
+    .wx-bar i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: linear-gradient(90deg, #5ac8fa, #ffb21a); }
+    .wx-more { padding: 2px 4px 8px 52px; color: var(--muted); font-size: 11.5px; }
+    .wx-more p { margin: 0 0 6px; }
+    .wx-3h { display: flex; gap: 2px; overflow-x: auto; }
+    .wx-3h > div { flex: 1 0 40px; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+    .wx-3h svg { width: 18px; height: 18px; }
+    .wx-dots { flex: none; display: flex; justify-content: center; gap: 8px; padding-top: 6px; }
+    .wx-dot { appearance: none; position: relative; width: 7px; height: 7px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--faint); cursor: default; outline: none; }
+    .wx-dot::before { content: ""; position: absolute; inset: -6px; }
+    .wx-dot[aria-selected="true"] { background: var(--text); }
+    .wx-list { flex-direction: column; }
+    .wx-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px 40px auto; align-items: center; gap: 8px; padding: 6px 2px; border-bottom: 0.5px solid var(--border); font-variant-numeric: tabular-nums; }
+    .wx-row:last-child { border-bottom: 0; }
+    .wx-row svg { width: 22px; height: 22px; }
+    .wx-rc { font-weight: 550; font-size: 12.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .wx-rt { font-size: 15px; font-weight: 300; text-align: right; } .wx-rl { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .wx-ask { padding: 4px 0; } .wx-ask strong { display: block; font-size: 13px; margin-bottom: 2px; } .wx-ask p { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+    .wx-ask-btns { display: flex; gap: 6px; } .wx-ask .w-btn { margin-top: 2px; }
+    @container card (min-width: 150px) and (min-height: 130px) { .wx-name { display: flex; } }
+    @container card (min-width: 200px) and (min-height: 150px) { .wx-hours { display: flex; } }
+    @container card (min-height: 300px) { .wx-days { display: flex; } }
+    @container card (min-width: 260px) and (min-height: 260px) { .wx-details { display: grid; } }
+    /* Several places: one at a time with dots on a small card, one row each on a wide or tall one. */
+    .wx-places:not(:has(.wx-dots)) .wx-list { display: none !important; }
+    .wx-places[data-view="list"] .wx-cycle, .wx-places[data-view="list"] .wx-dots { display: none; }
+    .wx-places[data-view="list"] .wx-list { display: flex; }
+    @container card (min-width: 280px) and (min-height: 220px) {
+      .wx-places[data-view="auto"]:has(.wx-dots) .wx-cycle, .wx-places[data-view="auto"] .wx-dots { display: none; }
+      .wx-places[data-view="auto"] .wx-list { display: flex; }
+    }
+    .w-card.no-now .wx-now, .w-card.no-hourly .wx-hours, .w-card.no-daily .wx-days, .w-card.no-details .wx-details { display: none !important; }
     .wx-icon .cloud { fill: var(--cloud); }
     .wx-icon .sun { fill: var(--sun); }
     .wx-icon .ray { stroke: var(--sun); stroke-width: 2; stroke-linecap: round; }
@@ -264,6 +360,8 @@
     .wx-icon .flake { fill: var(--drop); }
     .wx-icon .bolt { fill: var(--sun); }
     .wx-icon .fog { stroke: var(--cloud); stroke-width: 2.2; stroke-linecap: round; }
+    @container card (max-width: 200px) { .wx-now { gap: 6px; } .wx-now svg { width: 30px; height: 30px; } .wx-temp { font-size: 28px; } .wx-text { display: none; } }
+    @container card (max-height: 120px) { .wx-text { display: none; } .wx-now { margin-bottom: 0; } }
 
     /* Tasks and events: one row each. */
     .w-list { display: flex; flex-direction: column; margin: 0 -6px; }
@@ -274,7 +372,7 @@
     .w-row a:hover { text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; }
     .w-sub { color: var(--muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
     .w-sub.late { color: var(--warn); }
-    .w-more { padding: 4px 0 0; color: var(--muted); font-size: 11.5px; }
+    .w-more { margin: 0; padding: 4px 0 0; color: var(--muted); font-size: 11.5px; }
     .w-check {
       --p: var(--faint); appearance: none; flex: none; width: 17px; height: 17px; margin: 1px 0 0; padding: 0; border: 1.5px solid var(--p); border-radius: 50%;
       background: transparent; cursor: default; outline: none; position: relative; transition: background-color 160ms ease-out, transform 160ms var(--ease);
@@ -290,12 +388,48 @@
     .w-day { padding: 8px 6px 2px; color: var(--muted); font-size: 10.5px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
     .w-day:first-child { padding-top: 0; }
     .w-time { flex: none; width: 58px; padding-top: 1px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .w-bar { flex: none; width: 3px; align-self: stretch; margin: 2px 0; border-radius: 2px; background: var(--accent); opacity: 0.8; }
+    .w-bar { flex: none; width: 3px; align-self: stretch; margin: 2px 0; border-radius: 2px; background: var(--ev, var(--accent)); opacity: 0.85; }
+    /* Colors setting (calendar, weather, todoist): "Match screen", "Accent only" and "Monochrome" tint the card from
+       the page's own colours; the text colours are derived to stay at 4.5:1 or better on the tinted surface. */
+    body .w-card.tinted { background: var(--w-surface); box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--w-text) 14%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--w-text); --text: var(--w-text); --muted: color-mix(in srgb, var(--w-text) 70%, var(--w-surface)); --faint: color-mix(in srgb, var(--w-text) 45%, var(--w-surface)); --hover: color-mix(in srgb, var(--w-text) 9%, transparent); --field: color-mix(in srgb, var(--w-text) 10%, transparent); transition: transform 260ms var(--ease), box-shadow 200ms var(--ease), scale 200ms var(--ease), background-color 300ms ease-out; }
+    .w-card.tinted .w-head h2, .w-card.tinted .w-day.today-label, .w-card.tinted .wx-temp { color: var(--w-head); }
+    .w-card.tinted .w-row .w-bar { background: var(--w-bar0); opacity: 1; }
+    .w-card.tinted .w-row[data-c="1"] .w-bar { background: var(--w-bar1); }
+    .w-card.tinted .w-row[data-c="2"] .w-bar { background: var(--w-bar2); }
+    .w-card.tinted .w-row.today { background: var(--w-today); }
+    .w-card.tinted .wx-bar i { background: linear-gradient(90deg, var(--w-bar1), var(--w-bar0)); }
+    .w-card.tinted .w-btn.primary { background: var(--w-head); color: var(--w-surface); }
+    body.calm .w-card.tinted { transition: none; }
+    /* Calendar: the next event on a small card, three on a middling one, the whole agenda on a tall one. */
+    @container card (max-height: 149px) { .calendar .later { display: none; } }
+    @container card (max-height: 299px) { .calendar .far, .calendar .w-day.later { display: none; } }
+    @container card (max-width: 240px) { .w-time { width: 48px; } .w-fallback { flex-wrap: wrap; } }
+    /* Todoist: a count and the next task on a small card, the list (with what the settings switch on) on a bigger one. */
+    .td-summary { display: flex; flex-direction: column; justify-content: center; min-height: 0; flex: 1 1 auto; }
+    .td-count { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .td-of { color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
+    .td-next { font-size: 12.5px; font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .td-full { display: none; flex-direction: column; }
+    @container card (min-width: 190px) and (min-height: 130px) { .td-summary { display: none; } .td-full { display: flex; } }
+    .td-meta { display: none; flex-wrap: wrap; align-items: center; gap: 0 8px; color: var(--muted); font-size: 11.5px; }
+    .td-desc { display: none; color: var(--muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    @container card (min-width: 260px) { .td-meta { display: flex; } }
+    @container card (min-width: 300px) and (min-height: 230px) { .td-desc { display: block; } }
+    .td-rec svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vertical-align: -1px; }
+    .td-proj i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%; background: var(--faint); }
+    .td-label { color: var(--muted); }
+    .dense .w-row { padding: 2px 6px; }
+    .dense .w-day { padding-top: 5px; }
+    .td-done { margin-top: 6px; } .td-done-row { padding: 2px 0; color: var(--muted); font-size: 12px; text-decoration: line-through; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .td-add { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
+    .td-add input { flex: 1 1 auto; width: auto; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12.5px; }
+    .td-add .w-btn { margin: 0; flex: none; }
+    .td-toast { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 12px; box-shadow: 0 6px 18px var(--shadow); }
+    .td-toast span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .td-toast .w-btn { margin: 0; padding: 2px 10px; background: rgba(128, 128, 128, 0.3); color: inherit; }
 
-    /* A web page in a frame (no Lumen privileges: sandboxed, no referrer), or a card that opens it. */
-    .w-frame { display: block; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
-    .w-frame[data-h="small"] { height: 200px; } .w-frame[data-h="medium"] { height: 340px; }
-    .w-frame[data-h="large"] { height: 500px; } .w-frame[data-h="tall"] { height: 720px; }
+    /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
+    .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
     .w-card.embed { padding-bottom: 10px; }
     .w-fallback { display: flex; align-items: center; gap: 12px; padding: 4px 0 2px; }
     .w-fallback .tile { flex: none; width: 42px; height: 42px; border-radius: 11px; font-size: 17px; }
@@ -303,13 +437,10 @@
     .w-fallback .w-btn { margin: 0; flex: none; }
     @media (prefers-reduced-motion: reduce) {
       .w-skel i { animation: none; }
-      .widgets { animation: fade 160ms ease-out backwards !important; }
-      .w-check, .w-row, .w-card { transition: none; }
+      .w-check, .w-row, .w-card, .w-ghost, main { transition: none; }
     }
 
     @media (max-width: 560px) {
-      .widgets { grid-template-columns: minmax(0, 1fr); }
-      .w-card[data-span] { grid-column: 1 / -1; }
       .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .frequent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -332,11 +463,14 @@
         <button type="button" role="radio" id="mode-ask" data-mode="ask" aria-checked="false" tabindex="-1">Ask AI</button>
       </div><span class="mode-hint" id="mode-hint">Ctrl+/ to switch</span>
     </form>
-    <div id="widgets" class="widgets" role="region" aria-label="Widgets"></div>
     <div id="sections"></div>
   </main>
+  <div id="widgets" class="widgets" role="region" aria-label="Widgets"></div>
   <script src="favicons.js"></script>
+  <script src="../features/widget-layout.js"></script>
+  <script src="../features/widget-colors.js"></script>
   <script src="newtab-widgets.js"></script>
+  <script src="newtab-widgets-grid.js"></script>
   <script src="newtab.js"></script>
 </body>
 </html>
