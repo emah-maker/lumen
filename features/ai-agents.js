@@ -12,6 +12,8 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { exists, lookup: which, validModel } = require('../cli-utils');
 const launcher = require('../launcher');
+// `electron` is only there in the main process; units.js loads this file in plain Node.
+const webContents = { getAllWebContents: () => require('electron').webContents.getAllWebContents() };
 
 const MAIN_DIR = path.join(__dirname, '..');
 const DEFAULT_AUTOMATION_PORT = 9222;
@@ -43,14 +45,21 @@ function automationToken(userData) {
 // { relaunch: true }: this process should hand over to launcher.js (main.js does). Otherwise the
 // proxy's plan, with Chromium's DevTools on the launcher's pipe (pipeFd) or, in test runs under
 // Playwright, on a localhost port (file: where Chromium says which).
-function prepareAutomation(app, settings) {
+// In-process backend (cdp-inproc.js): no Chromium port, no pipe, no launcher. Always on macOS, where
+// a launcher would lose the open-url/open-file events LaunchServices sends to the process it started;
+// LUMEN_AUTOMATION_INPROC=1 forces it elsewhere (how the tests run it on Windows and Linux).
+const inProcessAutomation = (platform = process.platform, env = process.env) => platform === 'darwin' || env.LUMEN_AUTOMATION_INPROC === '1';
+
+function prepareAutomation(app, settings, { platform = process.platform, env = process.env } = {}) {
   const launched = launcher.isLaunched();
   if (!settings.automationEnabled) return null;
-  if (!launched && launcher.available()) return { relaunch: true };
+  const inproc = inProcessAutomation(platform, env);
+  if (!inproc && !launched && launcher.available()) return { relaunch: true };
   const plan = { port: validPort(settings.automationPort), token: automationToken(app.getPath('userData')) };
   // Debugging makes Chromium set navigator.webdriver = true on every page, which Cloudflare's
   // "Verify you are human" and Google sign-in treat as a bot: the checkbox spins and resets forever.
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+  if (inproc) return { ...plan, inproc: true }; // never a debugging switch: nothing outside Lumen can reach Chromium's DevTools
   if (launched) {
     app.commandLine.appendSwitch('remote-debugging-pipe');
     return { ...plan, pipeFd: launcher.LUMEN_FD };
@@ -377,6 +386,12 @@ function setupAiAgents(deps) {
         openTab: (url, options = {}) => deps.openTab(deps.isWebUrl(url) || url === 'about:blank' ? url : 'about:blank', options),
         closeTab: (id) => deps.closeTab(id),
         switchTab: (id) => deps.switchTab(id),
+        // In-process backend only: every web contents, now and as they appear, so a tab's iframes are tracked from the start.
+        onContents: (cb) => {
+          for (const wc of webContents.getAllWebContents()) cb(wc);
+          app.on('web-contents-created', (_e, wc) => cb(wc));
+        },
+        userAgent: () => deps.userTabs()[0]?.webContents.getUserAgent() || '',
         onSession: ({ active, remaining }) => mcpEvent({ type: 'session', active: Boolean(active), remaining, clientName: 'Playwright (CDP)' }),
       },
     });
@@ -389,7 +404,7 @@ function setupAiAgents(deps) {
       // The address is http://127.0.0.1:<port>/<token>; the token of the next launch while it's on.
       token: automationProxy ? deps.automationPlan.token : settings.automationEnabled ? automationToken(app.getPath('userData')) : null,
       running: automationProxy ? { port: automationProxy.state.port, listening: automationProxy.state.listening, error: automationProxy.state.error, clients: automationProxy.clients() } : null,
-      internalPort: !launcher.available(), // Chromium's own port is open too (test runs: see launcher.js)
+      internalPort: !deps.automationPlan?.inproc && !launcher.available(), // Chromium's own port is open too (test runs: see launcher.js)
     };
   });
   ipcMain.handle('automation:set', (_e, { enabled, port } = {}) => {
@@ -508,4 +523,4 @@ function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models =
   }));
 }
 
-module.exports = { setupAiAgents, prepareAutomation, validPort, DEFAULT_AUTOMATION_PORT, claudeCodeOptions, grokBuildOptions };
+module.exports = { setupAiAgents, prepareAutomation, inProcessAutomation, validPort, DEFAULT_AUTOMATION_PORT, claudeCodeOptions, grokBuildOptions };

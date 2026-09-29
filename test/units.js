@@ -1732,6 +1732,174 @@ async function chatPageRuns() {
   check('continuous: related tabs end up in one group, not two near-twins', first && k2.every((t) => gid(t) === first) && h.tg.state().length === 1, JSON.stringify(h.tg.state()));
 }
 
+// ---- automation's in-process backend (cdp-inproc.js): session/target id mapping, filtering, and which
+// platforms use it (macOS always: no debugging port and no launcher, so open-url reaches the app)
+async function inprocRuns() {
+  const { EventEmitter } = require('events');
+  const { inprocUpstream, tabCommandFilter } = require('../cdp-inproc');
+  const { prepareAutomation, inProcessAutomation } = require('../features/ai-agents');
+
+  // prepareAutomation: the plan per platform
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-prep-'));
+    const switches = [];
+    const app = { getPath: () => dir, commandLine: { appendSwitch: (k, v) => switches.push(v === undefined ? k : `${k}=${v}`) } };
+    const on = { automationEnabled: true, automationPort: 9339 };
+    check('automation plan: off means no plan', prepareAutomation(app, { automationEnabled: false }, { platform: 'darwin', env: {} }) === null, 'plan');
+    const mac = prepareAutomation(app, on, { platform: 'darwin', env: {} });
+    check('automation plan: macOS is in-process, with no hand-over and no debugging switch', mac.inproc === true && !mac.relaunch && mac.pipeFd === undefined && !mac.file && mac.port === 9339 && /^[0-9a-f]{48}$/.test(mac.token) && !switches.some((s) => /remote-debugging/.test(s)), JSON.stringify({ mac, switches }));
+    switches.length = 0;
+    const forced = prepareAutomation(app, on, { platform: 'win32', env: { LUMEN_AUTOMATION_INPROC: '1' } });
+    check('automation plan: LUMEN_AUTOMATION_INPROC=1 forces it on Windows', forced.inproc === true && !forced.relaunch && !switches.some((s) => /remote-debugging/.test(s)), JSON.stringify(forced));
+    const win = prepareAutomation(app, on, { platform: 'win32', env: {} });
+    check('automation plan: Windows and Linux still hand over to the pipe launcher', win.relaunch === true && !inProcessAutomation('linux', {}) && inProcessAutomation('darwin', {}) && inProcessAutomation('freebsd', { LUMEN_AUTOMATION_INPROC: '1' }) && !inProcessAutomation('win32', { LUMEN_AUTOMATION_INPROC: '0' }), JSON.stringify(win));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const fakeTab = (id, targetId, url = 'http://a.example/', title = 'A') => {
+    const dbg = new EventEmitter();
+    let destroyed = false;
+    const wc = {
+      calls: [], url, title,
+      debugger: dbg,
+      getURL: () => wc.url, getTitle: () => wc.title, isDestroyed: () => destroyed, destroy: () => { destroyed = true; },
+    };
+    dbg.isAttached = () => true;
+    dbg.attach = () => {};
+    dbg.sendCommand = async (method, params, sid) => {
+      wc.calls.push({ method, params, sid });
+      if (method === 'Target.getTargetInfo') return { targetInfo: { targetId } };
+      if (method === 'Page.addScriptToEvaluateOnNewDocument') return { identifier: '7' };
+      if (method === 'Runtime.enable') return {};
+      if (method === 'Boom') throw new Error('Boom failed');
+      return { echo: method };
+    };
+    return { id, webContents: wc, wc, targetId };
+  };
+  const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+  const t1 = fakeTab(1, 'TARGET-1');
+  const t2 = fakeTab(2, 'TARGET-2', 'http://b.example/', 'B');
+  const tabs = [t1, t2];
+  const up = inprocUpstream({ tabs: () => tabs, userAgent: () => 'UA', versions: { chrome: '1.2.3', v8: '9.9' }, interval: 15 });
+  const out = [];
+  up.onMessage = (text) => out.push(JSON.parse(text));
+  let nextId = 1;
+  const rpc = async (method, params, sessionId) => {
+    const id = nextId++;
+    up.send({ id, method, params, ...(sessionId ? { sessionId } : {}) });
+    for (let i = 0; i < 200; i++) { const hit = out.find((m) => m.id === id); if (hit) return hit; await tick(5); }
+    return { id, timeout: true };
+  };
+  const events = (method, sessionId) => out.filter((m) => m.method === method && (sessionId === undefined || m.sessionId === sessionId));
+
+  const version = await rpc('Browser.getVersion');
+  check('inproc: Browser.getVersion answers from the process itself', version.result?.product === 'Chrome/1.2.3' && version.result.userAgent === 'UA' && version.result.protocolVersion === '1.3' && version.result.jsVersion === '9.9', JSON.stringify(version));
+  const B = (await rpc('Target.attachToBrowserTarget')).result.sessionId;
+  const listed = (await rpc('Target.getTargets', {}, B)).result.targetInfos;
+  check('inproc: getTargets lists exactly the tabs it was given', listed.map((t) => t.targetId).sort().join() === 'TARGET-1,TARGET-2' && listed.every((t) => t.type === 'page'), JSON.stringify(listed));
+  check('inproc: no session id is a target id, and session ids differ', /^[0-9A-F]{32}$/.test(B) && B !== 'TARGET-1', B);
+
+  await rpc('Target.setDiscoverTargets', { discover: true }, B);
+  await tick();
+  check('inproc: setDiscoverTargets reports each tab with targetCreated', events('Target.targetCreated', B).length === 2, JSON.stringify(out.length));
+  await rpc('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, B);
+  await tick();
+  const attached = events('Target.attachedToTarget', B);
+  const S1 = attached.find((m) => m.params.targetInfo.targetId === 'TARGET-1')?.params.sessionId;
+  const S2 = attached.find((m) => m.params.targetInfo.targetId === 'TARGET-2')?.params.sessionId;
+  check('inproc: setAutoAttach attaches each tab with its own session id', attached.length === 2 && S1 && S2 && S1 !== S2 && attached.every((m) => m.params.waitingForDebugger === false), JSON.stringify(attached));
+
+  const r1 = await rpc('Runtime.evaluate', { expression: '1' }, S1);
+  check('inproc: a command goes to its own tab only, unwrapped, and is answered on its session', t1.wc.calls.some((c) => c.method === 'Runtime.evaluate' && c.sid === undefined) && !t2.wc.calls.some((c) => c.method === 'Runtime.evaluate') && r1.sessionId === S1 && r1.result?.echo === 'Runtime.evaluate', JSON.stringify({ r1, calls: t1.wc.calls }));
+  const unknown = await rpc('Runtime.evaluate', {}, 'NOPE');
+  check('inproc: an unknown session is a clear error', unknown.error?.code === -32001 && /Session with given id not found/.test(unknown.error.message), JSON.stringify(unknown));
+  const failing = await rpc('Boom', {}, S1);
+  check('inproc: a failing command comes back as a CDP error', failing.error?.message === 'Boom failed', JSON.stringify(failing));
+
+  // What is refused inside a tab, and that it never reaches the tab's debugger.
+  const before = t1.wc.calls.length;
+  const refused = await Promise.all(['Page.close', 'Page.crash', 'Browser.setPermission', 'Browser.close', 'Target.createTarget', 'Target.exposeDevToolsProtocol'].map((m) => rpc(m, {}, S1)));
+  check('inproc: commands that reach past a tab are refused with a CDP error', refused.every((r) => r.error?.code === -32601 && /not available in Lumen/.test(r.error.message)) && t1.wc.calls.length === before, JSON.stringify(refused));
+  check('inproc: the filter lets ordinary and Emulation commands through', tabCommandFilter('Page.navigate').ok && tabCommandFilter('Emulation.setDeviceMetricsOverride').ok && tabCommandFilter('Fetch.enable').ok && !tabCommandFilter('Target.attachToTarget').ok, 'filter');
+  const browserLevel = await Promise.all(['Browser.grantPermissions', 'Target.createBrowserContext', 'Browser.setWindowBounds'].map((m) => rpc(m, {}, B)));
+  check('inproc: browser-level commands that can\'t be emulated answer with an error, not silence', browserLevel.every((r) => r.error?.code === -32601), JSON.stringify(browserLevel));
+  check('inproc: downloads: "allow" accepted, "deny" refused', (await rpc('Browser.setDownloadBehavior', { behavior: 'allowAndName' }, B)).result && (await rpc('Browser.setDownloadBehavior', { behavior: 'deny' }, B)).error?.code === -32601, 'download behavior');
+
+  // Child targets (iframes, workers) come from the tab's own debugger, one mapped id per client.
+  t1.wc.debugger.emit('message', {}, 'Target.attachedToTarget', { sessionId: 'CHROMIUM-C1', targetInfo: { targetId: 'FRAME-1', type: 'iframe' }, waitingForDebugger: true });
+  await tick();
+  check('inproc: a child is not shown to a session that did not turn auto-attach on', events('Target.attachedToTarget', S1).length === 0, 'shown');
+  await rpc('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, S1);
+  await tick();
+  const seen = events('Target.attachedToTarget', S1);
+  const C1 = seen[0]?.params.sessionId;
+  check('inproc: an existing child is replayed under a mapped id, not Chromium\'s and not waiting', seen.length === 1 && C1 && C1 !== 'CHROMIUM-C1' && seen[0].params.waitingForDebugger === false && seen[0].params.targetInfo.targetId === 'FRAME-1', JSON.stringify(seen));
+  await rpc('DOM.getDocument', {}, C1);
+  check('inproc: a command to a child goes to Chromium\'s session id for it', t1.wc.calls.some((c) => c.method === 'DOM.getDocument' && c.sid === 'CHROMIUM-C1'), JSON.stringify(t1.wc.calls.slice(-3)));
+  t1.wc.debugger.emit('message', {}, 'Runtime.consoleAPICalled', { type: 'log' }, 'CHROMIUM-C1');
+  t1.wc.debugger.emit('message', {}, 'Page.loadEventFired', { timestamp: 1 });
+  await tick();
+  check('inproc: a child\'s events carry the mapped id, a tab\'s its own session id', events('Runtime.consoleAPICalled', C1).length === 1 && events('Page.loadEventFired', S1).length === 1 && events('Page.loadEventFired', S2).length === 0, JSON.stringify(out.slice(-3)));
+  t1.wc.debugger.emit('message', {}, 'Target.attachedToTarget', { sessionId: 'CHROMIUM-C2', targetInfo: { targetId: 'FRAME-2', type: 'worker' }, waitingForDebugger: true });
+  await tick();
+  check('inproc: a live child is reported as paused, for the client to resume', events('Target.attachedToTarget', S1).length === 2 && events('Target.attachedToTarget', S1)[1].params.waitingForDebugger === true, 'not waiting');
+  t1.wc.debugger.emit('message', {}, 'Target.detachedFromTarget', { sessionId: 'CHROMIUM-C1' });
+  await tick();
+  const detachedChild = events('Target.detachedFromTarget', S1)[0];
+  check('inproc: a child going away is reported under its mapped id, then it is unknown', detachedChild?.params.sessionId === C1 && (await rpc('DOM.getDocument', {}, C1)).error?.code === -32001, JSON.stringify(detachedChild));
+
+  // A second client on the same tab: its own ids for the same child, and Runtime is answered from the first's contexts.
+  const B2 = (await rpc('Target.attachToBrowserTarget')).result.sessionId;
+  const S1b = (await rpc('Target.attachToTarget', { targetId: 'TARGET-1', flatten: true }, B2)).result.sessionId;
+  check('inproc: a second client gets its own session on the same tab', S1b && S1b !== S1 && (await rpc('Runtime.evaluate', {}, S1b)).result, S1b);
+  await rpc('Runtime.enable', {}, S1);
+  t1.wc.debugger.emit('message', {}, 'Runtime.executionContextCreated', { context: { id: 4, origin: 'http://a.example', name: '', auxData: { frameId: 'F' } } });
+  await tick();
+  const enableCalls = () => t1.wc.calls.filter((c) => c.method === 'Runtime.enable' && c.sid === undefined).length;
+  const outBefore = out.length;
+  await rpc('Runtime.enable', {}, S1b);
+  check('inproc: a second Runtime.enable is not passed on, and gets the contexts already reported', enableCalls() === 1 && out.slice(outBefore).some((m) => m.method === 'Runtime.executionContextCreated' && m.sessionId === S1b && m.params.context.id === 4), JSON.stringify(out.slice(outBefore)));
+  t1.wc.debugger.emit('message', {}, 'Runtime.executionContextCreated', { context: { id: 5 } });
+  await tick();
+  check('inproc: contexts reach both clients live', events('Runtime.executionContextCreated', S1).some((m) => m.params.context.id === 5) && events('Runtime.executionContextCreated', S1b).some((m) => m.params.context.id === 5), 'missing');
+  await rpc('Fetch.enable', {}, S1);
+  const fetchB = await rpc('Fetch.enable', {}, S1b);
+  check('inproc: request interception is one setting per tab: a second client is told so', /in use by another client/.test(fetchB.error?.message || ''), JSON.stringify(fetchB));
+
+  // Leaving: what the clients changed is undone when the last one detaches.
+  await rpc('Page.addScriptToEvaluateOnNewDocument', { source: 'x' }, S1);
+  await rpc('Emulation.setDeviceMetricsOverride', { width: 1, height: 1, deviceScaleFactor: 1, mobile: false }, S1);
+  await rpc('Target.detachFromTarget', { sessionId: S1b }, B2);
+  const mid = t1.wc.calls.length;
+  check('inproc: one client leaving does not undo what another still uses', !t1.wc.calls.slice(-3).some((c) => /disable|clear|remove/i.test(c.method)), JSON.stringify(t1.wc.calls.slice(-3)));
+  await rpc('Target.detachFromTarget', { sessionId: S1 }, B);
+  await tick();
+  const undone = t1.wc.calls.slice(mid).map((c) => c.method);
+  check('inproc: the last client leaving undoes scripts, emulation, interception and enabled domains', ['Page.removeScriptToEvaluateOnNewDocument', 'Emulation.clearDeviceMetricsOverride', 'Fetch.disable', 'Runtime.disable'].every((m) => undone.includes(m)), undone.join());
+  const gone = await rpc('Runtime.evaluate', {}, S1);
+  check('inproc: a detached session is unknown afterwards', gone.error?.code === -32001, JSON.stringify(gone));
+
+  // Tabs coming and going.
+  const t3 = fakeTab(3, 'TARGET-3', 'http://c.example/', 'C');
+  tabs.push(t3);
+  await tick(80);
+  const created = events('Target.targetCreated', B).find((m) => m.params.targetInfo.targetId === 'TARGET-3');
+  const attached3 = events('Target.attachedToTarget', B).find((m) => m.params.targetInfo.targetId === 'TARGET-3');
+  check('inproc: a new tab is reported (targetCreated) and auto-attached', created && attached3, JSON.stringify(out.slice(-4)));
+  t3.wc.url = 'http://c.example/next';
+  await tick(80);
+  check('inproc: a tab navigating is reported with targetInfoChanged', events('Target.targetInfoChanged', B).some((m) => m.params.targetInfo.url === 'http://c.example/next'), 'no change event');
+  t2.wc.destroy();
+  tabs.splice(tabs.indexOf(t2), 1);
+  await tick(80);
+  check('inproc: a closed tab is reported (targetDestroyed) and its session detached', events('Target.targetDestroyed', B).some((m) => m.params.targetId === 'TARGET-2') && events('Target.detachedFromTarget', B).some((m) => m.params.sessionId === S2), 'not reported');
+  check('inproc: getTargets no longer lists the closed tab', !(await rpc('Target.getTargets', {}, B)).result.targetInfos.some((t) => t.targetId === 'TARGET-2'), 'still listed');
+  check('inproc: a tab it was not given cannot be attached', /No target with given id/.test((await rpc('Target.attachToTarget', { targetId: 'UI-TARGET' }, B)).error?.message || ''), 'attached');
+
+  await rpc('Target.detachFromTarget', { sessionId: B }, undefined);
+  await rpc('Target.detachFromTarget', { sessionId: B2 }, undefined);
+  up.close();
+}
 
 // ---- the Windows swap helper's quit-apply mode (features/swap-helper.js)
 async function swapHelperRuns() {
@@ -2180,7 +2348,7 @@ async function bgTaskRuns() {
   fs.rmSync(dir2, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(() => {
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
