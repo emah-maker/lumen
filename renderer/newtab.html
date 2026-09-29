@@ -324,15 +324,15 @@
     .wx-rt { font-size: 15px; font-weight: 300; text-align: right; } .wx-rl { color: var(--muted); font-size: 11px; white-space: nowrap; }
     .wx-ask { padding: 4px 0; } .wx-ask strong { display: block; font-size: 13px; margin-bottom: 2px; } .wx-ask p { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
     .wx-ask-btns { display: flex; gap: 6px; } .wx-ask .w-btn { margin-top: 2px; }
-    @container card (min-width: 200px) and (min-height: 150px) { .wx-name { display: flex; } }
-    @container card (min-width: 250px) and (min-height: 190px) { .wx-hours { display: flex; } }
-    @container card (min-height: 330px) { .wx-days { display: flex; } }
-    @container card (min-width: 300px) and (min-height: 260px) { .wx-details { display: grid; } }
+    @container card (min-width: 150px) and (min-height: 130px) { .wx-name { display: flex; } }
+    @container card (min-width: 200px) and (min-height: 150px) { .wx-hours { display: flex; } }
+    @container card (min-height: 300px) { .wx-days { display: flex; } }
+    @container card (min-width: 260px) and (min-height: 260px) { .wx-details { display: grid; } }
     /* Several places: one at a time with dots on a small card, one row each on a wide or tall one. */
     .wx-places:not(:has(.wx-dots)) .wx-list { display: none !important; }
     .wx-places[data-view="list"] .wx-cycle, .wx-places[data-view="list"] .wx-dots { display: none; }
     .wx-places[data-view="list"] .wx-list { display: flex; }
-    @container card (min-width: 320px) and (min-height: 250px) {
+    @container card (min-width: 280px) and (min-height: 220px) {
       .wx-places[data-view="auto"]:has(.wx-dots) .wx-cycle, .wx-places[data-view="auto"] .wx-dots { display: none; }
       .wx-places[data-view="auto"] .wx-list { display: flex; }
     }
@@ -395,11 +395,11 @@
     .td-of { color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
     .td-next { font-size: 12.5px; font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     .td-full { display: none; flex-direction: column; }
-    @container card (min-width: 220px) and (min-height: 150px) { .td-summary { display: none; } .td-full { display: flex; } }
+    @container card (min-width: 190px) and (min-height: 130px) { .td-summary { display: none; } .td-full { display: flex; } }
     .td-meta { display: none; flex-wrap: wrap; align-items: center; gap: 0 8px; color: var(--muted); font-size: 11.5px; }
     .td-desc { display: none; color: var(--muted); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     @container card (min-width: 260px) { .td-meta { display: flex; } }
-    @container card (min-width: 320px) and (min-height: 240px) { .td-desc { display: block; } }
+    @container card (min-width: 300px) and (min-height: 230px) { .td-desc { display: block; } }
     .td-rec svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vertical-align: -1px; }
     .td-proj i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%; background: var(--faint); }
     .td-label { color: var(--muted); }
