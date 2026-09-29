@@ -3838,7 +3838,7 @@ const widgets = createWidgets({
 if (TEST) global.__widgets = widgets;
 // [widgets] The Spotify widget's Web player (features/spotify-web.js): one persistent view in the normal session.
 const spotifyWeb = SW.createSpotifyWeb({
-  WebContentsView, session: session.defaultSession, isWebUrl,
+  WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
   getWindow: () => win,
   getBounds: () => contentBounds,
   activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
