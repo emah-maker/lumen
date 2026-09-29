@@ -60,6 +60,10 @@
   promptEl.setAttribute('aria-controls', 'slash-menu');
   promptEl.setAttribute('aria-expanded', 'false');
 
+  // The message box's combobox state is shared with the "@" tab picker (tabs-ask.js): each popup only
+  // changes it while it is the one the box points at.
+  const ownsPrompt = () => { const c = promptEl.getAttribute('aria-controls'); return !c || c === 'slash-menu'; };
+
   function notify(text) {
     clearTimeout(hintTimer);
     hint.textContent = text || '';
@@ -96,8 +100,8 @@
     index = 0;
     open = shown.length > 0;
     menu.hidden = !open;
-    promptEl.setAttribute('aria-expanded', String(open));
-    if (!open) { promptEl.removeAttribute('aria-activedescendant'); return; }
+    if (open || ownsPrompt()) { promptEl.setAttribute('aria-controls', 'slash-menu'); promptEl.setAttribute('aria-expanded', String(open)); }
+    if (!open) { if (ownsPrompt()) promptEl.removeAttribute('aria-activedescendant'); return; }
     render();
     if (loader && !menu.dataset.loading) { // the page's state (selection, ...) makes the "can't run" reasons; it arrives a moment later
       menu.dataset.loading = '1';
@@ -107,8 +111,10 @@
   function closeMenu() {
     open = false;
     menu.hidden = true;
-    promptEl.setAttribute('aria-expanded', 'false');
-    promptEl.removeAttribute('aria-activedescendant');
+    if (ownsPrompt()) {
+      promptEl.setAttribute('aria-expanded', 'false');
+      promptEl.removeAttribute('aria-activedescendant');
+    }
   }
 
   // ---------- the chip ----------
