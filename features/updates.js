@@ -151,9 +151,13 @@ function createUpdates(deps) {
     updater.setFeedURL({ provider: 'github', owner: OWNER, repo: REPO }); // pinned, not inferred
     updater.logger = null;
     updater.disableWebInstaller = true;
-    updater.autoDownload = false; // it only looks: the zip below is what gets downloaded
-    updater.autoInstallOnAppQuit = false;
-    return updater;
+    return lookOnly(updater);
+  }
+  // It only looks: the zip in startStage() is what gets downloaded and installed.
+  function lookOnly(u) {
+    u.autoDownload = false;
+    u.autoInstallOnAppQuit = false;
+    return u;
   }
 
   // Download, verify and unpack this platform's zip; the restart then swaps it in.
@@ -240,7 +244,7 @@ function createUpdates(deps) {
 
   // Tests (test/updates.js) swap in a stand-in updater and stager and pretend to be a given kind of install.
   const testHooks = deps.test ? {
-    useUpdater: (u) => { clearTimeout(timer); updater = u; wire(u); },
+    useUpdater: (u) => { clearTimeout(timer); updater = lookOnly(u); wire(u); },
     useStager: (z) => { testStager = z; },
     stubQuit: (fn) => { testQuit = fn; },
     setKind: (k, replaceable = true) => { kind = k; mode = updateMode({ kind: k, replaceable: () => replaceable }); publish(); },
