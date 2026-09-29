@@ -11,7 +11,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
 
   // The same shape the sidebar's window.assistant has, cut down to what a conversation needs.
   contextBridge.exposeInMainWorld('assistant', {
-    ask: (text, runId, images) => ipcRenderer.send('agent:ask', text, runId, images),
+    ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
+    askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs
     stop: () => ipcRenderer.send('agent:stop'),
     reset: () => ipcRenderer.send('agent:reset'),
     chats: {

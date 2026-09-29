@@ -148,7 +148,7 @@ function cacheLastTool(tools) {
 // Read-only tools that may run side by side when the model asks for several in one turn. Nothing
 // here acts on a page, navigates the task's tab, or runs code (read_page since_last keeps a diff
 // baseline, so it stays sequential).
-const PARALLEL_READS = new Set(['read_page', 'find', 'read_urls', 'web_search', 'read_pdf', 'screenshot', 'list_tabs']);
+const PARALLEL_READS = new Set(['read_page', 'find', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'screenshot', 'list_tabs']);
 const isParallelRead = (use) => PARALLEL_READS.has(use.name) && !(use.name === 'read_page' && use.input && use.input.since_last);
 
 // Runs a turn's tool calls. Every call is gated (`gate`, may throw) one at a time, in order, before

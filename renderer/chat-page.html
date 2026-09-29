@@ -63,11 +63,16 @@
             <button class="chip" type="button" data-prompt="Summarize this page." data-i18n="chips.summarize">Summarize this page</button>
             <button class="chip" type="button" data-prompt="What are the key takeaways from this page?" data-i18n="chips.takeaways">Key takeaways</button>
             <button class="chip" type="button" data-prompt="Explain this page in simple terms." data-i18n="chips.explain">Explain simply</button>
+            <button class="chip" type="button" data-all-tabs="1" data-prompt="Summarize my open tabs." data-i18n="tabs.quick.summarize">Summarize my open tabs</button>
+            <button class="chip" type="button" data-all-tabs="1" data-prompt="Compare these tabs and tell me how they differ." data-i18n="tabs.quick.compare">Compare these tabs</button>
           </div>
         </div>
       </div>
 
       <form id="composer" class="composer">
+        <div class="tabs-picker" id="tabs-picker" role="listbox" aria-label="Open tabs" data-i18n-aria-label="tabs.picker" hidden></div>
+        <div class="tabs-confirm" id="tabs-confirm" role="alert" hidden></div>
+        <div class="tab-chips" id="tab-chips" role="list" aria-label="Tabs attached to this message" data-i18n-aria-label="tabs.chips" hidden></div>
         <div class="attachments" id="attachments" hidden></div>
         <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
         <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-title="composer.send.title" data-i18n-aria-label="composer.send" disabled>
@@ -81,6 +86,8 @@
   <script src="markdown.js"></script>
   <script src="picker.js"></script>
   <script src="chat-core.js"></script>
+  <script src="tabs-ask-core.js"></script>
+  <script src="tabs-ask.js"></script>
   <script src="chat-items.js"></script>
   <script src="chat-page.js"></script>
   <script src="chat-extras.js"></script>

@@ -131,7 +131,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
+  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
@@ -3115,6 +3115,13 @@ const agentTabById = (id) => {
   if (t?.sleeping) withWindow(owner, () => wakeTab(t));
   return t && alive(t) && !agentOffLimits(t) ? { id: t.id, webContents: t.view.webContents } : null;
 };
+// [ask across tabs] This window's tabs as read_tabs and the "@" picker see them (features/tabs-ask.js
+// decides which may be read). A private window's tabs are never in here: it keeps its own.
+const askTabsList = () => tabs.filter((t) => !t.closing && (alive(t) || t.sleeping)).map((t) => {
+  const live = alive(t);
+  const url = live ? realUrl(t.view.webContents) : t.sleepUrl || '';
+  return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping), active: t.id === activeId, offLimits: agentOffLimits(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
+});
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
 const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_KEY ? 'env' : cliAuth.profileState().signedIn ? 'cli' : null);
@@ -3137,7 +3144,7 @@ const inRun = (fn) => (...args) => (runRec && winRecs.has(runRec) ? withWindow(r
 const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
-  hasUnsavedInput: inRun(agentHasUnsavedInput), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
+  hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
@@ -3447,8 +3454,9 @@ ipcMain.on('find:start', (_e, text, options = {}) => {
 });
 ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSelection'));
 
+const tabsAsk = require('./features/tabs-ask');
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-ipcMain.on('agent:ask', (event, text, runId, images = []) => {
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   const valid = (Array.isArray(images) ? images : [])
     .filter((img) => IMAGE_TYPES.has(img?.media_type) && typeof img.data === 'string' && img.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(img.data))
     .slice(0, 5);
@@ -3464,7 +3472,14 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
     else if (msg.type === 'tool_done') saveChatSoon(generation);
     else if (msg.type === 'usage' && generation === chatGeneration) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
-  }, valid);
+  }, valid, { tabs: tabsAsk.cleanIds(tabIds) }); // tabIds: the tabs the user picked with "@" (features/tabs-ask.js)
+});
+// The tabs the "@" picker offers: this window's readable tabs, never a private window's.
+ipcMain.handle('tabs:ask-list', (event) => {
+  if (!syntheticTestEvent(event) && !recOfSender(event?.sender)) return []; // a private window's UI is in no window record
+  return askTabsList()
+    .filter((t) => tabsAsk.ineligible({ ...t, aiOff: aiSites.isOff(t.url) }) === null)
+    .map((t) => ({ id: t.id, title: t.title, host: hostOf(t.url) || t.url, favicon: t.favicon, active: t.active, sleeping: t.sleeping }));
 });
 ipcMain.on('agent:stop', () => agent.stop());
 // "Working in: …" in the sidebar: jump to the tab the task works in.

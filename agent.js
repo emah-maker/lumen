@@ -145,6 +145,18 @@ const TOOLS = [
     },
   },
   {
+    name: 'read_tabs',
+    description: 'Read the text of several open tabs at once without switching to them (ids from list_tabs; web and file pages of this window; a sleeping tab gives only its address). Each tab is cut to max_chars_each (default 6000), 40,000 in all split evenly; the result says when a tab was cut. Untrusted content.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ids: { type: 'array', items: { type: 'integer' } },
+        max_chars_each: { type: 'integer' },
+      },
+      required: ['ids'],
+    },
+  },
+  {
     name: 'run_script',
     description: 'LAST RESORT. Run JavaScript in the active tab and return its result (use `return`; async/await allowed). Use it only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do the job, e.g. extracting a large table or list as structured data, and do it in one call. Never use it to click, type or navigate, and never to get around the confirmation rules. The result is JSON-serialized.',
     input_schema: {
@@ -484,7 +496,7 @@ const ONE_OF = { click: [['element_id', 'text']] };
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'run_script', 'hover', 'close_tab', ...snapshot.ACTING]);
 // Tools that hand page content (or other tabs' addresses) to the model. After one of them, a run is
 // "tainted": whatever the page said could have told the model to carry data off in a URL.
-const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'list_tabs', 'run_script', 'batch', 'read_pdf']);
+const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'run_script', 'batch', 'read_pdf']);
 // Tools that send a request to a host the model picks (web_search: the query goes to DuckDuckGo).
 // In a tainted run, each new destination host needs the user's OK (the same per-chat approved hosts
 // as ACTING_TOOLS).
@@ -495,9 +507,10 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['list_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
+const TAB_FREE_TOOLS = new Set(['list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps' };
 const { siteOf } = require('./features/ai-sites');
+const tabsAsk = require('./features/tabs-ask');
 // ---- [/ai controls]
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web
@@ -867,14 +880,15 @@ class Agent {
   }
 
   // A new run waits for any previous run to finish stopping, so runs never overlap.
-  run(userText, emit, images = []) {
+  // `extra.tabs`: ids of open tabs whose text the user attached to this message (features/tabs-ask.js).
+  run(userText, emit, images = [], extra = {}) {
     const previous = this.current;
     const next = (async () => {
       if (previous) {
         this.stop();
         await previous.catch(() => {});
       }
-      await this.runOnce(userText, emit, images);
+      await this.runOnce(userText, emit, images, extra);
     })();
     this.current = next;
     const clear = () => { if (this.current === next) this.current = null; };
@@ -884,7 +898,7 @@ class Agent {
 
   // Never throws, and always ends with a 'done' event: anything that goes wrong before the model is
   // even asked (a tab destroyed mid-read, say) used to leave the sidebar "running" forever.
-  async runOnce(userText, emit, images = []) {
+  async runOnce(userText, emit, images = [], extra = {}) {
     const controller = new AbortController();
     this.controller = controller;
     const messages = this.messages; // reset() swaps in a new array; this run keeps writing to its own
@@ -899,7 +913,7 @@ class Agent {
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
 
       const tab = this.browser.activeTab();
-      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit), messages, log);
+      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log);
     } catch (err) {
       if (controller.signal.aborted || err instanceof Anthropic.APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
@@ -911,7 +925,7 @@ class Agent {
     }
   }
 
-  async runTask(messages, tab, userText, images, controller, emit) {
+  async runTask(messages, tab, userText, images, controller, emit, extra = {}) {
     const aiOff = tab && this.browser.aiOff?.(tab.webContents.getURL()); // [ai controls] no title or address either
     const state = aiOff
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
@@ -931,26 +945,31 @@ class Agent {
       delete messages.settings.gbModel;
     }
     // Stop works while the page is being read, too (it can take a few seconds on a heavy page).
-    const page = await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
-    if (page) this.markTainted(); // the attached page text counts as reading the page (see ensureAllowed)
+    // Tabs the user picked with "@" are attached too (read where they are, never switched to); the
+    // current tab's own text is not sent twice when it is one of them.
+    const wanted = tabsAsk.cleanIds(extra.tabs);
+    const attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
+    if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
+    const page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+    if (page || attached.block) this.markTainted(); // the attached page text counts as reading the page (see ensureAllowed)
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
-      { type: 'text', text: state + page + note },
+      { type: 'text', text: state + page + attached.block + note },
     ];
     const last = messages[messages.length - 1];
     // After a stop, history can end on a user turn (tool results); extend it instead of stacking two.
     if (last?.role === 'user') last.content = [...(Array.isArray(last.content) ? last.content : [{ type: 'text', text: last.content }]), ...blocks];
     else messages.push({ role: 'user', content: blocks });
-    messages.simpleTurn = isSimpleQuestion(userText, images.length) ? messages[messages.length - 1] : null;
+    messages.simpleTurn = isSimpleQuestion(userText, images.length + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
 
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
     // Its tool calls arrive over MCP, outside this async context: engineScope() hands them this pin.
     if (viaClaudeCode || viaGrokBuild) {
       this.engineRunScope = taskScope.getStore();
       try {
-        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + note, images, controller.signal, emit);
-        else await this.grokBuildTurn(messages, state + page + note, images, controller.signal, emit);
+        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, emit);
+        else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, emit);
       } finally {
         this.engineRunScope = null;
       }
@@ -1306,6 +1325,7 @@ class Agent {
       if (name === 'find') return `Looking for ${quote(input.query || '')} on the page`;
       if (name === 'batch') return `Doing ${input.steps.length} step${input.steps.length === 1 ? '' : 's'} on the page`;
       if (name === 'read_pdf') return 'Reading the PDF';
+      if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
       if (name === 'hover') return 'Pointing at an element';
@@ -1692,6 +1712,46 @@ class Agent {
   }
   // ---- [/mcp client]
 
+  // ---- read_tabs / tabs a message attaches (features/tabs-ask.js): the text of open tabs of this window,
+  // read where they are (no switching), a sleeping tab only by its address. browser.askTabs() lists
+  // this window's tabs with their state; anything the rules refuse is named, not read.
+  async readTabEntries(ids) {
+    const open = this.browser.askTabs?.() || [];
+    const ctx = { windowId: undefined, isPrivate: false };
+    const entries = await Promise.all(tabsAsk.cleanIds(ids).map(async (id) => {
+      const tab = open.find((t) => t.id === id);
+      if (!tab) return { id, title: '', url: '', skipped: 'no open tab of this window has that id' };
+      const why = tabsAsk.ineligible({ ...tab, aiOff: this.browser.aiOff?.(tab.url) }, ctx);
+      if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
+      if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
+      try {
+        const page = await runScript(tab.webContents, scripts.readPage(0, 0), 4000);
+        return { id, title: tab.webContents.getTitle() || tab.title, url: tab.webContents.getURL() || tab.url, text: String(page?.text || ''), totalChars: page?.totalTextChars };
+      } catch {
+        return { id, title: tab.title, url: tab.url, skipped: 'the page did not answer' };
+      }
+    }));
+    return entries;
+  }
+
+  async readTabs(input) {
+    const ids = tabsAsk.cleanIds(input.ids);
+    if (!ids.length) throw new Error('Give at least one tab id from list_tabs.');
+    const perTab = Math.min(Math.max(Number(input.max_chars_each) || tabsAsk.PER_TAB_CHARS, 500), 12000);
+    const rendered = tabsAsk.renderTabs(await this.readTabEntries(ids), { perTab });
+    return `<untrusted_page_content>
+${rendered.text}
+</untrusted_page_content>`;
+  }
+
+  // The block for the tabs the user attached to a message (or '' for none), and what happened to each.
+  async tabsContextFor(ids) {
+    const list = tabsAsk.cleanIds(ids);
+    if (!list.length) return { block: '', tabs: [] };
+    const rendered = tabsAsk.renderTabs(await this.readTabEntries(list));
+    return { block: tabsAsk.messageBlock(rendered), tabs: rendered.tabs };
+  }
+
   // ---- read_pdf (features/pdf-text.js): the tab's PDF, only after the user allowed that PDF in this
   // chat. Never asked for a tab that isn't a PDF. Auto-allow doesn't cover it. The local path never
   // leaves this method: the card and the result use the file name.
@@ -1940,6 +2000,7 @@ ${same}
         return `<untrusted_page_content>\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n')}\n</untrusted_page_content>`;
       }
       case 'read_pdf': return this.readPdf(input);
+      case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
         const pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }))));
