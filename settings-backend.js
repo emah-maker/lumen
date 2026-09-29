@@ -9,6 +9,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { registrableDomain } = require('./tab-groups');
 const { related } = require('./features/site-activity');
+const { cleanList: cleanWidgets } = require('./features/widgets');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
@@ -40,6 +41,7 @@ const DEFAULTS = {
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
+  homeWidgets: [], // [widgets] [{ id, type, title, ...config }], in order (features/widgets.js); changed through prefs:widget-*
   forceDarkWebsites: false, // Chromium's auto dark mode (restart)
   defaultZoom: 1,
   fontSize: 16,
@@ -127,6 +129,7 @@ function validate(key, value) {
     case 'spellcheckLanguages':
     case 'languages':
       return Array.isArray(value) ? [...new Set(value.map(String).filter(langTag))].slice(0, 12) : null;
+    case 'homeWidgets': return cleanWidgets(value);
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -452,12 +455,13 @@ function create(deps) {
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());
-    if (key === 'accentColor' || key.startsWith('newTab')) deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
+    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
   async function set(key, value) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
+    if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
     writeSettings({ ...readSettings(), [key]: valid });
@@ -658,6 +662,12 @@ function create(deps) {
     });
     handle('prefs:pick-wallpaper', pickWallpaper); // [look]
     handle('prefs:remove-wallpaper', removeWallpaper);
+    // [widgets] the new-tab page's widgets (features/widgets.js): tokens go in, never come back out
+    handle('prefs:widgets', () => deps.widgets.state());
+    handle('prefs:widget-test', (input) => deps.widgets.test(input));
+    handle('prefs:widget-save', async (input, id) => { const out = await deps.widgets.save(input, typeof id === 'string' ? id : null); return { message: out.message, state: deps.widgets.state() }; });
+    handle('prefs:widget-remove', (id) => { deps.widgets.remove(String(id)); return deps.widgets.state(); });
+    handle('prefs:widget-move', (id, delta) => { deps.widgets.move(String(id), Number(delta)); return deps.widgets.state(); });
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
       return canceled || !filePaths[0] ? state() : set('downloadDir', filePaths[0]);

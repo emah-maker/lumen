@@ -46,6 +46,7 @@ const { createSafeBrowsing } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
+const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -273,6 +274,25 @@ function safeBrowsingKey() {
     try { return decryptKey(enc); } catch {}
   }
   return process.env.GOOGLE_SAFE_BROWSING_API_KEY || null;
+}
+
+// [widgets] tokens for new-tab widgets (Todoist): settings.keys[`widget:${name}`], encrypted like
+// the others. Only features/widgets.js asks for them, in this process; the page never sees them.
+function widgetSecret(name) {
+  const enc = readSettings().keys?.[`widget:${name}`];
+  if (!enc || !safeStorage.isEncryptionAvailable()) return null;
+  try { return decryptKey(enc); } catch { return null; }
+}
+function setWidgetSecret(name, value) {
+  const settings = readSettings();
+  const keys = { ...(settings.keys || {}) };
+  if (value) {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable, so Lumen can’t store the token safely.');
+    keys[`widget:${name}`] = safeStorage.encryptString(String(value)).toString('base64');
+  } else {
+    delete keys[`widget:${name}`];
+  }
+  writeSettings({ ...settings, keys });
 }
 
 function providerKey(provider) {
@@ -1225,7 +1245,7 @@ function wireView(tab, url, history = null) {
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
     tab.favicon = tab.favicons[0] || null;
   });
-  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id); });
+  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url); });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
@@ -2203,6 +2223,7 @@ function newTabUrl() {
     search: engineFor(readSettings().searchEngine),
     assistant: homeAssistant(),
     look: settingsBackend.newTabLook(), // [look] background, accent, clock, name, which sections show
+    widgets: widgets.forPage(), // [widgets] display data only (cached; stale ones refresh in the background)
   };
   return `${NEW_TAB_URL}#${encodeURIComponent(JSON.stringify(data))}`;
 }
@@ -2232,6 +2253,17 @@ function askFromHome(event, url, tabId) {
   text = text.trim().slice(0, 20000);
   if (!text) return true;
   ui()?.send('ask-from-home', { text, tabId });
+  return true;
+}
+
+// [widgets] The new-tab page's widget buttons (a Todoist checkbox, Refresh) load the page itself
+// with ?widget=<id>&do=…, the same way Ask AI does: cancel that and do it here.
+function widgetAction(event, url) {
+  if (!isNewTab(url)) return false;
+  const action = widgets.actionFrom(url);
+  if (!action) return false;
+  event.preventDefault();
+  if (!action.invalid) widgets.act(action).catch((err) => console.error('[lumen] widget action:', err.message));
   return true;
 }
 
@@ -3541,11 +3573,32 @@ if (TEST) global.__skills = skillsFeature;
 
 // ---------- [settings] lumen://settings ----------
 
+// [look] New-tab pages already open take a new background, accent or layout at once (the page
+// reads its design from its hash, so a hash change is enough: no reload, nothing typed is lost).
+function refreshNewTabs() {
+  const open = tabs.filter((t) => alive(t) && isNewTab(t.view.webContents.getURL()));
+  if (!open.length) return;
+  const url = newTabUrl();
+  for (const t of open) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {});
+}
+// [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as
+// several widgets often finish together).
+let widgetRefreshTimer = null;
+const widgets = createWidgets({
+  readSettings, writeSettings,
+  fetch: (url, options) => net.fetch(url, options),
+  getSecret: widgetSecret,
+  setSecret: setWidgetSecret,
+  onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  // Tests point the connectors at a local server (global.__widgetEndpoints); nothing else can.
+  endpoints: () => (TEST && global.__widgetEndpoints) || {},
+});
+if (TEST) global.__widgets = widgets;
+
 const settingsBackend = settingsPage.create({
   usage, // [usage] You and AI → Usage
-  // [look] New-tab pages already open take a new background, accent or layout at once (the page
-  // reads its design from its hash, so a hash change is enough: no reload, nothing typed is lost).
-  refreshNewTabs: () => { for (const t of tabs) if (alive(t) && isNewTab(t.view.webContents.getURL())) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(newTabUrl())}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {}); },
+  refreshNewTabs,
+  widgets, // [widgets] Settings → Appearance → Widgets
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
