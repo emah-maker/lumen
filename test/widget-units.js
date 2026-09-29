@@ -89,6 +89,18 @@ module.exports = async function widgetUnits(check) {
   const box = { left: 400, right: 1040, bottom: 800 };
   const obs = WL.obstacleFor(box, m);
   check('widgets layout: the centre column\'s box becomes the obstacle in cells', obs && obs.x >= 2 && obs.x + obs.w <= 10 && obs.h > 5 && obs.y === 0, JSON.stringify(obs));
+  // The centre column keeps a clear gap (>= OB_MARGIN px) from cards beside it, at any window width, and stays centred.
+  for (const width of [1000, 1280, 1440, 2000, 2560]) {
+    const mw = WL.metrics(width);
+    const bx = { left: (width - 640) / 2, right: (width + 640) / 2, bottom: 600 };
+    const ob = WL.obstacleFor(bx, mw);
+    const leftPx = WL.cellToPx({ x: ob.x - 1, y: 0, w: 1, h: 1 }, mw);
+    const rightPx = WL.cellToPx({ x: ob.x + ob.w, y: 0, w: 1, h: 1 }, mw);
+    const okL = ob.x === 0 || bx.left - (leftPx.left + leftPx.width) >= WL.OB_MARGIN - 1e-6;
+    const okR = ob.x + ob.w >= mw.cols || rightPx.left - bx.right >= WL.OB_MARGIN - 1e-6;
+    check(`widgets layout: ${width}px wide, cards beside the centre column leave >= ${WL.OB_MARGIN}px`, okL && okR && mw.pad <= 20, JSON.stringify({ ob, okL, okR }));
+  }
+  check('widgets layout: the outer gutter is narrow (side cards near the window edge)', WL.metrics(2000).pad === 20 && WL.metrics(1000).pad === 16, '');
   const narrow = WL.resolve([it('wbbbb1', 'weather', 6, 0, 4, 3), it('waaaa1', 'weather', 0, 0, 4, 3), it('wcccc1', 'weather', 0, 6, 4, 3)], { cols: 1, obstacle: { x: 0, y: 0, w: 1, h: 8 } });
   check('widgets layout: a narrow window stacks one column ordered by (y, x), below the centre column', narrow[1].y === 8 && narrow[0].y === 11 && narrow[2].y === 14 && narrow.every((c) => c.x === 0 && c.w === 1), enc(narrow));
   check('widgets layout: dragging in a stacked window does nothing (saved places stay)', enc(WL.move(narrow, 'waaaa1', { x: 5, y: 5 }, { cols: 1 })) === enc(narrow), '');
