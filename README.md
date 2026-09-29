@@ -54,7 +54,7 @@ Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A
   - click by visible text
   - `fill_form` fills a whole form by field labels
   - `read_urls` reads up to 6 pages in parallel in hidden tabs
-  - `read_pdf` reads the text of a PDF open in a tab, only after you allow that PDF (a card, "Allow the AI to read <file name>?", remembered for that chat; local and web PDFs alike; up to 30,000 characters per call, with page ranges). The text counts as page content, like `read_page`. Scanned pages have no text.
+  - `read_pdf` reads the text of a PDF open in a tab, only after you allow that PDF (a card, "Allow the AI to read <file name>?", remembered for that chat; local and web PDFs alike; up to 30,000 characters per call, page markers, page ranges, and a `query` that returns the pages where some text appears). The text counts as page content, like `read_page`. Scanned pages have no text.
   - `read_tabs` reads the text of several open tabs of the window in one call, without switching to them (6,000 characters per tab, 40,000 in all)
   - **Ask across open tabs:** type `@` in the composer to pick tabs (or `@all tabs`, `@this tab`); their text goes with that message, labelled `[Tab: title — host]`, and the message shows which tabs were attached. Sleeping tabs are sent by address only.
   - `run_script` runs JavaScript in the page for bulk extraction or edits

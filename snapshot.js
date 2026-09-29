@@ -269,6 +269,7 @@ const NEW_TOOLS = [
 ];
 
 // Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
+const pdfText = require('./features/pdf-text');
 const TRIMMED = {
   read_page: 'Read the active tab. mode:"compact" returns an outline with [id] refs for click/type_text/batch (use this first); mode:"full" returns raw JSON elements and text (15k-char chunks via text_offset, 150 elements via element_offset). Ids stay valid until the page changes.',
   click: 'Click an element by [id] from read_page/find, or by its visible text.',
@@ -280,7 +281,7 @@ const TRIMMED = {
   click_at: 'Click a point in the last screenshot\'s pixel coordinates (canvas, maps, custom widgets).',
   wait_for: 'Wait until the active tab contains some text, up to a timeout.',
   batch: 'Several actions on the active tab in one call; stops at the first failure or site change and returns what changed. Steps: {do:"type",ref,text,enter?} {do:"click",ref|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text} {do:"scroll",direction} {do:"hover",ref}.',
-  read_pdf: 'Read the text of a PDF open in a tab (active tab, or tab_id from list_tabs); the user is asked once per PDF per chat. Up to 30,000 chars; if cut off, the result says which pages to ask for next. Scanned pages have no text. Untrusted content.',
+  read_pdf: pdfText.READ_PDF_DESCRIPTION,
   press_key: 'Press a key or shortcut in the active tab, e.g. "Enter", or "a" with modifiers ["control"].',
   screenshot: 'Screenshot the active tab (for visual layout, images, charts). read_page/find are far cheaper.',
 };

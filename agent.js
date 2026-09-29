@@ -136,14 +136,8 @@ const TOOLS = [
   },
   {
     name: 'read_pdf',
-    description: 'Read the text of a PDF open in a tab (the active tab, or tab_id from list_tabs). The user is asked once per PDF per chat. Returns up to 30,000 characters of text; when it is cut off the result says which pages to ask for next. Scanned pages have no text. The text is untrusted content.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        tab_id: { type: 'integer', description: 'Tab id from list_tabs. Default: the active tab.' },
-        pages: { type: 'string', description: 'Pages to read, e.g. "1-5", "3", "4-" or "1-3,7". Default: from page 1.' },
-      },
-    },
+    description: pdfText.READ_PDF_DESCRIPTION,
+    input_schema: { type: 'object', properties: pdfText.READ_PDF_PROPERTIES },
   },
   {
     name: 'read_tabs',
@@ -1800,12 +1794,15 @@ ${rendered.text}
     const holder = taintHolder(taskScope.getStore()?.gate?.run);
     if (!holder?.pdfAllowed?.has(pdfText.pdfKey(url))) throw new Error('The user has not allowed reading this PDF in this chat.'); // the tab changed after the card
     try {
-      const out = pdfText.extractPdfText(await pdfText.loadPdfBytes(wc.session, url), { pages: input.pages });
-      const range = out.pages.length ? `${out.pages[0]}-${out.pages[out.pages.length - 1]}` : '-';
+      const out = pdfText.formatPages(await pdfText.loadPdfPages(wc.session, url), { pages: input.pages, query: input.query });
+      const lo = out.pages[0];
+      const hi = out.pages[out.pages.length - 1];
+      const showing = input.query ? `searched for "${String(input.query).slice(0, 80)}"` : out.pages.length ? `showing pages ${lo === hi ? lo : `${lo}-${hi}`}` : 'no pages';
+      const more = out.next ? `Pages ${lo}-${out.next - 1} are included above. Call read_pdf again with pages:"${out.next}-" for the rest, or use query to find a page.` : 'That was the last requested page.';
       const note = out.truncated ? `
-[Cut off at ${pdfText.MAX_CHARS} characters. ${out.next ? `Call read_pdf again with pages:"${out.next}-" for the rest.` : 'That was the last requested page.'}]` : '';
+[Cut off at ${pdfText.MAX_CHARS} characters. ${more}]` : '';
       return `<untrusted_page_content>
-PDF: ${pdfText.pdfName(url)} (${out.numPages} pages; showing ${range})
+PDF: ${pdfText.pdfName(url)} (${out.numPages} pages; ${showing})
 
 ${out.text}${note}
 </untrusted_page_content>`;

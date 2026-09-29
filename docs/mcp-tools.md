@@ -78,12 +78,13 @@ Read up to 6 pages in parallel in hidden tabs without cookies/logins (use naviga
 
 ### `read_pdf`
 
-Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks you first, once per PDF per chat, even with Auto-allow on; the card and the result show the file name, never its folder. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule. Returns up to 30,000 characters; when cut off, the result names the pages to ask for next. Scanned or encrypted PDFs give no text.
+Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks you first, once per PDF per chat, even with Auto-allow on; the card and the result show the file name, never its folder. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule. Each page comes under a `--- Page N of M ---` marker. Pass `query` to find which page mentions something: one call returns the matching page numbers with a short snippet each (case-insensitive). Returns up to 30,000 characters; when cut off, the result lists the pages included and the `pages` value to ask for next. The parsed text is cached per PDF, so repeat calls are cheap. Scanned or encrypted PDFs give no text.
 
 | Parameter | Type | Required |
 |---|---|---|
 | `tab_id` | integer | no |
 | `pages` | string ("1-5", "3", "4-", "1-3,7") | no |
+| `query` | string | no |
 
 ### `read_tabs`
 

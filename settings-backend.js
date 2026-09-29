@@ -48,7 +48,7 @@ const DEFAULTS = {
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
-  newTabWidgetsPacked: true, // [widgets] Keep widgets packed: cards slide up into gaps
+  newTabWidgetsPacked: false, // [widgets] Keep widgets packed: cards slide up into gaps (off: a card stays in the cell it was put in)
   homeWidgetSizes: {}, // [widgets] the last size used per kind of widget (the default for a new one); internal
   weatherPlaces: [], // [widgets] places saved from weather widgets (features/weather-view.js); internal
   weatherHere: null, // [widgets] the last "My location" answer { name, lat, lon, at }, kept an hour; internal
@@ -254,7 +254,7 @@ function create(deps) {
       accent: accentOf(p.accentColor),
       clock: p.newTabClock, name: p.newTabName,
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
-      widgetsPacked: p.newTabWidgetsPacked !== false,
+      widgetsPacked: p.newTabWidgetsPacked === true,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };
   }

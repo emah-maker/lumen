@@ -1311,6 +1311,27 @@ async function pdfRuns() {
   const cut = pdfText.extractPdfText(pdf, { maxChars: 60 });
   check('pdf text: output is capped and says where to continue', cut.truncated && cut.next === 2 && cut.pages.join() === '1', JSON.stringify(cut));
   check('pdf text: ranges parse ("4-", "1-3,7", out of range)', pdfText.parsePageRange('3-', 5).join() === '3,4,5' && pdfText.parsePageRange('1-2,4', 9).join() === '1,2,4' && pdfText.parsePageRange('9', 3).length === 0, 'ranges');
+  const pages = ['Intro and overview', 'Budget\nsummary for 2025', 'Nothing here', 'The BUDGET summary again, and another budget line', ''];
+  const marked = pdfText.formatPages(pages, { pages: '2-3' });
+  check('pdf text: every page sits under a "--- Page N of M ---" marker', marked.text === '--- Page 2 of 5 ---\nBudget\nsummary for 2025\n\n--- Page 3 of 5 ---\nNothing here' && marked.pages.join() === '2,3', marked.text);
+  check('pdf text: a page without text says so', pdfText.formatPages(pages, { pages: '5' }).text.includes('--- Page 5 of 5 ---\n(no text'), '');
+  const q = pdfText.formatPages(pages, { query: 'budget SUMMARY' });
+  check('pdf query: case-insensitive, matches across a line break, lists page numbers with a snippet', q.hits.map((h) => h.page).join() === '2,4' && q.text.includes('Page 2 (1 match)') && q.text.includes('Budget summary for 2025') && q.pages.join() === '2,4', q.text);
+  check('pdf query: counts every hit on a page', pdfText.formatPages(pages, { query: 'budget' }).hits.find((h) => h.page === 4).count === 2, '');
+  check('pdf query: limited to a page range, and a miss says so', pdfText.formatPages(pages, { query: 'budget', pages: '1-3' }).hits.length === 1 && /not found in pages 3-5/.test(pdfText.formatPages(pages, { query: 'zebra', pages: '3-5' }).text), '');
+  check('pdf query: snippets carry context and are capped per page', pdfText.findInPage('x'.repeat(300) + ' needle ' + 'y'.repeat(300) + ' needle', 'Needle').snippets.length === 2 && pdfText.findInPage('abc', '').count === 0, '');
+  const long = Array.from({ length: 6 }, (_, k) => 'p'.repeat(40) + k);
+  const capped = pdfText.formatPages(long, { maxChars: 130 });
+  check('pdf text: truncation reports the pages included and where to continue', capped.truncated && capped.pages.join() === '1,2' && capped.next === 3, JSON.stringify(capped));
+  check('pdf text: bad ranges are refused, open ranges run to the end', (() => { try { pdfText.parsePageRange('x-y', 5); return false; } catch { return pdfText.parsePageRange('-2', 5).join() === '1,2' && pdfText.parsePageRange('4-', 5).join() === '4,5'; } })(), '');
+  const stamp = { calls: 0 };
+  const fakeSession = { fetch: async () => { stamp.calls++; return { ok: true, body: [pdf] }; } };
+  const first = await pdfText.loadPdfPages(fakeSession, 'https://x.test/cache.pdf?a=1');
+  const again = await pdfText.loadPdfPages(fakeSession, 'https://x.test/cache.pdf?a=2#page=2');
+  check('pdf cache: a second read of the same PDF is not downloaded or parsed again', stamp.calls === 1 && first === again && first.length === 2, String(stamp.calls));
+  const zoom = require('../features/pdf-zoom');
+  check('pdf zoom: the viewer script targets zoom in, out and reset; the viewer frame is found', zoom.zoomScript(1).includes('"in"') && zoom.zoomScript(-0.5).includes('"out"') && zoom.zoomScript(0).includes('"reset"') && zoom.viewerFrame({ mainFrame: { framesInSubtree: [{ url: 'https://a.test' }, { url: `${zoom.PDF_VIEWER}/index.html` }] } }) !== null && zoom.viewerFrame({ mainFrame: { framesInSubtree: [{ url: 'https://a.test' }] } }) === null, '');
+  check('pdf tool: agent and snapshot registries share the read_pdf description and query parameter', pdfText.READ_PDF_PROPERTIES.query && /--- Page N of M ---/.test(pdfText.READ_PDF_DESCRIPTION) && /pdfText\.READ_PDF_DESCRIPTION/.test(fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8')) && /pdfText\.READ_PDF_DESCRIPTION/.test(fs.readFileSync(path.join(__dirname, '..', 'snapshot.js'), 'utf8')), '');
   let bad = '';
   try { pdfText.extractPdfText(Buffer.from('hello')); } catch (err) { bad = err.message; }
   check('pdf text: a file that is not a PDF is refused', /not a PDF/.test(bad), bad);
@@ -2088,6 +2109,16 @@ async function organizeAiRuns() {
     L.learnRename(auto, 'Summer Trip', lg.candidates());
     lg.organizeByTopic(null);
     check('learner: Organize names the same kind of group the way the user renamed it', lg.state().length === 1 && lg.state()[0].name === 'Summer Trip', JSON.stringify([auto, lg.state()]));
+  }
+
+  {
+    // Organize counts sleeping / restored-unloaded tabs (no webContents): main.js reads sleepUrl / sleepTitle for them
+    let sl = [];
+    const alive = (t) => Boolean(t.view);
+    const sg = tg.createTabGroups({ getTabs: () => sl, setTabs: (l) => { sl = l; }, urlOf: (t) => (alive(t) ? t.view.url : t.sleepUrl || ''), titleOf: (t) => (alive(t) ? t.view.title : t.sleepTitle || ''), textOf: () => '', isWeb: (u) => /^https?:\/\//i.test(u), mode: () => 'topic', aiTopics: () => false });
+    sl.push({ id: 1, sleeping: true, sleepUrl: 'https://one.example/a', sleepTitle: 'Kayak rental Maine', groupId: null });
+    sl.push({ id: 2, sleeping: true, sleepUrl: 'https://two.example/b', sleepTitle: 'Kayak rental deals', groupId: null });
+    check('organize: sleeping tabs are candidates (stored URL and title)', sg.candidates().length === 2 && sg.candidates()[0].url === 'https://one.example/a' && sg.candidates()[0].title === 'Kayak rental Maine', JSON.stringify(sg.candidates()));
   }
 
   // duplicates

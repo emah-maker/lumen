@@ -38,6 +38,7 @@ const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords } = require('./tab-groups');
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
+const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
 const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
@@ -688,8 +689,9 @@ const tabGroups = createTabGroups({
   learned: organizeLearner,
   getTabs: () => tabs,
   setTabs: (list) => { tabs = list; },
-  urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : ''),
-  titleOf: (t) => (alive(t) ? t.view.webContents.getTitle() : ''),
+  // A sleeping / restored-but-unloaded tab has no webContents; its stored URL and title stand in, so it can be grouped.
+  urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || ''),
+  titleOf: (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || ''),
   textOf: (t) => t.pageText || '', // the page's description / first heading (see readPageText)
   isWeb: (url) => isWebUrl(url),
   mode: () => groupingMode(),
@@ -1715,6 +1717,15 @@ function resolveInput(text) {
 
 function zoomBy(wc, step) {
   if (!wc) return;
+  // A PDF tab: the built-in viewer keeps its own scale and ignores page zoom (features/pdf-zoom.js).
+  if (pdfZoom.viewerFrame(wc)) {
+    pdfZoom.zoomPdf(wc, step).then((took) => { if (!took) zoomPage(wc, step); });
+    return;
+  }
+  zoomPage(wc, step);
+}
+
+function zoomPage(wc, step) {
   // [settings] Reset (Ctrl+0, the zoom pill) goes back to the default zoom from Settings, and the
   // site follows that default again; zooming by hand makes the default leave this site alone.
   if (step === 0) settingsBackend.resetZoom(wc);

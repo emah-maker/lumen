@@ -24,6 +24,24 @@ module.exports = async function widgetUnits(check) {
   check('widgets layout: without packing a card stays where it is dropped (gaps allowed)', r[0].x === 3 && r[0].y === 10 && r[1].y === 0, enc(r));
   r = WL.move(items, 'waaaa1', { x: 3, y: 10 }, { packed: true });
   check('widgets layout: with packing it slides up into the gap', r[0].y === 3 && noOverlap(r), enc(r));
+  // A card can be put in any cell, in a low row with nothing above it, and stays exactly there (the page does not pack by default).
+  {
+    const low = { obstacle: { x: 4, y: 0, w: 4, h: 6 }, packed: false };
+    const lone = [it('waaaa1', 'weather', 0, 0, 4, 3), it('wbbbb1', 'calendar', 8, 0, 4, 3)];
+    r = WL.move(lone, 'waaaa1', { x: 0, y: 12 }, low);
+    check('widgets layout: a card dropped in a low row with empty rows above stays there', r[0].x === 0 && r[0].y === 12 && r[1].y === 0 && noOverlap(r), enc(r));
+    r = WL.move(lone, 'waaaa1', { x: 5, y: 15 }, low);
+    check('widgets layout: a low row under the centre column is a valid drop', r[0].x === 5 && r[0].y === 15, enc(r));
+    r = WL.resolve(WL.move(lone, 'waaaa1', { x: 2, y: 30 }, low), low);
+    check('widgets layout: re-resolving a saved layout (a reload) does not pull a low card up', r[0].y === 30 && r[1].y === 0, enc(r));
+    r = WL.resize(WL.move(lone, 'waaaa1', { x: 0, y: 12 }, low), 'waaaa1', { x: 0, y: 12, w: 6, h: 4 }, low);
+    check('widgets layout: resizing a low card keeps its row', r[0].y === 12 && r[0].w === 6 && r[0].h === 4, enc(r));
+    r = WL.move(WL.move(lone, 'waaaa1', { x: 0, y: 12 }, low), 'wbbbb1', { x: 0, y: 14 }, low);
+    check('widgets layout: a card dropped on a low one pushes it down, neither is pulled up', noOverlap(r) && r[1].y === 14 && r[0].y >= 12, enc(r));
+    const mm = WL.metrics(1280);
+    const px = WL.cellToPx({ x: 2, y: 12, w: 3, h: 2 }, mm);
+    check('widgets layout: a pointer over a low cell maps back to that cell', Math.round((px.left - mm.pad) / mm.pitchX) === 2 && Math.round((px.top - mm.top) / mm.pitchY) === 12, JSON.stringify(px));
+  }
   r = WL.move(items, 'waaaa1', { x: 99, y: -5 }, NO_OB);
   check('widgets layout: a drop outside the grid is clamped in', r[0].x === 8 && r[0].y === 0 && noOverlap(r), enc(r));
   check('widgets layout: an unknown id or a garbage target changes nothing', enc(WL.move(items, 'nope', { x: 1, y: 1 })) === enc(items) && enc(WL.move(items, 'waaaa1', { x: NaN, y: 1 })) === enc(items), '');

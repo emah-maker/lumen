@@ -30,7 +30,9 @@
 
   const stackedNow = () => WL.metrics(document.documentElement.clientWidth).cols === 1;
   const shown = (id) => (id === 'wsyshead' ? opts.header !== false : id === 'wsyssearch' ? true : Boolean(parts[KEY[id]]));
-  const isFree = (id) => shown(id) && !stackedNow() && (persisted.has(id) || origin.has(id));
+  // The clock and the search box stay where they always were (centred, the clock above the search box); widgets work around them.
+  const PINNED = new Set(['wsyshead', 'wsyssearch']);
+  const isFree = (id) => shown(id) && !PINNED.has(id) && !stackedNow() && (persisted.has(id) || origin.has(id));
   const layoutOf = (id) => persisted.get(id) || origin.get(id);
 
   function makeCard(id) {
@@ -126,7 +128,7 @@
     const boxes = {};
     const rectOfNode = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }; };
     for (const id of WS.IDS) {
-      if (isFree(id) || !shown(id)) continue;
+      if (isFree(id) || PINNED.has(id) || !shown(id)) continue;
       const node = id === 'wsyshead' ? headerEl : id === 'wsyssearch' ? formEl : parts[KEY[id]].section;
       boxes[id] = rectOfNode(node);
     }

@@ -49,7 +49,7 @@ function lookOf(l) {
     clock: look.clock !== false,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
     sections: { header: sections.header !== false, favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
-    packed: look.widgetsPacked !== false, // [widgets] Keep widgets packed
+    packed: look.widgetsPacked === true, // off unless switched on: cards stay where they are put. [widgets] Keep widgets packed
     imageColors: Array.isArray(look.imageColors) ? look.imageColors.filter((c) => hex(c)).slice(0, 3) : [], // [widgets] Match screen colours
   };
 }
