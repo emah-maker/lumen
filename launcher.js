@@ -9,6 +9,10 @@
 // ends. Lumen exits → this exits with its code; this is killed → the pipes close and Chromium quits
 // Lumen (an ordinary quit: will-quit runs).
 //
+// macOS no longer uses this for automation (features/ai-agents.js inProcessAutomation): a link opened
+// while Lumen runs goes to the process LaunchServices started, which here is the first process that
+// has already left, so it would be lost. cdp-inproc.js needs no launcher. The handling below stays
+// for a macOS copy that is started through here anyway.
 // On macOS a link that launches Lumen arrives as an 'open-url' event for the first process, after
 // it starts and before 'ready'. So there the first process waits for 'ready', collecting those links,
 // and passes them on as arguments (handOver).

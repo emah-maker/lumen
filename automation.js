@@ -11,8 +11,10 @@
 // - reports connects and disconnects, so the sidebar shows "Lumen is being driven by …".
 //
 // Behind the proxy is one CDP connection to Chromium, shared by every client (multiplexer below):
-// a pipe that only launcher.js holds the other end of, so nothing else on the computer can reach
-// Chromium's DevTools. Only in test runs under Playwright (why: launcher.js) is it Chromium's own
+// on Windows and Linux a pipe that only launcher.js holds the other end of, on macOS no connection
+// at all (cdp-inproc.js answers from the tabs' own debuggers, since a launcher there would lose
+// open-url events). Either way nothing else on the computer can reach Chromium's DevTools.
+// Only in test runs under Playwright (why: launcher.js) is it Chromium's own
 // debugging port on a random localhost port, which can't be locked:
 // it has no authentication, and a local program that finds it gets everything, Lumen's own UI
 // included. There the proxy reads DevToolsActivePort as soon as Chromium writes it and deletes it,
@@ -246,7 +248,16 @@ function multiplexer(up) {
     return conn;
   }
 
-  return { ready, call, open };
+  return { ready, call, open, sync: () => up.refresh?.() };
+}
+
+// The in-process backend (cdp-inproc.js) over the user's tabs. hooks.onContents(cb) calls cb(webContents)
+// for every web contents now and later, so a tab's iframes are known from the start.
+function inprocBackend(hooks) {
+  const { inprocUpstream } = require('./cdp-inproc');
+  const up = inprocUpstream({ tabs: hooks.tabs, userAgent: hooks.userAgent });
+  hooks.onContents?.((wc) => up.track(wc));
+  return up;
 }
 
 // ---------------------------------------------------------------- the proxy
@@ -254,11 +265,13 @@ function multiplexer(up) {
 // token: the secret every URL starts with.
 // hooks: { tabs() -> [{ id, webContents }], openTab(url) -> { id, webContents }, closeTab(id),
 //          onSession({ active, remaining }) }
-// pipeFd: the launcher's pipe; file: DevToolsActivePort, where there is none (see the top).
-function start({ port, pipeFd, file, token, hooks }) {
+// pipeFd: the launcher's pipe; file: DevToolsActivePort, where there is none (see the top);
+// inproc: no Chromium connection at all, cdp-inproc.js answers from the tabs' own debuggers (macOS).
+function start({ port, pipeFd, file, inproc, token, hooks }) {
   const targetIds = new WeakMap(); // webContents -> targetId
   const clients = new Set();
-  const chromium = multiplexer(pipeFd !== undefined ? pipeUpstream(pipeFd) : portUpstream(file));
+  const upstream = inproc ? inprocBackend(hooks) : pipeFd !== undefined ? pipeUpstream(pipeFd) : portUpstream(file);
+  const chromium = multiplexer(upstream);
   // Our own command on the browser; throws Chromium's error.
   const command = async (method, params) => {
     const reply = await chromium.call(method, params);
@@ -491,6 +504,7 @@ function start({ port, pipeFd, file, token, hooks }) {
           const tab = hooks.openTab(params.url || 'about:blank', { background: Boolean(params.background) });
           const targetId = await targetIdOf(tab.webContents);
           if (!targetId) return reply(id, null, null, 'Could not open a tab.');
+          chromium.sync(); // the in-process backend learns of the tab now, not at its next look
           // Like Chrome, answer only after the client has been told about (auto-attached to) the tab.
           if (autoAttaching && !knownTargets.has(targetId)) {
             await new Promise((resolve) => {
@@ -558,7 +572,7 @@ function start({ port, pipeFd, file, token, hooks }) {
     state,
     disconnectAll: () => { for (const c of [...clients]) c.close(); },
     clients: () => clients.size,
-    close: () => { for (const c of [...clients]) c.close(); server.close(); },
+    close: () => { for (const c of [...clients]) c.close(); server.close(); upstream.close?.(); },
   };
 }
 
