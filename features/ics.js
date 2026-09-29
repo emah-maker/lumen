@@ -84,6 +84,16 @@ function property(line) {
   return { name: name.toUpperCase(), params, value: line.slice(i + 1) };
 }
 const unescapeText = (v) => v.replace(/\\([\\;,nN])/g, (_m, c) => (c === 'n' || c === 'N' ? '\n' : c));
+// A colour a feed gives (COLOR, X-APPLE-CALENDAR-COLOR, X-WR-CALCOLOR): #rgb, #rrggbb, #rrggbbaa or a common CSS name -> '#rrggbb', or ''.
+const COLOR_NAMES = { red: '#ff0000', orange: '#ffa500', yellow: '#ffd700', green: '#008000', blue: '#0000ff', purple: '#800080', pink: '#ff69b4', brown: '#8b4513', gray: '#808080', grey: '#808080', teal: '#008080', cyan: '#00bcd4', magenta: '#ff00ff', navy: '#000080', olive: '#808000', lime: '#32cd32', maroon: '#800000', indigo: '#4b0082', violet: '#ee82ee', gold: '#ffd700', coral: '#ff7f50', salmon: '#fa8072', turquoise: '#40e0d0' };
+function cleanColor(v) {
+  const t = String(v || '').trim().toLowerCase();
+  if (COLOR_NAMES[t]) return COLOR_NAMES[t];
+  let m = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/.exec(t);
+  if (m) return `#${m[1]}`;
+  m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(t);
+  return m ? `#${m[1]}${m[1]}${m[2]}${m[2]}${m[3]}${m[3]}` : '';
+}
 const cleanText = (v, max = 200) => unescapeText(v).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
 
 // A DATE or DATE-TIME value -> { allDay, y, mo, d, h, mi, s, tz }, or null.
@@ -131,6 +141,7 @@ function readEvents(text) {
   if (!lines.some((l) => /^BEGIN:VCALENDAR\s*$/i.test(l))) throw new Error('That isn’t a calendar (ICS) file.');
   const events = [];
   let name = '';
+  let color = '';
   let ev = null;
   let depth = 0; // components nested inside the VEVENT (VALARM)
   for (const line of lines) {
@@ -152,6 +163,7 @@ function readEvents(text) {
     }
     if (!ev) {
       if (p.name === 'X-WR-CALNAME' && !name) name = cleanText(p.value, 80);
+      if ((p.name === 'X-APPLE-CALENDAR-COLOR' || p.name === 'X-WR-CALCOLOR' || p.name === 'COLOR') && !color) color = cleanColor(p.value);
       continue;
     }
     if (depth) continue;
@@ -159,6 +171,7 @@ function readEvents(text) {
       case 'UID': ev.uid = p.value.slice(0, 300); break;
       case 'SUMMARY': ev.summary = cleanText(p.value); break;
       case 'LOCATION': ev.location = cleanText(p.value); break;
+      case 'COLOR': ev.color = cleanColor(p.value); break;
       case 'URL': { const u = p.value.trim(); if (/^https:\/\/[^\s"<>]+$/i.test(u) && u.length < 2000) ev.url = u; break; }
       case 'STATUS': ev.cancelled = /^CANCELLED$/i.test(p.value.trim()); break;
       case 'DTSTART': ev.start = parseDate(p.value, p.params); break;
@@ -170,7 +183,7 @@ function readEvents(text) {
       default: break;
     }
   }
-  return { name, events };
+  return { name, color, events };
 }
 
 // One occurrence's key: a day number for all-day events, an instant for timed ones.
@@ -215,7 +228,7 @@ function* occurrenceDays(ev, lastDay) {
 // The occurrences that overlap [from, from + days) in the computer's time zone, soonest first:
 // [{ title, location, url, allDay, date ('YYYY-MM-DD', all-day only), start, end (epoch ms) }]
 function eventsBetween(text, { from = Date.now(), days = 14, limit = 50 } = {}) {
-  const { name, events } = readEvents(text);
+  const { name, color, events } = readEvents(text);
   const firstDay = localDay(from);
   const lastDay = firstDay + days;
   const windowStart = new Date(from).setHours(0, 0, 0, 0);
@@ -244,19 +257,19 @@ function eventsBetween(text, { from = Date.now(), days = 14, limit = 50 } = {}) 
       if (!ev.recurrenceId && ev.rrule && ev.uid && overrides.has(`${ev.uid}|${key}`)) continue; // moved or edited: its override shows instead
       if (s.allDay) {
         if (n + spanDays <= firstDay || n >= lastDay) continue;
-        out.push({ title: ev.summary, location: ev.location, url: ev.url, allDay: true, date: `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, days: spanDays, start: new Date(y, mo - 1, d).getTime(), end: new Date(y, mo - 1, d + spanDays).getTime() });
+        out.push({ title: ev.summary, location: ev.location, url: ev.url, color: ev.color || '', allDay: true, date: `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, days: spanDays, start: new Date(y, mo - 1, d).getTime(), end: new Date(y, mo - 1, d + spanDays).getTime() });
       } else {
         const start = instant(occ, zone);
         const until = ev.rrule?.until;
         if (until && !until.allDay && start > instant(until, until.tz)) continue; // UNTIL is an instant, not just a day
         const end = endsAt(start);
         if (Math.max(end, start + 1) <= windowStart || start >= windowEnd || localDay(start) >= lastDay) continue;
-        out.push({ title: ev.summary, location: ev.location, url: ev.url, allDay: false, start, end });
+        out.push({ title: ev.summary, location: ev.location, url: ev.url, color: ev.color || '', allDay: false, start, end });
       }
     }
   }
   out.sort((a, b) => a.start - b.start || Number(b.allDay) - Number(a.allDay));
-  return { name, total: events.length, events: out.slice(0, limit) };
+  return { name, color, total: events.length, events: out.slice(0, limit) };
 }
 
 module.exports = { eventsBetween, readEvents, parseDate, parseDuration, parseRule, zoneOf, instant, unfold };

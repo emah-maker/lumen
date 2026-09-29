@@ -3732,8 +3732,14 @@ const widgets = createWidgets({
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
   onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
+  onConfigure: () => {
+    const wc = tabs.find((t) => t.id === openSettingsPage('appearance'))?.view?.webContents;
+    if (wc && !wc.isDestroyed() && !wc.isLoading()) wc.reload(); // an open Settings page reads the request when it builds
+  },
   // Tests point the connectors at a local server (global.__widgetEndpoints); nothing else can.
   endpoints: () => (TEST && global.__widgetEndpoints) || {},
+  rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 if (TEST) global.__widgets = widgets;
 
