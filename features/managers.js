@@ -7,11 +7,13 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { toNetscape, parseNetscape } = require('./bookmark-html');
+const chatPage = require('./chat-page'); // lumen://chat opens and is switched to like these pages, with its own preload
 
 const BOOKMARKS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'bookmarks.html')).href;
 const DOWNLOADS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'downloads.html')).href;
-const PAGES = { bookmarks: BOOKMARKS_URL, downloads: DOWNLOADS_URL };
+const PAGES = { bookmarks: BOOKMARKS_URL, downloads: DOWNLOADS_URL, chat: chatPage.CHAT_URL };
 const PRELOAD = path.join(__dirname, 'managers-preload.js');
+const preloadFor = (page) => (page === 'chat' ? chatPage.PRELOAD : PRELOAD);
 
 const pageOf = (url) => {
   const bare = String(url || '').split(/[?#]/)[0];
@@ -144,7 +146,7 @@ function createManagers(deps) {
     on('downloads:folder', 'downloads', () => { deps.openFolder(); return true; }, false);
   }
 
-  return { setup, open, pageOf, PAGES, PRELOAD, pushDownloads, pushBookmarks, pickers, add, update, remove, importHtml, exportHtml, list };
+  return { setup, open, pageOf, PAGES, PRELOAD, preloadFor, pushDownloads, pushBookmarks, pickers, add, update, remove, importHtml, exportHtml, list };
 }
 
-module.exports = { createManagers, pageOf, BOOKMARKS_URL, DOWNLOADS_URL, PRELOAD };
+module.exports = { createManagers, pageOf, BOOKMARKS_URL, DOWNLOADS_URL, PRELOAD, preloadFor };

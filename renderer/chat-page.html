@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="chats.css" />
+  <link rel="stylesheet" href="prefs.css" />
+  <link rel="stylesheet" href="extras.css" />
+  <link rel="stylesheet" href="chat-page.css" />
+</head>
+<!-- lumen://chat: the sidebar's conversation as a full page. The conversation half is the sidebar's own
+     markup and code (chat-core.js); "chat-full" is the sidebar stylesheet's wide layout. -->
+<body class="chat-page chat-full">
+  <nav class="cp-list" aria-label="Chats" data-i18n-aria-label="sidebar.chats">
+    <div class="cp-list-head">
+      <h1 data-i18n="sidebar.chats">Chats</h1>
+      <button class="btn primary" id="new-chat" type="button" data-i18n="sidebar.newChat">New chat</button>
+    </div>
+    <ul class="chat-items" id="cp-items" aria-label="Saved chats" data-i18n-aria-label="chatpage.saved"></ul>
+    <p class="chat-list-empty" id="cp-empty" hidden data-i18n="chatpage.noChats">No saved chats yet. Chats appear here after the first reply.</p>
+  </nav>
+
+  <main class="cp-main">
+    <section id="chat-root" class="sidebar" data-chat-root aria-label="Conversation" data-i18n-aria-label="chatpage.conversation">
+      <header class="sidebar-head">
+        <div class="model-picker">
+          <select id="model" aria-label="Model" data-i18n-aria-label="sidebar.model"></select>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
+        </div>
+        <div class="cp-target" id="cp-target" role="status" aria-live="polite">
+          <img class="cp-target-icon" id="cp-target-icon" alt="" hidden />
+          <span class="cp-target-text" id="cp-target-text"></span>
+        </div>
+        <div class="sidebar-actions">
+          <button class="icon-btn cp-back" id="cp-back" type="button" title="Back to sidebar (Ctrl+Shift+L)" aria-label="Back to sidebar" data-i18n-title="chatpage.back.title" data-i18n-aria-label="chatpage.back">
+            <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
+            <span class="cp-back-label" data-i18n="chatpage.back">Back to sidebar</span>
+          </button>
+          <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
+            <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
+          </button>
+          <button class="icon-btn" id="open-settings" type="button" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
+            <svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.75" class="knob"/><circle cx="5.5" cy="11.5" r="1.75" class="knob"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="chat-usage" class="chat-usage" hidden></div>
+      <div id="messages" class="messages" role="log" aria-live="polite" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
+        <div class="empty" id="empty">
+          <p class="empty-title" >Ask anything, or give Lumen a task on the tab you were just on.</p>
+          <div class="setup" id="setup" hidden>
+            <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
+            <button class="setup-option" type="button" id="setup-keys">
+              <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
+              <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
+            </button>
+          </div>
+          <div class="chips">
+            <button class="chip" type="button" data-prompt="Summarize this page." data-i18n="chips.summarize">Summarize this page</button>
+            <button class="chip" type="button" data-prompt="What are the key takeaways from this page?" data-i18n="chips.takeaways">Key takeaways</button>
+            <button class="chip" type="button" data-prompt="Explain this page in simple terms." data-i18n="chips.explain">Explain simply</button>
+          </div>
+        </div>
+      </div>
+
+      <form id="composer" class="composer">
+        <div class="attachments" id="attachments" hidden></div>
+        <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
+        <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-title="composer.send.title" data-i18n-aria-label="composer.send" disabled>
+          <svg viewBox="0 0 16 16"><path d="M8 12.5v-9M4 7.5 8 3.5l4 4"/></svg>
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <script src="i18n.js"></script>
+  <script src="markdown.js"></script>
+  <script src="picker.js"></script>
+  <script src="chat-core.js"></script>
+  <script src="chat-items.js"></script>
+  <script src="chat-page.js"></script>
+  <script src="chat-extras.js"></script>
+  <script src="ui-prefs.js"></script>
+</body>
+</html>

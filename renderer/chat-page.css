@@ -1,0 +1,43 @@
+/* lumen://chat: a chat list on the left, the conversation on the right. The conversation is the
+   sidebar's own markup and styles (styles.css: body.chat-full is its wide layout); this file only
+   adds the list, the header's "working on" tab and the page frame. */
+
+body.chat-page { flex-direction: row; background: var(--bg); }
+
+.cp-list {
+  flex: none; width: 280px; display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg); border-right: 1px solid var(--border);
+}
+.cp-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 12px 8px 16px; }
+.cp-list-head h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.cp-list .chat-items { padding: 0 8px 16px; }
+.cp-list .chat-list-empty { margin: 8px 16px; }
+/* Row actions are always reachable on a page you sit in front of: show them for the open chat too. */
+.cp-list .chat-item.current .chat-actions { opacity: 1; }
+
+.cp-main { flex: 1; min-width: 0; display: flex; min-height: 0; background: var(--surface); }
+body.chat-page .sidebar { flex: 1; width: 100%; min-width: 0; background: var(--surface); animation: none; }
+body.chat-page .sidebar-head { max-width: 760px; width: 100%; gap: 8px; padding-left: 24px; }
+body.chat-page .messages { padding-left: 24px; padding-right: 24px; }
+
+/* Which tab the AI is working in: the chat page is never that tab. */
+.cp-target {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; justify-content: center;
+  padding: 3px 8px; border-radius: 8px; font-size: 12px; color: var(--muted);
+}
+.cp-target[hidden] { display: none; }
+.cp-target-icon { flex: none; width: 14px; height: 14px; border-radius: 3px; }
+.cp-target-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+body.agent-active .cp-target { color: var(--accent); background: var(--accent-soft); }
+
+#cp-back { width: auto; padding: 0 8px; gap: 6px; display: inline-flex; align-items: center; }
+.cp-back-label { font-size: 12px; white-space: nowrap; }
+
+/* A frame in the accent colour while the AI works, as around the page in the browser window. */
+body.chat-page.agent-active .cp-main { box-shadow: inset 0 0 0 2px var(--accent); }
+
+@media (max-width: 720px) {
+  .cp-list { width: 200px; }
+  .cp-back-label { display: none; }
+}
+body.chat-page .chat-usage { max-width: 760px; width: 100%; margin: 0 auto; padding-left: 24px; }
