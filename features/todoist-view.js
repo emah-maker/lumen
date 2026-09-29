@@ -114,7 +114,7 @@ function normalizeTask(t, projects = new Map(), today = ymd(new Date())) {
 }
 
 // ---- sort, group, cut ----
-const dueKey = (t) => (t.due ? `${t.due}${t.time ? t.time.slice(10) : 'T99'}` : '9999');
+const dueKey = (t) => (t.due ? `${t.due}${t.time ? t.time.slice(10) : 'T00:00'}` : '9999');
 const byDue = (a, b) => dueKey(a).localeCompare(dueKey(b)) || b.priority - a.priority;
 function sortTasks(tasks, sort) {
   const list = tasks.map((t, i) => [t, i]);

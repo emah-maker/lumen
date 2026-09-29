@@ -3737,6 +3737,7 @@ const widgets = createWidgets({
   },
   // Tests point the connectors at a local server (global.__widgetEndpoints); nothing else can.
   endpoints: () => (TEST && global.__widgetEndpoints) || {},
+  rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 if (TEST) global.__widgets = widgets;
 

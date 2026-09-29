@@ -324,7 +324,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -415,10 +415,13 @@ function createWidgets(deps) {
   // A changed config invalidates its cached data; its size and place on the page don't.
   const keyOf = ({ span, height, x, y, w, h, snap, colors, ...rest }) => JSON.stringify(rest);
 
+  let epoch = 0; // flush() bumps it: an answer that was in flight is not kept
   async function memo(key, ttl, fn) {
     const hit = memoCache.get(key);
     if (hit && now() - hit.at < ttl) return hit.value;
+    const born = epoch;
     const value = await fn();
+    if (born !== epoch) return value;
     memoCache.set(key, { at: now(), value });
     if (memoCache.size > 60) memoCache.delete(memoCache.keys().next().value);
     return value;
@@ -430,7 +433,7 @@ function createWidgets(deps) {
     const t = now();
     if (t < backoffUntil) throw new Error('The service asked Lumen to slow down. It will try again shortly.');
     while (recent.length && t - recent[0] > RATE.window) recent.shift();
-    if (recent.length >= RATE.max) throw new Error('Too many requests right now. Try again in a minute.');
+    if (recent.length >= (Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
     recent.push(t);
   }
   async function request(url, { method = 'GET', headers = {}, max = 2e6, body } = {}) {
@@ -537,7 +540,7 @@ function createWidgets(deps) {
     const age = now() - entry.at;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : c.ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
-    if (force) { forget('tasks:'); forget('done:'); }
+    if (force) { forget('tasks:'); forget('done:'); forget('wx:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
       .then((data) => { entry.data = data; entry.error = null; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); })
@@ -725,7 +728,7 @@ function createWidgets(deps) {
     if (choice !== 'allow' && choice !== 'deny') return false;
     deps.writeSettings({ ...deps.readSettings(), weatherLocation: choice === 'allow' ? 'granted' : 'denied', weatherHere: null });
     forget('wx:');
-    for (const w of list()) if (w.type === 'weather') cache.delete(w.id);
+    for (const w of list()) if (w.type === 'weather' && cache.has(w.id)) cache.get(w.id).at = 0; // stale: fetched again, the old forecast stays until then
     deps.onUpdate?.();
     return true;
   }
@@ -733,7 +736,7 @@ function createWidgets(deps) {
   function relocate() {
     deps.writeSettings({ ...deps.readSettings(), weatherHere: null });
     forget('wx:');
-    for (const w of list()) if (w.type === 'weather') cache.delete(w.id);
+    for (const w of list()) if (w.type === 'weather' && cache.has(w.id)) cache.get(w.id).at = 0; // stale: fetched again, the old forecast stays until then
     deps.onUpdate?.();
     return true;
   }
@@ -825,7 +828,9 @@ function createWidgets(deps) {
     }
   }
 
-  return { list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
+  // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
+  const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
 }
 
 module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };

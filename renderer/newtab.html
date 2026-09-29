@@ -168,7 +168,7 @@
        page. They sit on a 12-column grid over the whole page (newtab-widgets-grid.js positions them
        with transforms; the centre column stays clear), and each card is a size container: what it
        shows depends on the room it has. Everything in them is set as text. */
-    body { position: relative; }
+    body { position: relative; display: flow-root; } /* flow-root: the centre column's margin (a banner above it) must not slide the whole page */
     main { transition: margin-top 260ms var(--ease); }
     .widgets { position: absolute; top: 0; left: 0; width: 100%; height: 0; pointer-events: none; z-index: 1; }
     .widgets.empty { display: none; }
@@ -376,7 +376,7 @@
     .w-bar { flex: none; width: 3px; align-self: stretch; margin: 2px 0; border-radius: 2px; background: var(--ev, var(--accent)); opacity: 0.85; }
     /* Colors setting (calendar, weather, todoist): "Match screen", "Accent only" and "Monochrome" tint the card from
        the page's own colours; the text colours are derived to stay at 4.5:1 or better on the tinted surface. */
-    .w-card.tinted { background: var(--w-surface); color: var(--w-text); --text: var(--w-text); --muted: color-mix(in srgb, var(--w-text) 70%, var(--w-surface)); --faint: color-mix(in srgb, var(--w-text) 45%, var(--w-surface)); --hover: color-mix(in srgb, var(--w-text) 9%, transparent); --field: color-mix(in srgb, var(--w-text) 10%, transparent); transition: transform 260ms var(--ease), box-shadow 200ms var(--ease), scale 200ms var(--ease), background-color 300ms ease-out; }
+    body .w-card.tinted { background: var(--w-surface); box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--w-text) 14%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--w-text); --text: var(--w-text); --muted: color-mix(in srgb, var(--w-text) 70%, var(--w-surface)); --faint: color-mix(in srgb, var(--w-text) 45%, var(--w-surface)); --hover: color-mix(in srgb, var(--w-text) 9%, transparent); --field: color-mix(in srgb, var(--w-text) 10%, transparent); transition: transform 260ms var(--ease), box-shadow 200ms var(--ease), scale 200ms var(--ease), background-color 300ms ease-out; }
     .w-card.tinted .w-head h2, .w-card.tinted .w-day.today-label, .w-card.tinted .wx-temp { color: var(--w-head); }
     .w-card.tinted .w-row .w-bar { background: var(--w-bar0); opacity: 1; }
     .w-card.tinted .w-row[data-c="1"] .w-bar { background: var(--w-bar1); }

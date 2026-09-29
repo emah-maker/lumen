@@ -25,6 +25,7 @@
   let firstLayout = true;
   let suppress = false;
   let editBtn = null;
+  let resyncTimer = 0;
 
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -45,6 +46,7 @@
     o = { cols: m.cols, obstacle, packed: body.dataset.wpack !== '0', rows: WL.pageRows(window.innerHeight, m) };
     body.classList.toggle('w-stacked', m.cols === 1);
     if (m.cols === 1 && editing) setEditing(false);
+    if (editBtn) editBtn.hidden = !items.length || m.cols === 1;
   }
   function setBox(card, px) {
     const key = `${px.left},${px.top},${px.width},${px.height}`;
@@ -124,10 +126,17 @@
       return { id: w.id, type: w.type, title: w.title, ...rect, ...(snap ? { snap } : {}) };
     });
     items = incoming;
+    clearTimeout(resyncTimer);
     if (optimistic) {
+      // What we just sent is what is drawn until the browser's list agrees; if it never does (something else changed
+      // the layout at the same moment), the browser's list wins once the echo window is over.
       const agrees = incoming.every((it) => !optimistic.map.has(it.id) || WL.encode([it]) === WL.encode([optimistic.map.get(it.id)]));
-      if (agrees || Date.now() - optimistic.at > 1500) optimistic = null;
-      else items = incoming.map((it) => (optimistic.map.has(it.id) ? { ...it, ...optimistic.map.get(it.id) } : it));
+      const age = Date.now() - optimistic.at;
+      if (agrees || age > 900) optimistic = null;
+      else {
+        items = incoming.map((it) => (optimistic.map.has(it.id) ? { ...it, ...optimistic.map.get(it.id) } : it));
+        resyncTimer = setTimeout(() => sync(valid, cards), 950 - age);
+      }
     }
     ensureEditButton(incoming.length);
     if (!incoming.length && editing) setEditing(false);
@@ -468,5 +477,5 @@
     }
   }
 
-  window.widgetGrid = { attach, sync, busy: () => Boolean(drag), defer: (list) => { deferred = list; } };
+  window.widgetGrid = { attach, sync, busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();
