@@ -815,6 +815,19 @@ function nameSimilarity(a, b) {
 }
 
 // groups: [{ id, name, color, auto, userNamed, domain, members: [entry] }] (the window's own groups).
+// Groups formed at different times that are one topic: most of both carry the same country
+// (a Tokyo group and a Japan group), or a small one shares a specific concept with a big one.
+function sameTopicLater(A, B) {
+  const major = (D, pred) => { const m = new Map(); for (const d of D) for (const k of d.vec.keys()) if (pred(k)) m.set(k, (m.get(k) || 0) + 1); return new Set([...m].filter(([, n]) => n / D.length > 0.5).map(([k]) => k)); };
+  const ca = major(A, (k) => COUNTRY_KEYS.has(k));
+  if ([...major(B, (k) => COUNTRY_KEYS.has(k))].some((k) => ca.has(k))) return true;
+  const [small, big] = A.length <= B.length ? [A, B] : [B, A];
+  if (small.length > ABSORB_MAX || big.length < 4) return false;
+  const cs = major(small, (k) => k[0] === '%');
+  if (![...major(big, (k) => k[0] === '%')].some((k) => cs.has(k))) return false;
+  return cosine(centroidOf(small), centroidOf(big)) >= ABSORB_MIN_COS;
+}
+
 // Returns the merges to make: [{ into, from: [ids], name, color, auto, userNamed }]. Deterministic: oldest
 // group first, one pass (a merged group is not compared again), so merging can't ping-pong. By-site
 // groups are left alone. Groups the user made or named only merge with an exact twin, and then the
@@ -834,7 +847,7 @@ function mergeSimilarGroups(groups) {
       const kind = nameSimilarity(root.name, g.name);
       if (kind === 'exact') return true;
       if (c.some(owned) || owned(g)) return false;
-      if (!kind) return Boolean(anchorLink(c.flatMap(docsOf), docsOf(g), docs.df, docs.n)); // groups formed at different times, one topic
+      if (!kind) return Boolean(anchorLink(c.flatMap(docsOf), docsOf(g), docs.df, docs.n)) || sameTopicLater(c.flatMap(docsOf), docsOf(g)); // groups formed at different times, one topic
       const sim = cosine(centroid.get(root.id), centroid.get(g.id));
       return kind === 'weak' ? sim >= CENTROID_MERGE_THRESHOLD : sim >= 0.1;
     });
