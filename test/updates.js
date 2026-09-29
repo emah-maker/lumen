@@ -1,6 +1,8 @@
 // In-app updates (features/updates.js) with a stand-in updater, never the network: off in test
 // mode unless a test opts in, the About → Updates row, the toolbar prompt, the manual download for
-// copies that can't update themselves, and that "Restart to update" saves the session first.
+// copies that can't swap themselves in place, and that "Restart to update" saves the session first.
+// The stager is a stand-in too: nothing is downloaded, unpacked or swapped here (test/units.js covers
+// the swap logic; the swap itself was exercised on a scratch folder).
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -84,23 +86,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await new Promise((r) => setTimeout(r, 100));
       fake.emit('update-downloaded', { version: fake.next });
     };
-    fake.quitAndInstall = (...args) => { fake.installs.push(args); }; // records instead of quitting
     global.__fakeUpdater = fake;
     global.__updates.testHooks.useUpdater(fake);
+    const stager = { staged: 0, swaps: [], canReplace: () => true, swapPaths: () => ({ staging: null }) };
+    stager.stage = async ({ onProgress }) => { stager.staged++; onProgress?.(50); await new Promise((r) => setTimeout(r, 100)); return { fake: true }; };
+    stager.launchSwap = ({ staged }) => { stager.swaps.push(staged); }; // records instead of swapping
+    global.__stager = stager;
+    global.__updates.testHooks.useStager(stager);
+    global.__updates.testHooks.stubQuit(() => { global.__quits = (global.__quits || 0) + 1; }); // and instead of quitting
     global.__manualDownloads = [];
     session.defaultSession.downloadURL = (url) => global.__manualDownloads.push(url); // nothing leaves the machine
   });
   check('opted in: updates are enabled', (await app.evaluate(() => global.__updates.state().disabled)) === null, 'disabled');
 
-  // A zip copy: "available", and the download is the zip, fetched through Lumen's downloads.
-  await app.evaluate(() => global.__updates.testHooks.setKind('zip'));
+  // A zip copy in a folder it can't write to: "available", and the download is the zip, fetched through Lumen's downloads.
+  await app.evaluate(() => global.__updates.testHooks.setKind('zip', false));
   let id = await openSettings();
   let r = await row(inTab, id);
-  check('a zip copy: the automatic-download switch is off-limits', r.autoDisabled === true && !r.checkDisabled, JSON.stringify(r));
+  check('a copy that can't swap itself: the automatic-download switch is off-limits', r.autoDisabled === true && !r.checkDisabled, JSON.stringify(r));
   await inTab(id, "document.getElementById('updates-check').click()");
   r = await waitFor(async () => { const x = await row(inTab, id); return /available/.test(x.note) && x; });
   check('Check for updates finds 9.9.9 and offers the zip', /Lumen 9\.9\.9 is available/.test(r.note) && r.action === 'Download Lumen-9.9.9-win-x64.zip' && /Checked just now/.test(r.desc), JSON.stringify(r));
-  check('the updater did not download anything itself', (await app.evaluate(() => global.__fakeUpdater.downloads)) === 0 && (await app.evaluate(() => global.__fakeUpdater.autoDownload)) === false, 'downloaded');
+  check('the updater did not download anything itself', (await app.evaluate(() => global.__stager.staged)) === 0 && (await app.evaluate(() => global.__fakeUpdater.autoDownload)) === false, 'downloaded');
   check('the toolbar offers the download', (await waitFor(() => pill(ui))) === 'Lumen 9.9.9 is available | Download', await pill(ui));
   await ui.click('#update-action');
   const urls = await waitFor(() => app.evaluate(() => global.__manualDownloads.length && global.__manualDownloads));
@@ -109,21 +116,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const checkedAt = JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).updatesCheckedAt;
   check('the last check is remembered', typeof checkedAt === 'number' && Date.now() - checkedAt < 60e3, checkedAt);
 
-  // Installed with the setup, automatic downloads off: the prompt downloads, then offers a restart.
+  // Installed with the setup (a per-user folder it can write to), automatic downloads off: the prompt downloads, then offers a restart.
   await app.evaluate(() => { global.__updates.testHooks.reset(); global.__updates.testHooks.setKind('nsis'); });
   await inTab(id, 'location.reload()');
   await waitFor(() => inTab(id, 'document.body?.dataset.ready === "1"'));
   r = await row(inTab, id);
-  check('an installed copy: the switch is available', r.autoDisabled === false && r.auto === true, JSON.stringify(r));
+  check('a copy that swaps itself: the switch is available', r.autoDisabled === false && r.auto === true, JSON.stringify(r));
   await inTab(id, "document.getElementById('pref-autoDownloadUpdates').click()");
   await waitFor(() => app.evaluate(() => global.__settings.backend.prefs().autoDownloadUpdates === false));
   await inTab(id, "document.getElementById('updates-check').click()");
   r = await waitFor(async () => { const x = await row(inTab, id); return x.action === 'Download' && x; });
-  check('automatic downloads off: 9.9.9 waits for "Download"', r.action === 'Download' && (await app.evaluate(() => global.__fakeUpdater.downloads)) === 0, JSON.stringify(r));
+  check('automatic downloads off: 9.9.9 waits for "Download"', r.action === 'Download' && (await app.evaluate(() => global.__stager.staged)) === 0, JSON.stringify(r));
   check('the toolbar says it is available', (await waitFor(() => pill(ui))) === 'Lumen 9.9.9 is available | Download', await pill(ui));
   await ui.click('#update-action');
-  check('Download fetches the installer in the background', (await waitFor(async () => (await pill(ui)) === 'Lumen 9.9.9 is ready | Restart to update')) === true && (await app.evaluate(() => global.__fakeUpdater.downloads)) === 1, await pill(ui));
-  check('no manual download for an installed copy', (await app.evaluate(() => global.__manualDownloads.length)) === 1, 'manual');
+  check('Download stages the zip in the background, then offers the restart', (await waitFor(async () => (await pill(ui)) === 'Lumen 9.9.9 is ready | Restart to update')) === true && (await app.evaluate(() => global.__stager.staged)) === 1, await pill(ui));
+  check('no manual download for a copy that swaps itself', (await app.evaluate(() => global.__manualDownloads.length)) === 1, 'manual');
   await ui.click('#update-dismiss');
   check('closing the prompt hides it', (await waitFor(async () => (await pill(ui)) === null)) === true, await pill(ui));
   r = await waitFor(async () => { const x = await row(inTab, id); return x.action === 'Restart to update' && x; }); // the page refreshes every second
@@ -140,10 +147,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await waitFor(() => app.evaluate(() => global.__agent.browser.listTabs().some((t) => String(t.url).endsWith('/keep-me'))));
   await app.evaluate(() => global.__patchSettings({ session: null })); // so only the restart can write it
   await ui.click('#update-action');
-  const installs = await waitFor(() => app.evaluate(() => global.__fakeUpdater.installs.length && global.__fakeUpdater.installs));
-  check('Restart to update installs silently and starts the new version', JSON.stringify(installs) === '[[true,true]]', JSON.stringify(installs));
+  const installs = await waitFor(() => app.evaluate(() => global.__stager.swaps.length && global.__stager.swaps));
+  check('Restart to update hands the staged update to the swap and quits', JSON.stringify(installs) === '[{"fake":true}]' && (await app.evaluate(() => global.__quits)) === 1, JSON.stringify(installs));
   const saved = JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).session;
-  check('the session is saved before the installer runs', Array.isArray(saved?.urls) && saved.urls.some((u) => u.endsWith('/keep-me')), JSON.stringify(saved));
+  check('the session is saved before the swap', Array.isArray(saved?.urls) && saved.urls.some((u) => u.endsWith('/keep-me')), JSON.stringify(saved));
 
   await app.close();
   server.close();
