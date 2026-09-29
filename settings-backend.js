@@ -736,6 +736,13 @@ function create(deps) {
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
+    // A "Where do I get this?" link on a widget's page: only these fixed addresses, chosen by name, open in the browser.
+    const WIDGET_HELP = {
+      todoist: 'https://app.todoist.com/app/settings/integrations/developer', github: 'https://github.com/settings/personal-access-tokens', twelvedata: 'https://twelvedata.com/account/api-keys',
+      coingecko: 'https://www.coingecko.com/en/api', muse: 'https://dev.meta.ai', spotify: 'https://developer.spotify.com/dashboard', gmail: 'https://console.cloud.google.com/apis/credentials',
+      slack: 'https://api.slack.com/apps', calendar: 'https://support.google.com/calendar/answer/37648',
+    };
+    handle('prefs:widget-help', (key) => { const url = Object.hasOwn(WIDGET_HELP, key) ? WIDGET_HELP[key] : null; if (url) shell.openExternal(url).catch(() => {}); return Boolean(url); });
     // Slack sign-in: Open Slack (the approval page opens in the default browser), then the pasted address finishes it.
     handle('prefs:slack-start', (input) => {
       const out = deps.widgets.slackStart(input);

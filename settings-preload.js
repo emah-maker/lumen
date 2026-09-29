@@ -31,6 +31,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       slackDisconnect: call('prefs:slack-disconnect'),
       slackChannels: call('prefs:slack-channels'),
       search: call('prefs:widget-search'),
+      help: call('prefs:widget-help'), // opens a fixed "where do I get this" page by name
       savedPlaces: call('prefs:widget-saved-places'),
       location: call('prefs:widget-location'),
       resetLayout: call('prefs:widget-reset-layout'),

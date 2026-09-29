@@ -357,9 +357,9 @@ const CONNECTORS = {
       return cfg ? { ...cfg, colors: WC.cleanMode(c.colors) } : null;
     },
     async resolve(input, x) {
-      const clientId = SV.cleanClientId(input.clientId);
-      if (!clientId) throw new Error('Paste your Spotify app’s Client ID (32 letters and digits).');
-      if (!x.secret()) throw new Error('Connect Spotify first (the Connect button).');
+      const clientId = SV.cleanClientId(input.clientId); // the user's own, or '' to use Lumen's
+      if (!SV.effectiveClientId(clientId)) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
+      if (!x.secret()) throw new Error('Log in with Spotify first.');
       const me = await spotifyCall(x, { clientId }, 'GET', '/me');
       if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
       let name = '';
@@ -369,7 +369,7 @@ const CONNECTORS = {
     title: () => 'Spotify',
     summary: (c) => `Now playing${c.art ? '' : ' · no album art'}`,
     async fetch(c, x) {
-      if (!x.secret()) throw new Error('Connect Spotify in Settings.');
+      if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
       const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
       if (res.status !== 204 && !res.ok) throw new Error(SV.playerError(res.status, res.body));
       let body = null;
@@ -824,7 +824,7 @@ async function completedToday(x) {
 // a 429 already backs every request off (request() below) and reads as a calm message.
 async function spotifyCall(x, cfg, method, path, body) {
   const go = async (force) => {
-    const token = await spotifyAccess(x, cfg.clientId, force);
+    const token = await spotifyAccess(x, SV.effectiveClientId(cfg.clientId), force);
     return x.raw(`${x.endpoint('spotify')}${path}`, {
       method, max: 262144, body: body ? JSON.stringify(body) : undefined,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -842,7 +842,7 @@ async function spotifyAccess(x, clientId, force = false) {
   if (!s.pending) {
     s.pending = (async () => {
       const refresh = x.secret();
-      if (!refresh) throw new Error('Connect Spotify in Settings.');
+      if (!refresh) throw new Error('Log in with Spotify in Settings.');
       const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
         method: 'POST', max: 65536, body: SV.tokenForm('refresh', { clientId, refresh }),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -1456,8 +1456,8 @@ function createWidgets(deps) {
   // Returns what main.js needs: the address to open, the state to check on return, and exchange(code),
   // which trades the code for tokens (the PKCE verifier stays in here) and stores the refresh token encrypted.
   function spotifyStart(clientIdInput) {
-    const clientId = SV.cleanClientId(clientIdInput);
-    if (!clientId) throw new Error('Paste your Spotify app’s Client ID first (32 letters and digits).');
+    const clientId = SV.effectiveClientId(clientIdInput);
+    if (!clientId) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
     const p = SV.pkce();
     const x = helpers('spotify');
     return {
@@ -1472,12 +1472,24 @@ function createWidgets(deps) {
         if (!res.ok) throw new Error(SV.tokenError(res.status, res.body));
         const t = SV.parseToken(res.body, now());
         deps.setSecret('spotify', t.refresh);
-        Object.assign(x.spotifyToken, { access: t.access, exp: t.exp });
+        Object.assign(x.spotifyToken, { access: t.access, exp: t.exp, name: undefined });
         for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+        await spotifyName(x, clientId); // "Connected as …" in Settings
         deps.onUpdate?.();
         return true;
       },
     };
+  }
+  // Who is signed in, for Settings' status line (kept in memory, never stored). '' when unknown.
+  async function spotifyName(x, clientId) {
+    const tok = x.spotifyToken;
+    if (!x.secret() || tok.namePending) return tok.name || '';
+    tok.namePending = true;
+    try {
+      const me = await spotifyCall(x, { clientId }, 'GET', '/me');
+      tok.name = me.ok ? str(JSON.parse(me.body)?.display_name, 60) || 'your account' : '';
+    } catch { tok.name = ''; } finally { tok.namePending = false; }
+    return tok.name;
   }
   // Settings' Disconnect: forget the refresh token (Spotify's own account page can revoke the app too).
   function spotifyDisconnect() {
@@ -1582,6 +1594,18 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // For Settings' Spotify page: the redirect to register on an own app, where the Client ID in use comes
+  // from ('user' is per widget, so Settings works that out), and who is signed in.
+  function spotifyState() {
+    const x = helpers('spotify');
+    const source = SV.clientIdSource({ env: process.env.LUMEN_SPOTIFY_CLIENT_ID });
+    if (x.secret() && x.spotifyToken.name === undefined && !x.spotifyToken.namePending) {
+      const own = list().find((w) => w.type === 'spotify')?.clientId;
+      const id = SV.effectiveClientId(own);
+      if (id) spotifyName(x, id).then(() => deps.onUpdate?.());
+    }
+    return { redirect: SV.REDIRECT_URI, shared: source !== 'none', name: x.secret() ? x.spotifyToken.name || '' : '' };
+  }
   // For Settings: the list with a line each, and which secrets are stored (never their values).
   function state() {
     const edit = pendingEdit;
@@ -1599,7 +1623,7 @@ function createWidgets(deps) {
       spans: SPANS,
       edit: typeof edit === 'string' ? edit : null,
       create: edit?.create || null, // the page's Add widget picked a kind: Settings opens the new-widget form for it
-      spotify: { redirect: SV.REDIRECT_URI },
+      spotify: spotifyState(),
     };
   }
 

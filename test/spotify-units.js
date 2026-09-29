@@ -24,8 +24,19 @@ const track = (extra = {}) => ({
 });
 
 function viewChecks(check) {
-  check('spotify config: a Client ID is 32 hex digits (trimmed, lowercased); anything else drops the widget', SV.cleanClientId(` ${CLIENT.toUpperCase()} `) === CLIENT && SV.cleanClientId('nope') === '' && SV.cleanClientId(CLIENT + 'a') === '' && SV.cleanConfig({}) === null && SV.cleanConfig(null) === null && SV.cleanConfig({ clientId: CLIENT }).art === true && SV.cleanConfig({ clientId: CLIENT, art: false }).art === false, '');
+  check('spotify config: a Client ID is 32 hex digits (trimmed, lowercased); anything else drops the widget', SV.cleanClientId(` ${CLIENT.toUpperCase()} `) === CLIENT && SV.cleanClientId('nope') === '' && SV.cleanClientId(CLIENT + 'a') === '' && SV.cleanConfig({}).clientId === '' && SV.cleanConfig(null) === null && SV.cleanConfig({ clientId: CLIENT }).art === true && SV.cleanConfig({ clientId: CLIENT, art: false }).art === false, '');
   const p = SV.pkce();
+  const ENV = 'fedcba9876543210fedcba9876543210';
+  const BUILT = '11111111111111111111111111111111';
+  check('spotify client id: the user’s own beats the environment’s, which beats the built-in one', SV.pickClientId({ user: CLIENT, env: ENV, builtin: BUILT }) === CLIENT && SV.pickClientId({ user: '', env: ENV, builtin: BUILT }) === ENV && SV.pickClientId({ user: 'junk', env: 'junk', builtin: BUILT }) === BUILT && SV.pickClientId({ builtin: '' }) === '' && SV.pickClientId({ user: '', env: '' }) === SV.BUILTIN_SPOTIFY_CLIENT_ID, '');
+  check('spotify client id: where it comes from is named (user, env, builtin, none)', SV.clientIdSource({ user: CLIENT, env: ENV, builtin: BUILT }) === 'user' && SV.clientIdSource({ env: ENV, builtin: BUILT }) === 'env' && SV.clientIdSource({ builtin: BUILT }) === 'builtin' && SV.clientIdSource({ builtin: '' }) === 'none', '');
+  {
+    const old = process.env.LUMEN_SPOTIFY_CLIENT_ID;
+    process.env.LUMEN_SPOTIFY_CLIENT_ID = ENV;
+    const fromEnv = SV.effectiveClientId('') === ENV && SV.effectiveClientId(CLIENT) === CLIENT;
+    if (old === undefined) delete process.env.LUMEN_SPOTIFY_CLIENT_ID; else process.env.LUMEN_SPOTIFY_CLIENT_ID = old;
+    check('spotify client id: LUMEN_SPOTIFY_CLIENT_ID is used when no own id is set, and never overrides one', fromEnv, '');
+  }
   check('spotify PKCE: the verifier is 43 to 128 URL-safe characters and the challenge is its SHA-256 (S256)', /^[A-Za-z0-9_-]{43,128}$/.test(p.verifier) && p.challenge === crypto.createHash('sha256').update(p.verifier).digest('base64url') && SV.pkce().verifier !== p.verifier && /^[0-9a-f]{32}$/.test(p.state), p.verifier);
   const u = new URL(SV.authorizeUrl('https://accounts.spotify.com', { clientId: CLIENT, challenge: p.challenge, state: p.state }));
   check('spotify authorize address: code flow, PKCE, the loopback redirect, only the two playback scopes, no secret', u.origin + u.pathname === 'https://accounts.spotify.com/authorize' && u.searchParams.get('response_type') === 'code' && u.searchParams.get('code_challenge_method') === 'S256' && u.searchParams.get('code_challenge') === p.challenge && u.searchParams.get('redirect_uri') === SV.REDIRECT_URI && /^http:\/\/127\.0\.0\.1:\d+\/callback$/.test(SV.REDIRECT_URI) && u.searchParams.get('scope') === 'user-read-playback-state user-modify-playback-state' && !u.search.includes('secret'), u.href);
@@ -105,9 +116,9 @@ async function connectorChecks(check) {
   const plain = (s) => JSON.stringify(s);
 
   // sign-in
-  let threw = '';
-  try { w.spotifyStart('nope'); } catch (e) { threw = e.message; }
-  check('spotify sign-in: without a valid Client ID it refuses before opening anything', /Client ID/.test(threw), threw);
+  const fallback = new URL(w.spotifyStart('nope').url);
+  check('spotify sign-in: without a valid Client ID of the user’s own it signs in with Lumen’s built-in app', fallback.searchParams.get('client_id') === SV.BUILTIN_SPOTIFY_CLIENT_ID, fallback.href);
+  check('spotify sign-in: a valid Client ID of the user’s own is the one used', new URL(w.spotifyStart(CLIENT).url).searchParams.get('client_id') === CLIENT, '');
   const session = w.spotifyStart(CLIENT);
   const auth = new URL(session.url);
   await session.exchange('GOOD-CODE');
@@ -127,7 +138,7 @@ async function connectorChecks(check) {
   const test = await w.test({ type: 'spotify', clientId: CLIENT });
   check('spotify Settings: Check says who is connected (one call, the access token from sign-in)', test.ok && /Connected as Ann/.test(test.message) && fake.log.length === before + 1 && fake.log.at(-1).path === '/v1/me', plain(test));
   const noClient = await w.test({ type: 'spotify', clientId: '' });
-  check('spotify Settings: no Client ID is a plain message', !noClient.ok && /Client ID/.test(noClient.message), plain(noClient));
+  check('spotify Settings: no Client ID of the user’s own falls back to Lumen’s built-in app', noClient.ok && /Connected as Ann/.test(noClient.message) && SV.pickClientId({}) === SV.BUILTIN_SPOTIFY_CLIENT_ID && /^[0-9a-f]{32}$/.test(SV.BUILTIN_SPOTIFY_CLIENT_ID), plain(noClient));
   const saved = await w.save({ type: 'spotify', clientId: CLIENT, art: true, colors: 'match' });
   const id = saved.widget.id;
   const settle = async () => { await w.cache.get(id)?.pending; }; // a save starts a fetch of its own
@@ -231,7 +242,7 @@ async function connectorChecks(check) {
   check('spotify Disconnect: the stored refresh token goes and the card asks to connect', !secrets.has('spotify') && w.state().secrets.spotify === false, '');
   w.remove(id);
   check('spotify remove: the widget is gone and the token stays gone', w.list().length === 0 && !secrets.has('spotify'), '');
-  await w.save({ type: 'spotify', clientId: CLIENT }).then(() => check('spotify Settings: saving without a sign-in is refused', false, 'saved'), (e) => check('spotify Settings: saving without a sign-in is refused', /Connect Spotify first/.test(e.message), e.message));
+  await w.save({ type: 'spotify', clientId: CLIENT }).then(() => check('spotify Settings: saving without a sign-in is refused', false, 'saved'), (e) => check('spotify Settings: saving without a sign-in is refused', /Log in with Spotify first/.test(e.message), e.message));
 }
 
 module.exports = async function spotifyUnits(check) {
