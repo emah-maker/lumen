@@ -719,6 +719,31 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('cache_control: only the last tool is marked, input untouched', cached.filter((t) => t.cache_control).length === 1 && cached[2].cache_control.type === 'ephemeral' && tools[0].cache_control && cacheLastTool([]).length === 0, JSON.stringify(cached));
 }
 
+async function schedulerRuns() {
+  const { runToolUses } = require('../loop-guard');
+  const log = [];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const uses = [{ name: 'read_page', input: {} }, { name: 'find', input: {} }, { name: 'click', input: {} }, { name: 'screenshot', input: {} }, { name: 'read_urls', input: {} }].map((u, i) => ({ ...u, id: `t${i}` }));
+  const out = await runToolUses(uses, {
+    gate: async (u) => { log.push(`gate:${u.id}`); await sleep(1); },
+    exec: async (u) => { log.push(`start:${u.id}`); await sleep(u.id === 't0' ? 30 : 5); log.push(`end:${u.id}`); return u.id; },
+  });
+  check('parallel: results come back in call order', out.map((o) => o.value).join() === 't0,t1,t2,t3,t4', JSON.stringify(out));
+  check('parallel: every gate in a read group runs before any of them starts', log.indexOf('gate:t1') < log.indexOf('start:t0'), log.join(' '));
+  check('parallel: reads overlap (t1 ends before slow t0)', log.indexOf('end:t1') < log.indexOf('end:t0'), log.join(' '));
+  check('parallel: an action waits for the reads before it and runs alone', log.indexOf('end:t0') < log.indexOf('gate:t2') && log.indexOf('end:t2') < log.indexOf('start:t3'), log.join(' '));
+
+  const denied = await runToolUses(uses.slice(0, 3), {
+    gate: async (u) => { if (u.id === 't1') throw new Error('no'); },
+    exec: async (u) => u.id,
+  });
+  check('parallel: a denied gate fails only that call, others still run', denied[0].ok && !denied[1].ok && denied[1].gated && denied[2].ok, JSON.stringify(denied));
+
+  const halted = await runToolUses(uses, { gate: async () => {}, exec: async (u) => { if (u.id === 't1') throw new Error('gone'); return 1; }, halts: (o) => o && o.ok === false });
+  check('parallel: a halting outcome skips the calls after its group', halted[0].ok && !halted[1].ok && halted.slice(2).every((o) => o.skipped), JSON.stringify(halted));
+  check('parallel: read_page since_last and run_script stay sequential', !require('../loop-guard').isParallelRead({ name: 'read_page', input: { since_last: true } }) && !require('../loop-guard').isParallelRead({ name: 'run_script', input: {} }) && require('../loop-guard').isParallelRead({ name: 'read_pdf', input: {} }), '');
+}
+
 async function fuseChecks() {
   const afterPack = require('../scripts/after-pack');
   const { FuseV1Options, getCurrentFuseWire } = require('@electron/fuses');
@@ -1208,7 +1233,7 @@ async function pdfRuns() {
   check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
 }
 
-fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

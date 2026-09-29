@@ -77,4 +77,45 @@ function cacheLastTool(tools) {
   });
 }
 
-module.exports = { RepeatDetector, withNote, trimToolResults, cacheLastTool, BENIGN };
+// Read-only tools that may run side by side when the model asks for several in one turn. Nothing
+// here acts on a page, navigates the task's tab, or runs code (read_page since_last keeps a diff
+// baseline, so it stays sequential).
+const PARALLEL_READS = new Set(['read_page', 'find', 'read_urls', 'web_search', 'read_pdf', 'screenshot', 'list_tabs']);
+const isParallelRead = (use) => PARALLEL_READS.has(use.name) && !(use.name === 'read_page' && use.input && use.input.since_last);
+
+// Runs a turn's tool calls. Every call is gated (`gate`, may throw) one at a time, in order, before
+// it runs; a run of consecutive parallel-safe calls is gated first and then executed together, and
+// anything else waits for the calls before it. `exec` runs an approved call. Returns one outcome
+// per call, in call order: { ok, value } | { ok: false, error, gated } | { skipped: true }.
+// `halts(outcome)` (e.g. the user stopped, the tab closed) skips every call after that outcome.
+// `onOutcome` fires as each call finishes (for live progress).
+async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halts = () => false, onOutcome = () => {} }) {
+  const outcomes = new Array(uses.length);
+  let group = [];
+  let halted = false;
+  const settle = (i, outcome) => { outcomes[i] = outcome; onOutcome(uses[i], outcome, i); };
+  const flush = async () => {
+    const indexes = group;
+    group = [];
+    await Promise.all(indexes.map((i) => Promise.resolve().then(() => exec(uses[i], i)).then((value) => { settle(i, { ok: true, value }); }, (error) => { settle(i, { ok: false, error }); })));
+    if (indexes.some((i) => halts(outcomes[i]))) halted = true;
+  };
+  for (let i = 0; i < uses.length; i++) {
+    const parallel = isParallel(uses[i]);
+    if (!parallel || halted) await flush();
+    if (halted) { settle(i, { skipped: true }); continue; }
+    try {
+      await gate(uses[i], i);
+    } catch (error) {
+      settle(i, { ok: false, error, gated: true });
+      if (halts(outcomes[i])) halted = true;
+      continue;
+    }
+    group.push(i);
+    if (!parallel) await flush();
+  }
+  await flush();
+  return outcomes;
+}
+
+module.exports = { RepeatDetector, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };

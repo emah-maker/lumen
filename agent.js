@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
 const { addUsage } = require('./features/chat-usage');
-const { RepeatDetector, withNote, trimToolResults, cacheLastTool } = require('./loop-guard');
+const { RepeatDetector, withNote, trimToolResults, cacheLastTool, runToolUses } = require('./loop-guard');
 const pdfText = require('./features/pdf-text');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
@@ -1184,44 +1184,53 @@ class Agent {
       }
       if (toolUses.length === 0) return;
 
+      const who = onClaude ? 'Claude' : providers.PROVIDERS[providers.splitModel(model).provider]?.label || 'The AI';
+      // Gates run one at a time in order; consecutive read-only calls then run together (loop-guard.js).
+      const outcomes = await runToolUses(toolUses, {
+        gate: async (use) => {
+          const problem = this.isExternalTool(use.name) // [mcp client] the server checks its own input
+            ? (use.input && typeof use.input === 'object' && !Array.isArray(use.input) ? null : 'Input must be an object')
+            : validateInput(use.name, use.input);
+          const label = problem ? null : await this.describeStep(use.name, use.input);
+          emit({ type: 'tool', id: use.id, name: use.name, input: use.input, label });
+          if (problem) throw Object.assign(new Error(problem), { invalid: true });
+          await this.ensureAllowed(use.name, emit, signal, { input: use.input, who });
+        },
+        exec: (use) => abortable(this.execute(use.name, use.input), signal),
+        halts: (o) => Boolean(signal.aborted || (o && o.ok === false && toolError(o.error) === TAB_CLOSED)),
+        onOutcome: (use, o) => {
+          if (o.skipped) return;
+          if (o.ok) emit({ type: 'tool_done', id: use.id, ok: true });
+          else if (o.error?.invalid) emit({ type: 'tool_done', id: use.id, ok: false, error: o.error.message });
+          else if (signal.aborted) emit({ type: 'tool_done', id: use.id, ok: false, stopped: true });
+          else emit({ type: 'tool_done', id: use.id, ok: false, error: toolError(o.error).split('
+')[0] });
+        },
+      });
       const results = [];
       let tabClosed = false;
+      let stopError = null;
       for (const [index, use] of toolUses.entries()) {
-        if (tabClosed) {
-          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `Not run: ${TAB_CLOSED}` });
-          continue;
-        }
-        const problem = this.isExternalTool(use.name) // [mcp client] the server checks its own input
-          ? (use.input && typeof use.input === 'object' && !Array.isArray(use.input) ? null : 'Input must be an object')
-          : validateInput(use.name, use.input);
-        const label = problem ? null : await this.describeStep(use.name, use.input);
-        emit({ type: 'tool', id: use.id, name: use.name, input: use.input, label });
-        if (problem) {
-          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `INVALID_INPUT: ${problem}` });
-          emit({ type: 'tool_done', id: use.id, ok: false, error: problem });
-          continue;
-        }
-        try {
-          await this.ensureAllowed(use.name, emit, signal, { input: use.input, who: onClaude ? 'Claude' : providers.PROVIDERS[providers.splitModel(model).provider]?.label || 'The AI' });
-          const content = await abortable(this.execute(use.name, use.input), signal);
-          results.push({ type: 'tool_result', tool_use_id: use.id, content: withNote(content, repeats.record(use.name, use.input, true)) });
-          emit({ type: 'tool_done', id: use.id, ok: true });
-        } catch (err) {
-          if (signal.aborted) {
-            // Keep finished results; the interrupted action may already have happened in the page.
-            results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: 'Stopped by the user while this action was running. It may or may not have taken effect; check the page before retrying.' });
-            emit({ type: 'tool_done', id: use.id, ok: false, stopped: true });
-            for (const skipped of toolUses.slice(index + 1)) {
-              results.push({ type: 'tool_result', tool_use_id: skipped.id, is_error: true, content: 'Not run: stopped by the user.' });
-            }
-            messages.push({ role: 'user', content: results });
-            throw err;
-          }
-          const text = toolError(err);
-          tabClosed = text === TAB_CLOSED;
+        const o = outcomes[index];
+        if (o.skipped) {
+          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: signal.aborted ? 'Not run: stopped by the user.' : `Not run: ${TAB_CLOSED}` });
+        } else if (o.ok) {
+          results.push({ type: 'tool_result', tool_use_id: use.id, content: withNote(o.value, repeats.record(use.name, use.input, true)) });
+        } else if (o.error?.invalid) {
+          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `INVALID_INPUT: ${o.error.message}` });
+        } else if (signal.aborted) {
+          // Keep finished results; the interrupted action may already have happened in the page.
+          stopError = stopError || o.error;
+          results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: 'Stopped by the user while this action was running. It may or may not have taken effect; check the page before retrying.' });
+        } else {
+          const text = toolError(o.error);
+          if (text === TAB_CLOSED) tabClosed = true;
           results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: withNote(text, repeats.record(use.name, use.input, false)) });
-          emit({ type: 'tool_done', id: use.id, ok: false, error: text.split('\n')[0] });
         }
+      }
+      if (signal.aborted) {
+        messages.push({ role: 'user', content: results });
+        throw stopError || new Error('Stopped');
       }
       messages.push({ role: 'user', content: results });
       if (tabClosed) {
