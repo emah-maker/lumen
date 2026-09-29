@@ -20,6 +20,7 @@
 // obstacle, 'tl' 'tr' 'bl' 'br' half-height docks, 'top' a banner above the obstacle) keeps
 // hugging that place: resolve() re-derives its rect for the current window. A banner pushes the
 // obstacle down by bannerRows(). Moving or resizing an item by hand drops its snap.
+(function () {
 'use strict';
 
 const COLS = 12;
@@ -436,3 +437,4 @@ const api = {
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetLayout = api;
+})();

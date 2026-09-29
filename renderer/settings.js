@@ -408,6 +408,7 @@ function buildLook(card) {
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
+    toggle('newTabWidgetsPacked', 'Keep widgets packed', 'Cards slide up into gaps, so the new-tab page stays tidy as you move and resize them. Off: leave gaps wherever you put a card.'),
   );
   renderSwatches();
   renderTiles();
@@ -416,7 +417,8 @@ function buildLook(card) {
 
 // ---------- [widgets] cards on the new-tab page (features/widgets.js) ----------
 // Lumen fetches their data itself; the page gets display data only, and tokens stay encrypted in
-// the browser (they are sent in, never read back).
+// the browser (they are sent in, never read back). Places, Todoist filters and colours are chosen here
+// (and from a card's gear in edit mode on the new-tab page, which opens this editor).
 const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
@@ -425,6 +427,9 @@ const WIDGET_ICONS = {
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
 const WIDGET_SPANS = [['2', 'A third'], ['3', 'Half'], ['4', 'Two thirds'], ['6', 'Full width']];
+const WIDGET_COLORS = [['calendar', 'Default'], ['match', 'Match screen'], ['accent', 'Accent only'], ['mono', 'Monochrome']];
+const TODO_SOURCES = [['todayOverdue', 'Today and overdue'], ['today', 'Today'], ['upcoming', 'Upcoming (next days)'], ['inbox', 'Inbox'], ['project', 'A project'], ['label', 'A label'], ['all', 'All tasks'], ['custom', 'A Todoist filter']];
+const TODO_FIELDS = [['due', 'Due date and time'], ['project', 'Project name and colour'], ['labels', 'Labels'], ['priority', 'Priority colour'], ['description', 'Description'], ['subtasks', 'Subtask count'], ['recurring', 'Repeat icon']];
 function widgetIcon(type) {
   const span = h('span', { class: `widget-icon wi-${type}` });
   span.innerHTML = WIDGET_ICONS[type] || ''; // constant markup
@@ -449,6 +454,12 @@ async function buildWidgets(card) {
       ))));
   };
   const closeForm = () => { formHost.replaceChildren(); renderList(); };
+  const sel = (id, label, options, value) => {
+    const s = h('select', { id, 'aria-label': label }, options.map(([v, t]) => h('option', { value: String(v), text: t })));
+    s.value = String(value);
+    return s;
+  };
+  const chk = (id, label, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked: Boolean(checked) }), label);
 
   // Add or edit: a type, its fields, and Check before Save.
   function openForm(existing = null) {
@@ -459,24 +470,133 @@ async function buildWidgets(card) {
     title.value = existing?.customTitle || '';
     const inputs = {};
     const field = (label, control, hint) => h('label', { class: 'widget-field' }, h('span', { class: 'label', text: label }), control, hint ? h('span', { class: 'note', text: hint }) : null);
+    const plain = (label, control, hint) => h('div', { class: 'widget-field' }, h('span', { class: 'label', text: label }), control, hint ? h('span', { class: 'note', text: hint }) : null);
+    let places = (existing?.type === 'weather' && existing.wx?.places ? existing.wx.places : []).map((p) => ({ ...p }));
+    let projects = [];
+    const colors = sel('widget-colors', 'Colors', WIDGET_COLORS, existing?.colors || 'calendar');
+
+    // ---- weather: places, units, sections ----
+    function weatherFields(same) {
+      const wx = same?.wx || {};
+      const placesBox = h('div', { class: 'wx-edit-places', id: 'widget-places' });
+      const results = h('div', { class: 'wx-edit-results', id: 'widget-results' });
+      const drawPlaces = () => {
+        placesBox.replaceChildren(...places.map((p, i) => h('div', { class: 'item wx-edit-place' },
+          h('span', { class: 'grow', text: p.here ? `My location${p.name && p.name !== 'My location' ? ` (${p.name})` : ''}` : p.name }),
+          h('input', { type: 'text', class: 'wx-nick', maxlength: '30', placeholder: 'Nickname', 'aria-label': `Nickname for ${p.name}`, value: p.nick || '', onchange: (e) => { places[i] = { ...places[i], nick: e.target.value.trim() || undefined }; } }),
+          h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${p.name} up`, disabled: i === 0, onclick: () => { [places[i - 1], places[i]] = [places[i], places[i - 1]]; drawPlaces(); } }),
+          h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${p.name} down`, disabled: i === places.length - 1, onclick: () => { [places[i + 1], places[i]] = [places[i], places[i + 1]]; drawPlaces(); } }),
+          h('button', { class: 'danger', text: 'Remove', 'aria-label': `Remove ${p.name}`, onclick: () => { places.splice(i, 1); drawPlaces(); } }))));
+        if (!places.length) placesBox.append(h('p', { class: 'note', text: 'No places yet: search below, or add My location.' }));
+        const saved = (ws.savedPlaces || []).filter((s) => !places.some((p) => !p.here && Math.abs(p.lat - s.lat) < 0.01 && Math.abs(p.lon - s.lon) < 0.01));
+        results.replaceChildren(...saved.map((s) => h('button', { class: 'plain', text: `+ ${s.nick || s.name}`, title: 'A place you saved', onclick: () => { if (places.length < 6) { places.push({ ...s }); drawPlaces(); } } })));
+      };
+      inputs.city = h('input', { type: 'text', id: 'widget-city', placeholder: 'City or ZIP code', maxlength: '80', 'aria-label': 'Search for a place' });
+      inputs.city.value = places.length ? '' : same?.place || '';
+      const found = h('div', { class: 'wx-edit-found', id: 'widget-found' });
+      const search = async () => {
+        const q = inputs.city.value.trim();
+        if (q.length < 2) return;
+        found.replaceChildren(h('span', { class: 'note', text: 'Searching…' }));
+        try {
+          const out = await S.widgets.search(q);
+          found.replaceChildren(...(out.length ? out.map((r) => h('button', { class: 'plain', text: `+ ${r.name}`, onclick: () => { if (places.length < 6 && !places.some((p) => !p.here && Math.abs(p.lat - r.lat) < 0.01 && Math.abs(p.lon - r.lon) < 0.01)) places.push({ name: r.name, lat: r.lat, lon: r.lon }); found.replaceChildren(); inputs.city.value = ''; drawPlaces(); } })) : [h('span', { class: 'note', text: `No place called “${q}” was found.` })]));
+        } catch (err) { found.replaceChildren(h('span', { class: 'note error', text: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })); }
+      };
+      inputs.city.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+      const here = h('button', { id: 'widget-here', text: 'Add My location', onclick: () => { if (places.length < 6 && !places.some((p) => p.here)) places.push({ here: true, name: 'My location' }); drawPlaces(); } });
+      const consentNote = h('span', { class: 'note', id: 'widget-location-note' });
+      const drawConsent = () => {
+        const loc = ws.location || { consent: 'unset', service: 'an IP service', here: '' };
+        consentNote.textContent = loc.consent === 'granted' ? `My location is on: Lumen asks ${loc.service} which city your network is in${loc.here ? ` (last answer: ${loc.here})` : ''}.`
+          : loc.consent === 'denied' ? 'My location is off.' : `Lumen asks ${loc.service} which city your network is in. ${loc.service} sees your IP address; nothing else is sent. Nothing is asked until you allow it.`;
+        consent.replaceChildren(
+          loc.consent === 'granted' ? null : h('button', { id: 'widget-location-allow', text: 'Allow', onclick: async () => { ws = await S.widgets.location('allow'); drawConsent(); } }),
+          loc.consent === 'denied' ? null : h('button', { id: 'widget-location-deny', text: loc.consent === 'granted' ? 'Turn off' : 'Not now', onclick: async () => { ws = await S.widgets.location('deny'); drawConsent(); } }),
+        );
+      };
+      const consent = h('span', { class: 'widget-consent' });
+      drawConsent();
+      inputs.units = sel('widget-units', 'Temperature units', [['f', '°F (Fahrenheit)'], ['c', '°C (Celsius)']], same?.units || wx.units || (/^en-US$/i.test(navigator.language) ? 'f' : 'c'));
+      inputs.wind = sel('widget-wind', 'Wind speed units', [['auto', 'Automatic'], ['mph', 'mph'], ['kmh', 'km/h'], ['ms', 'm/s']], wx.wind || 'auto');
+      inputs.clock = sel('widget-clock', 'Clock', [['auto', 'System'], ['12', '12-hour'], ['24', '24-hour']], wx.clock || 'auto');
+      inputs.days = sel('widget-days', 'Days in the forecast', [[7, '7 days'], [10, '10 days']], wx.days || 7);
+      inputs.hours = sel('widget-hours', 'Hours in the strip', [[12, '12 hours'], [24, '24 hours']], wx.hours || 12);
+      inputs.view = sel('widget-view', 'Several places', [['auto', 'Automatic'], ['cycle', 'One at a time'], ['list', 'A list']], wx.view || 'auto');
+      const show = wx.show || {};
+      inputs.show = { now: chk('widget-show-now', 'Now', show.now !== false), hourly: chk('widget-show-hourly', 'Hourly strip', show.hourly !== false), daily: chk('widget-show-daily', 'By day', show.daily !== false), details: chk('widget-show-details', 'Details (wind, humidity, UV, sun)', show.details !== false) };
+      drawPlaces();
+      fields.replaceChildren(
+        plain('Places', h('div', null, placesBox, h('div', { class: 'widget-inline' }, inputs.city, h('button', { id: 'widget-search', text: 'Search', onclick: search }), here), found, results), 'Forecasts from Open-Meteo (free, no account). Only the place goes to it. Add several: a card can step through them or list them.'),
+        plain('My location', h('div', { class: 'widget-inline' }, consentNote, consent)),
+        field('Units', inputs.units), field('Wind', inputs.wind), field('Clock', inputs.clock), field('Forecast', inputs.days), field('Hours', inputs.hours), field('Several places', inputs.view),
+        plain('Show', h('div', { class: 'widget-checks' }, Object.values(inputs.show)), 'The card also shows more or less depending on its size.'),
+        field('Colors', colors, '“Match screen” tints the card from your accent color and background.'));
+    }
+    // ---- todoist: what to show ----
+    function todoFields(same) {
+      const t = same?.todo || {};
+      const f = t.fields || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.todoist ? 'Saved. Paste a new token to replace it.' : 'Paste your API token', 'aria-label': 'Todoist API token' });
+      inputs.source = sel('widget-source', 'Which tasks', TODO_SOURCES, t.source || 'todayOverdue');
+      inputs.days = h('input', { type: 'number', id: 'widget-tdays', min: '1', max: '30', value: String(t.days || 7), 'aria-label': 'Days ahead' });
+      inputs.project = sel('widget-project', 'Project', [[t.projectId || '', t.projectName || 'Load projects…']], t.projectId || '');
+      inputs.label = h('input', { type: 'text', id: 'widget-label', maxlength: '60', placeholder: 'label', value: t.label || '', 'aria-label': 'Label name' });
+      inputs.query = h('input', { type: 'text', id: 'widget-query', maxlength: '200', placeholder: 'e.g. (today | overdue) & p1', value: t.query || '', 'aria-label': 'Todoist filter' });
+      const load = h('button', { id: 'widget-load-projects', text: 'Load projects', onclick: async () => {
+        try {
+          projects = await S.widgets.projects(inputs.token.value);
+          inputs.project.replaceChildren(...projects.map((p) => h('option', { value: p.id, text: p.name })));
+          inputs.project.value = t.projectId && projects.some((p) => p.id === t.projectId) ? t.projectId : projects[0]?.id || '';
+          inputs.quickProject.replaceChildren(h('option', { value: '', text: 'Inbox (Todoist’s default)' }), ...projects.map((p) => h('option', { value: p.id, text: p.name })));
+          inputs.quickProject.value = t.quickProjectId || '';
+          flash(note, `${projects.length} projects.`, 'ok');
+        } catch (err) { flash(note, String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+      } });
+      const which = h('div', { class: 'widget-inline' }, inputs.source, inputs.days, inputs.project, load, inputs.label, inputs.query);
+      const syncSource = () => {
+        const v = inputs.source.value;
+        inputs.days.hidden = v !== 'upcoming';
+        inputs.project.hidden = load.hidden = v !== 'project';
+        inputs.label.hidden = v !== 'label';
+        inputs.query.hidden = v !== 'custom';
+      };
+      inputs.source.addEventListener('change', syncSource);
+      syncSource();
+      inputs.group = sel('widget-group', 'Group by', [['none', 'No grouping'], ['project', 'Project'], ['due', 'Due date'], ['priority', 'Priority'], ['label', 'Label']], t.group || 'none');
+      inputs.sort = sel('widget-sort', 'Sort by', [['due', 'Due date'], ['priority', 'Priority'], ['project', 'Project'], ['manual', 'Todoist’s own order'], ['created', 'Date added']], t.sort || 'due');
+      inputs.density = sel('widget-density', 'Density', [['comfortable', 'Comfortable'], ['compact', 'Compact']], t.density || 'comfortable');
+      inputs.max = sel('widget-max', 'Tasks shown', [[5, '5'], [10, '10'], [20, '20'], [50, '50'], [0, 'All (scrolls)']], t.max ?? 10);
+      inputs.fields = Object.fromEntries(TODO_FIELDS.map(([k, label]) => [k, chk(`widget-field-${k}`, label, f[k] ?? ({ due: true, priority: true, recurring: true }[k] || false))]));
+      inputs.showDone = chk('widget-showdone', 'Show tasks completed today', t.showDone);
+      inputs.overdueRed = chk('widget-overdue', 'Show overdue in red', t.overdueRed !== false);
+      inputs.showCount = chk('widget-showcount', 'Show the task count in the title', t.showCount);
+      inputs.quick = sel('widget-quick', 'Add-task field', [['off', 'Off'], ['top', 'At the top'], ['bottom', 'At the bottom']], t.quick || 'off');
+      inputs.quickProject = sel('widget-quickproject', 'New tasks go to', [['', 'Inbox (Todoist’s default)'], ...(t.quickProjectId ? [[t.quickProjectId, 'The chosen project']] : [])], t.quickProjectId || '');
+      fields.replaceChildren(
+        field('API token', inputs.token, 'In Todoist: Settings → Integrations → Developer. Stored encrypted by your system; it never reaches the new-tab page.'),
+        plain('Which tasks', which, 'A Todoist filter is Todoist’s own query language, like “today & p1”.'),
+        field('Group', inputs.group), field('Sort', inputs.sort), field('Density', inputs.density), field('Tasks shown', inputs.max),
+        plain('Show on each task', h('div', { class: 'widget-checks' }, Object.values(inputs.fields))),
+        plain('Also', h('div', { class: 'widget-checks' }, inputs.showDone, inputs.overdueRed, inputs.showCount)),
+        field('Add-task field', inputs.quick, 'Typed like in Todoist’s quick add: “Pay rent tomorrow 9am”.'), field('New tasks go to', inputs.quickProject, 'Load projects above to pick one.'),
+        field('Colors', colors, 'Only the card’s surface and title follow it; priority colors stay.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
       note.className = 'note';
+      for (const k of Object.keys(inputs)) delete inputs[k];
       const same = existing?.type === type ? existing : null;
       if (type === 'weather') {
-        inputs.city = h('input', { type: 'text', id: 'widget-city', placeholder: 'Boston', maxlength: '80', 'aria-label': 'City' });
-        inputs.city.value = same?.place || '';
-        inputs.units = h('select', { id: 'widget-units', 'aria-label': 'Temperature units' }, h('option', { value: 'f', text: '°F (Fahrenheit)' }), h('option', { value: 'c', text: '°C (Celsius)' }));
-        inputs.units.value = same?.units || (/^en-US$/i.test(navigator.language) ? 'f' : 'c');
-        fields.replaceChildren(field('City', inputs.city, 'Forecasts from Open-Meteo (free, no account). Only the place goes to it.'), field('Units', inputs.units));
+        weatherFields(same);
       } else if (type === 'calendar') {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'webcal://… or https://….ics', 'aria-label': 'Calendar address (ICS)' });
         inputs.url.value = same?.url || '';
-        fields.replaceChildren(field('Calendar address', inputs.url, 'The subscribe or “secret address in iCal format” link from Muse, Google Calendar, Outlook, iCloud or Fantastical. Today’s and upcoming events show.'));
+        fields.replaceChildren(field('Calendar address', inputs.url, 'The subscribe or “secret address in iCal format” link from Muse, Google Calendar, Outlook, iCloud or Fantastical. Today’s and upcoming events show.'),
+          field('Colors', colors, '“Calendar colors” uses the color the feed gives each event; “Match screen” follows your accent color and background.'));
       } else if (type === 'todoist') {
-        inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.todoist ? 'Saved. Paste a new token to replace it.' : 'Paste your API token', 'aria-label': 'Todoist API token' });
-        fields.replaceChildren(field('API token', inputs.token, 'In Todoist: Settings → Integrations → Developer. Stored encrypted by your system; it never reaches the new-tab page.'));
+        todoFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -487,7 +607,23 @@ async function buildWidgets(card) {
     };
     const width = h('select', { id: 'widget-span', 'aria-label': 'Card width' }, WIDGET_SPANS.map(([v, t]) => h('option', { value: v, text: t })));
     const syncWidth = () => { width.value = String(existing?.type === type ? existing.span : type === 'embed' ? 6 : 3); };
-    const input = () => ({ type, title: title.value, city: inputs.city?.value, units: inputs.units?.value, url: inputs.url?.value, height: inputs.height?.value, span: width.value, token: inputs.token?.value });
+    const val = (c) => c?.querySelector?.('input')?.checked;
+    const input = () => {
+      const base = { type, title: title.value, span: width.value, colors: colors.value };
+      if (type === 'weather') {
+        return { ...base, city: inputs.city?.value, units: inputs.units.value, wx: { places, units: inputs.units.value, wind: inputs.wind.value, clock: inputs.clock.value, days: Number(inputs.days.value), hours: Number(inputs.hours.value), view: inputs.view.value, show: Object.fromEntries(Object.entries(inputs.show).map(([k, c]) => [k, val(c)])) } };
+      }
+      if (type === 'todoist') {
+        const p = inputs.project.selectedOptions[0];
+        const q = inputs.quickProject.selectedOptions[0];
+        return { ...base, token: inputs.token.value, todo: {
+          source: inputs.source.value, days: Number(inputs.days.value), projectId: inputs.project.value, projectName: p?.value ? p.textContent : '', label: inputs.label.value, query: inputs.query.value,
+          group: inputs.group.value, sort: inputs.sort.value, density: inputs.density.value, max: Number(inputs.max.value), fields: Object.fromEntries(Object.entries(inputs.fields).map(([k, c]) => [k, val(c)])),
+          showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
+        } };
+      }
+      return { ...base, url: inputs.url?.value, height: inputs.height?.value };
+    };
     const busy = (on) => { for (const b of form.querySelectorAll('button')) b.disabled = on; };
     const check = h('button', { id: 'widget-check', text: 'Check', onclick: async () => {
       busy(true);
@@ -515,18 +651,22 @@ async function buildWidgets(card) {
       ws.types.map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, disabled: Boolean(existing) && t.type !== existing.type, onclick: () => { type = t.type; renderFields(); syncWidth(); } }, widgetIcon(t.type), t.label)));
     const form = h('div', { class: 'widget-form', id: 'widget-form' },
       h('div', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
-      types, fields, field('Title', title), field('Width', width, 'Or drag the card’s corner on the new-tab page, and its title bar to move it.'),
+      types, fields, field('Title', title), field('Width', width, 'Or use Edit widgets on the new-tab page: drag a card anywhere, resize it from any edge, snap it to a side.'),
       h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: closeForm }), check, save));
     formHost.replaceChildren(form);
     renderFields();
     syncWidth();
     renderList();
     (inputs.city || inputs.url || inputs.token)?.focus();
+    form.scrollIntoView?.({ block: 'nearest' });
   }
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
-  card.append(stackRow('Widgets', 'Cards under the search box on the new-tab page: weather, a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online.', list, formHost, h('div', { class: 'controls start' }, add, listNote)));
+  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every card its default size, packed in order', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
+  const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
+  if (target) openForm(target); // a card's gear on the new-tab page
 }
 function alertLine(host, text) {
   host.querySelector('.note.error')?.remove();

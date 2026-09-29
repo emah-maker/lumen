@@ -265,3 +265,10 @@ body.interstitial { display: block; }
 .widget-buttons > .note { flex: 0 1 auto; min-width: 0; max-width: 60%; }
 .note.warn { color: #b25000; }
 @media (prefers-color-scheme: dark) { .note.warn { color: #ffb340; } }
+.widget-inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.widget-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.widget-fields > .widget-field:has(.widget-inline, .widget-checks, .wx-edit-places) { grid-column: 1 / -1; }
+.wx-edit-place { min-height: 40px; }
+.wx-nick { width: 130px; }
+.wx-edit-found, .wx-edit-results { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.widget-inline input[type="text"], .widget-inline input[type="number"] { width: auto; min-width: 160px; }

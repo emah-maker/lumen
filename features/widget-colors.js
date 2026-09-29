@@ -5,6 +5,7 @@
 //
 // A widget's Colors setting is one of MODES: 'calendar' (what the feed says, today's behaviour),
 // 'match' (from the screen), 'accent' (only the Lumen accent), 'mono' (greys).
+(function () {
 'use strict';
 
 const MODES = ['calendar', 'match', 'accent', 'mono'];
@@ -149,3 +150,4 @@ const api = {
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetColors = api;
+})();
