@@ -4,6 +4,17 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.3.2 (2026-09-29)
+
+- Tab grouping by topic is much more accurate and is now the default: related tabs across different sites land in one group (a whole trip, course, job search or recipe plan), and unrelated tabs are rarely pulled in. On a set of realistic sessions, accuracy went from 0.59 to 0.88 and wrongly grouped tabs from 23% to 4%. A choice you made before is kept.
+- Tabs organize themselves: a few seconds after your tabs change (Settings > Tabs > Organize after, 2 seconds to 1 minute, default 5), loose tabs are grouped on this computer with Undo. By default only when they are a mix of topics, so two related tabs next to an unrelated one become a group while a few tabs about one thing are left alone ("Only when topics are mixed").
+- Organize with AI asks the model when groups look like pieces of one topic, gives it 8 seconds before keeping the quick grouping, keeps names you chose, and says what it did ("3 groups, 2 tabs left loose").
+- New-tab grid rebuilt on a 12-column layout with 24px gutters: side widgets can be as wide at the top as lower down, the sections sit right under the search box, and a card dropped under another lands one gutter below it. The clock (Small to Extra large) and the search box width can be resized in Edit layout or in Settings > Home.
+- Widgets look cleaner: no scrollbars unless there is more to see (lists show "+N more"), the weather card shows the place once and drops details before cutting rows, and every card shares the same padding, title and footer.
+- Widget settings rewritten in plain language: a list with a summary of each widget, a page per widget with grouped sections, and account widgets with a clear connected / not connected line and a "Where do I get this?" link.
+- Spotify: a Web player mode shows Spotify's own site in the card (sign in on Spotify, no developer setup, no user limit), and the Now playing card has a one-click "Log in with Spotify".
+- Ctrl+Shift+K (Cmd+Shift+K) starts a new sidebar chat. Every Ask AI question, from the new-tab box or Alt+Enter in the address bar, opens a new chat; the previous one stays in the list.
+- The new-tab box's Search / Ask AI choice no longer changes what the address bar does: the address bar always searches or opens the address.
 - Background tasks are easier to follow and control. The Tasks panel shows each running task's current step, step count and time, and a queued task's place in line; anything waiting for you appears at the top with its approval card so you can answer from the list. Finished tasks you have not opened get a "New" marker and a dot on the Tasks button.
 - Tasks interrupted by closing Lumen say so when it reopens and can be resumed from what they had done (or retried from the start). Edit and run again changes a task's request, name or sites; Copy result and a list of the pages a run visited were added; a run that fails before writing anything keeps the last good result. Repeating tasks now really are given the previous result to compare with.
 - Notifications: one message per wait instead of one per question, a system notification only when Lumen is not the window in front, and a new option to skip the plain "finished" ones. Questions nobody answers are refused after 15 minutes to 4 hours (your choice) so a task no longer holds its place forever. New menu item: Run a Task in the Background.
