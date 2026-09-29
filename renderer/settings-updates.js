@@ -22,12 +22,12 @@ function updateView(u) {
     case 'checking': return { note: 'Checking for updates…', cls: '' };
     case 'up-to-date': return { note: 'Lumen is up to date.', cls: 'ok' };
     case 'downloading': return { note: `Downloading Lumen ${u.version}… ${u.progress || 0}%`, cls: '' };
-    case 'downloaded': return { note: `Lumen ${u.version} is ready. ${u.canAutoInstall ? 'Restart to finish updating, or it installs when you quit.' : 'Restart to finish updating; your settings and tabs are kept.'}`, cls: 'ok', action: 'Restart to update' };
+    case 'downloaded': return { note: `Lumen ${u.version} is ready. Restart to finish updating; your settings and tabs are kept.`, cls: 'ok', action: 'Restart to update' };
     case 'available':
       if (u.canSelfUpdate) return { note: `Lumen ${u.version} is available.`, cls: 'ok', action: 'Download' };
-      return { note: `Lumen ${u.version} is available.${u.kind === 'mac' ? ' Open the downloaded disk image and drag Lumen to Applications.' : ' Unzip it over this copy.'}`, cls: 'ok', action: u.asset ? `Download ${u.asset.name}` : 'Open releases page' };
+      return { note: `Lumen ${u.version} is available. This copy can't replace itself where it is installed.${u.kind === 'mac' ? ' Open the downloaded disk image and drag Lumen to Applications.' : u.asset ? ' Unzip it over this copy.' : ''}`, cls: 'ok', action: u.asset ? `Download ${u.asset.name}` : 'Open releases page' };
     case 'error': return u.version && u.canSelfUpdate
-      ? { note: `Couldn’t ${u.kind === 'zip' ? 'update to' : 'download'} Lumen ${u.version}: ${u.error || 'unknown error'}`, cls: 'err', action: 'Try again' }
+      ? { note: `Couldn’t update to Lumen ${u.version}: ${u.error || 'unknown error'}`, cls: 'err', action: 'Try again' }
       : { note: `Couldn’t check for updates: ${u.error || 'unknown error'}`, cls: 'err' };
     default: return { note: '', cls: '' };
   }
@@ -44,9 +44,9 @@ async function buildUpdates(card) {
   r.querySelector('.text').append(desc, note);
   r.dataset.search += ' update version check download';
   const auto = toggle('autoDownloadUpdates', 'Download updates automatically',
-    u.canAutoInstall ? 'New versions download in the background; Lumen asks you to restart when one is ready.'
-      : u.kind === 'zip' ? 'This copy tells you when a new version is out, downloads it when you ask, and swaps it in when you restart.' : 'Only the installed and zip Windows versions can update themselves. This copy tells you when a new version is out and downloads it when you ask.');
-  auto.querySelector('input').disabled = !u.canAutoInstall;
+    u.canSelfUpdate ? 'New versions download in the background; Lumen asks you to restart when one is ready. Off: Lumen asks before downloading.'
+      : 'This copy can’t replace itself where it is installed (a portable exe, a folder that needs administrator rights, or Linux). It tells you when a new version is out and downloads it when you ask.');
+  auto.querySelector('input').disabled = !u.canSelfUpdate;
 
   function render() {
     const v = updateView(u);

@@ -1,6 +1,10 @@
-// The toolbar's update prompt (features/updates.js), a pill next to Downloads:
-//   "Restart to update to vX"          an installed or zip Windows copy that has downloaded vX
-//   "Lumen vX is available · Download" automatic downloads off, a zip/portable copy, or macOS
+// The toolbar's update prompt (features/updates.js), a pill next to Downloads. The same words for
+// every kind of copy that can update itself:
+//   "Downloading Lumen vX…"            staging the zip (also automatic downloads)
+//   "Lumen vX is ready · Restart to update"
+//   "Couldn't update to vX · Try again"  the download, checksum or unpacking failed
+//   "Lumen vX is available · Download"   automatic downloads off, or a copy that can't swap itself
+//                                        (the button fetches the zip, dmg or opens the releases page)
 // Closing it hides it for this version until Lumen restarts; Settings → About keeps the details.
 (() => {
   const api = window.lumenUpdates;
@@ -18,13 +22,17 @@
 
   function render(u) {
     const ready = u.status === 'downloaded' && u.canSelfUpdate;
-    // An installed copy with automatic downloads on says nothing until the update is ready.
-    const offer = u.status === 'available' && (!u.canAutoInstall || !u.autoDownload);
-    pill.hidden = Boolean(u.disabled) || u.dismissed || !(ready || offer);
+    const busy = u.status === 'downloading' && u.canSelfUpdate;
+    const failed = u.status === 'error' && u.canSelfUpdate && Boolean(u.version);
+    // A copy with automatic downloads on says nothing until the update is downloading or ready.
+    const offer = u.status === 'available' && (!u.canSelfUpdate || !u.autoDownload);
+    pill.hidden = Boolean(u.disabled) || u.dismissed || !(ready || busy || failed || offer);
     if (pill.hidden) return;
-    text.textContent = window.t(ready ? 'updates.ready' : 'updates.available', { version: u.version });
-    action.textContent = ready ? window.t('updates.restart') : window.t('updates.download');
-    action.title = ready ? window.t('updates.restart.title') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
+    const key = ready ? 'updates.ready' : busy ? 'updates.downloading' : failed ? 'updates.failed' : 'updates.available';
+    text.textContent = window.t(key, { version: u.version, progress: u.progress || 0 });
+    action.hidden = busy;
+    action.textContent = ready ? window.t('updates.restart') : failed ? window.t('updates.retry') : window.t('updates.download');
+    action.title = ready ? window.t('updates.restart.title') : failed ? window.t('updates.retry') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => render(await api.apply()));
   close.addEventListener('click', async () => render(await api.dismiss()));
