@@ -29,7 +29,9 @@ module.exports = [
   },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', current: 'readonly' } } },
-  { files: ['renderer/settings.js'], languageOptions: { globals: { buildUpdates: 'readonly', buildMcpServers: 'readonly' } } },
+  { files: ['renderer/settings.js'], languageOptions: { globals: { buildUpdates: 'readonly', buildMcpServers: 'readonly', buildSkills: 'readonly' } } },
+  // settings-skills.js is loaded before settings.js and uses its helpers.
+  { files: ['renderer/settings-skills.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-mcp-servers.js is loaded after settings.js and uses its helpers.
   { files: ['renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.
