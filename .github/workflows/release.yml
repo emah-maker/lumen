@@ -86,6 +86,9 @@ jobs:
         env:
           EVS_ACCOUNT_NAME: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_ACCOUNT_NAME || '' }}
           EVS_PASSWD: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_PASSWD || '' }}
+          # macOS: a stable self-signed identity keeps the Keychain's "Always Allow" across updates (scripts/after-sign.js).
+          LUMEN_SIGN_P12: ${{ secrets.LUMEN_SIGN_P12 }}
+          LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
         run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
       - name: List the zip in latest.yml
