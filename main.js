@@ -3732,6 +3732,8 @@ const widgets = createWidgets({
   fetch: (url, options) => net.fetch(url, options),
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
+  // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
+  openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {

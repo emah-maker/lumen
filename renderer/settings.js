@@ -462,6 +462,7 @@ const WIDGET_ICONS = {
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
   spotify: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M4.9 6.2c2.2-.7 4.7-.5 6.6.6M5.3 8.3c1.8-.5 3.7-.3 5.2.5M5.7 10.3c1.4-.4 2.7-.2 3.9.4"/></svg>',
+  gmail: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="3.2" width="12.4" height="9.6" rx="2"/><path d="m2.4 4.4 5.6 4.2 5.6-4.2"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -656,6 +657,58 @@ async function buildWidgets(card) {
         plain('Show', h('div', { class: 'widget-checks' }, inputs.art)),
         field('Colors', colors, 'Only the card’s surface and title follow it.'));
     }
+    // ---- gmail: your own Google Cloud OAuth client, then Connect (opens your browser) ----
+    function gmailFields(same) {
+      const g = same || {};
+      const connected = () => Boolean(ws.connections?.gmail);
+      inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID'), value: g.clientId || '' });
+      inputs.clientSecret = h('input', { type: 'password', id: 'widget-clientsecret', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
+      inputs.count = sel('widget-gmail-count', tr('settings.gmail.count', 'Messages shown'), [3, 4, 5, 6, 8, 10].map((n) => [n, String(n)]), g.count || 5);
+      inputs.snippets = chk('widget-gmail-snippets', tr('settings.gmail.snippets', 'Show a short preview under each subject'), g.snippets !== false);
+      const status = h('span', { class: 'note', role: 'status', id: 'widget-gmail-status' });
+      const connect = h('button', { id: 'widget-gmail-connect', text: tr('settings.gmail.connect', 'Connect Gmail') });
+      const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
+      const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
+      const draw = () => {
+        disconnect.hidden = !connected();
+        connect.textContent = connected() ? tr('settings.gmail.reconnect', 'Connect again') : tr('settings.gmail.connect', 'Connect Gmail');
+        if (!status.textContent) status.textContent = connected() ? tr('settings.gmail.connected', 'A Google account is connected.') : tr('settings.gmail.notConnected', 'Not connected yet.');
+      };
+      connect.addEventListener('click', async () => {
+        connect.disabled = true;
+        cancel.hidden = false;
+        flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
+        try {
+          const r = await S.widgets.gmailConnect({ clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value });
+          ws = r.state;
+          inputs.clientSecret.value = '';
+          inputs.clientSecret.placeholder = tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.');
+          flash(status, r.message, 'ok');
+        } catch (err) {
+          flash(status, String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err');
+        }
+        connect.disabled = false;
+        cancel.hidden = true;
+        draw();
+      });
+      cancel.addEventListener('click', () => S.widgets.gmailCancel());
+      disconnect.addEventListener('click', async () => {
+        ws = await S.widgets.gmailDisconnect();
+        status.textContent = '';
+        flash(status, tr('settings.gmail.disconnected', 'Disconnected. Lumen also asked Google to revoke access.'), 'ok');
+        draw();
+      });
+      draw();
+      fields.replaceChildren(
+        plain(tr('settings.gmail.setup', 'Your Google Cloud client'), h('div', { class: 'widget-fields' },
+          field(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId),
+          field(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret)),
+        tr('settings.gmail.setupHelp', 'In Google Cloud Console, enable the Gmail API, create an OAuth client of type Desktop app, and paste its Client ID and secret here. Lumen asks only for read-only access to your mail (gmail.readonly), opens Google’s sign-in page in your normal browser, and keeps the tokens encrypted on this computer. The new-tab page only ever receives sender, subject and preview text.')),
+        plain(tr('settings.gmail.account', 'Account'), h('div', { class: 'widget-inline' }, connect, cancel, disconnect, status),
+          tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.')),
+        field(tr('settings.gmail.count', 'Messages shown'), inputs.count), plain(tr('settings.gmail.show', 'Show'), h('div', { class: 'widget-checks' }, inputs.snippets)),
+        field('Colors', colors));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -673,6 +726,8 @@ async function buildWidgets(card) {
         todoFields(same);
       } else if (type === 'spotify') {
         spotifyFields(same);
+      } else if (type === 'gmail') {
+        gmailFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -699,6 +754,9 @@ async function buildWidgets(card) {
         } };
       }
       if (type === 'spotify') return { ...base, clientId: inputs.clientId.value, art: val(inputs.art) };
+      if (type === 'gmail') {
+        return { ...base, clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value, count: Number(inputs.count.value), snippets: val(inputs.snippets) };
+      }
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
     const busy = (on) => { for (const b of form.querySelectorAll('button')) b.disabled = on; };
@@ -740,7 +798,7 @@ async function buildWidgets(card) {
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, Spotify (now playing, with play, pause, next and previous), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, Spotify (now playing, with play, pause, next and previous), Gmail (read-only), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page

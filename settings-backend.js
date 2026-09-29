@@ -712,6 +712,9 @@ function create(deps) {
     handle('prefs:widget-test', (input) => deps.widgets.test(input));
     handle('prefs:widget-save', async (input, id) => { const out = await deps.widgets.save(input, typeof id === 'string' ? id : null); return { message: out.message, state: deps.widgets.state() }; });
     handle('prefs:widget-remove', (id) => { deps.widgets.remove(String(id)); return deps.widgets.state(); });
+    handle('prefs:widget-gmail-connect', async (input) => { const out = await deps.widgets.gmailConnect(input); return { message: out.message, state: deps.widgets.state() }; });
+    handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
+    handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
     handle('prefs:widget-search', (query) => deps.widgets.search(query));
     handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });
