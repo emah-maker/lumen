@@ -456,7 +456,12 @@ contextBridge.exposeInMainWorld('browser', {
   closeTab: (id) => ipcRenderer.send('tab:close', id),
   switchTab: (id) => ipcRenderer.send('tab:switch', id),
   moveTab: (id, toIndex) => ipcRenderer.send('tab:move', id, toIndex),
-  dropTab: (id) => ipcRenderer.send('tab:drop', id), // released far outside the strip: another window's strip, or a new window
+  // A tab dragged out of the strip: main.js moves it into a window that follows the cursor.
+  dragTabStart: (id, grab) => ipcRenderer.send('tab:dragstart', id, grab),
+  dragTabEnd: () => ipcRenderer.send('tab:dragend'), // the button came up
+  dragTabCancel: () => ipcRenderer.send('tab:dragcancel'), // Escape
+  onTabDropAt: on('tab:dropat'), // { beforeId } while a dragged window hovers this strip, null when it leaves
+  onTabDragWatch: on('tab:dragwatch'), // this window is being dragged: report the release if it sees it
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   groupMenu: (id, point) => ipcRenderer.send('group:context-menu', id, point),
   toggleGroup: (id) => ipcRenderer.send('group:toggle', id),
