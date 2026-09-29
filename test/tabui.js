@@ -121,7 +121,15 @@ function toneWav() {
   await ui.mouse.click(r.x, r.y, { button: 'middle' });
   check('middle-click closes that tab', await waitFor(async () => !(await tabIds()).includes(extra)), (await tabIds()).join());
   const count = (await tabIds()).length;
+  // Closing a tab reflows the rest (they animate wider), and the search button rides the strip's
+  // end - so wait for the tab strip to hold still, then pick the point and check it is not a tab.
+  const stripLayout = () => ui.evaluate(() => JSON.stringify([...document.querySelectorAll('#tabs .tab'), document.getElementById('tab-search')].map((el) => el.getBoundingClientRect().right)) + document.querySelectorAll('.organize-note').length);
+  let lastLayout = '';
+  let stableFrames = 0;
+  await waitFor(async () => { const l = await stripLayout(); stableFrames = l === lastLayout ? stableFrames + 1 : 0; lastLayout = l; return stableFrames >= 4; }, 4000);
   const empty = await ui.evaluate(() => { const b = document.getElementById('tab-search').getBoundingClientRect(); return { x: b.right + 60, y: b.top + b.height / 2 }; });
+  const emptyHit = await ui.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.tab, button') !== null, empty);
+  check('the empty strip point is not on a tab or button', !emptyHit, JSON.stringify(empty));
   await ui.mouse.click(empty.x, empty.y, { button: 'middle' });
   await ui.mouse.dblclick(empty.x, empty.y);
   await sleep(400);
