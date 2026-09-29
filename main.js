@@ -151,6 +151,7 @@ const UI_ONLY_IPC = new Set([
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -859,6 +860,7 @@ function showAppMenu({ x, y }) {
     { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
     { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
     { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
+    ...bgTasks.menuItems(wc?.getURL()), // Watch this page, Background tasks
     { type: 'separator' },
     { label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
     { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
@@ -3490,6 +3492,24 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 const usage = createUsage({ app, claudeBin: () => require('./claude-code').findClaude() });
 agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
+// Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
+// (features/background-runner.js). Kept out of the sidebar chat and the user's tabs.
+const bgTasks = require('./features/background-runner').create({
+  file: path.join(app.getPath('userData'), 'background-tasks.json'),
+  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+  available: () => safeStorage.isEncryptionAvailable(),
+  ui, readSettings, writeSettings, t, test: TEST,
+  getClient: (...args) => agent.getClient(...args), getKey: providerKey,
+  effectiveModel, modelOptions, currentModel: () => effectiveModel(), anthropicAuth,
+  aiOff: (url) => aiSites.isOff(url), externalTools: mcpClient, maxSteps: () => readSettings().maxSteps,
+  reportUsage: (engine, data) => agent.onUsage?.(engine, data),
+  activeUrl: () => { const u = activeTab()?.webContents.getURL(); return isWebUrl(u) ? u : ''; },
+  openTab: (url) => openTab(url), focusApp: () => focusWindow(),
+});
+bgTasks.register(ipcMain);
+app.on('will-quit', () => bgTasks.shutdown());
+if (TEST) global.__bg = bgTasks;
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
@@ -4202,6 +4222,7 @@ app.whenReady().then(async () => {
   setupPermissions();
   downloads.load(); // the list from last time (downloads.json)
   usage.load(); // [usage] the log from earlier sessions (usage.json)
+  bgTasks.init(); // background tasks: restore them and start the scheduler
   downloads.setup();
   siteActivity.watch(session.defaultSession);
   loadChat();

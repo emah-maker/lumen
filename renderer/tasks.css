@@ -1,0 +1,106 @@
+/* The sidebar's Tasks panel and the "Run in the background?" card (renderer/tasks.js). Uses the chat
+   list's panel base (chats.css) and the theme variables, so light and dark follow the rest of the UI. */
+
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+.tasks-btn { position: relative; }
+.tasks-btn.active { color: var(--accent); background: var(--accent-soft); }
+.task-badge {
+  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.task-badge.waiting { background: var(--warning); }
+#toggle-sidebar.has-task-attention { position: relative; }
+#toggle-sidebar.has-task-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 2px var(--bg); }
+
+.task-panel { z-index: 4; }
+.task-head { gap: 4px; }
+.task-head h2 { flex: 1; min-width: 0; margin: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-note { margin: 0 20px 6px; font-size: 11px; color: var(--muted); }
+.task-items { display: block; }
+.task-row {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 12px; border: 0; border-radius: var(--radius);
+  background: none; color: inherit; font: inherit; text-align: left; cursor: default;
+}
+.task-row:hover, .task-row:focus-visible { background: var(--hover); outline: none; }
+.task-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.task-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-meta { font-size: 11px; color: var(--faint); margin: 0; overflow-wrap: anywhere; }
+.task-row .task-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-needs { font-size: 11px; font-weight: 600; color: var(--warning); }
+
+.task-dot { flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--faint); }
+.task-dot.running { background: var(--accent); animation: task-pulse 1.4s ease-in-out infinite; }
+.task-dot.queued { background: var(--muted); }
+.task-dot.waiting-approval, .task-dot.interrupted { background: var(--warning); }
+.task-dot.done { background: var(--success); }
+.task-dot.failed { background: var(--danger); }
+.task-dot.stopped { background: var(--faint); }
+@keyframes task-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .task-dot.running { animation: none; } }
+
+.task-scroll { flex: 1; overflow-y: auto; padding: 0 16px 20px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.task-detail h3 { margin: 16px 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.task-status { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0; font-size: 12px; color: var(--muted); }
+.task-status .task-dot { margin-top: 4px; }
+.task-error { margin: 6px 0; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
+.task-notice { margin: 6px 0; font-size: 12px; color: var(--warning); }
+.task-prompt { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+.task-actions .btn.danger.armed { background: var(--danger-soft); color: var(--danger); }
+.task-result { padding: 0; }
+.task-steps { margin: 0; padding-left: 20px; font-size: 12px; color: var(--muted); }
+.task-steps li { padding: 1px 0; overflow-wrap: anywhere; }
+.task-steps li.failed { color: var(--danger); }
+.task-steps li.ok::marker { color: var(--success); }
+.task-runs { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--muted); }
+.task-runs li { display: flex; gap: 8px; align-items: flex-start; padding: 2px 0; }
+.task-runs .task-dot { margin-top: 5px; }
+.task-approval { margin: 10px 0 0; }
+.task-approval-actions { flex-wrap: wrap; }
+.task-edit { margin: 10px 0; padding: 10px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--hairline); }
+
+.task-settings { margin: 8px 16px 16px; font-size: 12px; color: var(--muted); }
+.task-settings summary { cursor: default; padding: 4px 0; }
+.task-check { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; color: var(--text); }
+.task-field { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; color: var(--muted); }
+.task-field.stack { flex-direction: column; align-items: stretch; gap: 4px; }
+.task-field input[type="text"], .task-field input[type="number"], .task-field input[type="datetime-local"], .task-field select, .task-field textarea {
+  flex: 1; min-width: 0; padding: 5px 8px; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--field); border: 1px solid transparent; border-radius: 6px; outline: none;
+}
+.task-field input:focus-visible, .task-field select:focus-visible, .task-field textarea:focus-visible { border-color: var(--accent); }
+.task-field textarea { resize: vertical; min-height: 56px; }
+.task-field .task-minutes { flex: none; width: 64px; }
+
+.task-create {
+  position: absolute; inset: 46px 0 0; z-index: 6; display: flex; align-items: flex-start; justify-content: center; padding: 12px 10px;
+  background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(6px); overflow-y: auto;
+}
+.task-create-card {
+  width: 100%; padding: 14px; border-radius: 12px; background: var(--surface-raised);
+  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 16px 40px -16px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+}
+.task-create-card h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.task-summary { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; white-space: pre-line; }
+.task-create-card .approval-actions { margin-top: 12px; }
+
+/* The sidebar gives its children a fixed width (styles.css), so the banner names its own. */
+.sidebar > .task-toast { width: calc(var(--sidebar-width) - 25px); }
+.task-toast {
+  position: absolute; top: 50px; right: 12px; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px;
+  border-radius: 10px; background: var(--surface-raised); font-size: 12px; box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 10px 28px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+  animation: chat-list-in var(--t-base) var(--ease-out);
+}
+.task-toast > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.task-toast.approval, .task-toast.failed { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--warning), 0 10px 28px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
+.task-toast .icon-btn { width: 24px; height: 24px; }
+
+/* The composer's background button sits left of Send. */
+.send-bg {
+  position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
+  background: var(--field); color: var(--muted);
+}
+.send-bg svg { width: 14px; height: 14px; stroke-width: 1.75; }
+.send-bg:not(:disabled):hover { color: var(--text); background: var(--hover); }
+.send-bg:disabled { opacity: 0.4; }
