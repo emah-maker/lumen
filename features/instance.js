@@ -10,7 +10,17 @@ function appIcon() {
   return fs.existsSync(installed) ? installed : path.join(__dirname, '..', 'assets', 'icon.ico');
 }
 
-const shortcutDirs = (app) => [app.getPath('desktop'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')];
+// Per-user paths (what `--install-shortcuts` writes to) plus the all-users equivalents: a
+// perMachine NSIS install (e.g. into Program Files) puts its shortcuts in the machine-wide
+// Desktop/Start Menu instead, which the per-user-only paths never reached — leaving a shortcut
+// stuck on Lumen.exe's own icon (Electron's) forever. Dirs this process can't see or write to
+// (missing env var, no permission) are silently skipped by their callers.
+const shortcutDirs = (app) => [
+  app.getPath('desktop'),
+  path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+  ...(process.env.PUBLIC ? [path.join(process.env.PUBLIC, 'Desktop')] : []),
+  ...(process.env.ProgramData ? [path.join(process.env.ProgramData, 'Microsoft', 'Windows', 'Start Menu', 'Programs')] : []),
+];
 
 // `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
 // Start menu shortcuts carrying the app ID and icon, then exits.
