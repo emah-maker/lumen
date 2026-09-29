@@ -4,6 +4,18 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.2.10 (2026-09-29)
+
+- Open the sidebar chat as a full page (button in the sidebar, or Ctrl+Shift+L) with your saved chats alongside; the sidebar and the page share one chat.
+- A downloaded update installs by itself when you quit Lumen, and one downloaded earlier is reused instead of fetched again.
+- Auto organize is smarter: better topic groups and names, new tabs and sites are placed as you browse, groups with similar names merge, and Organize with AI falls back quietly if it fails.
+- The sidebar AI is faster: independent page reads run at once, repeated reads of an unchanged page are skipped, replies render incrementally, and the Claude Code and Grok Build engines start quicker.
+- Runs end cleanly: hitting a step limit gives a written summary and a Continue button instead of stopping silently. There is a new "Max steps per task" setting (default Unlimited), and scripts are a last resort for the AI.
+- OpenRouter, OpenAI, Grok, Gemini and the Claude API now connect through the same network stack as the browser, so proxies and campus or VPN networks no longer cause connection errors; the error now says why.
+- The usage panel no longer credits Lumen with plan usage from Claude Code you ran elsewhere.
+- Outside agents no longer post a "connected" and "disconnected" line in the chat for every session.
+- Google loads dark from the first frame in a dark theme.
+
 ## 0.2.9 (2026-09-29)
 
 - macOS builds are now Widevine-signed, so sites that require production Widevine (Netflix, Disney+, Spotify) can play.
