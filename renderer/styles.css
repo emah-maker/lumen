@@ -180,6 +180,8 @@ button:active:not(:disabled) { transform: scale(0.94); }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.globe { color: var(--faint); stroke-width: 1.25; }
 .tab-favicon.page-icon { color: var(--muted); }
+.tab.ai-reading .tab-title { animation: ai-reading-pulse 1.4s ease-in-out infinite; }
+@keyframes ai-reading-pulse { 50% { opacity: 0.55; } }
 .tab-favicon.spinner { border: 1.5px solid var(--hairline); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; background: none; }
 /* The title runs to the tab's edge and fades out there; while the ✕ shows, the fade moves in ahead
    of it (--title-cut animates, so the text doesn't jump). */
@@ -603,7 +605,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
   .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
-  .tab-favicon.spinner, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
+  .tab.ai-reading .tab-title, .tab-favicon.spinner, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
   /* The working line stays visible: the light stops travelling and the whole bar breathes instead. */
   .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 1.8s ease-in-out infinite !important; animation-duration: 1.8s !important; animation-iteration-count: infinite !important; }
   .loadbar::before { transform: none; left: 0; width: 100%; opacity: 0.6; }

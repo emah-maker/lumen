@@ -2957,6 +2957,95 @@ async function bgCliRuns() {
   check('sidebar overlay: the UI reports the closed width, main.js applies the override in layout() and drops it on navigation', /fullWidth/.test(appSrc) && /overlayParams\(\{ newTab: true/.test(mainSrc) && /enableDeviceEmulation\(params\)/.test(mainSrc) && /disableDeviceEmulation\(\)/.test(mainSrc) && /wc\.on\('did-navigate', \(\) => \{\s*if \(tab\.overlay\)/.test(mainSrc), '');
 }
 
+// Research tabs: web_search / read_urls open what they look at in background tabs (pure logic, injected browser).
+{
+  const R = require('../features/research-tabs');
+  const make = (over = {}, opts) => {
+    const log = { opened: [], navigated: [], groups: [], reading: [], closed: new Set(), groupGone: false };
+    let nextId = 1;
+    const deps = {
+      enabled: () => true,
+      isAiOff: (url) => /blocked\.example/.test(url),
+      searchUrl: (q) => `https://search.example/?q=${encodeURIComponent(q)}`,
+      openTab: (url, o) => { const id = nextId++; log.opened.push({ id, url, groupId: o?.groupId ?? null }); return id; },
+      navigateTab: (id, url) => log.navigated.push({ id, url }),
+      tabExists: (id) => !log.closed.has(id),
+      createGroup: (name, ids) => { log.groups.push({ name, ids }); return log.groups.length; },
+      groupExists: () => !log.groupGone,
+      setReading: (id, on) => log.reading.push([id, on]),
+      ...over,
+    };
+    return { r: R.createResearchTabs(deps, opts), log };
+  };
+  {
+    const { r, log } = make();
+    const run = {};
+    const end = r.begin(run, { query: 'best espresso machine 2026' });
+    check('research tabs: web_search opens the engine\'s results page in a group named "AI: <query>"', log.opened.length === 1 && log.opened[0].url === 'https://search.example/?q=best%20espresso%20machine%202026' && log.groups.length === 1 && log.groups[0].name === 'AI: best espresso machine 2026', JSON.stringify(log));
+    check('research tabs: the tab shows the reading marker until the call ends', log.reading.at(-1)[1] === true && (end(), log.reading.at(-1)[1] === false), JSON.stringify(log.reading));
+    r.begin(run, { urls: ['https://a.example/x', 'https://b.example/'] })();
+    check('research tabs: read_urls tabs join the run\'s group (one group per run)', log.opened.length === 3 && log.opened.slice(1).every((o) => o.groupId === 1) && log.groups.length === 1, JSON.stringify(log));
+    r.begin(run, { urls: ['https://a.example/x#frag', 'https://b.example'] })();
+    check('research tabs: the same URL twice in a run opens nothing new (fragment and trailing slash ignored)', log.opened.length === 3, JSON.stringify(log.opened));
+    r.begin({}, { urls: ['https://a.example/x'] })();
+    check('research tabs: another run opens its own tab and its own group', log.opened.length === 4 && log.groups.length === 2, JSON.stringify(log));
+    r.finish(run);
+    check('research tabs: finishing a run clears the marker and leaves the tabs open', !r.has(run) && log.closed.size === 0 && log.reading.every(([, on], i, a) => on || a.slice(0, i).some(([id, o]) => o)), '');
+  }
+  {
+    const { r, log } = make();
+    const run = {};
+    r.begin(run, { urls: Array.from({ length: 6 }, (_, i) => `https://p${i}.example/`) })();
+    check('research tabs: up to 6 research tabs per run', log.opened.length === 6, String(log.opened.length));
+    r.begin(run, { urls: ['https://p6.example/', 'https://p7.example/'] })();
+    check('research tabs: past the cap the oldest tabs are navigated, not more tabs opened', log.opened.length === 6 && log.navigated.length === 2 && log.navigated[0].id === 1 && log.navigated[1].id === 2 && log.navigated[0].url === 'https://p6.example/', JSON.stringify(log.navigated));
+    check('research tabs: never more than the cap open for a run', r.tabCount(run) === 6, String(r.tabCount(run)));
+  }
+  {
+    const { r, log } = make();
+    r.begin({}, { urls: ['https://blocked.example/a', 'https://ok.example/'] })();
+    check('research tabs: a site with AI turned off gets no tab, the others do', log.opened.length === 1 && log.opened[0].url === 'https://ok.example/', JSON.stringify(log.opened));
+    const aiOffSearch = make({ isAiOff: () => true });
+    aiOffSearch.r.begin({}, { query: 'x' })();
+    check('research tabs: an engine site with AI off gets no search tab', aiOffSearch.log.opened.length === 0, '');
+    const bad = make();
+    bad.r.begin({}, { urls: ['javascript:alert(1)', 'file:///etc/passwd', 'notaurl', 'chrome://settings'] })();
+    check('research tabs: only http(s) pages are ever opened', bad.log.opened.length === 0, JSON.stringify(bad.log.opened));
+  }
+  {
+    const off = make({ enabled: () => false });
+    off.r.begin({}, { query: 'q' })();
+    off.r.begin({}, { urls: ['https://a.example/'] })();
+    check('research tabs: with "Show AI research in tabs" off nothing opens and nothing is marked', off.log.opened.length === 0 && off.log.groups.length === 0 && off.log.reading.length === 0, JSON.stringify(off.log));
+    const boom = make({ openTab: () => { throw new Error('window gone'); } });
+    let threw = false;
+    try { boom.r.begin({}, { query: 'q' })(); } catch { threw = true; }
+    check('research tabs: a failing browser call never breaks the tool', !threw, '');
+  }
+  {
+    const { r, log } = make();
+    const run = {};
+    r.begin(run, { query: 'q' })();
+    log.closed.add(1); log.groupGone = true; // the user closed the research tab and its group
+    r.begin(run, { urls: ['https://a.example/'] })();
+    check('research tabs: after the user closes the group the next page starts a fresh group', log.opened.length === 2 && log.opened[1].groupId === null && log.groups.length === 2, JSON.stringify(log));
+    r.begin(run, { query: 'q' })();
+    check('research tabs: a page the user closed can be shown again', log.opened.length === 3, JSON.stringify(log.opened));
+  }
+  {
+    let t = 0;
+    const { r, log } = make({}, { now: () => t, idleMs: 1000 });
+    r.begin('external', { query: 'a' })();
+    t = 500; r.begin('external', { urls: ['https://a.example/'] })();
+    check('research tabs: an outside agent\'s calls in quick succession share one group', log.groups.length === 1 && log.opened[1].groupId === 1, JSON.stringify(log));
+    t = 5000; r.begin('external', { query: 'b' })();
+    check('research tabs: after it goes quiet a new question gets a new group', log.groups.length === 2, JSON.stringify(log.groups));
+  }
+  check('research tabs: group names shorten long queries on a word', R.groupName('  how do I  repot a very large monstera plant without killing it  ') === 'AI: how do I repot a very large…' && R.groupName('') === 'AI: research' && R.shortQuery('short') === 'short', R.groupName('  how do I  repot a very large monstera plant without killing it  '));
+  const SB = require('../settings-backend');
+  check('research tabs: the setting exists, on by default, and is a plain boolean', SB.DEFAULTS?.researchTabs === true || /researchTabs: true/.test(fs.readFileSync(path.join(__dirname, '..', 'settings-backend.js'), 'utf8')), '');
+}
+
 schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

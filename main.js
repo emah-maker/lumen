@@ -1130,6 +1130,7 @@ function tabState() {
         groupId: t.groupId || null,
         alert: dialogs.pendingFor(wc), // a dialog is waiting for this background tab
         pinned: Boolean(t.pinned),
+        aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         ...tabTools.state(t, true), // audible, muted
       };
     }),
@@ -3572,7 +3573,22 @@ app.on('will-quit', () => mcpClient.stopAll());
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
 let runRec = null;
 const inRun = (fn) => (...args) => (runRec && winRecs.has(runRec) ? withWindow(runRec, () => fn(...args)) : fn(...args));
+// [research tabs] web_search / read_urls show what they look at in background tabs (features/research-tabs.js).
+// The tabs open in the run's window, behind the user's current tab, never through agentOpenTab (that
+// would move the task onto them). Private windows have no agent, so none of this reaches them.
+const researchTabs = require('./features/research-tabs').createResearchTabs({
+  enabled: () => readSettings().researchTabs !== false,
+  isAiOff: (url) => aiSites.isOff(url),
+  searchUrl: (query) => searchUrlFor(readSettings().searchEngine, query),
+  openTab: inRun((url, opts) => openTab(url, { background: true, ...opts }).id),
+  navigateTab: inRun((id, url) => { const t = tabs.find((x) => x.id === id); if (alive(t)) t.view.webContents.loadURL(url).catch(() => {}); }),
+  tabExists: inRun((id) => { const t = tabs.find((x) => x.id === id); return Boolean(t && !t.closing && (alive(t) || t.sleeping)); }),
+  createGroup: inRun((name, ids) => { const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
+  groupExists: inRun((groupId) => tabGroups.groups.has(groupId)),
+  setReading: inRun((id, on) => { const t = tabs.find((x) => x.id === id); if (t && Boolean(t.aiReading) !== on) { t.aiReading = on; sendTabs(); } }),
+});
 const agent = new Agent({
+  research: researchTabs,
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
