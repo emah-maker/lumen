@@ -22,12 +22,12 @@ function updateView(u) {
     case 'checking': return { note: 'Checking for updates…', cls: '' };
     case 'up-to-date': return { note: 'Lumen is up to date.', cls: 'ok' };
     case 'downloading': return { note: `Downloading Lumen ${u.version}… ${u.progress || 0}%`, cls: '' };
-    case 'downloaded': return { note: `Lumen ${u.version} is ready. Restart to finish updating, or it installs when you quit.`, cls: 'ok', action: 'Restart to update' };
+    case 'downloaded': return { note: `Lumen ${u.version} is ready. ${u.canAutoInstall ? 'Restart to finish updating, or it installs when you quit.' : 'Restart to finish updating; your settings and tabs are kept.'}`, cls: 'ok', action: 'Restart to update' };
     case 'available':
-      if (u.canAutoInstall) return { note: `Lumen ${u.version} is available.`, cls: 'ok', action: 'Download' };
+      if (u.canSelfUpdate) return { note: `Lumen ${u.version} is available.`, cls: 'ok', action: 'Download' };
       return { note: `Lumen ${u.version} is available.${u.kind === 'mac' ? ' Open the downloaded disk image and drag Lumen to Applications.' : ' Unzip it over this copy.'}`, cls: 'ok', action: u.asset ? `Download ${u.asset.name}` : 'Open releases page' };
-    case 'error': return u.version && u.canAutoInstall
-      ? { note: `Couldn’t download Lumen ${u.version}: ${u.error || 'unknown error'}`, cls: 'err', action: 'Try again' }
+    case 'error': return u.version && u.canSelfUpdate
+      ? { note: `Couldn’t ${u.kind === 'zip' ? 'update to' : 'download'} Lumen ${u.version}: ${u.error || 'unknown error'}`, cls: 'err', action: 'Try again' }
       : { note: `Couldn’t check for updates: ${u.error || 'unknown error'}`, cls: 'err' };
     default: return { note: '', cls: '' };
   }
@@ -45,7 +45,7 @@ async function buildUpdates(card) {
   r.dataset.search += ' update version check download';
   const auto = toggle('autoDownloadUpdates', 'Download updates automatically',
     u.canAutoInstall ? 'New versions download in the background; Lumen asks you to restart when one is ready.'
-      : 'Only the installed Windows version can update itself. This copy tells you when a new version is out and downloads it when you ask.');
+      : u.kind === 'zip' ? 'This copy tells you when a new version is out, downloads it when you ask, and swaps it in when you restart.' : 'Only the installed and zip Windows versions can update themselves. This copy tells you when a new version is out and downloads it when you ask.');
   auto.querySelector('input').disabled = !u.canAutoInstall;
 
   function render() {
