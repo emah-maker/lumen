@@ -1290,6 +1290,44 @@ async function pdfRuns() {
   check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
 }
 
+// ---- usage: Lumen's share of the account-wide 5-hour meter ignores your other Claude Code use
+async function usageShareRuns() {
+  const { createUsage, otherClaudeActivity } = require('../features/usage');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-share-'));
+  const mkfile = (dir, name, ageMs) => {
+    fs.mkdirSync(path.join(root, dir), { recursive: true });
+    const f = path.join(root, dir, name);
+    fs.writeFileSync(f, '{}');
+    const t = new Date(Date.now() - ageMs);
+    fs.utimesSync(f, t, t);
+  };
+  const since = Date.now() - 60000;
+  mkfile('C--tmp-lumen-cc-AAAA', 's.jsonl', 0);
+  mkfile('C--tmp-lumen-usage-BBBB', 's.jsonl', 0);
+  mkfile('C--proj-other', 'old.jsonl', 3600e3);
+  check('other Claude activity: Lumen\'s own folders and old transcripts do not count', (await otherClaudeActivity(since, root)) === false, 'counted');
+  mkfile('C--proj-other', 'new.jsonl', 1000);
+  check('other Claude activity: a recent transcript elsewhere does', (await otherClaudeActivity(since, root)) === true, 'missed');
+  check('other Claude activity: no projects folder is not activity', (await otherClaudeActivity(since, path.join(root, 'nope'))) === false, 'counted');
+  fs.rmSync(root, { recursive: true, force: true });
+
+  const run = async (other) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-share-u-'));
+    const u = createUsage({ app: { getPath: () => dir }, claudeBin: async () => null, otherActivity: async () => other });
+    const turn = (pct) => ({ usage: { inputTokens: 1, outputTokens: 1, models: ['m'] }, rateLimit: { unifiedWindows: { five_hour: { utilization: pct, resetsAt: Date.now() / 1000 + 3600 } } } });
+    u.record('claudecode', turn(0.10));
+    u.record('claudecode', turn(0.16));
+    await new Promise((r) => setTimeout(r, 30));
+    const points = (await u.summary({ refresh: false })).lumen?.window?.limitPoints;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return points;
+  };
+  const alone = await run(false);
+  check('share of the meter: alone, the second turn is credited with its movement', Math.abs(alone - 6) < 0.01, String(alone));
+  const shared = await run(true);
+  check('share of the meter: with other Claude use in between, it is left unknown, not credited', shared == null, String(shared));
+}
+
 // ---- sidebar speed: incremental markdown tail, cached CLI lookup, passive usage refresh
 async function speedRuns() {
   const { render, stableLength } = require('../renderer/markdown');
@@ -1566,7 +1604,7 @@ async function swapHelperRuns() {
   fs.rmSync(d, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(() => {
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
