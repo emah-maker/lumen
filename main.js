@@ -1914,12 +1914,12 @@ async function organizeTabs() {
     });
     sendTabs();
     if (!stats.groups && !stats.created) {
-      if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'info', message: t('organize.none'), detail: t('organize.none.detail') });
+      organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // a note that closes itself, not a modal: nothing needs an answer
     } else if (stats.reason === 'confident' || stats.reason === 'cached') organizeNote(t('organize.noAi'), { undo: true });
     else if (stats.reason === 'refined') organizeNote(t('organize.refined'), { undo: true });
     else if (stats.reason !== 'cancelled') organizeNote(t('organize.localOnly'), { undo: true });
   } catch (err) {
-    if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: t('organize.failed'), detail: err.message });
+    organizeNote(`${t('organize.failed')}: ${err.message}`);
   } finally {
     organizing = false;
     organizeAbort = null;
