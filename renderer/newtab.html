@@ -47,7 +47,17 @@
       animation: drift 36s var(--ease) infinite alternate;
     }
     /* [look] An animated effect (newtab-effects.js) sits over the background, under everything else. */
-    #effect { position: fixed; inset: 0; z-index: -1; width: 100vw; height: 100vh; pointer-events: none; }
+    #effect {
+      position: fixed; inset: 0; z-index: -1; width: 100vw; height: 100vh; pointer-events: none;
+      /* It never takes a click, and it fades behind the content column so text and fields stay clear. */
+      -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(50% - 400px), rgba(0, 0, 0, 0.28) calc(50% - 300px), rgba(0, 0, 0, 0.28) calc(50% + 300px), #000 calc(50% + 400px), #000 100%);
+      mask-image: linear-gradient(90deg, #000 0, #000 calc(50% - 400px), rgba(0, 0, 0, 0.28) calc(50% - 300px), rgba(0, 0, 0, 0.28) calc(50% + 300px), #000 calc(50% + 400px), #000 100%);
+    }
+    @media (max-width: 760px) { #effect { -webkit-mask-image: linear-gradient(#000, #000); mask-image: none; opacity: 0.35; } }
+    /* Over an effect the search box, switch and cards are less see-through. */
+    body.on-media.has-effect input:not(:focus) { background: rgba(28, 28, 32, 0.72); }
+    body.on-media.has-effect .w-card, body.on-media.has-effect .privacy,
+    body.on-media.has-effect .frequent a, body.on-media.has-effect .mode { background: rgba(28, 28, 32, 0.6); }
     body[data-bg="image"] #backdrop { background: #000 var(--wallpaper) center / cover no-repeat; }
     body[data-bg="image"] #backdrop::after { background: linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, rgba(0, 0, 0, 0.12) 40%, rgba(0, 0, 0, 0.45) 100%); inset: 0; }
     @keyframes drift { from { transform: translate3d(-3%, -2%, 0) scale(1); } to { transform: translate3d(3%, 2%, 0) scale(1.08); } }

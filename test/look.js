@@ -59,8 +59,9 @@ const path = require('path');
   check('an unknown effect is refused', (await set('newTabEffect', 'fireworks')).startsWith('ERROR'), 'accepted');
   for (const name of ['particles', 'stars', 'bubbles', 'snow']) {
     await set('newTabEffect', name);
-    for (let i = 0; i < 20 && !(e = await fx()).canvas; i++) await sleep(100);
-    const drawn = await page("new Promise((res) => { const c = document.getElementById('effect'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; res(n); })");
+    for (let i = 0; i < 20 && !((e = await fx()).canvas && (await page('window.setBackdropEffect?.info?.()?.name')) === name); i++) await sleep(100);
+    let drawn = 0;
+    for (let i = 0; i < 20 && !drawn; i++, await sleep(100)) drawn = await page("new Promise((res) => { const c = document.getElementById('effect'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; res(n); })");
     check(`${name}: one canvas that draws something`, e.script && e.canvas === 1 && e.w > 0 && drawn > 0, JSON.stringify({ e, drawn }));
   }
   // The frame rate stays capped (rAF can still run 60 times a second; the effect draws at most 30).
@@ -76,6 +77,63 @@ const path = require('path');
   const still = await page("new Promise((res) => { const ctx = document.getElementById('effect').getContext('2d'); let n = 0; const orig = ctx.clearRect.bind(ctx); ctx.clearRect = (...a) => { n++; return orig(...a); }; setTimeout(() => res(n), 500); })");
   check('Reduce motion leaves one still frame (nothing animates)', still === 0 && (await fx()).canvas === 1, still);
   await set('reduceMotion', false);
+
+  // ---- the effect's options: color, amount, speed, size, the pointer
+  await app.evaluate(() => { global.__lookTab = global.__agent.browser.activeTab(); });
+  const info = () => app.evaluate(() => global.__lookTab.webContents.executeJavaScript('window.setBackdropEffect?.info?.() || null'));
+  const until = async (fn) => { let v; for (let i = 0; i < 20 && !(v = await fn()); i++) await sleep(100); return v; };
+  check('an effect color must be a #rrggbb, auto, accent or rainbow', (await set('newTabEffectColor', 'red')).startsWith('ERROR') && (await set('newTabEffectColor', 'url(x)')).startsWith('ERROR'), 'accepted');
+  await set('newTabEffectColor', '#FF3366');
+  let fi = await until(async () => { const x = await info(); return x?.colors?.[0] === '255, 51, 102' && x; });
+  check('a custom color colors the particles (and their lines)', fi && fi.colors.length === 1 && fi.line === '255, 51, 102', JSON.stringify(fi));
+  await set('newTabEffectColor', 'rainbow');
+  fi = await until(async () => { const x = await info(); return x?.colors?.length === 6 && x; });
+  check('rainbow uses six colors', Boolean(fi), JSON.stringify(await info()));
+  await set('newTabEffectColor', 'accent');
+  fi = await until(async () => { const x = await info(); return x?.colors?.length === 1 && x; });
+  const accentRgb = await page("(() => { const n = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--accent').trim().slice(1), 16); return `${n >> 16}, ${(n >> 8) & 255}, ${n & 255}`; })()");
+  check('accent follows the accent color', fi?.colors[0] === accentRgb, JSON.stringify({ fi, accentRgb }));
+  const normalCount = (await info()).count;
+  await set('newTabEffectAmount', 'few');
+  const few = await until(async () => { const x = await info(); return x && x.count < normalCount && x; });
+  await set('newTabEffectAmount', 'many');
+  const many = await until(async () => { const x = await info(); return x && x.count > normalCount && x; });
+  check('Amount changes how many (few < normal < many)', few && many && few.count < normalCount && normalCount < many.count, JSON.stringify({ few: few?.count, normalCount, many: many?.count }));
+  check('…and stays capped', many.count <= 150, many.count);
+  await set('newTabEffectSpeed', 'fast');
+  await set('newTabEffectSize', 'large');
+  await set('newTabEffectInteract', false);
+  fi = await until(async () => { const x = await info(); return x?.speed > 1 && x.size > 1 && x.interact === false && x; });
+  check('Speed, Size and React to the pointer apply', Boolean(fi), JSON.stringify(await info()));
+  check('an unknown amount, speed or size is refused', (await set('newTabEffectAmount', 'tons')).startsWith('ERROR') && (await set('newTabEffectSpeed', 9)).startsWith('ERROR') && (await set('newTabEffectSize', 'huge')).startsWith('ERROR'), 'accepted');
+
+  // ---- it never covers anything: clicks reach the fields, and typing works with it running
+  await set('newTabFavorites', true);
+  await sleep(300);
+  const hits = await page(`(() => { const at = (el) => { const r = el.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e === el || el.contains(e) ? 'ok' : (e?.id || e?.tagName); };
+    return [document.getElementById('q'), document.getElementById('mode-ask'), ...document.querySelectorAll('#sections a')].filter(Boolean).slice(0, 6).map(at); })()`);
+  check('the effect is under every field and link (they get the clicks)', hits.length >= 3 && hits.every((x) => x === 'ok'), JSON.stringify(hits));
+  check('…and takes no pointer events itself', (await page("getComputedStyle(document.getElementById('effect')).pointerEvents")) === 'none', 'takes clicks');
+  const q = await page("(() => { const r = document.getElementById('q').getBoundingClientRect(); return { x: Math.round(r.left + 40), y: Math.round(r.top + r.height / 2) }; })()");
+  await app.evaluate((_e, p) => { const wc = global.__agent.browser.activeTab().webContents; wc.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 }); wc.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 }); for (const c of 'cats') wc.sendInputEvent({ type: 'char', keyCode: c }); }, q);
+  await sleep(300);
+  check('clicking the search box and typing works over an effect', (await page("document.activeElement.id + ':' + document.getElementById('q').value")) === 'q:cats', await page("document.activeElement.id + ':' + document.getElementById('q').value"));
+  await page("document.getElementById('q').value = ''");
+
+  // ---- Settings shows the options only with an effect on
+  const sid = await app.evaluate(() => global.__settings.open('appearance'));
+  const sp = (code) => app.evaluate((_e, [id, c]) => global.__settings.contents(id).executeJavaScript(c), [sid, code]);
+  for (let i = 0; i < 40 && !(await sp("Boolean(document.body.dataset.ready && document.getElementById('effect-options'))").catch(() => false)); i++) await sleep(150);
+  const opts = await sp("({ hidden: document.getElementById('effect-options').hidden, colors: document.querySelectorAll('#effect-options [data-color]').length, checked: document.querySelector('#effect-options [aria-checked=true]')?.dataset.color, selects: ['newTabEffectAmount', 'newTabEffectSpeed', 'newTabEffectSize'].map((k) => document.getElementById('pref-' + k)?.value) })");
+  check('Settings: the effect options show, with the current choices', !opts.hidden && opts.colors === 9 && opts.checked === 'accent' && opts.selects.join() === 'many,fast,large', JSON.stringify(opts));
+  await sp("document.querySelector('#effect-options [data-color=\"#30d158\"]').click()");
+  fi = await until(async () => { const x = await info(); return x?.colors?.[0] === '48, 209, 88' && x; });
+  check('Settings: a swatch sets the color on an open new-tab page', Boolean(fi), JSON.stringify(await info()));
+  await sp("(() => { const s = document.getElementById('pref-newTabEffect'); s.value = 'none'; s.dispatchEvent(new Event('change')); })()");
+  await sleep(300);
+  check('Settings: choosing None hides the options', await sp("document.getElementById('effect-options').hidden"), 'shown');
+  await app.evaluate((_e, id) => { global.__agent.browser.closeTab(id); global.__agent.browser.switchTab(global.__lookTab.id); }, sid);
+  for (const [k, v] of [['newTabEffectColor', 'auto'], ['newTabEffectAmount', 'normal'], ['newTabEffectSpeed', 'normal'], ['newTabEffectSize', 'normal'], ['newTabEffectInteract', true]]) await set(k, v);
   await set('newTabEffect', 'none');
 
   // ---- a picture kept in the profile

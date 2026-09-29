@@ -353,6 +353,41 @@ function buildAppearance(card) {
 // ---------- [look] accent color and the new-tab page ----------
 const ACCENT_SWATCHES = [['blue', 'Blue'], ['indigo', 'Indigo'], ['purple', 'Purple'], ['pink', 'Pink'], ['red', 'Red'], ['orange', 'Orange'], ['green', 'Green'], ['teal', 'Teal'], ['graphite', 'Graphite']];
 const BACKGROUND_CHOICES = [['plain', 'Plain'], ['aurora', 'Aurora'], ['dusk', 'Dusk'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['sunset', 'Sunset'], ['graphite', 'Graphite']];
+// The animated effect's look: a color (automatic, the accent, rainbow, a preset or any), how many,
+// how fast, how big, and whether the pointer moves them.
+const EFFECT_SWATCHES = [['#ffffff', 'White'], ['#64d2ff', 'Cyan'], ['#bf5af2', 'Purple'], ['#ff6482', 'Pink'], ['#ffd60a', 'Gold'], ['#30d158', 'Green']];
+function buildEffectOptions() {
+  const box = h('div', { class: 'effect-options', id: 'effect-options' });
+  const modes = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Effect color' });
+  const swatches = h('div', { class: 'swatches' });
+  const custom = h('input', { type: 'color', class: 'swatch-custom', id: 'effect-color-custom', 'aria-label': 'Custom effect color', title: 'Any color' });
+  const render = () => {
+    const current = st.prefs.newTabEffectColor;
+    for (const b of box.querySelectorAll('[data-color]')) b.setAttribute('aria-checked', String(b.dataset.color === current));
+    custom.classList.toggle('on', /^#/.test(current) && !EFFECT_SWATCHES.some(([v]) => v === current));
+    if (/^#/.test(current)) custom.value = current;
+  };
+  const pickColor = async (value) => { await save('newTabEffectColor', value); render(); };
+  for (const [value, label] of [['auto', 'Automatic'], ['accent', 'Accent'], ['rainbow', 'Rainbow']]) {
+    modes.append(h('button', { type: 'button', role: 'radio', 'data-color': value, text: label, onclick: () => pickColor(value) }));
+  }
+  for (const [value, label] of EFFECT_SWATCHES) {
+    const b = h('button', { type: 'button', role: 'radio', class: 'swatch', 'data-color': value, title: label, 'aria-label': label, onclick: () => pickColor(value) });
+    b.style.background = value; // (the page's CSP has no inline style attributes)
+    swatches.append(b);
+  }
+  custom.addEventListener('change', () => pickColor(custom.value.toLowerCase()));
+  swatches.append(custom);
+  box.append(
+    stackRow('Effect color', 'Automatic is white over a background and your text color on Plain.', modes, swatches),
+    select('newTabEffectAmount', 'Amount', null, [['few', 'Few'], ['normal', 'Normal'], ['many', 'Many']]),
+    select('newTabEffectSpeed', 'Speed', null, [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']]),
+    select('newTabEffectSize', 'Size', null, [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']]),
+    toggle('newTabEffectInteract', 'React to the pointer', 'Particles reach for it, stars light up, bubbles and snow move aside.'),
+  );
+  render();
+  return box;
+}
 function applyPageAccent() {
   const hex = st?.accent && (matchMedia('(prefers-color-scheme: dark)').matches ? st.accent.dark : st.accent.light);
   const style = document.documentElement.style;
@@ -397,8 +432,10 @@ function buildLook(card) {
       onclick: async () => { await save('newTabBackground', value); renderTiles(); } }, h('span', { text: label })));
   }
   card.append(stackRow('New tab background', 'Behind the new-tab page. A picture is resized and kept in your Lumen profile; it never leaves this computer.', tiles, picture));
-  card.append(select('newTabEffect', 'Animated effect', 'Moving particles over the background. Light on purpose: few particles, at most 30 frames a second, paused while the tab is hidden, and still with Reduce motion.',
-    [['none', 'None'], ['particles', 'Particles'], ['stars', 'Stars'], ['bubbles', 'Bubbles'], ['snow', 'Snow']]));
+  const effectOptions = buildEffectOptions();
+  card.append(select('newTabEffect', 'Animated effect', 'Moving particles over the background. Light on purpose: few particles, at most 30 frames a second, paused while the tab is hidden, and still with Reduce motion. It never covers the search box or the cards.',
+    [['none', 'None'], ['particles', 'Particles'], ['stars', 'Stars'], ['bubbles', 'Bubbles'], ['snow', 'Snow']], { after: (v) => { effectOptions.hidden = v === 'none'; } }), effectOptions);
+  effectOptions.hidden = st.prefs.newTabEffect === 'none';
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
   name.addEventListener('change', () => save('newTabName', name.value));
