@@ -18,11 +18,24 @@ const searchUrlFor = (id, query) => engineFor(id).url.replace('%s', encodeURICom
 // classic trick to make someone run script on the site they're on, so it is searched as text.
 const TLDS = require('./tlds');
 const LOCAL_HOST = /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?([/?#]|$)/i;
+// A path typed or pasted into the address bar opens the file, as in Chrome: /Users/me/page.html,
+// ~/Downloads/report.pdf, C:\\Users\\me\\page.html. Spaces are allowed (paths have them), so this
+// runs before the "has a space, so it's a search" rule. "//host" is left alone.
+function localPath(value) {
+  const { pathToFileURL } = require('url');
+  const os = require('os');
+  if (/^~(\/|$)/.test(value)) return pathToFileURL(os.homedir() + value.slice(1)).href;
+  if (/^\/(?!\/)/.test(value)) return pathToFileURL(value).href;
+  if (/^[a-z]:[\\/]/i.test(value)) return `file:///${value.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/').replace(/^([a-z])%3A/i, '$1:')}`;
+  return null;
+}
 function resolveInput(text, engineId) {
   const value = String(text || '').trim();
   const search = () => searchUrlFor(engineId, value);
   if (!value || /^javascript:/i.test(value)) return search();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^(about|mailto|tel):/i.test(value)) return value;
+  const file = localPath(value);
+  if (file) return file;
   if (/\s/.test(value)) return search();
   if (LOCAL_HOST.test(value) || /^[^/?#]+\.localhost(:\d+)?([/?#]|$)/i.test(value)) return `http://${value}`;
   const host = value.split(/[/?#]/)[0].replace(/:\d+$/, '').replace(/\.$/, '');

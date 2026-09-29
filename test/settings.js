@@ -83,7 +83,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- nav and search ----
   const navCount = await inTab(sid, "document.querySelectorAll('#nav a').length");
-  check('left nav lists all 13 sections', navCount === 13, navCount);
+  const sectionCount = require('../settings-backend').SECTIONS.length;
+  check(`left nav lists all ${sectionCount} sections`, navCount === sectionCount, navCount);
   await inTab(sid, "document.querySelector('#nav a[data-section=appearance]').click()");
   await waitFor(() => inTab(sid, "!document.getElementById('sec-appearance').hidden"));
   const visible = await inTab(sid, "[...document.querySelectorAll('#sections > section')].filter((s) => !s.hidden).map((s) => s.id)");

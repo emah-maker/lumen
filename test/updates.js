@@ -136,8 +136,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await app.evaluate(() => global.__updates.check());
   check('automatic downloads on: the prompt appears once the update is ready', (await waitFor(async () => (await pill(ui)) === 'Lumen 10.0.0 is ready | Restart to update')) === true, await pill(ui));
   await app.evaluate((_e, url) => global.__agent.browser.openTab(url), `${base}/keep-me`);
-  await waitFor(() => app.evaluate(() => global.__tabsArray().length >= 3));
-  await sleep(500);
+  // Wait for the page itself, not a fixed time: under load the tab can take longer to commit.
+  await waitFor(() => app.evaluate(() => global.__agent.browser.listTabs().some((t) => String(t.url).endsWith('/keep-me'))));
   await app.evaluate(() => global.__patchSettings({ session: null })); // so only the restart can write it
   await ui.click('#update-action');
   const installs = await waitFor(() => app.evaluate(() => global.__fakeUpdater.installs.length && global.__fakeUpdater.installs));

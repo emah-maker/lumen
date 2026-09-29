@@ -956,6 +956,13 @@ class Agent {
   }
   // ---- [/page context]
 
+  // [usage] Each finished turn's tokens (and, for Claude Code, the plan's limits) go to
+  // features/usage.js through main.js (agent.onUsage). A failure there never affects the reply.
+  reportUsage(engine, data) {
+    if (!this.onUsage || !data?.usage) return;
+    try { this.onUsage(engine, data); } catch (err) { console.error('[lumen] usage log failed:', err.message); }
+  }
+
   // ---- [claude code engine] One message through the user's Claude Code CLI. The session id lives
   // in the chat's settings, so follow-ups resume it and New chat (reset) starts a fresh one.
   async claudeCodeTurn(messages, prompt, images, signal, emit) {
@@ -985,6 +992,7 @@ class Agent {
       emit,
     });
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
+    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: engineModel(settings.model) });
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
@@ -1023,6 +1031,7 @@ class Agent {
       emit,
     });
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
+    this.reportUsage('grokbuild', { usage: out.usage, model: engineModel(settings.model) });
     if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
@@ -1048,7 +1057,10 @@ class Agent {
         emit({ type: 'text_block' });
       }
     }
-    return stream.finalMessage();
+    const final = await stream.finalMessage();
+    const u = final?.usage;
+    if (u) this.reportUsage('anthropic', { model: final.model, usage: { inputTokens: u.input_tokens, outputTokens: u.output_tokens, cacheReadTokens: u.cache_read_input_tokens, cacheWriteTokens: u.cache_creation_input_tokens } });
+    return final;
   }
 
   // One turn on OpenAI, Grok or Gemini (Chat Completions). Same message shape as Claude's.

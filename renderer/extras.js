@@ -1,7 +1,8 @@
 // Sidebar additions kept out of app.js (merge-friendly):
 //  - the Claude Code / Grok Build engines' placeholder,
 //  - the "Using: <page>" chip above the composer (the current tab rides along with each message),
-//  - the pending-approval badge on the toolbar button while the sidebar is closed.
+//  - the pending-approval badge on the toolbar button while the sidebar is closed,
+//  - [usage] the plan meter under the page chip while a Claude Code model is picked.
 (() => {
   const $ = (id) => document.getElementById(id);
   const extras = window.lumenExtras || {};
@@ -100,6 +101,49 @@
   });
   window.browser.onTabs?.((state) => renderChip(state)); // follows tab switches, titles and navigation
   extras.getPageContext?.().then((on) => { include = on !== false; renderChip(); });
+
+  // ---------- [usage] the plan meter ----------
+  // "Plan 29% · resets 8:09 PM · Lumen ≈3": the 5-hour limit, and roughly how much of it Lumen's
+  // sidebar used in this window. Live during a turn (the CLI's rate_limit_event), refreshed after
+  // each one; a click opens Settings → Usage.
+  const meter = Object.assign(document.createElement('button'), { type: 'button', id: 'usage-meter', className: 'usage-meter', hidden: true });
+  const meterBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
+  const meterFill = document.createElement('i');
+  meterBar.append(meterFill);
+  const meterText = Object.assign(document.createElement('span'), { className: 'um-text' });
+  meter.append(meterBar, meterText);
+  chip.after(meter);
+  meter.addEventListener('click', () => extras.openUsage?.());
+  let usage = null;
+  const onClaudeCode = () => String(select?.value || '').startsWith('claudecode:');
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  function renderMeter() {
+    const session = usage?.plan?.available && usage.plan.limits.find((l) => /session/i.test(l.label));
+    const percent = usage?.meter?.percent ?? session?.percent;
+    meter.hidden = !onClaudeCode() || percent == null;
+    if (meter.hidden) return;
+    const p = Math.max(0, Math.min(100, percent));
+    meterFill.style.width = `${p}%`;
+    meter.classList.toggle('high', p >= 80);
+    const resets = usage.meter?.resetsAt ? clock(usage.meter.resetsAt) : session?.resets?.replace(/\s*\(.*\)$/, '');
+    const points = usage.lumen?.window?.limitPoints;
+    meterText.textContent = [`Plan ${Math.round(p)}%`, resets ? `resets ${resets}` : '', points != null ? `Lumen ≈${points < 1 ? '<1' : Math.round(points)}` : ''].filter(Boolean).join(' · ');
+    meter.title = `Your Claude plan's 5-hour limit is ${Math.round(p)}% used${resets ? `; it resets ${resets}` : ''}.${points != null ? ` About ${points < 1 ? 'less than 1 point' : `${Math.round(points)} points`} of that came from Lumen's sidebar.` : ''} Click for details.`;
+  }
+  async function refreshUsage(force) {
+    if (!onClaudeCode() || !extras.usage) { renderMeter(); return; }
+    usage = await extras.usage(force).catch(() => usage);
+    renderMeter();
+  }
+  select?.addEventListener('change', () => setTimeout(() => refreshUsage(false)));
+  window.assistant?.onEvent?.((event) => {
+    if (event.type === 'rate_limit' && event.info?.unifiedWindows?.five_hour && usage) {
+      const w = event.info.unifiedWindows.five_hour;
+      usage.meter = { percent: Number(w.utilization) * 100, resetsAt: Number(w.resetsAt) * 1000 };
+      renderMeter();
+    } else if (event.type === 'done') setTimeout(() => refreshUsage(false), 300);
+  });
+  setTimeout(() => refreshUsage(false), 1500); // after the model list has loaded
 
   // ---------- the pending-approval badge ----------
 

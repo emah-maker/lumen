@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree, validModel } = require('./cli-utils');
+const { exists, lookup, killTree, validModel, usageOf } = require('./cli-utils');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -188,8 +188,12 @@ class ClaudeCodeEngine {
     let newSession = sessionId;
     let stderr = '';
     let buffer = '';
+    let rateLimit = null; // the plan's limits as of this turn (rate_limit_event), for the Usage panel
     const handle = (msg) => {
-      if (msg.type === 'system' && msg.subtype === 'init') {
+      if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
+        rateLimit = msg.rate_limit_info;
+        emit({ type: 'rate_limit', info: rateLimit });
+      } else if (msg.type === 'system' && msg.subtype === 'init') {
         newSession = msg.session_id || newSession;
         const lumen = (msg.mcp_servers || []).find((s) => s.name === 'lumen');
         if (lumen && lumen.status !== 'connected') emit({ type: 'notice', text: `Claude Code could not connect to Lumen (${lumen.status}).` });
@@ -239,12 +243,13 @@ class ClaudeCodeEngine {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
+    const usage = usageOf(result);
     if (!result || result.is_error || result.subtype !== 'success') {
       emit({ type: 'error', ...describeFailure(result?.result || (result?.errors || []).join('\n') || stderr, code) });
       // A resumed session that no longer exists: forget it so the next message starts fresh.
-      return { text, sessionId: /no conversation found|session.*not found/i.test(`${result?.result || ''}${stderr}`) ? null : newSession, failed: true };
+      return { text, sessionId: /no conversation found|session.*not found/i.test(`${result?.result || ''}${stderr}`) ? null : newSession, failed: true, usage, rateLimit };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage, rateLimit };
   }
 }
 

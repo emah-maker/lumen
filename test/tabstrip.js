@@ -1,6 +1,6 @@
 // The tab strip under load and the basics around it: clicks that land while tabs are updating,
 // scrolling a strip that overflows, pinned tabs, restoring a session lazily (and pinned tabs with
-// it), the History page, zoom reset to the default, F11, and dialogs from a popup window.
+// it), favicons, the History page, zoom reset to the default, F11, and dialogs from a popup window.
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -25,8 +25,24 @@ const os = require('os');
     if (req.url === '/xframe' || req.url === '/frame') seenHints[req.url] = req.headers['sec-ch-ua'];
     if (req.url === '/xframe') return res.end(`<title>xframe</title><iframe src="http://localhost:${server.address().port}/frame"></iframe>`);
     if (req.url === '/frame') return res.end('<script>window.brands = JSON.stringify(navigator.userAgentData?.brands || []);</script>');
+    // Favicons (section 7c): a good icon, a missing one, one that fails the first time it's asked
+    // for, a download and an empty (204) response, neither of which leaves the page.
+    if (req.url === '/fav/i.png' || req.url === '/fav/good.png') { res.setHeader('Content-Type', 'image/png'); return res.end(PNG); }
+    if (req.url === '/fav/flaky.png') {
+      if (!flakyServed++) { res.writeHead(500); return res.end(); }
+      res.setHeader('Content-Type', 'image/png');
+      return res.end(PNG);
+    }
+    if (req.url === '/fav/file.bin') { res.setHeader('Content-Type', 'application/octet-stream'); res.setHeader('Content-Disposition', 'attachment; filename=lumen-test.bin'); return res.end('x'); }
+    if (req.url === '/fav/empty') { res.writeHead(204); return res.end(); }
+    if (/^\/fav\/.*\.(png|ico)$/.test(req.url)) { res.writeHead(404); return res.end(); }
+    if (req.url === '/fav/broken') return res.end('<title>broken icon</title><link rel=icon href=/fav/good.png><link rel=icon href=/fav/a-missing.png>');
+    if (req.url === '/fav/flaky') return res.end('<title>flaky icon</title><link rel=icon href=/fav/flaky.png>');
+    if (req.url.startsWith('/fav/')) return res.end(`<title>icon ${req.url}</title><link rel=icon href=/fav/i.png><a id=dl href=/fav/file.bin>dl</a><a id=empty href=/fav/empty>204</a><a id=next href=/fav/next>next</a>`);
     res.end(`<title>Page ${req.url}</title><p>${req.url}</p>`);
   }).listen(0);
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  let flakyServed = 0;
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabstrip-'));
   const launch = () => electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile } });
@@ -221,6 +237,53 @@ const os = require('os');
   }, pageTabs[pageTabs.length - 1].id);
   check('clicking the page right after a tab switch keeps focus in the page', clickFocus, clickFocus);
 
+  // ---- 7c. favicons show, and stay, whenever the page has one ----
+  // The tab's icon in the strip: an <img> that has loaded, or the globe/page icon standing in.
+  const iconOf = (id) => ui.evaluate((id) => {
+    const el = document.querySelector(`#tabs .tab[data-id="${id}"] .tab-favicon`);
+    return el && { img: el.tagName === 'IMG', src: el.getAttribute('src') || '', ok: el.tagName === 'IMG' && el.complete && el.naturalWidth > 0 };
+  }, id);
+  const showsIcon = async (id, file, ms = 4000) => (await waitFor(async () => { const i = await iconOf(id); return i?.ok && i.src.endsWith(file); }, ms)) || iconOf(id);
+  const inActive = (code) => app.evaluate((_e, code) => global.__agent.browser.activeTab().webContents.executeJavaScript(code), code);
+  const favId = await open(`${base}/fav/first`);
+  check('a page\'s favicon shows in its tab', (await showsIcon(favId, '/fav/i.png')) === true, JSON.stringify(await iconOf(favId)));
+  // Chromium reports icons only when they change: a reload or the next page of a site with the same
+  // icon gets no report, and clearing the icon when a navigation started left those tabs a globe.
+  await app.evaluate(async () => { const wc = global.__agent.browser.activeTab().webContents; wc.reload(); await new Promise((r) => wc.once('did-stop-loading', r)); });
+  await sleep(500);
+  check('the favicon is still there after a reload', (await showsIcon(favId, '/fav/i.png', 1000)) === true, JSON.stringify(await iconOf(favId)));
+  await inActive("document.getElementById('next').click()");
+  await waitFor(() => app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL().endsWith('/fav/next') && !global.__agent.browser.activeTab().webContents.isLoading()));
+  await sleep(500);
+  check('the next page of the site, with the same icon, still shows it', (await showsIcon(favId, '/fav/i.png', 1000)) === true, JSON.stringify(await iconOf(favId)));
+  // A link to a download, or to a 204, starts a navigation that never commits: the page stays.
+  await app.evaluate((_e, dir) => global.__settings.backend.set('downloadDir', dir), profile); // not ~/Downloads
+  await inActive("document.getElementById('dl').click()");
+  await sleep(1200);
+  check('a link that downloads a file doesn\'t take the page\'s favicon away', (await showsIcon(favId, '/fav/i.png', 1000)) === true, JSON.stringify(await iconOf(favId)));
+  await inActive("document.getElementById('empty').click()");
+  await sleep(1200);
+  check('a link to an empty (204) response doesn\'t take the favicon away', (await showsIcon(favId, '/fav/i.png', 1000)) === true, JSON.stringify(await iconOf(favId)));
+  // A page that isn't a web page has no icon; coming back to the site brings its icon back.
+  await app.evaluate(async () => { await global.__agent.browser.activeTab().webContents.loadURL('data:text/html,<title>plain</title>'); });
+  await sleep(400);
+  const dataIcon = await iconOf(favId);
+  await app.evaluate(async (_e, url) => { await global.__agent.browser.activeTab().webContents.loadURL(url); }, `${base}/fav/first`);
+  await sleep(500);
+  check('a data: page shows no favicon, and going back to the site shows it again', dataIcon && !dataIcon.img && (await showsIcon(favId, '/fav/i.png', 1000)) === true, JSON.stringify({ dataIcon, back: await iconOf(favId) }));
+  // Electron lists a page's icons alphabetically, not by preference: the first may be missing.
+  const brokenId = await open(`${base}/fav/broken`);
+  check('a missing icon listed first falls through to the page\'s good one', (await showsIcon(brokenId, '/fav/good.png')) === true, JSON.stringify(await iconOf(brokenId)));
+  // An icon that failed once (a server error) is tried again rather than left a globe for good.
+  // (On localhost, a host visited once: the new-tab page's icon cache doesn't fetch it first.)
+  const flakyId = await open(`http://localhost:${server.address().port}/fav/flaky`);
+  check('an icon that failed to load once is retried', (await showsIcon(flakyId, '/fav/flaky.png', 6000)) === true, JSON.stringify(await iconOf(flakyId)));
+  // A page visited once (so the new-tab page's icon cache doesn't keep a copy), left in the
+  // background for the restart below (section 8).
+  const onceId = await open(`http://localhost:${server.address().port}/fav/once`);
+  await showsIcon(onceId, '/fav/i.png');
+  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), pageTabs[pageTabs.length - 1].id);
+
   // ---- 8. restart: only the active tab loads; pinned tabs stay pinned ----
   const activeUrl = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL());
   await sleep(3500); // session save
@@ -243,6 +306,9 @@ const os = require('os');
   await waitFor(async () => /\/(p|q)\d+$/.test((await app.evaluate(() => global.__agent.browser.activeTab()?.webContents.getURL())) || ''), 5000);
   const woke = await app.evaluate(() => global.__agent.browser.activeTab()?.webContents.getURL());
   check('opening a restored tab loads it', /\/(p|q)\d+$/.test(woke || ''), woke);
+  // A restored tab that hasn't loaded yet shows the icon it had (from the saved session), not a globe.
+  const favTab = (await app.evaluate(() => global.__agent.browser.listTabs())).find((t) => t.url.endsWith('/fav/once'));
+  check('a restored, not yet loaded tab shows its favicon', favTab && (await showsIcon(favTab.id, `localhost:${server.address().port}/fav/i.png`)) === true, JSON.stringify(favTab && await iconOf(favTab.id)));
 
   // ---- 9. a sleeping tab keeps its back/forward history ----
   await open(`${base}/h1`);
@@ -284,6 +350,7 @@ const os = require('os');
   check('no renderer errors', errors.length === 0, errors.join('; '));
   server.close();
   await app.close();
+  fs.rmSync(profile, { recursive: true, force: true }); // ~10 MB per run otherwise left in the temp dir
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

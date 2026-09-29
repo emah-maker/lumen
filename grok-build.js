@@ -160,7 +160,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree, validModel } = require('./cli-utils');
+const { exists, lookup, killTree, validModel, usageOf } = require('./cli-utils');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://x.ai/cli/install.ps1 | iex, then run `grok` once to sign in (needs SuperGrok or X Premium+).'
@@ -709,9 +709,9 @@ class GrokBuildEngine {
       // where it's one failed step and the turn continues) -- see file header.
       const failText = (result?.errors || []).join('\n') || result?.result || stderr;
       emit({ type: 'error', ...describeFailure(failText, code) });
-      return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true };
+      return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true, usage: usageOf(result) };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage: usageOf(result) };
   }
 }
 

@@ -70,12 +70,16 @@ const path = require('path');
     res.setHeader('Content-Type', 'text/html');
     // A strict policy that allows the ad host but not the stand-in scheme: the stand-in must still load.
     if (req.url === '/csp') res.setHeader('Content-Security-Policy', "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com; img-src 'self' https://ad.doubleclick.net");
-    res.end('<!doctype html><head><script>window.__early = String(window.lumenProbe);</script></head><body>hi</body>');
+    res.end('<!doctype html><head><script>window.__early = String(window.lumenProbe); try { window.__toString = typeof String(setTimeout); } catch (e) { window.__toString = String(e); }</script></head><body>hi</body>');
   }).listen(0);
-  await app.evaluate(() => global.__adblockEngine.updateFromDiff({ added: ['lumen-test.org##+js(set-constant, lumenProbe, 42)'] }));
+  // Two scriptlets sharing a helper (proxyApplyFn), as YouTube's rules do: run at one global scope,
+  // the second wrapped toString around the first and every call overflowed the stack.
+  await app.evaluate(() => global.__adblockEngine.updateFromDiff({ added: ['lumen-test.org##+js(set-constant, lumenProbe, 42)', 'lumen-test.org##+js(json-prune, lumenAdA)', 'lumen-test.org##+js(json-prune, lumenAdB)'] }));
   await go(`http://probe.lumen-test.org:${server.address().port}/`);
   await ui.waitForTimeout(500);
   check('scriptlets run before the page’s own first script', (await js('window.__early')) === '42', await js('window.__early'));
+  check('scriptlets sharing helpers leave toString working', (await js('window.__toString')) === 'string', await js('window.__toString'));
+  check('scriptlet helpers stay off window', !(await js(`['safeSelf', 'proxyApplyFn', 'scriptletGlobals'].filter((k) => k in window).length`)), 'helpers on window');
   await go(`http://probe.lumen-test.org:${server.address().port}/csp`);
   const csp = await js(`Promise.all([['script', 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js'], ['img', 'https://ad.doubleclick.net/ddm/ad/pixel.gif']].map(([tag, src]) => new Promise((res) => { const e = document.createElement(tag); e.src = src; e.onload = () => res('load'); e.onerror = () => res('error'); document.body.appendChild(e); setTimeout(() => res('timeout'), 5000); })))`);
   check('stand-ins load on a page with a strict Content-Security-Policy', csp.every((r) => r === 'load'), JSON.stringify(csp));

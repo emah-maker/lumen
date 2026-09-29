@@ -92,6 +92,10 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ![Lumen's settings page](docs/media/settings.png)
 
+- **PDFs** open in Chromium's own viewer, from the web or from disk.
+- **Make it yours** (Settings → Appearance): an accent color (nine presets or any color) across Lumen and its pages, and a new-tab page with a background (Plain, Aurora, Dusk, Ocean, Forest, Sunset, Graphite, or your own picture, kept in your profile), a big clock, a greeting with your name, and the sections you want. Open new-tab pages change as you pick.
+- **Usage** (Settings → Usage, and a meter under the sidebar's composer while a Claude Code model is picked): your Claude plan's 5-hour and weekly limits with reset times, read with the free `claude /usage` and live from each turn, and how much of them Lumen uses: tokens per engine (Claude Code, Grok Build, API key) and roughly how far each Claude Code turn moved the 5-hour meter. Claude Code driving Lumen over MCP shows as its share of this Mac's Claude Code use.
+- **Downloads panel** (the toolbar's download button): progress with speed and time left, pause, resume, cancel, retry, show in folder, remove. Drag a finished file out of the panel into Finder, Explorer, mail or chat. The list is kept across restarts.
 - **Ad blocker** built into the browser, not an extension. It uses uBlock Origin–compatible lists (Ghostery engine). Toggle it, or allow ads on one site, from **⋯ → Ad Blocker**. Hidden-element rules are applied in a way pages can't read, and uBlock's scripts disarm known anti-adblock checks. Blocked requests are cancelled, so a determined site can still notice that its ad request failed.
 - **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get Extensions…** and click *Add to Lumen*. Extension buttons appear in the toolbar. The ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work; content blockers that rely on static declarativeNetRequest rulesets are refused at install.
 - **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (Settings, or ⋯ → Search Engine).
@@ -110,6 +114,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | New tab / close tab / focus address | `Ctrl+T` / `Ctrl+W` / `Ctrl+L` |
 | Switch tabs | `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+1`–`9` |
 | Reopen closed tab | `Ctrl+Shift+T` |
+| Open a local file (HTML, PDF, images, media) | `Ctrl+O`, drop it on the window, type or paste its path, or **Open With → Lumen** |
 | Back / forward | `Alt+←` / `Alt+→` (macOS: `Cmd+[` / `Cmd+]`) |
 | Reload | `Ctrl+R` or `F5` |
 | Find in page | `Ctrl+F` |
@@ -283,7 +288,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab, settings, history and error pages
 - `scripts/`: build, install and `capture-media.js` (the README's screenshots)
 - `docs/media/`: the README's screenshots and GIFs (not shipped in builds)
-- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup, hardening (UI window and reader session lockdown), exfil (the AI's approval gate: redirects, searches, batch steps and scripts), updates (the updater with a stand-in, never the network), security-ui (the certificate warning page and the lock icon), cli-json (one-shot Claude Code and Grok Build runs for tab grouping), grokgate (Grok Build's tool check, with the real `grok` CLI)
+- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup, hardening (UI window and reader session lockdown), exfil (the AI's approval gate: redirects, searches, batch steps and scripts), updates (the updater with a stand-in, never the network), security-ui (the certificate warning page and the lock icon), cli-json (one-shot Claude Code and Grok Build runs for tab grouping), grokgate (Grok Build's tool check, with the real `grok` CLI), files (PDF viewer, local files), usage (plan limits and Lumen's share, with a stand-in CLI), look (accent color and the new-tab page's design). `LUMEN_TEST_BACKGROUND=1 npm test` runs every window invisible and never takes focus, so you can keep working in your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP
 
 ## License
 

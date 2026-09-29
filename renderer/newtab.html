@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; form-action https:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data: file:; form-action https:" />
   <title>New Tab</title>
   <style>
     :root {
@@ -29,6 +29,46 @@
     }
     ::selection { background: var(--ring); }
     main { width: min(640px, 88vw); margin: 0 auto; padding: clamp(40px, 12vh, 132px) 0 48px; }
+
+    /* [look] Backgrounds (Settings → Appearance → New tab page). On anything but Plain, text turns
+       light and the cards become frosted glass over the picture or gradient. */
+    #backdrop { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+    #backdrop::before, #backdrop::after { content: ""; position: absolute; inset: -20%; }
+    body[data-bg="plain"] #backdrop { display: none; }
+    body[data-bg="aurora"] #backdrop { background: #06121f; }
+    body[data-bg="aurora"] #backdrop::before { background: radial-gradient(40% 50% at 20% 30%, rgba(46, 213, 170, 0.55), transparent 70%), radial-gradient(45% 55% at 75% 25%, rgba(94, 92, 230, 0.55), transparent 70%), radial-gradient(50% 50% at 55% 85%, rgba(191, 90, 242, 0.4), transparent 70%); filter: blur(30px); animation: drift 28s var(--ease) infinite alternate; }
+    body[data-bg="dusk"] #backdrop { background: linear-gradient(160deg, #1d1b4b 0%, #5b2a86 45%, #d9577b 80%, #f7a26a 100%); }
+    body[data-bg="ocean"] #backdrop { background: linear-gradient(160deg, #031b34 0%, #0a4a7a 45%, #0e8fa8 80%, #6fd6c8 100%); }
+    body[data-bg="forest"] #backdrop { background: linear-gradient(160deg, #07170f 0%, #164430 45%, #2f7d4f 80%, #9fcf7a 100%); }
+    body[data-bg="sunset"] #backdrop { background: linear-gradient(160deg, #2a0d2e 0%, #8a1f4b 40%, #f0584a 75%, #ffc26b 100%); }
+    body[data-bg="graphite"] #backdrop { background: radial-gradient(120% 90% at 50% 0%, #3a3a3c 0%, #1c1c1e 60%, #111 100%); }
+    body[data-bg="dusk"] #backdrop::before, body[data-bg="ocean"] #backdrop::before, body[data-bg="forest"] #backdrop::before, body[data-bg="sunset"] #backdrop::before {
+      background: radial-gradient(35% 40% at 80% 20%, rgba(255, 255, 255, 0.16), transparent 70%), radial-gradient(40% 45% at 15% 80%, rgba(255, 255, 255, 0.08), transparent 70%);
+      animation: drift 36s var(--ease) infinite alternate;
+    }
+    body[data-bg="image"] #backdrop { background: #000 var(--wallpaper) center / cover no-repeat; }
+    body[data-bg="image"] #backdrop::after { background: linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, rgba(0, 0, 0, 0.12) 40%, rgba(0, 0, 0, 0.45) 100%); inset: 0; }
+    @keyframes drift { from { transform: translate3d(-3%, -2%, 0) scale(1); } to { transform: translate3d(3%, 2%, 0) scale(1.08); } }
+    body.on-media {
+      --text: #ffffff; --muted: rgba(255, 255, 255, 0.72); --faint: rgba(255, 255, 255, 0.5); --card: rgba(255, 255, 255, 0.12);
+      --field: rgba(255, 255, 255, 0.16); --hover: rgba(255, 255, 255, 0.14); --border: rgba(255, 255, 255, 0.22); --bg: rgba(20, 20, 24, 0.55);
+      --mono-l: 30%; --mono-t: 88%;
+      background: #000; text-shadow: 0 1px 12px rgba(0, 0, 0, 0.25);
+    }
+    body.on-media input, body.on-media .frequent a, body.on-media .privacy, body.on-media .mode, body.on-media .empty {
+      -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
+    }
+    body.on-media input { background: rgba(255, 255, 255, 0.16); color: #fff; box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.22); }
+    body.on-media input:focus { background: rgba(20, 20, 24, 0.62); }
+    body.on-media .frequent a, body.on-media .privacy { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
+    /* The clock: large, light, and steady (tabular digits don't jitter as minutes change). */
+    .clock { margin: 0 0 4px; font-size: clamp(56px, 9vw, 88px); line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .clock[hidden] { display: none; }
+    main { animation: arrive 700ms var(--ease) both; }
+    @keyframes arrive { from { opacity: 0; transform: translateY(8px); } }
+    @media (prefers-reduced-motion: reduce) {
+      main, #backdrop::before { animation: none !important; }
+    }
 
     header { margin-bottom: 20px; }
     .date { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -127,9 +167,11 @@
     }
   </style>
 </head>
-<body>
+<body data-bg="plain">
+  <div id="backdrop" aria-hidden="true"></div>
   <main>
     <header>
+      <p class="clock" id="clock" hidden></p>
       <p class="date" id="date"></p>
       <h1 id="greeting">Hello</h1>
     </header>

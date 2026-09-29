@@ -4,6 +4,9 @@
 // until the user agrees; then it finishes there and moves into the Downloads folder. Nothing lands
 // in Downloads unanswered, and it isn't downloaded a second time (which failed for one-time links,
 // POST responses and blob: URLs).
+// The list survives restarts (downloads.json in the profile); the toolbar button opens a panel
+// (renderer/downloads.html) with progress, speed and time left, and each finished file can be
+// dragged out of it into Finder, Explorer, mail or chat, as in Chrome.
 const fs = require('fs');
 const path = require('path');
 const { hostOf } = require('./adblock');
@@ -12,15 +15,56 @@ const { t } = require('./i18n');
 const RISKY_TYPES = /^\.(exe|msi|msix|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|hta|jar|dll|lnk|reg|appx)$/i;
 const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
 
-// deps: { app, session, dialog, shell, win, ui, downloadDir, askWhereToSave }
+// deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave }
 function createDownloads(deps) {
-  const downloads = []; // { id, name, path, state, received, total, paused, awaitingOk } (+ item, url, contents: not sent)
+  const downloads = []; // { id, name, path, state, received, total, paused, awaitingOk, url, started, endedAt, speed } (+ item, contents: not sent)
   const reserved = new Set(); // paths claimed by downloads still running, so two same-named files don't collide
   let downloadSeq = 0;
+  const icons = new Map(); // path -> { image (nativeImage, for dragging), dataUrl (for the panel) }
+  const listFile = () => path.join(deps.app.getPath('userData'), 'downloads.json');
+  let saveTimer = null;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const kept = downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt }) => ({ id, name, path: file, state, received, total, url, started, endedAt }));
+      fs.promises.writeFile(listFile(), JSON.stringify(kept)).catch((err) => console.error('[lumen] could not save the downloads list:', err.message));
+    }, 500);
+  }
+  // Last session's list. A download that was still running when Lumen quit can only be retried.
+  function load() {
+    let list = [];
+    try { list = JSON.parse(fs.readFileSync(listFile(), 'utf8')); } catch (err) { if (err.code !== 'ENOENT') console.error('[lumen] could not read the downloads list:', err.message); }
+    if (!Array.isArray(list)) return;
+    for (const d of list.slice(0, KEEP)) {
+      if (!d || typeof d.id !== 'number' || typeof d.name !== 'string') continue;
+      const entry = { ...d, state: d.state === 'progressing' ? 'interrupted' : d.state, paused: false, awaitingOk: false, speed: 0 };
+      Object.defineProperties(entry, { item: { value: null, writable: true }, contents: { value: null } });
+      downloads.push(entry);
+      downloadSeq = Math.max(downloadSeq, d.id);
+      if (entry.state === 'completed') loadIcon(entry);
+    }
+  }
+  const exists = (d) => Boolean(d.path) && fs.existsSync(d.path);
+  // What the panel shows for one download (no Electron objects, nothing about other tabs).
+  const panelEntry = (d) => ({
+    id: d.id, name: d.name, state: d.state, received: d.received, total: d.total, paused: Boolean(d.paused), awaitingOk: Boolean(d.awaitingOk),
+    speed: Math.round(d.speed || 0), host: hostOf(d.url || ''), endedAt: d.endedAt || null,
+    missing: d.state === 'completed' && !exists(d), canResume: Boolean(d.item && d.state === 'interrupted' && d.item.canResume()),
+    icon: icons.get(d.path)?.dataUrl || null,
+  });
   const sendDownloads = () => {
     deps.ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total, paused }) => ({ id, name, state, received, total, paused })));
     deps.onChange?.(); // the Downloads page (features/managers.js)
+    deps.panel?.()?.send('downloads:list', downloads.map(panelEntry)); // the toolbar's panel
+    save();
   };
+  function loadIcon(entry) {
+    if (!entry.path || icons.has(entry.path) || !exists(entry)) return;
+    deps.app.getFileIcon(entry.path, { size: 'normal' }).then((image) => {
+      icons.set(entry.path, { image, dataUrl: image.toDataURL() });
+      sendDownloads();
+    }).catch(() => {});
+  }
 
   // The first free name in `dir`: "report.pdf", then "report (1).pdf", …
   function freePath(dir, base) {
@@ -67,13 +111,22 @@ function createDownloads(deps) {
         if (ask) item.setSaveDialogOptions({ defaultPath: target });
         else item.setSavePath(target);
       }
-      const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky, awaitingOk: risky, started: Date.now() };
-      Object.defineProperties(entry, { item: { value: item, writable: true }, url: { value: url }, contents: { value: contents } });
+      const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky, awaitingOk: risky, started: Date.now(), url, endedAt: null, speed: 0 };
+      Object.defineProperties(entry, { item: { value: item, writable: true }, contents: { value: contents } });
+      let lastAt = Date.now();
+      let lastReceived = 0;
       downloads.unshift(entry);
       trim();
       sendDownloads();
       item.on('updated', (_e, state) => {
-        entry.received = item.getReceivedBytes();
+        const now = Date.now();
+        const received = item.getReceivedBytes();
+        // Bytes per second, smoothed. A failed transfer can report fewer bytes than before: no speed then.
+        const rate = now > lastAt && received >= lastReceived ? ((received - lastReceived) * 1000) / (now - lastAt) : 0;
+        entry.speed = state === 'interrupted' || item.isPaused() ? 0 : entry.speed ? entry.speed * 0.7 + rate * 0.3 : rate;
+        lastAt = now;
+        lastReceived = received;
+        entry.received = received;
         entry.total = item.getTotalBytes();
         entry.paused = item.isPaused() || entry.awaitingOk;
         entry.state = state === 'interrupted' ? 'interrupted' : 'progressing';
@@ -96,6 +149,8 @@ function createDownloads(deps) {
   function finish(entry, state) {
     entry.state = state; // completed | cancelled | interrupted
     entry.paused = false;
+    entry.speed = 0;
+    entry.endedAt = Date.now();
     const { holding } = entry;
     if (holding) {
       if (state === 'completed' && entry.path) {
@@ -110,6 +165,7 @@ function createDownloads(deps) {
     }
     progress();
     sendDownloads();
+    if (entry.state === 'completed') loadIcon(entry);
     const w = deps.win();
     if (entry.state === 'completed' && w && !w.isDestroyed()) w.flashFrame(!w.isFocused());
   }
@@ -146,7 +202,8 @@ function createDownloads(deps) {
   function retry(entry) {
     const { contents } = entry;
     const w = deps.win();
-    if (entry.state === 'interrupted' && entry.item.canResume()) { entry.item.resume(); return; }
+    if (entry.state === 'interrupted' && entry.item?.canResume()) { entry.item.resume(); return; }
+    if (!entry.url) return;
     (contents && !contents.isDestroyed() ? contents : w && !w.isDestroyed() ? w.webContents : null)?.downloadURL(entry.url);
   }
 
@@ -171,7 +228,7 @@ function createDownloads(deps) {
       }
       return { // cancelled | interrupted
         label: t('downloads.item', { name: d.name, status: d.state === 'cancelled' ? t('downloads.cancelled') : t('downloads.failed') }),
-        submenu: [{ label: d.state === 'interrupted' && d.item.canResume() ? t('downloads.resume') : t('downloads.retry'), click: () => retry(d) }],
+        submenu: [{ label: d.state === 'interrupted' && d.item?.canResume() ? t('downloads.resume') : t('downloads.retry'), click: () => retry(d) }],
       };
     });
     const done = downloads.filter((d) => d.state === 'completed');
@@ -190,17 +247,30 @@ function createDownloads(deps) {
   function act(id, action) {
     const d = downloads.find((x) => x.id === id);
     if (!d) return false;
-    if (action === 'open' && d.state === 'completed' && d.path) { deps.shell.openPath(d.path); return true; }
-    if (action === 'show' && d.state === 'completed' && d.path) { deps.shell.showItemInFolder(d.path); return true; }
-    if (action === 'pause' && d.state === 'progressing' && !d.awaitingOk && !d.paused) { d.item.pause(); return true; }
-    if (action === 'resume' && d.state === 'progressing' && !d.awaitingOk && d.paused) { d.item.resume(); return true; }
-    if (action === 'cancel' && d.state === 'progressing') { if (d.held) finish(d, 'cancelled'); else d.item.cancel(); return true; }
+    if (action === 'open' && d.state === 'completed' && exists(d)) { deps.shell.openPath(d.path); return true; }
+    if (action === 'show' && d.state === 'completed' && exists(d)) { deps.shell.showItemInFolder(d.path); return true; }
+    if (action === 'pause' && d.state === 'progressing' && d.item && !d.awaitingOk && !d.paused) { d.item.pause(); return true; }
+    if (action === 'resume' && d.state === 'progressing' && d.item && !d.awaitingOk && d.paused) { d.item.resume(); return true; }
+    if (action === 'cancel' && d.state === 'progressing') { if (d.held) finish(d, 'cancelled'); else d.item?.cancel(); return true; }
     if (action === 'retry' && (d.state === 'cancelled' || d.state === 'interrupted')) { retry(d); return true; }
     if (action === 'remove' && d.state !== 'progressing') { downloads.splice(downloads.indexOf(d), 1); sendDownloads(); return true; }
     return false;
   }
 
-  return { list: downloads, send: sendDownloads, setup, menu, summary, act };
+  function clearFinished() {
+    for (let i = downloads.length - 1; i >= 0; i--) if (downloads[i].state !== 'progressing') downloads.splice(i, 1);
+    sendDownloads();
+  }
+  // Drag a finished file out of the panel. startDrag needs an icon right away, so it uses the one
+  // loaded when the download finished (or Lumen's own).
+  function drag(id, sender) {
+    const d = downloads.find((x) => x.id === id);
+    if (!d || d.state !== 'completed' || !exists(d)) return;
+    const icon = icons.get(d.path)?.image || deps.fallbackIcon();
+    sender.startDrag({ file: d.path, icon });
+  }
+
+  return { list: downloads, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
 }
 
 module.exports = { createDownloads };

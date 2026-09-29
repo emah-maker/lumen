@@ -82,7 +82,9 @@ async function nodePart() {
   check('stdio: a call returns the result, marked untrusted', /^<untrusted_page_content source="mcp:fake\/echo">\necho: hi there\n/.test(echoed), echoed);
   const seen = JSON.parse(/\{[\s\S]*\}/.exec(await client.call('fake__env', {}))[0]);
   check('stdio: the server sees only its own variables and the allowlist', seen.probe === 'probe-secret-value' && !seen.names.some((n) => /API_KEY|CLAUDE_BROWSER|ELECTRON|NODE_OPTIONS/i.test(n)), JSON.stringify(seen.names));
-  check('stdio: it runs in a Lumen-owned folder', seen.cwd.startsWith(path.join(userData, 'mcp-servers')), seen.cwd);
+  // Real paths on both sides: on macOS the temp folder is /var/…, which is a link to /private/var/….
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  check('stdio: it runs in a Lumen-owned folder', real(seen.cwd).startsWith(real(path.join(userData, 'mcp-servers'))), seen.cwd);
   check('stdio: arguments arrive exactly as typed', JSON.stringify(seen.argv) === JSON.stringify(['a b', 'x&y %PATH% "q"']), JSON.stringify(seen.argv));
   let failText = '';
   try { await client.call('fake__fail', {}); } catch (e) { failText = e.message; }
@@ -191,7 +193,7 @@ async function lumenPart() {
     const envRun = await run({ toolUses: [{ name: 'fake__env', input: {} }], answer: true });
     const seen = JSON.parse(/\{[\s\S]*\}/.exec(envRun.results[0]?.text || '{}')[0] || '{}');
     check('the server gets no API keys or Lumen variables, only what the user set', seen.probe === 'hello-probe' && Array.isArray(seen.names) && !seen.names.some((n) => /API_KEY|CLAUDE_BROWSER|ELECTRON|LUMEN/i.test(n)), JSON.stringify(seen.names));
-    check('the server runs in the profile’s own folder', String(seen.cwd || '').startsWith(path.join(profile, 'mcp-servers')), seen.cwd);
+    check('the server runs in the profile’s own folder', Boolean(seen.cwd) && fs.realpathSync(seen.cwd).startsWith(fs.realpathSync(path.join(profile, 'mcp-servers'))), seen.cwd);
 
     const always = await run({ toolUses: [{ name: 'fake__echo', input: { text: 'one' } }, { name: 'fake__echo', input: { text: 'two' } }], answer: 'always' });
     check('"Always allow" is per tool: the next call in the chat doesn’t ask', always.events.filter((e) => e.type === 'approval').length === 1 && always.results.every((r) => !r.error), JSON.stringify(always));
