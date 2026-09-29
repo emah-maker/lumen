@@ -126,6 +126,7 @@ function createUpdates(deps) {
   let dismissed = null; // the version whose toolbar prompt was closed (this session only)
   let timer = null;
   let staged = null; // an update unpacked and waiting for the restart
+  let cleaning = null; // the old staging folder being deleted at start
   let swapStarted = false; // a swap helper is already running (Restart to update, then the quit): one is enough
   let blockedVersion = null; // the version the last swap failed on: not retried on quit (that would loop)
   const errFile = () => path.join(app.getPath('userData'), 'update-error.txt');
@@ -163,7 +164,8 @@ function createUpdates(deps) {
     const asset = stageAsset({ kind, version: state.version, arch, files: info?.files });
     if (!asset || state.status === 'downloading') return;
     setState({ status: 'downloading', progress: 0, error: '' });
-    zipMod().stage({ net: require('electron').net, asset, version: state.version, files: info?.files, execPath: process.execPath, onProgress: (progress) => setState({ progress }) })
+    const run = () => zipMod().stage({ net: require('electron').net, asset, version: state.version, files: info?.files, execPath: process.execPath, onProgress: (progress) => setState({ progress }) });
+    (cleaning ? cleaning.then(run) : run()) // not while an old staging folder is still being deleted
       .then((s) => { staged = s; setState({ status: 'downloaded', progress: 100 }); })
       .catch((err) => setState({ status: 'error', error: short(err) }));
   }
@@ -251,7 +253,8 @@ function createUpdates(deps) {
       if (!staged.helper) setTimeout(() => { try { if (staged && !swapStarted) staged.helper = zip.prepareHelper(process.execPath); } catch {} }, 5000).unref?.();
       return;
     }
-    fs.rm(stagingDir, { recursive: true, force: true }, () => {});
+    const done = fs.promises.rm(stagingDir, { recursive: true, force: true }).catch(() => {}).then(() => { if (cleaning === done) cleaning = null; });
+    cleaning = done;
   }
 
   function start() {
