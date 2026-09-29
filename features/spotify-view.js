@@ -6,6 +6,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const SW = require('./spotify-web');
 
 // Spotify only accepts a redirect address that was registered on the app, exactly. A loopback
 // address over http is allowed, so this one is fixed and Settings tells the user to register it.
@@ -44,7 +45,7 @@ function clientIdSource({ user, env, builtin = BUILTIN_SPOTIFY_CLIENT_ID } = {})
 // user's own and may be empty: the built-in or environment one is used then.
 function cleanConfig(c) {
   if (!c || typeof c !== 'object') return null;
-  return { clientId: cleanClientId(c.clientId), art: c.art !== false };
+  return { mode: SW.cleanMode(c), clientId: cleanClientId(c.clientId), art: c.art !== false };
 }
 
 // ---- sign-in (RFC 7636 PKCE) ----

@@ -53,6 +53,7 @@ const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
+const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
 const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
@@ -571,6 +572,7 @@ function setupPermissions() {
   settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
 
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
+    if (spotifyWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] Spotify's card: protected media only, never a prompt
     if (ALWAYS_ALLOWED.has(permission)) return callback(true);
     if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
@@ -599,8 +601,8 @@ function setupPermissions() {
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
   });
-  ses.setPermissionCheckHandler((_wc, permission, origin) =>
-    ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
+  ses.setPermissionCheckHandler((wc, permission, origin) =>
+    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
 }
 
@@ -1192,6 +1194,7 @@ function layout() {
       tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
     }
   }
+  spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
 }
 // Turn the tab's full-width layout override on, change it or off (only when it changed).
 function setOverlay(tab, params) {
@@ -3821,6 +3824,7 @@ const widgets = createWidgets({
   setSecret: setWidgetSecret,
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
+  spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {
@@ -3832,6 +3836,17 @@ const widgets = createWidgets({
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 if (TEST) global.__widgets = widgets;
+// [widgets] The Spotify widget's Web player (features/spotify-web.js): one persistent view in the normal session.
+const spotifyWeb = SW.createSpotifyWeb({
+  WebContentsView, session: session.defaultSession, isWebUrl,
+  getWindow: () => win,
+  getBounds: () => contentBounds,
+  activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
+  hasWidget: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'),
+  openTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
+  onSignIn: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+});
+app.on('before-quit', () => spotifyWeb.destroy());
 
 const settingsBackend = settingsPage.create({
   usage, // [usage] You and AI → Usage

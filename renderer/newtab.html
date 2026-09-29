@@ -563,6 +563,9 @@
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
     .w-card.embed { padding-bottom: 10px; }
+    .w-card.sp-web .w-body { overflow: hidden; }
+    .sp-web-slot { flex: 1 1 0; min-height: 200px; width: 100%; border-radius: 10px; display: grid; place-items: center; font-size: 12px; opacity: .6; } /* Spotify's own page is drawn over this */
+    .sp-web-signin { margin: 0 0 0 auto; padding: 3px 10px; font-size: 12px; }
     .w-fallback { display: flex; align-items: center; gap: 12px; padding: 4px 0 2px; }
     .w-fallback .tile { flex: none; width: 42px; height: 42px; border-radius: 11px; font-size: 17px; }
     .w-fallback .w-note { margin: 0; padding: 0; flex: 1 1 auto; min-width: 0; }

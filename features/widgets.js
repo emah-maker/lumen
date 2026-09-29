@@ -53,6 +53,7 @@ const WC = require('./widget-colors');
 const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
 const SV = require('./spotify-view');
+const SW = require('./spotify-web');
 const GV = require('./gmail-view');
 const SL = require('./slack-view');
 const OA = require('./oauth');
@@ -358,17 +359,20 @@ const CONNECTORS = {
     },
     async resolve(input, x) {
       const clientId = SV.cleanClientId(input.clientId); // the user's own, or '' to use Lumen's
+      // Web player: Spotify's own site in the card, nothing to check here (the user signs in on the site itself).
+      if (SW.cleanMode(input) === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card shows open.spotify.com. Sign in there once.' };
       if (!SV.effectiveClientId(clientId)) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
       if (!x.secret()) throw new Error('Log in with Spotify first.');
       const me = await spotifyCall(x, { clientId }, 'GET', '/me');
       if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
       let name = '';
       try { name = str(JSON.parse(me.body)?.display_name, 60); } catch { /* the name is only for the message */ }
-      return { config: { clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
+      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
     },
     title: () => 'Spotify',
-    summary: (c) => `Now playing${c.art ? '' : ' · no album art'}`,
+    summary: (c) => (c.mode === 'web' ? 'Spotify web player' : `Now playing${c.art ? '' : ' · no album art'}`),
     async fetch(c, x) {
+      if (c.mode === 'web') return { mode: 'web', url: SW.WEB_URL }; // the card is Spotify's own site (features/spotify-web.js)
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
       const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
       if (res.status !== 204 && !res.ok) throw new Error(SV.playerError(res.status, res.body));
@@ -381,8 +385,11 @@ const CONNECTORS = {
       if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
       return { ...data, art };
     },
+    // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
+    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn } : d),
     // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
     async act(c, action, x, cached) {
+      if (c.mode === 'web') return false;
       const req = SV.actionRequest(action.do);
       if (!req) return false;
       const res = await spotifyCall(x, c, req.method, req.path);
@@ -910,7 +917,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -986,6 +993,7 @@ function applyRects(widgets, items) {
 
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
+//         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
@@ -1246,7 +1254,7 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;

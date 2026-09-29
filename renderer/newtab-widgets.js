@@ -281,6 +281,19 @@ const WIDGET_RENDERERS = {
   // data: URL that main made from bytes it sniffed itself; the buttons ask main to call Spotify.
   spotify(w, card) {
     const d = w.data;
+    if (d.mode === 'web') { // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
+      card.el.classList.add('sp-web');
+      card.head.append(openLink('https://open.spotify.com/', 'Open in Spotify'));
+      if (d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
+        const signIn = link('https://open.spotify.com/', 'Open in a tab to sign in', 'w-btn primary');
+        signIn.classList.add('sp-web-signin');
+        card.head.append(signIn);
+      }
+      const slot = el('div', 'sp-web-slot', 'Loading Spotify…');
+      slot.setAttribute('role', 'status');
+      card.body.append(slot);
+      return;
+    }
     card.head.append(refreshButton(w));
     const open = typeof d.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(d.url) ? d.url : null;
     if (open) card.head.append(openLink(open, 'Open in Spotify'));

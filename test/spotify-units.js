@@ -5,7 +5,8 @@
 // previous, and that no token ever reaches the page's data or settings.json.
 const crypto = require('crypto');
 const SV = require('../features/spotify-view');
-const { createWidgets } = require('../features/widgets');
+const { createWidgets, cleanList } = require('../features/widgets');
+const SW = require('../features/spotify-web');
 
 const CLIENT = '0123456789abcdef0123456789abcdef';
 // A 1x1 PNG: enough for the magic-byte check.
@@ -245,7 +246,64 @@ async function connectorChecks(check) {
   await w.save({ type: 'spotify', clientId: CLIENT }).then(() => check('spotify Settings: saving without a sign-in is refused', false, 'saved'), (e) => check('spotify Settings: saving without a sign-in is refused', /Log in with Spotify first/.test(e.message), e.message));
 }
 
+// The Web player mode: Spotify's own site in a view over the card. Pure logic only (mode, allow-list,
+// permissions, geometry) plus the connector's data; the view itself needs Electron.
+async function webChecks(check) {
+  check('spotify web: an explicit mode wins', SW.cleanMode({ mode: 'web', clientId: CLIENT }) === 'web' && SW.cleanMode({ mode: 'api' }) === 'api', '');
+  check('spotify web: a widget saved before modes existed stays the API card', SW.cleanMode({ clientId: CLIENT, art: true }) === 'api' && SW.cleanMode({ art: false }) === 'api', '');
+  check('spotify web: a new widget (no mode, no API fields) or a bad mode is web', SW.cleanMode({}) === 'web' && SW.cleanMode(null) === 'web' && SW.cleanMode({ mode: 'evil' }) === 'web', '');
+  const list = cleanList([
+    { id: 'wold1', type: 'spotify', clientId: CLIENT, art: true },
+    { id: 'wnew1', type: 'spotify', mode: 'web' },
+    { id: 'wbad1', type: 'spotify', mode: '<x>' },
+  ]);
+  const by = Object.fromEntries(list.map((x) => [x.id, x]));
+  check('spotify web: cleanList keeps saved widgets as api, web as web, garbage as web', by.wold1.mode === 'api' && by.wnew1.mode === 'web' && by.wbad1.mode === 'web' && by.wold1.clientId === CLIENT, JSON.stringify(list.map((x) => x.mode)));
+  check('spotify web: cleanList does not drop the widget for lacking a Client ID', Boolean(by.wnew1) && by.wnew1.clientId === '', '');
+
+  const ok = ['https://open.spotify.com/', 'https://open.spotify.com/playlist/abc?si=1', 'https://accounts.spotify.com/en/login?continue=x'];
+  const no = ['http://open.spotify.com/', 'https://open.spotify.com.evil.example/', 'https://evil.example/open.spotify.com', 'https://user:pw@open.spotify.com/', 'https://open.spotify.com:8443/', 'https://www.spotify.com/', 'https://accounts.google.com/', 'https://spotify.com/', 'javascript:alert(1)', 'file:///c:/x', 'data:text/html,hi', 'not a url', '', null, undefined];
+  check('spotify web: allow-list accepts Spotify\'s player and sign-in hosts', ok.every(SW.isAllowedUrl), ok.filter((u) => !SW.isAllowedUrl(u)).join(' '));
+  check('spotify web: allow-list refuses look-alikes, other schemes, ports, credentials and other hosts', no.every((u) => !SW.isAllowedUrl(u)), no.filter((u) => SW.isAllowedUrl(u)).join(' '));
+
+  check('spotify web: only protected media is permitted', SW.permissionAllowed('mediaKeySystem') && SW.permissionAllowed('protectedMediaIdentifier'), '');
+  check('spotify web: camera, mic, location, notifications, clipboard, fullscreen, openExternal are refused', ['media', 'geolocation', 'notifications', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'openExternal', 'display-capture', 'midi', '', undefined].every((p) => !SW.permissionAllowed(p)), '');
+
+  check('spotify web: a narrow card zooms out to a compact layout, a wide one is not zoomed', SW.layoutZoom(300) === 0.75 && SW.layoutZoom(100) === 0.5 && SW.layoutZoom(400) === 1 && SW.layoutZoom(900) === 1 && SW.layoutZoom(0) === 1 && SW.layoutZoom(NaN) === 1, [SW.layoutZoom(300), SW.layoutZoom(100)].join(' '));
+  const page = { x: 40, y: 100, width: 800, height: 500 };
+  const v = SW.viewBounds({ x: 20, y: 50, w: 300.4, h: 400.6 }, page);
+  check('spotify web: the view is placed over the card in window coordinates', v && v.x === 60 && v.y === 150 && v.width === 300 && v.height === 401, JSON.stringify(v));
+  const clipped = SW.viewBounds({ x: 700, y: 400, w: 300, h: 300 }, page);
+  check('spotify web: the view is cut to the visible page', clipped && clipped.x === 740 && clipped.y === 500 && clipped.width === 100 && clipped.height === 100, JSON.stringify(clipped));
+  check('spotify web: a card scrolled out of view, tiny, or a bad answer hides the view', [SW.viewBounds({ x: 0, y: 600, w: 300, h: 300 }, page), SW.viewBounds({ x: 0, y: -280, w: 300, h: 300 }, page), SW.viewBounds({ x: 0, y: 0, w: 20, h: 300 }, page), SW.viewBounds(null, page), SW.viewBounds({ x: 'a', y: 0, w: 1, h: 1 }, page), SW.viewBounds({ x: 0, y: 0, w: 300, h: 300 }, null)].every((r) => r === null), '');
+
+  // The connector: no sign-in or Client ID needed, nothing fetched from Spotify.
+  let calls = 0;
+  let signedIn = null;
+  let settings = {};
+  const w = createWidgets({
+    readSettings: () => settings,
+    writeSettings: (s) => { settings = JSON.parse(JSON.stringify(s)); },
+    fetch: async () => { calls++; throw new Error('the Web player must not call any API'); },
+    getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}),
+    spotifyWebSignedIn: () => signedIn,
+  });
+  const saved = await w.save({ type: 'spotify', mode: 'web' }).catch((e) => ({ error: e.message }));
+  check('spotify web: saving needs no Client ID and no sign-in', !saved.error && w.list()[0]?.mode === 'web', saved.error || '');
+  const id = w.list()[0].id;
+  await w.refresh(w.list()[0]);
+  const card = () => w.forPage().find((c) => c.id === id);
+  check('spotify web: the card data is the mode and Spotify\'s address, no API call', card().data.mode === 'web' && card().data.url === 'https://open.spotify.com/' && calls === 0 && card().data.signedIn === null, JSON.stringify(card().data));
+  signedIn = false;
+  check('spotify web: the card learns the site is signed out (it offers "Open in a tab to sign in")', card().data.signedIn === false, '');
+  signedIn = true;
+  check('spotify web: …and signed in', card().data.signedIn === true, '');
+  check('spotify web: play/pause buttons do nothing in this mode', (await w.act({ id, do: 'play' }).catch(() => 'threw')) !== 'threw' && calls === 0, '');
+  check('spotify web: the Settings summary says so', /web player/i.test(w.state().widgets.find((x) => x.id === id)?.summary || ''), JSON.stringify(w.state().widgets.find((x) => x.id === id)));
+}
+
 module.exports = async function spotifyUnits(check) {
   viewChecks(check);
   await connectorChecks(check);
+  await webChecks(check);
 };
