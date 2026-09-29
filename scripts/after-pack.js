@@ -37,6 +37,11 @@ function vmpSign(appOutDir) {
   if (check.error || check.status !== 0) return warnSkipVmp('the castlabs-evs package is not installed', appOutDir);
 
   const headless = Boolean(process.env.EVS_ACCOUNT_NAME && process.env.EVS_PASSWD);
+  if (headless) {
+    // castlabs' CI flow: log in from the environment (no TTY) before signing.
+    const reauth = spawnSync('python', ['-m', 'castlabs_evs.account', 'reauth'], { stdio: 'inherit', env: { ...process.env, EVS_NO_ASK: '1' } });
+    if (reauth.error || reauth.status !== 0) return warnSkipVmp('EVS login failed; check EVS_ACCOUNT_NAME / EVS_PASSWD', appOutDir);
+  }
   console.log(`Signing Widevine VMP for ${appOutDir} (${headless ? 'EVS credentials from environment' : 'saved EVS credentials'}) ...`);
   // --no-ask is a global flag and must come before the sign-pkg subcommand.
   const sign = spawnSync('python', ['-m', 'castlabs_evs.vmp', '--no-ask', 'sign-pkg', appOutDir], { stdio: 'inherit' });
