@@ -63,6 +63,8 @@ function siteName(url, title = '') {
 
 // Search engines' own pages never form a group.
 const SEARCH_DOMAINS = new Set(['google.com', 'duckduckgo.com', 'bing.com', 'search.brave.com', 'brave.com', 'ecosia.org', 'startpage.com', 'yahoo.com', 'baidu.com', 'yandex.com', 'yandex.ru']);
+// A search engine's page or one of the well-known apps (Gmail, Drive ...): never worth asking a model about.
+const isAppOrSearch = (url) => Boolean(PRODUCT_SITES[hostname(url)]) || SEARCH_DOMAINS.has(registrableDomain(url));
 
 // ---------- topics: local, private clustering of tabs by title, site and address ----------
 //
@@ -472,7 +474,7 @@ const SAME_SITE_BONUS = 0.12; // a group already holding pages of this site: the
 // items: [{ entry, current }] (current: the group id the tab is in now, or null).
 // groupList: [{ id, domain, members: [entry] }]. background: other loose entries, only for idf.
 // Returns an array parallel to items: the group id to put each tab in, or null to leave it as it is.
-function placeTabs(items, groupList, { background = [], threshold = TOPIC_THRESHOLD, margin = MOVE_MARGIN } = {}) {
+function placeTabs(items, groupList, { background = [], threshold = TOPIC_THRESHOLD, margin = MOVE_MARGIN, bonus = null } = {}) {
   if (!items.length || !groupList.length) return items.map(() => null);
   const byId = new Map();
   for (const e of [...items.map((i) => i.entry), ...groupList.flatMap((g) => g.members), ...background]) if (!byId.has(e.id)) byId.set(e.id, e);
@@ -495,7 +497,9 @@ function placeTabs(items, groupList, { background = [], threshold = TOPIC_THRESH
     if (g.domain && siteKey(entry.url) === g.domain) return 1; // a by-site group: its own site's tabs belong
     const s = cosine(d, pool.centroid);
     const sameSite = Boolean(d.site) && pool.members.some((m) => doc.get(m.id).site === d.site);
-    return s + (sameSite && s >= threshold * 0.6 ? SAME_SITE_BONUS : 0);
+    // What the user taught (bonus): only tips a tab that already has SOME words in common with the group.
+    const taught = bonus && s >= 0.05 ? bonus(entry, g) : 0;
+    return s + (sameSite && s >= threshold * 0.6 ? SAME_SITE_BONUS : 0) + taught;
   };
   return items.map(({ entry, current }) => {
     let best = null;
@@ -642,7 +646,7 @@ function mergeSimilarGroups(groups) {
 }
 
 // mode(): 'off' | 'site' | 'topic' (automatic grouping).
-function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode, aiTopics, onChange }) {
+function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode, aiTopics, onChange, learned = null }) {
   const groups = new Map(); // id -> { id, name, color, collapsed, domain, topic, auto }
   const isAuto = () => mode() !== 'off';
   let undoState = null; // the tabs and groups from before the last "Organize"
@@ -711,7 +715,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   const entry = (t) => ({ id: t.id, title: titleOf(t), url: urlOf(t), text: textOf ? textOf(t) : '', hint: t.openerQuery || '' });
   const keyOf = (t) => { const e = entry(t); return `${e.title}|${e.url}|${e.text.length}`; };
 
-  function create(name, tabIds, { domain = null, color, topic = null, auto = false } = {}) {
+  function create(name, tabIds, { domain = null, color, topic = null, auto = false, cohesion } = {}) {
     const group = {
       id: nextId++,
       name: String(name || 'Group').slice(0, 40),
@@ -720,6 +724,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
       domain,
       topic, // the shared word a topic group was formed on; later tabs with it join
       auto, // made by automatic grouping (can be re-organized); groups the user made never are
+      ...(cohesion == null ? {} : { cohesion }), // how tight the cluster was when formed (0-1)
     };
     groups.set(group.id, group);
     for (const id of tabIds) {
@@ -804,10 +809,10 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     const candidates = getTabs().filter((t) => movable(t) && (t.autoMoves || 0) < MAX_AUTO_MOVES
       && (t.groupId ? groups.get(t.groupId)?.auto && t.autoKey !== keyOf(t) : true));
     if (autoGroups.length && candidates.length) {
-      const groupList = autoGroups.map((g) => ({ id: g.id, domain: g.domain, members: members(g.id).map(entry) }));
+      const groupList = autoGroups.map((g) => ({ id: g.id, name: g.name, domain: g.domain, members: members(g.id).map(entry) }));
       const candidateIds = new Set(candidates.map((t) => t.id));
       const background = loose().filter((t) => !candidateIds.has(t.id)).map(entry);
-      const result = placeTabs(candidates.map((t) => ({ entry: entry(t), current: t.groupId || null })), groupList, { background });
+      const result = placeTabs(candidates.map((t) => ({ entry: entry(t), current: t.groupId || null })), groupList, { background, bonus: learned ? (e, g) => learned.affinity(e, g.name) : null });
       candidates.forEach((tab, i) => {
         tab.autoKey = keyOf(tab);
         if (result[i] == null) return;
@@ -883,7 +888,48 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     const prior = [...groups.values()].filter((g) => g.auto).map((g) => ({ ...g, ids: new Set(members(g.id).map((t) => t.id)) }));
     for (const g of prior) ungroupAll(g.id);
     for (const t of getTabs()) { t.autoMoves = 0; t.autoKey = null; }
-    return groupLoose(proposal, { prior });
+    const before = new Set(groups.keys());
+    const count = groupLoose(proposal, { prior });
+    orderGroupsByRecency();
+    spreadColors(new Set([...groups.keys()].filter((id) => !before.has(id))));
+    return count;
+  }
+
+  // The groups Organize made sit in the strip by how recently their tabs were used, most recent first.
+  // Only the places those groups already held are reshuffled: loose, pinned and user-made groups stay put.
+  const usedAt = (t) => Math.max(t.lastActiveAt || 0, t.viewedAt || 0);
+  function orderGroupsByRecency() {
+    const blocks = [];
+    const seen = new Set();
+    for (const t of getTabs()) {
+      if (!t.groupId) blocks.push({ tabs: [t] });
+      else if (!seen.has(t.groupId)) { seen.add(t.groupId); blocks.push({ gid: t.groupId, tabs: members(t.groupId) }); }
+    }
+    const mine = (b) => { const g = b.gid && groups.get(b.gid); return Boolean(g) && g.auto && !g.userNamed && !g.domain; };
+    const slots = blocks.map((b, i) => (mine(b) ? i : -1)).filter((i) => i >= 0);
+    if (slots.length < 2) return;
+    const recent = (b) => Math.max(...b.tabs.map(usedAt));
+    const sorted = slots.map((i) => blocks[i]).map((b, k) => ({ b, k })).sort((x, y) => recent(y.b) - recent(x.b) || x.k - y.k).map((x) => x.b);
+    slots.forEach((slot, i) => { blocks[slot] = sorted[i]; });
+    setTabs(blocks.flatMap((b) => b.tabs));
+  }
+
+  // New groups never share a colour with the group beside them (the colour of a group that already
+  // existed, or one the user picked, is never changed).
+  function spreadColors(newIds) {
+    if (!newIds.size) return;
+    const order = [];
+    for (const t of getTabs()) if (t.groupId && !order.includes(t.groupId)) order.push(t.groupId);
+    const used = new Map(GROUP_COLORS.map((c) => [c, 0]));
+    for (const id of order) { const g = groups.get(id); if (g) used.set(g.color, (used.get(g.color) || 0) + 1); }
+    order.forEach((id, i) => {
+      const g = groups.get(id);
+      if (!g || !newIds.has(id) || g.colorLocked) return;
+      const near = [order[i - 1], order[i + 1]].map((n) => groups.get(n)?.color).filter(Boolean);
+      if (!near.includes(g.color)) return;
+      const pick = GROUP_COLORS.filter((c) => !near.includes(c)).sort((a, b) => (used.get(a) || 0) - (used.get(b) || 0))[0];
+      if (pick) { used.set(g.color, used.get(g.color) - 1); used.set(pick, (used.get(pick) || 0) + 1); g.color = pick; }
+    });
   }
   const applyProposal = organizeByTopic; // the older name: "Organize with AI"
 
@@ -911,12 +957,67 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
         continue;
       }
       if (old) claimed.add(old.id);
-      create(uniqueName(old && !c.ai ? old.name : c.name), ids, { topic: c.key, auto: true, color: old?.color });
+      // A name the user gave this kind of group before (renamed it, or filed such tabs under it) wins over the automatic one.
+      const taught = !c.ai && !old && learned ? learned.nameFor(ids.map((id) => entry(tabById(id))), c.name) : c.name;
+      create(uniqueName(old && !c.ai ? old.name : taught), ids, { topic: c.key, auto: true, color: old?.color, cohesion: c.cohesion });
       count++;
     }
     arrange();
     cleanup();
     return count > 0 ? Math.max(count - mergeSimilar().gone, 1) : 0;
+  }
+
+  // The topic groups "Organize" made (automatic ones the user hasn't named) with their tabs, and the tabs
+  // still loose: what a model is asked to refine. Read only.
+  function organizeView() {
+    const isCandidate = (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
+    const list = [];
+    for (const g of groups.values()) {
+      if (!g.auto || g.userNamed || g.domain) continue;
+      const entries = members(g.id).filter(isCandidate).map(entry);
+      if (entries.length) list.push({ id: g.id, name: g.name, cohesion: g.cohesion, entries });
+    }
+    return { groups: list, leftovers: loose().map(entry) };
+  }
+
+  // Phase two of "Organize with AI" (see features/organize-ai.js planApply): rename groups in place, put
+  // loose tabs into groups, form new groups from loose tabs, merge groups. It changes nothing the user
+  // changed meanwhile, and adds no step of undo: it belongs to the organize step `seq` names, and does
+  // nothing at all once that step was undone or another one was made.
+  function applyRefinement({ renames = [], places = [], groups: created = [], merges = [] } = {}, { seq = null } = {}) {
+    const out = { renamed: 0, placed: 0, created: 0, merged: 0 };
+    if (seq != null && undoState?.seq !== seq) return out;
+    const mine = (g) => g && g.auto && !g.userNamed;
+    for (const { into, from } of merges) {
+      const keep = groups.get(into);
+      const gone = groups.get(from);
+      if (!mine(keep) || !mine(gone)) continue;
+      for (const tab of members(from)) if (!pinned(tab)) tab.groupId = into;
+      groups.delete(from);
+      out.merged++;
+    }
+    for (const { id, name } of renames) {
+      const g = groups.get(id);
+      const clean = cleanGroupName(name);
+      if (!mine(g) || !clean) continue;
+      g.name = uniqueName(clean, id).slice(0, 40);
+      out.renamed++;
+    }
+    for (const { tab: tabId, group } of places) {
+      const tab = tabById(tabId);
+      if (!tab || tab.groupId || !movable(tab) || !groups.get(group)) continue;
+      tab.groupId = group;
+      tab.autoKey = keyOf(tab);
+      out.placed++;
+    }
+    for (const { name, ids } of created) {
+      const free = ids.filter((id) => { const t = tabById(id); return t && !t.groupId && movable(t); });
+      if (free.length < 2) continue;
+      create(uniqueName(cleanGroupName(name)), free, { auto: true });
+      out.created++;
+    }
+    if (out.merged || out.renamed || out.placed || out.created) { arrange(); cleanup(); }
+    return out;
   }
 
   // "Merge Similar Groups": one step of undo, nothing recorded when there was nothing to merge.
@@ -973,22 +1074,22 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     return order.map((id) => groups.get(id)).filter(Boolean).map(({ id, name, color, collapsed }) => ({ id, name, color, collapsed }));
   };
 
-  const snapshot = () => [...groups.values()].map(({ id, name, color, collapsed, domain, topic, auto, userNamed }) => ({ id, name, color, collapsed, domain, topic, auto, userNamed: Boolean(userNamed) }));
+  const snapshot = () => [...groups.values()].map(({ id, name, color, collapsed, domain, topic, auto, userNamed, colorLocked }) => ({ id, name, color, collapsed, domain, topic, auto, userNamed: Boolean(userNamed), colorLocked: Boolean(colorLocked) }));
 
   function restore(saved) {
     for (const g of saved || []) {
-      groups.set(g.id, { id: g.id, name: g.name, color: GROUP_COLORS.includes(g.color) ? g.color : 'gray', collapsed: Boolean(g.collapsed), domain: g.domain || null, topic: g.topic || null, auto: g.auto ?? Boolean(g.domain), userNamed: Boolean(g.userNamed) });
+      groups.set(g.id, { id: g.id, name: g.name, color: GROUP_COLORS.includes(g.color) ? g.color : 'gray', collapsed: Boolean(g.collapsed), domain: g.domain || null, topic: g.topic || null, auto: g.auto ?? Boolean(g.domain), userNamed: Boolean(g.userNamed), colorLocked: Boolean(g.colorLocked) });
       nextId = Math.max(nextId, g.id + 1);
     }
     colorIndex = groups.size;
   }
 
   return {
-    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, mergeGroups, undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
+    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, mergeGroups, entryFor: (id) => { const t = tabById(id); return t ? entry(t) : null; }, groupEntries: (id) => members(id).map(entry), organizeView, applyRefinement, organizeSeq: () => (undoState ? undoState.seq : null), undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
     candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,
   };
 }
 
-module.exports = { createTabGroups, isTransientTitle, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
+module.exports = { createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
