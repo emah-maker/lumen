@@ -774,9 +774,21 @@ window.addEventListener('resize', () => releaseTabWidths(false));
 const organizeBtn = $('organize-tabs');
 organizeBtn.onclick = () => window.browser.organizeTabs();
 window.browser.onOrganizing?.((busy) => {
-  organizeBtn.classList.toggle('busy', busy);
-  organizeBtn.disabled = busy;
-  organizeBtn.querySelector('span').textContent = busy ? t('tabs.organizing') : t('tabs.organize');
+  // busy: true (grouping on this computer), 'refine' (the groups are shown, the AI is refining them: a click cancels), false.
+  organizeBtn.classList.toggle('busy', Boolean(busy));
+  organizeBtn.disabled = busy === true;
+  organizeBtn.querySelector('span').textContent = busy === 'refine' ? t('tabs.refining') : busy ? t('tabs.organizing') : t('tabs.organize');
+});
+// "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
+window.browser.onOrganizeNote?.(({ text, undo }) => {
+  document.querySelector('.organize-note')?.remove();
+  const note = Object.assign(document.createElement('div'), { className: 'organize-note', role: 'status' });
+  note.append(Object.assign(document.createElement('span'), { textContent: text }));
+  if (undo) {
+    note.append(Object.assign(document.createElement('button'), { textContent: t('organize.undo'), onclick: () => { window.browser.undoOrganize(); note.remove(); } }));
+  }
+  organizeBtn.after(note); // in the strip's own row: web pages cover everything below it
+  setTimeout(() => note.remove(), 9000);
 });
 
 function renderTabs(state) {

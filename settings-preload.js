@@ -73,6 +73,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       setAutoGroup: call('settings:set-auto-group'),
       setTabGrouping: call('settings:set-tab-grouping'),
       setTopicAi: call('settings:set-topic-ai'),
+      setOrganizeIdle: call('settings:set-organize-idle'),
+      forgetOrganizeLearning: call('settings:forget-organize-learning'),
       aiSites: call('settings:ai-sites'), // [ai controls]
       setAiSite: call('settings:set-ai-site'),
       setSearchEngine: call('settings:set-search-engine'),
