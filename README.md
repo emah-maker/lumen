@@ -249,12 +249,16 @@ Release installers are built by GitHub Actions (`.github/workflows/release.yml`)
 
 `electron` is castlabs' [ECS build](https://github.com/castlabs/electron-releases) (`electron-releases#v44.1.0+wvcus`), which adds a Widevine CDM that stock Electron doesn't have. On startup Lumen calls `components.whenReady()` (with a 10s timeout so a failed/offline CDM download never blocks the window opening) and logs `components.status()`; the CDM itself downloads on first run.
 
-That's enough for sites that accept the plain Widevine CDM. Production DRM providers (Netflix, Disney+, Spotify and others) also check that the binary is **VMP-signed**. The release builds on GitHub are not VMP-signed (the workflow has no castlabs account), so those services may refuse to play in them; a build you make yourself with the setup below is signed. Why it's needed: electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature. One-time setup, then every `npm run dist:win` VMP-signs the build automatically (`scripts/after-pack.js`; it warns and continues the build if any of this isn't set up):
+That's enough for sites that accept the plain Widevine CDM. Production DRM providers (Netflix, Disney+, Spotify and others) also check that the binary is **VMP-signed** by castlabs. An unsigned build still plays where a site accepts software Widevine (L3); services that require a VMP signature may refuse or downgrade. electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature, so Lumen re-signs during packaging (`scripts/after-pack.js`, Windows and macOS). It warns and carries on if signing isn't set up.
+
+**Local builds:** sign up once for a free [castlabs EVS](https://github.com/castlabs/electron-releases/wiki/EVS) account; after that, `npm run dist` signs automatically:
 
 ```
 python -m pip install --upgrade castlabs-evs
 python -m castlabs_evs.account signup      # or: python -m castlabs_evs.account reauth
 ```
+
+**Headless / CI:** set `EVS_ACCOUNT_NAME` and `EVS_PASSWD` instead. The release workflow does this on the Windows and macOS jobs when the repository secrets of the same names exist; without them it builds unsigned.
 
 To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
 

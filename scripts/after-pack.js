@@ -1,8 +1,9 @@
 // electron-builder afterPack hook: remove Electron's placeholder app from the build,
-// then (Windows only) VMP-sign the castlabs ECS binary so production Widevine (Netflix,
+// then VMP-sign the castlabs ECS binary so production Widevine (Netflix,
 // Disney+, Spotify, ...) works. afterPack runs before any code signing; we don't do
 // Authenticode signing here (signAndEditExecutable: false), so there's no ordering issue
-// with castlabs' "sign VMP after Authenticode on Windows" rule. VMP signing writes a
+// with castlabs' "sign VMP after Authenticode on Windows" rule. On macOS castlabs wants VMP
+// signing before the Apple codesign, which electron-builder runs after this hook. VMP signing writes a
 // separate .sig file next to the exe — it does not modify the exe itself, so this runs
 // after build.js's byte-identical check for win-unpacked/Lumen.exe.
 //
@@ -16,14 +17,18 @@ const fs = require('fs');
 const path = require('path');
 
 function warnSkipVmp(reason, appOutDir) {
-  console.warn(`\nWARNING: skipping Widevine VMP signing (${reason}).`);
-  console.warn('Netflix, Disney+, Spotify and other production DRM will fail in this build until it is VMP-signed.');
-  console.warn('One-time setup, then rebuild:');
+  console.warn(`
+WARNING: skipping Widevine VMP signing (${reason}).`);
+  console.warn('This build is unsigned: Netflix, Disney+, Spotify and other production DRM may refuse to play (Widevine L3 / software only, where a site allows it).');
+  console.warn('Local setup (free castlabs EVS account), then rebuild:');
   console.warn('  python -m pip install --upgrade castlabs-evs');
   console.warn('  python -m castlabs_evs.account signup   (or: python -m castlabs_evs.account reauth)');
-  console.warn(`  python -m castlabs_evs.vmp sign-pkg "${appOutDir}"\n`);
+  console.warn('Headless/CI: set EVS_ACCOUNT_NAME and EVS_PASSWD instead of signing up interactively.');
+  console.warn(`Manual signing: python -m castlabs_evs.vmp sign-pkg "${appOutDir}"
+`);
 }
 
+// castlabs-evs reads EVS_ACCOUNT_NAME / EVS_PASSWD from the environment, so CI needs no interactive login.
 function vmpSign(appOutDir) {
   const py = spawnSync('python', ['--version']);
   if (py.error || py.status !== 0) return warnSkipVmp('python was not found on PATH', appOutDir);
@@ -31,10 +36,13 @@ function vmpSign(appOutDir) {
   const check = spawnSync('python', ['-m', 'castlabs_evs.vmp', '--help']);
   if (check.error || check.status !== 0) return warnSkipVmp('the castlabs-evs package is not installed', appOutDir);
 
-  console.log(`Signing Widevine VMP for ${appOutDir} ...`);
+  const headless = Boolean(process.env.EVS_ACCOUNT_NAME && process.env.EVS_PASSWD);
+  console.log(`Signing Widevine VMP for ${appOutDir} (${headless ? 'EVS credentials from environment' : 'saved EVS credentials'}) ...`);
   // --no-ask is a global flag and must come before the sign-pkg subcommand.
   const sign = spawnSync('python', ['-m', 'castlabs_evs.vmp', '--no-ask', 'sign-pkg', appOutDir], { stdio: 'inherit' });
-  if (sign.error || sign.status !== 0) return warnSkipVmp('EVS signing failed — no EVS account configured? run account signup/reauth', appOutDir);
+  if (sign.error || sign.status !== 0) {
+    return warnSkipVmp(headless ? 'EVS signing failed; check EVS_ACCOUNT_NAME / EVS_PASSWD' : 'EVS signing failed; no EVS account configured? run account signup/reauth', appOutDir);
+  }
   console.log('Widevine VMP signing complete.');
 }
 
@@ -54,6 +62,6 @@ exports.default = async (context) => {
   fs.rmSync(path.join(appOutDir, 'resources', 'default_app.asar'), { force: true });
   const config = fuses(electronPlatformName);
   if (config) await context.packager.addElectronFuses(context, config);
-  if (electronPlatformName === 'win32') vmpSign(appOutDir);
+  if (electronPlatformName === 'win32' || electronPlatformName === 'darwin') vmpSign(appOutDir);
 };
 exports.fuses = fuses;
