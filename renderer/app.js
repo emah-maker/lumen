@@ -1788,6 +1788,7 @@ const TOOL_LABELS = {
   group_tabs: (i) => t('tool.group_tabs', { name: i.name ?? '' }),
   ungroup_tabs: () => t('tool.ungroup_tabs'),
   read_urls: () => t('tool.read_urls'),
+  read_pdf: () => t('tool.read_pdf'),
   run_script: () => t('tool.run_script'),
   wait_for: (i) => t('tool.wait_for', { text: i.text ?? '' }),
 };
@@ -2029,7 +2030,8 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   const agentName = assistantIdentity?.name || t('approval.theAi');
   const opening = action === 'open';
   const scripting = action === 'script';
-  const heading = opening
+  const pdf = action === 'pdf';
+  const heading = pdf ? openTitle || t('approval.pdf', { name: agentName, file: host }) : opening
     ? openTitle || (host ? t('approval.open', { name: agentName, host }) : t('approval.openNew', { name: agentName }))
     : scripting ? openTitle || t('approval.script', { name: agentName, host })
       : t('approval.interact', { name: agentName, host });
@@ -2042,6 +2044,7 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   detail.className = 'approval-detail';
   detail.textContent = query !== undefined
     ? t('approval.detail.search', { query, host })
+    : pdf ? t('approval.detail.pdf')
     : opening ? t('approval.detail.open')
       : scripting ? t('approval.detail.script')
         : t('approval.detail.interact');
@@ -2318,8 +2321,8 @@ window.assistant.onMcpEvent?.((event) => {
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
-      const vars = { client: event.clientName, host: event.host, query: event.query };
-      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
+      const vars = { client: event.clientName, host: event.host, file: event.host, query: event.query };
+      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
       if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = t('mcp.approval.detail.open'); }
       card?.setAttribute('aria-label', title?.textContent || '');
