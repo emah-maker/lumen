@@ -88,6 +88,11 @@ jobs:
           EVS_PASSWD: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_PASSWD || '' }}
         run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
+      - name: List the zip in latest.yml
+        if: matrix.platform == 'win'
+        shell: bash
+        run: node scripts/add-zip-to-latest.js
+
       - name: List build output
         shell: bash
         run: ls -la dist
