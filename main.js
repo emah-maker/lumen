@@ -1,6 +1,8 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
+const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
+if (TEST) global.__perf = perf;
 
 // `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
@@ -3108,6 +3110,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
     uiReady = true;
+    perf.mark('uiReady');
     downloads.send(); // last session's downloads: the toolbar button shows when there are any
     openLinksFromOtherApps(pendingLinks.splice(0));
   });
@@ -3889,6 +3892,7 @@ if (!singleInstance) app.quit();
 app.on('second-instance', (_e, argv) => { focusWindow(); openLinksFromOtherApps(linksIn(argv)); });
 
 app.whenReady().then(async () => {
+  perf.mark('ready');
   if (process.argv.includes('--install-shortcuts')) {
     instance.installShortcuts(app, shell, APP_ID);
     app.quit();
@@ -3923,6 +3927,7 @@ app.whenReady().then(async () => {
   safeBrowsing.refresh().catch(() => {});
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
   if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
+  perf.mark('adblockReady');
   for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
