@@ -129,9 +129,30 @@ function setupAiAgents(deps) {
     return grokBuild;
   };
 
+  // Grok's PreToolUse hook (mcp-http.js terminalDecision) asks this before letting a
+  // run_terminal_command call through: the same approval card as an MCP tool's (renderer/app.js
+  // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
+  // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
+  async function onTerminalApproval(tag, command) {
+    const engineRun = grokBuild?.owns(tag) ? grokBuild.active : null;
+    if (!engineRun) return 'deny';
+    let args = String(command || '');
+    if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
+    try {
+      const answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
+        action: 'terminal',
+        title: 'Grok wants to run a terminal command',
+        args,
+      });
+      return answer === 'always' ? 'always' : answer ? 'once' : 'deny';
+    } catch {
+      return 'deny'; // the user hit Stop while the card was up
+    }
+  }
+
   let grokGate = null;
   function startGrokGate() {
-    grokGate ||= require('../mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent })
+    grokGate ||= require('../mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval })
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }

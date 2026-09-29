@@ -1777,6 +1777,9 @@ const approvals = new Map(); // approvalId -> { card, host }
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
 function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted } = {}) {
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
+  // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
+  // an MCP tool's, but "always" only lasts this chat (not a persisted Settings toggle), so its own copy.
+  if (action === 'terminal') return showToolApproval(approvalId, host, { title: openTitle, args, terminal: true });
   const card = document.createElement('div');
   card.className = 'approval';
   card.tabIndex = 0;
@@ -1834,25 +1837,27 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
 
 // A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
-function showToolApproval(approvalId, host, { title: heading, args, tainted }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false }) {
   const card = document.createElement('div');
-  card.className = 'approval approval-tool';
+  card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   card.setAttribute('aria-label', heading || `Use ${host}?`);
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || `Use ${host}?` });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
-    textContent: tainted
-      ? 'It has read page content in this chat. Check that these details are what you want to send to this server:'
-      : 'This server gets these details:',
+    textContent: terminal
+      ? 'This runs for real on your computer, with your permissions:'
+      : tainted
+        ? 'It has read page content in this chat. Check that these details are what you want to send to this server:'
+        : 'This server gets these details:',
   });
   const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: "Don't allow" });
   const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Allow once' });
-  const always = tainted ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: 'Always allow this tool', title: 'Stop asking for this tool (it still asks after the AI reads a page). Change it in Settings → You and AI.' });
+  const always = tainted && !terminal ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? 'Allow for this chat' : 'Always allow this tool', title: terminal ? 'Stop asking for terminal commands for the rest of this chat. Resets when you start a new chat.' : 'Stop asking for this tool (it still asks after the AI reads a page). Change it in Settings → You and AI.' });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');

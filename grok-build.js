@@ -251,12 +251,16 @@ const BUILTIN_TOOLS = [
 // MCP tools are deferred behind search_tool / use_tool (Lumen's are lumen__<tool>). use_tool itself is
 // NOT allowed: Grok checks each use_tool call against the tool it names, so `lumen__*` lets through
 // Lumen's tools and dontAsk refuses any other server's (verified: other__ping was cancelled).
-const DENIED = ['run_terminal_command', 'spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output'];
+// run_terminal_command is not in DENIED: Lumen's PreToolUse gate (mcp-http.js terminalDecision) asks
+// the user for it per call instead of refusing it outright, so it needs an --allow rule here too (layer
+// 2 -- Grok's own dontAsk -- still runs after the gate's allow, and refuses anything --allow doesn't
+// name). The other three stay hard-denied: no approval flow exists for them.
+const DENIED = ['spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output'];
 const ARGS_BASE = [
   '--output-format', 'streaming-messages-json', '--include-partial-messages',
   '--disallowed-tools', BUILTIN_TOOLS,
   ...DENIED.flatMap((t) => ['--deny', t]),
-  '--allow', 'lumen__*', '--allow', 'search_tool',
+  '--allow', 'lumen__*', '--allow', 'search_tool', '--allow', 'run_terminal_command',
   '--permission-mode', 'dontAsk',
   '--no-subagents', '--no-plan', '--disable-web-search',
   '--max-turns', '20',
@@ -367,12 +371,15 @@ function mcpWait(line) {
 
 // Lumen's own check on every tool call Grok reports (see the file header): Lumen's tools are
 // lumen__<tool>, search_tool (a search of the tool catalog, which holds only what config.toml
-// connects) and use_tool naming a lumen__ tool. Anything else -- a built-in (run_terminal_command,
-// edit_file, ...), a hosted server tool, another server's tool -- is not.
+// connects) and use_tool naming a lumen__ tool. run_terminal_command is also let through here: it's
+// gated per call by the PreToolUse hook (mcp-http.js terminalDecision), which the user has already
+// answered by the time Grok reports it in the stream -- either it ran with their approval, or the
+// hook already denied it and nothing happened; this check no longer needs to kill the run over it.
+// Anything else -- a built-in (edit_file, ...), a hosted server tool, another server's tool -- is not.
 const LUMEN_TOOL = /^lumen__[\w-]+$/;
 function isLumenTool(name, input) {
   const n = String(name || '');
-  if (LUMEN_TOOL.test(n) || n === 'search_tool') return true;
+  if (LUMEN_TOOL.test(n) || n === 'search_tool' || n === 'run_terminal_command') return true;
   if (n === 'use_tool') return LUMEN_TOOL.test(String(input?.tool_name ?? ''));
   return false;
 }
@@ -558,7 +565,10 @@ class GrokBuildEngine {
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
-    const gateRun = gate.open(tag);
+    // sessionId is Grok's own conversation id (settings.gbSession): stable across every message in
+    // this chat, so a run_terminal_command "allow for this chat" (mcp-http.js terminalDecision) can
+    // outlive this one message's tag, which is fresh every time.
+    const gateRun = gate.open(tag, sessionId);
     const gateFile = path.join(home, GATE_FILE);
     fs.writeFileSync(gateFile, gateScript(), { mode: 0o700 });
     fs.writeFileSync(path.join(home, 'config.toml'), grokConfig({ gate: gateFile }), { mode: 0o600 });
