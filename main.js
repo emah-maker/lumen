@@ -2041,7 +2041,7 @@ function autoOrganizeNow() {
     const pool = tabGroups.loose();
     const key = organizeAi.setKey(pool);
     const topics = pool.length >= 2 ? require('./tab-groups').topicClusters(pool).map((c) => c.ids) : [];
-    if (!organizeLearn.shouldAutoOrganize({ enabled: true, ungrouped: pool.length, topics, key, lastKey: idleOrganizeKey, busy: organizing })) return false;
+    if (!organizeLearn.shouldAutoOrganize({ enabled: true, ungrouped: pool.length, topics, key, lastKey: idleOrganizeKey, busy: organizing, onlyMixed: settings.organizeOnlyMixed !== false })) return false;
     idleOrganizeKey = key;
     if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); return true; }
   } catch {}

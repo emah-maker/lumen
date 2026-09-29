@@ -144,22 +144,21 @@ function findDuplicates(tabs) {
 
 // ---------- "Organize tabs automatically" ----------
 // A few seconds after the tabs change (ORGANIZE_DELAYS, Settings), the loose tabs are grouped on this
-// computer, with Undo. A handful of tabs that are all one topic is left alone: grouping 2 or 3 tabs
-// about one thing adds nothing. Tabs on different topics are grouped.
+// computer, with Undo. Only when the loose tabs are a mix: if they are all one topic (however many),
+// there is nothing to sort out and they are left alone. Two related tabs beside an unrelated one are grouped.
 
 const ORGANIZE_DELAYS = [2, 5, 10, 30, 60]; // seconds after the last tab change
 const DEFAULT_ORGANIZE_DELAY = 5;
-const SMALL_SAME_TOPIC = 3; // this many loose tabs or fewer, all one topic: leave them
 const organizeDelay = (v) => (ORGANIZE_DELAYS.includes(Number(v)) ? Number(v) : DEFAULT_ORGANIZE_DELAY);
 // ungrouped: loose tab count; topics: the local topic groups those tabs would form ([[ids]]);
 // key: which loose tabs (so an unchanged set isn't organized twice).
-function shouldAutoOrganize({ enabled, ungrouped, topics = [], key: setKey, lastKey = null, busy = false }) {
+// onlyMixed (Settings, default on): off, tabs that are all one topic are grouped too.
+function shouldAutoOrganize({ enabled, ungrouped, topics = [], key: setKey, lastKey = null, busy = false, onlyMixed = true }) {
   if (!enabled || busy || setKey === lastKey) return false;
   if (ungrouped < 2 || !topics.length) return false; // nothing would form a group
   const oneTopic = topics.length === 1 && topics[0].length === ungrouped;
-  if (oneTopic && ungrouped <= SMALL_SAME_TOPIC) return false;
-  return true;
+  return !onlyMixed || !oneTopic; // by default, organize only when something unrelated is among them
 }
 const IDLE_MIN_UNGROUPED = 2;
 
-module.exports = { createLearner, normalizeUrl, findDuplicates, shouldAutoOrganize, IDLE_MIN_UNGROUPED, ORGANIZE_DELAYS, DEFAULT_ORGANIZE_DELAY, SMALL_SAME_TOPIC, organizeDelay };
+module.exports = { createLearner, normalizeUrl, findDuplicates, shouldAutoOrganize, IDLE_MIN_UNGROUPED, ORGANIZE_DELAYS, DEFAULT_ORGANIZE_DELAY, organizeDelay };

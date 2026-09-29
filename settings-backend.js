@@ -86,6 +86,7 @@ const DEFAULTS = {
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
+  organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)

@@ -2184,8 +2184,9 @@ async function organizeAiRuns() {
   const idle = (o) => learn.shouldAutoOrganize({ enabled: true, ungrouped: 6, topics: [[1, 2, 3], [4, 5]], key: 'k1', lastKey: null, ...o });
   check('auto organize: runs when on, the loose tabs form a topic group, and the set is new', idle({}) === true);
   check('auto organize: never when off, busy, already done for this set, or nothing would form a group', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }) && !idle({ topics: [] }) && !idle({ ungrouped: 1 }));
-  check('auto organize: 2-3 loose tabs all about one topic are left alone', !idle({ ungrouped: 3, topics: [[1, 2, 3]] }) && !idle({ ungrouped: 2, topics: [[1, 2]] }));
-  check('auto organize: a few tabs on different topics are grouped; many tabs on one topic are too', idle({ ungrouped: 3, topics: [[1, 2]] }) && idle({ ungrouped: 5, topics: [[1, 2, 3, 4, 5]] }));
+  check('auto organize: loose tabs that are all one topic are left alone, however many', !idle({ ungrouped: 3, topics: [[1, 2, 3]] }) && !idle({ ungrouped: 2, topics: [[1, 2]] }) && !idle({ ungrouped: 9, topics: [[1, 2, 3, 4, 5, 6, 7, 8, 9]] }));
+  check('auto organize: with "Only when topics are mixed" off, one topic is grouped too', idle({ ungrouped: 3, topics: [[1, 2, 3]], onlyMixed: false }) && !idle({ ungrouped: 3, topics: [], onlyMixed: false }));
+  check('auto organize: only a mix is organized (2 related + 1 other, two topics)', idle({ ungrouped: 3, topics: [[1, 2]] }) && idle({ ungrouped: 4, topics: [[1, 2], [3, 4]] }));
   check('auto organize: the delay is one of the Settings choices, else 5 seconds', learn.organizeDelay(10) === 10 && learn.organizeDelay('30') === 30 && learn.organizeDelay(7) === 5 && learn.organizeDelay(undefined) === 5);
 
   // recency order and colours

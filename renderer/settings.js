@@ -193,7 +193,7 @@ async function buildAi(card) {
   topicRow.classList.add('sub-row');
   topicRow.hidden = ai.tabGrouping !== 'topic';
   const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
-  const idleRow = row('Organize tabs automatically', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Two or three tabs that are all one topic are left alone. On by default.', idleOrganize);
+  const idleRow = row('Organize tabs automatically', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Only when they are a mix: tabs that are all one topic are left alone. On by default.', idleOrganize);
   const forgetBtn = h('button', { id: 'ai-forget-organize', text: 'Forget organize learning', onclick: async () => { await S.ai.forgetOrganizeLearning(); forgetBtn.textContent = 'Forgotten'; setTimeout(() => { forgetBtn.textContent = 'Forget organize learning'; }, 2000); } });
   const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
   card.append(
@@ -207,6 +207,7 @@ async function buildAi(card) {
     row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, such as recipes or one trip, once 4 or more are loose. Tabs you group or move by hand stay put.', grouping),
     topicRow,
     idleRow,
+    toggle('organizeOnlyMixed', 'Only when topics are mixed', 'Leave loose tabs alone when they are all about one thing. Off: those get a group too.'),
     select('organizeDelaySeconds', 'Organize after', 'How long after your tabs change Lumen waits before grouping them.', [2, 5, 10, 30, 60].map((n) => [n, n < 60 ? `${n} seconds` : '1 minute']), { number: true }),
     forgetRow,
   );
