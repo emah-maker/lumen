@@ -31,7 +31,7 @@ const cliAuth = lazy(() => require('./cli-auth'));
 // touches this; a session that only ever uses Claude Code, Grok, or another provider never loads it.
 let anthropicSdk_ = null;
 const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
-const { createTabGroups, siteName } = require('./tab-groups');
+const { createTabGroups, siteName, pathWords } = require('./tab-groups');
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
 const { createManagers, pageOf: managerPageOf } = require('./features/managers'); // Bookmarks and Downloads pages
@@ -630,7 +630,7 @@ function scheduleAutoGroup() {
   autoGroupTimer = setTimeout(() => {
     if (tabGroups.autoGroup()) sendTabs();
     if (groupingMode() === 'topic' && readSettings().topicAi === true) scheduleAiTopics();
-  }, 400); // after the title usually arrives
+  }, groupingMode() === 'topic' ? 1500 : 400); // after the title usually arrives; by topic waits a little longer for the page text
 }
 
 let ignoreExtensionSelect = false;
@@ -1595,7 +1595,7 @@ const ORGANIZE_SCHEMA = {
   required: ['groups'],
   additionalProperties: false,
 };
-const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Give each group a short name (1-3 words, Title Case). A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
+const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has an id, title, host and path words; "group" is the name of the group it is in now. Where tabs already belong together in a group, reuse that exact group name for them. The tab marked "active" is what the user is doing right now: keep it with its related tabs. Make 2 to 8 groups of at least 2 tabs each. Name each group specifically in 1-3 words (Title Case), like "Flights to Tokyo" or "React docs", never just a website. A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON only: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
 
 // Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' picks) answer
 // it as a one-shot, tool-less run (cli-json.js), so no API key is needed. An API model without a
@@ -1654,23 +1654,23 @@ function aiOffTab(id) {
 }
 
 let organizing = false;
+// "Organize Tabs with AI": the tabs as they are right now (new ones and their latest titles included).
+// Any failure, refusal or unusable answer falls back to the local topic organizer, so it never ends in an error.
 async function organizeTabs() {
   if (organizing) return;
   organizing = true;
   ui()?.send('tabs:organizing', true);
   try {
-    const list = tabs.filter((t) => alive(t) && isWebUrl(realUrl(t.view.webContents)))
-      .map((t) => ({ id: t.id, title: t.view.webContents.getTitle().slice(0, 120), host: hostOf(realUrl(t.view.webContents)) }));
-    if (list.length < 2) throw new Error(t('organize.tooFew'));
-    const model = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
-    const count = tabGroups.applyProposal(await proposeGroups(model, list));
+    const entries = tabGroups.candidates().slice(0, MAX_ORGANIZE_TABS);
+    if (entries.length < 2) throw new Error(t('organize.tooFew'));
+    const proposal = await proposeGroups(cheapTopicModel(), topicList(entries)).catch(() => null);
+    const count = tabGroups.organizeByTopic(proposal);
     sendTabs();
     if (!count && win && !win.isDestroyed()) {
       await dialog.showMessageBox(win, { type: 'info', message: t('organize.none'), detail: t('organize.none.detail') });
     }
   } catch (err) {
-    const detail = err instanceof anthropicSdk().AuthenticationError ? t('organize.keyRejected') : err.message;
-    if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: t('organize.failed'), detail });
+    if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: t('organize.failed'), detail: err.message });
   } finally {
     organizing = false;
     ui()?.send('tabs:organizing', false);
@@ -1687,7 +1687,16 @@ function cheapTopicModel() {
   const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
   return `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
 }
-const topicList = (entries) => entries.map((e) => ({ id: e.id, title: String(e.title).slice(0, 120), host: hostOf(e.url) }));
+// What a model is told about a tab: id, title, host and the words of the address path. Never the page,
+// the full address or its query string. The active tab is marked, and a tab already in a group
+// carries the group's name so the model can keep it there.
+const MAX_ORGANIZE_TABS = 80;
+const topicList = (entries) => entries.slice(0, MAX_ORGANIZE_TABS).map((e) => {
+  const tab = tabs.find((x) => x.id === e.id);
+  const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
+  const path = pathWords(e.url);
+  return { id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(path ? { path } : {}), ...(group ? { group: group.name } : {}), ...(e.id === activeId ? { active: true } : {}) };
+});
 
 let aiTopicsTimer = null;
 let aiTopicsBusy = false;
@@ -1720,6 +1729,10 @@ async function organizeByTopic() {
   const count = tabGroups.organizeByTopic(proposal);
   sendTabs();
   return count;
+}
+// "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
+function mergeGroups() {
+  if (tabGroups.mergeGroups()) sendTabs();
 }
 function undoOrganize() {
   if (tabGroups.undoOrganize()) sendTabs();
@@ -1801,6 +1814,7 @@ function tabMenuTemplate(id) {
     if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
     if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
     items.push({ label: t('menu.organizeByTopic'), click: organizeByTopic });
+    if (tabGroups.state().length > 1) items.push({ label: t('menu.mergeGroups'), click: mergeGroups });
     if (tabGroups.canUndo()) items.push({ label: t('menu.undoOrganize'), click: undoOrganize });
   }
   items.push(
@@ -1938,6 +1952,7 @@ function tabGroupsMenu() {
   const mode = groupingMode();
   return [
     { label: t('menu.organizeByTopic'), click: organizeByTopic },
+    { label: t('menu.mergeGroups'), enabled: tabGroups.state().length > 1, click: mergeGroups },
     { label: t('menu.undoOrganize'), enabled: tabGroups.canUndo(), click: undoOrganize },
     { label: t('menu.organizeWithAi'), enabled: !organizing, click: organizeTabs },
     { type: 'separator' },
@@ -3284,7 +3299,7 @@ ipcMain.on('group:toggle', (_e, id) => {
 ipcMain.on('group:rename', (_e, id, name) => {
   const group = tabGroups.groups.get(id);
   const clean = String(name || '').trim().slice(0, 40);
-  if (group && clean) group.name = clean;
+  if (group && clean) { group.name = clean; group.auto = false; group.userNamed = true; } // named by the user: automatic grouping and Organize leave it alone
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);

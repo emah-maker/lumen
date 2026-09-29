@@ -165,7 +165,7 @@ const os = require('os');
     }
   });
   check('organize with Claude Code: runs the CLI (Haiku for speed), never the API', cli.calls.length === 1 && cli.calls[0].engine === 'claudecode' && cli.calls[0].bin === 'claude-fake.exe' && cli.calls[0].model === 'haiku' && cli.calls[0].schema, JSON.stringify(cli.calls));
-  check('organize with Claude Code: only ids, titles and hosts are sent', cli.calls[0] && JSON.parse(cli.calls[0].user.split('Tabs:\n')[1]).every((x) => Object.keys(x).sort().join() === 'host,id,title'), cli.calls[0]?.user);
+  check('organize with Claude Code: only ids, titles, hosts and path words are sent', cli.calls[0] && JSON.parse(cli.calls[0].user.split('Tabs:\n')[1]).every((x) => ['id', 'title', 'host'].every((k) => k in x) && Object.keys(x).every((k) => ['id', 'title', 'host', 'path', 'group', 'active'].includes(k)) && !/[?#]/.test(x.path || '')), cli.calls[0]?.user);
   check('organize with Claude Code: its groups are applied', cli.picked.includes('From Claude Code'), JSON.stringify(cli.picked));
   check('organize: an API model with no key falls back to Claude Code', cli.noKey.engine === 'claudecode' && cli.noKey.model === 'haiku', JSON.stringify(cli.noKey));
   check('organize: a Grok Build pick runs Grok Build with its model', cli.grok.engine === 'grokbuild' && cli.grok.model === 'grok-4.7', JSON.stringify(cli.grok));
