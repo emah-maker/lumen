@@ -124,9 +124,11 @@ function parseAuthStatus(stdout) {
 // CLIs without `auth status`, and any failure (timeout, non-zero exit, ENOENT), resolve 'unknown'.
 function checkAuthStatus(bin) {
   return new Promise((resolve) => {
-    execFile(bin, ['auth', 'status', '--json'], { shell: false, windowsHide: true, timeout: 5000 }, (err, stdout) => {
-      resolve(err ? { signedIn: 'unknown', accountType: null, detail: null } : parseAuthStatus(stdout));
-    });
+    try {
+      execFile(bin, ['auth', 'status', '--json'], { shell: false, windowsHide: true, timeout: 5000 }, (err, stdout) => {
+        resolve(err ? { signedIn: 'unknown', accountType: null, detail: null } : parseAuthStatus(stdout));
+      });
+    } catch { resolve({ signedIn: 'unknown', accountType: null, detail: null }); } // a file that can't be executed at all (spawn EFTYPE)
   });
 }
 

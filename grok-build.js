@@ -227,9 +227,11 @@ function parseGrokModels(stdout) {
 // start MCP servers; it writes only to that GROK_HOME (its first-run files, the first time: ~2 s).
 function checkAuthStatus(bin, { env, cwd, exec = execFile }) {
   return new Promise((resolve) => {
-    exec(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd, env }, (err, stdout) => {
-      resolve(err ? { signedIn: 'unknown', detail: null, models: [] } : parseGrokModels(stdout));
-    });
+    try {
+      exec(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd, env }, (err, stdout) => {
+        resolve(err ? { signedIn: 'unknown', detail: null, models: [] } : parseGrokModels(stdout));
+      });
+    } catch { resolve({ signedIn: 'unknown', detail: null, models: [] }); } // a file that can't be executed at all (spawn EFTYPE)
   });
 }
 
