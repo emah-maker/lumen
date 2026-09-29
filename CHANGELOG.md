@@ -4,6 +4,18 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.2.12 (2026-09-29)
+
+- Skills: saved prompts you run from the sidebar with a slash command (`/summarize`, `/explain`, `/reply` and more), editable in Settings, with import and export.
+- Ask across your open tabs: type `@` in the sidebar to attach specific tabs or all of them, or ask "compare these tabs"; the AI can also read several tabs at once.
+- The AI no longer goes wrong when you switch tabs while it is working: it stays on its own tab, and the sidebar shows "Working in: …" so you can see which.
+- Translate a page with your connected AI (or Google Translate), a screenshot tool (Ctrl+Shift+S) with visible, full-page and select-area capture, and a QR code for the page or selected text.
+- Dragging a tab out of the tab strip now opens its window at once and it follows your mouse; drop it on another window's strip to merge, or drag a window's only tab to move the window.
+- Performance mode (Settings, System; Auto by default) turns on for slower PCs: tabs sleep sooner, caches are capped, and blur and animation are off. The install is about 60 MB smaller.
+- Organize is faster and smarter: the local organizer applies at once and the AI only refines names and leftover tabs (a 200-tab session finishes in about 4 s instead of 6 s), with learning from your drags, a "Close duplicate tabs" item, and an optional idle organizer.
+- On Mac, the Keychain's "Always Allow" for Lumen now survives updates (builds are signed with one stable certificate).
+- The model menu no longer hides under the chat history list, and the usage panel says "this PC" on Windows.
+- New-tab page widgets (weather, calendar, Todoist, web pages) that you can drag and resize.
 - Background tasks: let the AI do a job on its own in a hidden tab while you keep browsing (the clock button next to Send, or `/background …`), on a schedule, or watch a page and get told when it changes or a condition holds (`/watch …`, or Watch This Page in the menu). Tasks live in a new Tasks panel with steps, results, cost, and approval cards; they ask before visiting sites you did not list and before buying, sending or submitting anything. Scheduled and watching tasks run only while Lumen is open.
 - Automation (Playwright over CDP) on macOS no longer opens Chromium's debugging port: Lumen answers the protocol itself, and links opened from other apps keep working.
 
