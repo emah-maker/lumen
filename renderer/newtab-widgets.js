@@ -62,6 +62,8 @@ const el = (tag, cls, text) => {
   return e;
 };
 const safeUrl = (u) => (typeof u === 'string' && u.length < 2000 && /^https:\/\/[^\s"'<>\\]+$/i.test(u) ? u : null);
+// A github.com address (an issue, a pull request or one of its list pages), or null.
+const githubUrl = (u) => (typeof u === 'string' && u.length < 300 && /^https:\/\/github\.com\/[A-Za-z0-9_./#-]{0,250}$/.test(u) ? u : null);
 const text = (v, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '');
 const int = (v) => (Number.isFinite(v) ? Math.round(v) : null);
 const pct = (v) => (Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null);
@@ -351,6 +353,90 @@ const WIDGET_RENDERERS = {
         }, 1000);
       }
     }
+  },
+
+  // GitHub: unread notifications and review requests as numbers on a small card; the lists on a bigger one.
+  // Everything comes from features/github-view.js already checked, and is checked again here.
+  github(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const open = githubUrl(d.open);
+    if (open) card.head.append(openLink(open, 'Open GitHub'));
+    const listOf = (v) => {
+      if (!v || typeof v !== 'object') return null;
+      if (typeof v.error === 'string' && v.error) return { error: text(v.error, 200) };
+      const items = (Array.isArray(v.items) ? v.items : []).filter((it) => it && typeof it.title === 'string' && githubUrl(it.url)).slice(0, 20);
+      return { items, total: Math.max(items.length, int(v.total) || 0), partial: v.partial === true };
+    };
+    const reviews = listOf(d.reviews);
+    const assigned = listOf(d.assigned);
+    const notif = d.notifications && typeof d.notifications === 'object' ? d.notifications : null;
+    const unread = notif && !notif.error && int(notif.count) !== null ? { n: int(notif.count), label: /^\d{1,4}\+?$/.test(notif.label) ? notif.label : String(int(notif.count)) } : null;
+    const stat = (n, label, href) => {
+      const box = href ? link(href, '', 'gh-stat') : el('span', 'gh-stat');
+      box.append(el('span', 'gh-num', n), el('span', 'gh-of', label));
+      return box;
+    };
+    // Small: the numbers.
+    const small = el('div', 'gh-summary');
+    if (unread) small.append(stat(unread.label, unread.n === 1 ? 'unread notification' : 'unread notifications', githubUrl(d.openNotifications)));
+    if (reviews && !reviews.error) small.append(stat(String(reviews.total), reviews.total === 1 ? 'review requested' : 'reviews requested', githubUrl(d.openReviews)));
+    if (assigned && !assigned.error) small.append(stat(String(assigned.total), 'assigned to you', githubUrl(d.openAssigned)));
+    if (!small.children.length) small.append(el('span', 'gh-of', 'Nothing to show.'));
+    card.body.append(small);
+    // Bigger: the counts in one line and the lists.
+    const full = el('div', 'gh-full');
+    if (notif) {
+      const line = el('p', 'gh-unread');
+      if (unread) {
+        const a = link(githubUrl(d.openNotifications) || 'https://github.com/notifications', `${unread.label} unread notification${unread.n === 1 ? '' : 's'}`, 'w-link');
+        line.append(a);
+      } else {
+        line.classList.add('w-note');
+        line.append(text(notif.error, 200) || 'Notifications aren’t available.');
+      }
+      full.append(line);
+    }
+    const now = Date.now();
+    const since = (ms) => {
+      if (!Number.isFinite(ms) || ms > now) return '';
+      const min = Math.round((now - ms) / 60e3);
+      return min < 1 ? 'just now' : min < 60 ? `${min} min ago` : min < 1440 ? `${Math.round(min / 60)} h ago` : `${Math.round(min / 1440)} d ago`;
+    };
+    const section = (heading, data, moreUrl, empty) => {
+      if (!data) return;
+      const wrap = el('div', 'gh-section');
+      wrap.append(el('div', 'w-day', data.error ? heading : `${heading} · ${data.total}`));
+      if (data.error) { wrap.append(el('p', 'w-note', data.error)); full.append(wrap); return; }
+      if (!data.items.length) wrap.append(el('p', 'w-empty', empty));
+      const list = el('div', 'w-list');
+      for (const it of data.items) {
+        const row = el('div', 'w-row');
+        const pr = it.kind === 'pr';
+        const mark = el('span', `gh-kind ${pr ? 'pr' : 'issue'}${it.draft ? ' draft' : ''}`, pr ? (it.draft ? 'Draft' : 'PR') : 'Issue');
+        const main = el('div', 'w-main');
+        main.append(link(githubUrl(it.url), text(it.title) || 'Untitled', ''));
+        const meta = el('div', 'gh-meta');
+        meta.append(el('span', 'gh-repo', `${text(it.repo, 120)}#${int(it.number) ?? ''}`));
+        if (typeof it.author === 'string' && it.author) meta.append(el('span', null, text(it.author, 40)));
+        const ago = since(it.updated);
+        if (ago) meta.append(el('span', null, ago));
+        main.append(meta);
+        row.append(mark, main);
+        list.append(row);
+      }
+      wrap.append(list);
+      if (data.total > data.items.length) {
+        const more = el('p', 'w-more');
+        const href = githubUrl(moreUrl);
+        if (href) more.append(link(href, `${data.total - data.items.length} more on GitHub`, 'w-link')); else more.append(`${data.total - data.items.length} more`);
+        wrap.append(more);
+      }
+      full.append(wrap);
+    };
+    section('Review requests', reviews, d.openReviews, 'No reviews waiting on you.');
+    section('Assigned to you', assigned, d.openAssigned, 'Nothing assigned to you.');
+    card.body.append(full);
   },
 
   todoist(w, card) {
@@ -769,7 +855,7 @@ window.applyWidgetColors = applyWidgetColors;
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, gmail: 5 * 60e3, slack: 5 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;
