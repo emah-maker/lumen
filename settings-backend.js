@@ -44,6 +44,7 @@ const DEFAULTS = {
   newTabImage: 0, // [look] when the wallpaper file (newtab-wallpaper.jpg in the profile) was last set; 0: none
   newTabClock: true, // [look] the big clock above the greeting
   newTabName: '', // [look] "Good evening, <name>"
+  newTabHeader: true, // [look] the date and greeting (a system card, features/widget-system.js)
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
@@ -252,7 +253,7 @@ function create(deps) {
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor),
       clock: p.newTabClock, name: p.newTabName,
-      sections: { favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
+      sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked !== false,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };

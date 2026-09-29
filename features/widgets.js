@@ -29,6 +29,8 @@ const WL = require('./widget-layout');
 const TV = require('./todoist-view');
 const WX = require('./weather-view');
 const WC = require('./widget-colors');
+const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
+const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -330,6 +332,7 @@ function cleanInput(input) {
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
 // x, y, w, h are left out when they aren't four integers (an older list, or garbage): cleanList places those.
 function cleanWidget(w) {
+  if (SYS.isSystem(w)) return SYS.clean(w);
   if (!w || typeof w !== 'object' || !CONNECTORS[w.type] || typeof w.id !== 'string' || !/^w[0-9a-z]{4,20}$/.test(w.id)) return null;
   const config = CONNECTORS[w.type].clean(w);
   if (!config) return null;
@@ -364,7 +367,7 @@ function layoutAll(items) {
   const laid = WL.resolve(items.map((it, i) => ({ id: it.id, type: it.type, ...rects[i], ...(it.snap && hasRect(it) ? { snap: it.snap } : {}) })), { packed: false });
   const out = items.map((it, i) => {
     const { x, y, w, h, snap } = laid[i];
-    const next = { ...it, x, y, w, h, ...WL.mirror(it.type, { w, h }) };
+    const next = { ...it, x, y, w, h, ...(SYS.isSystem(it) ? {} : WL.mirror(it.type, { w, h })) };
     if (snap) next.snap = snap; else delete next.snap;
     return next;
   });
@@ -374,7 +377,7 @@ function layoutAll(items) {
 function cleanList(list) {
   if (!Array.isArray(list)) return null;
   const seen = new Set();
-  return layoutAll(list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)).slice(0, MAX_WIDGETS));
+  return layoutAll(SYS.capReal(list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)), MAX_WIDGETS));
 }
 // The last size used per kind of widget (the default for a new one): { weather: { w, h }, ... }.
 function cleanSizes(v) {
@@ -408,8 +411,12 @@ function createWidgets(deps) {
   const now = () => (deps.now ? deps.now() : Date.now());
   const UNDO_MS = deps.undoMs ?? 6000;
 
-  const list = () => cleanList(deps.readSettings().homeWidgets) || [];
-  const save = (widgets, extra = {}) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList(widgets), ...extra });
+  // list(): the widgets. The system cards (features/widget-system.js) share the stored list, and are kept through every save.
+  const stored = () => cleanList(deps.readSettings().homeWidgets) || [];
+  const list = () => stored().filter((w) => !SYS.isSystem(w));
+  const sysList = () => stored().filter(SYS.isSystem);
+  const save = (widgets, extra = {}, sys = sysList()) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList([...widgets, ...sys]), ...extra });
+  const trash = createTrash({ now, ttl: deps.trashMs ?? 30000 });
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.DEFAULT_SIZE[type] || { w: 4, h: 3 };
   // A changed config invalidates its cached data; its size and place on the page don't.
@@ -550,7 +557,7 @@ function createWidgets(deps) {
   const connector = (w) => CONNECTORS[w.type];
   // What the new-tab page shows now; stale widgets refresh in the background.
   function forPage() {
-    return list().map((w) => {
+    const cards = list().map((w) => {
       const entry = cache.get(w.id);
       const current = entry && entry.key === keyOf(w) ? entry : null;
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
@@ -561,6 +568,7 @@ function createWidgets(deps) {
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
     });
+    return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
   function refreshAll({ force = false } = {}) {
     return Promise.all(list().map((w) => refresh(w, { force })));
@@ -668,8 +676,10 @@ function createWidgets(deps) {
   }
   // do=layout: the page's drag, resize and snap: rects for (some of) the widgets. Checked and clamped
   // here; the last size resized per kind is remembered for new widgets.
-  function layout(items) {
+  function layout(items, dock) {
     const widgets = list();
+    const sysBefore = sysList();
+    const sysNext = SYS.applyLayout(sysBefore, items, dock);
     let resized = null;
     const next = widgets.map((w) => {
       const r = Array.isArray(items) ? items.find((i) => i && i.id === w.id) : null;
@@ -681,8 +691,8 @@ function createWidgets(deps) {
       if ((rect.w !== w.w || rect.h !== w.h) && !snap) resized = { type: w.type, w: rect.w, h: rect.h };
       return n;
     });
-    if (JSON.stringify(cleanList(next)) === JSON.stringify(widgets)) return false;
-    save(next, resized ? { homeWidgetSizes: { ...sizes(), [resized.type]: { w: resized.w, h: resized.h } } } : {});
+    if (JSON.stringify(cleanList([...next, ...sysNext])) === JSON.stringify(cleanList([...widgets, ...sysBefore]))) return false;
+    save(next, resized ? { homeWidgetSizes: { ...sizes(), [resized.type]: { w: resized.w, h: resized.h } } } : {}, sysNext);
     deps.onUpdate?.();
     return true;
   }
@@ -691,7 +701,7 @@ function createWidgets(deps) {
     const widgets = list();
     const rects = WL.flowPack(widgets.map((w) => WL.DEFAULT_SIZE[w.type] || { w: 4, h: 3 }));
     widgets.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
-    save(widgets, { homeWidgetSizes: {} });
+    save(widgets, { homeWidgetSizes: {} }, []); // and every section back in the centre column
     deps.onUpdate?.();
     return true;
   }
@@ -752,7 +762,8 @@ function createWidgets(deps) {
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       max: MAX_WIDGETS,
       spans: SPANS,
-      edit,
+      edit: typeof edit === 'string' ? edit : null,
+      create: edit?.create || null, // the page's Add widget picked a kind: Settings opens the new-widget form for it
     };
   }
 
@@ -767,7 +778,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -789,17 +800,58 @@ function createWidgets(deps) {
     if (action.do === 'layout') {
       action.items = WL.decode(params.get('l'));
       if (!action.items) return { invalid: true };
+      action.dock = (params.get('d') || '').split(',').filter(SYS.isSystemId).slice(0, SYS.IDS.length); // system cards back to the centre column
+    }
+    if (action.do === 'create') { // the page's Add widget: open Settings' new-widget form for a kind
+      action.type = Object.prototype.hasOwnProperty.call(CONNECTORS, params.get('type')) ? params.get('type') : null;
+      if (!action.type) return { invalid: true };
     }
     return action;
   }
+  // ---- the new-tab page's edit mode: hiding a section, removing with Undo ----
+  // A system card: layout (moved, resized, docked), remove (hides the section: its Settings toggle) or nothing else.
+  function setSectionShown(id, shown) {
+    const pref = SYS.prefOf(id);
+    if (!pref) return false;
+    deps.writeSettings({ ...deps.readSettings(), [pref]: shown });
+    deps.onUpdate?.();
+    return true;
+  }
+  function actSystem(action) {
+    if (action.do === 'layout') return layout(action.items, action.dock);
+    if (action.do === 'remove') return setSectionShown(action.id, false);
+    return false;
+  }
+  // The page's remove badge: the widget goes, but its settings (and token) are kept for a few seconds so Undo can bring it back.
+  function removeFromPage(w) {
+    const name = CONNECTORS[w.type].secret;
+    trash.hold({ id: w.id, widget: w, secretName: name || null, secret: name ? deps.getSecret(name) || null : null });
+    return remove(w.id);
+  }
+  // do=restore: Undo of a removal, or "show again" for a section that was hidden.
+  function restore(id) {
+    if (SYS.isSystemId(id)) return setSectionShown(id, true);
+    const held = trash.take(id);
+    if (!held) return false;
+    const widgets = list();
+    if (widgets.length >= MAX_WIDGETS || widgets.some((w) => w.id === id)) return false;
+    if (held.secret && held.secretName) deps.setSecret(held.secretName, held.secret);
+    save([...widgets, held.widget]);
+    deps.onUpdate?.();
+    return true;
+  }
   async function act(action) {
+    if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
+    if (action.do === 'restore') return restore(action.id);
+    if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
+    if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
     if (action.do === 'refresh') return refresh(w, { force: true });
     if (action.do === 'place') return place(w.id, action.to);
     if (action.do === 'size') return resize(w.id, { span: action.span, height: action.height });
-    if (action.do === 'layout') return layout(action.items);
-    if (action.do === 'remove') return remove(w.id);
+    if (action.do === 'layout') return layout(action.items, action.dock);
+    if (action.do === 'remove') return removeFromPage(w);
     if (action.do === 'consent') return setLocationConsent(action.arg);
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
@@ -830,7 +882,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
 }
 
 module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };

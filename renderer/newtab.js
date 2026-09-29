@@ -48,7 +48,7 @@ function lookOf(l) {
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
-    sections: { favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
+    sections: { header: sections.header !== false, favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
     packed: look.widgetsPacked !== false, // [widgets] Keep widgets packed
     imageColors: Array.isArray(look.imageColors) ? look.imageColors.filter((c) => hex(c)).slice(0, 3) : [], // [widgets] Match screen colours
   };
@@ -213,12 +213,19 @@ function render() {
   const now = new Date();
   document.getElementById('date').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   document.getElementById('greeting').textContent = look.name ? `${greeting(now)}, ${look.name}` : greeting(now);
+  // The sections are cards on the widget grid once moved or while Edit layout is on (newtab-system.js);
+  // until then they are in the centre column as they always were. They are placed first: the grid needs them.
+  const part = (shown, title, build) => {
+    if (!shown) return null;
+    const content = build();
+    return { title, content, section: section(title, content) };
+  };
+  window.newtabSystem.fill({
+    favorites: part(look.sections.favorites, 'Favorites', () => favorites(favs)),
+    frequent: part(look.sections.frequent && freq.length, 'Frequently Visited', () => frequent(freq)),
+    privacy: part(look.sections.privacy && blocked !== null, 'Privacy', () => privacy(blocked)),
+  }, { header: look.sections.header }, widgets);
   window.renderWidgets?.(widgets); // [widgets] newtab-widgets.js
-  const box = document.getElementById('sections');
-  box.replaceChildren();
-  if (look.sections.favorites) box.append(section('Favorites', favorites(favs)));
-  if (look.sections.frequent && freq.length) box.append(section('Frequently Visited', frequent(freq)));
-  if (look.sections.privacy && blocked !== null) box.append(section('Privacy', privacy(blocked)));
 }
 
 // "/" jumps to the search field, like many sites; typing elsewhere is left alone.

@@ -441,6 +441,7 @@ function buildLook(card) {
   name.addEventListener('change', () => save('newTabName', name.value));
   card.append(
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
+    toggle('newTabHeader', 'Show the date and greeting', 'Turn off to hide the date and “Good evening” line. In Edit layout on the new-tab page, the ✕ on a section does the same.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
@@ -499,8 +500,8 @@ async function buildWidgets(card) {
   const chk = (id, label, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked: Boolean(checked) }), label);
 
   // Add or edit: a type, its fields, and Check before Save.
-  function openForm(existing = null) {
-    let type = existing?.type || 'weather';
+  function openForm(existing = null, initialType = null) {
+    let type = existing?.type || initialType || 'weather';
     const note = h('span', { class: 'note', role: 'status', id: 'widget-note' });
     const fields = h('div', { class: 'widget-fields' });
     const title = h('input', { type: 'text', id: 'widget-title', placeholder: 'Automatic', maxlength: '60', 'aria-label': 'Card title' });
@@ -688,7 +689,7 @@ async function buildWidgets(card) {
       ws.types.map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, disabled: Boolean(existing) && t.type !== existing.type, onclick: () => { type = t.type; renderFields(); syncWidth(); } }, widgetIcon(t.type), t.label)));
     const form = h('div', { class: 'widget-form', id: 'widget-form' },
       h('div', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
-      types, fields, field('Title', title), field('Width', width, 'Or use Edit widgets on the new-tab page: drag a card anywhere, resize it from any edge, snap it to a side.'),
+      types, fields, field('Title', title), field('Width', width, 'Or use Edit layout on the new-tab page: drag a card anywhere, resize it from any edge, snap it to a side.'),
       h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: closeForm }), check, save));
     formHost.replaceChildren(form);
     renderFields();
@@ -699,11 +700,12 @@ async function buildWidgets(card) {
   }
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
-  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every card its default size, packed in order', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page
+  else if (ws.create && ws.types.some((t) => t.type === ws.create)) openForm(null, ws.create); // its Add widget picker
 }
 function alertLine(host, text) {
   host.querySelector('.note.error')?.remove();

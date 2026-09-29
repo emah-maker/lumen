@@ -4,11 +4,18 @@
 //
 // Cards are positioned with transforms only and never reordered in the DOM (a moved frame would
 // reload). Dragging follows the pointer with a transform; the other cards slide out of the way and a
-// ghost shows where the card will land. Edit mode ("Edit widgets", or a long press on a card) lets a
+// ghost shows where the card will land. Edit mode ("Edit layout", or a long press on a card) lets a
 // card be dragged from anywhere, resized from every corner and edge, snapped to a side, resized to a
 // preset, configured (the gear) or removed. Drops are sent as one layout (do=layout).
+// The page's own sections (Favorites, the search box, ...) are cards here too while they are free or
+// Edit layout is on (newtab-system.js); the toolbar, Add widget, undo and snap guides are in
+// newtab-edit.js, which this file calls through window.widgetEditUI.
 (() => {
   const WL = window.WidgetLayout;
+  const WE = window.WidgetEdit;
+  const WS = window.WidgetSystem;
+  const strings = window.lumenI18n?.strings;
+  const txt = (key, vars) => WE.text(key, vars, strings);
   const body = document.body;
   const mainEl = document.querySelector('main');
   const boxEl = () => document.getElementById('widgets');
@@ -24,8 +31,8 @@
   let mainMargin = 0;
   let firstLayout = true;
   let suppress = false;
-  let editBtn = null;
   let resyncTimer = 0;
+  const layoutHooks = [];
 
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -42,11 +49,17 @@
   function measure() {
     m = WL.metrics(document.documentElement.clientWidth);
     const bottom = mainEl.offsetTop + mainEl.offsetHeight - mainMargin - 32;
-    const obstacle = WL.obstacleFor({ left: mainEl.offsetLeft, right: mainEl.offsetLeft + mainEl.offsetWidth, bottom }, m);
+    // The centre column is only an obstacle while something is docked in it (every section may have become a card).
+    const docked = window.newtabSystem ? window.newtabSystem.dockedCount() > 0 : true;
+    const obstacle = docked ? WL.obstacleFor({ left: mainEl.offsetLeft, right: mainEl.offsetLeft + mainEl.offsetWidth, bottom }, m) : null;
     o = { cols: m.cols, obstacle, packed: body.dataset.wpack !== '0', rows: WL.pageRows(window.innerHeight, m) };
     body.classList.toggle('w-stacked', m.cols === 1);
     if (m.cols === 1 && editing) setEditing(false);
-    if (editBtn) editBtn.hidden = !items.length || m.cols === 1;
+    announceMode();
+  }
+  // The toolbar (newtab-edit.js) follows: editing or not, and whether the window is too narrow to edit.
+  function announceMode() {
+    document.dispatchEvent(new CustomEvent('w-mode', { detail: { editing, stacked: stacked() } }));
   }
   function setBox(card, px) {
     const key = `${px.left},${px.top},${px.width},${px.height}`;
@@ -99,6 +112,7 @@
       box.classList.add('w-instant'); // no sliding into place on the first draw
       requestAnimationFrame(() => requestAnimationFrame(() => box.classList.remove('w-instant')));
     }
+    for (const fn of layoutHooks) fn();
   }
   let scheduled = 0;
   function relayout() {
@@ -138,7 +152,6 @@
         resyncTimer = setTimeout(() => sync(valid, cards), 950 - age);
       }
     }
-    ensureEditButton(incoming.length);
     if (!incoming.length && editing) setEditing(false);
     measure();
     layoutNow();
@@ -161,14 +174,50 @@
   }
 
   // ---- committing ----
-  const send = (next, id) => window.widgetAct(id, 'layout', { l: WL.encode(next) });
-  function commit(next, id, message) {
+  // A section card nobody has changed is not sent (it stays in the centre column when Edit layout ends).
+  const untouched = (it) => Boolean(window.newtabSystem?.isPristine(it.id));
+  function send(list, id, dock) {
+    if (!list.length) return;
+    const extra = { l: WL.encode(list) };
+    if (dock?.length) extra.d = dock.join(',');
+    window.widgetAct(id, 'layout', extra);
+  }
+  const titleOfId = (id) => cardsById.get(id)?.getAttribute('aria-label') || 'Widget';
+  // What Undo needs to know about the layout as it is now (before a change).
+  function snapshot(id) {
+    return { kind: 'layout', before: view.map((i) => ({ ...i })), id, title: id ? titleOfId(id) : '', pristine: new Set(view.filter(untouched).map((i) => i.id)), at: Date.now() };
+  }
+  // o: { history: false } for an undo, { items, dock } the cards to send instead of the whole layout, { local } send nothing.
+  function commit(next, id, message, o = {}) {
+    const sys = window.newtabSystem;
+    if (o.history !== false) {
+      const entry = snapshot(id);
+      for (const it of next) {
+        if (!WS.isSystemId(it.id)) continue;
+        const was = entry.before.find((b) => b.id === it.id);
+        if (it.id === id || !was || WE.rectKey(was) !== WE.rectKey(it)) sys?.touch([it.id]); // now the browser is told about it
+      }
+      window.widgetEditUI?.recordLayout(entry);
+    }
     items = next.map((it) => ({ ...it }));
     optimistic = { map: new Map(next.map((it) => [it.id, { x: it.x, y: it.y, w: it.w, h: it.h, ...(it.snap ? { snap: it.snap } : {}) }])), at: Date.now() };
     view = next;
     place(next);
     if (message) say(message);
-    send(next, id);
+    if (!o.local) send(o.items || next.filter((it) => !untouched(it)), id, o.dock);
+    for (const fn of layoutHooks) fn();
+  }
+  // Undo of a layout change (newtab-edit.js keeps the stack): back to entry.before, sending only what differs.
+  function undoLayout(entry) {
+    if (stacked() || drag || !entry?.before) return false;
+    const sys = window.newtabSystem;
+    const touched = new Set(view.filter((i) => WS.isSystemId(i.id) && sys && !sys.isPristine(i.id)).map((i) => i.id));
+    const plan = WE.undoPlan(entry.before, view, { isSystem: WS.isSystemId, pristine: entry.pristine, touched });
+    if (!plan) return false;
+    const next = view.map((v) => entry.before.find((b) => b.id === v.id) || v).map((i) => ({ ...i }));
+    sys?.untouch(plan.dock);
+    commit(next, plan.items[0]?.id || next[0].id, null, { history: false, items: plan.items, dock: plan.dock, local: plan.local });
+    return true;
   }
   function describe(card, before, after) {
     const t = titleOf(card);
@@ -276,6 +325,7 @@
       d.snap = snap;
       place(preview, id);
       ghostTo(d.ghost, preview.find((i) => i.id === id), snap);
+      window.widgetEditUI?.guides(preview.find((i) => i.id === id), preview, o.obstacle, m);
     }
     // Near the top or bottom edge of the window while dragging: scroll.
     if (d.kind === 'move' && !snap) {
@@ -288,6 +338,7 @@
     const d = drag;
     if (d?.raf) cancelAnimationFrame(d.raf);
     d?.ghost?.remove();
+    window.widgetEditUI?.clearGuides();
     body.classList.remove('w-dragging');
     d?.card.classList.remove('lifted', 'resizing');
     try { d?.card.releasePointerCapture(d.pointerId); } catch { /* not captured */ }
@@ -305,7 +356,7 @@
     if (cancelled || WL.encode(next) === WL.encode(d.base)) {
       d.card._pos = null;
       place(d.base);
-      if (cancelled) say('Move cancelled');
+      if (cancelled) say(txt('newtab.edit.cancelled'));
       flushDeferred();
       return;
     }
@@ -320,7 +371,7 @@
     cleanup();
     d.card._pos = null;
     place(d.base);
-    say('Move cancelled');
+    say(txt('newtab.edit.cancelled'));
     flushDeferred();
   }
   function flushDeferred() {
@@ -333,30 +384,31 @@
   document.addEventListener('click', (e) => { if (suppress) { e.preventDefault(); e.stopPropagation(); suppress = false; } }, true);
 
   // ---- edit mode ----
-  function ensureEditButton(count) {
-    if (!editBtn) {
-      editBtn = el('button', 'w-edit-btn', 'Edit widgets');
-      editBtn.type = 'button';
-      editBtn.setAttribute('aria-pressed', 'false');
-      editBtn.addEventListener('click', () => setEditing(!editing));
-      document.querySelector('main header')?.append(editBtn);
-    }
-    editBtn.hidden = !count || stacked();
-  }
   function setEditing(on) {
+    measure();
     if (on === editing || (on && stacked())) return;
+    if (on) window.newtabSystem?.freeAll(); // every section becomes a card where it stands
     editing = on;
     body.classList.toggle('w-editing', on);
-    if (editBtn) { editBtn.textContent = on ? 'Done' : 'Edit widgets'; editBtn.setAttribute('aria-pressed', String(on)); }
     for (const card of cardsById.values()) card.tabIndex = on ? 0 : -1;
-    say(on ? 'Editing widgets. Drag a card to move it, or use the arrow keys. Shift and arrows resize. Control Alt and arrows snap to a side. Escape or Done to finish.' : 'Done editing widgets.');
+    if (!on) window.newtabSystem?.settle(); // the sections nobody changed go back to the centre column
+    window.widgetEditUI?.editingChanged(on);
+    announceMode();
+    say(txt(on ? 'newtab.edit.entered' : 'newtab.edit.left'));
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (drag) { e.preventDefault(); e.stopPropagation(); cancelDrag(); } else if (editing) { setEditing(false); }
+    if (e.key === 'Escape') {
+      if (drag) { e.preventDefault(); e.stopPropagation(); cancelDrag(); } else if (editing && !document.querySelector('.w-picker')) { setEditing(false); }
+      return;
+    }
+    // Ctrl+Z (Cmd+Z): undo the last move, resize, removal or reset.
+    if (editing && !drag && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) {
+      e.preventDefault();
+      window.widgetEditUI?.undo();
+    }
   }, true);
   document.addEventListener('pointerdown', (e) => {
-    if (editing && !drag && !e.target.closest?.('.w-card, .w-edit-btn')) setEditing(false);
+    if (editing && !drag && !e.target.closest?.('.w-card, .w-edit-btn, .w-ui')) setEditing(false);
   });
 
   // ---- one card's controls and gestures ----
@@ -377,21 +429,18 @@
     corner.dataset.dir = 'se';
     card.append(corner);
     for (const dir of DIRS) { const h = el('div', 'w-h'); h.dataset.dir = dir; card.append(h); }
+    const sysCard = Boolean(card.dataset.sys);
     const remove = el('button', 'w-remove');
     remove.type = 'button';
     remove.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9"/></svg>';
-    remove.setAttribute('aria-label', `Remove ${title}`);
-    let armed = 0;
+    remove.setAttribute('aria-label', sysCard ? `Hide ${title}` : `Remove ${title}`);
+    // One press removes it; Undo (the toolbar, the toast that appears, Ctrl+Z) brings it back with its settings.
     remove.addEventListener('click', () => {
-      if (!armed) {
-        armed = setTimeout(() => { armed = 0; remove.classList.remove('armed'); remove.setAttribute('aria-label', `Remove ${title}`); }, 3500);
-        remove.classList.add('armed');
-        remove.setAttribute('aria-label', `Confirm: remove ${title}`);
-        say(`Press again to remove ${title}`);
-        return;
-      }
-      clearTimeout(armed);
-      window.widgetAct(card.dataset.id, 'remove');
+      const id = card.dataset.id;
+      const name = titleOf(card);
+      window.widgetEditUI?.removed({ id, title: name, system: sysCard, at: Date.now() });
+      say(txt(sysCard ? 'newtab.edit.hidden' : 'newtab.edit.removed', { title: name }));
+      window.widgetAct(id, 'remove');
     });
     const gear = el('button', 'w-gear');
     gear.type = 'button';
@@ -408,7 +457,9 @@
       b.addEventListener('click', () => keyOp(card, (list, it) => WL.resize(list, it.id, { x: it.x, y: it.y, ...WL.PRESETS[name] }, o)));
       presets.append(b);
     }
-    card.append(remove, gear, presets);
+    if (card.dataset.keep !== '1') card.append(remove); // the search box can't be removed
+    if (!sysCard) card.append(gear); // a section's settings are its toggle in Settings, reached from Edit layout's picker
+    card.append(presets);
     card.tabIndex = editing ? 0 : -1;
 
     card.addEventListener('pointerdown', (e) => {
@@ -459,7 +510,7 @@
   function cardKey(e, card) {
     const grip = e.target.classList?.contains('w-grip');
     if (e.target !== card && !grip) return;
-    if (e.key === 'Delete' && editing && e.target === card) { e.preventDefault(); card.querySelector('.w-remove').click(); return; }
+    if (e.key === 'Delete' && editing && e.target === card) { e.preventDefault(); card.querySelector('.w-remove')?.click(); return; }
     const dx = { ArrowLeft: -1, ArrowRight: 1 }[e.key] || 0;
     const dy = { ArrowUp: -1, ArrowDown: 1 }[e.key] || 0;
     if (!dx && !dy) return;
@@ -477,5 +528,5 @@
     }
   }
 
-  window.widgetGrid = { attach, sync, busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
+  window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();

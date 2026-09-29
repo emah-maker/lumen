@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab page: Edit layout is now a button on the page itself (bottom right, always there). Turn it on to drag, resize or hide any card, and the page's own sections too: the clock and greeting, the search box, Favorites, Frequently visited and Privacy behave like widget cards on the same grid. Nothing moves until you move something, and Reset layout puts every section back in the centre. An Add widget tile and picker put new widgets (or a hidden section) on the page without opening Settings; snap guides show what a card lines up with; removing a card, moving it or resetting can be undone (Undo button, Ctrl+Z, or the toast). Arrow keys move a focused card, Shift and arrows resize it, Ctrl+Alt and arrows snap it, and each step is announced to screen readers. It stays still with Reduce motion or Performance mode, and the page still never goes online.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.
