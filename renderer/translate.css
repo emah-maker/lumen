@@ -1,0 +1,13 @@
+/* Translate infobar (under the toolbar) and the address bar button: renderer/translate.js */
+.infobar { display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; padding: 5px 6px 5px 12px; border-radius: 10px; background: var(--field); color: var(--text); font-size: 12.5px; }
+.infobar[hidden] { display: none; }
+.infobar .infobar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.infobar .infobar-note { color: var(--muted); }
+.infobar button { -webkit-app-region: no-drag; height: 24px; padding: 0 10px; border: none; border-radius: 7px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+.infobar button:hover { background: var(--hover, rgba(127, 127, 127, 0.16)); }
+.infobar button.primary { background: var(--accent); color: #fff; }
+.infobar button.primary:hover { background: var(--accent-bright, var(--accent)); }
+.infobar .infobar-close { width: 24px; padding: 0; color: var(--muted); }
+.infobar progress { width: 90px; height: 4px; accent-color: var(--accent); }
+.translate-btn svg { stroke-width: 1.3; }
+.translate-btn[aria-pressed="true"] { color: var(--accent); }
