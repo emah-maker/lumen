@@ -144,6 +144,13 @@ class ClaudeCodeEngine {
     return this.bin;
   }
 
+  // The binary for a run: the one found earlier while it is still on disk (a `where`/`which` spawn per
+  // message cost tens to hundreds of ms before the first token), else a fresh look.
+  async ensureBin() {
+    if (this.bin && exists(this.bin)) return this.bin;
+    return this.detect(true);
+  }
+
   // { installed, signedIn: true|false|'unknown', accountType: 'subscription'|'apiKey'|null, detail }.
   // refresh: re-detect the binary and re-run the CLI's own auth check instead of the 30s cache.
   async status(refresh = false) {
@@ -162,7 +169,7 @@ class ClaudeCodeEngine {
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
   async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', signal, emit }) {
-    const bin = await this.detect(true);
+    const bin = await this.ensureBin();
     if (!bin) {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };

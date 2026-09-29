@@ -1208,7 +1208,37 @@ async function pdfRuns() {
   check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
 }
 
-fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+// ---- sidebar speed: incremental markdown tail, cached CLI lookup, passive usage refresh
+async function speedRuns() {
+  const { render, stableLength } = require('../renderer/markdown');
+  const src = 'Intro line\n\n- a\n- b\n\n```js\nx\n\ny\n```\n\nTail text';
+  const cut = stableLength(src);
+  check('markdown: stable head ends at the last blank line outside a code fence', src.slice(cut) === 'Tail text', JSON.stringify(src.slice(cut)));
+  check('markdown: a blank line inside an open fence is not a boundary', stableLength('a\n\n```\nx\n\ny\n') === 3, String(stableLength('a\n\n```\nx\n\ny\n')));
+  check('markdown: head + tail render the same as the whole', render(src.slice(0, cut)) + render(src.slice(cut)) === render(src), 'split');
+  check('markdown: no boundary without a finished blank line', stableLength('one\ntwo') === 0 && stableLength('one\n') === 0, 'none');
+  const eng = new cc.ClaudeCodeEngine({ userData: os.tmpdir(), mcpCommand: () => ({}), ensureServer: () => {} });
+  let looks = 0;
+  eng.detect = async () => { looks++; return eng.bin; };
+  eng.bin = process.execPath;
+  const a = await eng.ensureBin();
+  check('CLI lookup: a binary found earlier is reused, no new `where`', a === process.execPath && looks === 0, String(looks));
+  eng.bin = path.join(os.tmpdir(), 'no-such-claude-bin');
+  await eng.ensureBin();
+  check('CLI lookup: a binary that vanished is looked for again', looks === 1, String(looks));
+  const { createUsage } = require('../features/usage');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-u-'));
+  let probes = 0;
+  const u = createUsage({ app: { getPath: () => dir }, claudeBin: async () => { probes++; return null; } });
+  await u.summary({ refresh: true });
+  u.record('claudecode', { usage: { inputTokens: 1, outputTokens: 1, models: ['x'] }, rateLimit: { unifiedWindows: { five_hour: { utilization: 0.3, resetsAt: Date.now() / 1000 + 3600 } } } });
+  const before = probes;
+  await u.summary({ refresh: false });
+  check('usage: the after-reply refresh skips /usage while the 5-hour reading is fresh', probes === before && before === 1, `${before} ${probes}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

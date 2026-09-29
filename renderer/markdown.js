@@ -159,5 +159,27 @@
     return out.join('');
   }
 
-  window.renderMarkdown = render;
+  // Where a streaming reply's finished blocks end: just after the last blank line that is outside a
+  // code fence. Everything before it renders the same however much text follows, so a stream only
+  // has to redraw the text after it. Blocks (lists, tables, paragraphs) all end at a blank line.
+  function stableLength(source) {
+    let fenced = false;
+    let stable = 0;
+    let pos = 0;
+    while (pos < source.length) {
+      let end = source.indexOf('\n', pos);
+      if (end === -1) break; // an unfinished last line is never stable
+      const line = source.slice(pos, end);
+      if (/^```/.test(line)) fenced = !fenced;
+      else if (!fenced && line.trim() === '' && pos > 0) stable = end + 1;
+      pos = end + 1;
+    }
+    return stable;
+  }
+
+  if (typeof window !== 'undefined') {
+    window.renderMarkdown = render;
+    window.markdownStableLength = stableLength;
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength };
 })();
