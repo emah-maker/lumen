@@ -1,3 +1,4 @@
+/* global document, window, requestAnimationFrame, MutationObserver, PerformanceObserver, performance */
 // Measures Lumen's startup, memory, idle CPU and interaction cost on this machine and prints a table.
 //   node scripts/measure-perf.js                 startup, timers, memory at 1/5/15 tabs, idle CPU
 //   node scripts/measure-perf.js --throttle 6    also: sidebar / send / tab switch / Settings with the UI and tabs

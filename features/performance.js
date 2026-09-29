@@ -116,7 +116,7 @@ function trimCodeCache(userData, capBytes, { now = Date.now(), every = WEEK } = 
   const dir = path.join(userData, 'Code Cache');
   const leftover = `${dir}.old`;
   if (fs.existsSync(leftover)) fs.promises.rm(leftover, { recursive: true, force: true }).catch(() => {});
-  try { if (now - fs.statSync(stamp).mtimeMs < every) return 'skipped'; } catch { /* never checked */ }
+  try { if (every > 0 && now - fs.statSync(stamp).mtimeMs < every) return 'skipped'; } catch { /* never checked */ }
   try { fs.writeFileSync(stamp, String(now)); } catch { /* read-only profile: check again next time */ }
   if (!fs.existsSync(dir) || folderBytes(dir, capBytes) <= capBytes) return 'kept';
   try {
