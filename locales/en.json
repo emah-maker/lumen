@@ -390,7 +390,7 @@
   "updates.releases": "Open the releases page",
   "updates.restart": "Restart to update",
   "updates.retry": "Try again",
-  "updates.restart.title": "Restart Lumen now; your tabs come back",
+  "updates.restart.title": "Restart Lumen now and your tabs come back. Or just quit: the update installs when you do.",
   "usage.context": "Context {percent}%",
   "usage.context.title": "The last turn filled about {percent}% of the model's context window ({used} of {total} tokens).",
   "usage.label": "{engine} usage",

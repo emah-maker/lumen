@@ -126,6 +126,8 @@ function createUpdates(deps) {
   let dismissed = null; // the version whose toolbar prompt was closed (this session only)
   let timer = null;
   let staged = null; // an update unpacked and waiting for the restart
+  let swapStarted = false; // a swap helper is already running (Restart to update, then the quit): one is enough
+  let blockedVersion = null; // the version the last swap failed on: not retried on quit (that would loop)
   const errFile = () => path.join(app.getPath('userData'), 'update-error.txt');
 
   const autoDownload = () => deps.prefs().autoDownloadUpdates !== false;
@@ -161,7 +163,7 @@ function createUpdates(deps) {
     const asset = stageAsset({ kind, version: state.version, arch, files: info?.files });
     if (!asset || state.status === 'downloading') return;
     setState({ status: 'downloading', progress: 0, error: '' });
-    zipMod().stage({ net: require('electron').net, asset, files: info?.files, execPath: process.execPath, onProgress: (progress) => setState({ progress }) })
+    zipMod().stage({ net: require('electron').net, asset, version: state.version, files: info?.files, execPath: process.execPath, onProgress: (progress) => setState({ progress }) })
       .then((s) => { staged = s; setState({ status: 'downloaded', progress: 100 }); })
       .catch((err) => setState({ status: 'error', error: short(err) }));
   }
@@ -201,7 +203,10 @@ function createUpdates(deps) {
     if (canSelfUpdate()) {
       if (state.status === 'downloaded' && staged) {
         deps.beforeInstall?.(); // the session and chat are saved before the swap
-        zipMod().launchSwap({ staged, execPath: process.execPath, errFile: errFile() });
+        if (!swapStarted) {
+          swapStarted = true;
+          zipMod().launchSwap({ staged, execPath: process.execPath, errFile: errFile() });
+        }
         (testQuit || (() => app.quit()))();
       } else if (state.status === 'available' || state.status === 'error') {
         startStage();
@@ -216,6 +221,39 @@ function createUpdates(deps) {
     return snapshot();
   }
 
+  // The user quit with an update downloaded: install it now, but don't start Lumen again. Called from
+  // main.js once quitting is under way (will-quit); the detached helper waits for this process to exit.
+  function applyOnQuit() {
+    if (reason || swapStarted || !canSelfUpdate() || state.status !== 'downloaded' || !staged) return false;
+    if (state.version && state.version === blockedVersion) return false;
+    swapStarted = true;
+    try {
+      zipMod().launchSwap({ staged, execPath: process.execPath, errFile: errFile(), relaunch: false });
+      return true;
+    } catch {
+      swapStarted = false;
+      return false;
+    }
+  }
+
+  // A complete staged update from an earlier run that was never applied: pick it up again instead of
+  // downloading it twice. Only for a version newer than this one; anything else is deleted.
+  function restoreStaged(lastSwapFailed) {
+    const zip = zipMod();
+    const stagingDir = zip.swapPaths(process.execPath).staging;
+    const found = zip.readStaged?.(process.execPath);
+    const marked = found?.version || zip.readMarker?.(process.execPath)?.version;
+    if (lastSwapFailed && marked) blockedVersion = marked;
+    if (found && !lastSwapFailed && isNewer(found.version, app.getVersion())) {
+      staged = found.staged;
+      Object.assign(state, { status: 'downloaded', version: found.version, progress: 100, error: '' });
+      // the copy of the exe that runs the swap: ready before the user needs it
+      if (!staged.helper) setTimeout(() => { try { if (staged && !swapStarted) staged.helper = zip.prepareHelper(process.execPath); } catch {} }, 5000).unref?.();
+      return;
+    }
+    fs.rm(stagingDir, { recursive: true, force: true }, () => {});
+  }
+
   function start() {
     const handle = (channel, fn) => deps.ipcMain.handle(channel, (_event, ...args) => fn(...args));
     handle('settings:updates-state', snapshot);
@@ -224,13 +262,15 @@ function createUpdates(deps) {
     handle('settings:updates-dismiss', () => { dismissed = state.version; publish(); return snapshot(); });
     if (reason) return;
     // The last swap couldn't replace the files: the old version is what's running.
+    let lastSwapFailed = false;
     try {
       const msg = fs.readFileSync(errFile(), 'utf8').trim();
       fs.rmSync(errFile(), { force: true });
-      if (msg) state.error = msg.slice(0, 200), state.status = 'error';
+      if (msg) state.error = msg.slice(0, 200), state.status = 'error', lastSwapFailed = true;
     } catch {}
-    // An update that was unpacked but never applied leaves a big folder next to the install.
-    if (canSelfUpdate()) fs.rm(zipMod().swapPaths(process.execPath).staging, { recursive: true, force: true }, () => {});
+    // An update that was unpacked but never applied leaves a big folder next to the install: use it
+    // if it is complete and newer, else clear it.
+    if (canSelfUpdate()) restoreStaged(lastSwapFailed);
     wire(getUpdater());
     timer = setTimeout(function tick() {
       check();
@@ -244,10 +284,11 @@ function createUpdates(deps) {
     useStager: (z) => { testStager = z; },
     stubQuit: (fn) => { testQuit = fn; },
     setKind: (k, replaceable = true) => { kind = k; mode = updateMode({ kind: k, replaceable: () => replaceable }); publish(); },
-    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; publish(); },
+    restore: (lastSwapFailed) => restoreStaged(lastSwapFailed),
+    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; blockedVersion = null; publish(); },
   } : undefined;
 
-  return { start, check, apply, state: snapshot, testHooks };
+  return { start, check, apply, applyOnQuit, state: snapshot, testHooks };
 }
 
 module.exports = { createUpdates, disabledReason, installKind, updateMode, isNewer, stageAsset, manualAsset, RELEASES_URL };
