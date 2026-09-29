@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.2.9 (2026-09-29)
+
+- macOS builds are now Widevine-signed, so sites that require production Widevine (Netflix, Disney+, Spotify) can play.
+
 ## 0.2.8 (2026-09-29)
 
 - Updates install from inside Lumen on every install type: it downloads the release zip, checks it, and swaps it in when you restart. Per-machine installs, the portable exe and unwritable Mac apps still get a Download prompt.
