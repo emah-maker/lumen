@@ -599,7 +599,8 @@ async function buildUsage(card) {
       : w.turns ? 'How far each turn moved the meter shows up after your next chat.' : 'No Claude Code chats in Lumen in this window.';
     parts.push(row('Lumen’s sidebar, this 5-hour window', `${w.turns} turn${w.turns === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens · ${dollars(w.costUSD)} at API prices. ${share}`));
     const mcp = (u.plan?.contributions || []).map((c) => `${c.lumen}% in the last ${c.period}`).join(', ');
-    if (mcp) parts.push(row('Claude Code driving Lumen (MCP)', `Share of this Mac’s Claude Code usage from Lumen’s browser tools: ${mcp}.`));
+    const machine = navigator.platform.startsWith('Mac') ? 'Mac' : navigator.platform.startsWith('Win') ? 'PC' : 'computer';
+    if (mcp) parts.push(row('Claude Code driving Lumen (MCP)', `Share of this ${machine}’s Claude Code usage from Lumen’s browser tools: ${mcp}.`));
 
     const engines = Object.entries(u.lumen.byEngine);
     const list = h('div', { class: 'list', id: 'usage-engines' }, engines.length

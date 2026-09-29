@@ -1327,6 +1327,16 @@ async function pdfRuns() {
   check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
 }
 
+// ---- macOS re-signing with Lumen's own certificate (scripts/after-sign.js)
+{
+  const { identityHash } = require('../scripts/after-sign');
+  const hash = '5CBDFCED634205BA0AAF0B7C097B0A331A48D467';
+  const good = `  1) ${hash} "Lumen Release Signing" (CSSMERR_TP_NOT_TRUSTED)\n     1 identities found\n`;
+  check('after-sign: finds the Lumen identity by name, trusted or not', identityHash(good, 'Lumen Release Signing') === hash, String(identityHash(good, 'Lumen Release Signing')));
+  check('after-sign: another identity name is not picked', identityHash(good, 'Somebody Else') === null, 'picked');
+  check('after-sign: an empty listing has no identity', identityHash('     0 identities found\n', 'Lumen Release Signing') === null, 'picked');
+}
+
 // ---- usage: Lumen's share of the account-wide 5-hour meter ignores your other Claude Code use
 async function usageShareRuns() {
   const { createUsage, otherClaudeActivity } = require('../features/usage');
@@ -1797,6 +1807,27 @@ async function swapHelperRuns() {
   const { DEFAULTS } = require('../settings-backend');
   check('translate: settings defaults: offer on, no consent, no sites, Lumen\'s language', DEFAULTS.translateOffer === true && DEFAULTS.translateConsent.length === 0 && DEFAULTS.translateNever.length === 0 && DEFAULTS.translateTarget === '', '');
 })();
+// ---- tab drag geometry (features/tab-drag-math.js)
+{
+  const { clampToDisplay, windowBoundsFor, stripHit } = require('../features/tab-drag-math');
+  const area = { x: 0, y: 0, width: 1920, height: 1040 };
+  const strip = { key: 'w', bounds: { x: 100, y: 100, width: 800, height: 600 }, bottom: 40, tabs: [{ id: 1, mid: 100 }, { id: 2, mid: 300 }, { id: 3, mid: 500 }] };
+  check('drag: the grabbed spot lands under the cursor', JSON.stringify(windowBoundsFor({ x: 500, y: 300 }, { x: 60, y: 14 }, { width: 900, height: 700 })) === JSON.stringify({ x: 440, y: 286, width: 900, height: 700 }));
+  const clamped = clampToDisplay({ x: -2000, y: -50, width: 900, height: 700 }, area);
+  check('drag: a window dragged off the left keeps 160px on the display and its top edge on it', clamped.x === -740 && clamped.y === 0 && clamped.width === 900, JSON.stringify(clamped));
+  const low = clampToDisplay({ x: 5000, y: 5000, width: 900, height: 700 }, area);
+  check('drag: dragged past the right and bottom edges it keeps a grabbable strip', low.x === 1760 && low.y === 1000, JSON.stringify(low));
+  check('drag: a window inside the display is not moved', JSON.stringify(clampToDisplay({ x: 10, y: 20, width: 900, height: 700 }, area)) === JSON.stringify({ x: 10, y: 20, width: 900, height: 700 }));
+  const at = (x, y) => stripHit({ x, y }, [strip]);
+  check('drag: left of the first tab midpoint inserts before it', at(150, 120)?.beforeId === 1, JSON.stringify(at(150, 120)));
+  check('drag: between two tabs inserts before the second', at(100 + 350, 120)?.beforeId === 3 && at(100 + 250, 120)?.beforeId === 2, JSON.stringify(at(450, 120)));
+  check('drag: past the last tab midpoint appends (beforeId null)', at(100 + 700, 120)?.beforeId === null, JSON.stringify(at(800, 120)));
+  check('drag: below the strip (page area) is not a hit', at(300, 100 + 40 + 20) === null && at(300, 100 + 40 + 6)?.key === 'w');
+  check('drag: outside the window is not a hit', at(50, 120) === null && at(900, 120) === null && at(300, 90) === null);
+  const other = { ...strip, key: 'v', bounds: { x: 1000, y: 100, width: 800, height: 600 } };
+  check('drag: the first strip under the cursor wins', stripHit({ x: 1100, y: 120 }, [strip, other])?.key === 'v');
+  check('drag: no strips, no hit', stripHit({ x: 1, y: 1 }, []) === null);
+}
 
 schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
