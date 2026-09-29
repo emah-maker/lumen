@@ -1,5 +1,5 @@
 // The toolbar's update prompt (features/updates.js), a pill next to Downloads:
-//   "Restart to update to vX"          an installed Windows copy that has downloaded vX
+//   "Restart to update to vX"          an installed or zip Windows copy that has downloaded vX
 //   "Lumen vX is available · Download" automatic downloads off, a zip/portable copy, or macOS
 // Closing it hides it for this version until Lumen restarts; Settings → About keeps the details.
 (() => {
@@ -17,14 +17,14 @@
   end.insertBefore(pill, document.getElementById('downloads') || end.firstChild);
 
   function render(u) {
-    const ready = u.status === 'downloaded' && u.canAutoInstall;
+    const ready = u.status === 'downloaded' && u.canSelfUpdate;
     // An installed copy with automatic downloads on says nothing until the update is ready.
     const offer = u.status === 'available' && (!u.canAutoInstall || !u.autoDownload);
     pill.hidden = Boolean(u.disabled) || u.dismissed || !(ready || offer);
     if (pill.hidden) return;
     text.textContent = window.t(ready ? 'updates.ready' : 'updates.available', { version: u.version });
     action.textContent = ready ? window.t('updates.restart') : window.t('updates.download');
-    action.title = ready ? window.t('updates.restart.title') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
+    action.title = ready ? window.t('updates.restart.title') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => render(await api.apply()));
   close.addEventListener('click', async () => render(await api.dismiss()));

@@ -488,6 +488,19 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 
 // ---- updates (features/updates.js): who may update, how, and what to download
 {
+  const zu = require('../features/zip-update');
+  const zp = zu.swapPaths(path.join('C:', 'Apps', 'Lumen', 'Lumen.exe'));
+  check('zip update: staging, old copy and script sit next to the install folder', path.dirname(zp.staging) === path.join('C:', 'Apps') && zp.staging.endsWith('Lumen.update') && zp.old.endsWith('Lumen.old') && zp.script.endsWith('Lumen.update.cmd'), JSON.stringify(zp));
+  check('zip update: the expected hash comes from the matching latest.yml entry', zu.expectedHash([{ url: 'a.exe', sha512: 'x' }, { url: 'Lumen-1.0.0-win-x64.zip', sha512: 'zz' }], 'Lumen-1.0.0-win-x64.zip') === 'zz' && zu.expectedHash([], 'a.zip') === '', 'hash');
+  check('zip update: a missing or different hash is refused', zu.hashMatches('a', 'a') && !zu.hashMatches('a', 'b') && !zu.hashMatches('', ''), 'match');
+  const tree = { r: ['Lumen'], 'r/Lumen': ['Lumen.exe', 'x.dll'], flat: ['Lumen.exe'], two: ['a', 'b'] };
+  const fakeLs = (d) => (tree[d.split(path.sep).join('/')] || []).map((n) => ({ name: n, isDirectory: () => !n.includes('.') }));
+  check('zip update: finds the exe at the zip root or inside its single folder', zu.findRoot('flat', 'Lumen.exe', fakeLs) === 'flat' && zu.findRoot('r', 'Lumen.exe', fakeLs) === path.join('r', 'Lumen') && zu.findRoot('two', 'Lumen.exe', fakeLs) === null, 'root');
+  const A = 'C:/A';
+  const sw = zu.swapScript({ pid: 42, dir: `${A}/Lumen`, root: `${A}/Lumen.update/files`, old: `${A}/Lumen.old`, exe: `${A}/Lumen/Lumen.exe`, errFile: 'C:/P/update-error.txt', staging: `${A}/Lumen.update`, self: `${A}/Lumen.update.cmd` });
+  const mv = (a, b) => `move "${A}/${a}" "${A}/${b}"`;
+  check('zip update: the swap script waits for Lumen, renames both folders, restores on failure, relaunches', sw.includes('PID eq 42') && sw.includes(mv('Lumen', 'Lumen.old')) && sw.includes(mv('Lumen.update/files', 'Lumen')) && sw.includes(mv('Lumen.old', 'Lumen')) && sw.includes('update-error.txt') && sw.includes(`start "" "${A}/Lumen/Lumen.exe"`), 'script');
+  check('zip update: only zip copies stage in-app', require('../features/updates').canStage('zip') && !require('../features/updates').canStage('portable') && !require('../features/updates').canStage('nsis'), 'canStage');
   const { disabledReason, installKind, canAutoInstall, isNewer, manualAsset } = require('../features/updates');
   check('updates: off in a development run', disabledReason({ packaged: false, test: false }) === 'dev', disabledReason({ packaged: false }));
   check('updates: off in test mode', disabledReason({ packaged: false, test: true }) === 'test', disabledReason({ packaged: false, test: true }));

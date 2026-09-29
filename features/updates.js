@@ -6,7 +6,10 @@
 // What each copy of Lumen can do:
 //   Windows, installed with the NSIS setup  downloads in the background, then "Restart to update";
 //                                           if that's ignored, it installs when Lumen quits
-//   Windows zip / portable copy             "Lumen vX is available": downloads the zip
+//   Windows zip copy                        downloads the zip in-app (sha512-checked, unpacked next to
+//                                           the install), then "Restart to update": a small script swaps
+//                                           the folders after Lumen exits (features/zip-update.js)
+//   Windows portable exe                    "Lumen vX is available": downloads the zip
 //   macOS                                   the same, with the dmg for this Mac (Squirrel.Mac
 //                                           can't apply updates to an unsigned app)
 // Never in test mode (unless a test asks for it), a development run, or the `--mcp` bridge.
@@ -38,6 +41,7 @@ function installKind({ platform, execPath, env = {}, exists = fs.existsSync, pro
   return exists(path.join(path.dirname(execPath), `Uninstall ${productName}.exe`)) ? 'nsis' : 'zip';
 }
 const canAutoInstall = (kind) => kind === 'nsis';
+const canStage = (kind) => kind === 'zip'; // updates itself in-app, but not through electron-updater
 
 // Is version `a` newer than `b`? "1.2.3" style, an optional "v", and a pre-release ("-beta.1")
 // sorts before its release.
@@ -94,6 +98,8 @@ function createUpdates(deps) {
   let info = null; // the updater's info for `version`
   let dismissed = null; // the version whose toolbar prompt was closed (this session only)
   let timer = null;
+  let staged = null; // a zip update unpacked and waiting for the restart
+  const errFile = () => path.join(app.getPath('userData'), 'update-error.txt');
 
   const autoDownload = () => deps.prefs().autoDownloadUpdates !== false;
   const snapshot = () => ({
@@ -101,10 +107,11 @@ function createUpdates(deps) {
     current: app.getVersion(),
     kind,
     canAutoInstall: canAutoInstall(kind),
+    canSelfUpdate: canAutoInstall(kind) || canStage(kind),
     autoDownload: autoDownload(),
     disabled: reason,
     dismissed: Boolean(state.version) && dismissed === state.version,
-    asset: state.version && !canAutoInstall(kind) ? manualAsset({ kind, version: state.version, arch, files: info?.files }) : null,
+    asset: state.version && !canAutoInstall(kind) && !canStage(kind) ? manualAsset({ kind, version: state.version, arch, files: info?.files }) : null,
     releasesUrl: RELEASES_URL,
   });
   const publish = () => deps.ui()?.send('updates:state', snapshot());
@@ -166,6 +173,20 @@ function createUpdates(deps) {
       return snapshot();
     }
     const asset = manualAsset({ kind, version: state.version, arch, files: info?.files });
+    if (canStage(kind) && asset) {
+      const zip = require('./zip-update');
+      if (state.status === 'downloaded' && staged) {
+        deps.beforeInstall?.();
+        zip.launchSwap({ staged, execPath: process.execPath, errFile: errFile() });
+        app.quit();
+      } else if (state.status === 'available' || state.status === 'error') {
+        setState({ status: 'downloading', progress: 0, error: '' });
+        zip.stage({ net: require('electron').net, asset, files: info?.files, execPath: process.execPath, onProgress: (progress) => setState({ progress }) })
+          .then((s) => { staged = s; setState({ status: 'downloaded', progress: 100 }); })
+          .catch((err) => setState({ status: 'error', error: String(err?.message || err).split('\n')[0].slice(0, 200) }));
+      }
+      return snapshot();
+    }
     if (asset) deps.session.defaultSession.downloadURL(asset.url); // shows in Lumen's Downloads
     else require('electron').shell.openExternal(RELEASES_URL);
     dismissed = state.version; // the toolbar prompt has done its job
@@ -180,6 +201,12 @@ function createUpdates(deps) {
     handle('settings:updates-apply', apply);
     handle('settings:updates-dismiss', () => { dismissed = state.version; publish(); return snapshot(); });
     if (reason) return;
+    // The last swap couldn't replace the files: the old version is what's running.
+    try {
+      const msg = fs.readFileSync(errFile(), 'utf8').trim();
+      fs.rmSync(errFile(), { force: true });
+      if (msg) state.error = msg.slice(0, 200), state.status = 'error';
+    } catch {}
     wire(getUpdater());
     timer = setTimeout(function tick() {
       check();
@@ -197,4 +224,4 @@ function createUpdates(deps) {
   return { start, check, apply, state: snapshot, testHooks };
 }
 
-module.exports = { createUpdates, disabledReason, installKind, canAutoInstall, isNewer, manualAsset, RELEASES_URL };
+module.exports = { createUpdates, disabledReason, installKind, canAutoInstall, canStage, isNewer, manualAsset, RELEASES_URL };
