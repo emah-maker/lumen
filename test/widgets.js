@@ -286,6 +286,62 @@ function server(opts) {
   p = await pageState();
   check('reordering reaches the page', p.types[0] === 'todoist' && p.types[1] === 'weather', JSON.stringify(p.types));
 
+  // ---- moving and resizing on the page ----
+  const layout = () => page("[...document.querySelectorAll('#widgets > .w-card')].map((c) => ({ id: c.dataset.id, type: c.classList[1], span: c.dataset.span, h: c.querySelector('.w-frame')?.dataset.h || null, w: Math.round(c.getBoundingClientRect().width) }))");
+  const act = (params) => page(`location.href = location.pathname + '?' + new URLSearchParams(${JSON.stringify(params)}) + location.hash`);
+  const stored = async (id) => (await W('list')).find((x) => x.id === id);
+  let lay = await layout();
+  check('cards start at half width, a web page at the full width', lay.filter((c) => c.type === 'embed').every((c) => c.span === '6') && lay.filter((c) => c.type !== 'embed').every((c) => c.span === '3'), JSON.stringify(lay));
+  const board = list[3].id;
+  await act({ widget: board, do: 'size', span: '2', height: 'large' });
+  for (let i = 0; i < 20 && (lay = await layout()).find((c) => c.id === board).span !== '2'; i++) await sleep(150);
+  let b = lay.find((c) => c.id === board);
+  const full = lay.find((c) => c.id === list[4].id);
+  check('a resize from the page is stored and shown (a third of the width, a large frame)', b.span === '2' && b.h === 'large' && (await stored(board)).span === 2 && (await stored(board)).height === 'large' && Math.abs(b.w * 3 - full.w) < 30, JSON.stringify({ b, full }));
+  check('…without reloading the framed page', (await page("document.querySelector('#widgets iframe')?.dataset.kept")) === '1', 'reloaded');
+  for (const bad of [{ span: '5' }, { span: '3', height: 'huge' }, { span: 'x' }]) await act({ widget: board, do: 'size', ...bad });
+  await act({ widget: board, do: 'place', to: '-1' });
+  await sleep(400);
+  check('sizes and places outside the grid are refused', (await stored(board)).span === 2 && (await stored(board)).height === 'large' && (await W('list'))[3].id === board, JSON.stringify(await stored(board)));
+
+  // A real drag: the calendar's title bar onto the first card takes its place.
+  const rect = (sel) => page(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()`);
+  const calId = list[2].id;
+  const from = await rect(`.w-card[data-id="${calId}"] .w-head h2`);
+  const to = await rect('#widgets > .w-card');
+  const mouse = (type, x, y) => app.evaluate((_e, [t, px, py]) => global.__wtab.webContents.sendInputEvent({ type: t, x: Math.round(px), y: Math.round(py), button: 'left', clickCount: 1, modifiers: t === 'mouseMove' ? ['leftButtonDown'] : [] }), [type, x, y]);
+  await mouse('mouseDown', from.x + 10, from.y + 6);
+  for (let k = 1; k <= 8; k++) { await mouse('mouseMove', from.x + 10 + ((to.x + 20) - (from.x + 10)) * k / 8, from.y + 6 + ((to.y + 20) - (from.y + 6)) * k / 8); await sleep(30); }
+  const lifted = await page("document.querySelectorAll('.w-card.lifted').length + '/' + document.body.classList.contains('w-dragging')");
+  await mouse('mouseUp', to.x + 20, to.y + 20);
+  let order = [];
+  for (let i = 0; i < 20 && ((order = (await W('list')).map((x) => x.id))[0] !== calId || (lay = await layout())[0].id !== calId); i++) await sleep(150);
+  check('dragging a card by its title bar moves it (and it lifts while dragged)', lifted === '1/true' && order[0] === calId && lay[0].id === calId, JSON.stringify({ lifted, order, lay: lay.map((c) => c.type) }));
+  check('…and the framed page still wasn’t reloaded', (await page("document.querySelector('#widgets iframe')?.dataset.kept")) === '1', 'reloaded');
+
+  // The keyboard: arrows on the grip move a card, on the corner resize it.
+  await page(`document.querySelector('.w-card[data-id="${calId}"] .w-grip').focus()`);
+  await app.evaluate(() => { const wc = global.__wtab.webContents; wc.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Right' }); });
+  for (let i = 0; i < 20 && ((await W('list'))[1].id !== calId || (await layout())[1].id !== calId); i++) await sleep(150);
+  check('the grip’s arrow keys move a card, and it keeps focus', (await W('list'))[1].id === calId && (await page('document.activeElement?.className')) === 'w-grip', JSON.stringify((await W('list')).map((x) => x.type)));
+  await page(`document.querySelector('.w-card[data-id="${calId}"] .w-resize').focus()`);
+  await app.evaluate(() => { const wc = global.__wtab.webContents; wc.sendInputEvent({ type: 'keyDown', keyCode: 'Right' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Right' }); });
+  for (let i = 0; i < 20 && (await stored(calId)).span !== 4; i++) await sleep(150);
+  check('the corner’s arrow keys resize a card', (await stored(calId)).span === 4, JSON.stringify(await stored(calId)));
+  await W('save', { type: 'calendar', url: `${base}/cal.ics` }, calId);
+  check('an edit from Settings keeps a card’s size', (await stored(calId)).span === 4, JSON.stringify(await stored(calId)));
+  await W('move', calId, 1); // back where it was: todoist, weather, calendar, …
+  // The corner dragged left snaps the width down to a third.
+  const wxId = list[0].id;
+  await page(`document.querySelector('.w-card[data-id="${wxId}"]').scrollIntoView({ block: 'center' })`);
+  const corner = await rect(`.w-card[data-id="${wxId}"] .w-resize`);
+  const wxCard = await rect(`.w-card[data-id="${wxId}"]`);
+  await mouse('mouseDown', corner.x + 9, corner.y + 9);
+  for (let k = 1; k <= 6; k++) { await mouse('mouseMove', corner.x + 9 - (wxCard.w * 0.3) * k / 6, corner.y + 9); await sleep(30); }
+  await mouse('mouseUp', corner.x + 9 - wxCard.w * 0.3, corner.y + 9);
+  for (let i = 0; i < 20 && (await stored(wxId)).span !== 2; i++) await sleep(150);
+  check('dragging a card’s corner resizes it, snapped to the grid', (await stored(wxId)).span === 2 && (await layout()).find((c) => c.id === wxId).span === '2', JSON.stringify(await stored(wxId)));
+
   // ---- rate limits and errors ----
   const before = fake.log.length;
   r = await app.evaluate(async () => { const w = global.__widgets; const it = w.list().find((x) => x.type === 'calendar'); return [await w.refresh(it, { force: true }), await w.refresh(it, { force: true })]; });

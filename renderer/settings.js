@@ -422,6 +422,7 @@ const WIDGET_ICONS = {
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
+const WIDGET_SPANS = [['2', 'A third'], ['3', 'Half'], ['4', 'Two thirds'], ['6', 'Full width']];
 function widgetIcon(type) {
   const span = h('span', { class: `widget-icon wi-${type}` });
   span.innerHTML = WIDGET_ICONS[type] || ''; // constant markup
@@ -482,7 +483,9 @@ async function buildWidgets(card) {
         fields.replaceChildren(field('Address', inputs.url, 'Any https page, like your Muse board or a dashboard. Sites that refuse to be framed get an Open button instead.'), field('Height', inputs.height));
       }
     };
-    const input = () => ({ type, title: title.value, city: inputs.city?.value, units: inputs.units?.value, url: inputs.url?.value, height: inputs.height?.value, token: inputs.token?.value });
+    const width = h('select', { id: 'widget-span', 'aria-label': 'Card width' }, WIDGET_SPANS.map(([v, t]) => h('option', { value: v, text: t })));
+    const syncWidth = () => { width.value = String(existing?.type === type ? existing.span : type === 'embed' ? 6 : 3); };
+    const input = () => ({ type, title: title.value, city: inputs.city?.value, units: inputs.units?.value, url: inputs.url?.value, height: inputs.height?.value, span: width.value, token: inputs.token?.value });
     const busy = (on) => { for (const b of form.querySelectorAll('button')) b.disabled = on; };
     const check = h('button', { id: 'widget-check', text: 'Check', onclick: async () => {
       busy(true);
@@ -507,13 +510,14 @@ async function buildWidgets(card) {
       }
     } });
     const types = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Kind of widget' },
-      ws.types.map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, disabled: Boolean(existing) && t.type !== existing.type, onclick: () => { type = t.type; renderFields(); } }, widgetIcon(t.type), t.label)));
+      ws.types.map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, disabled: Boolean(existing) && t.type !== existing.type, onclick: () => { type = t.type; renderFields(); syncWidth(); } }, widgetIcon(t.type), t.label)));
     const form = h('div', { class: 'widget-form', id: 'widget-form' },
       h('div', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
-      types, fields, field('Title', title),
+      types, fields, field('Title', title), field('Width', width, 'Or drag the card’s corner on the new-tab page, and its title bar to move it.'),
       h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: closeForm }), check, save));
     formHost.replaceChildren(form);
     renderFields();
+    syncWidth();
     renderList();
     (inputs.city || inputs.url || inputs.token)?.focus();
   }

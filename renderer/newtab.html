@@ -163,18 +163,47 @@
     }
 
     /* [widgets] Cards fed by the browser (features/widgets.js): weather, tasks, a calendar, a web
-       page. Two columns; a web page takes the full width. Everything in them is set as text. */
-    .widgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0 0 32px; animation: rise 480ms var(--ease) 60ms backwards; }
+       page. A six-column grid: each card spans 2, 3, 4 or 6 of it (data-span; a web page starts at
+       the full width, the rest at half). Drag a card's title bar to move it, its corner to resize it.
+       Everything in them is set as text. */
+    .widgets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 0 0 32px; animation: rise 480ms var(--ease) 60ms backwards; }
     .widgets:empty { display: none; }
     .w-card {
       --cloud: #c5cbd3; --drop: #2f8cff; --sun: #ffb21a; --moon: #b8b5ff; --warn: #d70015;
       position: relative; display: flex; flex-direction: column; min-width: 0; padding: 12px 14px 14px; border-radius: 16px;
-      background: var(--card); box-shadow: 0 0 0 0.5px var(--border);
+      background: var(--card); box-shadow: 0 0 0 0.5px var(--border); grid-column: span 3; container-type: inline-size;
+      transition: box-shadow 200ms var(--ease), transform 200ms var(--ease);
     }
+    .w-card[data-span="2"] { grid-column: span 2; } .w-card[data-span="4"] { grid-column: span 4; } .w-card[data-span="6"] { grid-column: 1 / -1; }
     @media (prefers-color-scheme: dark) { .w-card { --cloud: #9aa1ab; --drop: #64b5ff; --moon: #c9c7ff; --warn: #ff6961; } }
     body.on-media .w-card { --cloud: #eef1f5; --drop: #8fd0ff; --warn: #ff8a80; }
-    .w-card.wide { grid-column: 1 / -1; }
-    .w-head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 8px; }
+    .w-head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 8px; cursor: grab; touch-action: none; user-select: none; }
+    .w-head a, .w-head button:not(.w-grip) { cursor: default; }
+    /* Moving and resizing: a grip before the title and a corner handle, both shown on hover. */
+    .w-grip, .w-resize { appearance: none; flex: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--faint); opacity: 0; outline: none; transition: opacity 150ms ease-out, color 150ms ease-out, background-color 150ms ease-out; }
+    .w-grip { display: grid; place-items: center; width: 14px; height: 22px; margin: 0 -4px 0 -8px; border-radius: 5px; cursor: grab; }
+    .w-grip svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+    .w-resize { position: absolute; right: 2px; bottom: 2px; width: 18px; height: 18px; border-radius: 0 0 14px 4px; cursor: nwse-resize; touch-action: none; }
+    .w-resize svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+    .w-card:hover .w-grip, .w-card:hover .w-resize, .w-grip:focus-visible, .w-resize:focus-visible, .w-card.resizing .w-resize { opacity: 1; }
+    .w-grip:hover, .w-resize:hover, .w-card.resizing .w-resize { color: var(--text); }
+    .w-grip:focus-visible, .w-resize:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+    body.w-dragging, body.w-dragging * { user-select: none; }
+    body.w-dragging iframe { pointer-events: none; } /* a frame under the pointer would swallow the drag */
+    .w-card.lifted { z-index: 2; cursor: grabbing; transition: box-shadow 200ms var(--ease); box-shadow: 0 0 0 1px var(--accent), 0 18px 40px -14px var(--shadow); }
+    .w-card.lifted .w-head { cursor: grabbing; }
+    .w-card.resizing { box-shadow: 0 0 0 1px var(--accent); }
+    /* Small cards keep to the essentials. */
+    @container (max-width: 240px) {
+      .wx-now { gap: 8px; margin-bottom: 10px; }
+      .wx-now svg { width: 34px; height: 34px; }
+      .wx-temp { font-size: 30px; }
+      .wx-range { white-space: normal; }
+      .wx-hours { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .wx-hours > div:nth-child(n + 4) { display: none; }
+      .w-time { width: 48px; }
+      .w-fallback { flex-wrap: wrap; }
+    }
     .w-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; font-weight: 600; color: var(--muted); }
     .w-link { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 7px; color: var(--muted); font-size: 11.5px; font-weight: 500; text-decoration: none; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
     .w-link:hover { background: var(--hover); color: var(--text); }
@@ -258,11 +287,12 @@
     @media (prefers-reduced-motion: reduce) {
       .w-skel i { animation: none; }
       .widgets { animation: fade 160ms ease-out backwards !important; }
-      .w-check, .w-row { transition: none; }
+      .w-check, .w-row, .w-card { transition: none; }
     }
 
     @media (max-width: 560px) {
       .widgets { grid-template-columns: minmax(0, 1fr); }
+      .w-card[data-span] { grid-column: 1 / -1; }
       .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .frequent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
