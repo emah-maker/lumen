@@ -50,10 +50,10 @@ Lumen.exe (main process: main.js)
 
 ## Updates
 
-`features/updates.js` uses `electron-updater` with GitHub Releases. It reads `latest.yml` / `latest-mac.yml` from the newest release and checks the download's SHA-512 against it.
+`features/updates.js` looks for a new version on GitHub Releases (`electron-updater` only reads `latest.yml` / `latest-mac.yml`; it downloads and installs nothing). It checks the download's SHA-512 against the release's entry for the zip.
 
-- A Windows copy installed with the setup program downloads updates in the background and installs on restart.
-- A Windows zip copy and macOS say when a new version is out and download the zip or disk image when asked.
+- Every copy that can write to its install location (Windows setup per-user install, zip or hand-copied folder; the Mac app in a writable Applications folder) downloads the release zip for its platform in the app, unpacks it next to the install, and swaps it in on restart (`features/zip-update.js`). Windows runs the swap with a byte-identical copy of the signed `Lumen.exe` in Node mode running `features/swap-helper.js`, so Smart App Control has no script or unsigned binary to block; macOS uses a shell script that also clears quarantine flags. The profile is never touched, the NSIS uninstaller is carried over, and a failed swap keeps the old version and shows why in Settings.
+- Per-machine installs, unwritable Mac apps, the portable exe and Linux show a Download button (zip, dmg or the releases page) instead. Lumen never runs an installer.
 - Updates never run in development runs (`electron .`), test mode or the MCP bridge.
 
 ## Build and tests

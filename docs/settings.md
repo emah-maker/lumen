@@ -111,7 +111,7 @@ Programs and scripts are held until you agree to keep them, whatever these setti
 | Put unused tabs to sleep | `tabSleep` | on | Frees memory from background tabs left alone for a while; switching back reloads them. |
 | Keep Lumen running when its window is closed | `keepRunningInBackground` | on | macOS only. |
 | Proxy | `proxy` | `system` | `mode` is `system`, `direct`, `fixed_servers` (with `rules` and `bypass`), `pac_script` (with `pacUrl`) or `auto_detect`. Applies straight away. |
-| Download updates automatically | `autoDownloadUpdates` | on | Windows setup installs only: new versions download in the background and install on restart. Other copies say when a version is out and download it when you ask. |
+| Download updates automatically | `autoDownloadUpdates` | on | New versions download in the background and "Restart to update" appears when one is ready. Off: Lumen asks before downloading. Copies that can't replace themselves (portable exe, per-machine install, unwritable Mac app) say when a version is out and download it when you ask. |
 
 ## Extensions
 

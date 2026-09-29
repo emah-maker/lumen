@@ -490,18 +490,74 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 {
   const zu = require('../features/zip-update');
   const zp = zu.swapPaths(path.join('C:', 'Apps', 'Lumen', 'Lumen.exe'));
-  check('zip update: staging, old copy and script sit next to the install folder', path.dirname(zp.staging) === path.join('C:', 'Apps') && zp.staging.endsWith('Lumen.update') && zp.old.endsWith('Lumen.old') && zp.script.endsWith('Lumen.update.cmd'), JSON.stringify(zp));
+  check('zip update: staging and old copy sit next to the install folder', path.dirname(zp.staging) === path.join('C:', 'Apps') && zp.staging.endsWith('Lumen.update') && zp.old.endsWith('Lumen.old') && zp.script === null, JSON.stringify(zp));
   check('zip update: the expected hash comes from the matching latest.yml entry', zu.expectedHash([{ url: 'a.exe', sha512: 'x' }, { url: 'Lumen-1.0.0-win-x64.zip', sha512: 'zz' }], 'Lumen-1.0.0-win-x64.zip') === 'zz' && zu.expectedHash([], 'a.zip') === '', 'hash');
   check('zip update: a missing or different hash is refused', zu.hashMatches('a', 'a') && !zu.hashMatches('a', 'b') && !zu.hashMatches('', ''), 'match');
   const tree = { r: ['Lumen'], 'r/Lumen': ['Lumen.exe', 'x.dll'], flat: ['Lumen.exe'], two: ['a', 'b'] };
   const fakeLs = (d) => (tree[d.split(path.sep).join('/')] || []).map((n) => ({ name: n, isDirectory: () => !n.includes('.') }));
   check('zip update: finds the exe at the zip root or inside its single folder', zu.findRoot('flat', 'Lumen.exe', fakeLs) === 'flat' && zu.findRoot('r', 'Lumen.exe', fakeLs) === path.join('r', 'Lumen') && zu.findRoot('two', 'Lumen.exe', fakeLs) === null, 'root');
-  const A = 'C:/A';
-  const sw = zu.swapScript({ pid: 42, dir: `${A}/Lumen`, root: `${A}/Lumen.update/files`, old: `${A}/Lumen.old`, exe: `${A}/Lumen/Lumen.exe`, errFile: 'C:/P/update-error.txt', staging: `${A}/Lumen.update`, self: `${A}/Lumen.update.cmd` });
-  const mv = (a, b) => `move "${A}/${a}" "${A}/${b}"`;
-  check('zip update: the swap script waits for Lumen, renames both folders, restores on failure, relaunches', sw.includes('PID eq 42') && sw.includes(mv('Lumen', 'Lumen.old')) && sw.includes(mv('Lumen.update/files', 'Lumen')) && sw.includes(mv('Lumen.old', 'Lumen')) && sw.includes('update-error.txt') && sw.includes(`start "" "${A}/Lumen/Lumen.exe"`), 'script');
-  check('zip update: only zip copies stage in-app', require('../features/updates').canStage('zip') && !require('../features/updates').canStage('portable') && !require('../features/updates').canStage('nsis'), 'canStage');
-  const { disabledReason, installKind, canAutoInstall, isNewer, manualAsset } = require('../features/updates');
+  // Windows swap: no script file, a copy of the signed exe in Node mode runs swap-helper.js
+  const fakeStaged = { dir: 'C:/A/Lumen', root: 'C:/A/Lumen.update/files', old: 'C:/A/Lumen.old', staging: 'C:/A/Lumen.update', script: null, helper: { exe: 'T/lumen-update-helper/Lumen.exe', script: 'T/lumen-update-helper/swap-helper.js', dir: 'T/lumen-update-helper' } };
+  const hc = zu.helperCommand({ staged: fakeStaged, execPath: 'C:/A/Lumen/Lumen.exe', errFile: 'C:/P/update-error.txt', pid: 42 });
+  const ho = JSON.parse(hc.args[1]);
+  check('zip update (win): the swap runs the copied exe in Node mode with a .js helper, detached, from outside the install', hc.command.endsWith('Lumen.exe') && hc.args[0].endsWith('swap-helper.js') && hc.options.env.ELECTRON_RUN_AS_NODE === '1' && hc.options.detached && hc.options.cwd === 'T/lumen-update-helper' && ho.pid === 42 && ho.dir === 'C:/A/Lumen' && ho.root === 'C:/A/Lumen.update/files' && ho.old === 'C:/A/Lumen.old' && ho.exe === 'C:/A/Lumen/Lumen.exe' && ho.errFile === 'C:/P/update-error.txt', JSON.stringify(hc));
+  const swapDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-swap-unit-'));
+  {
+    const spawned = [];
+    const before = fs.readdirSync(swapDir);
+    zu.launchSwap({ staged: fakeStaged, execPath: 'C:/A/Lumen/Lumen.exe', errFile: 'x', platform: 'win32', pid: 1, spawnFn: (...a) => { spawned.push(a); return { unref() {} }; } });
+    check('zip update (win): launching writes no .cmd/.bat/.ps1/.vbs and starts no script host', spawned.length === 1 && !/(cmd|powershell|wscript|cscript|pwsh)(\.exe)?$/i.test(spawned[0][0]) && !spawned[0][1].some((x) => /\.(cmd|bat|ps1|vbs)$/i.test(x)) && fs.readdirSync(swapDir).length === before.length, JSON.stringify(spawned));
+  }
+  fs.rmSync(swapDir, { recursive: true, force: true });
+  const helperSrc = fs.readFileSync(path.join(__dirname, '..', 'features', 'swap-helper.js'), 'utf8') + fs.readFileSync(path.join(__dirname, '..', 'features', 'zip-update.js'), 'utf8');
+  check('zip update (win): the update path has no script hosts, no Unblock-File and no Zone.Identifier tricks', !/powershell|Unblock-File|Zone\.Identifier|wscript|cscript|\.cmd\b|\.bat\b|\.vbs/i.test(helperSrc.replace(/\/\/.*$/gm, '')), 'found one');
+  check('zip update (win): the helper copy brings only the exe, its start-up data and the helper script', JSON.stringify(zu.HELPER_FILES) === '["icudtl.dat","snapshot_blob.bin","v8_context_snapshot.bin"]', JSON.stringify(zu.HELPER_FILES));
+  // the staged exe sanity check: exists, >10 MB, MZ header
+  {
+    const { checkExe } = require('../features/swap-helper');
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-exe-unit-'));
+    const mk = (name, head, size) => { const f = path.join(d, name); const b = Buffer.alloc(size); b.write(head, 'latin1'); fs.writeFileSync(f, b); return f; };
+    check('staged exe check: a real-sized MZ file passes', checkExe(mk('ok.exe', 'MZ', 11 * 1024 * 1024)) === null, checkExe(mk('ok.exe', 'MZ', 11 * 1024 * 1024)));
+    check('staged exe check: too small, no MZ header, or missing is refused', /too small/.test(checkExe(mk('small.exe', 'MZ', 1000)) || '') && /isn't a Windows executable/.test(checkExe(mk('bad.exe', 'PK', 11 * 1024 * 1024)) || '') && /missing/.test(checkExe(path.join(d, 'nope.exe')) || ''), 'checks');
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+  // the NSIS uninstaller travels with the update
+  {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-carry-unit-'));
+    fs.mkdirSync(path.join(d, 'old')); fs.mkdirSync(path.join(d, 'new'));
+    fs.writeFileSync(path.join(d, 'old', 'Uninstall Lumen.exe'), 'u'); fs.writeFileSync(path.join(d, 'old', 'other.txt'), 'o');
+    zu.carryOver(path.join(d, 'old'), path.join(d, 'new'));
+    check('zip update: the NSIS uninstaller is carried into the new folder, nothing else', fs.existsSync(path.join(d, 'new', 'Uninstall Lumen.exe')) && !fs.existsSync(path.join(d, 'new', 'other.txt')), fs.readdirSync(path.join(d, 'new')).join());
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+  // macOS
+  const mp = zu.swapPaths('/Applications/Lumen.app/Contents/MacOS/Lumen', 'darwin');
+  check('zip update (mac): the app bundle is the install; staging, old and script are its siblings', mp.dir === '/Applications/Lumen.app' && mp.old === '/Applications/Lumen.app.old' && mp.staging === '/Applications/.Lumen.update' && mp.script === '/Applications/.Lumen.update.sh', JSON.stringify(mp));
+  check('zip update (mac): the bundle is found from the exe path', zu.macBundle('/Users/me/Apps/Lumen.app/Contents/MacOS/Lumen') === '/Users/me/Apps/Lumen.app' && zu.macBundle('/opt/lumen') === '', 'bundle');
+  const msw = zu.macSwapScript({ pid: 42, dir: mp.dir, root: '/Applications/.Lumen.update/files/Lumen.app', old: mp.old, errFile: "/Users/o'brien/update-error.txt", staging: mp.staging, self: mp.script });
+  check('zip update (mac): the script waits for the pid, moves the app aside, moves the new one in, clears quarantine, reopens, and rolls back', msw.startsWith('#!/bin/sh') && msw.includes('PID=42') && msw.includes('kill -0 "$PID"') && msw.includes('mv "$APP" "$OLD"') && msw.includes('mv "$NEW" "$APP"') && msw.includes('mv "$OLD" "$APP"') && msw.includes('xattr -cr "$NEW"') && msw.includes('xattr -cr "$APP"') && msw.includes('open "$APP"') && msw.includes('> "$ERR"'), msw);
+  check('zip update (mac): paths with quotes are shell-quoted', msw.includes("ERR='/Users/o'\\''brien/update-error.txt'"), msw.split('\n').find((l) => l.startsWith('ERR')));
+  const macTree = { flat: ['__MACOSX', 'Lumen.app'], none: ['a.txt'] };
+  const macLs = (d) => (macTree[d] || []).map((n) => ({ name: n, isDirectory: () => !n.endsWith('.txt') }));
+  check('zip update (mac): finds Lumen.app in the unpacked zip', zu.findApp('flat', 'Lumen.app', macLs) === path.join('flat', 'Lumen.app') && zu.findApp('none', 'Lumen.app', macLs) === null, 'app');
+  // writable location
+  const okProbe = () => {};
+  const badProbe = () => { throw new Error('EACCES'); };
+  const okAccess = () => {};
+  const winExe = 'C:\\Users\\me\\AppData\\Local\\Programs\\Lumen\\Lumen.exe';
+  check('install location: writable folder and parent can be replaced', zu.canReplace(winExe, 'win32', okProbe, okAccess), 'ok');
+  check('install location: a folder that is not writable can not (Program Files style)', !zu.canReplace('C:\\Program Files\\Lumen\\Lumen.exe', 'win32', okProbe, (d) => { if (/Program Files/.test(d)) throw new Error('EACCES'); }), 'dir');
+  check('install location: a writable folder inside an unwritable parent can not', !zu.canReplace('C:\\Program Files\\Lumen\\Lumen.exe', 'win32', okProbe, (d) => { if (d === 'C:\\Program Files') throw new Error('EACCES'); }), 'parent');
+  check('install location: access() passing but a real write failing (ACLs) can not', !zu.canReplace(winExe, 'win32', badProbe, okAccess), 'probe');
+  check('install location (mac): /Applications not writable can not; writable can', !zu.canReplace('/Applications/Lumen.app/Contents/MacOS/Lumen', 'darwin', okProbe, (d) => { if (d === '/Applications') throw new Error('EACCES'); }) && zu.canReplace('/Applications/Lumen.app/Contents/MacOS/Lumen', 'darwin', okProbe, okAccess), 'mac');
+  {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-probe-unit-'));
+    fs.mkdirSync(path.join(d, 'Lumen'));
+    check('install location: the real probe passes on a temp install and leaves nothing behind', zu.canReplace(path.join(d, 'Lumen', 'Lumen.exe'), 'win32') && fs.readdirSync(d).join() === 'Lumen' && fs.readdirSync(path.join(d, 'Lumen')).length === 0, fs.readdirSync(d).join());
+    check('install location: a folder that does not exist can not be replaced', !zu.canReplace(path.join(d, 'gone', 'Lumen.exe'), 'win32'), 'gone');
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+  const { disabledReason, installKind, updateMode, isNewer, stageAsset, manualAsset } = require('../features/updates');
   check('updates: off in a development run', disabledReason({ packaged: false, test: false }) === 'dev', disabledReason({ packaged: false }));
   check('updates: off in test mode', disabledReason({ packaged: false, test: true }) === 'test', disabledReason({ packaged: false, test: true }));
   check('updates: a test can opt in (test mode only)', disabledReason({ packaged: false, test: true, override: true }) === null && disabledReason({ packaged: false, test: false, override: true }) === 'dev', 'override');
@@ -511,14 +567,19 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const exe = path.join('C:', 'Users', 'me', 'AppData', 'Local', 'Programs', 'Lumen', 'Lumen.exe');
   const uninstaller = path.join(path.dirname(exe), 'Uninstall Lumen.exe');
   const nsis = installKind({ platform: 'win32', execPath: exe, exists: (p) => p === uninstaller });
-  check('updates: a Windows copy next to the NSIS uninstaller is an installed copy', nsis === 'nsis' && canAutoInstall(nsis), nsis);
+  check('updates: a Windows copy next to the NSIS uninstaller is an installed copy', nsis === 'nsis', nsis);
   const zip = installKind({ platform: 'win32', execPath: exe, exists: () => false });
-  check('updates: a Windows copy without it (zip, hand-copied) can\'t install updates', zip === 'zip' && !canAutoInstall(zip), zip);
+  check('updates: a Windows copy without it (zip, hand-copied) is a zip copy', zip === 'zip', zip);
   const portable = installKind({ platform: 'win32', execPath: exe, env: { PORTABLE_EXECUTABLE_DIR: 'D:\\' }, exists: () => true });
-  check('updates: a portable exe never installs updates', portable === 'portable' && !canAutoInstall(portable), portable);
+  check('updates: a portable exe is its own kind', portable === 'portable', portable);
   const mac = installKind({ platform: 'darwin', execPath: '/Applications/Lumen.app/Contents/MacOS/Lumen', exists: () => true });
-  check('updates: macOS (unsigned) never installs updates itself', mac === 'mac' && !canAutoInstall(mac), mac);
-  check('updates: Linux falls back to the releases page', installKind({ platform: 'linux', execPath: '/opt/lumen/lumen' }) === 'other' && manualAsset({ kind: 'other', version: '1.0.0' }) === null, 'linux');
+  check('updates: macOS is the mac kind', mac === 'mac', mac);
+  check('updates: Linux falls back to the releases page', installKind({ platform: 'linux', execPath: '/opt/lumen/lumen' }) === 'other' && manualAsset({ kind: 'other', version: '1.0.0' }) === null && stageAsset({ kind: 'other', version: '1.0.0' }) === null, 'linux');
+  const yes = () => true;
+  const no = () => false;
+  check('updates: a writable NSIS install (per-user) swaps in place like a zip copy', updateMode({ kind: 'nsis', replaceable: yes }) === 'stage' && updateMode({ kind: 'zip', replaceable: yes }) === 'stage' && updateMode({ kind: 'mac', replaceable: yes }) === 'stage', 'stage');
+  check('updates: a per-machine / unwritable install falls back to the manual prompt', updateMode({ kind: 'nsis', replaceable: no }) === 'manual' && updateMode({ kind: 'mac', replaceable: no }) === 'manual' && updateMode({ kind: 'zip', replaceable: no }) === 'manual', 'manual');
+  check('updates: portable and Linux never swap, and never even probe the disk', updateMode({ kind: 'portable', replaceable: () => { throw new Error('probed'); } }) === 'manual' && updateMode({ kind: 'other', replaceable: () => { throw new Error('probed'); } }) === 'manual', 'portable');
 
   check('updates: version compare', isNewer('0.3.0', '0.2.4') && isNewer('v0.2.10', '0.2.9') && isNewer('1.0.0', '0.99.99') && !isNewer('0.2.4', '0.2.4') && !isNewer('0.2.3', '0.2.4'), 'semver');
   check('updates: a pre-release sorts before its release', isNewer('1.0.0', '1.0.0-beta.2') && !isNewer('1.0.0-beta.2', '1.0.0') && isNewer('1.0.0-beta.10', '1.0.0-beta.2'), 'pre');
@@ -527,6 +588,10 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const arm = manualAsset({ kind: 'mac', version: '0.3.0', arch: 'arm64' });
   check('updates: an Apple silicon Mac gets the arm64 dmg', arm.url === `${base}Lumen-0.3.0-mac-arm64.dmg`, JSON.stringify(arm));
   check('updates: an Intel Mac gets the x64 dmg', manualAsset({ kind: 'mac', version: '0.3.0', arch: 'x64' }).name === 'Lumen-0.3.0-mac-x64.dmg', manualAsset({ kind: 'mac', version: '0.3.0', arch: 'x64' }).name);
+  check('updates: Apple silicon stages the arm64 zip and Intel the x64 zip', stageAsset({ kind: 'mac', version: '0.3.0', arch: 'arm64' }).url === `${base}Lumen-0.3.0-mac-arm64.zip` && stageAsset({ kind: 'mac', version: '0.3.0', arch: 'x64' }).name === 'Lumen-0.3.0-mac-x64.zip', 'mac zip');
+  check('updates: installed and zip Windows copies stage the win zip', stageAsset({ kind: 'nsis', version: '0.3.0', arch: 'x64' }).name === 'Lumen-0.3.0-win-x64.zip' && stageAsset({ kind: 'zip', version: '0.3.0' }).name === 'Lumen-0.3.0-win-x64.zip' && stageAsset({ kind: 'portable', version: '0.3.0' }) === null, 'win zip');
+  check("updates: the staged zip's hash comes from the release info (latest-mac.yml lists both zips)", zu.expectedHash([{ url: 'Lumen-0.3.0-mac-arm64.zip', sha512: 'A' }, { url: 'Lumen-0.3.0-mac-x64.zip', sha512: 'X' }, { url: 'Lumen-0.3.0-mac-x64.dmg', sha512: 'D' }], 'Lumen-0.3.0-mac-x64.zip') === 'X', 'yml');
+  check('updates: a per-machine installed copy has no file to drop in, so the releases page', manualAsset({ kind: 'nsis', version: '0.3.0' }) === null, 'nsis manual');
   check('updates: a zip or portable copy gets the zip', manualAsset({ kind: 'zip', version: '0.3.0', arch: 'x64' }).url === `${base}Lumen-0.3.0-win-x64.zip` && manualAsset({ kind: 'portable', version: '0.3.0' }).name === 'Lumen-0.3.0-win-x64.zip', 'zip');
   const listed = manualAsset({ kind: 'mac', version: '0.3.0', arch: 'arm64', files: [{ url: 'Lumen-0.3.0-mac-arm64.zip' }, { url: 'https://example.com/x/Lumen-0.3.0-mac-arm64.dmg' }] });
   check('updates: a full URL listed in the release info is used as is', listed.url === 'https://example.com/x/Lumen-0.3.0-mac-arm64.dmg', listed.url);
