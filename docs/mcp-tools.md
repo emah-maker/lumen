@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Gemini CLI](../README.md#use-lumen-from-claude-code-codex-gemini-cli)) offers the same 27 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
+Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Gemini CLI](../README.md#use-lumen-from-claude-code-codex-gemini-cli)) offers the same 28 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
 
 A few things apply to every tool:
 
@@ -84,6 +84,15 @@ Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks y
 |---|---|---|
 | `tab_id` | integer | no |
 | `pages` | string ("1-5", "3", "4-", "1-3,7") | no |
+
+### `read_tabs`
+
+Read the text of several open tabs at once, without switching to them (`ids` from `list_tabs`). Only web and file pages of the same window; Lumen's own pages, sites where you turned AI off, and tabs of other windows (or of private windows) are named and skipped, and a sleeping tab returns only its address. Each tab is cut to `max_chars_each` (default 6,000, at most 12,000) and the total is capped at 40,000 characters, split evenly; the result says when a tab was cut. Each tab comes back under a `[Tab: title — host]` line. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `ids` | integer[] | yes | Tab ids from `list_tabs` (at most 20). |
+| `max_chars_each` | integer |  | Characters per tab. Default 6000. |
 
 ### `run_script`
 

@@ -31,7 +31,7 @@ const CHAT_IPC = new Set([
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
-  'chatpage:state', 'chatpage:back', 'chatpage:link',
+  'chatpage:state', 'chatpage:back', 'chatpage:link', 'tabs:ask-list',
 ]);
 
 // The tab an AI run started from the chat page works in: the one the user looked at most recently
