@@ -2121,4 +2121,4 @@ function describeError(err, auth = null) {
 // Tools offered to external agents over MCP: every browser tool plus the client-side web search.
 const EXTERNAL_TOOLS = OTHER_TOOLS;
 
-module.exports = { Agent, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };
+module.exports = { requestFor, Agent, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };

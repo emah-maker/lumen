@@ -723,6 +723,17 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   for (let i = 0; i < 8; i++) rc.tick('find');
   check('read cache: too many calls later the model gets the page again', rc.check(1, 'u', 'c', 'x') === null && /Unchanged/.test(rc.check(1, 'u', 'c', 'x') || ''), '');
 
+  {
+    const { requestFor, DEFAULT_MODEL } = require('../agent');
+    const msgs = (extra) => Object.assign([{ role: 'user', content: 'hi' }, ...extra], { settings: { model: DEFAULT_MODEL } });
+    const a = requestFor(msgs([]).settings, msgs([]));
+    const b = requestFor(msgs([]).settings, msgs([{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'more' }]));
+    const marks = (p) => (JSON.stringify(p).match(/"cache_control"/g) || []).length;
+    check('request: tools + system prefix is identical across turns (cache-stable)', JSON.stringify([a.tools, a.system]) === JSON.stringify([b.tools, b.system]), '');
+    check('request: at most 4 cache breakpoints, one on the last tool and one on system', marks(a) <= 4 && a.tools[a.tools.length - 1].cache_control && a.system[0].cache_control, String(marks(a)));
+    check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
+  }
+
   const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];
   const cached = cacheLastTool(tools);
   check('cache_control: only the last tool is marked, input untouched', cached.filter((t) => t.cache_control).length === 1 && cached[2].cache_control.type === 'ephemeral' && tools[0].cache_control && cacheLastTool([]).length === 0, JSON.stringify(cached));
