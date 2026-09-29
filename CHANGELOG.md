@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.2.13 (2026-09-29)
+
+- New-tab animated backgrounds (particles, stars, bubbles, snow) that stop when Reduce motion or Performance mode is on, and while the tab is hidden.
+
 ## 0.2.12 (2026-09-29)
 
 - Skills: saved prompts you run from the sidebar with a slash command (`/summarize`, `/explain`, `/reply` and more), editable in Settings, with import and export.
