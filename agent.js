@@ -1203,8 +1203,7 @@ class Agent {
           if (o.ok) emit({ type: 'tool_done', id: use.id, ok: true });
           else if (o.error?.invalid) emit({ type: 'tool_done', id: use.id, ok: false, error: o.error.message });
           else if (signal.aborted) emit({ type: 'tool_done', id: use.id, ok: false, stopped: true });
-          else emit({ type: 'tool_done', id: use.id, ok: false, error: toolError(o.error).split('
-')[0] });
+          else emit({ type: 'tool_done', id: use.id, ok: false, error: toolError(o.error).split('\n')[0] });
         },
       });
       const results = [];
