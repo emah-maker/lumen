@@ -28,7 +28,7 @@ module.exports = [
     },
   },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
-  { files: ['renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', current: 'readonly' } } },
+  { files: ['renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
   { files: ['renderer/settings.js'], languageOptions: { globals: { buildUpdates: 'readonly', buildMcpServers: 'readonly', buildSkills: 'readonly' } } },
   // settings-skills.js is loaded before settings.js and uses its helpers.
   { files: ['renderer/settings-skills.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },

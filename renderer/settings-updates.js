@@ -59,7 +59,7 @@ async function buildUpdates(card) {
   }
   // Follows a check or a download (also one started from the toolbar) while About is showing.
   const timer = setInterval(async () => {
-    if (current !== 'about' || document.hidden) return;
+    if (!visibleNow(checkBtn) || document.hidden) return;
     u = await U.state();
     render();
   }, 1000);

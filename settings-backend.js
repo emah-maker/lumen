@@ -14,11 +14,15 @@ const { cleanList: cleanWidgets, cleanSizes } = require('./features/widgets');
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
 const SETTINGS_PRELOAD = path.join(__dirname, 'settings-preload.js');
-const SECTIONS = ['you-and-ai', 'skills', 'usage', 'appearance', 'search', 'startup', 'privacy', 'downloads', 'languages', 'accessibility', 'system', 'extensions', 'reset', 'about', 'internals'];
+// The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
+// section ids (mapped to a category) and the sub-pages.
+const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
+const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
+  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
-const urlFor = (section) => (SECTIONS.includes(section) ? `${SETTINGS_URL}#${section}` : SETTINGS_URL);
+const urlFor = (section) => (SECTION_LINKS.includes(section) ? `${SETTINGS_URL}#${section}` : SETTINGS_URL);
 const displayUrl = (url) => {
   const section = url.split('#')[1] || '';
   return `lumen://settings${section ? `/${section}` : ''}`;
@@ -83,6 +87,7 @@ const DEFAULTS = {
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
+  autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
   translateNever: [], // sites where the offer stays away
@@ -788,4 +793,4 @@ function create(deps) {
   };
 }
 
-module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
