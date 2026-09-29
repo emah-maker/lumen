@@ -24,7 +24,6 @@
     .w-card.sys .w-head h2 { font-size: 13px; }
     .w-card.sys-bare .w-head { position: absolute; top: 0; left: 0; margin: 0; min-height: 0; z-index: 3; }
     .w-card.sys-bare .w-head h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-    .w-card.sys-header .clock { font-size: clamp(36px, 20cqw, 88px); }
     @container card (max-width: 340px) { .sys .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .sys .frequent { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @container card (max-width: 220px) { .sys .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .sys .frequent { grid-template-columns: minmax(0, 1fr); } }
     body.w-editing .w-card.sys-bare .w-grip { opacity: 1; }

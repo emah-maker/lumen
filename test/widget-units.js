@@ -355,6 +355,7 @@ module.exports = async function widgetUnits(check) {
   // ---- world clock: zones, clocks and sun times (features/worldclock-view.js) ----
   check('world clock: the default size is 4x3', WL.DEFAULT_SIZE.worldclock.w === 4 && WL.DEFAULT_SIZE.worldclock.h === 3, JSON.stringify(WL.DEFAULT_SIZE.worldclock));
   check('world clock: it is resized within the same limits as the other cards', WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).w === 12 && WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).h === 2, '');
+  check('world clock: the card is at least 3 cells wide so the time (with seconds) is never clipped or shrunk, and 2 rows tall', WL.limitsOf('worldclock').minW === 3 && WL.limitsOf('worldclock').minH === 2 && WL.cleanRect('worldclock', { x: 0, y: 0, w: 1, h: 1 }).w === 3, JSON.stringify(WL.limitsOf('worldclock')));
   check('world clock: time zone names are checked (a real IANA name, or nothing)', WCK.cleanTz('Asia/Tokyo') === 'Asia/Tokyo' && WCK.cleanTz('America/Argentina/Buenos_Aires') === 'America/Argentina/Buenos_Aires' && WCK.cleanTz('UTC') === 'UTC' && WCK.cleanTz('Mars/Olympus') === null && WCK.cleanTz('<b>/x') === null && WCK.cleanTz('../../etc') === null && WCK.cleanTz('') === null && WCK.cleanTz(42) === null && WCK.cleanTz('A/'.repeat(40)) === null, '');
   const jan = Date.UTC(2026, 0, 15, 12, 0, 0); // winter: New York is UTC-5, London UTC+0
   const jul = Date.UTC(2026, 6, 15, 12, 0, 0); // summer: New York UTC-4, London UTC+1

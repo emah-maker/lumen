@@ -53,8 +53,25 @@
     const body = document.createElement('div');
     body.className = 'w-body';
     card.append(head, body);
+    watchFit(body);
     window.widgetGrid?.attach(card);
     return card;
+  }
+  // A section card scrolls only when its content really is taller than the card: a few px of rounding or padding
+  // slack (the body is overflow-y: auto) must not show a scrollbar or let the wheel move a section that fits.
+  const SLACK = 8;
+  function watchFit(body) {
+    const check = () => {
+      if (!body.isConnected) return;
+      body.style.overflowY = 'hidden';
+      body.style.overflowY = body.scrollHeight - body.clientHeight > SLACK ? '' : 'hidden';
+    };
+    if (typeof ResizeObserver === 'function') {
+      const ro = new ResizeObserver(check);
+      ro.observe(body);
+      new MutationObserver(() => { requestAnimationFrame(check); ro.disconnect(); ro.observe(body); for (const c of body.children) ro.observe(c); }).observe(body, { childList: true });
+    }
+    requestAnimationFrame(check);
   }
   const bodyOf = (card) => card.querySelector('.w-body');
   // Move a node only when it isn't already there: a moved input loses focus.

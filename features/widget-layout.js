@@ -38,7 +38,7 @@ const LIMITS = {
   slack: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   github: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   feed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
-  worldclock: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
+  worldclock: { minW: 3, minH: 2, maxW: 12, maxH: 20 },
   stocks: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   crypto: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   embed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },

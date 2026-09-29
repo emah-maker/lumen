@@ -423,13 +423,32 @@ function startTurn(text, images, tabs = null) {
 function beginTurn() {
   const working = document.createElement('div');
   working.className = 'working';
-  working.innerHTML = '<span></span><span></span><span></span>';
+  working.setAttribute('role', 'status');
+  working.setAttribute('aria-label', t('chat.thinking'));
   turn = { text: null, textSource: '', thinking: null, working: append(working), steps: new Map() };
   setRunning(true);
 }
 
+// Keeps the working line last in the turn. Only moves it when something landed after it: re-appending
+// a node that is already last still removes and re-inserts it, which restarts its CSS animation (a
+// visible flicker on every streamed frame).
 function moveWorkingToEnd() {
-  if (turn?.working) messages.append(turn.working);
+  const w = turn?.working;
+  if (w && messages.lastElementChild !== w) messages.append(w);
+}
+
+// The working line shows while the AI works, not while it waits on the user's answer to an approval card.
+function syncWorking() {
+  turn?.working?.classList.toggle('waiting', approvals.size > 0);
+}
+
+// Adds a piece of the running reply above the working line, which stays last without ever moving.
+function appendToTurn(el) {
+  if (!turn?.working?.isConnected) return append(el);
+  $('empty').hidden = true;
+  turn.working.before(el);
+  scrollToBottom();
+  return el;
 }
 
 const TOOL_LABELS = {
@@ -534,14 +553,14 @@ window.assistant.onEvent((event) => {
         details.className = 'thinking';
         details.innerHTML = '<summary></summary><div></div>';
         details.firstChild.textContent = t('chat.thinking');
-        turn.thinking = append(details).querySelector('div');
+        turn.thinking = appendToTurn(details).querySelector('div');
       }
       turn.thinking.textContent += event.text;
       moveWorkingToEnd();
       break;
     }
     case 'text': {
-      if (!turn.text) turn.text = append(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' }));
+      if (!turn.text) turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' }));
       turn.textSource += event.text;
       renderStreaming(turn.text, turn.textSource);
       break;
@@ -563,11 +582,10 @@ window.assistant.onEvent((event) => {
       step.innerHTML = '<span class="step-detail"></span>';
       step.firstChild.textContent = label;
       step.title = label;
-      append(step);
+      appendToTurn(step);
       endStream();
       turn.text = null;
       turn.textSource = '';
-      moveWorkingToEnd();
       break;
     }
     case 'tool_done': {
@@ -592,9 +610,10 @@ window.assistant.onEvent((event) => {
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted });
       moveWorkingToEnd();
+      syncWorking();
       break;
     case 'notice': {
-      const notice = append(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.text }));
+      const notice = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.text }));
       if (event.action === 'continue') {
         const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
         button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
@@ -603,7 +622,7 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'error': {
-      const error = append(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
+      const error = appendToTurn(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
       if (event.action === 'settings') {
         const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: t('chat.setupAi') });
         button.onclick = openAiSettings;
@@ -825,6 +844,7 @@ function resolveApproval(approvalId, ok) {
   card.removeAttribute('role');
   card.removeAttribute('aria-label');
   card.textContent = tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
+  syncWorking();
   if (document.activeElement === document.body) prompt.focus();
 }
 

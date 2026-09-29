@@ -486,8 +486,9 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
   background: linear-gradient(90deg, transparent, var(--accent), var(--accent-bright), transparent);
   animation: shimmer 1.3s var(--ease-out) infinite; will-change: transform;
 }
-.working span { display: none; }
+.working.waiting { display: none; } /* an approval card is waiting on the user, not the AI */
 @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(200%); } }
+@keyframes working-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.9; } }
 @keyframes pulse { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
 
 /* ---------- composer (a floating glass layer; messages pass underneath) ---------- */
@@ -602,7 +603,9 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
   .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
-  .tab-favicon.spinner, .working::before, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
+  .tab-favicon.spinner, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
+  /* The working line stays visible: the light stops travelling and the whole bar breathes instead. */
+  .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 1.8s ease-in-out infinite !important; animation-duration: 1.8s !important; animation-iteration-count: infinite !important; }
   .loadbar::before { transform: none; left: 0; width: 100%; opacity: 0.6; }
   body.agent-active .viewport, body.agent-active .agent-pill { animation: none !important; }
   button:active:not(:disabled) { transform: none; }
@@ -635,11 +638,15 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 }
 
 
+/* Settings -> Accessibility -> Reduce motion and Performance mode (pref-reduce-motion, prefs.css) squash every
+   animation to one 0.01ms run, which left the working line's light parked off the bar: same pulse instead. */
+.pref-reduce-motion .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 1.8s ease-in-out infinite !important; animation-duration: 1.8s !important; animation-iteration-count: infinite !important; }
+
 /* In the background, decorative loops stop (saves GPU; nothing to look at). */
 body.window-inactive .agent-pill,
 body.window-inactive.agent-active .viewport,
 body.window-inactive .agent-dot,
-body.window-inactive .working *,
+body.window-inactive .working::before,
 body.window-inactive .loadbar::before { animation-play-state: paused !important; }
 
 /* ---------- tab groups ---------- */
