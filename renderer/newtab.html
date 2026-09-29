@@ -401,6 +401,8 @@
     .w-card.tinted .w-btn.primary { background: var(--w-head); color: var(--w-surface); }
     body.calm .w-card.tinted { transition: none; }
     /* Calendar: the next event on a small card, three on a middling one, the whole agenda on a tall one. */
+    @container card (max-height: 149px) { .feed .later { display: none; } }
+    @container card (max-height: 299px) { .feed .far { display: none; } }
     @container card (max-height: 149px) { .calendar .later { display: none; } }
     @container card (max-height: 299px) { .calendar .far, .calendar .w-day.later { display: none; } }
     @container card (max-width: 240px) { .w-time { width: 48px; } .w-fallback { flex-wrap: wrap; } }

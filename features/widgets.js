@@ -37,6 +37,7 @@
 //   x.session(creds?)   the OAuth account for this connector's secret (or for creds, to check them)
 //   x.backoff(ms)       no requests for a while (a service's own rate-limit answer)
 const ics = require('./ics');
+const FEED = require('./feed');
 const WL = require('./widget-layout');
 const TV = require('./todoist-view');
 const GH = require('./github-view');
@@ -190,6 +191,37 @@ const CONNECTORS = {
       const events = cal.events.filter((e) => e.allDay || e.end > now).slice(0, 12)
         .map(({ title, location, url, color, allDay, date, start, end }) => ({ title: title || 'Busy', location, url, color: color || '', allDay, date: date || null, start, end }));
       return { events, name: cal.name, color: cal.color || '' };
+    },
+  },
+
+  // Headlines from an RSS 2.0 or Atom feed (features/feed.js reads it safely): a preset (FEED.PRESETS) or
+  // any https address. The card gets { source, items: [{ title, url, time }] }; links are https only.
+  feed: {
+    label: 'Feed headlines',
+    ttl: 10 * 60e3,
+    clean: (c) => {
+      const url = httpsUrl(c.url);
+      const preset = FEED.presetFor(c.preset);
+      return url ? { url, preset: preset && preset.url === url ? preset.id : '', name: str(c.name, 80), count: Math.min(12, Math.max(3, Math.round(num(c.count, 3, 12) ?? 8))), colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const preset = FEED.presetFor(input.feed);
+      const url = preset ? preset.url : httpsUrl(input.url);
+      if (!url) throw new Error('Pick a feed, or paste an https:// feed address.');
+      const feed = FEED.parseFeed(await x.text(url, { max: FEED.MAX_INPUT }), { base: url });
+      const name = preset ? preset.name : feed.title || hostOf(url);
+      return {
+        config: { url, preset: preset ? preset.id : '', name, count: input.count ?? 8, colors: WC.cleanMode(input.colors) },
+        message: `${name}: ${feed.items.length} headlines, the newest “${feed.items[0].title.slice(0, 60)}”.`,
+      };
+    },
+    title: (c) => c.name || hostOf(c.url) || 'Headlines',
+    summary: (c) => hostOf(c.url),
+    async fetch(c, x) {
+      const feed = FEED.parseFeed(await x.text(c.url, { max: FEED.MAX_INPUT }), { base: c.url, max: 12 });
+      // The page opens https links only: a feed's http article address is upgraded, the same page nearly everywhere.
+      const items = feed.items.slice(0, c.count).map((i) => ({ title: i.title, url: i.url.replace(/^http:/i, 'https:'), time: i.time }));
+      return { source: c.name || feed.title || hostOf(c.url), items };
     },
   },
 
@@ -632,7 +664,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -1311,6 +1343,7 @@ function createWidgets(deps) {
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
+      feedPresets: FEED.PRESETS.map(({ id, name }) => ({ id, name })),
       max: MAX_WIDGETS,
       spans: SPANS,
       edit: typeof edit === 'string' ? edit : null,

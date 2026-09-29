@@ -773,5 +773,11 @@
   "settings.widgets.github.token": "Access token",
   "settings.widgets.github.tokenHelp": "Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.",
   "settings.widgets.github.show": "Show",
-  "settings.widgets.github.showHelp": "Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets."
+  "settings.widgets.github.showHelp": "Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets.",
+  "settings.widgets.feed.pick": "Feed",
+  "settings.widgets.feed.custom": "Custom address…",
+  "settings.widgets.feed.pickHint": "Lumen fetches the feed itself; the new-tab page never goes online. Headlines open in a new tab.",
+  "settings.widgets.feed.url": "Feed address (RSS or Atom)",
+  "settings.widgets.feed.urlHint": "Only used with Custom address. Must be https://.",
+  "settings.widgets.feed.count": "Headlines shown"
 }

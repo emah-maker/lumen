@@ -251,6 +251,7 @@ body.interstitial { display: block; }
 .wi-spotify { background: linear-gradient(160deg, #2fd066, #1a9a48); }
 .wi-gmail { background: linear-gradient(160deg, #ea6a5e, #c5372c); }
 .wi-github { background: linear-gradient(160deg, #57606a, #24292f); }
+.wi-feed { background: linear-gradient(160deg, #ffb340, #e8850c); }
 .wi-embed { background: linear-gradient(160deg, #a1a1a6, #636366); }
 .widget-form { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; padding: 14px; border-radius: 10px; background: var(--field); }
 .widget-form .sub-label { font-weight: 600; }
