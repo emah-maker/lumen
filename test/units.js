@@ -537,6 +537,31 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const msw = zu.macSwapScript({ pid: 42, dir: mp.dir, root: '/Applications/.Lumen.update/files/Lumen.app', old: mp.old, errFile: "/Users/o'brien/update-error.txt", staging: mp.staging, self: mp.script });
   check('zip update (mac): the script waits for the pid, moves the app aside, moves the new one in, clears quarantine, reopens, and rolls back', msw.startsWith('#!/bin/sh') && msw.includes('PID=42') && msw.includes('kill -0 "$PID"') && msw.includes('mv "$APP" "$OLD"') && msw.includes('mv "$NEW" "$APP"') && msw.includes('mv "$OLD" "$APP"') && msw.includes('xattr -cr "$NEW"') && msw.includes('xattr -cr "$APP"') && msw.includes('open "$APP"') && msw.includes('> "$ERR"'), msw);
   check('zip update (mac): paths with quotes are shell-quoted', msw.includes("ERR='/Users/o'\\''brien/update-error.txt'"), msw.split('\n').find((l) => l.startsWith('ERR')));
+  const mq = zu.macSwapScript({ pid: 42, dir: mp.dir, root: '/Applications/.Lumen.update/files/Lumen.app', old: mp.old, errFile: '/e', staging: mp.staging, self: mp.script, relaunch: false });
+  check('zip update (mac): quitting applies the update without reopening Lumen, and is a no-op when the staged app is gone', !/^\s*open /m.test(mq) && mq.includes('[ -d "$NEW" ] ||') && mq.includes('mv "$NEW" "$APP"') && /^\s*open /m.test(msw) && !msw.includes('[ -d "$NEW" ] ||'), mq);
+  check('zip update (win): relaunch defaults to true and quit-apply passes false to the helper', JSON.parse(hc.args[1]).relaunch === true && JSON.parse(zu.helperCommand({ staged: fakeStaged, execPath: 'C:/A/Lumen/Lumen.exe', errFile: 'e', pid: 1, relaunch: false }).args[1]).relaunch === false, 'relaunch');
+  {
+    // a staged update left by an earlier run: reused only while it is complete
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-staged-unit-'));
+    const exe = path.join(d, 'Lumen', 'Lumen.exe');
+    const sp = zu.swapPaths(exe);
+    const root = path.join(sp.staging, 'files', 'Lumen');
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'Lumen.exe'), 'x');
+    const ok = () => null;
+    check('staged update: no marker means nothing to reuse', zu.readStaged(exe, 'win32', ok) === null, 'no marker');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', sha512: 'h', root: 'files/Lumen' }));
+    const got = zu.readStaged(exe, 'win32', ok);
+    check('staged update: a marker with an intact folder restores the version and paths', got && got.version === '9.9.9' && got.sha512 === 'h' && got.staged.root === root && got.staged.dir === sp.dir && got.staged.old === sp.old, JSON.stringify(got));
+    check('staged update: a damaged exe is refused', zu.readStaged(exe, 'win32', () => 'too small') === null, 'exe');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', root: '../../elsewhere' }));
+    check('staged update: a marker pointing outside the staging folder is not trusted', zu.readStaged(exe, 'win32', ok) === null, 'escape');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), '{not json');
+    check('staged update: an unreadable marker is not trusted', zu.readStaged(exe, 'win32', ok) === null && zu.readMarker(exe) === null, 'garbage');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', root: 'files/Gone' }));
+    check('staged update: a missing folder is not reused', zu.readStaged(exe, 'win32', ok) === null, 'gone');
+    fs.rmSync(d, { recursive: true, force: true });
+  }
   const macTree = { flat: ['__MACOSX', 'Lumen.app'], none: ['a.txt'] };
   const macLs = (d) => (macTree[d] || []).map((n) => ({ name: n, isDirectory: () => !n.endsWith('.txt') }));
   check('zip update (mac): finds Lumen.app in the unpacked zip', zu.findApp('flat', 'Lumen.app', macLs) === path.join('flat', 'Lumen.app') && zu.findApp('none', 'Lumen.app', macLs) === null, 'app');
@@ -1398,7 +1423,254 @@ async function chatPageRuns() {
   check('chat runtime: a chat switch reaches the other view, not the one that made it', uiWc.sent.some(([c]) => c === 'chat:sync') && !chatWc.sent.some(([c]) => c === 'chat:sync'), 'sync');
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(() => {
+
+// ---- tab groups: incremental placement, proposals, undo (pure Node: tab-groups.js on plain arrays)
+{
+  const tg = require('../tab-groups');
+  const { harness } = require('./topics-bench');
+  const { sessions } = require('./topics-sessions');
+  const recipes = ['Easy Banana Bread Recipe', 'Chocolate Chip Cookie Recipes', 'Classic Pancake Recipe'];
+  const setup = (extra = []) => {
+    const h = harness(tg, { withText: false });
+    const tabs = recipes.map((title, i) => h.addTab({ title, url: `https://site${i}.example/${encodeURIComponent(title)}` }));
+    for (const t of extra) tabs.push(h.addTab(t));
+    return { h, tabs };
+  };
+  const gid = (t) => t.groupId || null;
+
+  // A tab that loads later joins the group it fits, and stays loose when nothing fits.
+  let { h, tabs } = setup();
+  h.tg.organizeByTopic();
+  const recipeGroup = gid(tabs[0]);
+  check('groups: three recipe tabs form one group', recipeGroup && tabs.every((t) => gid(t) === recipeGroup), JSON.stringify(tabs.map(gid)));
+  const cake = h.addTab({ title: 'Lemon Drizzle Cake Recipe', url: 'https://cakes.example/lemon-drizzle-cake-recipe' });
+  const weather = h.addTab({ title: 'Weather forecast Boston', url: 'https://weather.example/boston' });
+  h.tg.autoGroup();
+  check('incremental: a new recipe tab joins the recipe group', gid(cake) === recipeGroup, String(gid(cake)));
+  check('incremental: an unrelated tab stays loose', gid(weather) === null, String(gid(weather)));
+  check('incremental: the placement is undoable, and the tab is then left alone', h.tg.canUndo() && h.tg.undoOrganize() && gid(cake) === null && (h.tg.autoGroup(), gid(cake) === null), String(gid(cake)));
+
+  // Two related loose tabs form a group of their own; a third later joins it.
+  const p1 = h.addTab({ title: 'Kyoto Temple Guide', url: 'https://travel.example/kyoto-temple-guide' });
+  const p2 = h.addTab({ title: 'Best Kyoto Temples to Visit', url: 'https://other.example/best-kyoto-temples' });
+  h.tg.autoGroup();
+  check('incremental: two related loose tabs form a new group', gid(p1) && gid(p1) === gid(p2) && gid(p1) !== recipeGroup, `${gid(p1)} ${gid(p2)}`);
+  const p3 = h.addTab({ title: 'Kyoto Temple Map', url: 'https://maps.example/kyoto-temple-map' });
+  h.tg.autoGroup();
+  check('incremental: a later tab joins that group', gid(p3) === gid(p1), `${gid(p3)} ${gid(p1)}`);
+
+  // Manual placement, pins and the move cap are respected.
+  ({ h, tabs } = setup());
+  h.tg.organizeByTopic();
+  const mine = h.addTab({ title: 'Lemon Tart Recipe', url: 'https://tarts.example/lemon-tart-recipe' });
+  mine.userMoved = true;
+  const placed = h.addTab({ title: 'Apple Pie Recipe', url: 'https://pies.example/apple-pie-recipe' });
+  placed.userPlaced = true;
+  const pin = h.addTab({ title: 'Sourdough Bread Recipe', url: 'https://bread.example/sourdough-bread-recipe' });
+  pin.pinned = true;
+  const capped = h.addTab({ title: 'Blueberry Muffin Recipe', url: 'https://muffins.example/blueberry-muffin-recipe' });
+  capped.autoMoves = tg.MAX_AUTO_MOVES;
+  h.tg.autoGroup();
+  check('incremental: dragged, hand-placed, pinned and move-capped tabs are not grouped', [mine, placed, pin, capped].every((t) => gid(t) === null), JSON.stringify([mine, placed, pin, capped].map(gid)));
+
+  // A grouped tab moves only for a clearly better group, once its title changes.
+  ({ h, tabs } = setup([
+    { title: 'Kyoto Temple Guide', url: 'https://travel.example/kyoto-temple-guide' },
+    { title: 'Best Kyoto Temples to Visit', url: 'https://other.example/best-kyoto-temples' },
+    { title: 'Kyoto Temple Map', url: 'https://maps.example/kyoto-temple-map' },
+  ]));
+  h.tg.organizeByTopic();
+  const stray = h.addTab({ title: 'New Tab', url: 'https://travel.example/page' });
+  h.tg.add(stray.id, gid(tabs[0]), { auto: true });
+  stray.autoMoves = 1;
+  h.tg.autoGroup();
+  check('incremental: an untitled tab in a group stays where it is', gid(stray) === gid(tabs[0]), String(gid(stray)));
+  stray.title = 'Kyoto Temple Opening Hours';
+  h.tg.autoGroup();
+  check('incremental: once titled, it moves to the group it fits', gid(stray) === gid(tabs[3]) && gid(stray) !== gid(tabs[0]), `${gid(stray)} ${gid(tabs[3])} ${gid(tabs[0])}`);
+  stray.title = 'Kyoto Temple Tickets';
+  h.tg.autoGroup();
+  stray.title = 'Chocolate Chip Cookie Recipes Again';
+  h.tg.autoGroup();
+  check('incremental: moves per tab are capped', stray.autoMoves <= tg.MAX_AUTO_MOVES, String(stray.autoMoves));
+
+  // placeTabs directly: unknown domains work from words alone.
+  const e = (id, title, url) => ({ id, title, url, text: '', hint: '' });
+  const zod = [e(1, 'Zod schema validation basics', 'https://zod.dev/basics'), e(2, 'Zod optional vs nullable', 'https://stackoverflow.com/q/1/zod-optional-nullable')];
+  const bread = [e(3, 'Sourdough starter tips', 'https://bread.example/starter'), e(4, 'Sourdough bread recipe', 'https://bread.example/recipe')];
+  const res = tg.placeTabs([{ entry: e(9, 'Zod refine and transform', 'https://newsite.example/zod-refine'), current: null }, { entry: e(10, 'Best hiking boots', 'https://boots.example/best'), current: null }], [{ id: 1, domain: null, members: zod }, { id: 2, domain: null, members: bread }]);
+  check('placeTabs: a never-seen domain is placed by its words; an unrelated tab is not', res[0] === 1 && res[1] === null, JSON.stringify(res));
+
+  // Proposals from a model are validated.
+  const okIds = new Set([1, 2, 3, 4, 5, 6]);
+  check('proposal: unknown and duplicate ids and singleton groups are dropped', JSON.stringify(tg.sanitizeProposal([{ name: 'A', tab_ids: [1, 2, 99, 2] }, { name: 'B', tab_ids: [2, 3] }, { name: 'Solo', tab_ids: [4] }, { name: 'C', tab_ids: [3, 4] }], okIds)) === JSON.stringify([{ name: 'A', ids: [1, 2] }, { name: 'C', ids: [3, 4] }]));
+  check('proposal: garbage or one group holding nearly every tab is refused', tg.sanitizeProposal('nope', okIds) === null && tg.sanitizeProposal([{ name: 'All', tab_ids: [1, 2, 3, 4, 5, 6] }], okIds) === null && tg.sanitizeProposal([{ name: '', tab_ids: [1, 2] }], okIds) === null);
+  const cut = tg.sanitizeProposal([{ name: '<b>Reading List Stuff Extra</b>', tab_ids: [1, 2] }], okIds);
+  check('proposal: names are cut to 3 words and stripped of markup', cut?.[0].name === 'Reading List Stuff', JSON.stringify(cut));
+  const many = Array.from({ length: 20 }, (_v, i) => ({ name: `G${i}`, tab_ids: [i * 2 + 1, i * 2 + 2] }));
+  check('proposal: at most 8 groups', tg.sanitizeProposal(many, new Set(Array.from({ length: 40 }, (_v, i) => i + 1))).length === 8);
+  const words = tg.pathWords('https://x.example/docs/react/hooks/use-state/3f9a8b7c1d2e4f5a6b7c?token=SECRET#frag');
+  check('pathWords: path words only, no query, fragment, ids or tokens', words === 'react hooks state', words);
+
+  // Organize with a proposal: merges into a same-named group, keeps pins out, and undoes.
+  ({ h, tabs } = setup([{ title: 'Kyoto Temple Guide', url: 'https://travel.example/kyoto-temple-guide' }, { title: 'Best Kyoto Temples', url: 'https://other.example/best-kyoto-temples' }]));
+  const pinnedTab = h.addTab({ title: 'Inbox', url: 'https://mail.example/inbox' });
+  pinnedTab.pinned = true;
+  const snap = () => h.tabs().map((t) => [t.id, t.groupId || null].join(':')).join();
+  const before = snap();
+  const n = h.tg.applyProposal([{ name: 'Baking', tab_ids: [tabs[0].id, tabs[1].id, pinnedTab.id] }, { name: 'baking', tab_ids: [tabs[2].id, tabs[3].id] }]);
+  const names = h.tg.state().map((x) => x.name);
+  check('AI organize: a group named like an existing one is merged, not duplicated; pinned tabs stay out', n === 2 && names.length === 1 && gid(pinnedTab) === null, JSON.stringify(names));
+  check('AI organize: undo restores every tab', h.tg.undoOrganize() && snap() === before && h.tg.state().length === 0);
+  h.tg.applyProposal(null);
+  check('AI organize: no proposal falls back to the local topics', h.tg.state().length >= 1 && gid(pinnedTab) === null);
+  check('undo works after the fallback too, and only once', h.tg.undoOrganize() && !h.tg.canUndo() && !h.tg.undoOrganize());
+
+  // Organizing again keeps a group's colour and name.
+  ({ h, tabs } = setup());
+  h.tg.organizeByTopic();
+  const first = h.tg.state()[0];
+  h.tg.organizeByTopic();
+  const second = h.tg.state()[0];
+  check('organize again: same tabs keep the group name and colour', first.name === second.name && first.color === second.color, JSON.stringify([first, second]));
+
+  // Two groups with one name become "X" and "X (2)".
+  const dup = harness(tg, { withText: false });
+  const dtabs = ['a', 'b', 'c', 'd'].map((k) => dup.addTab({ title: `Doc ${k}`, url: `https://${k}.example/${k}` }));
+  dup.tg.create('Docs', [dtabs[0].id, dtabs[1].id]);
+  dup.tg.applyProposal([{ name: 'Docs', tab_ids: [dtabs[2].id, dtabs[3].id] }]);
+  check('groups: a proposal group named like an existing one joins it', dup.tg.state().filter((x) => x.name === 'Docs').length === 1);
+
+  // Mixed sessions: the local organizer names project, doc and video groups sensibly.
+  const hs = harness(tg, { withText: false });
+  sessions[0].tabs.forEach((t) => hs.addTab(t));
+  hs.tg.groupLoose();
+  const gnames = hs.tg.state().map((x) => x.name);
+  check('sessions: a repo\'s tabs are named for the repo, its docs for the library', gnames.includes('Lumen') && gnames.includes('Next.js'), JSON.stringify(gnames));
+}
+
+// ---- tab groups: merging groups with similar names
+{
+  const tg = require('../tab-groups');
+  const { harness } = require('./topics-bench');
+  const sim = tg.nameSimilarity;
+  check('merge names: case, punctuation, plural and (2) are the same name', sim('React Docs', 'react docs') === 'exact' && sim('Recipes', 'Recipe') === 'exact' && sim('Docs (2)', 'Docs') === 'exact' && sim('Tokyo-Trip!', 'tokyo trip') === 'exact');
+  check('merge names: one name inside the other as whole words', sim('Flights', 'Flights to Tokyo') === 'contain' && sim('Kyoto', 'Kyoto Travel Tabs') === 'contain');
+  check('merge names: a typo apart', sim('Kubernetes', 'Kubernets') === 'close', String(sim('Kubernetes', 'Kubernets')));
+  check('merge names: Java / JavaScript and unrelated names are not similar; a kind word (PRs) only makes names weakly similar', sim('Java', 'JavaScript') === null && sim('Lumen', 'Lumen PRs') === 'weak' && sim('Piano', 'Grand Prix') === null);
+
+  const setup = () => {
+    const h = harness(tg, { withText: false });
+    const mk = (title, url) => h.addTab({ title, url });
+    return { h, mk };
+  };
+  const gid = (t) => t.groupId || null;
+  const names = (h) => h.tg.state().map((g) => g.name);
+
+  // Same name twice, topic overlap: merged into the older group's id, more specific name.
+  let { h, mk } = setup();
+  const a = [mk('Flights to Tokyo', 'https://kayak.example/flights-tokyo'), mk('Tokyo flight deals', 'https://skyscanner.example/tokyo-flights')];
+  const b = [mk('Tokyo hotels', 'https://booking.example/tokyo-hotels'), mk('Tokyo flights cheap', 'https://nerd.example/tokyo-flights')];
+  const ga = h.tg.create('Flights', a.map((t) => t.id), { auto: true, color: 'blue' });
+  const gb = h.tg.create('Flights to Tokyo', b.map((t) => t.id), { auto: true, color: 'red' });
+  check('merge: "Flights" and "Flights to Tokyo" become one group (older id and colour, longer name)', h.tg.mergeGroups() === 1 && h.tg.state().length === 1 && names(h)[0] === 'Flights to Tokyo' && [...a, ...b].every((t) => gid(t) === ga.id) && h.tg.state()[0].color === 'blue' && !h.tg.groups.has(gb.id), JSON.stringify(h.tg.state()));
+  check('merge: one undo reverts the whole pass', h.tg.undoOrganize() && h.tg.state().length === 2 && a.every((t) => gid(t) === ga.id) && b.every((t) => gid(t) === gb.id) && names(h).join() === 'Flights,Flights to Tokyo' && h.tg.state()[1].color === 'red');
+  check('merge: nothing to merge records no undo', (h.tg.mergeGroups(), h.tg.undoOrganize()) && h.tg.mergeGroups() === 1 && h.tg.undoOrganize() && !h.tg.canUndo());
+
+  // Not merged: distinct topics, "Java"/"JavaScript", kind qualifiers, unrelated tabs sharing one word.
+  ({ h, mk } = setup());
+  const j1 = [mk('Java streams', 'https://a.example/java-streams'), mk('Java records', 'https://b.example/java-records')];
+  const j2 = [mk('JavaScript promises', 'https://c.example/promises'), mk('JavaScript closures', 'https://d.example/closures')];
+  h.tg.create('Java', j1.map((t) => t.id), { auto: true });
+  h.tg.create('JavaScript', j2.map((t) => t.id), { auto: true });
+  check('merge: Java and JavaScript stay apart', h.tg.mergeGroups() === 0 && h.tg.state().length === 2);
+  ({ h, mk } = setup());
+  const c1 = [mk('Pull requests lumen', 'https://github.com/o/lumen/pulls'), mk('Fix flicker pull 46', 'https://github.com/o/lumen/pull/46')];
+  const c2 = [mk('Sidebar issue', 'https://github.com/o/lumen/issues/41'), mk('Lumen readme', 'https://github.com/o/lumen')];
+  h.tg.create('Lumen PRs', c1.map((t) => t.id), { auto: true });
+  h.tg.create('Lumen', c2.map((t) => t.id), { auto: true });
+  check('merge: "Lumen" and "Lumen PRs" stay apart on names alone', h.tg.mergeGroups() === 0);
+  ({ h, mk } = setup());
+  const w1 = [mk('Mitosis stages', 'https://a.example/mitosis'), mk('Cell division', 'https://b.example/cell-division')];
+  const w2 = [mk('Hamlet essay', 'https://c.example/hamlet'), mk('Hamlet themes', 'https://d.example/themes')];
+  h.tg.create('Study', w1.map((t) => t.id), { auto: true });
+  h.tg.create('Study Guides', w2.map((t) => t.id), { auto: true });
+  check('merge: weakly similar names with unrelated tabs stay apart', h.tg.mergeGroups() === 0);
+
+  // User-named and user-made groups: only exact twins merge, and the user's name and colour win.
+  ({ h, mk } = setup());
+  const u1 = [mk('Kyoto guide', 'https://a.example/kyoto'), mk('Kyoto temples', 'https://b.example/temples')];
+  const u2 = [mk('Kyoto map', 'https://c.example/map'), mk('Kyoto food', 'https://d.example/food')];
+  const g1 = h.tg.create('Kyoto', u1.map((t) => t.id), { auto: true, color: 'green' });
+  const g2 = h.tg.create('kyoto', u2.map((t) => t.id), { auto: true, color: 'pink' });
+  g2.userNamed = true;
+  g2.auto = false;
+  check('merge: exact twins merge; the user-named group\'s name and colour survive, under the older id', h.tg.mergeGroups() === 1 && h.tg.state().length === 1 && names(h)[0] === 'kyoto' && h.tg.state()[0].color === 'pink' && h.tg.groups.has(g1.id) && h.tg.groups.get(g1.id).userNamed === true, JSON.stringify(h.tg.state()));
+  ({ h, mk } = setup());
+  const n1 = [mk('Kyoto guide', 'https://a.example/kyoto'), mk('Kyoto temples', 'https://b.example/temples')];
+  const n2 = [mk('Kyoto map', 'https://c.example/map'), mk('Kyoto food', 'https://d.example/food')];
+  h.tg.create('Kyoto', n1.map((t) => t.id), { auto: true });
+  const mine = h.tg.create('Kyoto Trip', n2.map((t) => t.id)); // made by the user
+  mine.userNamed = true;
+  check('merge: a user-named group is not merged into a merely similar one', h.tg.mergeGroups() === 0 && h.tg.state().length === 2);
+
+  // Pinned tabs never move; by-site groups are left alone.
+  ({ h, mk } = setup());
+  const p = [mk('Tokyo trip a', 'https://a.example/a'), mk('Tokyo trip b', 'https://b.example/b')];
+  const q = [mk('Tokyo trip c', 'https://c.example/c'), mk('Tokyo trip d', 'https://d.example/d')];
+  h.tg.create('Tokyo Trip', p.map((t) => t.id), { auto: true });
+  h.tg.create('Tokyo Trip', q.map((t) => t.id), { auto: true });
+  q[0].pinned = true;
+  const gq = gid(q[0]);
+  h.tg.mergeGroups();
+  check('merge: a pinned tab is not moved into the merged group', gid(q[0]) === gq && gid(q[1]) === gid(p[0]));
+  ({ h, mk } = setup());
+  const s1 = [mk('a', 'https://one.example/a'), mk('b', 'https://one.example/b')];
+  const s2 = [mk('c', 'https://two.example/c'), mk('d', 'https://two.example/d')];
+  h.tg.create('Docs', s1.map((t) => t.id), { auto: true, domain: 'one.example' });
+  h.tg.create('Docs', s2.map((t) => t.id), { auto: true, domain: 'two.example' });
+  check('merge: by-site groups are left alone', h.tg.mergeGroups() === 0);
+
+  // An organize action merges near-duplicate groups it just made (a model proposing "Recipes" and "Recipe").
+  ({ h, mk } = setup());
+  const r = ['Banana Bread Recipe', 'Cookie Recipes', 'Pancake Recipe', 'Muffin Recipe'].map((t, i) => mk(t, `https://r${i}.example/${i}`));
+  const made = h.tg.applyProposal([{ name: 'Recipes', tab_ids: [r[0].id, r[1].id] }, { name: 'Recipe', tab_ids: [r[2].id, r[3].id] }]);
+  check('organize: near-duplicate proposed groups merge, and undo reverts all of it', made === 1 && h.tg.state().length === 1 && r.every((t) => gid(t) === gid(r[0])) && h.tg.undoOrganize() && r.every((t) => gid(t) === null));
+
+  // The continuous pass merges a group it just formed into a same-named one, and one undo puts it back.
+  ({ h, mk } = setup());
+  const k = [mk('Kyoto temple guide', 'https://a.example/kyoto-temple-guide'), mk('Best Kyoto temples', 'https://b.example/best-kyoto-temples')];
+  h.tg.autoGroup();
+  const first = gid(k[0]);
+  const k2 = [mk('Kyoto temple hours', 'https://c.example/kyoto-temple-hours'), mk('Kyoto temple tickets', 'https://d.example/kyoto-temple-tickets')];
+  h.tg.autoGroup();
+  check('continuous: related tabs end up in one group, not two near-twins', first && k2.every((t) => gid(t) === first) && h.tg.state().length === 1, JSON.stringify(h.tg.state()));
+}
+
+
+// ---- the Windows swap helper's quit-apply mode (features/swap-helper.js)
+async function swapHelperRuns() {
+  const { swap } = require('../features/swap-helper');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-swaprun-unit-'));
+  const mk = (rel, text) => { fs.mkdirSync(path.dirname(path.join(d, rel)), { recursive: true }); fs.writeFileSync(path.join(d, rel), text); };
+  const opts = (extra = {}) => ({ pid: 2 ** 22 + 1, dir: path.join(d, 'Lumen'), root: path.join(d, 'Lumen.update', 'files'), old: path.join(d, 'Lumen.old'), staging: path.join(d, 'Lumen.update'), exe: path.join(d, 'Lumen', 'Lumen.exe'), errFile: path.join(d, 'err.txt'), minBytes: 1, retryMs: 10, waitMs: 500, ...extra });
+  const started = [];
+  const start = (...a) => started.push(a);
+  mk('Lumen/Lumen.exe', 'MZ old'); mk('Lumen.update/files/Lumen.exe', 'MZ new');
+  const r1 = await swap(opts({ relaunch: false }), start);
+  check('swap helper: quit-apply swaps the folders and starts nothing', r1 === 'swapped' && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ new' && !fs.existsSync(path.join(d, 'Lumen.old')) && !fs.existsSync(path.join(d, 'Lumen.update')) && started.length === 0, `${r1} ${started.length}`);
+  const r2 = await swap(opts({ relaunch: false }), start);
+  check('swap helper: quit-apply with the staged folder already gone is a quiet no-op', r2 === 'noop' && !fs.existsSync(path.join(d, 'err.txt')) && started.length === 0, r2);
+  mk('Lumen.update/files/Lumen.exe', 'MZ newer');
+  const r3 = await swap(opts(), start);
+  check('swap helper: the normal apply still starts the new exe', r3 === 'swapped' && started.length === 1 && started[0][0] === opts().exe, `${r3} ${started.length}`);
+  mk('Lumen.update/files/Lumen.exe', 'tiny');
+  const r4 = await swap(opts({ relaunch: false, minBytes: 1000 }), start);
+  check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
+  fs.rmSync(d, { recursive: true, force: true });
+}
+
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

@@ -75,7 +75,7 @@ const STOPWORDS = new Set(`a an and are as at be by for from has have how i in i
 about after all also any best can com could do does get go guide home into just like login more most new news no not now official one only other out over page
 said see sign site so some than them then there these they top up us use using via vs was way we web welcome were what www html htm php aspx index amp http https
 official free online app video videos watch search results result edit view log docs doc wiki org net io co uk en de fr es de
-time times visit deal deals thing things day days week weeks year years review reviews reviewed rated tips ideas
+help helps works time times visit deal deals thing things day days week weeks year years review reviews reviewed rated tips ideas
 library libraries open source powerful comprehensive community resources ecosystem platform`.split(/\s+/));
 const TOPIC_THRESHOLD = 0.34;
 // Small pools (2-3 loose tabs) need stronger evidence than a full cluster does before forming a
@@ -89,6 +89,7 @@ const CENTROID_MERGE_THRESHOLD = 0.3;
 // that site's template, not a topic - it shouldn't count when linking two tabs of that same site.
 const SITE_TEMPLATE_RATIO = 0.7;
 const SITE_TEMPLATE_PENALTY = 0.15;
+const MAX_GROUP = 12; // a bigger cluster is split again, more strictly
 const TEXT_WEIGHT = 0.7; // page text (meta description/h1): more deliberate than a URL path, less than the title
 const BIGRAM_VEC_WEIGHT = 0.5; // a 2-word combination is more specific than either word alone
 
@@ -157,7 +158,33 @@ function tokens(text) {
 // Words of one tab: stem -> { weight, surface (first seen, for naming) }. Also carries
 // `.bigrams`: adjacent word pairs from the title/query, for naming a cluster "Machine Learning"
 // rather than two unrelated top words.
-function tabWords({ title = '', url = '', text = '' }) {
+// Code hosts: "owner/repo" identifies a project, so its issues, PRs, discussions and code pages
+// belong together, and (with the repo name as a word) with the docs and questions about it.
+const REPO_HOSTS = new Set(['github.com', 'gitlab.com', 'bitbucket.org', 'codeberg.org']);
+const NOT_AN_OWNER = new Set(['orgs', 'settings', 'marketplace', 'topics', 'search', 'notifications', 'pulls', 'issues', 'explore', 'sponsors', 'features', 'login', 'new', 'about', 'pricing', 'collections', 'trending', 'users', 'apps']);
+function repoOf(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^www\./, '');
+    if (!REPO_HOSTS.has(host)) return null;
+    const [owner, repo] = u.pathname.split('/').filter(Boolean).map((s) => decodeURIComponent(s).toLowerCase());
+    if (!owner || !repo || NOT_AN_OWNER.has(owner)) return null;
+    return { key: `@${host}/${owner}/${repo}`, name: repo, owner };
+  } catch { return null; }
+}
+
+// "issues", "pull", "discussions" ... -> what kind of page a repo tab is (for naming "Lumen PRs").
+function repoPageKind(url) {
+  try {
+    const seg = new URL(url).pathname.split('/').filter(Boolean)[2] || '';
+    if (/^pulls?$/.test(seg)) return 'PRs';
+    if (seg === 'issues') return 'issues';
+    if (seg === 'discussions') return 'discussions';
+  } catch {}
+  return '';
+}
+
+function tabWords({ title = '', url = '', text = '', hint = '' }) {
   const words = new Map();
   const bigrams = [];
   const add = (list, weight, { naming = false, vector = false } = {}) => {
@@ -193,6 +220,14 @@ function tabWords({ title = '', url = '', text = '' }) {
   const q = queryText(url);
   if (q) add(tokens(decodeURIComponent(q.replace(/\+/g, ' '))), 1, { naming: true, vector: true });
   if (text) add(tokens(String(text).slice(0, 500)), TEXT_WEIGHT, { vector: true }); // optional page text (see main.js note)
+  // The search a tab was opened from (main.js passes the opener's query): the page is what that search led to.
+  if (hint) add(tokens(String(hint).slice(0, 200)), 0.8, { vector: true });
+  const repo = repoOf(url);
+  if (repo) {
+    words.set(repo.key, { weight: 1.2, surface: repo.name });
+    add(tokens(repo.name.replace(/[-_.]/g, ' ')), 0.8);
+  }
+  words.brand = label && label.length >= 4 && !BRAND_WORDS.has(label) && !SEARCH_DOMAINS.has(domain) ? label : '';
   if (titleTokens.length <= 2) for (const g of charTrigrams(cleanTitle)) if (!words.has(g)) words.set(g, { weight: 0.4, surface: g });
   words.bigrams = bigrams;
   return words;
@@ -202,6 +237,18 @@ function tabWords({ title = '', url = '', text = '' }) {
 function vectorize(entries) {
   const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url) }));
   const n = docs.length;
+  // A site's own name ("nextjs.org", "zod.dev") is brand noise between two of its own pages, but
+  // it IS the topic when a page of ANOTHER site names it (Stack Overflow "Next.js ...", a GitHub
+  // repo called next.js): then the site's tabs get that word at full strength, so the docs join.
+  for (const d of docs) {
+    const b = d.words.brand;
+    if (!b) continue;
+    for (const variant of new Set([b, b.replace(/(js|hq|io|py)$/, '')])) {
+      if (variant.length < 3) continue;
+      const key = stem(variant);
+      if (docs.some((o) => o.site !== d.site && (o.words.get(key)?.weight ?? 0) >= 0.8)) d.words.set(key, { weight: 1, surface: d.words.get(key)?.surface || variant.charAt(0).toUpperCase() + variant.slice(1) });
+    }
+  }
   const df = new Map();
   for (const d of docs) for (const key of d.words.keys()) df.set(key, (df.get(key) || 0) + 1);
   const informative = (key) => df.get(key) >= 2 && (n < 4 || df.get(key) / n <= 0.8);
@@ -234,7 +281,7 @@ function vectorize(entries) {
     if (idxs.length < 2) continue;
     const count = new Map();
     for (const i of idxs) for (const k of docs[i].vec.keys()) count.set(k, (count.get(k) || 0) + 1);
-    for (const [k, c] of count) if (c / idxs.length >= SITE_TEMPLATE_RATIO && df.get(k) === c) for (const i of idxs) docs[i].template.add(k);
+    for (const [k, c] of count) if (!k.startsWith('@') && c / idxs.length >= SITE_TEMPLATE_RATIO && df.get(k) === c) for (const i of idxs) docs[i].template.add(k);
   }
   return docs;
 }
@@ -279,20 +326,23 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   if (n < 2) return [];
   const sim = docs.map((a) => docs.map((b) => cosine(a, b)));
   // Average-linkage agglomerative clustering, merging the closest pair while above the threshold.
-  let clusters = docs.map((_d, i) => [i]);
   const link = (x, y) => { let s = 0; for (const i of x) for (const j of y) s += sim[i][j]; return s / (x.length * y.length); };
-  for (;;) {
-    let best = null;
-    for (let i = 0; i < clusters.length; i++) {
-      for (let j = i + 1; j < clusters.length; j++) {
-        const s = link(clusters[i], clusters[j]);
-        if (s >= threshold && (!best || s > best.s)) best = { i, j, s };
+  const agglomerate = (indices, at) => {
+    const out = indices.map((i) => [i]);
+    for (;;) {
+      let best = null;
+      for (let i = 0; i < out.length; i++) {
+        for (let j = i + 1; j < out.length; j++) {
+          const s = link(out[i], out[j]);
+          if (s >= at && (!best || s > best.s)) best = { i, j, s };
+        }
       }
+      if (!best) return out;
+      out[best.i] = out[best.i].concat(out[best.j]);
+      out.splice(best.j, 1);
     }
-    if (!best) break;
-    clusters[best.i] = clusters[best.i].concat(clusters[best.j]);
-    clusters.splice(best.j, 1);
-  }
+  };
+  let clusters = agglomerate(docs.map((_d, i) => i), threshold);
   // Second stage: merge sub-clusters (or fold in a leftover single tab) whose pooled vocabulary
   // (centroid) is close. A centroid is a cleaner signal than any single member's vector, so a
   // cross-site topic (esp. carried by page text) that wasn't quite enough to link two individual
@@ -313,13 +363,18 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
     merged[best.i] = merged[best.i].concat(merged[best.j]);
     merged.splice(best.j, 1);
   }
-  clusters = merged;
+  // No mega-groups: a cluster past MAX_GROUP is re-split at a stricter threshold (a few times); tabs
+  // that no longer belong with anyone stay loose rather than being forced into a group.
+  const split = (c, at, depth) => (c.length <= MAX_GROUP || depth >= 4 ? [c] : agglomerate(c, at).flatMap((part) => (part.length < 2 ? [] : split(part, at + 0.1, depth + 1))));
+  clusters = merged.flatMap((c) => split(c, threshold + 0.1, 0));
+  // Deterministic order: tabs in the order given, groups by their first tab.
+  clusters = clusters.map((c) => [...c].sort((x, y) => x - y)).sort((x, y) => x[0] - y[0]);
   const titleCase = (w) => (w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1) : w);
   const titleCasePhrase = (s) => s.split(/\s+/).map(titleCase).join(' ');
   const clip = (s) => (s.length <= 24 ? s : (s.slice(0, 24).replace(/\s+\S*$/, '') || s.slice(0, 24)));
   return clusters.filter((c) => c.length >= 2).map((c) => {
     const members = c.map((i) => docs[i]);
-    const isReal = (k) => !k.startsWith('#') && !k.startsWith('~'); // trigram/vector-bigram keys are similarity-only, never names
+    const isReal = (k) => !/^[#~@]/.test(k); // trigram/vector-bigram/repo keys are similarity-only, never names
     // A word (or bigram) has to be a strict majority, not just "at least half": for a 2-member
     // cluster, "half" (ceil(2/2) = 1) would let a word only ONE member has name the pair.
     const majority = Math.floor(members.length / 2) + 1;
@@ -349,12 +404,205 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
     const bigramRanked = [...bigramScore.values()].filter((e) => e.count >= majority).sort((a, b) => b.score - a.score);
     const top = ranked[0];
     const siteOnly = top && members.every((d) => registrableDomain(d.url) === registrableDomain(members[0].url)) && registrableDomain(members[0].url).startsWith(top[0]);
+    // A project's tabs: named for the repo ("Lumen PRs", "Lumen issues"), whatever else is in the group.
+    const repoCount = new Map();
+    for (const d of members) { const r = repoOf(d.url); if (r) repoCount.set(r.name, (repoCount.get(r.name) || 0) + 1); }
+    const [topRepo, topRepoCount] = [...repoCount].sort((a, b) => b[1] - a[1])[0] || [];
     let name;
-    if (siteOnly) name = siteName(members[0].url, members[0].title);
+    if (topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) {
+      const kinds = new Set(members.filter((d) => repoOf(d.url)?.name === topRepo).map((d) => repoPageKind(d.url)));
+      const kind = kinds.size === 1 ? [...kinds][0] : '';
+      name = `${titleCasePhrase(topRepo.replace(/[-_]+/g, ' '))}${kind ? ` ${kind}` : ''}`;
+    } else if (siteOnly) name = siteName(members[0].url, members[0].title);
     else if (bigramRanked.length) name = titleCasePhrase(bigramRanked[0].surface);
     else if (top) name = titleCase(surface(top[0]));
     else name = siteName(members[0].url, members[0].title);
+    // "Next" from "Next.js" titles: keep the suffix a library name is written with.
+    const dotted = /^[A-Za-z]+$/.test(name) && members.find((d) => new RegExp(`\\b${name}\\.(js|ts|py|io)\\b`, 'i').test(d.title));
+    if (dotted) name = `${name}${String(dotted.title).match(new RegExp(`\\b${name}(\\.(?:js|ts|py|io))\\b`, 'i'))[1]}`;
     return { name: clip(name), ids: members.map((d) => d.id), key: top?.[0] || null };
+  });
+}
+
+// ---------- incremental placement: where does ONE tab belong among the groups that already exist? ----------
+//
+// A tab that just loaded (or changed title or site) is scored against each group's pooled words,
+// with the same signal as "Organize by topic". It joins the best group only above TOPIC_THRESHOLD,
+// and a tab that is already in a group only moves to another one that fits clearly better (MOVE_MARGIN).
+// Pure: no tab objects, just entries ({ id, title, url, text, hint }).
+const MAX_AUTO_MOVES = 3; // automatic placements/moves per tab, so a tab whose title keeps changing settles
+const MOVE_MARGIN = 0.15;
+const SAME_SITE_BONUS = 0.12; // a group already holding pages of this site: the site itself is weak evidence
+
+// items: [{ entry, current }] (current: the group id the tab is in now, or null).
+// groupList: [{ id, domain, members: [entry] }]. background: other loose entries, only for idf.
+// Returns an array parallel to items: the group id to put each tab in, or null to leave it as it is.
+function placeTabs(items, groupList, { background = [], threshold = TOPIC_THRESHOLD, margin = MOVE_MARGIN } = {}) {
+  if (!items.length || !groupList.length) return items.map(() => null);
+  const byId = new Map();
+  for (const e of [...items.map((i) => i.entry), ...groupList.flatMap((g) => g.members), ...background]) if (!byId.has(e.id)) byId.set(e.id, e);
+  const list = [...byId.values()];
+  const docs = vectorize(list);
+  const doc = new Map(list.map((e, i) => [e.id, docs[i]]));
+  const pooled = new Map();
+  const centroidFor = (g, exceptId) => {
+    const key = `${g.id}|${g.members.some((m) => m.id === exceptId) ? exceptId : ''}`;
+    if (!pooled.has(key)) {
+      const rest = g.members.filter((m) => m.id !== exceptId);
+      pooled.set(key, rest.length ? { members: rest, centroid: centroidOf(rest.map((m) => doc.get(m.id))) } : null);
+    }
+    return pooled.get(key);
+  };
+  const scoreOf = (entry, g) => {
+    const d = doc.get(entry.id);
+    const pool = centroidFor(g, entry.id);
+    if (!pool) return 0;
+    if (g.domain && siteKey(entry.url) === g.domain) return 1; // a by-site group: its own site's tabs belong
+    const s = cosine(d, pool.centroid);
+    const sameSite = Boolean(d.site) && pool.members.some((m) => doc.get(m.id).site === d.site);
+    return s + (sameSite && s >= threshold * 0.6 ? SAME_SITE_BONUS : 0);
+  };
+  return items.map(({ entry, current }) => {
+    let best = null;
+    let cur = 0;
+    for (const g of groupList) {
+      const s = scoreOf(entry, g);
+      if (g.id === current) cur = s;
+      else if (s >= threshold && (!best || s > best.s || (s === best.s && g.id < best.id))) best = { id: g.id, s };
+    }
+    if (current != null && groupList.some((g) => g.id === current)) {
+      if (!best || best.s < cur + margin) return null;
+      return best.id;
+    }
+    return best ? best.id : null;
+  });
+}
+
+// ---------- a model's proposal, made safe ----------
+
+const MAX_AI_GROUPS = 8;
+function cleanGroupName(name) {
+  return String(name || '').replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f<>"]/g, '').trim().split(/\s+/).filter(Boolean).slice(0, 3).join(' ').slice(0, 30);
+}
+
+// [{ name, tab_ids }] from a model -> [{ name, ids }] using only ids in validIds, each in one group,
+// 2+ tabs per group, at most MAX_AI_GROUPS groups (the biggest). Anything else (not an array, no
+// usable group, one group swallowing almost every tab) is null: the caller uses the local organizer.
+function sanitizeProposal(proposal, validIds) {
+  if (!Array.isArray(proposal)) return null;
+  const valid = validIds instanceof Set ? validIds : new Set(validIds);
+  const used = new Set();
+  const out = [];
+  for (const g of proposal) {
+    if (!g || typeof g !== 'object') continue;
+    const name = cleanGroupName(g.name);
+    const ids = [];
+    for (const raw of Array.isArray(g.tab_ids) ? g.tab_ids : []) {
+      const id = Number(raw);
+      if (Number.isInteger(id) && valid.has(id) && !used.has(id) && !ids.includes(id)) ids.push(id);
+    }
+    if (!name || ids.length < 2) continue;
+    ids.forEach((id) => used.add(id));
+    out.push({ name, ids });
+  }
+  if (!out.length) return null;
+  const kept = out.length > MAX_AI_GROUPS ? [...out].sort((a, b) => b.ids.length - a.ids.length).slice(0, MAX_AI_GROUPS).sort((a, b) => out.indexOf(a) - out.indexOf(b)) : out;
+  if (valid.size >= 6 && kept.some((g) => g.ids.length > valid.size * 0.8)) return null;
+  return kept;
+}
+
+// The words of a tab's address path worth telling a model: "docs/react/hooks" -> "docs react hooks".
+// Never the query string or fragment, and nothing that looks like an id, hash or token.
+function pathWords(url, max = 6) {
+  let pathname = '';
+  try { ({ pathname } = new URL(url)); } catch { return ''; }
+  const words = [];
+  for (const seg of pathname.split('/')) {
+    let s = seg;
+    try { s = decodeURIComponent(seg); } catch {}
+    for (const w of s.split(/[^\p{L}]+/u)) {
+      if (w.length >= 3 && w.length <= 20 && !/^[a-f]+$/i.test(w) && !STOPWORDS.has(w.toLowerCase())) words.push(w.toLowerCase());
+    }
+  }
+  return [...new Set(words)].slice(0, max).join(' ');
+}
+
+// ---------- merging groups with similar names ----------
+
+const NAME_FILLER = new Set(['a', 'an', 'the', 'to', 'for', 'of', 'and', 'in', 'on', 'with', 'tabs', 'tab', 'pages', 'page', 'links', 'stuff', 'misc', 'other', 'things']);
+// A word that says WHAT KIND of thing the tabs are ("Lumen PRs" vs "Lumen"): a qualifier that keeps two
+// groups apart on names alone.
+const NAME_KIND = new Set(['pr', 'prs', 'issue', 'doc', 'discussion', 'video', 'review', 'pull', 'request', 'news', 'tutorial']);
+
+function nameTokens(name) {
+  return String(name).replace(/\(\d+\)\s*$/, '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w && !NAME_FILLER.has(w)).map(stem);
+}
+
+function levenshtein(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_v, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// How alike two group names are: 'exact' (same words after case, punctuation, plural and "(2)"),
+// 'contain' (one is the other plus plain words: "Flights" / "Flights to Tokyo"), 'close' (a typo apart),
+// 'weak' (they share a real word), or null. "Java" and "JavaScript" are none of these.
+function nameSimilarity(a, b) {
+  const ta = nameTokens(a);
+  const tb = nameTokens(b);
+  if (!ta.length || !tb.length) return null;
+  if ([...ta].sort().join(' ') === [...tb].sort().join(' ')) return 'exact';
+  const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (small.length < big.length && small.every((w) => big.includes(w)) && small.some((w) => w.length >= 4) && big.filter((w) => !small.includes(w)).every((w) => !NAME_KIND.has(w))) return 'contain';
+  const ja = ta.join('');
+  const jb = tb.join('');
+  const len = Math.min(ja.length, jb.length);
+  if (len >= 5 && ja[0] === jb[0] && levenshtein(ja, jb) <= Math.max(1, Math.floor(len / 8))) return 'close';
+  if (ta.some((w) => w.length >= 4 && tb.includes(w))) return 'weak';
+  return null;
+}
+
+// groups: [{ id, name, color, auto, userNamed, domain, members: [entry] }] (the window's own groups).
+// Returns the merges to make: [{ into, from: [ids], name, color, auto, userNamed }]. Deterministic: oldest
+// group first, one pass (a merged group is not compared again), so merging can't ping-pong. By-site
+// groups are left alone. Groups the user made or named only merge with an exact twin, and then the
+// user's name and colour survive; otherwise the more specific name and the oldest group's colour do.
+function mergeSimilarGroups(groups) {
+  const list = groups.filter((g) => !g.domain && g.members.length).sort((a, b) => a.id - b.id);
+  if (list.length < 2) return [];
+  const docs = vectorize(list.flatMap((g) => g.members));
+  const doc = new Map(docs.map((d) => [d.id, d]));
+  const centroid = new Map(list.map((g) => [g.id, centroidOf(g.members.map((m) => doc.get(m.id)))]));
+  const owned = (g) => !g.auto || g.userNamed;
+  const clusters = [];
+  for (const g of list) {
+    const home = clusters.find((c) => {
+      const root = c[0];
+      const kind = nameSimilarity(root.name, g.name);
+      if (!kind) return false;
+      if (kind === 'exact') return true;
+      if (owned(root) || owned(g)) return false;
+      const sim = cosine(centroid.get(root.id), centroid.get(g.id));
+      return kind === 'weak' ? sim >= CENTROID_MERGE_THRESHOLD : sim >= 0.1;
+    });
+    if (home) home.push(g); else clusters.push([g]);
+  }
+  return clusters.filter((c) => c.length > 1).map((c) => {
+    const named = c.find((g) => g.userNamed);
+    const specific = [...c].sort((a, b) => nameTokens(b.name).length - nameTokens(a.name).length || b.name.length - a.name.length || a.id - b.id)[0];
+    const base = named || specific;
+    return {
+      into: c[0].id,
+      from: c.slice(1).map((g) => g.id),
+      name: base.name.replace(/\s*\(\d+\)\s*$/, '') || base.name,
+      color: named ? named.color : c[0].color,
+      auto: c.every((g) => g.auto),
+      userNamed: c.some((g) => g.userNamed),
+    };
   });
 }
 
@@ -362,7 +610,9 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
 function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode, aiTopics, onChange }) {
   const groups = new Map(); // id -> { id, name, color, collapsed, domain, topic, auto }
   const isAuto = () => mode() !== 'off';
-  let undoState = null; // the tabs and groups from before the last "Organize by topic"
+  let undoState = null; // the tabs and groups from before the last "Organize"
+  let autoUndo = null; // the tabs the last automatic by-topic placement moved, and where they were
+  let undoSeq = 0;
   let nextId = 1;
   let colorIndex = 0;
 
@@ -387,6 +637,45 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     for (const id of groups.keys()) if (!members(id).length) groups.delete(id);
   }
 
+  // "Docs" twice becomes "Docs" and "Docs (2)"
+  function uniqueName(name, exceptId = null) {
+    const taken = new Set([...groups.values()].filter((g) => g.id !== exceptId).map((g) => g.name.toLowerCase()));
+    if (!taken.has(String(name).toLowerCase())) return name;
+    for (let n = 2; ; n++) if (!taken.has(`${name} (${n})`.toLowerCase())) return `${name} (${n})`;
+  }
+
+  // One merge pass over this window's groups (see mergeSimilarGroups). `moves`: an automatic pass's
+  // record of where tabs were, so undoAuto can put them back. Returns how many groups went away and
+  // the groups as they were before.
+  function mergeSimilar(moves = null) {
+    const plan = mergeSimilarGroups([...groups.values()].map((g) => ({ ...g, members: members(g.id).filter((t) => !pinned(t)).map(entry) })));
+    const touched = [];
+    let gone = 0;
+    for (const { into, from, name, color, auto, userNamed } of plan) {
+      const keep = groups.get(into);
+      touched.push({ ...keep }, ...from.map((id) => ({ ...groups.get(id) })));
+      for (const id of from) {
+        for (const tab of members(id)) {
+          if (pinned(tab)) continue;
+          if (moves && !moves.has(tab.id)) moves.set(tab.id, id);
+          tab.groupId = into;
+        }
+        groups.delete(id);
+        gone++;
+      }
+      keep.name = uniqueName(name, keep.id).slice(0, 40);
+      keep.color = color;
+      keep.auto = auto;
+      keep.userNamed = userNamed;
+    }
+    if (gone) { arrange(); cleanup(); }
+    return { gone, touched };
+  }
+
+  const pinned = (t) => Boolean(t.pinned);
+  const entry = (t) => ({ id: t.id, title: titleOf(t), url: urlOf(t), text: textOf ? textOf(t) : '', hint: t.openerQuery || '' });
+  const keyOf = (t) => { const e = entry(t); return `${e.title}|${e.url}|${e.text.length}`; };
+
   function create(name, tabIds, { domain = null, color, topic = null, auto = false } = {}) {
     const group = {
       id: nextId++,
@@ -400,18 +689,24 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     groups.set(group.id, group);
     for (const id of tabIds) {
       const tab = tabById(id);
-      if (tab) { tab.groupId = group.id; tab.userRemoved = false; }
+      if (!tab) continue;
+      tab.groupId = group.id;
+      tab.userRemoved = false;
+      if (auto) tab.autoKey = keyOf(tab);
+      else tab.userPlaced = true; // put there by the user (or an agent asked by them): never moved automatically
     }
     cleanup();
     arrange();
     return group;
   }
 
-  function add(tabId, groupId) {
+  // `auto`: an automatic placement (an opener's group), not a choice the user made.
+  function add(tabId, groupId, { auto = false } = {}) {
     const tab = tabById(tabId);
     if (!tab || !groups.has(groupId)) return false;
     tab.groupId = groupId;
     tab.userRemoved = false;
+    if (!auto) tab.userPlaced = true;
     arrange();
     cleanup();
     return true;
@@ -440,52 +735,69 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // A tab opened from another tab joins the opener's group (a new one if the opener has none).
   function joinOpener(tab, opener) {
     if (!isAuto() || !opener) return;
+    // A tab opened from a search results page carries that search's words: it is what the search led to.
+    const from = urlOf(opener);
+    if (SEARCH_DOMAINS.has(registrableDomain(from))) tab.openerQuery = queryText(from).slice(0, 200);
     // Opened tabs sit right after the opener (or its group), like Safari and Chrome.
     const list = getTabs().filter((t) => t !== tab);
     const at = opener.groupId ? list.map((t) => t.groupId).lastIndexOf(opener.groupId) : list.indexOf(opener);
     list.splice(at + 1, 0, tab);
     setTabs(list);
-    // One link opened in a new tab is not a topic: it only joins a group the opener is already in.
-    if (opener.groupId && groups.has(opener.groupId)) add(tab.id, opener.groupId);
+    // One link opened in a new tab is not a topic: it only joins a group the opener is already in
+    // (and is looked at again once it has a title: see autoGroupTopics).
+    if (!pinned(tab) && opener.groupId && groups.has(opener.groupId)) {
+      add(tab.id, opener.groupId, { auto: true });
+      tab.autoMoves = 1;
+    }
   }
 
-  // Tabs automatic grouping may move: ungrouped web tabs the user hasn't taken out of a group
-  // or dragged into place.
-  const loose = () => getTabs().filter((t) => !t.groupId && !t.userRemoved && !t.userMoved && isWeb(urlOf(t)));
-  const entry = (t) => ({ id: t.id, title: titleOf(t), url: urlOf(t), text: textOf ? textOf(t) : '' });
+  // Tabs automatic grouping may move: ungrouped web tabs the user hasn't taken out of a group,
+  // dragged into place or put into a group themselves. Pinned tabs never.
+  const movable = (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
+  const loose = () => getTabs().filter((t) => !t.groupId && movable(t));
 
-  // By topic: a loose tab joins the topic group its words are most similar to (centroid, same
-  // IDF as the rest of the current tabs) - not just the first group whose key word it happens to
-  // contain, which let generic words ("review", "2026") drag unrelated tabs into a group and
-  // ignored what the rest of the group was actually about. 4+ remaining loose tabs cluster at the
-  // normal threshold; 2-3 need stronger similarity, since fewer members corroborate the overlap.
+  // By topic, continuously: each tab whose title, address or page text changed (or that has no group)
+  // is scored against every automatic group - topic groups and by-site groups alike - and joins, or
+  // moves to, the best one it clearly fits. Tabs still loose that are related to each other then form
+  // new groups of their own (2+; 4+ loose tabs at the normal threshold, 2-3 need stronger evidence).
+  // Every batch is one step for undoOrganize. Returns whether anything changed.
   function autoGroupTopics({ cluster = true } = {}) {
-    let changed = false;
-    const topicGroups = [...groups.values()].filter((g) => g.topic);
-    const looseTabs = loose();
-    if (topicGroups.length && looseTabs.length) {
-      const groupEntries = topicGroups.map((g) => members(g.id).map(entry));
-      const docs = vectorize([...looseTabs.map(entry), ...groupEntries.flat()]);
-      let at = looseTabs.length;
-      const centroids = groupEntries.map((list) => { const slice = docs.slice(at, at + list.length); at += list.length; return centroidOf(slice); });
-      const looseDocs = docs.slice(0, looseTabs.length);
-      looseTabs.forEach((tab, i) => {
-        let bestJ = -1;
-        let bestSim = TOPIC_THRESHOLD;
-        centroids.forEach((c, j) => { const s = cosine(looseDocs[i], c); if (s >= bestSim) { bestSim = s; bestJ = j; } });
-        if (bestJ >= 0) { tab.groupId = topicGroups[bestJ].id; changed = true; }
+    const groupsBefore = [...groups.keys()];
+    const autoGroups = [...groups.values()].filter((g) => g.auto);
+    const moves = new Map(); // tab id -> the group it was in before (null: none)
+    const record = (tab) => { if (!moves.has(tab.id)) moves.set(tab.id, tab.groupId || null); };
+    const candidates = getTabs().filter((t) => movable(t) && (t.autoMoves || 0) < MAX_AUTO_MOVES
+      && (t.groupId ? groups.get(t.groupId)?.auto && t.autoKey !== keyOf(t) : true));
+    if (autoGroups.length && candidates.length) {
+      const groupList = autoGroups.map((g) => ({ id: g.id, domain: g.domain, members: members(g.id).map(entry) }));
+      const candidateIds = new Set(candidates.map((t) => t.id));
+      const background = loose().filter((t) => !candidateIds.has(t.id)).map(entry);
+      const result = placeTabs(candidates.map((t) => ({ entry: entry(t), current: t.groupId || null })), groupList, { background });
+      candidates.forEach((tab, i) => {
+        tab.autoKey = keyOf(tab);
+        if (result[i] == null) return;
+        record(tab);
+        tab.groupId = result[i];
+        tab.autoMoves = (tab.autoMoves || 0) + 1;
       });
     }
     const rest = loose();
     if (cluster && rest.length >= 2) {
       const threshold = rest.length >= 4 ? TOPIC_THRESHOLD : LOOSE_PAIR_THRESHOLD;
       for (const c of topicClusters(rest.map(entry), { threshold })) {
-        create(c.name, c.ids, { topic: c.key, auto: true });
-        changed = true;
+        const ids = c.ids.filter((id) => !tabById(id)?.groupId);
+        if (ids.length < 2) continue;
+        for (const id of ids) record(tabById(id));
+        create(uniqueName(c.name), ids, { topic: c.key, auto: true });
+        for (const id of ids) tabById(id).autoMoves = 1;
       }
     }
-    if (changed) { arrange(); cleanup(); }
-    return changed;
+    const merged = groups.size > groupsBefore.length ? mergeSimilar(moves) : { touched: [] };
+    if (!moves.size) return false;
+    autoUndo = { seq: ++undoSeq, moves, groups: merged.touched };
+    arrange();
+    cleanup();
+    return true;
   }
 
   // Three or more ungrouped tabs from one site form a group; later tabs of that site join it.
@@ -495,7 +807,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     let changed = false;
     const bySite = new Map();
     for (const tab of getTabs()) {
-      if (tab.groupId || tab.userRemoved || tab.userMoved || !isWeb(urlOf(tab))) continue;
+      if (tab.groupId || pinned(tab) || tab.userRemoved || tab.userMoved || tab.userPlaced || !isWeb(urlOf(tab))) continue;
       const domain = siteKey(urlOf(tab));
       if (!domain || SEARCH_DOMAINS.has(domain)) continue; // result pages from a search engine aren't a topic
       if (!bySite.has(domain)) bySite.set(domain, []);
@@ -507,7 +819,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
         for (const tab of list) tab.groupId = existing.id;
         changed = true;
       } else if (list.length >= 3) {
-        create(siteName(urlOf(list[0]), titleOf(list[0])), list.map((t) => t.id), { domain, auto: true });
+        create(uniqueName(siteName(urlOf(list[0]), titleOf(list[0]))), list.map((t) => t.id), { domain, auto: true });
         changed = true;
       }
     }
@@ -515,63 +827,106 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     return changed;
   }
 
-  // Replace groups with a proposed set: [{ name, tab_ids }]. Singletons stay ungrouped.
-  function applyProposal(proposal) {
-    const used = new Set();
-    const valid = [];
-    for (const g of proposal || []) {
-      const ids = [...new Set((g.tab_ids || []).map(Number))].filter((id) => tabById(id) && !used.has(id));
-      if (ids.length < 2 || !g.name) continue;
-      ids.forEach((id) => used.add(id));
-      valid.push({ name: String(g.name).split(/\s+/).slice(0, 3).join(' '), ids });
-    }
-    for (const id of [...groups.keys()]) ungroupAll(id);
-    for (const tab of getTabs()) tab.userRemoved = false;
-    for (const g of valid) create(g.name, g.ids);
-    return valid.length;
+  function saveUndo() {
+    undoState = {
+      seq: ++undoSeq,
+      order: getTabs().map((t) => t.id),
+      tabs: new Map(getTabs().map((t) => [t.id, t.groupId || null])),
+      flags: new Map(getTabs().map((t) => [t.id, { userRemoved: Boolean(t.userRemoved), userPlaced: Boolean(t.userPlaced), autoMoves: t.autoMoves || 0 }])),
+      groups: snapshot(),
+    };
+    autoUndo = null; // this step includes everything the automatic ones did
   }
 
-  // "Organize Tabs by Topic": loose tabs and tabs in automatic groups are regrouped, from the
-  // local clusters or a proposal ([{ name, tab_ids }], e.g. from an AI model). Groups the user
-  // made, and tabs the user took out of groups or dragged, stay as they are. One step of undo.
+  // "Organize Tabs by Topic" / "Organize with AI": loose tabs and tabs in automatic groups are regrouped,
+  // from the local clusters or a proposal ([{ name, tab_ids }] from an AI model; anything unusable in it
+  // falls back to the local clusters). Groups the user made, and tabs the user took out of groups,
+  // dragged, or pinned, stay as they are. A new group that mostly matches an old automatic one keeps
+  // its colour (and, for local clusters, its name) so the tab strip doesn't reshuffle. One step of undo.
   function organizeByTopic(proposal = null) {
-    undoState = { order: getTabs().map((t) => t.id), tabs: new Map(getTabs().map((t) => [t.id, t.groupId || null])), groups: snapshot() };
-    for (const g of [...groups.values()]) if (g.auto) ungroupAll(g.id);
-    return groupLoose(proposal);
+    saveUndo();
+    const prior = [...groups.values()].filter((g) => g.auto).map((g) => ({ ...g, ids: new Set(members(g.id).map((t) => t.id)) }));
+    for (const g of prior) ungroupAll(g.id);
+    for (const t of getTabs()) { t.autoMoves = 0; t.autoKey = null; }
+    return groupLoose(proposal, { prior });
   }
+  const applyProposal = organizeByTopic; // the older name: "Organize with AI"
 
   // Groups loose tabs only: from a proposal ([{ name, tab_ids }]) or the local clusters.
-  function groupLoose(proposal = null) {
+  function groupLoose(proposal = null, { prior = [] } = {}) {
     const pool = loose();
     const poolIds = new Set(pool.map((t) => t.id));
-    const clusters = proposal
-      ? proposal.map((g) => ({ name: String(g.name || '').split(/\s+/).slice(0, 3).join(' '), ids: [...new Set((g.tab_ids || []).map(Number))].filter((id) => poolIds.has(id)), key: null }))
-      : topicClusters(pool.map(entry));
+    const proposed = proposal ? sanitizeProposal(proposal, poolIds) : null;
+    const clusters = proposed ? proposed.map((g) => ({ name: g.name, ids: g.ids, key: null, ai: true })) : topicClusters(pool.map(entry));
     const used = new Set();
+    const claimed = new Set();
     let count = 0;
     for (const c of clusters) {
       const ids = c.ids.filter((id) => !used.has(id));
       if (ids.length < 2 || !c.name) continue;
       ids.forEach((id) => used.add(id));
-      create(c.name, ids, { topic: c.key, auto: true });
+      // The old automatic group these tabs mostly came from (stable colour and name).
+      const old = prior.filter((p) => !claimed.has(p.id)).map((p) => ({ p, n: ids.filter((id) => p.ids.has(id)).length }))
+        .filter(({ p, n }) => n >= 2 && n >= Math.min(ids.length, p.ids.size) / 2).sort((a, b) => b.n - a.n)[0]?.p;
+      // A model's group named like a group that exists: the tabs join it rather than a twin.
+      const twin = c.ai && [...groups.values()].find((g) => g.name.toLowerCase() === c.name.toLowerCase());
+      if (twin) {
+        for (const id of ids) add(id, twin.id, { auto: true });
+        count++;
+        continue;
+      }
+      if (old) claimed.add(old.id);
+      create(uniqueName(old && !c.ai ? old.name : c.name), ids, { topic: c.key, auto: true, color: old?.color });
       count++;
     }
     arrange();
     cleanup();
-    return count;
+    return count > 0 ? Math.max(count - mergeSimilar().gone, 1) : 0;
   }
 
+  // "Merge Similar Groups": one step of undo, nothing recorded when there was nothing to merge.
+  function mergeGroups() {
+    const prev = { undoState, autoUndo, undoSeq };
+    saveUndo();
+    const { gone } = mergeSimilar();
+    if (!gone) ({ undoState, autoUndo, undoSeq } = prev);
+    return gone;
+  }
+
+  // Undoes the most recent thing: an organize, or the last automatic by-topic placement.
   function undoOrganize() {
+    if (autoUndo && (!undoState || autoUndo.seq > undoState.seq)) return undoAuto();
     if (!undoState) return false;
-    const { order, tabs: saved, groups: savedGroups } = undoState;
+    const { order, tabs: saved, groups: savedGroups, flags } = undoState;
     undoState = null;
     groups.clear();
     restore(savedGroups);
     const byId = new Map(getTabs().map((t) => [t.id, t]));
     const list = order.filter((id) => byId.has(id)).map((id) => byId.get(id));
     for (const t of getTabs()) if (!list.includes(t)) list.push(t); // opened since
-    for (const t of list) if (saved.has(t.id)) t.groupId = groups.has(saved.get(t.id)) ? saved.get(t.id) : null;
+    for (const t of list) {
+      if (!saved.has(t.id)) continue;
+      t.groupId = groups.has(saved.get(t.id)) ? saved.get(t.id) : null;
+      Object.assign(t, flags.get(t.id));
+    }
     setTabs(list);
+    arrange();
+    cleanup();
+    return true;
+  }
+
+  // Puts the tabs the last automatic pass moved back where they were. They are then left alone, so
+  // the same pass doesn't just move them again.
+  function undoAuto() {
+    const { moves, groups: touched } = autoUndo;
+    autoUndo = null;
+    for (const g of touched || []) groups.set(g.id, { ...g }); // groups a merge changed or removed
+    for (const [id, from] of moves) {
+      const tab = tabById(id);
+      if (!tab) continue;
+      tab.groupId = from && groups.has(from) ? from : null;
+      tab.userRemoved = true;
+    }
     arrange();
     cleanup();
     return true;
@@ -583,22 +938,22 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     return order.map((id) => groups.get(id)).filter(Boolean).map(({ id, name, color, collapsed }) => ({ id, name, color, collapsed }));
   };
 
-  const snapshot = () => [...groups.values()].map(({ id, name, color, collapsed, domain, topic, auto }) => ({ id, name, color, collapsed, domain, topic, auto }));
+  const snapshot = () => [...groups.values()].map(({ id, name, color, collapsed, domain, topic, auto, userNamed }) => ({ id, name, color, collapsed, domain, topic, auto, userNamed: Boolean(userNamed) }));
 
   function restore(saved) {
     for (const g of saved || []) {
-      groups.set(g.id, { id: g.id, name: g.name, color: GROUP_COLORS.includes(g.color) ? g.color : 'gray', collapsed: Boolean(g.collapsed), domain: g.domain || null, topic: g.topic || null, auto: g.auto ?? Boolean(g.domain) });
+      groups.set(g.id, { id: g.id, name: g.name, color: GROUP_COLORS.includes(g.color) ? g.color : 'gray', collapsed: Boolean(g.collapsed), domain: g.domain || null, topic: g.topic || null, auto: g.auto ?? Boolean(g.domain), userNamed: Boolean(g.userNamed) });
       nextId = Math.max(nextId, g.id + 1);
     }
     colorIndex = groups.size;
   }
 
   return {
-    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, undoOrganize, canUndo: () => Boolean(undoState), loose: () => loose().map(entry),
+    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, mergeGroups, undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
-    candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !t.userRemoved && !t.userMoved && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
+    candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,
   };
 }
 
-module.exports = { createTabGroups, siteName, registrableDomain, siteKey, topicClusters, GROUP_COLORS };
+module.exports = { createTabGroups, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
