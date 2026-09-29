@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('browser', {
   onTabs: on('tabs'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
+  onNewSidebarChat: on('new-sidebar-chat'),
   onAskSelection: on('ask-selection'),
   onAttachImage: on('attach-image'), // a screenshot for the sidebar composer (features/screenshot.js)
   onAskFromHome: on('ask-from-home'),
@@ -73,7 +74,6 @@ contextBridge.exposeInMainWorld('browser', {
   showSuggestions: (rect, payload) => ipcRenderer.send('suggest:show', rect, payload),
   hideSuggestions: () => ipcRenderer.send('suggest:hide'),
   addressTouched: () => ipcRenderer.send('address:touched'),
-  homeMode: () => ipcRenderer.invoke('home:mode'), // 'ask' | 'search' on the new-tab page, else null
   onSuggestionPicked: on('suggest:picked'),
   // Tab search (Ctrl+Shift+A) and the tab strip's speaker button (features/tab-tools.js)
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),

@@ -150,7 +150,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
-  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
+  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
@@ -873,6 +873,7 @@ function showAppMenu({ x, y }) {
     { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
     { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
     { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
+    { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
     { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
     ...bgTasks.menuItems(wc?.getURL()), // Watch this page, Background tasks
     { type: 'separator' },
@@ -1624,17 +1625,6 @@ ipcMain.on('address:touched', () => {
   if (!ui()?.isFocused()) ui()?.focus();
   const wc = activeTab()?.webContents;
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
-});
-// The new-tab page's Search | Ask AI choice (kept in the page's own localStorage), so Enter in the
-// address bar can follow it while that page is showing.
-ipcMain.handle('home:mode', async () => {
-  const wc = activeTab()?.webContents;
-  if (!wc || !isNewTab(wc.getURL())) return null;
-  try {
-    return (await wc.executeJavaScript("localStorage.getItem('lumen.home.mode')")) === 'ask' ? 'ask' : 'search';
-  } catch {
-    return null;
-  }
 });
 
 function guardFirstLoadFocus(tab, url) {
@@ -2715,6 +2705,7 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
+  else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
@@ -2746,6 +2737,12 @@ function handleShortcut(event, input) {
   else if (key === 'f12') wc?.toggleDevTools();
   else handled = false;
   if (handled) event.preventDefault();
+}
+
+// Ctrl+Shift+K / the menu: a fresh chat in the sidebar (opens it if closed); the renderer clicks its New chat button.
+function newSidebarChat() {
+  ui()?.focus();
+  ui()?.send('new-sidebar-chat');
 }
 
 // Ctrl+Shift+L / the menu: open the chat as a full page, or from the page go back to the sidebar.
@@ -2980,6 +2977,7 @@ function macMenu() {
         { label: t('menu.actualSize'), ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
         { type: 'separator' },
         { label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
+        { label: t('menu.newSidebarChat'), ...shown('Shift+Cmd+K'), click: newSidebarChat },
         { label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage },
         { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
         { type: 'separator' },
