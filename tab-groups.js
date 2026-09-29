@@ -523,6 +523,41 @@ function anchorMerge(clusters, docs) {
   }
 }
 
+// Fourth stage: a small group (or a lone tab) that shares a specific concept with a bigger group
+// joins it ("Dutch Oven" bread tabs into "Sourdough", an offer-negotiation pair into a job search).
+// Only when most of both sides carry that concept, the big side has 4+ tabs, and their pooled words
+// are not unrelated; the best-fitting big group wins.
+const ABSORB_MAX = 3;
+const ABSORB_MIN_COS = 0.04;
+function conceptAbsorb(clusters, docs) {
+  const out = clusters.map((c) => [...c]);
+  const conceptsOf = (c) => {
+    const m = new Map();
+    for (const i of c) for (const k of docs[i].vec.keys()) if (k[0] === '%') m.set(k, (m.get(k) || 0) + 1);
+    return new Set([...m].filter(([, n]) => n / c.length > 0.5).map(([k]) => k));
+  };
+  for (let changed = true; changed;) {
+    changed = false;
+    const sets = out.map(conceptsOf);
+    for (let s = 0; s < out.length; s++) {
+      if (out[s].length > ABSORB_MAX || !sets[s].size) continue;
+      let best = null;
+      for (let b = 0; b < out.length; b++) {
+        if (b === s || out[b].length < 4 || out[b].length <= out[s].length) continue;
+        if (![...sets[s]].some((k) => sets[b].has(k))) continue;
+        const cos = cosine(centroidOf(out[s].map((i) => docs[i])), centroidOf(out[b].map((i) => docs[i])));
+        if (cos >= ABSORB_MIN_COS && (!best || cos > best.cos)) best = { b, cos };
+      }
+      if (!best) continue;
+      out[best.b] = out[best.b].concat(out[s]);
+      out.splice(s, 1);
+      changed = true;
+      break;
+    }
+  }
+  return out;
+}
+
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
 function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   const docs = vectorize(entries);
@@ -569,6 +604,7 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   }
   // Third stage: groups (and lone tabs) that share an anchor word are one topic.
   if (!process.env.NOANCHOR) merged = anchorMerge(pruneWeak(anchorMerge(merged, docs), docs), docs);
+  if (!process.env.NOABSORB) merged = conceptAbsorb(merged, docs);
   // No mega-groups: a cluster past MAX_GROUP is re-split at a stricter threshold (a few times); tabs
   // that no longer belong with anyone stay loose rather than being forced into a group.
   const split = (c, at, depth) => (c.length <= MAX_GROUP || depth >= 4 ? [c] : agglomerate(c, at).flatMap((part) => (part.length < 2 ? [] : split(part, at + 0.1, depth + 1))));
