@@ -459,6 +459,8 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+  // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
+  session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
   // The AI's hidden reader/search views (agent.js, partition 'claude-reader') load pages nobody
   // sees: they get no permissions at all (camera, location, notifications, …) and no downloads.
   const reader = session.fromPartition('claude-reader');
@@ -3664,6 +3666,7 @@ const updates = require('./features/updates').createUpdates({
   beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
 });
 if (TEST) global.__updates = updates;
+app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits
 
 const focusWindow = () => {
   if (!win || win.isDestroyed()) return;

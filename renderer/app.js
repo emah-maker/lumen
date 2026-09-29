@@ -2311,6 +2311,12 @@ window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('wind
 
 const mcpSteps = new Map(); // step id -> row
 let mcpPillText = null;
+// An outside agent opens and closes a session around each task, so the pill (not the chat) carries
+// the state: it holds "driving" for a moment after a session ends so a quick reconnect doesn't
+// flicker, and the chat gets one line the first time each agent connects in this window, never one per session.
+const MCP_PILL_HOLD_MS = 1500;
+const mcpAnnounced = new Set();
+let mcpPillTimer = null;
 
 function mcpStepRow(event) {
   const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
@@ -2326,13 +2332,21 @@ function mcpStepRow(event) {
 window.assistant.onMcpEvent?.((event) => {
   switch (event.type) {
     case 'session': {
-      document.body.classList.toggle('mcp-active', event.active || event.remaining > 0);
-      const text = document.querySelector('#agent-pill span:not(.agent-dot)');
-      if (text) {
+      const driving = event.active || event.remaining > 0;
+      const showPill = () => {
+        document.body.classList.toggle('mcp-active', driving);
+        const text = document.querySelector('#agent-pill span:not(.agent-dot)');
+        if (!text) return;
         if (mcpPillText === null) mcpPillText = text.textContent;
-        text.textContent = event.active || event.remaining > 0 ? t('mcp.driving', { client: event.clientName }) : mcpPillText;
+        text.textContent = driving ? t('mcp.driving', { client: event.clientName }) : mcpPillText;
+      };
+      clearTimeout(mcpPillTimer);
+      if (driving) showPill();
+      else mcpPillTimer = setTimeout(showPill, MCP_PILL_HOLD_MS);
+      if (event.active && !mcpAnnounced.has(event.clientName)) {
+        mcpAnnounced.add(event.clientName);
+        append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('mcp.connected', { client: event.clientName }) }));
       }
-      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t(event.active ? 'mcp.connected' : 'mcp.disconnected', { client: event.clientName }) }));
       break;
     }
     case 'tool':

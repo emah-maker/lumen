@@ -367,19 +367,7 @@ function create(deps) {
       if (upgraded.has(wc.id) && /^https:/i.test(url)) upgraded.delete(wc.id);
       applyDefaultZoom(wc);
     });
-    wc.on('did-finish-load', () => darkenLightGoogle(wc));
     wc.once('destroyed', () => upgraded.delete(wc.id));
-  }
-  // Fallback for when Google ignores the color hint (an account set to Light, a cached page):
-  // in a dark theme, a Google page that still rendered light gets inverted.
-  const DARKEN_CSS = 'html{filter:invert(1) hue-rotate(180deg)!important;background:#fff}img,picture,video,canvas,svg image{filter:invert(1) hue-rotate(180deg)!important}';
-  // Luminance of the first opaque background (body, then html); a page with none shows white.
-  const LUMINANCE_JS = `(() => { for (const el of [document.body, document.documentElement]) { const m = el && getComputedStyle(el).backgroundColor.match(/[\\d.]+/g); if (m && (m[3] === undefined || +m[3] > 0.5)) return (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) / 255; } return 1; })()`;
-  async function darkenLightGoogle(wc) {
-    try {
-      if (!nativeTheme.shouldUseDarkColors || wc.isDestroyed() || !isGoogleSearch(wc.getURL())) return;
-      if ((await wc.executeJavaScript(LUMINANCE_JS)) > 0.6) await wc.insertCSS(DARKEN_CSS);
-    } catch {}
   }
   function noteUserZoom(wc) {
     try { userZoomed.add(new URL(wc.getURL()).host); } catch {}
