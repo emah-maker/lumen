@@ -149,7 +149,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
-  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
+  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
@@ -1622,17 +1622,6 @@ ipcMain.on('address:touched', () => {
   if (!ui()?.isFocused()) ui()?.focus();
   const wc = activeTab()?.webContents;
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
-});
-// The new-tab page's Search | Ask AI choice (kept in the page's own localStorage), so Enter in the
-// address bar can follow it while that page is showing.
-ipcMain.handle('home:mode', async () => {
-  const wc = activeTab()?.webContents;
-  if (!wc || !isNewTab(wc.getURL())) return null;
-  try {
-    return (await wc.executeJavaScript("localStorage.getItem('lumen.home.mode')")) === 'ask' ? 'ask' : 'search';
-  } catch {
-    return null;
-  }
 });
 
 function guardFirstLoadFocus(tab, url) {

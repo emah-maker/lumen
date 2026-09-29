@@ -41,7 +41,7 @@ Then set up an AI from the sidebar's empty state or **Settings → You and AI** 
   <img src="docs/media/newtab-dark.png" alt="Lumen's new-tab page in the dark theme" width="49%">
 </p>
 
-Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A` switch), with your favorites and most-visited sites underneath. It's a local page with a strict Content Security Policy: it loads nothing from the network, and site icons come from a small local cache.
+Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A` switch; the choice belongs to that box only and never changes what the address bar does; each question starts a new chat in the sidebar), with your favorites and most-visited sites underneath. It's a local page with a strict Content Security Policy: it loads nothing from the network, and site icons come from a small local cache.
 
 ## The AI in the sidebar
 

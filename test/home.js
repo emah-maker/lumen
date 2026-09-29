@@ -115,23 +115,22 @@ const path = require('path');
       await ui.keyboard.press('Escape');
       await ui.keyboard.press('Escape');
     }
-    // Still in Ask AI mode: Enter in the address bar on the new-tab page asks the assistant, as the
-    // page's own box would; an address typed there still opens.
+    // Still in Ask AI mode on the page: the address bar is separate and never asks the assistant; a
+    // question typed there is an ordinary search (it leaves the new-tab page), and an address opens.
     await app.evaluate(() => { global.__homePrompts = []; });
     await ctrlT();
     await typeNative('how tall is everest');
     await ui.keyboard.press('Enter');
-    prompts = [];
-    for (let i = 0; i < 30 && !prompts.length; i++) { await sleep(300); prompts = await app.evaluate(() => global.__homePrompts); }
-    check('Ask AI mode: a question in the address bar goes to the assistant', prompts.some((p) => p.includes('how tall is everest')), JSON.stringify(prompts));
-    check('…and the tab stays on the new-tab page', /newtab\.html/.test(await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL())), '');
-    await ui.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 }).catch(() => {});
+    await sleep(1500);
+    prompts = await app.evaluate(() => global.__homePrompts);
+    check('Ask AI mode on the page does not make the address bar ask the assistant', !prompts.length, JSON.stringify(prompts));
+    check('…the address bar searched instead of staying on the new-tab page', !/newtab\.html/.test(await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL())), '');
     await ctrlT();
     await typeNative('example.com');
     await ui.keyboard.press('Enter');
     let opened = '';
     for (let i = 0; i < 30 && !/example\.com/.test(opened); i++) { await sleep(300); opened = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()); }
-    check('Ask AI mode: an address in the address bar still opens', /example\.com/.test(opened), opened);
+    check('an address in the address bar opens', /example\.com/.test(opened), opened);
   }
   await ctrlT();
   await inTab("document.querySelector('[data-mode=search]')?.click()");

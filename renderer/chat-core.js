@@ -377,7 +377,27 @@ function sendQueued() {
   const next = queued.shift();
   if (!next) return;
   next.notice.remove();
+  if (next.fresh) {
+    // A question from the new-tab page that waited for the running reply: now start its new chat. The
+    // New chat button empties the view (notices of anything else still queued included), so put those back.
+    const rest = queued.splice(0);
+    $('new-chat').click();
+    for (const q of rest) { append(q.notice); queued.push(q); }
+  }
   ask(next.text, next.images, next.tabs);
+}
+
+// Ask AI from the new-tab page: the question starts a new chat instead of joining the open one (the
+// old one stays in the chat list). If a reply is still running it is not stopped: the question waits
+// its turn like any queued message, then opens the new chat.
+function askInNewChat(text) {
+  if (running) {
+    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text }) }));
+    queued.push({ text, images: [], tabs: null, notice, fresh: true });
+    return;
+  }
+  $('new-chat').click();
+  ask(text);
 }
 
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
