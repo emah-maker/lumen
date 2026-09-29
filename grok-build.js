@@ -162,6 +162,7 @@ const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, usageOf } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
+const { isLimitText, limitOf } = require('./features/grok-limit');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://x.ai/cli/install.ps1 | iex, then run `grok` once to sign in (needs SuperGrok or X Premium+).'
@@ -197,10 +198,47 @@ function describeFailure(text, code) {
   if (/not logged in|please (run|sign) in|run `grok login`|log ?in|oauth|authenticat/i.test(t)) {
     return { text: 'Grok Build is not signed in. Open a terminal, run `grok login`, and sign in with your SuperGrok or X Premium+ account. Lumen never sees your Grok login.' };
   }
-  if (/usage limit|limit reached|rate.?limit|out of (extra )?usage|resets? (at|in)|quota/i.test(t)) {
+  if (isLimitText(t)) {
     return { text: `Your Grok plan's usage limit is reached. ${t.split('\n')[0].slice(0, 200)}` };
   }
   return { text: `Grok Build stopped${code !== null && code !== undefined ? ` (exit ${code})` : ''}: ${t.split('\n').slice(0, 3).join(' ').slice(0, 300) || 'no output'}` };
+}
+
+// The model's real context window and auto-compaction threshold. Grok's streaming result names the
+// window only "when known" (its docs) and a real 1.0.41 run did not: `modelUsage` had no
+// contextWindow. The catalog Grok keeps in its home does: models_cache.json, { models: { <id>: {
+// info: { context_window, auto_compact_threshold_percent } } } }. The result names the model
+// "grok-4.7-build" where the catalog says "grok-4.7", so a trailing "-build" is tried without.
+function modelInfoFrom(cache, ids) {
+  const models = cache?.models || {};
+  for (const id of ids) {
+    for (const key of [id, String(id || '').replace(/-build$/, '')]) {
+      const info = models[key]?.info;
+      const contextWindow = Number(info?.context_window);
+      if (contextWindow > 0) {
+        const compact = Number(info.auto_compact_threshold_percent);
+        return { contextWindow, compactPercent: compact > 0 && compact <= 100 ? compact : null };
+      }
+    }
+  }
+  return null;
+}
+function readModelInfo(home, ids) {
+  try { return modelInfoFrom(JSON.parse(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8')), ids); } catch { return null; }
+}
+// What Lumen logs for one Grok turn (see cli-utils usageOf). `lastCall` is the usage of the turn's
+// last model call (the final `assistant` message): the context window's fill after the turn is
+// that call's whole input, not the turn's summed input, which counts a long tool loop's context
+// once per call. Reasoning tokens are part of output_tokens (`grok usage`: total = input + output).
+function grokUsage(result, { lastCall = null, info = null } = {}) {
+  const usage = usageOf(result);
+  if (!usage) return null;
+  if (!usage.contextWindow && info?.contextWindow) usage.contextWindow = info.contextWindow;
+  if (info?.compactPercent) usage.compactPercent = info.compactPercent;
+  if (lastCall && typeof lastCall === 'object') {
+    usage.contextTokens = (Number(lastCall.input_tokens) || 0) + (Number(lastCall.cache_read_input_tokens) || 0) + (Number(lastCall.cache_creation_input_tokens) || 0);
+  }
+  return usage;
 }
 
 // `grok models`: there is no `grok auth status --json` (no `auth`/`whoami` subcommand exists at all
@@ -599,6 +637,8 @@ class GrokBuildEngine {
     let finalText = '';
     let result = null;
     let newSession = sessionId;
+    let initModel = null;
+    let lastCall = null; // usage of the last model call this turn (the assistant message's)
     let stderr = '';
     let buffer = '';
     // Lumen's own tool check (see the file header): the first tool call that isn't Lumen's ends the
@@ -636,6 +676,7 @@ class GrokBuildEngine {
       }
       if (msg.type === 'system' && msg.subtype === 'init') {
         newSession = msg.session_id || newSession;
+        initModel = msg.model || initModel;
         // No connection-status notice here: see file header -- mcp_servers[].status is "pending"
         // at init even when the lumen server then works, so treating that as a failure signal (the
         // way claude-code.js does) would misfire on every run.
@@ -649,6 +690,7 @@ class GrokBuildEngine {
       } else if (msg.type === 'assistant') {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
+        if (msg.message?.usage) lastCall = msg.message.usage;
       } else if (msg.type === 'result') {
         result = msg;
         newSession = msg.session_id || newSession;
@@ -714,16 +756,18 @@ class GrokBuildEngine {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
-    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: result.total_cost_usd, usage: usageOf(result) }; // see claude-code.js
+    const usage = result ? grokUsage(result, { lastCall, info: readModelInfo(home, [initModel, ...Object.keys(result.modelUsage || {})].filter(Boolean)) }) : null;
+    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: result.total_cost_usd, usage }; // see claude-code.js
     if (!result || result.is_error || result.subtype !== 'success') {
       // A tool call outside the allow rules ends the whole run in error here (unlike Claude Code,
       // where it's one failed step and the turn continues) -- see file header.
       const failText = (result?.errors || []).join('\n') || result?.result || stderr;
       emit({ type: 'error', ...describeFailure(failText, code) });
-      return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true, usage: usageOf(result) };
+      // planLimit: the plan's usage limit was hit, with the reset time when the message names one.
+      return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true, usage, planLimit: limitOf(failText) };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage: usageOf(result) };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage };
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages, modelInfoFrom, readModelInfo, grokUsage };

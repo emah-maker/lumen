@@ -38,6 +38,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     // You and AI → Usage (features/usage.js)
     usage: call('prefs:usage'),
     clearUsage: call('prefs:clear-usage'),
+    setUsageBudget: call('prefs:usage-budget'),
     // About → Updates (features/updates.js)
     updates: {
       state: call('settings:updates-state'),

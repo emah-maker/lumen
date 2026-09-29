@@ -1,0 +1,37 @@
+{
+ "grok_version": "1.0.41",
+ "models": {
+  "grok-4.7": {
+   "info": {
+    "id": "grok-4.7",
+    "model": "grok-4.7",
+    "context_window": 256000,
+    "auto_compact_threshold_percent": 80
+   }
+  },
+  "grok-4.7-build-fast": {
+   "info": {
+    "id": "grok-4.7-build-fast",
+    "model": "grok-4.7-build-fast",
+    "context_window": 256000,
+    "auto_compact_threshold_percent": 80
+   }
+  },
+  "grok-4.6": {
+   "info": {
+    "id": "grok-4.6",
+    "model": "grok-4.6",
+    "context_window": 256000,
+    "auto_compact_threshold_percent": 80
+   }
+  },
+  "grok-4.5": {
+   "info": {
+    "id": "grok-4.5",
+    "model": "grok-4.5",
+    "context_window": 256000,
+    "auto_compact_threshold_percent": 80
+   }
+  }
+ }
+}

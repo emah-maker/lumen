@@ -2571,7 +2571,175 @@ async function bgTaskRuns() {
   fs.rmSync(dir2, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => {
+// ---- Grok Build's usage bar: the real result format, rolling windows, budget, limit messages
+async function grokUsageRuns() {
+  const { parseResetTime, limitOf, isLimitText } = require('../features/grok-limit');
+  const { barFor, grokWindows, budgetStatus, periodStart, periodEnd, normalizeBudget, createUsage } = require('../features/usage');
+  const { usageOf } = require('../cli-utils');
+  const fx = (name) => path.join(__dirname, 'fixtures', name);
+  const lines = fs.readFileSync(fx('grok-result.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const init = lines.find((m) => m.type === 'system');
+  const assistant = lines.find((m) => m.type === 'assistant');
+  const result = lines.find((m) => m.type === 'result');
+  const cache = JSON.parse(fs.readFileSync(fx('grok-models-cache.json'), 'utf8'));
+
+  // ---- the real `grok 1.0.41 --output-format streaming-messages-json` result, scrubbed (fixture)
+  const info = gb.modelInfoFrom(cache, [init.model, ...Object.keys(result.modelUsage)]);
+  const u = gb.grokUsage(result, { lastCall: assistant.message.usage, info });
+  check('Grok result: tokens, cache and cost are read from its usage fields', u.inputTokens === 17786 && u.outputTokens === 32 && u.cacheReadTokens === 1792 && u.cacheWriteTokens === 0 && Math.abs(u.costUSD - 0.0124644) < 1e-9 && u.models[0] === 'grok-4.7-build', JSON.stringify(u));
+  check('Grok result: the window comes from Grok\'s model catalog (the result names none)', !usageOf(result).contextWindow && u.contextWindow === 256000 && u.compactPercent === 80, JSON.stringify(u));
+  check('Grok result: context fill is the last model call\'s whole input (input + cache)', u.contextTokens === 17786 + 1792, u.contextTokens);
+  check('Grok result: a window in modelUsage wins over the catalog', gb.grokUsage({ ...result, modelUsage: { 'grok-4.7-build': { contextWindow: 1000000 } } }, { info }).contextWindow === 1000000, '');
+  check('Grok catalog: "-build" is tried without, an unknown model has no window', gb.modelInfoFrom(cache, ['grok-4.7-build']).contextWindow === 256000 && gb.modelInfoFrom(cache, ['nope']) === null && gb.modelInfoFrom(null, ['x']) === null && gb.modelInfoFrom({ models: { x: { info: { context_window: 0 } } } }, ['x']) === null, '');
+  check('Grok catalog: a threshold outside 1-100 is ignored', gb.modelInfoFrom({ models: { x: { info: { context_window: 9, auto_compact_threshold_percent: 500 } } } }, ['x']).compactPercent === null, '');
+  const rows = usageOf({ modelUsage: { a: { inputTokens: 5, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 1 }, b: { inputTokens: 1 } }, total_cost_usd: 0.5 });
+  check('usageOf: with no top-level usage the per-model rows are summed', rows.inputTokens === 6 && rows.outputTokens === 2 && rows.cacheReadTokens === 3 && rows.cacheWriteTokens === 1 && rows.costUSD === 0.5, JSON.stringify(rows));
+  check('usageOf: the Claude shape is unchanged', usageOf({ usage: { input_tokens: 7, output_tokens: 8, cache_read_input_tokens: 9, cache_creation_input_tokens: 10 }, modelUsage: { m: { inputTokens: 999, contextWindow: 200000 } }, total_cost_usd: 1 }).inputTokens === 7, '');
+  {
+    // The same messages through the engine against a fake grok: the run reports that usage.
+    const script = lines.filter((m) => m.type !== 'system').map((m) => ({ ...m, session_id: 'id-1' }));
+    const { out } = await fakeGrokRun([{ ...init, session_id: 'id-1' }, ...script]);
+    check('Grok run: the engine returns the real-format usage (context fill included)', out.text === 'ok' && out.usage.inputTokens === 17786 && out.usage.contextTokens === 19578 && Math.abs(out.cost - 0.0124644) < 1e-9 && !out.planLimit, JSON.stringify(out));
+    const limited = await fakeGrokRun([gbInit, { type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Usage limit reached. Your limit resets in 2h 10m.', session_id: 'id-1' }]);
+    const when = limited.out.planLimit?.resetsAt;
+    check('Grok run: a usage-limit failure carries its parsed reset time', limited.out.failed && /2h 10m/.test(limited.out.planLimit?.text || '') && Math.abs(when - (Date.now() + 130 * 60000)) < 30000, JSON.stringify(limited.out.planLimit));
+    const other = await fakeGrokRun([gbInit, { type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Something else broke.', session_id: 'id-1' }]);
+    check('Grok run: any other failure is not a limit', other.out.failed && other.out.planLimit === null, JSON.stringify(other.out.planLimit));
+  }
+
+  // ---- rolling windows, exactly from the log
+  const NOW = new Date(2026, 8, 30, 15, 0, 0).getTime(); // Wed 30 Sep 2026, 3pm local
+  const H = 3600e3;
+  const rec = (agoH, tokens, cost, engine = 'grokbuild') => ({ at: NOW - agoH * H, engine, inputTokens: tokens, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: cost });
+  const log = [rec(1, 1000, 0.01), rec(4.9, 2000, 0.02), rec(5.1, 4000, 0.04), rec(24 * 6.9, 8000, 0.08), rec(24 * 7.1, 16000, 0.16), rec(0.5, 999, 9, 'claudecode')];
+  const win = grokWindows(log, NOW);
+  check('Grok windows: last 5 hours counts only Grok turns inside it', win.h5.turns === 2 && win.h5.tokens === 3000 && Math.abs(win.h5.costUSD - 0.03) < 1e-9, JSON.stringify(win.h5));
+  check('Grok windows: last 7 days is rolling, and Claude turns are not counted', win.d7.turns === 4 && win.d7.tokens === 15000 && Math.abs(win.d7.costUSD - 0.15) < 1e-9, JSON.stringify(win.d7));
+
+  // ---- budget percent and reset, on a fake clock
+  check('budget: a day starts at local midnight and ends at the next', periodStart('daily', NOW) === new Date(2026, 8, 30).getTime() && periodEnd('daily', NOW) === new Date(2026, 9, 1).getTime(), '');
+  check('budget: a week starts on Monday and ends the next Monday', periodStart('weekly', NOW) === new Date(2026, 8, 28).getTime() && periodEnd('weekly', NOW) === new Date(2026, 9, 5).getTime() && periodStart('weekly', new Date(2026, 9, 4, 23).getTime()) === new Date(2026, 8, 28).getTime() && periodStart('weekly', new Date(2026, 9, 5, 0, 1).getTime()) === new Date(2026, 9, 5).getTime(), '');
+  const day = [{ ...rec(1, 100, 0.5) }, { ...rec(2, 100, 0.25) }, { ...rec(20, 100, 9) }, rec(48, 100, 1)]; // 3pm: 2 turns today ($0.75), one at 7pm yesterday, one 2 days ago
+  let bs = budgetStatus(day, { unit: 'usd', daily: 1, weekly: 4 }, NOW);
+  check('budget: percent of the daily budget in dollars, since midnight', bs.periods[0].kind === 'daily' && Math.abs(bs.periods[0].percent - 75) < 1e-9 && bs.periods[0].resetsAt === new Date(2026, 9, 1).getTime(), JSON.stringify(bs.periods[0]));
+  check('budget: the weekly period counts since Monday, and the furthest along is `top`', bs.periods[1].kind === 'weekly' && Math.abs(bs.periods[1].used - 10.75) < 1e-9 && bs.top.kind === 'weekly', JSON.stringify(bs));
+  bs = budgetStatus(day, { unit: 'tokens', daily: 400 }, NOW);
+  check('budget: in tokens, 200 of 400 today is 50%', bs.periods.length === 1 && bs.periods[0].percent === 50, JSON.stringify(bs));
+  check('budget: none set means no status, and nonsense is normalized away', budgetStatus(day, { unit: 'usd', daily: 0, weekly: -3 }, NOW) === null && budgetStatus(day, null, NOW) === null && JSON.stringify(normalizeBudget({ unit: 'x', daily: 'abc', weekly: '2.5' })) === '{"unit":"usd","daily":0,"weekly":2.5}', '');
+  const bar = (budget, records = day) => barFor('grokbuild', { engines: { grokbuild: { today: { turns: 2, tokens: 200, costUSD: 0.75 }, last: { contextTokens: 50000, contextWindow: 200000 } } }, grok: { windows: grokWindows(records, NOW), budget: { status: budgetStatus(records, budget, NOW) } } });
+  let b = bar({ unit: 'usd', daily: 10 });
+  check('Grok bar: a budget makes it a real progress bar (7.5%), with the reset time', b.kind === 'budget' && b.percent === 7.5 && b.level === 'ok' && b.resetsAt === new Date(2026, 9, 1).getTime() && b.period === 'daily', JSON.stringify(b));
+  b = bar({ unit: 'usd', daily: 0.9 });
+  check('Grok bar: amber at 80% of the budget', b.level === 'warn' && Math.round(b.percent) === 83, JSON.stringify(b));
+  b = bar({ unit: 'usd', daily: 0.7 });
+  check('Grok bar: red at 100%, and the bar stops at 100', b.level === 'high' && b.percent === 100, JSON.stringify(b));
+  b = bar(null);
+  check('Grok bar: with no budget it is the context fill (25%), tokens and cost today, and the rolling windows', b.kind === 'context' && b.percent === 25 && b.level === 'ok' && b.tokens === 200 && b.costUSD === 0.75 && b.windows.d7.turns === 4, JSON.stringify(b));
+  const ctx = (percent, compactPercent) => barFor('grokbuild', { engines: { grokbuild: { today: { turns: 1, tokens: 5, costUSD: 0 }, last: { contextTokens: percent * 1000, contextWindow: 100000, compactPercent } } } });
+  check('Grok bar: amber within 10 points of the auto-compaction threshold, never before', ctx(69, 80).level === 'ok' && ctx(70, 80).level === 'warn' && ctx(95, 80).level === 'warn' && ctx(89, null).level === 'ok' && ctx(90, null).level === 'warn', '');
+  check('Grok bar: no plan percentage anywhere (no plan/weekly fields)', !('weekly' in b) && !('lumenPoints' in b) && b.kind !== 'plan', '');
+  check('Grok bar: no Grok turn in 7 days and no budget hides it', barFor('grokbuild', { engines: {}, grok: { windows: grokWindows([], NOW), budget: { status: null } } }) === null && barFor('grokbuild', { engines: { grokbuild: { today: { turns: 0, tokens: 0, costUSD: 0 }, last: {} } }, grok: { windows: grokWindows([], NOW) } }) === null, '');
+  b = barFor('grokbuild', { engines: {}, grok: { limit: { text: 'Limit reached', resetsAt: NOW + H }, windows: grokWindows(day, NOW), budget: { status: budgetStatus(day, { unit: 'usd', daily: 10 }, NOW) } } });
+  check('Grok bar: limit reached wins, red at 100%, with the reset time', b.kind === 'limit' && b.level === 'high' && b.percent === 100 && b.resetsAt === NOW + H && b.message === 'Limit reached', JSON.stringify(b));
+
+  // ---- the reset time in a limit message (NOW as UTC noon so zones have a known "today")
+  const T = Date.UTC(2026, 8, 29, 16, 0, 0); // 12:00 EDT
+  const local = (y, mo, d, h, mi) => new Date(y, mo, d, h, mi).getTime();
+  const at = (text, now = T) => parseResetTime(text, now);
+  check('limit time: "resets in 2h 10m", "in 2 hours 10 minutes", "in 2h10m"', at('Limit reached, resets in 2h 10m') === T + 130 * 60e3 && at('You have hit your usage limit. It resets in 2 hours 10 minutes.') === T + 130 * 60e3 && at('resets in 2h10m') === T + 130 * 60e3, '');
+  check('limit time: minutes, days, seconds, "an hour", "try again in", "retry after"', at('rate limit, try again in 45 minutes') === T + 45 * 60e3 && at('resets in 1d 3h') === T + 27 * 3600e3 && at('retry after 90 seconds') === T + 90e3 && at('Quota exhausted, resets in an hour') === T + 3600e3, '');
+  const n = new Date(2026, 8, 29, 12, 0, 0).getTime();
+  check('limit time: "resets at 3:40pm" is today in local time; "at 15:40" too', at('Usage limit reached. Resets at 3:40pm', n) === local(2026, 8, 29, 15, 40) && at('resets at 15:40', n) === local(2026, 8, 29, 15, 40) && at('resets at 3:40 PM.', n) === local(2026, 8, 29, 15, 40) && at('resets at 3:40 p.m.', n) === local(2026, 8, 29, 15, 40), '');
+  check('limit time: a time already past today means tomorrow; 12am and 12pm are read right', at('resets at 9am', n) === local(2026, 8, 30, 9, 0) && at('resets at 12am', n) === local(2026, 8, 30, 0, 0) && at('resets at 12pm', n) === local(2026, 8, 29, 12, 0), '');
+  check('limit time: an IANA zone in parentheses is honoured (3:40 PM New York = 19:40Z)', at('resets at 3:40 PM (America/New_York)') === Date.UTC(2026, 8, 29, 19, 40), new Date(at('resets at 3:40 PM (America/New_York)')).toISOString());
+  check('limit time: abbreviations and UTC offsets (EST, PST, UTC+2, GMT-5:30)', at('resets at 3:40pm EST') === Date.UTC(2026, 8, 29, 20, 40) && at('resets at 8:00 PM PST') === Date.UTC(2026, 8, 30, 4, 0) && at('resets at 18:00 UTC+2') === Date.UTC(2026, 8, 29, 16, 0) && at('resets at 11:00 GMT-5:30') === Date.UTC(2026, 8, 29, 16, 30), `${new Date(at('resets at 8:00 PM PST')).toISOString()}`);
+  check('limit time: "at 3pm in New York" is a clock time; "in 2 hours (3pm)" is relative', at('resets at 3pm in New York', n) === local(2026, 8, 29, 15, 0) && at('resets in 2 hours (3pm)', n) === n + 2 * 3600e3, '');
+  check('limit time: a date with the time ("Oct 2 at 9am PST", "October 2nd, 2026 3:40 PM UTC")', at('resets Oct 2 at 9am PST') === Date.UTC(2026, 9, 2, 17, 0) && at('resets on October 2nd, 2026 3:40 PM UTC') === Date.UTC(2026, 9, 2, 15, 40), '');
+  check('limit time: ISO dates, with Z, an offset, a space, or a zone name after', at('resets 2026-10-01T15:40:00Z') === Date.UTC(2026, 9, 1, 15, 40) && at('resets at 2026-10-01T15:40:00+02:00') === Date.UTC(2026, 9, 1, 13, 40) && at('resets 2026-10-01 15:40 UTC') === Date.UTC(2026, 9, 1, 15, 40) && at('resets 2026-10-01 15:40 (America/New_York)') === Date.UTC(2026, 9, 1, 19, 40), '');
+  check('limit time: a Unix time in seconds or milliseconds', at('{"resets_at": 1790700000}', 1790690000000) === 1790700000000 && at('resets_at=1790700000000', 1790690000000) === 1790700000000, '');
+  check('limit time: no time given means null (never a guess)', at('Usage limit reached.') === null && at('rate limit exceeded') === null && at('quota') === null && at('') === null && at(null) === null && at('Limit reached, upgrade your plan for more') === null, '');
+  check('limit time: nonsense and far-off values are rejected', at('resets at 99:99') === null && at('resets at 13pm') === null && at('resets in 400 days') === null && at('resets 2031-01-01T00:00:00Z') === null && at('resets at 2020-01-01T00:00:00Z') === null, '');
+  check('limit time: a clock time far in a message after the anchor only', at('You did 3:40pm of work. Limit reached.') === null, '');
+  const lo = limitOf('Usage limit reached\nresets in 3h', T);
+  check('limit message: the first line is kept, and the time is parsed from all of it', lo.text === 'Usage limit reached' && lo.resetsAt === T + 3 * 3600e3 && limitOf('Something else') === null && isLimitText('out of usage') && isLimitText('quota exceeded') && !isLimitText('network unreachable'), JSON.stringify(lo));
+
+  // ---- state transitions (the real usage log on a fake clock and a throwaway profile)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-grokusage-'));
+  let clock = T;
+  const mk = (extra = {}) => createUsage({ app: { getPath: () => dir }, claudeBin: async () => null, now: () => clock, ...extra });
+  const turn = { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: 0.1, models: ['grok-4.7-build'], contextTokens: 20000, contextWindow: 256000 };
+  let session = 's-1';
+  const us = mk({ grokSession: () => session });
+  let sm = await us.summary();
+  check('state: with nothing logged the Grok bar is hidden', sm.bars.grokbuild === null && sm.grok.limit === null, JSON.stringify(sm.bars.grokbuild));
+  us.record('grokbuild', { usage: turn, session: 's-1', ok: true });
+  sm = await us.summary();
+  check('state: a Grok turn shows the context bar for the current chat (20000 of 256000)', sm.bars.grokbuild.kind === 'context' && Math.round(sm.bars.grokbuild.percent * 10) === 78 && sm.bars.grokbuild.tokens === 1100, JSON.stringify(sm.bars.grokbuild));
+  session = null;
+  sm = await us.summary();
+  check('state: a new chat (no Grok session yet) has no context percent, only today\'s counts', sm.bars.grokbuild.kind === 'context' && sm.bars.grokbuild.percent === null && sm.bars.grokbuild.tokens === 1100, JSON.stringify(sm.bars.grokbuild));
+  session = 's-1';
+  us.record('grokbuild', { usage: null, limit: { text: 'Usage limit reached. Resets at noon', resetsAt: T + 2 * H } });
+  sm = await us.summary();
+  check('state: a limit message turns the bar red with its reset time', sm.bars.grokbuild.kind === 'limit' && sm.bars.grokbuild.resetsAt === T + 2 * H && sm.grok.limit.text.startsWith('Usage limit reached'), JSON.stringify(sm.bars.grokbuild));
+  await new Promise((r) => setTimeout(r, 700)); // usage.json is saved half a second after a change
+  const again = mk({ grokSession: () => session });
+  again.load();
+  check('state: the limit is kept across a restart', (await again.summary()).bars.grokbuild.kind === 'limit', '');
+  clock = T + 2 * H + 1000;
+  sm = await us.summary();
+  check('state: it clears itself once the reset time passes', sm.grok.limit === null && sm.bars.grokbuild.kind === 'context', JSON.stringify(sm.bars.grokbuild));
+  clock = T;
+  us.record('grokbuild', { usage: null, limit: { text: 'Limit reached', resetsAt: null } });
+  clock = T + 3 * 24 * H;
+  sm = await us.summary();
+  check('state: a limit with no parsed time stays until a turn works', sm.bars.grokbuild.kind === 'limit' && sm.bars.grokbuild.resetsAt === null, JSON.stringify(sm.bars.grokbuild));
+  us.record('grokbuild', { usage: turn, session: 's-1', ok: false });
+  check('state: a turn that failed does not clear it', (await us.summary()).bars.grokbuild.kind === 'limit', '');
+  us.record('grokbuild', { usage: turn, session: 's-1', ok: true });
+  check('state: the next successful Grok turn clears it', (await us.summary()).grok.limit === null, '');
+  us.record('claudecode', { usage: turn, ok: true });
+  us.record('grokbuild', { usage: null, limit: { text: 'Limit reached', resetsAt: null } });
+  us.record('claudecode', { usage: turn, ok: true });
+  check('state: a Claude turn neither sets nor clears Grok\'s limit', (await us.summary()).grok.limit !== null, '');
+
+  // ---- the budget: real progress, and one notice per level and period
+  clock = new Date(2026, 8, 30, 15, 0).getTime();
+  const bu = mk();
+  bu.setBudget({ unit: 'usd', daily: 1 });
+  const cost = (c) => ({ ...turn, costUSD: c });
+  let r = bu.record('grokbuild', { usage: cost(0.5), session: 'x', ok: true });
+  check('budget notice: none below 80%', r === null, JSON.stringify(r));
+  r = bu.record('grokbuild', { usage: cost(0.35), session: 'x', ok: true });
+  check('budget notice: one at 80%, saying which budget and that it only counts Lumen\'s use', /85% of your daily Grok budget/.test(r?.notice) && /only Lumen's own/.test(r.notice), JSON.stringify(r));
+  r = bu.record('grokbuild', { usage: cost(0.01), session: 'x', ok: true });
+  check('budget notice: not again for the same level and period', r === null, JSON.stringify(r));
+  r = bu.record('grokbuild', { usage: cost(0.2), session: 'x', ok: true });
+  check('budget notice: another when it reaches 100%, saying nothing is blocked', /reached your daily Grok budget/.test(r?.notice) && /Nothing is blocked/.test(r.notice), JSON.stringify(r));
+  r = bu.record('grokbuild', { usage: cost(0.2), session: 'x', ok: true });
+  check('budget notice: and only once', r === null, JSON.stringify(r));
+  let bm = (await bu.summary()).bars.grokbuild;
+  check('budget bar: over budget it is a red bar stopped at 100', bm.kind === 'budget' && bm.level === 'high' && bm.percent === 100, JSON.stringify(bm));
+  clock = new Date(2026, 9, 1, 9, 0).getTime();
+  r = bu.record('grokbuild', { usage: cost(0.9), session: 'x', ok: true });
+  check('budget notice: the next day gets its own', /90% of your daily/.test(r?.notice), JSON.stringify(r));
+  bm = (await bu.summary()).bars.grokbuild;
+  check('budget bar: the new day starts from its own use (90%, amber) and resets at the next midnight', bm.level === 'warn' && Math.round(bm.percent) === 90 && bm.resetsAt === new Date(2026, 9, 2).getTime(), JSON.stringify(bm));
+  bu.setBudget({ unit: 'usd', daily: 0, weekly: 0 });
+  check('budget: cleared, the bar is the context fill again', (await bu.summary()).bars.grokbuild.kind === 'context', '');
+  await new Promise((res) => setTimeout(res, 700));
+  const kept = mk();
+  kept.load();
+  check('budget: the settings survive a restart', JSON.stringify(kept.budget()) === '{"unit":"usd","daily":0,"weekly":0}', JSON.stringify(kept.budget()));
+  bu.setBudget({ unit: 'tokens', daily: 0, weekly: 5000 });
+  await new Promise((res) => setTimeout(res, 700));
+  const kept2 = mk();
+  kept2.load();
+  check('budget: a saved weekly token budget loads back', JSON.stringify(kept2.budget()) === '{"unit":"tokens","daily":0,"weekly":5000}', JSON.stringify(kept2.budget()));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

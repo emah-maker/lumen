@@ -1,4 +1,5 @@
 // Usage: the plan's limits (a stand-in `claude` answering `/usage`) and Lumen's share of them
+// (and Grok Build's bar: context fill, a budget, the limit-reached state; stubbed turns only)
 // (stubbed Claude Code / Grok Build turns reporting tokens and rate_limit_event readings), shown in
 // Settings → Usage and the sidebar's meter, and kept across a restart. Offline; no real CLI runs.
 const { _electron: electron } = require('playwright-core');
@@ -115,6 +116,120 @@ const USAGE_TEXT = [
   await app.evaluate(() => global.__usage.clear());
   s = await summary(false);
   check('Clear empties Lumen\'s log', s.lumen.week.turns === 0, JSON.stringify(s.lumen.week));
+
+  // ---- Grok Build's bar: no plan numbers exist, so the states are context, budget and limit
+  // (stubbed turns: no real Grok runs). The log was just cleared, so it starts with nothing.
+  const grokUse = (contextTokens) => ({ inputTokens: 40000, outputTokens: 200, cacheReadTokens: 10000, cacheWriteTokens: 0, costUSD: 0.4, models: ['grok-4.7-build'], contextTokens, contextWindow: 200000, compactPercent: 80 });
+  await app.evaluate((_e, use) => {
+    global.__grokStub = { mode: 'ok', use, limit: null };
+    global.__agent.engines = {
+      grokbuild: {
+        owns: () => false,
+        run: async ({ sessionId }) => {
+          const g = global.__grokStub;
+          if (g.mode === 'limit') return { text: '', sessionId, failed: true, usage: null, planLimit: g.limit };
+          return { text: 'ok', sessionId: 'g1', usage: g.use };
+        },
+      },
+    };
+  }, grokUse(50000));
+  await app.evaluate(() => { global.__agent.browser.effectiveModel = (model) => model; }); // Grok isn't installed here: the stub is what answers
+  const stub = (patch) => app.evaluate((_e, p) => Object.assign(global.__grokStub, p), patch);
+  const grokTurn = () => app.evaluate(() => {
+    global.__agent.reset();
+    global.__agent.messages.settings = { ...global.__agent.getOptions(), model: 'grokbuild:default' };
+    const events = [];
+    return new Promise((resolve) => global.__agent.run('hello', (e) => { events.push({ type: e.type, text: e.text }); if (e.type === 'done') resolve(events); }));
+  });
+  const readMeter = () => ui.evaluate(() => {
+    const m = document.getElementById('usage-meter');
+    const b = m.querySelector('.um-bar');
+    return { hidden: m.hidden, text: m.textContent, cls: m.className, kind: m.dataset.kind || '', barHidden: b.hidden, now: b.getAttribute('aria-valuenow'), role: b.getAttribute('role'), label: b.getAttribute('aria-label') };
+  });
+  const pickGrok = () => ui.evaluate(() => {
+    const sel = document.getElementById('model');
+    if (![...sel.options].some((o) => o.value === 'grokbuild:default')) sel.append(new Option('Grok Build', 'grokbuild:default'));
+    sel.value = 'grokbuild:default';
+    sel.dispatchEvent(new Event('change'));
+  });
+  const until = async (pred, ms = 8000) => {
+    let m = null;
+    for (let i = 0; i < ms / 250; i++) { await pickGrok(); await sleep(250); m = await readMeter(); if (pred(m)) return m; }
+    return m;
+  };
+
+  let m = await until((x) => !x.hidden && /Send a message to see Grok usage/.test(x.text));
+  check('Grok bar: with no Grok turn yet there is no bar, only the hint', m && !m.hidden && m.barHidden && /Send a message to see Grok usage/.test(m.text), JSON.stringify(m));
+
+  await grokTurn();
+  m = await until((x) => /25% of context/.test(x.text));
+  check('Grok bar: default is the context fill (25%) with tokens and cost today', /25% of context · 50\.2k tokens · \$0\.40 today/.test(m.text) && m.kind === 'context' && !/high|warn/.test(m.cls), JSON.stringify(m));
+  check('Grok bar: a progressbar with the value, label and no plan wording', m.role === 'progressbar' && m.now === '25' && !m.barHidden && /Grok Build usage/.test(m.label) && !/Plan/.test(m.text), JSON.stringify(m));
+
+  await stub({ use: grokUse(150000) });
+  await grokTurn();
+  m = await until((x) => /75% of context/.test(x.text));
+  check('Grok bar: amber near the auto-compaction threshold (75% of an 80% threshold)', /warn/.test(m.cls) && !/high/.test(m.cls), JSON.stringify(m));
+  await stub({ use: grokUse(50000) });
+
+  // A budget of $1 a day: 2 turns of $0.40 have been used ($0.80 = 80%).
+  await app.evaluate(() => global.__usage.setBudget({ unit: 'usd', daily: 1 }));
+  m = await until((x) => x.kind === 'budget');
+  check('Grok bar: a budget makes it a progress bar toward it (80%), amber, with the reset time', /Budget 80%/.test(m.text) && /resets/.test(m.text) && m.now === '80' && /warn/.test(m.cls), JSON.stringify(m));
+  const t3 = await grokTurn();
+  m = await until((x) => /Budget 100%/.test(x.text));
+  check('Grok bar: at 100% of the budget it is red and stops at 100', /high/.test(m.cls) && m.now === '100', JSON.stringify(m));
+  check('Grok budget: one non-blocking notice when 100% is crossed', t3.some((e) => e.type === 'notice' && /reached your daily Grok budget/.test(e.text)) && t3.some((e) => e.type === 'done'), JSON.stringify(t3));
+  const t4 = await grokTurn();
+  check('Grok budget: no second notice for the same level', !t4.some((e) => e.type === 'notice' && /budget/.test(e.text)), JSON.stringify(t4));
+  await app.evaluate(() => global.__usage.setBudget({ unit: 'usd', daily: 0, weekly: 0 }));
+  m = await until((x) => x.kind === 'context');
+  check('Grok bar: with the budget removed it is the context fill again', m.kind === 'context', JSON.stringify(m));
+
+  // Limit reached, with the time Grok's message named.
+  const limitAt = Date.now() + 2 * 3600e3;
+  await stub({ mode: 'limit', limit: { text: 'Usage limit reached. Resets at soon', resetsAt: limitAt } });
+  await grokTurn();
+  m = await until((x) => x.kind === 'limit');
+  check('Grok bar: a limit-reached turn makes it red: "Grok limit reached, resets at <time>"', /Grok limit reached, resets at \d/.test(m.text) && /high/.test(m.cls) && m.now === '100', JSON.stringify(m));
+  s = await summary(false);
+  check('Grok limit: kept with its reset time in the usage log', s.grok.limit?.resetsAt === limitAt && s.bars.grokbuild.kind === 'limit', JSON.stringify(s.grok.limit));
+  await stub({ limit: { text: 'Limit reached', resetsAt: null } });
+  await grokTurn();
+  m = await until((x) => x.kind === 'limit' && /^Grok limit reached$/.test(x.text));
+  check('Grok bar: a limit with no time in the message says only "limit reached"', /^Grok limit reached$/.test(m.text), JSON.stringify(m));
+  await stub({ mode: 'ok' });
+  await grokTurn();
+  m = await until((x) => x.kind === 'context');
+  check('Grok bar: the next Grok turn that works clears the limit', m.kind === 'context' && (await summary(false)).grok.limit === null, JSON.stringify(m));
+  await stub({ mode: 'limit', limit: { text: 'Limit reached, resets in a moment', resetsAt: Date.now() + 2500 } });
+  await grokTurn();
+  m = await until((x) => x.kind === 'limit');
+  check('Grok limit: shown while its reset time is ahead', m.kind === 'limit', JSON.stringify(m));
+  await stub({ mode: 'ok' });
+  m = await until((x) => x.kind === 'context', 9000);
+  check('Grok limit: the bar leaves the limit state by itself when the reset time passes', m.kind === 'context', JSON.stringify(m));
+
+  // Settings → Usage: the plain line, the rolling use, and the budget the user can set.
+  await app.evaluate(() => global.__settings.open('usage'));
+  let gp = null;
+  for (let i = 0; i < 40 && !(gp && gp.save); i++) {
+    await sleep(250);
+    gp = await app.evaluate(async () => {
+      const t = global.__settings.tabs().find((x) => x.settings);
+      const wc = t && global.__settings.contents(t.id);
+      return wc ? wc.executeJavaScript("(() => { const sec = document.getElementById('sec-usage'); return sec && !sec.hidden && { save: Boolean(document.getElementById('usage-budget-save')), text: sec.textContent }; })()") : null;
+    });
+  }
+  check('Settings → Usage: says Grok doesn’t share plan limits and this is Lumen’s own use', gp && /Grok doesn’t share your plan’s limits, so this shows Lumen’s own use; set a budget to get a progress bar\./.test(gp.text), JSON.stringify(gp).slice(0, 600));
+  check('Settings → Usage: Lumen’s Grok use in the last 5 hours and 7 days, not plan remaining', gp && /Last 5 hours: \d+ turns?/.test(gp.text) && /Last 7 days: \d+ turns?/.test(gp.text) && /not what’s left of your plan/.test(gp.text), gp?.text.slice(0, 400));
+  await app.evaluate(async () => {
+    const t = global.__settings.tabs().find((x) => x.settings);
+    await global.__settings.contents(t.id).executeJavaScript("(() => { document.getElementById('usage-budget-daily').value = '3'; document.getElementById('usage-budget-unit').value = 'tokens'; document.getElementById('usage-budget-save').click(); })()");
+  });
+  let saved = null;
+  for (let i = 0; i < 20 && !(saved && saved.daily === 3); i++) { await sleep(200); saved = await app.evaluate(() => global.__usage.budget()); }
+  check('Settings → Usage: the budget saved from the page is applied (3 tokens a day, as typed)', saved && saved.daily === 3 && saved.unit === 'tokens', JSON.stringify(saved));
 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true });
