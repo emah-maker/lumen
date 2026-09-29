@@ -381,5 +381,19 @@
   "updates.ready": "Lumen {version} is ready",
   "updates.releases": "Open the releases page",
   "updates.restart": "Restart to update",
-  "updates.restart.title": "Restart Lumen now; your tabs come back"
+  "updates.restart.title": "Restart Lumen now; your tabs come back",
+  "usage.context": "Context {percent}%",
+  "usage.context.title": "The last turn filled about {percent}% of the model's context window ({used} of {total} tokens).",
+  "usage.label": "{engine} usage",
+  "usage.lumen": "Lumen ≈{points}",
+  "usage.more": "Click for details.",
+  "usage.plan": "Plan {percent}%",
+  "usage.plan.title": "Your Claude plan's 5-hour limit is {percent}% used.",
+  "usage.resets": "resets {time}",
+  "usage.resets.title": "It resets {time}.",
+  "usage.share.title": "About {points} of that came from Lumen's sidebar.",
+  "usage.tokens": "{tokens} tokens",
+  "usage.tokens.title": "Tokens and list-price cost from Lumen's sidebar chats with {engine} today.",
+  "usage.week": "week {percent}%",
+  "usage.week.title": "The weekly limit is {percent}% used."
 }

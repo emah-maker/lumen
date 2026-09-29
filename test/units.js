@@ -740,6 +740,26 @@ async function fuseChecks() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ---- the sidebar usage bar (features/usage.js barFor, cli-utils usageOf)
+{
+  const { barFor } = require('../features/usage');
+  const { usageOf } = require('../cli-utils');
+  const plan = { available: true, limits: [{ label: 'Current session', percent: 29, resets: '8:09pm (America/New_York)' }, { label: 'Current week (all models)', percent: 12, resets: 'Oct 2' }] };
+  let b = barFor('claudecode', { plan, meter: null, lumen: { window: { limitPoints: 3 } } });
+  check('usage bar: Claude Code shows the session and weekly limits', b.kind === 'plan' && b.percent === 29 && b.resetsText === '8:09pm' && b.weekly.percent === 12 && b.lumenPoints === 3, JSON.stringify(b));
+  b = barFor('claudecode', { plan: { available: false }, meter: { percent: 140, resetsAt: 5 } });
+  check('usage bar: a live meter reading wins and is clamped to 100', b.percent === 100 && b.resetsAt === 5 && b.weekly === null, JSON.stringify(b));
+  check('usage bar: no plan data and no meter hides the Claude bar', barFor('claudecode', { plan: { available: false } }) === null);
+  const s = { engines: { grokbuild: { today: { turns: 2, tokens: 5000, costUSD: 0.02 }, last: { contextTokens: 50000, contextWindow: 200000 } } } };
+  b = barFor('grokbuild', s);
+  check('usage bar: Grok Build shows context fill, tokens and cost', b.kind === 'context' && b.percent === 25 && b.tokens === 5000 && b.costUSD === 0.02, JSON.stringify(b));
+  b = barFor('grokbuild', { engines: { grokbuild: { today: { turns: 1, tokens: 10, costUSD: 0 }, last: { contextTokens: 10, contextWindow: 0 } } } });
+  check('usage bar: an unknown context window gives no percent, only counts', b.percent === null && b.tokens === 10, JSON.stringify(b));
+  check('usage bar: an engine with no turns today is hidden', barFor('grokbuild', { engines: { grokbuild: { today: { turns: 0, tokens: 0, costUSD: 0 }, last: {} } } }) === null && barFor('grokbuild', {}) === null);
+  const u = usageOf({ usage: { input_tokens: 5 }, modelUsage: { a: { contextWindow: 200000 }, b: { contextWindow: 1000000 } }, total_cost_usd: 0.1 });
+  check('usage bar: usageOf reads the largest context window', u.contextWindow === 1000000 && u.inputTokens === 5, JSON.stringify(u));
+}
+
 // ---- AI chat usage totals (features/chat-usage.js)
 {
   const { addUsage, describeUsage } = require('../features/chat-usage');

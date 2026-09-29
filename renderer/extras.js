@@ -102,44 +102,77 @@
   window.browser.onTabs?.((state) => renderChip(state)); // follows tab switches, titles and navigation
   extras.getPageContext?.().then((on) => { include = on !== false; renderChip(); });
 
-  // ---------- [usage] the plan meter ----------
-  // "Plan 29% · resets 8:09 PM · Lumen ≈3": the 5-hour limit, and roughly how much of it Lumen's
-  // sidebar used in this window. Live during a turn (the CLI's rate_limit_event), refreshed after
-  // each one; a click opens Settings → Usage.
+  // ---------- [usage] the usage bar ----------
+  // One compact bar per CLI engine, from features/usage.js's barFor(): Claude Code shows its plan's
+  // 5-hour limit ("Plan 29% · resets 8:09 PM · week 12% · Lumen ≈3"); Grok Build shows the tokens and
+  // cost of today's sidebar turns, and the context window's fill when the CLI reports its size. The
+  // bar hides when there is nothing real to show. Live during a Claude turn (rate_limit_event),
+  // refreshed after each one; a click opens Settings → Usage.
   const meter = Object.assign(document.createElement('button'), { type: 'button', id: 'usage-meter', className: 'usage-meter', hidden: true });
   const meterBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
   const meterFill = document.createElement('i');
   meterBar.append(meterFill);
+  meterBar.setAttribute('role', 'progressbar');
+  meterBar.setAttribute('aria-valuemin', '0');
+  meterBar.setAttribute('aria-valuemax', '100');
   const meterText = Object.assign(document.createElement('span'), { className: 'um-text' });
   meter.append(meterBar, meterText);
   chip.after(meter);
   meter.addEventListener('click', () => extras.openUsage?.());
   let usage = null;
-  const onClaudeCode = () => String(select?.value || '').startsWith('claudecode:');
+  const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' };
+  const engineKey = () => String(select?.value || '').split(':')[0];
   const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const compact = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
+  const pts = (n) => (n < 1 ? '<1' : String(Math.round(n)));
   function renderMeter() {
-    const session = usage?.plan?.available && usage.plan.limits.find((l) => /session/i.test(l.label));
-    const percent = usage?.meter?.percent ?? session?.percent;
-    meter.hidden = !onClaudeCode() || percent == null;
-    if (meter.hidden) return;
-    const p = Math.max(0, Math.min(100, percent));
-    meterFill.style.width = `${p}%`;
-    meter.classList.toggle('high', p >= 80);
-    const resets = usage.meter?.resetsAt ? clock(usage.meter.resetsAt) : session?.resets?.replace(/\s*\(.*\)$/, '');
-    const points = usage.lumen?.window?.limitPoints;
-    meterText.textContent = [`Plan ${Math.round(p)}%`, resets ? `resets ${resets}` : '', points != null ? `Lumen ≈${points < 1 ? '<1' : Math.round(points)}` : ''].filter(Boolean).join(' · ');
-    meter.title = `Your Claude plan's 5-hour limit is ${Math.round(p)}% used${resets ? `; it resets ${resets}` : ''}.${points != null ? ` About ${points < 1 ? 'less than 1 point' : `${Math.round(points)} points`} of that came from Lumen's sidebar.` : ''} Click for details.`;
+    const key = engineKey();
+    const bar = ENGINE_NAMES[key] ? usage?.bars?.[key] : null;
+    meter.hidden = !bar;
+    if (!bar) return;
+    const engine = ENGINE_NAMES[key];
+    const text = [];
+    const title = [];
+    const percent = bar.percent == null ? null : Math.round(bar.percent);
+    if (bar.kind === 'plan') {
+      const resets = bar.resetsAt ? clock(bar.resetsAt) : bar.resetsText;
+      text.push(window.t('usage.plan', { percent }));
+      if (resets) text.push(window.t('usage.resets', { time: resets }));
+      if (bar.weekly) text.push(window.t('usage.week', { percent: Math.round(bar.weekly.percent) }));
+      if (bar.lumenPoints != null) text.push(window.t('usage.lumen', { points: pts(bar.lumenPoints) }));
+      title.push(window.t('usage.plan.title', { percent }));
+      if (resets) title.push(window.t('usage.resets.title', { time: resets }));
+      if (bar.weekly) title.push(window.t('usage.week.title', { percent: Math.round(bar.weekly.percent) }));
+      if (bar.lumenPoints != null) title.push(window.t('usage.share.title', { points: pts(bar.lumenPoints) }));
+    } else {
+      if (percent != null) {
+        text.push(window.t('usage.context', { percent }));
+        title.push(window.t('usage.context.title', { percent, used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
+      }
+      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }) + (bar.costUSD > 0 ? ` · ~$${bar.costUSD < 0.01 ? bar.costUSD.toFixed(4) : bar.costUSD.toFixed(2)}` : ''));
+      title.push(window.t('usage.tokens.title', { engine }));
+    }
+    meterBar.hidden = percent == null;
+    if (percent != null) {
+      meterFill.style.width = `${percent}%`;
+      meterBar.setAttribute('aria-valuenow', String(percent));
+      meterBar.setAttribute('aria-valuetext', text[0]);
+    }
+    meterBar.setAttribute('aria-label', window.t('usage.label', { engine }));
+    meter.classList.toggle('high', percent != null && percent >= 80);
+    meterText.textContent = text.join(' · ');
+    meter.title = `${title.join(' ')} ${window.t('usage.more')}`;
   }
   async function refreshUsage(force) {
-    if (!onClaudeCode() || !extras.usage) { renderMeter(); return; }
+    if (!ENGINE_NAMES[engineKey()] || !extras.usage) { renderMeter(); return; }
     usage = await extras.usage(force).catch(() => usage);
     renderMeter();
   }
   select?.addEventListener('change', () => setTimeout(() => refreshUsage(false)));
   window.assistant?.onEvent?.((event) => {
-    if (event.type === 'rate_limit' && event.info?.unifiedWindows?.five_hour && usage) {
-      const w = event.info.unifiedWindows.five_hour;
-      usage.meter = { percent: Number(w.utilization) * 100, resetsAt: Number(w.resetsAt) * 1000 };
+    const w = event.type === 'rate_limit' && event.info?.unifiedWindows?.five_hour;
+    if (w && usage?.bars?.claudecode) {
+      usage.bars.claudecode = { ...usage.bars.claudecode, percent: Math.max(0, Math.min(100, Number(w.utilization) * 100)), resetsAt: Number(w.resetsAt) * 1000 };
       renderMeter();
     } else if (event.type === 'done') setTimeout(() => refreshUsage(false), 300);
   });
