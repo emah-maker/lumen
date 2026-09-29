@@ -80,6 +80,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 
 const SECTIONS = [
   { id: 'you-and-ai', title: 'You and AI', build: buildAi },
+  { id: 'skills', title: 'Skills', build: buildSkills }, // settings-skills.js
   { id: 'usage', title: 'Usage', build: buildUsage }, // [usage]
   { id: 'appearance', title: 'Appearance', build: buildAppearance },
   { id: 'search', title: 'Search engine', build: buildSearch },

@@ -43,6 +43,14 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     get: () => ipcRenderer.invoke('prefs:ui'),
     onChange: on('prefs:ui'),
   });
+  // The "/" menu (features/skills.js); no right-click "Run skill" here: that opens the sidebar.
+  contextBridge.exposeInMainWorld('skillsApi', {
+    menu: () => ipcRenderer.invoke('skills:menu'),
+    context: (options) => ipcRenderer.invoke('skills:context', options),
+    prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
+    draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+    onChanged: on('skills:changed'),
+  });
   contextBridge.exposeInMainWorld('lumenExtras', {
     usage: (refresh) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh) }),
     openUsage: () => ipcRenderer.send('settings-page:open', 'usage'),
