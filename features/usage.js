@@ -210,7 +210,10 @@ function createUsage(deps) {
   // Grok's limit state (see grokLimitNow): `limit` is { text, resetsAt } from a failed turn's message;
   // `ok` marks a finished turn, which clears it. Returns { notice } when this turn took a budget
   // over 80% or 100% for the first time in its period.
-  function record(engine, { usage, rateLimit, model, session, limit, ok } = {}) {
+  // background: a background task's run (features/background-runner.js). Its tokens and cost count as
+  // Lumen's, and its plan-meter reading chains with the sidebar's (each turn is measured against the
+  // reading before it), but it is kept apart: never the sidebar's "last turn" context bar.
+  function record(engine, { usage, rateLimit, model, session, limit, ok, background = false } = {}) {
     if (engine === 'grokbuild') {
       if (limit) { grokLimit = { at: clock(), resetsAt: Number.isFinite(limit.resetsAt) ? limit.resetsAt : null, text: String(limit.text || '').slice(0, 200) }; save(); }
       else if (ok && grokLimit) { grokLimit = null; save(); }
@@ -227,7 +230,7 @@ function createUsage(deps) {
       at: clock(), engine, model: model || (usage.models || [])[0] || null,
       inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0,
       cacheReadTokens: usage.cacheReadTokens || 0, cacheWriteTokens: usage.cacheWriteTokens || 0,
-      costUSD: usage.costUSD || 0, limitPoints,
+      costUSD: usage.costUSD || 0, limitPoints, ...(background ? { background: true } : {}),
       // Grok reports the last model call's own input (a long tool loop would otherwise count the context once per call).
       contextTokens: Number.isFinite(usage.contextTokens) ? usage.contextTokens : (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0), contextWindow: usage.contextWindow || 0,
       ...(engine === 'grokbuild' ? { session: session || null, compactPercent: usage.compactPercent || null } : {}),
@@ -334,22 +337,23 @@ function createUsage(deps) {
     const engines = {};
     for (const name of new Set(records.map((r) => r.engine))) {
       const mine = records.filter((r) => r.engine === name);
-      let last = mine[mine.length - 1];
+      // a background run's context is not the sidebar chat's
+      let last = [...mine].reverse().find((r) => !r.background) || { at: 0 };
       // Grok's context fill is the current chat's: its last turn, or none for a chat with no Grok turn yet.
       let fresh = false;
       if (name === 'grokbuild' && deps.grokSession) {
         const session = deps.grokSession();
-        const own = session ? mine.filter((r) => r.session === session) : [];
+        const own = session ? mine.filter((r) => r.session === session && !r.background) : [];
         if (own.length) last = own[own.length - 1]; else fresh = true;
       }
-      engines[name] = { today: sum(today.filter((r) => r.engine === name)), last: { at: last.at, contextTokens: fresh ? 0 : last.contextTokens || 0, contextWindow: last.contextWindow || 0, compactPercent: last.compactPercent || null } };
+      engines[name] = { today: sum(today.filter((r) => r.engine === name)), background: sum(today.filter((r) => r.engine === name && r.background)), last: { at: last.at, contextTokens: fresh ? 0 : last.contextTokens || 0, contextWindow: last.contextWindow || 0, compactPercent: last.compactPercent || null } };
     }
     const result = {
       plan: planData,
       meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt, at: meter.at } : null,
       status: latestInfo ? { status: latestInfo.status || null, overage: latestInfo.isUsingOverage ? 'in use' : latestInfo.overageStatus || null } : null,
       lumen: {
-        window: { start: windowStart, ...sum(since(windowStart).filter((r) => r.engine === 'claudecode')) },
+        window: { start: windowStart, ...sum(since(windowStart).filter((r) => r.engine === 'claudecode')), background: sum(since(windowStart).filter((r) => r.engine === 'claudecode' && r.background)).turns },
         today: sum(today),
         week: sum(since(now - 7 * 24 * 60 * 60 * 1000)),
         byEngine: Object.fromEntries(Object.entries(byEngine).map(([k, v]) => [k, sum(v)])),

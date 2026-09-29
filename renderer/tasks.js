@@ -205,6 +205,7 @@
       task.watching ? h('p', { className: 'task-meta', textContent: [task.watching.checkedAt ? T('tasks.watch.checked', { time: ago(task.watching.checkedAt) }) : T('tasks.watch.none'), task.watching.holding ? T('tasks.watch.holding') : ''].filter(Boolean).join(' · ') }) : null,
       task.pending.map((p) => approvalCard(task, p)),
       actions,
+      task.engine && task.engine !== 'api' ? h('p', { className: 'task-meta', textContent: T('tasks.detail.engine', { engine: task.engine === 'grokbuild' ? 'Grok Build' : 'Claude Code' }) }) : null,
       h('h3', { textContent: T('tasks.detail.prompt') }), h('p', { className: 'task-prompt', textContent: task.prompt }),
       h('p', { className: 'task-meta', textContent: T('tasks.create.mayVisit', { sites: task.allowedSites.join(', ') || '-' }) }));
 
@@ -322,9 +323,12 @@
     sites.setAttribute('aria-label', T('tasks.create.sites'));
     let sitesTouched = false;
     sites.addEventListener('input', () => { sitesTouched = true; summarize(); });
-    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === pv.model })));
+    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === pv.model, disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox' });
     const mcp = h('input', { type: 'checkbox' });
+    // A Claude Code / Grok Build task has Lumen's browser tools only: the user's MCP tools are for API models.
+    const mcpLabel = h('label', { className: 'task-check' }, mcp, T('tasks.create.mcp'));
+    const syncMcp = () => { const cli = pv.models.find((m) => m.id === model.value)?.engine !== 'api'; mcp.disabled = cli; if (cli) mcp.checked = false; mcpLabel.title = cli ? T('tasks.create.mcp.cli') : ''; };
     const summary = h('p', { className: 'task-summary', 'aria-live': 'polite' });
     const siteList = () => sites.value.split(',').map((s) => s.trim()).filter(Boolean);
     const modelLabel = () => model.selectedOptions[0]?.textContent.replace(/^.*· /, '') || pv.label;
@@ -339,7 +343,7 @@
       clearTimeout(timer);
       timer = setTimeout(async () => { if (!sitesTouched) { sites.value = (await api.preview({ prompt: prompt.value, pageUrl: pv.pageUrl })).sites.join(', '); summarize(); } }, 250);
     });
-    model.addEventListener('change', summarize);
+    model.addEventListener('change', () => { syncMcp(); summarize(); });
     fields.node.addEventListener('input', summarize);
     fields.node.addEventListener('change', summarize);
 
@@ -361,11 +365,13 @@
       h('label', { className: 'task-field stack' }, h('span', { textContent: T('tasks.create.sites') }), sites),
       h('label', { className: 'task-field' }, model, h('span', { textContent: T('tasks.create.model') })),
       h('label', { className: 'task-check' }, signedIn, T('tasks.create.signedIn')),
-      pv.hasMcp ? h('label', { className: 'task-check' }, mcp, T('tasks.create.mcp')) : null,
+      pv.hasMcp ? mcpLabel : null,
+      ...(pv.cli || []).filter((c) => c.state !== 'ready').map((c) => h('p', { className: 'task-meta', textContent: T(`tasks.create.cliNote.${c.state}`, { name: c.name }) })),
       error,
       h('div', { className: 'approval-actions' }, btn(T('tasks.create.cancel'), close), create));
     sidebar.append(overlay);
     creating = overlay;
+    syncMcp();
     summarize();
     (watch ? fields.url : prompt).focus();
   }

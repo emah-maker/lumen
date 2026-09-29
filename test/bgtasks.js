@@ -3,6 +3,7 @@
 // as waiting-approval and resumes on Allow; Deny and Stop end it cleanly; buy/send steps ask even on an
 // allowed site; a watch task notices a changed page without calling the model when nothing changed; a
 // private window can't create a task; and a restart marks a running task interrupted.
+// Claude Code / Grok Build tasks run against a fake CLI process (test/fixtures/fake-cli.js): no login, no tokens.
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -29,9 +30,15 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   const other = `http://localhost:${port}`; // a different host for the same server
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-bgtasks-'));
+  const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-fakecli-'));
+  const fakeCli = path.join(__dirname, 'fixtures', 'fake-cli.js');
   const launch = () => electron.launch({
     args: [path.join(__dirname, '..')],
-    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1' },
+    env: {
+      ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1',
+      // the CLIs are the fake process; the user's own ~/.grok is never read
+      LUMEN_TEST_CLI_SPAWN: fakeCli, LUMEN_TEST_CLI_DIR: cliDir, LUMEN_CLAUDE_BIN: fakeCli, LUMEN_GROK_BIN: fakeCli, LUMEN_GROK_SIDEBAR: '1', GROK_HOME: path.join(cliDir, 'user-grok'),
+    },
     colorScheme: null,
   });
   let app = await launch();
@@ -234,6 +241,196 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).close(), priv.windowId);
   await waitFor(() => app.evaluate(() => global.__bg.tasks().length >= 0 && global.__private.count() === 0));
 
+  // ---- 9b. Claude Code and Grok Build tasks, on the fake CLI: their own process, session and tab.
+  const scriptsFile = path.join(cliDir, 'scripts.json');
+  const setScripts = (more) => { let cur = {}; try { cur = JSON.parse(fs.readFileSync(scriptsFile, 'utf8')); } catch { /* none yet */ } fs.writeFileSync(scriptsFile, JSON.stringify({ ...cur, ...more })); };
+  const cliLog = () => { try { return fs.readFileSync(path.join(cliDir, 'log.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+  const cliRelease = (name) => fs.writeFileSync(path.join(cliDir, `release-${name}`), '');
+  const started = (marker) => cliLog().find((e) => e.event === 'start' && e.marker === marker);
+  const logOf = (marker, event) => { const pid = started(marker)?.pid; return cliLog().filter((e) => e.pid === pid && e.event === event); };
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const cliTask = (marker, model, more = {}) => create({ prompt: `${marker} go to 127.0.0.1:${port}/${marker.toLowerCase()} and report`, model, schedule: { type: 'now' }, ...more });
+  const preview = () => ui.evaluate(() => window.assistant.tasks.preview({}));
+  const argAfter = (argv, f) => argv[argv.indexOf(f) + 1];
+  const originalModel = await ui.inputValue('#model');
+  await app.evaluate(() => global.__patchSettings({ performanceMode: 'off' })); // Performance mode (auto on a throttled laptop) would cap tasks at 1: the queue check needs 2
+  await waitFor(async () => (await preview()).models.some((m) => m.id === 'grokbuild:default'), 15000);
+
+  const pv = await preview();
+  check('the model choice lists API models and both CLIs\' models', pv.models.some((m) => m.engine === 'api') && ['claudecode:default', 'claudecode:sonnet', 'grokbuild:default'].every((id) => pv.models.some((m) => m.id === id && m.available)), JSON.stringify(pv.models.map((m) => m.id)));
+  check('the CLIs are reported ready (nothing to warn about)', pv.cli.every((c) => c.state === 'ready'), JSON.stringify(pv.cli));
+
+  // Signed out: said when creating, not when it runs, and the option shows as unavailable.
+  await app.evaluate(() => { global.__claudeCode.status = async () => ({ installed: true, signedIn: false, accountType: null, detail: null }); });
+  await ui.evaluate(() => window.lumenExtras.claudeCodeStatus(true));
+  const pvOut = await preview();
+  check('a signed-out CLI is listed as unavailable, with a note', pvOut.models.find((m) => m.id === 'claudecode:sonnet')?.available === false && pvOut.cli.find((c) => c.engine === 'claudecode').state === 'not-signed-in', JSON.stringify(pvOut.cli));
+  const outRes = await create({ prompt: `TASK-CX 127.0.0.1:${port}`, model: 'claudecode:sonnet', schedule: { type: 'now' } });
+  check('creating a task on a signed-out CLI says so at once, and makes nothing', outRes.ok === false && /not signed in/i.test(outRes.error) && !(await tasks()).some((t) => t.title.includes('TASK-CX')), JSON.stringify(outRes));
+  await app.evaluate(() => { global.__claudeCode.status = async () => ({ installed: true, signedIn: true, accountType: 'subscription', detail: null }); });
+  await ui.evaluate(() => window.lumenExtras.claudeCodeStatus(true));
+
+  // A Claude Code task and a sidebar chat on the same fake, at the same time.
+  await app.evaluate((_e, u) => global.__agent.browser.openTab(u), `${base}/user3`);
+  await sleep(600);
+  setScripts({
+    'TASK-CA': [{ tool: 'navigate', input: { url: `${base}/ca` } }, { tool: 'read_page', input: {} }, { hold: 'CA' }, { say: 'RESULT-CA the page says: Page text for /ca' }],
+    'SIDE-1': [{ tool: 'read_page', input: {} }, { hold: 'S1' }, { say: 'RESULT-S1 sidebar reply' }],
+  });
+  await ui.selectOption('#model', 'claudecode:default');
+  await ui.fill('#prompt', 'SIDE-1 what is on this page?');
+  await ui.press('#prompt', 'Enter');
+  await waitFor(() => started('SIDE-1'), 15000);
+  const userTabsBefore = await userTabs();
+  const ca = await cliTask('TASK-CA', 'claudecode:sonnet');
+  check('a Claude Code task can be created', ca.ok === true, JSON.stringify(ca));
+  await waitFor(() => logOf('TASK-CA', 'tool').some((e) => e.name === 'read_page'), 25000);
+  const sa = started('TASK-CA');
+  const ss = started('SIDE-1');
+  check('the task and the sidebar chat are two processes with different sessions and different bridge tags', sa && ss && sa.pid !== ss.pid && sa.session !== ss.session && logOf('TASK-CA', 'bridge')[0]?.tag !== logOf('SIDE-1', 'bridge')[0]?.tag && alive(sa.pid) && alive(ss.pid), JSON.stringify({ sa, ss }));
+  check('the task is running while the sidebar chat is too', (await statusOf('TASK-CA')) === 'running' && await app.evaluate(() => global.__agent.running), await statusOf('TASK-CA'));
+  const av = sa.argv;
+  const toolsIdx = av.indexOf('--tools');
+  check('the task\'s claude has the sidebar\'s lock-down: no built-in tools, only mcp__lumen, strict MCP config, dontAsk', toolsIdx >= 0 && av[toolsIdx + 1] === '' && argAfter(av, '--allowedTools') === 'mcp__lumen' && av.includes('--strict-mcp-config') && argAfter(av, '--permission-mode') === 'dontAsk', av.join(' '));
+  check('its step limit is --max-turns 60 (Max steps is unlimited) and its model is the one picked', argAfter(av, '--max-turns') === '60' && argAfter(av, '--model') === 'sonnet' && argAfter(av, '--session-id') === sa.session && !av.includes('--resume'), av.join(' '));
+  check('the sidebar\'s own message has no turn cap and picked no model (unchanged)', !ss.argv.includes('--max-turns') && !ss.argv.includes('--model'), ss.argv.join(' '));
+  check('each has its own empty temp folder as cwd', /lumen-cc-/.test(sa.cwd) && /lumen-cc-/.test(ss.cwd) && sa.cwd !== ss.cwd, `${sa.cwd} | ${ss.cwd}`);
+  check('the task\'s claude is told it is a background task', /background task/.test(sa.system) && !/background task/.test(ss.system), sa.system.slice(-200));
+  const taskRead = logOf('TASK-CA', 'tool').find((e) => e.name === 'read_page');
+  const sideRead = logOf('SIDE-1', 'tool').find((e) => e.name === 'read_page');
+  check('the task\'s calls acted on its own tab (its page), the sidebar\'s on the user\'s tab', /Page text for \/ca/.test(taskRead?.text || '') && !/Page text for \/ca/.test(sideRead?.text || ''), JSON.stringify({ taskRead, sideRead }));
+  const workUrl = await app.evaluate(() => [...global.__bg.runtimes().values()].map((rt) => rt.wc.getURL()));
+  check('the work tab is on the task\'s page while the user\'s tabs were not navigated', workUrl.includes(`${base}/ca`) && JSON.stringify(await userTabs()) === JSON.stringify(userTabsBefore), JSON.stringify({ workUrl, tabs: await userTabs() }));
+  check('the task lists its own step rows', (await taskBy('TASK-CA')).steps.some((s2) => s2.startsWith('navigate')) && (await taskBy('TASK-CA')).steps.some((s2) => s2.startsWith('read_page')), JSON.stringify(await taskBy('TASK-CA')));
+  check('the sidebar has no approval or step of the task in it', await ui.evaluate(() => !document.querySelector('#messages .approval') && ![...document.querySelectorAll('#messages .step')].some((n) => /\/ca/.test(n.textContent))), '');
+  cliRelease('CA');
+  cliRelease('S1');
+  check('the task finishes with the CLI\'s result', await waitFor(async () => (await statusOf('TASK-CA')) === 'done', 20000) && /RESULT-CA/.test((await taskBy('TASK-CA')).result), JSON.stringify(await taskBy('TASK-CA')));
+  await waitFor(() => ui.evaluate(() => /RESULT-S1/.test(document.getElementById('messages').textContent)), 15000);
+  check('and the sidebar chat got its own reply', await ui.evaluate(() => /RESULT-S1/.test(document.getElementById('messages').textContent) && !/RESULT-CA/.test(document.getElementById('messages').textContent)), '');
+  const sideSession = await app.evaluate(() => global.__agent.messages.settings?.ccSession || null);
+  const run0 = await app.evaluate(() => global.__bg.tasks().find((t) => t.prompt.includes('TASK-CA')).runs.at(-1));
+  check('the sidebar keeps its own session; the task\'s session is only stored with its run', sideSession === ss.session && run0.session === sa.session && sideSession !== sa.session, JSON.stringify({ sideSession, run0 }));
+  check('the task shows the engine and its cost', await ui.evaluate(async () => { const st = await window.assistant.tasks.state(); const t = st.tasks.find((x) => x.title.includes('TASK-CA')); return t.engine === 'claudecode' && /tokens/.test(t.cost); }), '');
+  check('the fake process and its temp folder are gone, and the run\'s engine is released', await waitFor(() => !alive(sa.pid) && !fs.existsSync(sa.cwd), 5000) && (await app.evaluate(() => global.__bgEngineCount())) === 0, sa.cwd);
+  const usageRecords = await (async () => { await sleep(900); try { return JSON.parse(fs.readFileSync(path.join(profile, 'usage.json'), 'utf8')).records; } catch { return []; } })();
+  check('usage: the task\'s turn is logged as a background claudecode record, the sidebar\'s is not', usageRecords.some((r) => r.engine === 'claudecode' && r.background === true) && usageRecords.some((r) => r.engine === 'claudecode' && !r.background), JSON.stringify(usageRecords));
+  await ui.selectOption('#model', originalModel);
+
+  // Approvals: a call that needs the user waits as waiting-approval (a card in the Tasks panel, none in the sidebar).
+  setScripts({
+    'TASK-CB': [{ tool: 'navigate', input: { url: `${other}/cb` } }, { say: 'RESULT-CB reached the other host' }],
+    'TASK-CC': [{ tool: 'navigate', input: { url: `${other}/cc` } }, { say: 'RESULT-CC was refused, so I stopped' }],
+  });
+  const cb = await cliTask('TASK-CB', 'claudecode:default');
+  check('a Claude Code task pauses as waiting-approval on a new site', await waitFor(async () => (await statusOf('TASK-CB')) === 'waiting-approval', 25000), await statusOf('TASK-CB'));
+  const cbPending = (await taskBy('TASK-CB')).pending;
+  check('the card is the task\'s: it names the host, nothing loaded, the CLI is blocked on the call, the sidebar shows no card', cbPending.length === 1 && cbPending[0].host === `localhost:${port}` && (fixture.hits['/cb'] || 0) === 0 && !logOf('TASK-CB', 'tool').length && await ui.evaluate(() => !document.querySelector('#messages .approval')), JSON.stringify(cbPending));
+  await ui.evaluate(([id, aid]) => window.assistant.tasks.approve(id, aid, 'once'), [cb.id, cbPending[0].approvalId]);
+  check('Allow once resumes it: the call runs and the task finishes', await waitFor(async () => (await statusOf('TASK-CB')) === 'done', 20000) && (fixture.hits['/cb'] || 0) >= 1 && logOf('TASK-CB', 'tool')[0]?.isError === false, JSON.stringify({ hits: fixture.hits, log: logOf('TASK-CB', 'tool') }));
+  await app.evaluate(() => global.__patchSettings({ askBeforeActing: false }));
+  const cc = await cliTask('TASK-CC', 'claudecode:default');
+  check('with auto-allow on, a CLI task still waits for the user', await waitFor(async () => (await statusOf('TASK-CC')) === 'waiting-approval', 25000), await statusOf('TASK-CC'));
+  await ui.evaluate(([id, aid]) => window.assistant.tasks.approve(id, aid, 'deny'), [cc.id, (await taskBy('TASK-CC')).pending[0].approvalId]);
+  check('Deny: the CLI gets an error for the call, the page never loads, the task ends', await waitFor(async () => (await statusOf('TASK-CC')) === 'done', 20000) && (fixture.hits['/cc'] || 0) === 0 && /did not allow/i.test(logOf('TASK-CC', 'tool')[0]?.text || '') && logOf('TASK-CC', 'tool')[0]?.isError === true, JSON.stringify(logOf('TASK-CC', 'tool')));
+  await app.evaluate(() => global.__patchSettings({ askBeforeActing: true }));
+
+  // A call from a run Lumen never issued is refused, even with outside agents allowed.
+  await app.evaluate(() => global.__patchSettings({ mcpEnabled: true }));
+  setScripts({ 'TASK-CE': [{ foreign: true }, { say: 'RESULT-CE done' }] });
+  await cliTask('TASK-CE', 'claudecode:default');
+  await waitFor(() => logOf('TASK-CE', 'foreign').length, 25000);
+  const foreign = logOf('TASK-CE', 'foreign')[0];
+  check('a bridge naming a run tag that was never issued is refused (initialize and tools/call)', foreign && !/accepted/.test(`${foreign.initialize} ${foreign.call}`) && /turned off|refus|closed/i.test(foreign.initialize), JSON.stringify(foreign));
+  await waitFor(async () => (await statusOf('TASK-CE')) === 'done', 20000);
+  check('and nothing it asked ran in any tab', !(await taskBy('TASK-CE')).steps.some((s2) => s2.startsWith('read_page')), JSON.stringify(await taskBy('TASK-CE')));
+  await app.evaluate(() => global.__patchSettings({ mcpEnabled: false }));
+
+  // Stop ends the whole process tree (the fake claude and its MCP bridge child), and the task 'stopped'.
+  setScripts({ 'TASK-CD': [{ tool: 'read_page', input: {} }, { hold: 'CD' }, { say: 'never' }] });
+  const cd = await cliTask('TASK-CD', 'claudecode:default');
+  await waitFor(() => logOf('TASK-CD', 'tool').length && logOf('TASK-CD', 'bridge').length, 25000);
+  const cdPid = started('TASK-CD').pid;
+  const cdBridge = logOf('TASK-CD', 'bridge')[0].bridgePid;
+  check('before Stop, both processes of the run are alive', alive(cdPid) && alive(cdBridge), `${cdPid} ${cdBridge}`);
+  await ui.evaluate((id) => window.assistant.tasks.stop(id), cd.id);
+  check('Stop ends the task as stopped and frees its slot', await waitFor(async () => (await statusOf('TASK-CD')) === 'stopped', 15000) && await app.evaluate(() => global.__bg.runtimes().size === 0), await statusOf('TASK-CD'));
+  check('and the process tree (the CLI and its bridge) is dead', await waitFor(() => !alive(cdPid) && !alive(cdBridge), 8000), `${alive(cdPid)} ${alive(cdBridge)}`);
+
+  // Grok Build: the same, on the HTTP gate.
+  setScripts({
+    'TASK-KA': [{ tool: 'navigate', input: { url: `${base}/ga` } }, { tool: 'read_page', input: {} }, { terminal: 'echo hi' }, { hold: 'KGA' }, { say: 'RESULT-KA the page says: Page text for /ga' }],
+    'TASK-KB': [{ tool: 'navigate', input: { url: `${other}/gb` } }, { say: 'RESULT-KB reached the other host' }],
+    'TASK-KC': [{ say: 'Working.' }, { rawTool: 'edit_file' }, { say: 'LEAKED' }],
+    'TASK-KD': [{ hold: 'KGD' }, { say: 'never' }],
+    'TASK-KF': [{ foreign: true }, { say: 'RESULT-KF done' }],
+  });
+  await cliTask('TASK-KA', 'grokbuild:default');
+  await waitFor(() => logOf('TASK-KA', 'terminal').length, 25000);
+  const ga = started('TASK-KA');
+  check('a Grok Build task runs its own process in its own GROK_HOME and folder', ga && /grok-bg/.test(ga.home || '') && /grok-bg/.test(ga.cwd) && ga.home !== path.join(profile, 'grok-home') && (await statusOf('TASK-KA')) === 'running', JSON.stringify(ga));
+  const gav = ga.argv;
+  check('its argv keeps the sidebar\'s lock-down, has no terminal allow (denied instead), and --max-turns 60', gav.includes('--disallowed-tools') && argAfter(gav, '--permission-mode') === 'dontAsk' && gav.some((a, i) => a === '--deny' && gav[i + 1] === 'run_terminal_command') && !gav.some((a, i) => a === '--allow' && gav[i + 1] === 'run_terminal_command') && argAfter(gav, '--max-turns') === '60' && gav.includes('--no-subagents'), gav.join(' '));
+  check('its environment is the short allowlist (no API keys of Lumen\'s)', !ga.env.includes('ANTHROPIC_API_KEY') && ga.env.includes('LUMEN_MCP_TOKEN') && ga.env.includes('GROK_HOME'), ga.env.join(','));
+  check('its gate is armed and its calls ran on the task\'s own tab', logOf('TASK-KA', 'armed')[0]?.status === 200 && /Page text for \/ga/.test(logOf('TASK-KA', 'tool').find((e) => e.name === 'read_page')?.text || ''), JSON.stringify(logOf('TASK-KA', 'tool')));
+  check('a terminal command is denied by the gate outright: no card, nothing to approve', logOf('TASK-KA', 'terminal')[0]?.denied === true && (await taskBy('TASK-KA')).pending.length === 0, JSON.stringify(logOf('TASK-KA', 'terminal')));
+  cliRelease('KGA');
+  check('the Grok task finishes with its result and cleans up its folder', await waitFor(async () => (await statusOf('TASK-KA')) === 'done', 20000) && /RESULT-KA/.test((await taskBy('TASK-KA')).result) && await waitFor(() => !fs.existsSync(ga.cwd), 5000), JSON.stringify(await taskBy('TASK-KA')));
+  check('the Grok run\'s usage is logged as background too', await waitFor(() => { try { return JSON.parse(fs.readFileSync(path.join(profile, 'usage.json'), 'utf8')).records.some((r) => r.engine === 'grokbuild' && r.background === true); } catch { return false; } }, 4000), '');
+
+  const gb = await cliTask('TASK-KB', 'grokbuild:default');
+  check('a Grok task pauses as waiting-approval too, and resumes on Allow', await waitFor(async () => (await statusOf('TASK-KB')) === 'waiting-approval', 25000) && (fixture.hits['/gb'] || 0) === 0, await statusOf('TASK-KB'));
+  await ui.evaluate(([id, aid]) => window.assistant.tasks.approve(id, aid, 'once'), [gb.id, (await taskBy('TASK-KB')).pending[0].approvalId]);
+  check('and finishes after Allow once', await waitFor(async () => (await statusOf('TASK-KB')) === 'done', 20000) && (fixture.hits['/gb'] || 0) >= 1, JSON.stringify(await taskBy('TASK-KB')));
+
+  await cliTask('TASK-KC', 'grokbuild:default');
+  check('a non-Lumen tool call kills the Grok process at once and fails the task', await waitFor(async () => (await statusOf('TASK-KC')) === 'failed', 25000), await statusOf('TASK-KC'));
+  const gc = await taskBy('TASK-KC');
+  check('the error names the tool, and nothing after it reached the result', /isn't one of Lumen's \(edit_file\)/.test(gc.error) && !/LEAKED/.test(gc.result) && !alive(started('TASK-KC').pid), JSON.stringify(gc));
+
+  await cliTask('TASK-KF', 'grokbuild:default');
+  await waitFor(() => logOf('TASK-KF', 'foreign').length, 25000);
+  const gf = logOf('TASK-KF', 'foreign')[0];
+  check('Grok with a token or gate URL Lumen never issued: 401 on MCP, deny on the hook', gf && gf.mcpStatus === 401 && gf.hookDenied === true, JSON.stringify(gf));
+  await waitFor(async () => (await statusOf('TASK-KF')) === 'done', 20000);
+
+  const gd = await cliTask('TASK-KD', 'grokbuild:default');
+  await waitFor(() => started('TASK-KD') && logOf('TASK-KD', 'armed').length, 25000);
+  const gdPid = started('TASK-KD').pid;
+  await ui.evaluate((id) => window.assistant.tasks.stop(id), gd.id);
+  check('Stop on a Grok task ends it as stopped and kills the process', await waitFor(async () => (await statusOf('TASK-KD')) === 'stopped', 15000) && await waitFor(() => !alive(gdPid), 8000), await statusOf('TASK-KD'));
+
+  // CLI runs count toward the concurrency cap (2): a third waits in the queue.
+  setScripts({ 'TASK-H1': [{ hold: 'H1' }, { say: 'h1' }], 'TASK-H2': [{ hold: 'H2' }, { say: 'h2' }], 'TASK-H3': [{ say: 'RESULT-H3' }] });
+  await cliTask('TASK-H1', 'claudecode:default');
+  await cliTask('TASK-H2', 'grokbuild:default');
+  await cliTask('TASK-H3', 'claudecode:default');
+  await waitFor(() => started('TASK-H1') && started('TASK-H2'), 25000);
+  check('two CLI tasks (one each) hold both slots and the third waits', (await statusOf('TASK-H1')) === 'running' && (await statusOf('TASK-H2')) === 'running' && (await statusOf('TASK-H3')) === 'queued' && !started('TASK-H3'), (await tasks()).filter((t) => /running|queued|waiting/.test(t.status)).map((t) => `${t.title.slice(0, 9)}:${t.status}`).join());
+  cliRelease('H1');
+  check('and starts when one finishes', await waitFor(async () => (await statusOf('TASK-H3')) === 'done', 25000), (await tasks()).filter((t) => /running|queued|waiting/.test(t.status)).map((t) => `${t.title.slice(0, 9)}:${t.status}`).join());
+  cliRelease('H2');
+  await waitFor(async () => (await statusOf('TASK-H2')) === 'done', 20000);
+  // Performance mode still forces one at a time, CLI tasks included.
+  await app.evaluate(() => global.__patchSettings({ performanceMode: 'on' }));
+  setScripts({ 'TASK-P1': [{ hold: 'P1' }, { say: 'p1' }], 'TASK-P2': [{ say: 'RESULT-P2' }] });
+  const p1 = await cliTask('TASK-P1', 'claudecode:default');
+  await cliTask('TASK-P2', 'grokbuild:default');
+  await waitFor(() => started('TASK-P1'), 25000);
+  await sleep(1200);
+  check('in Performance mode the second CLI task waits for the first', (await statusOf('TASK-P1')) === 'running' && (await statusOf('TASK-P2')) === 'queued' && !started('TASK-P2'), `${await statusOf('TASK-P1')} ${await statusOf('TASK-P2')}`);
+  cliRelease('P1');
+  check('and runs after it', await waitFor(async () => (await statusOf('TASK-P2')) === 'done', 25000) && (await statusOf('TASK-P1')) === 'done' && Boolean(p1.ok), `${await statusOf('TASK-P1')} ${await statusOf('TASK-P2')}`);
+  await app.evaluate(() => global.__patchSettings({ performanceMode: 'off' }));
+  await ui.evaluate(() => { if (document.getElementById('task-panel').hidden) document.getElementById('tasks-btn').click(); });
+  await ui.evaluate(() => document.querySelector('.task-back')?.click());
+  await ui.waitForSelector('.task-row');
+  await ui.evaluate(() => [...document.querySelectorAll('.task-row')].find((r) => r.textContent.includes('TASK-KA')).click());
+  await ui.waitForSelector('.task-detail');
+  check('the details panel says which engine a task ran on', await ui.evaluate(() => /Runs on Grok Build/.test(document.querySelector('.task-detail').textContent)), '');
+  await ui.evaluate(() => document.querySelector('.task-back')?.click());
+  check('no engine is left registered, and no work tab is left over', (await app.evaluate(() => global.__bgEngineCount())) === 0 && await app.evaluate(() => global.__bg.runtimes().size === 0), '');
+
   // ---- 10. Settings: disabled hides the composer button and refuses new tasks; no schedule runs.
   await ui.evaluate(() => window.assistant.tasks.settings({ enabled: false }));
   check('turned off: the composer button hides', await waitFor(() => ui.evaluate(() => document.getElementById('send-bg').hidden)), '');
@@ -253,7 +450,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   await waitFor(() => app.evaluate(() => Boolean(global.__bg)));
-  const g = await app.evaluate(() => { const t = global.__bg.tasks().find((x) => x.prompt.includes('TASK-G')); return t ? { status: t.status, error: t.error, runs: t.runs.map((r) => r.status) } : null; });
+  const g = await app.evaluate(() => { const t = global.__bg.tasks().find((x) => x.prompt.includes('TASK-G')); return t ? { status: t.status, error: t.error, runs: t.runs.map((r) => r.status), model: t.model, result: t.result, n: global.__bg.tasks().length } : null; });
   check('after a restart the running task is interrupted', g && g.status === 'interrupted' && /closed/i.test(g.error) && g.runs.includes('interrupted'), JSON.stringify(g));
   const kept = await app.evaluate(() => global.__bg.tasks().map((t) => t.status));
   check('finished tasks and the watch tasks came back too', kept.filter((s) => s === 'done').length >= 4 && kept.length >= 10, JSON.stringify(kept));
