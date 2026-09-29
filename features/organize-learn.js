@@ -144,9 +144,9 @@ function findDuplicates(tabs) {
 
 // ---------- "Organize tabs automatically when idle" ----------
 
-const IDLE_MIN_UNGROUPED = 8;
+const IDLE_MIN_UNGROUPED = 5;
 // ungrouped: how many loose tabs there are; key: which loose tabs (so an unchanged set isn't organized twice).
-function shouldAutoOrganize({ enabled, idleSeconds, idleMinutes = 10, ungrouped, key: setKey, lastKey = null, busy = false }) {
+function shouldAutoOrganize({ enabled, idleSeconds, idleMinutes = 3, ungrouped, key: setKey, lastKey = null, busy = false }) {
   if (!enabled || busy) return false;
   if (!(idleMinutes >= 1) || idleSeconds < idleMinutes * 60) return false;
   if (ungrouped < IDLE_MIN_UNGROUPED) return false;

@@ -193,7 +193,7 @@ async function buildAi(card) {
   topicRow.classList.add('sub-row');
   topicRow.hidden = ai.tabGrouping !== 'topic';
   const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically when idle', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
-  const idleRow = row('Organize tabs automatically when idle', 'After about 10 idle minutes, with 8 or more ungrouped tabs, Lumen groups them on this computer (never with AI) and offers Undo. Off by default.', idleOrganize);
+  const idleRow = row('Organize tabs automatically when idle', 'After about 3 idle minutes, with 5 or more ungrouped tabs, Lumen groups them on this computer (never with AI) and offers Undo. On by default.', idleOrganize);
   const forgetBtn = h('button', { id: 'ai-forget-organize', text: 'Forget organize learning', onclick: async () => { await S.ai.forgetOrganizeLearning(); forgetBtn.textContent = 'Forgotten'; setTimeout(() => { forgetBtn.textContent = 'Forget organize learning'; }, 2000); } });
   const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
   card.append(

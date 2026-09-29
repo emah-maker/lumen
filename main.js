@@ -700,7 +700,7 @@ const tabGroups = createTabGroups({
 // Automatic grouping: 'off' | 'site' | 'topic'. Before topics it was a switch (autoGroupTabs).
 function groupingMode() {
   const { tabGrouping, autoGroupTabs } = readSettings();
-  return ['off', 'site', 'topic'].includes(tabGrouping) ? tabGrouping : autoGroupTabs === false ? 'off' : 'site';
+  return ['off', 'site', 'topic'].includes(tabGrouping) ? tabGrouping : autoGroupTabs === false ? 'off' : 'topic'; // default: by topic (a site's tabs that share a topic still end up together)
 }
 let autoGroupTimer = null;
 // By topic, titles alone are often too short to link one topic across sites (MDN, Stack Overflow
@@ -2026,16 +2026,16 @@ function closeDuplicateTabs() {
   for (const id of ids) requestCloseTab(id);
 }
 
-// "Organize tabs automatically when idle" (off by default): after N idle minutes, with 8 or more loose tabs,
+// "Organize tabs automatically when idle" (on by default): after N idle minutes (3), with 5 or more loose tabs,
 // the LOCAL organizer groups them (never the AI) and a toast offers Undo.
 let idleOrganizeKey = null;
 function idleOrganizeTick() {
   const settings = readSettings();
-  if (settings.organizeWhenIdle !== true) return;
+  if (settings.organizeWhenIdle === false) return;
   try {
     const pool = tabGroups.loose();
     const key = organizeAi.setKey(pool);
-    if (!organizeLearn.shouldAutoOrganize({ enabled: true, idleSeconds: powerMonitor.getSystemIdleTime(), idleMinutes: Number(settings.organizeIdleMinutes) || 10, ungrouped: pool.length, key, lastKey: idleOrganizeKey, busy: organizing })) return;
+    if (!organizeLearn.shouldAutoOrganize({ enabled: true, idleSeconds: powerMonitor.getSystemIdleTime(), idleMinutes: Number(settings.organizeIdleMinutes) || 3, ungrouped: pool.length, key, lastKey: idleOrganizeKey, busy: organizing })) return;
     idleOrganizeKey = key;
     if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); }
   } catch {}
@@ -4176,7 +4176,7 @@ ipcMain.handle('settings:get', () => {
     autoGroupTabs: groupingMode() !== 'off',
     tabGrouping: groupingMode(),
     topicAi: readSettings().topicAi === true,
-    organizeWhenIdle: readSettings().organizeWhenIdle === true,
+    organizeWhenIdle: readSettings().organizeWhenIdle !== false,
     organizeLearned: organizeLearner.size(),
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),

@@ -2172,8 +2172,8 @@ async function organizeAiRuns() {
 
   // idle rule
   const idle = (o) => learn.shouldAutoOrganize({ enabled: true, idleSeconds: 700, idleMinutes: 10, ungrouped: 9, key: 'k1', lastKey: null, ...o });
-  check('idle: runs when enabled, idle long enough, with 8+ loose tabs and a new set', idle({}) === true);
-  check('idle: never when off, busy, too few tabs, not idle long enough, or already done for this set', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ ungrouped: 7 }) && !idle({ idleSeconds: 500 }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }));
+  check('idle: runs when enabled, idle long enough, with 5+ loose tabs and a new set', idle({}) === true);
+  check('idle: never when off, busy, too few tabs, not idle long enough, or already done for this set', !idle({ enabled: false }) && !idle({ busy: true }) && !idle({ ungrouped: 4 }) && idle({ ungrouped: 5 }) && !idle({ idleSeconds: 500 }) && !idle({ lastKey: 'k1' }) && idle({ lastKey: 'other' }));
 
   // recency order and colours
   {
