@@ -60,6 +60,18 @@ const pageTools = require('./features/page-tools').createPageTools({
   downloadDir: () => settingsBackend.downloadDir(),
   showSaveDialog: (options) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(win, options)),
 });
+// Page translation (features/translate.js): user-initiated, with the user's own connected AI.
+const translate = require('./features/translate').createTranslate({
+  readSettings: () => readSettings(),
+  writeSettings: (s) => writeSettings(s),
+  t: (...a) => t(...a),
+  uiLocale: () => app.getLocale(),
+  engine: () => translateEngine(),
+  aiAllowed: (url) => !aiSites.isOff(url),
+  sendTabs: () => sendTabs(),
+  popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
+  openUrl: (tab, url) => tab.view.webContents.loadURL(url).catch(() => {}),
+});
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
@@ -135,7 +147,7 @@ const UI_ONLY_IPC = new Set([
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:drop',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -826,6 +838,7 @@ function showAppMenu({ x, y }) {
     { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: isWebUrl(wc?.getURL()), click: () => takeScreenshot(wc) },
     { label: t('menu.qrCode'), enabled: isWebUrl(wc?.getURL()), click: () => showQrCode(wc) },
     { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
+    ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
     ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
     { type: 'separator' },
     { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
@@ -1062,6 +1075,7 @@ function tabState() {
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url) || managerPageOf(url), // Lumen's own pages get their own icon
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
+        translate: translate.stateOf(t), // the translate button and infobar (features/translate.js)
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
@@ -1277,6 +1291,7 @@ function wireView(tab, url, history = null) {
   });
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
+  translate.attach(tab);
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
@@ -1696,6 +1711,38 @@ async function proposeGroups(model, list) {
 function aiOffTab(id) {
   const tab = tabs.find((t) => t.id === id);
   return Boolean(tab) && aiSites.isOff(alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
+}
+
+// ---- page translation engine: the cheapest fast model of the user's connected API provider.
+// CLI engines (Claude Code, Grok Build) aren't used: one agent run per chunk is too slow and costly;
+// with only those connected, the menu offers Google Translate instead.
+function translateEngine() {
+  const chosen = cheapTopicModel();
+  const base = LOCAL_ENGINE.test(chosen) ? modelOptions().find((o) => !LOCAL_ENGINE.test(o.id) && !o.id.endsWith(':__more'))?.id : chosen;
+  if (!base) return null;
+  const { provider } = providers.splitModel(base);
+  if (provider === 'anthropic' ? !anthropicUsable() : !providerKey(provider)) return null;
+  let model = 'claude-haiku-4-5';
+  if (provider !== 'anthropic') {
+    const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
+    model = `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
+  }
+  const label = provider === 'anthropic' ? 'Anthropic' : providers.PROVIDERS[provider].label;
+  return { id: provider === 'anthropic' ? 'anthropic' : provider, label, run: (system, user) => translateComplete(model, system, user) };
+}
+const TRANSLATE_SCHEMA = { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { id: { type: 'integer' }, text: { type: 'string' } }, required: ['id', 'text'], additionalProperties: false } } }, required: ['items'], additionalProperties: false };
+async function translateComplete(model, system, user) {
+  const { provider, model: id } = providers.splitModel(model);
+  if (provider !== 'anthropic') return providers.completeJSON({ provider, model: id, apiKey: providerKey(provider), system, user });
+  const res = await agent.getClient().messages.create({
+    model: id,
+    max_tokens: 8000,
+    system,
+    output_config: { format: { type: 'json_schema', schema: TRANSLATE_SCHEMA } },
+    messages: [{ role: 'user', content: user }],
+  });
+  if (res.stop_reason === 'refusal') throw new Error('The model declined to translate this page.');
+  return JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
 }
 
 let organizing = false;
@@ -2399,6 +2446,7 @@ function showContextMenu(wc, p) {
         { label: 'View Page Source', click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), click: () => takeScreenshot(wc) },
         { label: t('menu.qrCode'), click: () => showQrCode(wc) },
+        ...translate.pageMenuItem(tabByContents(wc)),
         { type: 'separator' },
       );
     }
@@ -2687,6 +2735,7 @@ function macMenu() {
         { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: () => reloadActive({ ignoreCache: true }) },
         { label: t('menu.find'), ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
         { label: t('menu.readerMode'), click: () => toggleReaderActive() },
+        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
         { label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
         { type: 'separator' },
         { label: t('menu.zoomIn'), ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
@@ -2820,14 +2869,14 @@ function adoptTab(tab, index) {
   tab.view?.webContents.focus();
 }
 const closableTabCount = (rec) => withWindow(rec, () => tabs.filter((t) => !t.closing).length);
-function moveTabBetween(src, dst, tabId, index) {
+function moveTabBetween(src, dst, tabId, index, { focus = true } = {}) {
   if (!src || !dst || src === dst || !winRecs.has(src) || !winRecs.has(dst) || !rcAlive(src) || !rcAlive(dst)) return false;
   const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
   if (!tab) return false;
   if (!withWindow(src, () => releaseTab(tab))) return false;
   withWindow(dst, () => adoptTab(tab, index));
   enterWindow(dst);
-  dst.win.focus();
+  if (focus) dst.win.focus(); // a drag in progress keeps the focus where the mouse is captured
   if (!tabsOf(src).length) src.win.close(); // it just lost its last tab
   return true;
 }
@@ -2836,22 +2885,163 @@ function moveTabToWindowId(src, tabId, windowId, index) {
   const dst = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId);
   return dst ? moveTabBetween(src, dst, tabId, index) : false;
 }
-// The tab strip of another window under the screen point, and where in it the tab would land.
-async function stripUnder(point, except) {
-  for (const rec of winRecs) {
-    if (rec === except || !rcAlive(rec) || rec.win.isMinimized()) continue;
-    const b = rec.win.getContentBounds();
-    if (point.x < b.x || point.x >= b.x + b.width || point.y < b.y || point.y >= b.y + b.height) continue;
-    const info = await rec.win.webContents.executeJavaScript(`(() => {
-      const strip = document.getElementById('tabs').getBoundingClientRect();
-      return { bottom: strip.bottom, tabs: [...document.querySelectorAll('#tabs .tab')].map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; }) };
-    })()`).catch(() => null);
-    if (!info || point.y - b.y > info.bottom + 6) continue;
-    const before = info.tabs.find((t) => point.x - b.x < t.mid);
-    return { rec, index: before ? tabsOf(rec).findIndex((t) => t.id === before.id) : undefined };
-  }
-  return null;
+// ---- dragging a tab out of the strip (Chrome-style): main.js drives the drag
+// Past the renderer's tear-off threshold the tab moves into a new window (or, for a window's only tab,
+// the window itself is the dragged thing) that follows the cursor until the button is released. Main
+// polls the cursor, because the source page may stop seeing the mouse once its tab is gone. Released
+// over another normal window's strip, the tab joins it and the emptied window closes; anywhere else
+// the window stays. Escape puts everything back. The renderer reports the release ('tab:dragend',
+// from whichever window sees the mouse come up); a hard timeout ends a drag whose release was lost.
+const tabDragMath = require('./features/tab-drag-math');
+let tabDragTimeoutMs = 60000;
+const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
+let tabDrag = null; // { rec, tabId, single, origin, grab, size, ready, hover, strips, timer, ... }
+const DRAG_OPACITY = 0.9;
+const DRAG_OVER_STRIP_OPACITY = 0.35; // see through the dragged window to the strip it is over
+
+// Where each other window's tabs sit (client coordinates); refreshed while dragging, off the hot path.
+async function stripGeometry(rec) {
+  const info = await rec.win.webContents.executeJavaScript(`(() => {
+    const strip = document.getElementById('tabs').getBoundingClientRect();
+    return { bottom: strip.bottom, tabs: [...document.querySelectorAll('#tabs .tab')].map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; }) };
+  })()`).catch(() => null);
+  return info && { rec, bottom: info.bottom, tabs: info.tabs };
 }
+async function refreshDragStrips(d) {
+  if (d.refreshing) return;
+  d.refreshing = true;
+  try {
+    const next = new Map();
+    for (const rec of [...winRecs]) {
+      if (rec === d.rec || !rcAlive(rec) || rec.win.isMinimized()) continue;
+      const g = await stripGeometry(rec);
+      if (g) next.set(rec, g);
+    }
+    if (tabDrag === d) d.strips = next;
+  } finally { d.refreshing = false; }
+}
+function setDragOpacity(d, value) {
+  if (!TEST_BACKGROUND && rcAlive(d.rec)) { try { d.rec.win.setOpacity(value); } catch {} }
+}
+function setDragHover(d, hit) {
+  const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId;
+  if (same) return;
+  if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', null);
+  d.hover = hit;
+  if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId });
+  setDragOpacity(d, hit ? DRAG_OVER_STRIP_OPACITY : DRAG_OPACITY);
+}
+function tickTabDrag() {
+  const d = tabDrag;
+  if (!d) return;
+  if (!rcAlive(d.rec)) { clearInterval(d.timer); tabDrag = null; return; } // the window was closed under the drag
+  if (Date.now() - d.started > tabDragTimeoutMs) {
+    if (d.ready) finishTabDrag('commit'); else { clearInterval(d.timer); tabDrag = null; }
+    return;
+  }
+  const cursor = cursorPoint();
+  const area = screen.getDisplayNearestPoint(cursor).workArea;
+  const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
+  if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setBounds(b); d.last = b; }
+  if (!d.ready) return;
+  if (Date.now() - d.stripsAt > 250) { d.stripsAt = Date.now(); refreshDragStrips(d); }
+  const strips = [...d.strips.values()].filter((g) => rcAlive(g.rec) && !g.rec.win.isMinimized())
+    .map((g) => ({ key: g.rec, bounds: g.rec.win.getContentBounds(), bottom: g.bottom, tabs: g.tabs }));
+  const hit = tabDragMath.stripHit(cursor, strips);
+  setDragHover(d, hit && { rec: hit.key, beforeId: hit.beforeId });
+}
+function dragReady(d) {
+  if (tabDrag !== d) return;
+  d.ready = true;
+  d.stripsAt = Date.now();
+  refreshDragStrips(d);
+  if (!d.single) {
+    if (!TEST_BACKGROUND && rcAlive(d.rec)) { d.rec.win.setOpacity(DRAG_OPACITY); d.rec.win.showInactive(); }
+    d.rec.win.webContents.send('tab:dragwatch'); // its page ends the drag too if it is the one that sees the release
+  }
+  d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
+  d.rec.win.webContents.on('before-input-event', d.escape);
+  if (d.endWhenReady) finishTabDrag(d.endWhenReady);
+}
+function finishTabDrag(reason) {
+  const d = tabDrag;
+  if (!d) return;
+  if (!d.ready) { d.endWhenReady = reason; return; } // the tab has not arrived in its window yet
+  tabDrag = null;
+  clearInterval(d.timer);
+  const rec = d.rec;
+  const target = d.hover;
+  if (rcAlive(rec)) d.rec.win.webContents.removeListener('before-input-event', d.escape);
+  setDragHover(d, null);
+  setDragOpacity(d, 1);
+  if (!rcAlive(rec)) return;
+  if (reason === 'commit') {
+    if (target && rcAlive(target.rec)) {
+      const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
+      moveTabBetween(rec, target.rec, d.tabId, at === -1 ? undefined : at);
+    } else {
+      rec.win.focus();
+    }
+    return;
+  }
+  if (d.single) {
+    rec.win.setBounds(d.origin.bounds);
+    if (d.origin.maximized) rec.win.maximize();
+  } else if (rcAlive(d.origin.rec) && moveTabBetween(rec, d.origin.rec, d.tabId, d.origin.index)) {
+    // Back where it started, pinned again if it was (a tear-off unpins).
+    withWindow(d.origin.rec, () => {
+      const tab = tabs.find((x) => x.id === d.tabId);
+      if (!tab) return;
+      tabs.splice(tabs.indexOf(tab), 1);
+      tabs.splice(Math.min(d.origin.index, tabs.length), 0, tab);
+      if (d.origin.pinned) tab.pinned = true;
+      sendTabs();
+    });
+  }
+}
+function beginTabDrag(src, tabId, grab) {
+  if (tabDrag) finishTabDrag('cancel');
+  const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
+  if (!tab || !rcAlive(src)) return false;
+  const cursor = cursorPoint();
+  const single = closableTabCount(src) < 2;
+  const d = tabDrag = { started: Date.now(), tabId, single, ready: false, endWhenReady: null, strips: new Map(), stripsAt: 0, hover: null, last: null };
+  const w = src.win;
+  if (single) {
+    // The whole window follows the cursor, like its title bar; a maximized one is restored first.
+    const before = w.getBounds();
+    d.origin = { bounds: before, maximized: w.isMaximized() };
+    const size = d.origin.maximized ? w.getNormalBounds() : before;
+    if (d.origin.maximized) w.unmaximize();
+    d.size = { width: size.width, height: size.height };
+    d.grab = { x: (grab.x * size.width) / before.width, y: grab.y };
+    d.rec = src;
+    dragReady(d);
+  } else {
+    // The tab is dropped under the cursor as it will sit in the new window's strip.
+    const size = w.isMaximized() ? w.getNormalBounds() : w.getBounds();
+    d.origin = { rec: src, index: tabsOf(src).indexOf(tab), pinned: Boolean(tab.pinned) };
+    d.size = { width: size.width, height: size.height };
+    d.grab = { x: grab.stripX, y: grab.y };
+    const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), screen.getDisplayNearestPoint(cursor).workArea);
+    d.rec = createWindow({ size: d.size, position: { x: at.x, y: at.y }, hidden: true, adopt: { src, tabId, focus: false, done: (ok) => { if (ok) dragReady(d); else if (tabDrag === d) { clearInterval(d.timer); tabDrag = null; } } } });
+  }
+  d.timer = setInterval(tickTabDrag, 12);
+  return true;
+}
+const num = (v) => (Number.isFinite(v) ? v : 0);
+ipcMain.on('tab:dragstart', (event, id, grab) => {
+  const src = recOfSender(event.sender); // a private window's UI is not in winRecs: refused
+  if (!src || !Number.isInteger(id)) return;
+  beginTabDrag(src, id, { x: num(grab?.x), y: num(grab?.y), stripX: num(grab?.stripX) });
+});
+// The release (or Escape) as seen by a page of the dragged window or of the window it came from.
+const dragEnder = (reason) => (event) => {
+  const from = recOfSender(event.sender);
+  if (tabDrag && from && (from === tabDrag.rec || from === tabDrag.origin?.rec)) finishTabDrag(reason);
+};
+ipcMain.on('tab:dragend', dragEnder('commit'));
+ipcMain.on('tab:dragcancel', dragEnder('cancel'));
 function tearOffTab(src, tabId, point) {
   const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
   if (!tab || closableTabCount(src) < 2) return false; // the only tab of a window stays where it is
@@ -2864,20 +3054,10 @@ function tearOffTab(src, tabId, point) {
   });
   return true;
 }
-async function dropTab(src, tabId, point) {
-  const hit = await stripUnder(point, src);
-  if (hit) return moveTabBetween(src, hit.rec, tabId, hit.index);
-  return tearOffTab(src, tabId, point);
-}
 // The window's own label in "Move tab to window": what it is showing, and how many tabs it has.
 const windowLabel = (rec) => withWindow(rec, () => {
   const tab = tabs.find((x) => x.id === activeId);
   return `${(tab && tabTitle(tab)) || 'New Tab'} (${tabs.length})`;
-});
-ipcMain.on('tab:drop', (event, id, testPoint) => {
-  const src = recOfSender(event.sender) || curRec;
-  const point = TEST && Number.isFinite(testPoint?.x) && Number.isFinite(testPoint?.y) ? testPoint : screen.getCursorScreenPoint();
-  if (Number.isInteger(id)) dropTab(src, id, { x: Math.round(point.x), y: Math.round(point.y) }).catch((err) => console.error('[lumen] tab drop failed:', err));
 });
 if (TEST) {
   global.__windows = {
@@ -2889,6 +3069,13 @@ if (TEST) {
       current: rec === curRec,
     })),
     moveTo: (srcWindowId, tabId, windowId, index) => moveTabToWindowId([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, windowId, index),
+    setCursor: (point) => { global.__testCursor = point; }, // null: the real cursor
+    setDragTimeout: (ms) => { tabDragTimeoutMs = ms; },
+    dragState: () => tabDrag && {
+      windowId: tabDrag.rec.win.id, ready: tabDrag.ready, single: tabDrag.single,
+      hover: tabDrag.hover && { windowId: tabDrag.hover.rec.win.id, beforeId: tabDrag.hover.beforeId },
+      bounds: rcAlive(tabDrag.rec) ? tabDrag.rec.win.getBounds() : null,
+    },
     tearOff: (srcWindowId, tabId, point) => tearOffTab([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, point),
     tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => (tabMenuTemplate(tabId) || []).map((i) => ({ label: i.label, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
   };
@@ -2899,11 +3086,11 @@ if (TEST) {
 const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // `adopt` ({ src, tabId }): a tab torn off `src` becomes this window's only tab. `restore`: a saved
 // window from the last session (the session's `more`). Neither: the first window, restoring the session.
-function createWindow({ size = null, position = null, adopt = null, restore = null } = {}) {
+function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
   const w = new BrowserWindow({
-    ...(TEST_BACKGROUND ? { show: false } : {}),
+    ...(TEST_BACKGROUND || hidden ? { show: false } : {}), // hidden: the caller shows it (a window being dragged)
     width: size?.width || 1440,
     height: size?.height || 920,
     ...(position || {}),
@@ -2999,7 +3186,9 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     createSuggestView();
     if (adopt) {
       // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
-      if (!moveTabBetween(adopt.src, rec, adopt.tabId, 0) && !tabs.length) openTab();
+      const adopted = moveTabBetween(adopt.src, rec, adopt.tabId, 0, { focus: adopt.focus !== false });
+      if (!adopted && !tabs.length) openTab();
+      adopt.done?.(adopted);
     } else {
       restoreSession(restore);
     }
@@ -3430,6 +3619,8 @@ function toggleReaderActive() {
   return pageTools.toggleReader(tabs.find((t) => t.id === activeId && alive(t)));
 }
 ipcMain.on('page:reader', () => { toggleReaderActive(); });
+ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
+if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
 ipcMain.on('nav:back', () => activeTab()?.webContents.navigationHistory.goBack());
 ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());

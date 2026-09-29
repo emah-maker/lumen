@@ -143,7 +143,30 @@ function startTabDrag(e, el, id) {
   drag = { el, id, startX: e.clientX, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
+  // Once the tab has left for a window of its own this page may lose the pointer, so the release and
+  // Escape are also watched on the window (main.js has its own fallbacks: see "dragging a tab out").
+  window.addEventListener('pointerup', endTabDrag, true);
+  window.addEventListener('pointercancel', endTabDrag, true);
+  window.addEventListener('keydown', dragKey, true);
 }
+function dragKey(e) {
+  if (e.key === 'Escape' && drag) { e.preventDefault(); e.stopPropagation(); endTabDrag(e); }
+}
+// This window is the one being dragged (its tab arrived from elsewhere): report the release from here.
+window.browser.onTabDragWatch?.(() => {
+  const up = () => { window.removeEventListener('pointerup', up, true); window.removeEventListener('mouseup', up, true); window.browser.dragTabEnd?.(); };
+  window.addEventListener('pointerup', up, true);
+  window.addEventListener('mouseup', up, true);
+});
+// Another window's tab is being dragged over this strip: mark where it would land.
+window.browser.onTabDropAt?.((at) => {
+  $('tabs').querySelectorAll('.drop-before, .drop-end').forEach((t) => t.classList.remove('drop-before', 'drop-end'));
+  if (!at) return;
+  const strip = [...$('tabs').querySelectorAll('.tab')];
+  const before = strip.find((t) => Number(t.dataset.id) === at.beforeId);
+  if (before) before.classList.add('drop-before');
+  else strip[strip.length - 1]?.classList.add('drop-end');
+});
 
 // Dragged this far outside the strip (or out of the window), releasing the tab hands it to main.js:
 // into another window's strip if the cursor is over one, else into a new window of its own.
@@ -154,8 +177,20 @@ function draggedOut(e) {
     || e.clientX < -TEAR_OFF_PX / 2 || e.clientX > window.innerWidth + TEAR_OFF_PX / 2;
 }
 
+// Past the threshold the tab goes to main.js, which moves it into a new window under the cursor (or
+// drags this whole window if it is the only tab). The element stays (holding the pointer) but takes no room.
+function handOffTabDrag(e) {
+  const r = drag.rects[drag.from];
+  drag.handed = true;
+  drag.el.style.transform = '';
+  [...$('tabs').querySelectorAll('.tab')].forEach((t) => { t.style.transform = ''; });
+  drag.el.classList.remove('tearing');
+  drag.el.classList.add('handed');
+  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: drag.rects[0].left + (drag.startX - r.left) });
+}
+
 function moveTabDrag(e) {
-  if (!drag) return;
+  if (!drag || drag.handed) return;
   drag.dx = e.clientX - drag.startX;
   if (!drag.moved && Math.abs(drag.dx) < 5) return;
   if (!drag.moved) {
@@ -168,7 +203,7 @@ function moveTabDrag(e) {
   const first = rects[0].left, last = rects[rects.length - 1].right;
   const dx = Math.max(first - rects[from].left, Math.min(last - rects[from].right, drag.dx));
   drag.el.style.transform = `translateX(${dx}px)`;
-  drag.el.classList.toggle('tearing', draggedOut(e));
+  if (window.browser.dragTabStart && draggedOut(e)) { handOffTabDrag(e); return; }
   const center = rects[from].left + rects[from].width / 2 + dx;
   let to = rects.findIndex((r) => center < r.left + r.width / 2);
   if (to === -1) to = rects.length - 1;
@@ -185,16 +220,21 @@ function moveTabDrag(e) {
 
 function endTabDrag(e) {
   if (!drag) return;
-  const { moved, from, to, id, ids } = drag;
-  const out = moved && e?.type === 'pointerup' && draggedOut(e);
+  const { moved, from, to, id, ids, handed } = drag;
+  const escaped = e?.type === 'keydown'; // a cancelled pointer just ends the drag where it is
   drag = null;
+  window.removeEventListener('pointerup', endTabDrag, true);
+  window.removeEventListener('pointercancel', endTabDrag, true);
+  window.removeEventListener('keydown', dragKey, true);
   $('tabs').classList.remove('reordering');
-  [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging', 'tearing'); });
+  [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging', 'tearing', 'handed'); });
   if (moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
-    if (out) {
-      window.browser.dropTab?.(id);
+    if (handed) {
+      if (escaped) window.browser.dragTabCancel?.(); else window.browser.dragTabEnd?.();
+    } else if (e?.type === 'keydown') {
+      // Escape before the tab left the strip: it stays where it was.
     } else if (from !== to) {
       // Collapsed groups hide tabs, so the strip's order isn't the full order: land next to the tab we dropped on.
       const without = (lastTabState?.tabs || []).map((t) => t.id).filter((x) => x !== id);

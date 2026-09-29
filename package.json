@@ -97,6 +97,7 @@
       "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
     },
     "afterPack": "scripts/after-pack.js",
+    "afterSign": "scripts/after-sign.js",
     "protocols": [
       {
         "name": "Web page",

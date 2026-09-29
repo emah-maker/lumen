@@ -599,7 +599,8 @@ async function buildUsage(card) {
       : w.turns ? 'How far each turn moved the meter shows up after your next chat.' : 'No Claude Code chats in Lumen in this window.';
     parts.push(row('Lumen’s sidebar, this 5-hour window', `${w.turns} turn${w.turns === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens · ${dollars(w.costUSD)} at API prices. ${share}`));
     const mcp = (u.plan?.contributions || []).map((c) => `${c.lumen}% in the last ${c.period}`).join(', ');
-    if (mcp) parts.push(row('Claude Code driving Lumen (MCP)', `Share of this Mac’s Claude Code usage from Lumen’s browser tools: ${mcp}.`));
+    const machine = navigator.platform.startsWith('Mac') ? 'Mac' : navigator.platform.startsWith('Win') ? 'PC' : 'computer';
+    if (mcp) parts.push(row('Claude Code driving Lumen (MCP)', `Share of this ${machine}’s Claude Code usage from Lumen’s browser tools: ${mcp}.`));
 
     const engines = Object.entries(u.lumen.byEngine);
     const list = h('div', { class: 'list', id: 'usage-engines' }, engines.length
@@ -659,6 +660,28 @@ function buildLanguages(card) {
   };
   renderSpell();
   card.append(stackRow('Spell check languages', null, spell));
+  buildTranslate(card);
+}
+
+// Page translation (features/translate.js): offer, target language, and what the user allowed.
+function buildTranslate(card) {
+  const TARGETS = [['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'], ['nl', 'Dutch'], ['sv', 'Swedish'], ['pl', 'Polish'], ['tr', 'Turkish'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['ar', 'Arabic'], ['he', 'Hebrew'], ['hi', 'Hindi'], ['zh-CN', 'Chinese (Simplified)'], ['zh-TW', 'Chinese (Traditional)'], ['ja', 'Japanese'], ['ko', 'Korean'], ['vi', 'Vietnamese'], ['id', 'Indonesian'], ['th', 'Thai'], ['el', 'Greek']];
+  const listRow = (key, title, none, label = (v) => v) => {
+    const list = h('div', { class: 'list', id: `pref-${key}` });
+    const render = () => list.replaceChildren(...(st.prefs[key].length ? st.prefs[key].map((value) => h('div', { class: 'item' },
+      h('span', { class: 'grow', text: label(value) }),
+      h('button', { text: 'Remove', onclick: async () => { await save(key, st.prefs[key].filter((x) => x !== value)); render(); } })))
+      : [h('span', { class: 'note', text: none })]));
+    render();
+    return stackRow(title, null, list);
+  };
+  card.append(
+    toggle('translateOffer', tr('settings.translate.offer', 'Offer to translate pages'), tr('settings.translate.offerDesc', 'When a page is in another language than yours, show a translate button and a bar. Nothing is sent anywhere until you click Translate, and the first time Lumen asks before sending a page’s text to your AI provider.')),
+    select('translateTarget', tr('settings.translate.target', 'Translate pages into'), null,
+      [['', tr('settings.translate.targetDefault', 'Lumen’s language')], ...TARGETS.map(([code, name]) => [code, `${langName(code)}` === code ? name : langName(code)])]),
+    listRow('translateNever', tr('settings.translate.never', 'Sites never offered translation'), tr('settings.translate.neverNone', 'No sites.')),
+    listRow('translateConsent', tr('settings.translate.consent', 'Allowed to receive page text'), tr('settings.translate.consentNone', 'None yet: Lumen asks the first time you translate.'), (v) => (v === 'google' ? 'Google Translate' : v)),
+  );
 }
 
 function buildAccessibility(card) {

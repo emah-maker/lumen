@@ -68,6 +68,10 @@ const DEFAULTS = {
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
+  translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
+  translateTarget: '', // '' = Lumen's language
+  translateNever: [], // sites where the offer stays away
+  translateConsent: [], // providers the user allowed to receive page text
   autoDownloadUpdates: true, // Windows setup installs: fetch new versions in the background (features/updates.js)
 };
 const RESTART_KEYS = ['hardwareAcceleration', 'forceDarkWebsites'];
@@ -86,6 +90,7 @@ const HEX = /^#[0-9a-f]{6}$/i;
 const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
+const translate = require('./features/translate');
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const bool = (v) => v === true;
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
@@ -107,6 +112,9 @@ function validate(key, value) {
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
+    case 'translateNever': return translate.cleanHosts(value);
+    case 'translateConsent': return translate.cleanConsent(value);
+    case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
     case 'adblockAllow':
       return Array.isArray(value) ? [...new Set(value.map((h) => String(h).trim().toLowerCase().replace(/^www\./, '')).filter((h) => /^[a-z0-9.-]+$/.test(h)))] : null;
     case 'permissionDefaults':
