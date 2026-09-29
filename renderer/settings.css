@@ -252,6 +252,11 @@ body.interstitial { display: block; }
 .wi-gmail { background: linear-gradient(160deg, #ea6a5e, #c5372c); }
 .wi-github { background: linear-gradient(160deg, #57606a, #24292f); }
 .wi-feed { background: linear-gradient(160deg, #ffb340, #e8850c); }
+.wi-slack { background: linear-gradient(160deg, #6c3f8f, #4a154b); }
+.wi-worldclock { background: linear-gradient(160deg, #5e5ce6, #3634a3); }
+.wi-muse { background: linear-gradient(160deg, #6ea8ff, #0064e0); }
+.wi-stocks { background: linear-gradient(160deg, #34c759, #1f8a3b); }
+.wi-crypto { background: linear-gradient(160deg, #ffb340, #e08a00); }
 .wi-embed { background: linear-gradient(160deg, #a1a1a6, #636366); }
 .widget-form { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; padding: 14px; border-radius: 10px; background: var(--field); }
 .widget-form .sub-label { font-weight: 600; }
