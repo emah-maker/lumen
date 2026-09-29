@@ -9,8 +9,9 @@
 //    list-price cost the CLI reports, for Claude Code, Grok Build and API-key chats. For Claude Code
 //    turns, how far the 5-hour meter moved during the turn is kept too: the reading from just
 //    before (the previous turn or /usage, when recent) against the one the turn ends with. Anything
-//    else using the same account at that moment (a terminal session, claude.ai) moves it too, so
-//    the panel calls it approximate.
+//    else using the same account at that moment moves it too: a Claude Code session outside Lumen is
+//    detected from its transcripts and makes that turn's share unknown; claude.ai and other machines
+//    can't be seen, so the panel still calls it approximate.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -73,7 +74,27 @@ function barFor(engine, s) {
   return { engine, kind: 'context', percent, tokens: e.today.tokens, costUSD: e.today.costUSD, turns: e.today.turns, contextTokens: contextTokens || 0, contextWindow: contextWindow || 0 };
 }
 
-// deps: { app, claudeBin: async () => path | null }
+// Did any Claude Code session other than Lumen's own write since `since` (ms)? Lumen runs each turn in
+// a temp folder named lumen-cc-* (and lumen-usage-* for /usage), so its transcripts sit in matching
+// project folders under ~/.claude/projects; a changed transcript anywhere else is you using Claude
+// Code in a terminal or an editor, and the 5-hour meter moved for that too.
+const LUMEN_PROJECT = /lumen-(cc|usage)-/i;
+async function otherClaudeActivity(since, projectsDir = path.join(os.homedir(), '.claude', 'projects')) {
+  let dirs;
+  try { dirs = await fs.promises.readdir(projectsDir); } catch { return false; }
+  for (const dir of dirs) {
+    if (LUMEN_PROJECT.test(dir)) continue;
+    let files;
+    try { files = await fs.promises.readdir(path.join(projectsDir, dir)); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      try { if ((await fs.promises.stat(path.join(projectsDir, dir, f))).mtimeMs > since) return true; } catch {}
+    }
+  }
+  return false;
+}
+
+// deps: { app, claudeBin: async () => path | null, otherActivity?: async (sinceMs) => boolean }
 function createUsage(deps) {
   let records = []; // { at, engine, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSD, limitPoints }
   let meter = null; // the latest 5-hour reading: { percent, resetsAt, at, source }
@@ -115,18 +136,25 @@ function createUsage(deps) {
   function record(engine, { usage, rateLimit, model } = {}) {
     if (!usage) return;
     let limitPoints = null;
+    const beforeAt = meter?.at ?? null;
     if (rateLimit) {
       latestInfo = rateLimit;
       const w = fiveHourOf(rateLimit);
       if (w) limitPoints = reading(w.percent, w.resetsAt, 'turn');
     }
-    records.push({
+    const rec = {
       at: Date.now(), engine, model: model || (usage.models || [])[0] || null,
       inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0,
       cacheReadTokens: usage.cacheReadTokens || 0, cacheWriteTokens: usage.cacheWriteTokens || 0,
       costUSD: usage.costUSD || 0, limitPoints,
       contextTokens: (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0), contextWindow: usage.contextWindow || 0,
-    });
+    };
+    records.push(rec);
+    // The meter is account-wide: if you used Claude Code elsewhere since the reading this turn is
+    // measured against, its movement isn't Lumen's, so the share for this turn becomes unknown.
+    if (limitPoints != null && beforeAt) {
+      (deps.otherActivity || otherClaudeActivity)(beforeAt - 2000).then((other) => { if (other) { rec.limitPoints = null; save(); } }, () => {});
+    }
     save();
   }
 
@@ -214,4 +242,4 @@ function createUsage(deps) {
   return { load, record, summary, planUsage, clear, meter: () => meter };
 }
 
-module.exports = { createUsage, parsePlan, fiveHourOf, barFor };
+module.exports = { createUsage, parsePlan, fiveHourOf, barFor, otherClaudeActivity };
