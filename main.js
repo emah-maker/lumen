@@ -146,7 +146,7 @@ const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|
 const UI_ONLY_IPC = new Set([
   'content-bounds', 'view:freeze', 'view:thaw', 'chat:full', 'view:warm',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
-  'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize',
+  'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',

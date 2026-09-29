@@ -35,9 +35,10 @@ function claudeArgs({ system, schema, model = 'haiku' }) {
 
 // ---------- Grok Build ----------
 
-// The sidebar engine's built-in tool denials, read from its argv.
+// The built-in tool denials of a background grok (nobody to approve a call in the moment, so the
+// terminal is denied outright too), read from its argv.
 function grokDenials() {
-  const base = require('./grok-build').buildArgs({ promptFile: 'p', sessionId: 's', systemPrompt: 's', cwd: 'c' });
+  const base = require('./grok-build').buildArgs({ promptFile: 'p', sessionId: 's', systemPrompt: 's', cwd: 'c', background: true });
   const values = (flag) => base.flatMap((v, i) => (v === flag ? [base[i + 1]] : []));
   return [
     '--disallowed-tools', values('--disallowed-tools').join(','),

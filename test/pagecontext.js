@@ -110,7 +110,7 @@ const path = require('path');
   }
   // The picked Claude Code model reaches the engine (claude-code.js turns it into --model).
   const engineModelFor = async (model) => { await firstRequest(model, 'claudecode'); return app.evaluate(() => global.__engineSent.claudecodeModel); };
-  check('Claude Code default reaches the engine as "default" (no --model)', (await engineModelFor('claudecode:default')) === 'default', await app.evaluate(() => global.__engineSent.claudecodeModel));
+  check('Claude Code default is auto-routed to a tier alias (features/model-route.js)', ['haiku', 'sonnet', 'opus'].includes(await engineModelFor('claudecode:default')), await app.evaluate(() => global.__engineSent.claudecodeModel));
   check('a picked Claude Code model reaches the engine', (await engineModelFor('claudecode:opus')) === 'opus', await app.evaluate(() => global.__engineSent.claudecodeModel));
   await app.evaluate(() => { global.__providers.streamTurn = global.__realStreamTurn; });
 
