@@ -3582,7 +3582,8 @@ chatPageRt.register();
 if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId };
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
-const usage = createUsage({ app, claudeBin: () => require('./claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null });
+// Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
+const usage = createUsage({ app, claudeBin: () => require('./claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null, ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
