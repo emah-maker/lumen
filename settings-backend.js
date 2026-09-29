@@ -716,6 +716,17 @@ function create(deps) {
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
+    // Slack sign-in: Open Slack (the approval page opens in the default browser), then the pasted address finishes it.
+    handle('prefs:slack-start', (input) => {
+      const out = deps.widgets.slackStart(input);
+      if (!out.url.startsWith('https://slack.com/oauth/v2/authorize?')) throw new Error('Not allowed');
+      shell.openExternal(out.url).catch(() => {});
+      return { redirectUri: out.redirectUri, state: deps.widgets.state() };
+    });
+    handle('prefs:slack-finish', async (pasted) => { const out = await deps.widgets.slackFinish(pasted); return { message: out.message, state: deps.widgets.state() }; });
+    handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); return deps.widgets.state(); });
+    handle('prefs:slack-disconnect', async () => { await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
+    handle('prefs:slack-channels', () => deps.widgets.slackChannels());
     handle('prefs:widget-search', (query) => deps.widgets.search(query));
     handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });
     handle('prefs:widget-location', (choice) => { deps.widgets.setLocationConsent(String(choice)); return deps.widgets.state(); });

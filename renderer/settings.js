@@ -463,6 +463,7 @@ const WIDGET_ICONS = {
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
   spotify: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M4.9 6.2c2.2-.7 4.7-.5 6.6.6M5.3 8.3c1.8-.5 3.7-.3 5.2.5M5.7 10.3c1.4-.4 2.7-.2 3.9.4"/></svg>',
   gmail: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="3.2" width="12.4" height="9.6" rx="2"/><path d="m2.4 4.4 5.6 4.2 5.6-4.2"/></svg>',
+  slack: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.2 2 5 14M11 2l-1.2 12M2.6 5.6h11.2M2.2 10.4h11.2"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -709,6 +710,71 @@ async function buildWidgets(card) {
         field(tr('settings.gmail.count', 'Messages shown'), inputs.count), plain(tr('settings.gmail.show', 'Show'), h('div', { class: 'widget-checks' }, inputs.snippets)),
         field('Colors', colors));
     }
+    // ---- slack: sign in (OAuth v2 with your own Slack app), then what to show ----
+    function slackFields(same) {
+      const sc = same?.slack || {};
+      let st = ws.slack || {};
+      const picked = new Map((sc.channels || []).map((c) => [c.id, c.name]));
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: 'Optional: a user token (xoxp-…) instead of signing in', 'aria-label': 'Slack user token' });
+      const clientId = h('input', { type: 'text', id: 'slack-client-id', autocomplete: 'off', spellcheck: 'false', placeholder: '1234567890.1234567890', value: st.clientId || '', 'aria-label': 'Slack app Client ID' });
+      const clientSecret = h('input', { type: 'password', id: 'slack-client-secret', autocomplete: 'off', spellcheck: 'false', placeholder: st.hasSecret ? 'Saved. Paste a new secret to replace it.' : 'Client Secret', 'aria-label': 'Slack app Client Secret' });
+      const redirect = h('input', { type: 'url', id: 'slack-redirect', spellcheck: 'false', value: st.redirect || '', 'aria-label': 'Slack redirect URL' });
+      const pasted = h('input', { type: 'text', id: 'slack-pasted', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the address you landed on', 'aria-label': 'Address after approving' });
+      const status = h('span', { class: 'note', role: 'status', id: 'slack-status' });
+      const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      const drawStatus = () => {
+        st = ws.slack || st;
+        if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Open Slack again to reconnect.`, 'warn');
+        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.canRefresh ? ' (renewing itself)' : ''}. Read-only.`, 'ok');
+        else if (st.waiting) flash(status, 'Approve in the browser tab that opened, then paste the address it ends on.', 'note');
+        else { status.textContent = 'Not connected.'; status.className = 'note'; }
+        disconnect.hidden = !st.connected;
+      };
+      const open = h('button', { type: 'button', id: 'slack-open', text: st.connected ? 'Reconnect' : 'Open Slack', onclick: async () => {
+        try {
+          const r = await S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value });
+          ws = r.state; clientSecret.value = ''; drawStatus();
+        } catch (err) { flash(status, clean(err), 'err'); }
+      } });
+      const finish = h('button', { type: 'button', id: 'slack-finish', text: 'Finish', onclick: async () => {
+        try {
+          const r = await S.widgets.slackFinish(pasted.value);
+          ws = r.state; pasted.value = ''; drawStatus(); flash(status, r.message, 'ok');
+        } catch (err) { flash(status, clean(err), 'err'); }
+      } });
+      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: async () => { ws = await S.widgets.slackDisconnect(); drawStatus(); } });
+      const chBox = h('div', { class: 'widget-checks', id: 'slack-channels' });
+      const drawChannels = (list) => {
+        chBox.replaceChildren(...list.map((c) => {
+          const l = chk(`slack-ch-${c.id}`, `${c.private ? '🔒 ' : '#'}${c.name}`, picked.has(c.id));
+          l.querySelector('input').dataset.id = c.id;
+          l.querySelector('input').dataset.name = c.name;
+          l.querySelector('input').addEventListener('change', (e) => { if (e.target.checked) picked.set(c.id, c.name); else picked.delete(c.id); });
+          return l;
+        }));
+      };
+      drawChannels([...picked].map(([id, name]) => ({ id, name, private: false })));
+      const load = h('button', { type: 'button', id: 'slack-load', text: 'Load channels', onclick: async () => {
+        try { drawChannels(await S.widgets.slackChannels()); } catch (err) { flash(status, clean(err), 'err'); }
+      } });
+      inputs.slackPicked = picked;
+      inputs.dms = chk('widget-slack-dms', 'Unread direct messages', sc.dms !== false);
+      inputs.mentions = chk('widget-slack-mentions', 'Mentions of you in the chosen channels', sc.mentions !== false);
+      inputs.count = sel('widget-slack-count', 'Recent messages', [[3, '3'], [5, '5'], [8, '8'], [10, '10']], sc.count || 5);
+      drawStatus();
+      fields.replaceChildren(
+        plain('Slack app', h('div', null,
+          h('div', { class: 'widget-inline' }, clientId, clientSecret),
+          h('div', { class: 'widget-inline' }, redirect, open),
+          h('div', { class: 'widget-inline' }, pasted, finish, disconnect),
+          status),
+        'Slack needs your own app (api.slack.com/apps → Create New App). Under OAuth & Permissions add the redirect URL above (Slack requires https, so approving ends on a page that may not load: that is fine) and these User Token Scopes: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Read-only: nothing can be posted. Keep the app private (not distributed) so Slack’s normal rate limits apply. Everything is stored encrypted by your system and never reaches the new-tab page.'),
+        field('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token from your app’s OAuth & Permissions page. It doesn’t renew itself.'),
+        plain('Channels', h('div', null, h('div', { class: 'widget-inline' }, load), chBox), 'Up to 4 channels you are in; their recent messages show on the card.'),
+        plain('Show', h('div', { class: 'widget-checks' }, inputs.dms, inputs.mentions)),
+        field('Recent messages', inputs.count),
+        field('Colors', colors, 'Only the card’s surface and title follow it.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -728,6 +794,8 @@ async function buildWidgets(card) {
         spotifyFields(same);
       } else if (type === 'gmail') {
         gmailFields(same);
+      } else if (type === 'slack') {
+        slackFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -756,6 +824,9 @@ async function buildWidgets(card) {
       if (type === 'spotify') return { ...base, clientId: inputs.clientId.value, art: val(inputs.art) };
       if (type === 'gmail') {
         return { ...base, clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value, count: Number(inputs.count.value), snippets: val(inputs.snippets) };
+      }
+      if (type === 'slack') {
+        return { ...base, token: inputs.token.value, slack: { channels: [...inputs.slackPicked].map(([id, name]) => ({ id, name })), dms: val(inputs.dms), mentions: val(inputs.mentions), count: Number(inputs.count.value) } };
       }
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
@@ -798,7 +869,7 @@ async function buildWidgets(card) {
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, Spotify (now playing, with play, pause, next and previous), Gmail (read-only), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, Spotify (now playing, with play, pause, next and previous), Gmail (read-only), Slack (read-only), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page

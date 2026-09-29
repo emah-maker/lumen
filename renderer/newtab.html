@@ -426,6 +426,18 @@
     @container card (min-width: 260px) and (min-height: 130px) { .sp-art { display: block; } .sp-album, .sp-progress { display: flex; } .sp-album { display: block; } }
     @container card (max-height: 129px) { .sp-progress { display: none; } }
     /* Todoist: a count and the next task on a small card, the list (with what the settings switch on) on a bigger one. */
+    .sl-summary { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 0; flex: 1 1 auto; }
+    .sl-counts { display: flex; gap: 18px; }
+    .sl-count { display: flex; flex-direction: column; }
+    .sl-n { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .sl-of { color: var(--muted); font-size: 11.5px; }
+    .sl-next { font-size: 12.5px; font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .sl-full { display: none; flex-direction: column; gap: 6px; }
+    @container card (min-width: 190px) and (min-height: 150px) { .sl-summary { display: none; } .sl-full { display: flex; } }
+    .sl-chats { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+    .sl-chat { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; }
+    .sl-full .w-row.unread .w-title, .sl-full .w-row.unread a { font-weight: 600; }
+    .sl-reconnect { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
     .td-summary { display: flex; flex-direction: column; justify-content: center; min-height: 0; flex: 1 1 auto; }
     .td-count { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .td-of { color: var(--muted); font-size: 11.5px; margin-bottom: 6px; }
