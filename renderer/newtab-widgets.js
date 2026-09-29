@@ -541,9 +541,13 @@ function renderWidgets(list) {
   for (const [id, s] of shownWidgets) if (!valid.some((w) => w.id === id)) { s.el.remove(); shownWidgets.delete(id); }
   // Cards are never reordered in the DOM (moving a frame would reload it): new ones go at the end.
   for (const card of cards) if (card.parentNode !== box) box.append(card);
-  box.classList.toggle('empty', !cards.length);
+  // The page's own sections that are cards too (newtab-system.js): part of the same grid.
+  const system = window.newtabSystem;
+  const all = new Map(valid.map((w, i) => [w.id, cards[i]]));
+  if (system) for (const [id, card] of system.cards()) all.set(id, card);
+  box.classList.toggle('empty', !all.size);
   applyWidgetColors();
-  window.widgetGrid?.sync(valid, new Map(valid.map((w, i) => [w.id, cards[i]])));
+  window.widgetGrid?.sync([...valid, ...(system ? system.entries() : [])], all);
 }
 // A card's Colors setting: 'calendar' leaves it alone; the others tint its surface, title, event bars and
 // today highlight from the page's accent and background (features/widget-colors.js keeps the text readable).
@@ -604,3 +608,4 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) tick
   }, 0));
 }
 window.renderWidgets = renderWidgets;
+window.widgetTypes = () => Object.keys(WIDGET_RENDERERS); // the kinds of card this file can draw (newtab-edit.js's Add widget picker)
