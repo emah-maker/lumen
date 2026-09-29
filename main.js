@@ -212,6 +212,16 @@ function writeSettings(settings) {
 }
 const aiSites = createAiSites({ readSettings, writeSettings });
 
+// Performance mode (features/performance.js): the disk cache cap has to be set before the app is
+// ready, and the weekly Code Cache check runs before Chromium opens that folder.
+const perfMode = require('./features/performance').create({
+  app, readSettings, powerMonitor: () => require('electron').powerMonitor,
+  onChange: () => { try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ } },
+});
+perfMode.applyLaunchSwitches();
+try { require('./features/performance').trimCodeCache(app.getPath('userData'), perfMode.limits().codeCacheBytes); } catch (err) { console.error('[lumen] cache check failed:', err.message); }
+if (TEST) global.__perfMode = perfMode;
+
 // Favicons out of settings.json and into their own debounced/async store (see favicon-store.js) —
 // settings.json is rewritten fully and synchronously, which a new favicon shouldn't have to pay for.
 // One-time migration: move any favicons an older build saved inline, then drop the key for good.
@@ -1422,7 +1432,7 @@ async function canSleep(tab) {
 async function sweepSleep() {
   if (!win || win.isDestroyed() || readSettings().tabSleep === false) return;
   const pressure = await pressureCheck();
-  const cutoff = Date.now() - (pressure ? PRESSURE_SLEEP_AFTER_MS : SLEEP_AFTER_MS);
+  const cutoff = Date.now() - (pressure ? PRESSURE_SLEEP_AFTER_MS : Math.min(SLEEP_AFTER_MS, perfMode.limits().sleepAfterMs)); // Performance mode: sooner
   for (const tab of [...tabs].sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0))) {
     if (!tab.lastActiveAt || tab.lastActiveAt > cutoff) continue;
     if (!(await canSleep(tab))) continue;
@@ -1431,6 +1441,19 @@ async function sweepSleep() {
     if (!alive(tab) || tab.sleeping || tab.id === activeId) continue;
     sleepTab(tab);
     sendTabs();
+  }
+  // Performance mode also caps how many background tabs stay loaded: the ones unused the longest go
+  // first, and nothing used in the last minute.
+  const cap = perfMode.limits().maxLiveBackgroundTabs;
+  if (Number.isFinite(cap)) {
+    const live = () => tabs.filter((t) => alive(t) && !t.sleeping && t.id !== activeId);
+    for (const tab of live().sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0))) {
+      if (live().length <= cap) break;
+      if (!tab.lastActiveAt || tab.lastActiveAt > Date.now() - 60e3 || !(await canSleep(tab))) continue;
+      if (!alive(tab) || tab.sleeping || tab.id === activeId) continue;
+      sleepTab(tab);
+      sendTabs();
+    }
   }
 }
 let pressureCheck = memoryPressure;
@@ -3368,6 +3391,7 @@ const settingsBackend = settingsPage.create({
   isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
+  performance: perfMode,
 });
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.
@@ -3875,6 +3899,7 @@ const aiAgents = setupAiAgents({
 const updates = require('./features/updates').createUpdates({
   app, ipcMain, session, ui, readSettings, writeSettings, test: TEST,
   prefs: () => settingsBackend.prefs(),
+  startupDelayMs: () => perfMode.limits().startupDelayMs,
   beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
 });
 if (TEST) global.__updates = updates;
@@ -3928,10 +3953,12 @@ app.whenReady().then(async () => {
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
   if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
   perf.mark('adblockReady');
-  for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider);
+  perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
-  updates.start(); // first check after a short delay, then every few hours
+  perfMode.start(); // Performance mode: power events, and whether the GPU really draws
+  setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
+  updates.start(); // first check after a short delay (longer in Performance mode), then every few hours
 });
 // On macOS the app stays running with no windows, and clicking the Dock icon opens one again.
 app.on('window-all-closed', () => { if (process.platform !== 'darwin' || !settingsBackend.prefs().keepRunningInBackground) app.quit(); }); // [settings]

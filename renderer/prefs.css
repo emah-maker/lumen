@@ -9,3 +9,7 @@
   transition-duration: 0.01ms !important; scroll-behavior: auto !important;
 }
 .pref-focus-rings :focus { outline: 2px solid var(--accent, #007aff) !important; outline-offset: 2px; }
+/* Performance mode (features/performance.js): no blur, lighter shadows; motion is stopped by pref-reduce-motion above. */
+.pref-lite .composer { backdrop-filter: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
+.pref-lite .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+.pref-lite .approval:not(.resolved):hover { box-shadow: 0 0 0 1px var(--hairline); }

@@ -430,5 +430,16 @@
   "usage.tokens": "{tokens} tokens",
   "usage.tokens.title": "Tokens and list-price cost from Lumen's sidebar chats with {engine} today.",
   "usage.week": "week {percent}%",
-  "usage.week.title": "The weekly limit is {percent}% used."
+  "usage.week.title": "The weekly limit is {percent}% used.",
+  "settings.performance.label": "Performance mode",
+  "settings.performance.desc": "Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.",
+  "settings.performance.auto": "Auto",
+  "settings.performance.on": "Always on",
+  "settings.performance.off": "Off",
+  "settings.performance.on.because": "Performance mode is on because {why}.",
+  "settings.performance.on.note": "Performance mode is on.",
+  "settings.performance.why.memory": "this PC has {gb} GB of memory",
+  "settings.performance.why.cpu": "this PC has {count} processor cores",
+  "settings.performance.why.gpu": "graphics acceleration is not available",
+  "settings.performance.why.throttled": "the PC is limiting its speed"
 }

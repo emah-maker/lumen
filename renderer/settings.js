@@ -672,6 +672,17 @@ function buildAccessibility(card) {
 
 function buildSystem(card) {
   card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.'), 'hardwareAcceleration', 'relaunch'));
+  const perfRow = select('performanceMode', tr('settings.performance.label', 'Performance mode'), tr('settings.performance.desc', 'Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.'),
+    [['auto', tr('settings.performance.auto', 'Auto')], ['on', tr('settings.performance.on', 'Always on')], ['off', tr('settings.performance.off', 'Off')]], { after: () => showPerfNote() });
+  const perfNote = h('span', { class: 'note', id: 'performance-note' });
+  const showPerfNote = () => {
+    const p = st.performance;
+    const why = (p?.reasons || []).map((r) => tr('settings.performance.why.' + r.key, { memory: 'this PC has {gb} GB of memory', cpu: 'this PC has {count} processor cores', gpu: 'graphics acceleration is not available', throttled: 'the PC is limiting its speed' }[r.key], r.vars));
+    perfNote.textContent = p?.active ? (why.length ? tr('settings.performance.on.because', 'Performance mode is on because {why}.', { why: why.join(', ') }) : tr('settings.performance.on.note', 'Performance mode is on.')) : '';
+  };
+  showPerfNote();
+  perfRow.querySelector('.text').append(perfNote);
+  card.append(perfRow);
   card.append(toggle('tabSleep', 'Put unused tabs to sleep', 'Frees up memory from background tabs left untouched for a while; switching back reloads them.'));
   if (st.platform === 'darwin') {
     card.append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
@@ -778,7 +789,7 @@ function refreshRestartNotes() {
   for (const button of document.querySelectorAll('button.relaunch')) button.hidden = !st.restartNeeded.includes(button.dataset.key);
 }
 function applyPageClasses() {
-  document.documentElement.classList.toggle('reduce-motion', Boolean(st.prefs.reduceMotion));
+  document.documentElement.classList.toggle('reduce-motion', Boolean(st.prefs.reduceMotion || st.performance?.active));
   applyPageAccent(); // [look]
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (st) applyPageAccent(); });

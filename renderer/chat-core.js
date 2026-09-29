@@ -454,7 +454,9 @@ function renderStreaming(el, source) {
     moveWorkingToEnd();
     scrollToBottom();
   };
-  if (source.length - (el.stableLen || 0) > 12000) setTimeout(draw, 120);
+  // Performance mode (pref-lite on <html>) redraws every 100 ms however short the reply.
+  if (document.documentElement.classList.contains('pref-lite')) setTimeout(draw, 100);
+  else if (source.length - (el.stableLen || 0) > 12000) setTimeout(draw, 120);
   else requestAnimationFrame(draw);
 }
 

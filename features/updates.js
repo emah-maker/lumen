@@ -282,7 +282,7 @@ function createUpdates(deps) {
     timer = setTimeout(function tick() {
       check();
       timer = setTimeout(tick, CHECK_EVERY_MS);
-    }, FIRST_CHECK_MS);
+    }, FIRST_CHECK_MS + (deps.startupDelayMs?.() || 0));
   }
 
   // Tests (test/updates.js) swap in a stand-in updater and stager and pretend to be a given kind of install.
