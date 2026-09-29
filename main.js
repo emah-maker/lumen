@@ -60,6 +60,18 @@ const pageTools = require('./features/page-tools').createPageTools({
   downloadDir: () => settingsBackend.downloadDir(),
   showSaveDialog: (options) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(win, options)),
 });
+// Page translation (features/translate.js): user-initiated, with the user's own connected AI.
+const translate = require('./features/translate').createTranslate({
+  readSettings: () => readSettings(),
+  writeSettings: (s) => writeSettings(s),
+  t: (...a) => t(...a),
+  uiLocale: () => app.getLocale(),
+  engine: () => translateEngine(),
+  aiAllowed: (url) => !aiSites.isOff(url),
+  sendTabs: () => sendTabs(),
+  popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
+  openUrl: (tab, url) => tab.view.webContents.loadURL(url).catch(() => {}),
+});
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
@@ -135,7 +147,7 @@ const UI_ONLY_IPC = new Set([
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -793,6 +805,7 @@ function showAppMenu({ x, y }) {
     { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
     { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
     { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
+    ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
     ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
     { type: 'separator' },
     { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
@@ -1029,6 +1042,7 @@ function tabState() {
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url) || managerPageOf(url), // Lumen's own pages get their own icon
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
+        translate: translate.stateOf(t), // the translate button and infobar (features/translate.js)
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
@@ -1244,6 +1258,7 @@ function wireView(tab, url, history = null) {
   });
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
+  translate.attach(tab);
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
@@ -1663,6 +1678,38 @@ async function proposeGroups(model, list) {
 function aiOffTab(id) {
   const tab = tabs.find((t) => t.id === id);
   return Boolean(tab) && aiSites.isOff(alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '');
+}
+
+// ---- page translation engine: the cheapest fast model of the user's connected API provider.
+// CLI engines (Claude Code, Grok Build) aren't used: one agent run per chunk is too slow and costly;
+// with only those connected, the menu offers Google Translate instead.
+function translateEngine() {
+  const chosen = cheapTopicModel();
+  const base = LOCAL_ENGINE.test(chosen) ? modelOptions().find((o) => !LOCAL_ENGINE.test(o.id) && !o.id.endsWith(':__more'))?.id : chosen;
+  if (!base) return null;
+  const { provider } = providers.splitModel(base);
+  if (provider === 'anthropic' ? !anthropicUsable() : !providerKey(provider)) return null;
+  let model = 'claude-haiku-4-5';
+  if (provider !== 'anthropic') {
+    const list = providerModels[provider] || providers.PROVIDERS[provider].defaults;
+    model = `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
+  }
+  const label = provider === 'anthropic' ? 'Anthropic' : providers.PROVIDERS[provider].label;
+  return { id: provider === 'anthropic' ? 'anthropic' : provider, label, run: (system, user) => translateComplete(model, system, user) };
+}
+const TRANSLATE_SCHEMA = { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { id: { type: 'integer' }, text: { type: 'string' } }, required: ['id', 'text'], additionalProperties: false } } }, required: ['items'], additionalProperties: false };
+async function translateComplete(model, system, user) {
+  const { provider, model: id } = providers.splitModel(model);
+  if (provider !== 'anthropic') return providers.completeJSON({ provider, model: id, apiKey: providerKey(provider), system, user });
+  const res = await agent.getClient().messages.create({
+    model: id,
+    max_tokens: 8000,
+    system,
+    output_config: { format: { type: 'json_schema', schema: TRANSLATE_SCHEMA } },
+    messages: [{ role: 'user', content: user }],
+  });
+  if (res.stop_reason === 'refusal') throw new Error('The model declined to translate this page.');
+  return JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
 }
 
 let organizing = false;
@@ -2363,6 +2410,7 @@ function showContextMenu(wc, p) {
       items.push(
         { label: 'Save Page As…', click: () => pageTools.savePage(wc).catch(() => {}) },
         { label: 'View Page Source', click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
+        ...translate.pageMenuItem(tabByContents(wc)),
         { type: 'separator' },
       );
     }
@@ -2648,6 +2696,7 @@ function macMenu() {
         { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: () => reloadActive({ ignoreCache: true }) },
         { label: t('menu.find'), ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
         { label: t('menu.readerMode'), click: () => toggleReaderActive() },
+        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
         { label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
         { type: 'separator' },
         { label: t('menu.zoomIn'), ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
@@ -3531,6 +3580,8 @@ function toggleReaderActive() {
   return pageTools.toggleReader(tabs.find((t) => t.id === activeId && alive(t)));
 }
 ipcMain.on('page:reader', () => { toggleReaderActive(); });
+ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
+if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
 ipcMain.on('nav:back', () => activeTab()?.webContents.navigationHistory.goBack());
 ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());

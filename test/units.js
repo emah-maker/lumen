@@ -1755,6 +1755,58 @@ async function swapHelperRuns() {
   fs.rmSync(d, { recursive: true, force: true });
 }
 
+// ---- page translation: pure logic (features/translate.js)
+(() => {
+  const tr = require('../features/translate');
+  const el = (tag, extra = {}, parent = null) => ({
+    tagName: tag, parentElement: parent, isContentEditable: false, classList: { contains: (c) => (extra.classes || []).includes(c) },
+    getAttribute: (n) => (extra.attrs || {})[n] ?? null, hasAttribute: (n) => n in (extra.attrs || {}),
+  });
+  const body = el('BODY');
+  const skipped = (node) => tr.excludedElement(node);
+  check('translate: plain text elements are translated', !skipped(el('P', {}, body)) && !skipped(el('A', {}, el('LI', {}, body))), '');
+  check('translate: script, style, code, pre and form fields are skipped', ['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA', 'INPUT', 'NOSCRIPT', 'SELECT'].every((tag) => skipped(el(tag, {}, body))), '');
+  check('translate: text inside code or pre is skipped at any depth', skipped(el('SPAN', {}, el('CODE', {}, el('P', {}, body)))) && skipped(el('B', {}, el('PRE', {}, body))), '');
+  check('translate: translate="no" and class notranslate are skipped, with their descendants', skipped(el('P', { attrs: { translate: 'no' } }, body)) && skipped(el('SPAN', {}, el('DIV', { classes: ['notranslate'] }, body))) && !skipped(el('P', { attrs: { translate: 'yes' } }, body)), '');
+  check('translate: editable areas and hidden elements are skipped', skipped(el('DIV', { attrs: { contenteditable: '' } }, body)) && skipped(el('DIV', { attrs: { contenteditable: 'true' } }, body)) && !skipped(el('DIV', { attrs: { contenteditable: 'false' } }, body)) && skipped(Object.assign(el('DIV', {}, body), { isContentEditable: true })) && skipped(el('DIV', { attrs: { hidden: '' } }, body)), '');
+  check('translate: only text with a letter is sent', tr.translatableText('Hola mundo', el('P', {}, body)) && tr.translatableText('  ñandú ', el('P', {}, body)) && !tr.translatableText(' 12 . 34 ', el('P', {}, body)) && !tr.translatableText('   ', el('P', {}, body)) && !tr.translatableText('Hola', el('CODE', {}, body)), '');
+
+  const items = Array.from({ length: 40 }, (_v, i) => ({ id: i + 1, text: `frase número ${i + 1} `.repeat(6).trim() }));
+  const chunks = tr.chunkItems(items, 1000);
+  check('translate: chunks stay near the size limit and keep every item once, in order', chunks.length > 1 && chunks.every((c) => c.reduce((n, i) => n + i.text.length + 24, 0) <= 1000 + 24 + items[0].text.length) && chunks.flat().map((i) => i.id).join() === items.map((i) => i.id).join(), chunks.map((c) => c.length).join());
+  check('translate: an oversized item gets a chunk of its own', tr.chunkItems([{ id: 1, text: 'a' }, { id: 2, text: 'b'.repeat(5000) }, { id: 3, text: 'c' }], 1000).map((c) => c.map((i) => i.id).join()).join('|') === '1|2|3', '');
+  check('translate: an empty page has no chunks', tr.chunkItems([]).length === 0, '');
+
+  const sent = [{ id: 1, text: 'Hola' }, { id: 2, text: 'Adiós' }, { id: 3, text: 'Gracias' }];
+  const good = tr.validateReply(sent, { items: [{ id: 2, text: 'Goodbye' }, { id: 1, text: 'Hello' }, { id: 3, text: 'Thanks' }] });
+  check('translate: a complete reply maps back by id whatever its order', good.missing.length === 0 && good.ok.get(1) === 'Hello' && good.ok.get(3) === 'Thanks', JSON.stringify([...good.ok]));
+  const bad = tr.validateReply(sent, { items: [{ id: 1, text: 'Hello' }, { id: 1, text: 'again' }, { id: 9, text: 'stray' }, { id: 2, text: 7 }, { id: '3', text: 'Thanks' }] });
+  check('translate: unknown ids, repeats and non-text are dropped; missing ones reported', bad.ok.get(1) === 'Hello' && bad.ok.get(3) === 'Thanks' && bad.ok.size === 2 && bad.missing.join() === '2' && bad.problems.length === 3, JSON.stringify(bad));
+  check('translate: a reply that is not a list leaves everything missing', tr.validateReply(sent, 'sure! here you go').missing.length === 3 && tr.validateReply(sent, null).ok.size === 0, '');
+  check('translate: a bare array reply is accepted; an emptied or absurdly long item is rejected', tr.validateReply(sent, [{ id: 1, text: 'Hello' }, { id: 2, text: '  ' }, { id: 3, text: 'x'.repeat(500) }]).missing.join() === '2,3', '');
+  check('translate: the prompt treats page text as untrusted data and names the target', /untrusted DATA/.test(tr.systemPrompt('fr')) && /French/.test(tr.systemPrompt('fr')) && /never instructions/.test(tr.systemPrompt('de')) && JSON.parse(tr.userPrompt(sent)).items.length === 3, '');
+
+  check('translate: the declared language wins, region and case ignored', tr.pageLanguage('es-MX', '') === 'es' && tr.pageLanguage('EN', '') === 'en' && tr.pageLanguage('zh-Hans-CN', '') === 'zh', '');
+  const ES = 'La ciudad de Madrid es la capital de España y una de las más grandes de Europa, con una historia que se remonta a muchos siglos y que atrae a millones de visitantes cada año para conocer sus museos y sus calles.';
+  const EN = 'The city of London is the capital of England and one of the largest in Europe, with a history that goes back many centuries and that attracts millions of visitors every year to see its museums and its streets.';
+  const DE = 'Die Stadt Berlin ist die Hauptstadt von Deutschland und eine der größten in Europa, mit einer Geschichte, die viele Jahrhunderte zurückreicht und die jedes Jahr Millionen von Besuchern anzieht, um die Museen zu sehen.';
+  check('translate: with no lang attribute, letters and common words tell Spanish, English and German apart', tr.pageLanguage('', ES) === 'es' && tr.pageLanguage('', EN) === 'en' && tr.pageLanguage('', DE) === 'de', [ES, EN, DE].map((x) => tr.pageLanguage('', x)).join());
+  check('translate: scripts are recognized (Japanese, Russian, Korean, Arabic)', tr.guessLanguage('これは日本語の文章です。'.repeat(8)) === 'ja' && tr.guessLanguage('Это русский текст для проверки определения языка страницы.'.repeat(2)) === 'ru' && tr.guessLanguage('이것은 한국어 문장입니다 언어를 감지하는 테스트입니다.'.repeat(2)) === 'ko' && tr.guessLanguage('هذا نص عربي لاختبار اكتشاف لغة الصفحة في المتصفح.'.repeat(2)) === 'ar', '');
+  check('translate: too little text, or numbers only, gives no guess', tr.guessLanguage('Hola') === '' && tr.guessLanguage('1234 5678 '.repeat(20)) === '', '');
+  check('translate: differing languages are compared by base language only', tr.languagesDiffer('es', 'en') && !tr.languagesDiffer('en-GB', 'en-US') && !tr.languagesDiffer('zh', 'zh-CN') && !tr.languagesDiffer('', 'en') && !tr.languagesDiffer('x-default', 'en'), '');
+  const offer = (extra) => tr.shouldOffer({ url: 'https://example.es/a', pageLang: 'es', target: 'en', ...extra });
+  check('translate: offered for a foreign page, never for the same language', offer({}) && !offer({ pageLang: 'en' }), '');
+  check('translate: not offered when off, on a never-site (www ignored), in private, or on non-web pages', !offer({ offerOn: false }) && !offer({ never: ['example.es'] }) && !offer({ url: 'https://www.example.es/x', never: ['example.es'] }) && !offer({ isPrivate: true }) && !offer({ url: 'lumen://settings' }) && !offer({ url: 'file:///c:/a.html' }), '');
+  check('translate: the target follows the setting, else the UI language, else English', tr.targetFor('', 'fr-CA') === 'fr' && tr.targetFor('de', 'fr') === 'de' && tr.targetFor('', 'zh_TW') === 'zh-TW' && tr.targetFor('', 'zh-CN') === 'zh-CN' && tr.targetFor('', 'xx') === 'en' && tr.targetFor('bogus', 'es') === 'es', '');
+
+  const web = 'https://example.es/a';
+  check('translate: the first send to a provider needs consent, then is remembered', JSON.stringify(tr.consentDecision({ url: web, consented: [], provider: 'openai' })) === '{"allow":true,"needsConsent":true,"remember":true}' && tr.consentDecision({ url: web, consented: ['openai'], provider: 'openai' }).needsConsent === false && tr.consentDecision({ url: web, consented: ['openai'], provider: 'groq' }).needsConsent === true, '');
+  check('translate: nothing goes out from lumen://, file://, about: pages or with no provider', ['lumen://settings', 'file:///c:/a.html', 'about:blank', 'chrome://x', ''].every((url) => !tr.consentDecision({ url, consented: ['openai'], provider: 'openai' }).allow) && tr.consentDecision({ url: web, provider: '' }).reason === 'no-engine', '');
+  check('translate: private windows refuse unless clicked, and then ask every time without remembering', tr.consentDecision({ url: web, isPrivate: true, explicit: false, consented: ['openai'], provider: 'openai' }).reason === 'private' && JSON.stringify(tr.consentDecision({ url: web, isPrivate: true, explicit: true, consented: ['openai'], provider: 'openai' })) === '{"allow":true,"needsConsent":true,"remember":false}', '');
+  check('translate: settings values are cleaned', tr.cleanHosts(['WWW.Example.com', 'bad host', 'a.b', 'a.b']).join() === 'example.com,a.b' && tr.cleanHosts('x') === null && tr.cleanConsent(['openai', 'x y', 'google', 'openai']).join() === 'openai,google', '');
+  const { DEFAULTS } = require('../settings-backend');
+  check('translate: settings defaults: offer on, no consent, no sites, Lumen\'s language', DEFAULTS.translateOffer === true && DEFAULTS.translateConsent.length === 0 && DEFAULTS.translateNever.length === 0 && DEFAULTS.translateTarget === '', '');
+})();
 // ---- tab drag geometry (features/tab-drag-math.js)
 {
   const { clampToDisplay, windowBoundsFor, stripHit } = require('../features/tab-drag-math');

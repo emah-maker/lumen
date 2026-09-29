@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="prefs.css" /><!-- [settings] -->
   <link rel="stylesheet" href="tab-search.css" />
   <link rel="stylesheet" href="chats.css" /><!-- chat history list -->
+  <link rel="stylesheet" href="translate.css" /><!-- translate infobar and button -->
 </head>
 <body class="sidebar-hidden">
   <header class="chrome">
@@ -92,6 +93,7 @@
         </button>
     </div>
     </div>
+    <div class="infobar" id="translate-bar" role="region" aria-label="Translate this page" data-i18n-aria-label="translate.region" hidden></div>
     <div class="loadbar" id="loadbar" hidden></div>
   </header>
 
@@ -178,5 +180,6 @@
   <script src="tab-search-match.js"></script>
   <script src="tab-search.js"></script>
   <script src="updates.js"></script>
+  <script src="translate.js"></script>
 </body>
 </html>
