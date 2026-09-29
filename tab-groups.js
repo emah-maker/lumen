@@ -76,7 +76,13 @@ about after all also any best can com could do does get go guide home into just 
 said see sign site so some than them then there these they top up us use using via vs was way we web welcome were what www html htm php aspx index amp http https
 official free online app video videos watch search results result edit view log docs doc wiki org net io co uk en de fr es de
 help helps works time times visit deal deals thing things day days week weeks year years review reviews reviewed rated tips ideas
-library libraries open source powerful comprehensive community resources ecosystem platform`.split(/\s+/));
+library libraries open source powerful comprehensive community resources ecosystem platform
+// Function words of the languages most tab titles come in besides English (French, Spanish, German, Portuguese):
+// without them "7 jours" and "3 jours" link a weather page to a Paris itinerary.
+le la les des du un une et en pour que qui dans sur avec voir jour jours par au aux pas plus est sont ce cette
+el los las del una por para con como que mas dias dia paso donde libre gratis
+der die das und ein eine mit von zu für auf ist im den dem
+de da do dos das os um uma com para por mais`.split(/\s+/));
 const TOPIC_THRESHOLD = 0.34;
 // Small pools (2-3 loose tabs) need stronger evidence than a full cluster does before forming a
 // group: fewer members corroborating the same words makes an incidental overlap more likely.
@@ -107,6 +113,14 @@ function stem(w) {
   if (s.length > 3 && /(.)\1$/.test(s) && !/(ss|ll|ff|zz)$/.test(s)) s = s.slice(0, -1);
   if (s.length > 3 && /[^s]s$/.test(s)) s = s.slice(0, -1);
   return s;
+}
+
+// A title that says nothing about the page: it is still loading, behind a bot check, or a login wall.
+// Its address words describe the tab instead, so it can still join the tabs it leads to.
+const TRANSIENT_TITLE = /^\s*(loading|please wait|just a moment|one moment|redirecting|attention required|access denied|checking your browser|untitled|about:blank|new tab|new tab page|connecting|sign[ -]?in|log[ -]?in|sign[ -]?up|login|register|authenticating|verifying)/i;
+function isTransientTitle(title) {
+  const t = String(title || '').trim();
+  return !t || TRANSIENT_TITLE.test(t) || /^https?:\/\//i.test(t);
 }
 
 // Strip a leading/trailing " - YouTube" / " | Reddit" / " — Stack Overflow" style segment that
@@ -207,7 +221,7 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
       }
     }
   };
-  const cleanTitle = stripSiteSegment(title, url);
+  const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(title, url);
   const titleTokens = tokens(cleanTitle);
   add(titleTokens, 1, { naming: true, vector: true });
   let pathname = '';
@@ -243,7 +257,7 @@ function vectorize(entries) {
   for (const d of docs) {
     const b = d.words.brand;
     if (!b) continue;
-    for (const variant of new Set([b, b.replace(/(js|hq|io|py)$/, '')])) {
+    for (const variant of new Set([b, b.replace(/(js|hq|io|py|css|ui|dev|lang|cli)$/, '')])) {
       if (variant.length < 3) continue;
       const key = stem(variant);
       if (docs.some((o) => o.site !== d.site && (o.words.get(key)?.weight ?? 0) >= 0.8)) d.words.set(key, { weight: 1, surface: d.words.get(key)?.surface || variant.charAt(0).toUpperCase() + variant.slice(1) });
@@ -319,6 +333,23 @@ function centroidOf(docs) {
   return { vec, norm: Math.hypot(...vec.values()) };
 }
 
+// A library or product whose own site is in the cluster and whose name most of the cluster's tabs carry
+// (its docs, a Stack Overflow question, its repo): the cluster is named for it, as its site writes it
+// ("Tailwind CSS", "Zod"), rather than for the most frequent word or phrase.
+const brandVariants = (b) => new Set([b, b.replace(/(js|hq|io|py|css|ui|dev|lang|cli)$/, '')]);
+function libraryName(members, majority) {
+  for (const d of members) {
+    const b = (d.site || '').split('.')[0];
+    if (!b || b.length < 3 || BRAND_WORDS.has(b) || SEARCH_DOMAINS.has(d.site)) continue;
+    for (const variant of brandVariants(b)) {
+      if (variant.length < 3) continue;
+      const key = stem(variant);
+      if (members.filter((m) => m.vec.has(key)).length >= majority && members.filter((m) => m.site === d.site).length >= 2) return siteName(d.url, d.title);
+    }
+  }
+  return '';
+}
+
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
 function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   const docs = vectorize(entries);
@@ -374,6 +405,9 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   const clip = (s) => (s.length <= 24 ? s : (s.slice(0, 24).replace(/\s+\S*$/, '') || s.slice(0, 24)));
   return clusters.filter((c) => c.length >= 2).map((c) => {
     const members = c.map((i) => docs[i]);
+    let pairSum = 0;
+    for (let x = 0; x < c.length; x++) for (let y = x + 1; y < c.length; y++) pairSum += sim[c[x]][c[y]];
+    const cohesion = pairSum / ((c.length * (c.length - 1)) / 2); // mean similarity of member pairs: how tight the group is
     const isReal = (k) => !/^[#~@]/.test(k); // trigram/vector-bigram/repo keys are similarity-only, never names
     // A word (or bigram) has to be a strict majority, not just "at least half": for a 2-member
     // cluster, "half" (ceil(2/2) = 1) would let a word only ONE member has name the pair.
@@ -414,13 +448,14 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
       const kind = kinds.size === 1 ? [...kinds][0] : '';
       name = `${titleCasePhrase(topRepo.replace(/[-_]+/g, ' '))}${kind ? ` ${kind}` : ''}`;
     } else if (siteOnly) name = siteName(members[0].url, members[0].title);
+    else if (libraryName(members, majority)) name = libraryName(members, majority);
     else if (bigramRanked.length) name = titleCasePhrase(bigramRanked[0].surface);
     else if (top) name = titleCase(surface(top[0]));
     else name = siteName(members[0].url, members[0].title);
     // "Next" from "Next.js" titles: keep the suffix a library name is written with.
     const dotted = /^[A-Za-z]+$/.test(name) && members.find((d) => new RegExp(`\\b${name}\\.(js|ts|py|io)\\b`, 'i').test(d.title));
     if (dotted) name = `${name}${String(dotted.title).match(new RegExp(`\\b${name}(\\.(?:js|ts|py|io))\\b`, 'i'))[1]}`;
-    return { name: clip(name), ids: members.map((d) => d.id), key: top?.[0] || null };
+    return { name: clip(name), ids: members.map((d) => d.id), key: top?.[0] || null, cohesion };
   });
 }
 
@@ -956,4 +991,4 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   };
 }
 
-module.exports = { createTabGroups, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
+module.exports = { createTabGroups, isTransientTitle, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
