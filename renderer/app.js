@@ -144,6 +144,15 @@ function startTabDrag(e, el, id) {
   el.setPointerCapture(e.pointerId);
 }
 
+// Dragged this far outside the strip (or out of the window), releasing the tab hands it to main.js:
+// into another window's strip if the cursor is over one, else into a new window of its own.
+const TEAR_OFF_PX = 36;
+function draggedOut(e) {
+  const bar = $('tabs').getBoundingClientRect();
+  return e.clientY > bar.bottom + TEAR_OFF_PX || e.clientY < bar.top - TEAR_OFF_PX
+    || e.clientX < -TEAR_OFF_PX / 2 || e.clientX > window.innerWidth + TEAR_OFF_PX / 2;
+}
+
 function moveTabDrag(e) {
   if (!drag) return;
   drag.dx = e.clientX - drag.startX;
@@ -158,6 +167,7 @@ function moveTabDrag(e) {
   const first = rects[0].left, last = rects[rects.length - 1].right;
   const dx = Math.max(first - rects[from].left, Math.min(last - rects[from].right, drag.dx));
   drag.el.style.transform = `translateX(${dx}px)`;
+  drag.el.classList.toggle('tearing', draggedOut(e));
   const center = rects[from].left + rects[from].width / 2 + dx;
   let to = rects.findIndex((r) => center < r.left + r.width / 2);
   if (to === -1) to = rects.length - 1;
@@ -172,16 +182,19 @@ function moveTabDrag(e) {
   });
 }
 
-function endTabDrag() {
+function endTabDrag(e) {
   if (!drag) return;
   const { moved, from, to, id, ids } = drag;
+  const out = moved && e?.type === 'pointerup' && draggedOut(e);
   drag = null;
   $('tabs').classList.remove('reordering');
-  [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging'); });
+  [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging', 'tearing'); });
   if (moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
-    if (from !== to) {
+    if (out) {
+      window.browser.dropTab?.(id);
+    } else if (from !== to) {
       // Collapsed groups hide tabs, so the strip's order isn't the full order: land next to the tab we dropped on.
       const without = (lastTabState?.tabs || []).map((t) => t.id).filter((x) => x !== id);
       const index = without.indexOf(ids[to]);

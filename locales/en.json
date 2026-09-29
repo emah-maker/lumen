@@ -193,6 +193,8 @@
   "menu.import": "Import Bookmarks and History",
   "menu.inspect": "Inspect Element",
   "menu.makeDefault": "Make Lumen Your Default Browser…",
+  "menu.moveToNewWindow": "Move Tab to New Window",
+  "menu.moveToWindow": "Move Tab to Window",
   "menu.muteSite": "Mute Site",
   "menu.muteTab": "Mute Tab",
   "menu.newPrivateWindow": "New Private Window",
