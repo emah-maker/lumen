@@ -194,3 +194,43 @@ body.interstitial { display: block; }
 /* safe-browsing.html */
 .interstitial.danger h1 { color: var(--danger); }
 .interstitial .attribution { font-size: 12px; opacity: 0.75; margin-top: 32px; }
+/* [usage] plan meters */
+.meter-line { display: flex; align-items: center; gap: 12px; }
+.meter { flex: 1 1 auto; height: 8px; border-radius: 4px; background: var(--field); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1); }
+.meter.high i { background: var(--danger); }
+.meter-value { flex: none; min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+/* [look] accent swatches */
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.swatch { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 160ms ease-out; }
+.swatch:hover { transform: scale(1.1); }
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px currentColor; }
+.swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.accent-blue { background: #007aff; color: #007aff; } .accent-indigo { background: #5856d6; color: #5856d6; }
+.accent-purple { background: #af52de; color: #af52de; } .accent-pink { background: #ff2d55; color: #ff2d55; }
+.accent-red { background: #ff3b30; color: #ff3b30; } .accent-orange { background: #ff9500; color: #ff9500; }
+.accent-green { background: #28a745; color: #28a745; } .accent-teal { background: #30b0c7; color: #30b0c7; }
+.accent-graphite { background: #8e8e93; color: #8e8e93; }
+.swatch-custom { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: conic-gradient(#ff3b30, #ff9500, #ffcc00, #34c759, #30b0c7, #007aff, #af52de, #ff2d55, #ff3b30); cursor: pointer; }
+.swatch-custom::-webkit-color-swatch-wrapper { padding: 3px; }
+.swatch-custom::-webkit-color-swatch { border: 0; border-radius: 50%; opacity: 0; }
+.swatch-custom.on::-webkit-color-swatch { opacity: 1; }
+.swatch-custom.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+/* [look] new-tab background tiles (the same gradients as newtab.html) */
+.bg-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.bg-tile { position: relative; height: 60px; padding: 0; border: 0; border-radius: 10px; cursor: pointer; overflow: hidden; box-shadow: inset 0 0 0 0.5px var(--border); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 160ms ease-out; }
+.bg-tile:hover { transform: translateY(-1px); }
+.bg-tile[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.bg-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.bg-tile[hidden] { display: none; }
+.bg-tile span { position: absolute; left: 8px; bottom: 6px; font-size: 11px; font-weight: 600; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
+.bg-plain { background: var(--bg); } .bg-plain span { color: var(--muted); text-shadow: none; }
+.bg-aurora { background: radial-gradient(60% 80% at 20% 30%, rgba(46, 213, 170, 0.8), transparent 70%), radial-gradient(60% 80% at 80% 30%, rgba(94, 92, 230, 0.85), transparent 70%), radial-gradient(70% 70% at 55% 100%, rgba(191, 90, 242, 0.7), transparent 70%), #06121f; }
+.bg-dusk { background: linear-gradient(160deg, #1d1b4b, #5b2a86 45%, #d9577b 80%, #f7a26a); }
+.bg-ocean { background: linear-gradient(160deg, #031b34, #0a4a7a 45%, #0e8fa8 80%, #6fd6c8); }
+.bg-forest { background: linear-gradient(160deg, #07170f, #164430 45%, #2f7d4f 80%, #9fcf7a); }
+.bg-sunset { background: linear-gradient(160deg, #2a0d2e, #8a1f4b 40%, #f0584a 75%, #ffc26b); }
+.bg-graphite { background: radial-gradient(120% 90% at 50% 0%, #3a3a3c, #1c1c1e 60%, #111); }
+.bg-image { background: linear-gradient(135deg, #8e8e93, #3a3a3c); }
+.note.error { color: var(--danger); }

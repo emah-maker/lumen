@@ -24,8 +24,12 @@ for (const [input, want] of [
   ['[::1]:8080', 'http://[::1]:8080'],
   ['https://node.js', 'https://node.js'],
   ['about:blank', 'about:blank'],
+  // A typed or pasted path opens the file, as in Chrome (spaces included).
+  ['/Users/me/My Page.html', 'file:///Users/me/My%20Page.html'],
+  [`~/Downloads/a b.pdf`, require('url').pathToFileURL(require('os').homedir() + '/Downloads/a b.pdf').href],
+  ['C:\\Users\\me\\page one.html', 'file:///C:/Users/me/page%20one.html'],
 ]) check(`"${input}" opens ${want}`, resolveInput(input, 'google') === want, resolveInput(input, 'google'));
-for (const input of ['node.js', 'next.js', 'notes.txt', 'a.b', 'hello', 'next.js docs', 'user@example.com', 'javascript:alert(1);a.com', 'JavaScript:void(0)']) {
+for (const input of ['node.js', 'next.js', 'notes.txt', 'a.b', 'hello', 'next.js docs', 'user@example.com', 'javascript:alert(1);a.com', 'JavaScript:void(0)', '//server/share', 'what is /etc']) {
   check(`"${input}" is searched`, searched(input), resolveInput(input, 'google'));
 }
 check('the search engine setting is used', resolveInput('node.js', 'duckduckgo').startsWith('https://duckduckgo.com/'), resolveInput('node.js', 'duckduckgo'));

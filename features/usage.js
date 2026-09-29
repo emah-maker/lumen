@@ -1,0 +1,173 @@
+// ---------- usage: your plan's limits, and how much of them Lumen uses ----------
+// Settings → You and AI → Usage, and the sidebar's meter under the composer.
+//  - The plan's limits come from two places, both free: `claude -p /usage` (a local command: no
+//    model call, 0 tokens), which reports "Current session: 29% used · resets 8:09pm" and a weekly
+//    line when the plan has one, plus what the CLI saw contributing ("Top MCP servers: lumen 1%" is
+//    Claude Code driving Lumen over MCP); and the rate_limit_event each Claude Code turn in the
+//    sidebar reports as it runs (claude-code.js).
+//  - Lumen's own use is logged per turn (usage.json in the profile, 35 days): tokens and the
+//    list-price cost the CLI reports, for Claude Code, Grok Build and API-key chats. For Claude Code
+//    turns, how far the 5-hour meter moved during the turn is kept too: the reading from just
+//    before (the previous turn or /usage, when recent) against the one the turn ends with. Anything
+//    else using the same account at that moment (a terminal session, claude.ai) moves it too, so
+//    the panel calls it approximate.
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const KEEP_DAYS = 35;
+const PLAN_TTL = 60 * 1000; // /usage is re-run at most once a minute
+const FRESH = 10 * 60 * 1000; // a meter reading this recent counts as "just before" a turn
+const FIVE_HOURS = 5 * 60 * 60 * 1000;
+
+// "Current session: 29% used · resets Sep 28 at 8:09pm (America/New_York)" and friends.
+function parsePlan(text) {
+  const out = { subscription: /using your subscription/i.test(text), limits: [], contributions: [] };
+  for (const m of String(text).matchAll(/^[ \t]*([^:\n]{3,60}):[ \t]*(\d+(?:\.\d+)?)% used(?:[ \t]*·[ \t]*resets[ \t]+([^\n]+))?[ \t]*$/gim)) {
+    out.limits.push({ label: m[1].trim(), percent: Number(m[2]), resets: (m[3] || '').trim() || null });
+  }
+  // "Last 24h · 644 requests · 7 sessions" blocks, each with "Top MCP servers: a 13%, lumen 1%".
+  const blocks = String(text).split(/^(?=Last \S+)/m).slice(1);
+  for (const block of blocks) {
+    const period = block.match(/^Last (\S+)/)[1];
+    const mcp = block.match(/Top MCP servers:[ \t]*([^\n]+)/i);
+    const servers = mcp ? [...mcp[1].matchAll(/([^,]+?)[ \t]+(\d+(?:\.\d+)?)%/g)].map((s) => ({ name: s[1].trim(), percent: Number(s[2]) })) : [];
+    out.contributions.push({ period, servers, lumen: servers.find((s) => /^lumen$/i.test(s.name))?.percent ?? 0 });
+  }
+  return out;
+}
+
+// The 5-hour window from a rate_limit_event's info: { percent, resetsAt (ms) } or null.
+function fiveHourOf(info) {
+  const w = info?.unifiedWindows?.five_hour || (info?.rateLimitType === 'five_hour' ? info : null);
+  if (!w || !Number.isFinite(Number(w.utilization ?? NaN)) || !Number.isFinite(Number(w.resetsAt))) return null;
+  return { percent: Number(w.utilization) * 100, resetsAt: Number(w.resetsAt) * 1000 };
+}
+
+// deps: { app, claudeBin: async () => path | null }
+function createUsage(deps) {
+  let records = []; // { at, engine, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSD, limitPoints }
+  let meter = null; // the latest 5-hour reading: { percent, resetsAt, at, source }
+  let latestInfo = null; // the latest rate_limit_event info (status, overage)
+  let plan = null; // { at, data } from /usage
+  let planRun = null;
+  const file = () => path.join(deps.app.getPath('userData'), 'usage.json');
+
+  function load() {
+    try {
+      const saved = JSON.parse(fs.readFileSync(file(), 'utf8'));
+      if (Array.isArray(saved.records)) records = saved.records.filter((r) => r && Number.isFinite(r.at));
+      if (saved.meter && Number.isFinite(saved.meter.percent)) meter = saved.meter;
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.error('[lumen] could not read usage.json:', err.message);
+    }
+  }
+  let saveTimer = null;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
+      records = records.filter((r) => r.at >= cutoff);
+      fs.promises.writeFile(file(), JSON.stringify({ records, meter })).catch((err) => console.error('[lumen] could not save usage.json:', err.message));
+    }, 500);
+  }
+
+  // A new 5-hour reading; returns how many points it moved since the last one, when that one is
+  // recent and in the same window (else null: unknown).
+  function reading(percent, resetsAt, source) {
+    const now = Date.now();
+    const same = meter && Math.abs(meter.resetsAt - resetsAt) < 60 * 1000 && now - meter.at < FRESH;
+    const moved = same ? Math.max(0, percent - meter.percent) : null;
+    meter = { percent, resetsAt, at: now, source };
+    return moved;
+  }
+
+  // One finished turn. `engine`: 'claudecode' | 'grokbuild' | 'anthropic' | 'openai' | …
+  function record(engine, { usage, rateLimit, model } = {}) {
+    if (!usage) return;
+    let limitPoints = null;
+    if (rateLimit) {
+      latestInfo = rateLimit;
+      const w = fiveHourOf(rateLimit);
+      if (w) limitPoints = reading(w.percent, w.resetsAt, 'turn');
+    }
+    records.push({
+      at: Date.now(), engine, model: model || (usage.models || [])[0] || null,
+      inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0,
+      cacheReadTokens: usage.cacheReadTokens || 0, cacheWriteTokens: usage.cacheWriteTokens || 0,
+      costUSD: usage.costUSD || 0, limitPoints,
+    });
+    save();
+  }
+
+  // `claude -p /usage`: a local command (0 tokens), run in an empty folder so no project settings
+  // apply, like the sidebar engine's own runs. At most once a minute unless `refresh`.
+  async function planUsage({ refresh = false } = {}) {
+    if (!refresh && plan && Date.now() - plan.at < PLAN_TTL) return plan.data;
+    if (planRun) return planRun;
+    planRun = (async () => {
+      const bin = await deps.claudeBin();
+      if (!bin) return { available: false, reason: 'Claude Code is not installed.' };
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-usage-'));
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const out = await new Promise((resolve) => {
+        let stdout = '';
+        let stderr = '';
+        const child = spawn(bin, ['-p', '/usage', '--output-format', 'json', '--no-session-persistence'], { shell: false, windowsHide: true, cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        const timer = setTimeout(() => child.kill(), 30000);
+        child.stdout.on('data', (d) => { stdout += d; });
+        child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+        child.on('error', (err) => { clearTimeout(timer); resolve({ error: err.message }); });
+        child.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
+      });
+      fs.rm(dir, { recursive: true, force: true }, () => {});
+      if (out.error) return { available: false, reason: out.error };
+      let json;
+      try { json = JSON.parse(out.stdout); } catch { return { available: false, reason: (out.stderr || out.stdout || 'No answer from Claude Code.').trim().split('\n')[0].slice(0, 200) }; }
+      if (json.is_error) return { available: false, reason: String(json.result || 'Claude Code could not read your usage.').split('\n')[0].slice(0, 200) };
+      const data = { available: true, ...parsePlan(json.result || '') };
+      // The session line is the 5-hour window: it becomes the "before" reading for the next turn.
+      const session = data.limits.find((l) => /session/i.test(l.label));
+      if (session && meter && Date.now() - meter.at < FIVE_HOURS) reading(session.percent, meter.resetsAt, 'usage');
+      return data;
+    })().then((data) => { plan = { at: Date.now(), data }; return data; }).finally(() => { planRun = null; });
+    return planRun;
+  }
+
+  const sum = (list) => list.reduce((a, r) => ({
+    turns: a.turns + 1,
+    tokens: a.tokens + r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens,
+    costUSD: a.costUSD + r.costUSD,
+    limitPoints: r.limitPoints == null ? a.limitPoints : (a.limitPoints ?? 0) + r.limitPoints,
+    unknown: a.unknown + (r.limitPoints == null && r.engine === 'claudecode' ? 1 : 0),
+  }), { turns: 0, tokens: 0, costUSD: 0, limitPoints: null, unknown: 0 });
+
+  // Everything the panel and the meter show.
+  async function summary({ refresh = false } = {}) {
+    const planData = await planUsage({ refresh }).catch((err) => ({ available: false, reason: err.message }));
+    const now = Date.now();
+    const windowStart = meter && meter.resetsAt > now ? meter.resetsAt - FIVE_HOURS : now - FIVE_HOURS;
+    const since = (t) => records.filter((r) => r.at >= t);
+    const byEngine = {};
+    for (const r of since(now - 7 * 24 * 60 * 60 * 1000)) (byEngine[r.engine] ||= []).push(r);
+    return {
+      plan: planData,
+      meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt, at: meter.at } : null,
+      status: latestInfo ? { status: latestInfo.status || null, overage: latestInfo.isUsingOverage ? 'in use' : latestInfo.overageStatus || null } : null,
+      lumen: {
+        window: { start: windowStart, ...sum(since(windowStart).filter((r) => r.engine === 'claudecode')) },
+        today: sum(since(new Date().setHours(0, 0, 0, 0))),
+        week: sum(since(now - 7 * 24 * 60 * 60 * 1000)),
+        byEngine: Object.fromEntries(Object.entries(byEngine).map(([k, v]) => [k, sum(v)])),
+      },
+    };
+  }
+
+  function clear() { records = []; save(); }
+
+  return { load, record, summary, planUsage, clear, meter: () => meter };
+}
+
+module.exports = { createUsage, parsePlan, fiveHourOf };

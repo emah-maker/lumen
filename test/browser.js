@@ -87,8 +87,10 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await app.evaluate((_e, p) => {
     const wc = global.__agent.browser.activeTab().webContents;
     wc.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y });
-    wc.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: ['control'] });
-    wc.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers: ['control'] });
+    // Ctrl+click on Windows and Linux; on a Mac Ctrl+click is a right-click and Cmd+click opens the tab.
+    const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
+    wc.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers });
+    wc.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers });
   }, pt);
   await waitFor(async () => (await tabCount()) === before + 2);
   await new Promise((r) => setTimeout(r, 300)); // a background tab must not take focus a moment later either
@@ -107,25 +109,30 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   check('window.open popup is a real window with window.opener', popup.title === 'has-opener' && popup.count === windowsBefore + 1, JSON.stringify(popup));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('/popup'))?.close());
 
-  // HTML fullscreen fills the window.
-  const viewTop = () => app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents)?.getBounds().y; });
-  await pageEval("document.getElementById('fs').click()");
-  await waitFor(async () => (await viewTop()) === 0);
-  await new Promise((r) => setTimeout(r, 200)); // the width follows the move
-  const fsBounds = await app.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    const view = win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents);
-    return { view: view.getBounds(), content: win.getContentSize() };
-  });
-  check('video fullscreen fills the whole window', fsBounds.view.y === 0 && fsBounds.view.x === 0 && fsBounds.view.width === fsBounds.content[0], JSON.stringify(fsBounds));
-  await pageEval('document.exitFullscreen()');
-  await waitFor(async () => (await viewTop()) > 0);
-  const normal = await app.evaluate(() => global.__agent.browser.activeTab().webContents);
-  const afterFs = await app.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents).getBounds();
-  });
-  check('leaving fullscreen restores the layout', afterFs.y > 0, JSON.stringify(afterFs));
+  // HTML fullscreen fills the window. It takes the window into macOS fullscreen, which never
+  // finishes for the invisible window of LUMEN_TEST_BACKGROUND runs, so those skip it.
+  if (process.env.LUMEN_TEST_BACKGROUND) console.log('SKIP  video fullscreen (needs a visible window; LUMEN_TEST_BACKGROUND is set)');
+  else {
+    // HTML fullscreen fills the window.
+    const viewTop = () => app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents)?.getBounds().y; });
+    await pageEval("document.getElementById('fs').click()");
+    await waitFor(async () => (await viewTop()) === 0);
+    await new Promise((r) => setTimeout(r, 200)); // the width follows the move
+    const fsBounds = await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const view = win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents);
+      return { view: view.getBounds(), content: win.getContentSize() };
+    });
+    check('video fullscreen fills the whole window', fsBounds.view.y === 0 && fsBounds.view.x === 0 && fsBounds.view.width === fsBounds.content[0], JSON.stringify(fsBounds));
+    await pageEval('document.exitFullscreen()');
+    await waitFor(async () => (await viewTop()) > 0);
+    const normal = await app.evaluate(() => global.__agent.browser.activeTab().webContents);
+    const afterFs = await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      return win.contentView.children.find((v) => v.getVisible() && v.webContents === global.__agent.browser.activeTab().webContents).getBounds();
+    });
+    check('leaving fullscreen restores the layout', afterFs.y > 0, JSON.stringify(afterFs));
+  }
 
   // Zoom and bookmarks show up in tab state.
   await app.evaluate(() => global.__agent.browser.activeTab().webContents.setZoomLevel(1));

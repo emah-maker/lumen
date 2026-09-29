@@ -13,7 +13,7 @@ const { related } = require('./features/site-activity');
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
 const SETTINGS_PRELOAD = path.join(__dirname, 'settings-preload.js');
-const SECTIONS = ['you-and-ai', 'appearance', 'search', 'startup', 'privacy', 'downloads', 'languages', 'accessibility', 'system', 'extensions', 'reset', 'about', 'internals'];
+const SECTIONS = ['you-and-ai', 'usage', 'appearance', 'search', 'startup', 'privacy', 'downloads', 'languages', 'accessibility', 'system', 'extensions', 'reset', 'about', 'internals'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -32,6 +32,14 @@ function parseSettingsInput(text) {
 // existing keys (searchEngine, adblock, adblockAllow, …).
 const DEFAULTS = {
   theme: 'system', // nativeTheme.themeSource: also what websites see as prefers-color-scheme
+  accentColor: 'blue', // [look] a preset from ACCENTS, or '#rrggbb'
+  newTabBackground: 'plain', // [look] plain | aurora | dusk | ocean | forest | sunset | graphite | image
+  newTabImage: 0, // [look] when the wallpaper file (newtab-wallpaper.jpg in the profile) was last set; 0: none
+  newTabClock: true, // [look] the big clock above the greeting
+  newTabName: '', // [look] "Good evening, <name>"
+  newTabFavorites: true,
+  newTabFrequent: true,
+  newTabPrivacy: true,
   forceDarkWebsites: false, // Chromium's auto dark mode (restart)
   defaultZoom: 1,
   fontSize: 16,
@@ -67,6 +75,14 @@ const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const FONT_SIZES = [9, 12, 16, 20, 24];
 // Site storage cleared along with cookies (Clear browsing data).
 const SITE_STORAGES = ['filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'];
+// [look] Accent colors: Apple's system colors, each with its light- and dark-mode shade.
+const ACCENTS = {
+  blue: ['#007aff', '#0a84ff'], indigo: ['#5856d6', '#5e5ce6'], purple: ['#af52de', '#bf5af2'], pink: ['#ff2d55', '#ff375f'],
+  red: ['#ff3b30', '#ff453a'], orange: ['#ff9500', '#ff9f0a'], green: ['#28a745', '#30d158'], teal: ['#30b0c7', '#40c8e0'], graphite: ['#8e8e93', '#98989d'],
+};
+const NEW_TAB_BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
+const HEX = /^#[0-9a-f]{6}$/i;
+const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
@@ -79,6 +95,10 @@ const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
 function validate(key, value) {
   switch (key) {
     case 'theme': return pick(value, ['system', 'light', 'dark'], null);
+    case 'accentColor': return ACCENTS[value] || HEX.test(String(value)) ? String(value).toLowerCase() : null;
+    case 'newTabBackground': return pick(value, NEW_TAB_BACKGROUNDS, null);
+    case 'newTabName': return String(value ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40);
+    case 'newTabImage': return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
@@ -166,7 +186,46 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, accent: accentOf(p.accentColor) };
+  }
+
+  // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
+  const wallpaperFile = () => path.join(app.getPath('userData'), 'newtab-wallpaper.jpg');
+  function newTabLook() {
+    const p = prefs();
+    const image = p.newTabBackground === 'image' && p.newTabImage && fs.existsSync(wallpaperFile())
+      ? `${pathToFileURL(wallpaperFile()).href}?v=${p.newTabImage}` : null;
+    return {
+      background: image ? 'image' : p.newTabBackground === 'image' ? 'plain' : p.newTabBackground,
+      image,
+      accent: accentOf(p.accentColor),
+      clock: p.newTabClock, name: p.newTabName,
+      sections: { favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
+    };
+  }
+  // A picture from disk, made at most 2560 px wide and saved as JPEG in the profile, so the page
+  // never depends on the original staying where it was.
+  async function pickWallpaper() {
+    const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), {
+      title: 'Choose a background picture',
+      properties: ['openFile'],
+      filters: [{ name: 'Pictures', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif', 'bmp', 'tif', 'tiff'] }],
+    });
+    if (canceled || !filePaths[0]) return state();
+    let image = require('electron').nativeImage.createFromPath(filePaths[0]);
+    if (image.isEmpty()) throw new Error('That file isn’t a picture Lumen can read.');
+    const { width } = image.getSize();
+    if (width > 2560) image = image.resize({ width: 2560, quality: 'best' });
+    fs.writeFileSync(wallpaperFile(), image.toJPEG(88));
+    writeSettings({ ...readSettings(), newTabImage: Date.now(), newTabBackground: 'image' });
+    deps.refreshNewTabs?.();
+    return state();
+  }
+  function removeWallpaper() {
+    try { fs.rmSync(wallpaperFile(), { force: true }); } catch (err) { console.error('[lumen] could not remove the background picture:', err.message); }
+    writeSettings({ ...readSettings(), newTabImage: 0, newTabBackground: prefs().newTabBackground === 'image' ? 'plain' : prefs().newTabBackground });
+    deps.refreshNewTabs?.();
+    return state();
   }
 
   // ---- languages ----
@@ -382,7 +441,8 @@ function create(deps) {
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());
+    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());
+    if (key === 'accentColor' || key.startsWith('newTab')) deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
@@ -399,6 +459,7 @@ function create(deps) {
     const p = prefs();
     return {
       prefs: p,
+      accent: accentOf(p.accentColor), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
@@ -585,6 +646,8 @@ function create(deps) {
       const d = deps.downloads.find((x) => x.id === id);
       if (d?.state === 'completed') shell.showItemInFolder(d.path);
     });
+    handle('prefs:pick-wallpaper', pickWallpaper); // [look]
+    handle('prefs:remove-wallpaper', removeWallpaper);
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
       return canceled || !filePaths[0] ? state() : set('downloadDir', filePaths[0]);
@@ -619,6 +682,8 @@ function create(deps) {
     handle('prefs:task-manager', taskManager);
     handle('prefs:restart-tab', restartTabProcess);
     handle('prefs:internals', internals);
+    handle('prefs:usage', (options) => deps.usage?.summary({ refresh: Boolean(options?.refresh) }) ?? null); // [usage]
+    handle('prefs:clear-usage', () => { deps.usage?.clear(); return true; });
     ipcMain.handle('prefs:ui', () => uiPrefs()); // the browser UI's own classes (compact tabs, …)
   }
 
@@ -634,8 +699,8 @@ function create(deps) {
   return {
     prefs, set, state, start, attachTab, guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
-    clearData, uiPrefs, launched,
+    clearData, uiPrefs, launched, newTabLook,
   };
 }
 
-module.exports = { create, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

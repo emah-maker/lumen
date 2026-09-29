@@ -34,4 +34,22 @@ const engineModel = (id) => String(id || '').split(':').slice(1).join(':') || 'd
 // argv never goes through a shell, but a leading dash would still read as another flag).
 const validModel = (model) => /^[a-z0-9][\w.[\]-]*$/i.test(String(model || ''));
 
-module.exports = { exists, lookup, killTree, engineModel, validModel };
+// Tokens and cost of one run, from a CLI's stream-json result message (usage + modelUsage;
+// Claude Code and Grok Build both send it). The cost is what
+// the tokens would cost at API list prices; on a Claude plan nothing is billed, but it is the
+// measure the plan's limits are closest to.
+function usageOf(result) {
+  if (!result || typeof result !== 'object') return null;
+  const u = result.usage || {};
+  const models = Object.keys(result.modelUsage || {});
+  return {
+    inputTokens: Number(u.input_tokens) || 0,
+    outputTokens: Number(u.output_tokens) || 0,
+    cacheReadTokens: Number(u.cache_read_input_tokens) || 0,
+    cacheWriteTokens: Number(u.cache_creation_input_tokens) || 0,
+    costUSD: Number(result.total_cost_usd) || 0,
+    models,
+  };
+}
+
+module.exports = { exists, lookup, killTree, engineModel, validModel, usageOf };

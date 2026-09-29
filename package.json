@@ -106,6 +106,32 @@
         "role": "Viewer"
       }
     ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "html",
+          "htm",
+          "xhtml",
+          "shtml"
+        ],
+        "name": "HTML Document",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF Document",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "svg"
+        ],
+        "name": "SVG Image",
+        "role": "Viewer"
+      }
+    ],
     "mac": {
       "icon": "assets/icon.png",
       "category": "public.app-category.productivity",

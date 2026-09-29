@@ -304,6 +304,32 @@ function createTabEl(id) {
   return el;
 }
 
+// A tab's favicon: the page's candidates in turn, falling through to the next when one doesn't load
+// (a page may list a missing icon next to a good one). When none loads, the globe stands in and the
+// icons are tried once more a little later, since a failure may be a passing one (a server error,
+// the network dropping for a moment); an <img> that failed would otherwise stay a globe for good.
+const FAVICON_RETRY_MS = 3000;
+function faviconImg(el, key, urls, retried = false) {
+  const img = document.createElement('img');
+  img.className = 'tab-favicon';
+  let i = 0;
+  img.onerror = () => {
+    if (++i < urls.length) { img.src = urls[i]; return; }
+    const globe = globeIcon();
+    img.replaceWith(globe);
+    if (retried) return;
+    setTimeout(() => {
+      // Only if the tab still wants these icons and still shows the globe that replaced them.
+      if (el.dataset.icon !== key || !globe.isConnected) return;
+      const again = faviconImg(el, key, urls, true);
+      // Swapped in only once it has loaded, so a second failure doesn't flash an empty image.
+      again.addEventListener('load', () => { if (el.dataset.icon === key && globe.isConnected) globe.replaceWith(again); }, { once: true });
+    }, FAVICON_RETRY_MS);
+  };
+  img.src = urls[0];
+  return img;
+}
+
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
   el.className = 'tab' + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '');
@@ -313,18 +339,16 @@ function updateTabEl(el, tab, group, activeId) {
   el.title = tab.title;
   el.setAttribute('aria-label', tab.title);
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
-  const iconKey = tab.loading ? 'loading' : tab.favicon && !tab.error ? `img:${tab.favicon}` : `page:${tab.page || ''}`;
+  const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
+  const iconKey = tab.loading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;
   if (el.dataset.icon !== iconKey) {
     el.dataset.icon = iconKey;
     let icon;
     if (tab.loading) {
       icon = document.createElement('span');
       icon.className = 'tab-favicon spinner';
-    } else if (tab.favicon && !tab.error) {
-      icon = document.createElement('img');
-      icon.className = 'tab-favicon';
-      icon.src = tab.favicon;
-      icon.onerror = () => icon.replaceWith(globeIcon());
+    } else if (favicons.length && !tab.error) {
+      icon = faviconImg(el, iconKey, favicons);
     } else {
       icon = globeIcon(tab.page);
     }
@@ -1455,7 +1479,7 @@ sidebarEl.addEventListener('drop', async (e) => {
 });
 
 // Anything else dropped on the window must never navigate the UI itself (main.js refuses that too):
-// a dropped web link opens as a new tab; text dropped into a text field still lands there.
+// a dropped file or web link opens as a new tab; text dropped into a text field still lands there.
 const editableTarget = (el) => Boolean(el?.closest?.('input, textarea, [contenteditable=""], [contenteditable="true"]'));
 const hasFiles = (dt) => [...(dt?.types || [])].includes('Files');
 document.addEventListener('dragover', (e) => {
@@ -1467,6 +1491,7 @@ document.addEventListener('drop', (e) => {
   if (e.defaultPrevented) return;
   if (editableTarget(e.target) && !hasFiles(e.dataTransfer)) return;
   e.preventDefault();
+  if (e.dataTransfer.files.length) { window.browser.openFiles(e.dataTransfer.files); return; }
   const dropped = (e.dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).find((l) => l && !l.startsWith('#'))
     || e.dataTransfer.getData('text/plain').trim();
   if (/^https?:\/\/\S+$/i.test(dropped || '')) window.browser.newTab(dropped);
@@ -1961,7 +1986,7 @@ window.browser.onDownloads?.((list) => {
 });
 downloadsBtn.onclick = () => {
   const r = downloadsBtn.getBoundingClientRect();
-  window.browser.openDownloadsMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom) });
+  window.browser.openDownloadsMenu?.({ right: Math.round(r.right), bottom: Math.round(r.bottom) });
 };
 
 // Links in replies open in a new tab.
@@ -2098,7 +2123,27 @@ $('agent-stop')?.addEventListener('click', () => {
     root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion));
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
+    accent = p.accent || null;
+    applyAccent();
   };
+  // [look] The accent color (Settings → Appearance), in the shades styles.css uses; it follows
+  // light and dark mode.
+  let accent = null;
+  const dark = matchMedia('(prefers-color-scheme: dark)');
+  const mix = (n, to, t) => Math.round(n + (to - n) * t);
+  function applyAccent() {
+    const style = document.documentElement.style;
+    const hex = accent && (dark.matches ? accent.dark : accent.light);
+    if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) { for (const v of ['--accent', '--accent-rgb', '--accent-bright', '--accent-deep', '--accent-soft']) style.removeProperty(v); return; }
+    const n = parseInt(hex.slice(1), 16);
+    const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255];
+    style.setProperty('--accent', hex);
+    style.setProperty('--accent-rgb', `${r} ${g} ${b}`);
+    style.setProperty('--accent-bright', `rgb(${mix(r, 255, 0.25)} ${mix(g, 255, 0.25)} ${mix(b, 255, 0.25)})`);
+    style.setProperty('--accent-deep', `rgb(${mix(r, 0, 0.18)} ${mix(g, 0, 0.18)} ${mix(b, 0, 0.18)})`);
+    style.setProperty('--accent-soft', `rgb(${r} ${g} ${b} / ${dark.matches ? 0.2 : 0.14})`);
+  }
+  dark.addEventListener('change', applyAccent);
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
 }
