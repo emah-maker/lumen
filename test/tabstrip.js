@@ -297,7 +297,7 @@ const os = require('os');
   const loaded = restored.filter((t) => !t.sleeping);
   check('after a restart only the active tab loads', loaded.length === 1 && restored.length >= 20, `${loaded.length} loaded of ${restored.length}`);
   check('the pinned tab comes back pinned, at the front', restored[0].pinned && restored.filter((t) => t.pinned).length === 1, JSON.stringify(restored.slice(0, 2)));
-  const titles = await ui.evaluate(() => [...document.querySelectorAll('#tabs .tab')].slice(0, 6).map((t) => t.title));
+  const titles = await ui.evaluate(() => [...document.querySelectorAll('#tabs .tab')].slice(0, 6).map((t) => t.getAttribute('aria-label'))); // tabs have no title tooltip: the hover card shows it
   check('restored tabs show their titles before loading', titles.filter((t) => /^Page \//.test(t)).length >= 3, JSON.stringify(titles));
   const activeAgain = await app.evaluate(() => global.__agent.browser.activeTab()?.webContents.getURL());
   check('the tab that was active is active again', loaded[0] && activeAgain === activeUrl, `${activeAgain} vs ${activeUrl}`);

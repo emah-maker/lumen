@@ -42,8 +42,11 @@ const path = require('path');
   // Claude API models, connected via ANTHROPIC_API_KEY above; 'claudecode:default' is added
   // separately when the Claude Code CLI is installed (test/claudecode.js).
   check('picker lists 5 models', options.filter((o) => !o.startsWith('claudecode:')).length === 5, JSON.stringify(options));
-  check('Opus 5 is the default', (await ui.inputValue('#model')) === 'claude-opus-5', await ui.inputValue('#model'));
+  check('Opus 5.5 is the default', (await ui.inputValue('#model')) === 'claude-opus-5-5', await ui.inputValue('#model'));
 
+  // The rest starts from Opus 5 and switches away and back, so pick it first.
+  await ui.selectOption('#model', 'claude-opus-5');
+  await ui.waitForTimeout(300);
   await sendFromUi('hello');
   let p = await lastParams();
   check('Opus 5: adaptive thinking + fallbacks + new web search', p.model === 'claude-opus-5' && p.thinking.type === 'adaptive' && p.fallbacks === 'default' && p.betas.includes('server-side-fallback-2026-07-01') && p.tools.some((t) => t.type === 'web_search_20260209'), JSON.stringify({ ...p, messages: undefined }).slice(0, 300));

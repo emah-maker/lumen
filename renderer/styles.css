@@ -11,6 +11,7 @@
   --muted: #6e6e73;
   --faint: #a1a1a6;
   --hover: rgba(0, 0, 0, 0.05);
+  --tab-idle: rgba(0, 0, 0, 0.035); /* a background tab's pill */
   --accent: #007aff;
   --accent-rgb: 0 122 255;
   --accent-bright: #409cff;
@@ -65,6 +66,7 @@
     --muted: #98989d;
     --faint: #636366;
     --hover: rgba(255, 255, 255, 0.07);
+    --tab-idle: rgba(255, 255, 255, 0.05);
     --accent: #0a84ff;
     --accent-rgb: 10 132 255;
     --accent-bright: #409cff;
@@ -110,7 +112,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
   -webkit-app-region: drag;
 }
 .tabstrip button, .tab { -webkit-app-region: no-drag; }
-.tabs { position: relative; display: flex; gap: 2px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; padding: 1px 0; }
+.tabs { position: relative; display: flex; gap: 4px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; padding: 1px 0; }
 .tabs::-webkit-scrollbar { display: none; }
 
 /* One surface glides between tabs instead of each tab lighting up on its own. */
@@ -123,19 +125,18 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab-indicator.instant { transition: none; }
 .tabs.reordering .tab-indicator { opacity: 0; }
 
-/* Background tabs are quiet: no surface, muted text, a hairline between neighbours (Safari/Chrome).
-   The hairline is drawn at each tab's left edge and drops out next to the active or hovered tab,
-   so a lit tab never sits between two lines. */
+/* Background tabs are soft pills (Safari, Arc): a faint fill with a little space between them, so
+   each reads as a tab rather than loose text between hairlines. The active tab is the raised
+   surface of .tab-indicator above; hover lifts a pill's fill a step. */
 .tab {
   position: relative; z-index: 1;
   container: tab / inline-size;
   width: 200px; min-width: 40px; flex: 0 1 200px; height: 28px;
-  border-radius: 8px; color: var(--muted);
-  background: linear-gradient(var(--border), var(--border)) left center / 1px 14px no-repeat transparent;
+  border-radius: 9px; color: var(--muted);
+  background: var(--tab-idle);
   cursor: default; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
 }
-.tab-indicator + .tab, .group-label + .tab, .tab.pinned, .tab.active, .tab.active + .tab, .tab:hover, .tab:hover + .tab,
-.tab:focus-visible, .tab:focus-visible + .tab, .tab.dragging, .tabs.reordering .tab { background-size: 0 0; }
+.tab.active, .tab.dragging, .tabs.reordering .tab { background-color: transparent; }
 .tab-inner { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 8px 0 10px; font-size: 12.5px; }
 .tab.active .tab-inner { font-weight: 500; }
 /* Narrow tabs: icon only, centered; the active tab keeps its close button. */
@@ -165,6 +166,9 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tabs.more-left.more-right { mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; object-fit: contain; }
+/* Dark icons (GitHub, Apple, X) vanish on a dark strip: a faint light outline keeps them visible. */
+@media (prefers-color-scheme: dark) { img.tab-favicon { filter: drop-shadow(0 0 0.75px rgb(255 255 255 / 0.55)); } }
+:root[data-theme="dark"] img.tab-favicon { filter: drop-shadow(0 0 0.75px rgb(255 255 255 / 0.55)); }
 img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.globe { color: var(--faint); stroke-width: 1.25; }
 .tab-favicon.page-icon { color: var(--muted); }
@@ -173,9 +177,9 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
    of it (--title-cut animates, so the text doesn't jump). */
 @property --title-cut { syntax: "<length>"; inherits: false; initial-value: 0px; }
 .tab-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: clip;
-  mask-image: linear-gradient(90deg, #000 calc(100% - var(--title-cut) - 18px), transparent calc(100% - var(--title-cut)));
+  mask-image: linear-gradient(90deg, #000 calc(100% - var(--title-cut) - 12px), transparent calc(100% - var(--title-cut)));
   transition: --title-cut var(--t-fast) ease-out; }
-.tab:hover .tab-title, .tab.active .tab-title { --title-cut: 18px; }
+.tab:hover .tab-title, .tab.active .tab-title { --title-cut: 16px; }
 /* ✕: laid over the title's end rather than holding its space, so background tabs aren't left with a
    blank gap after a clipped title. Shown on hover and on the active tab (Chrome). */
 .tab-close { position: absolute; top: 0; bottom: 0; right: 4px; margin: auto 0; width: 20px; height: 20px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
@@ -184,6 +188,31 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab.active .tab-close:hover { background: var(--field); }
 .tab-close svg { width: 9px; height: 9px; stroke-width: 1.75; }
 .new-tab { width: 28px; height: 28px; }
+/* Part of a multi-selection (Shift/Ctrl/Cmd+click): a lighter surface than the active tab's. */
+.tab.selected { background-color: color-mix(in srgb, var(--surface-raised) 55%, transparent); color: var(--text); box-shadow: inset 0 0 0 0.5px var(--hairline); }
+.tab.selected:hover { background-color: color-mix(in srgb, var(--surface-raised) 75%, transparent); }
+/* The speaker sits after the title (Chrome), clear of where the ✕ shows: it holds still, so the
+   pointer heading for it doesn't see it step aside as the tab lights up. */
+.tab-audio { margin-right: 18px; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
+.tab-inner:has(.tab-audio) .tab-title { --title-cut: 0px; }
+.tab.pinned .tab-audio { margin-right: 0; }
+@container tab (max-width: 72px) {
+  .tab .tab-audio { margin-right: 0; } /* the ✕ is in the row here (active) or hidden */
+  .tab.active .tab-inner:has(.tab-audio) .tab-favicon { display: none; } /* no room for all three */
+}
+/* After closing with ✕, tabs keep their widths until the pointer leaves the strip (app.js), then widen. */
+.tabs.reflowing .tab { transition: flex-basis var(--t-smooth) var(--spring-smooth), background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
+
+/* The tab hover card (app.js): title and site under a tab you rest on. It has to fit the toolbar
+   row, since the page view is drawn over everything below it. */
+.tab-hover-card {
+  position: fixed; z-index: 45; width: 240px; padding: 5px 10px; border-radius: 8px; pointer-events: none;
+  background: var(--surface-raised); color: var(--text);
+  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 0.5px var(--border), 0 8px 24px -8px rgb(0 0 0 / calc(0.9 * var(--shadow-k)));
+}
+.tab-hover-card.moving { transition: left var(--t-base) var(--spring-smooth), top var(--t-base) var(--spring-smooth); }
+.hover-card-title { font-size: 12px; line-height: 15px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hover-card-host { margin-top: 1px; font-size: 11px; line-height: 13px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade-in { from { opacity: 0; } }
 
