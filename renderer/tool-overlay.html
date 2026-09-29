@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:" />
+  <title>Lumen tools</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface: #ffffff; --field: rgba(0, 0, 0, 0.05); --border: rgba(0, 0, 0, 0.1);
+      --text: #1d1d1f; --muted: #6e6e73; --hover: rgba(0, 0, 0, 0.05);
+      --accent: #007aff; --accent-deep: #0051d5; --accent-soft: rgba(0, 122, 255, 0.14); --on-accent: #ffffff;
+      --warning: #b25000;
+      --backdrop: rgba(0, 0, 0, 0.18); --shadow: rgba(0, 0, 0, 0.22); --dim: rgba(0, 0, 0, 0.45);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --border: rgba(255, 255, 255, 0.12);
+        --text: #f5f5f7; --muted: #98989d; --hover: rgba(255, 255, 255, 0.08);
+        --accent: #0a84ff; --accent-deep: #0060df; --accent-soft: rgba(10, 132, 255, 0.2);
+        --warning: #ffb340;
+        --backdrop: rgba(0, 0, 0, 0.4); --shadow: rgba(0, 0, 0, 0.6);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    body { font: 13px/1.45 system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; color: var(--text); user-select: none; }
+    [hidden] { display: none !important; }
+    .screen { position: fixed; inset: 0; }
+    /* chooser + QR card */
+    #modal { display: flex; justify-content: center; align-items: flex-start; padding-top: 14vh; background: var(--backdrop); }
+    .card { width: 400px; max-width: calc(100vw - 48px); border-radius: 14px; padding: 20px 20px 16px; background: var(--surface); box-shadow: 0 0 0 0.5px var(--border), 0 24px 60px -12px var(--shadow), 0 4px 16px -6px var(--shadow); animation: card-in 220ms cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes card-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+    h1 { margin: 0 0 4px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+    .sub { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
+    .warn { margin: 8px 0 0; color: var(--warning); }
+    .choices { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .choice { text-align: left; height: auto; padding: 9px 12px; }
+    .choice small { display: block; color: var(--muted); font-weight: 400; }
+    .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+    .btn { height: 30px; padding: 0 14px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-weight: 500; cursor: default; }
+    .btn:hover { background: var(--hover); }
+    .btn:active { transform: scale(0.97); }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .btn.primary { background: var(--accent); color: var(--on-accent); }
+    .btn.primary:hover { background: var(--accent-deep); }
+    #qr-wrap { display: flex; justify-content: center; margin: 8px 0; }
+    #qr { width: 216px; height: 216px; background: #fff; border-radius: 8px; image-rendering: pixelated; box-shadow: 0 0 0 1px var(--border); }
+    #qr-text { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; max-height: 3.2em; overflow: hidden; text-align: center; }
+    /* area picker */
+    #select { cursor: crosshair; }
+    #dim-top, #dim-left, #dim-right, #dim-bottom { position: absolute; background: var(--dim); }
+    #box { position: absolute; outline: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
+    #hint { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 12px; border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 6px 20px -6px var(--shadow); }
+    /* toast */
+    #toast { display: flex; align-items: flex-end; justify-content: flex-end; }
+    #toast .card { width: 100%; padding: 12px 14px; border-radius: 12px; animation-duration: 180ms; }
+    #toast h1 { font-size: 13.5px; margin: 0; }
+    #toast .sub { margin: 2px 0 0; font-size: 12px; }
+    #toast .row { justify-content: flex-start; margin-top: 8px; gap: 6px; }
+    #toast .btn { height: 26px; padding: 0 10px; font-size: 12px; }
+    @media (prefers-reduced-motion: reduce) { .card { animation: none; } .btn:active { transform: none; } }
+  </style>
+</head>
+<body>
+  <div id="modal" class="screen" hidden>
+    <div class="card" id="card" role="dialog" aria-modal="true" aria-labelledby="m-title" aria-describedby="m-sub">
+      <h1 id="m-title"></h1>
+      <p class="sub" id="m-sub"></p>
+      <div id="qr-wrap" hidden><canvas id="qr" width="216" height="216" role="img"></canvas></div>
+      <div id="qr-text" hidden></div>
+      <p class="warn" id="m-warn" hidden></p>
+      <p class="sub" id="m-status" role="status" aria-live="polite" hidden></p>
+      <div class="choices" id="choices"></div>
+      <div class="row" id="m-buttons"></div>
+    </div>
+  </div>
+  <div id="select" class="screen" hidden tabindex="-1" role="application">
+    <div id="dim-top"></div><div id="dim-left"></div><div id="dim-right"></div><div id="dim-bottom"></div>
+    <div id="box" hidden></div>
+    <div id="hint" role="status"></div>
+  </div>
+  <div id="toast" class="screen" hidden>
+    <div class="card" role="status" aria-live="polite">
+      <h1 id="t-title"></h1>
+      <p class="sub" id="t-sub"></p>
+      <div class="row" id="t-buttons"></div>
+    </div>
+  </div>
+  <script src="tool-overlay.js"></script>
+</body>
+</html>

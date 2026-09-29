@@ -359,6 +359,34 @@ if (TEST) {
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
+// Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
+// overlay per window (features/tool-overlay.js). Loaded on first use.
+const toolOverlay = lazy(() => require('./features/tool-overlay').createToolOverlay({ ipcMain, WebContentsView }));
+const screenshotTool = lazy(() => require('./features/screenshot').createScreenshot({
+  overlay: toolOverlay, clipboard, nativeImage: require('electron').nativeImage, shell, screen, app, t,
+  downloadDir: () => settingsBackend.downloadDir(),
+  saveDir: () => (TEST && global.__screenshotDir) || null, // tests: a temp folder instead of Pictures
+  showSaveDialog: (options, w) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(w || win, options)),
+}));
+const qrTool = lazy(() => require('./features/qr').createQr({
+  overlay: toolOverlay, clipboard, nativeImage: require('electron').nativeImage, t,
+  downloadDir: () => settingsBackend.downloadDir(),
+  showSaveDialog: (options, w) => (TEST && global.__pageToolsSaveDialog ? global.__pageToolsSaveDialog(options) : dialog.showSaveDialog(w || win, options)),
+}));
+// What the tools need to know about a tab of this window (null when there is none).
+function pageToolCtx(wc = activeTab()?.webContents) {
+  const tab = wc && tabByContents(wc);
+  if (!tab || !win || win.isDestroyed()) return null;
+  return {
+    wc, win, view: tab.view, isPrivate: false,
+    restoreFocus: () => { if (!wc.isDestroyed()) wc.focus(); },
+    askAi: (png) => { ui()?.send('attach-image', png.toString('base64')); }, // into the sidebar's composer
+  };
+}
+const takeScreenshot = (wc) => { const ctx = pageToolCtx(wc); if (ctx) screenshotTool.open(ctx).catch(() => {}); };
+const showQrCode = (wc, text, kind) => { const ctx = pageToolCtx(wc); if (ctx) qrTool.open(ctx, text ?? ctx.wc.getURL(), kind).catch(() => {}); };
+if (TEST) global.__screenshot = { tool: screenshotTool, qr: qrTool, overlay: toolOverlay, ctx: pageToolCtx };
+
 // Certificate errors and mixed content (features/site-security.js). Going past a bad certificate is
 // only ever the user's answer in Lumen's own dialog, never a page's or the AI's.
 const siteSecurity = createSiteSecurity({
@@ -660,6 +688,7 @@ const adblock = createAdblock({
 const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
   resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
+  screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
 });
 if (TEST) global.__private = privateWindows;
 
@@ -792,6 +821,8 @@ function showAppMenu({ x, y }) {
     { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
     { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
     { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
+    { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: isWebUrl(wc?.getURL()), click: () => takeScreenshot(wc) },
+    { label: t('menu.qrCode'), enabled: isWebUrl(wc?.getURL()), click: () => showQrCode(wc) },
     { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
     ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
     { type: 'separator' },
@@ -2349,6 +2380,7 @@ function showContextMenu(wc, p) {
       { role: 'copy' },
       { label: t('menu.searchFor', { engine: engineFor(readSettings().searchEngine).label, text: short }), click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
       { label: t('menu.askAboutSelection'), click: () => ui()?.send('ask-selection', selection) },
+      { label: t('menu.qrSelection'), enabled: selection.length <= 500, click: () => showQrCode(wc, selection, 'text') },
       { type: 'separator' },
     );
   }
@@ -2363,6 +2395,8 @@ function showContextMenu(wc, p) {
       items.push(
         { label: 'Save Page As…', click: () => pageTools.savePage(wc).catch(() => {}) },
         { label: 'View Page Source', click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
+        { label: t('menu.screenshot'), click: () => takeScreenshot(wc) },
+        { label: t('menu.qrCode'), click: () => showQrCode(wc) },
         { type: 'separator' },
       );
     }
@@ -2411,6 +2445,7 @@ function handleShortcut(event, input) {
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
   else if (mod && key === 'p') wc?.print({}, () => {});
+  else if (mod && input.shift && !input.alt && key === 's') { if (wc) takeScreenshot(wc); }
   else if (mod && key === 's') { if (wc) pageTools.savePage(wc).catch(() => {}); }
   else if (mod && key === 'u') { if (wc) pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }); }
   else if (mod && key === ',') openSettingsPage(); // [settings]
@@ -2635,6 +2670,8 @@ function macMenu() {
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
         { label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
+        { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: () => takeScreenshot(wc()) },
+        { label: t('menu.qrCode'), click: () => showQrCode(wc()) },
         { label: t('menu.print'), ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
         { type: 'separator' },
         { label: t('menu.closeTab'), ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },

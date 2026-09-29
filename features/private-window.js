@@ -22,7 +22,7 @@ const sameFile = (a, b) => {
   try { return new URL(a).pathname.toLowerCase() === new URL(b).pathname.toLowerCase() && new URL(a).protocol === 'file:'; } catch { return false; }
 };
 
-// deps: { BrowserWindow, WebContentsView, session, ipcMain, dialog, resolveInput, isWebUrl, iconPath, test }
+// deps: { BrowserWindow, WebContentsView, session, ipcMain, dialog, resolveInput, isWebUrl, iconPath, test, screenshot(ctx) }
 function createPrivateWindows(deps) {
   const { BrowserWindow, WebContentsView, session, ipcMain, dialog, resolveInput, isWebUrl } = deps;
   const UI_URL = pathToFileURL(UI_HTML).href;
@@ -133,6 +133,14 @@ function createPrivateWindows(deps) {
     sendState(rec);
   }
 
+  // Screenshot (features/screenshot.js) of this window's front tab. Private: copies, never saves on its own.
+  function screenshotCtx(rec) {
+    const tab = activeTab(rec);
+    if (!tab || !alive(rec) || tab.view.webContents.isDestroyed()) return null;
+    const wc = tab.view.webContents;
+    return { wc, win: rec.win, view: tab.view, isPrivate: true, askAi: null, restoreFocus: () => { if (!wc.isDestroyed()) wc.focus(); } };
+  }
+
   function handleShortcut(rec, event, input) {
     if (input.type !== 'keyDown') return;
     const mod = input.control || input.meta;
@@ -143,6 +151,7 @@ function createPrivateWindows(deps) {
     else if (mod && key === 't') openTab(rec);
     else if (mod && key === 'w') { if (rec.activeId) closeTab(rec, rec.activeId); }
     else if (mod && key === 'l') { rec.win.webContents.focus(); rec.win.webContents.send('private:focus-address'); }
+    else if (mod && input.shift && !input.alt && key === 's') { const ctx = screenshotCtx(rec); if (ctx) deps.screenshot?.(ctx).catch(() => {}); }
     else if (mod && key === 'tab') {
       const i = rec.tabs.findIndex((t) => t.id === rec.activeId);
       switchTab(rec, rec.tabs[(i + (input.shift ? -1 : 1) + rec.tabs.length) % rec.tabs.length].id);
@@ -215,6 +224,8 @@ function createPrivateWindows(deps) {
       windowId: rec.win.id, partition: rec.partition,
       tabs: rec.tabs.map((t) => ({ id: t.id, url: t.view.webContents.getURL(), contentsId: t.view.webContents.id })),
     })),
+    screenshotCtx: (windowId) => { const rec = [...windows].find((r) => alive(r) && r.win.id === windowId); return rec ? screenshotCtx(rec) : null; },
+    shortcut: (windowId, input) => { const rec = [...windows].find((r) => alive(r) && r.win.id === windowId); if (rec) handleShortcut(rec, { preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }); },
     find: (windowId) => [...windows].find((rec) => alive(rec) && rec.win.id === windowId),
     openTab: (windowId, url) => { const rec = [...windows].find((r) => alive(r) && r.win.id === windowId); return rec ? openTab(rec, url)?.id : null; },
   };
