@@ -1327,6 +1327,16 @@ async function pdfRuns() {
   check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
 }
 
+// ---- macOS re-signing with Lumen's own certificate (scripts/after-sign.js)
+{
+  const { identityHash } = require('../scripts/after-sign');
+  const hash = '5CBDFCED634205BA0AAF0B7C097B0A331A48D467';
+  const good = `  1) ${hash} "Lumen Release Signing" (CSSMERR_TP_NOT_TRUSTED)\n     1 identities found\n`;
+  check('after-sign: finds the Lumen identity by name, trusted or not', identityHash(good, 'Lumen Release Signing') === hash, String(identityHash(good, 'Lumen Release Signing')));
+  check('after-sign: another identity name is not picked', identityHash(good, 'Somebody Else') === null, 'picked');
+  check('after-sign: an empty listing has no identity', identityHash('     0 identities found\n', 'Lumen Release Signing') === null, 'picked');
+}
+
 // ---- usage: Lumen's share of the account-wide 5-hour meter ignores your other Claude Code use
 async function usageShareRuns() {
   const { createUsage, otherClaudeActivity } = require('../features/usage');
