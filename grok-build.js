@@ -259,14 +259,17 @@ const BUILTIN_TOOLS = [
 const DENIED = ['spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output'];
 // Grok always gets a cap (a headless run must end); this is it when Max steps per task is Unlimited.
 const DEFAULT_MAX_TURNS = 100;
-const ARGS_BASE = [
+// A background task's grok (features/background-runner.js) has nobody to ask in the moment and gets no
+// shell at all: run_terminal_command is denied like the other three, and not allowed.
+const argsBase = (background = false) => [
   '--output-format', 'streaming-messages-json', '--include-partial-messages',
   '--disallowed-tools', BUILTIN_TOOLS,
-  ...DENIED.flatMap((t) => ['--deny', t]),
-  '--allow', 'lumen__*', '--allow', 'search_tool', '--allow', 'run_terminal_command',
+  ...(background ? [...DENIED, 'run_terminal_command'] : DENIED).flatMap((t) => ['--deny', t]),
+  '--allow', 'lumen__*', '--allow', 'search_tool', ...(background ? [] : ['--allow', 'run_terminal_command']),
   '--permission-mode', 'dontAsk',
   '--no-subagents', '--no-plan', '--disable-web-search',
 ];
+const ARGS_BASE = argsBase(false);
 
 // The argv for one message (exported for tests and the report; never joined into a shell string).
 // The message itself goes in a file (--prompt-file), not on the command line: with the page's
@@ -275,9 +278,9 @@ const ARGS_BASE = [
 // (flat ACP blocks: { type: 'image', data, mimeType }; verified 2026-09-27, a red test image came back
 // "Red"). The system prompt (~4 KB) stays on the command line: there is no file form of it.
 // model: one of `grok models`' ids, or 'default' (no -m: the CLI's own default model).
-function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default', maxTurns = 0 }) {
+function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = 'default', maxTurns = 0, background = false }) {
   return [
-    ...ARGS_BASE,
+    ...(background ? argsBase(true) : ARGS_BASE),
     '--max-turns', String(maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS), // hitting it ends in a "continue" notice (turnLimitHit), not an error
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--cwd', cwd,
@@ -341,11 +344,12 @@ const ENV_KEEP = /^(XAI_API_KEY|PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSP
 
 // The grok child's environment (see ENV_KEEP). `run`: this run's { mcpUrl, mcpToken, hookUrl } from
 // Lumen's HTTP gate (mcp-http.js), which config.toml and the gate script read from here.
-function buildEnv({ userData, base = process.env, run = null }) {
-  const home = sidebarDirFor(userData);
+// home / dir: a background run's own GROK_HOME and working folder (default: the sidebar's).
+function buildEnv({ userData, base = process.env, run = null, home: grokHome = grokHomeFor(userData), dir: workDir = sidebarDirFor(userData) }) {
+  const home = workDir;
   const kept = Object.fromEntries(Object.entries(base).filter(([k]) => ENV_KEEP.test(k)));
   const gate = run ? { LUMEN_MCP_URL: run.mcpUrl, LUMEN_MCP_TOKEN: run.mcpToken, LUMEN_HOOK_URL: run.hookUrl } : {};
-  return { ...kept, ...COMPAT_ENV, ...gate, GROK_HOME: grokHomeFor(userData), USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1', RUST_LOG: GROK_LOG, NO_COLOR: '1' };
+  return { ...kept, ...COMPAT_ENV, ...gate, GROK_HOME: grokHome, USERPROFILE: home, HOME: home, GROK_DISABLE_AUTOUPDATER: '1', RUST_LOG: GROK_LOG, NO_COLOR: '1' };
 }
 
 // The hook command Grok runs for UserPromptSubmit and PreToolUse: hands the event (stdin) to
@@ -380,9 +384,10 @@ function mcpWait(line) {
 // hook already denied it and nothing happened; this check no longer needs to kill the run over it.
 // Anything else -- a built-in (edit_file, ...), a hosted server tool, another server's tool -- is not.
 const LUMEN_TOOL = /^lumen__[\w-]+$/;
-function isLumenTool(name, input) {
+// terminal: whether run_terminal_command counts (false for a background run, which never gets one).
+function isLumenTool(name, input, terminal = true) {
   const n = String(name || '');
-  if (LUMEN_TOOL.test(n) || n === 'search_tool' || n === 'run_terminal_command') return true;
+  if (LUMEN_TOOL.test(n) || n === 'search_tool' || (terminal && n === 'run_terminal_command')) return true;
   if (n === 'use_tool') return LUMEN_TOOL.test(String(input?.tool_name ?? ''));
   return false;
 }
@@ -391,9 +396,9 @@ function isLumenTool(name, input) {
 // is known: Grok sends a tool's whole input as one input_json_delta, then content_block_stop, and a
 // use_tool whose input never parses counts as not Lumen's. The finished `assistant` message is
 // checked again, for a block the partial events missed.
-function toolWatch() {
+function toolWatch({ terminal = true } = {}) {
   const open = new Map(); // content block index -> { json } for a use_tool still being streamed
-  const judge = (name, input) => (isLumenTool(name, input) ? null : name === 'use_tool' ? `use_tool ${String(input?.tool_name || '(unreadable)').slice(0, 80)}` : String(name || 'unnamed tool').slice(0, 80));
+  const judge = (name, input) => (isLumenTool(name, input, terminal) ? null : name === 'use_tool' ? `use_tool ${String(input?.tool_name || '(unreadable)').slice(0, 80)}` : String(name || 'unnamed tool').slice(0, 80));
   const parse = (json) => { try { return JSON.parse(json); } catch { return undefined; } };
   return (msg) => {
     if (msg.type === 'stream_event') {
@@ -483,7 +488,13 @@ class GrokBuildEngine {
   // gate's own record). spawn / kill / exec: the child_process spawn, cli-utils killTree and
   // child_process execFile (for status), swappable for tests. argsFor and watch exist for
   // test/grokgate.js only, which loosens Grok's own rules to show the gate alone stops a call.
-  constructor({ userData, gate, lumenReady = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
+  // background: an engine made for one background task (features/ai-agents.js backgroundEngine): its own
+  // GROK_HOME (home) and working folder (dir), no terminal command at all, and its own `active` run.
+  constructor({ userData, gate, lumenReady = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
+    this.kind = 'grokbuild';
+    this.background = background;
+    this.home = home;
+    this.dir = dir;
     this.userData = userData;
     this.gate = gate;
     this.lumenReady = lumenReady;
@@ -517,8 +528,8 @@ class GrokBuildEngine {
     const bin = await this.detect(refresh);
     if (!bin) { this.statusCache = null; return { installed: false, signedIn: false, detail: null, models: [] }; }
     if (!refresh && this.statusCache && Date.now() - this.statusCache.at < 30000) return { installed: true, ...this.statusCache.value };
-    const home = grokHomeFor(this.userData);
-    const dir = sidebarDirFor(this.userData);
+    const home = this.home;
+    const dir = this.dir;
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     fs.mkdirSync(dir, { recursive: true });
     // The sign-in is shared the way run() shares it, except during a run, whose own link stays put
@@ -527,7 +538,7 @@ class GrokBuildEngine {
     const link = !this.active;
     let authBefore = null;
     if (link) try { authBefore = linkAuth(userHome, home); } catch {}
-    const value = await checkAuthStatus(bin, { env: buildEnv({ userData: this.userData }), cwd: dir, exec: this.exec });
+    const value = await checkAuthStatus(bin, { env: buildEnv({ userData: this.userData, home, dir }), cwd: dir, exec: this.exec });
     if (link && !this.active) try { settleAuth(userHome, home, authBefore); } catch {}
     this.statusCache = { at: Date.now(), value };
     return { installed: true, ...value };
@@ -539,7 +550,8 @@ class GrokBuildEngine {
   }
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit }) {
+  // runAgent: the Agent whose gate, approvals and tab this run's MCP calls use (a background task's own).
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null }) {
     const bin = await this.ensureBin();
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
@@ -549,13 +561,13 @@ class GrokBuildEngine {
     // Lumen's own GROK_HOME (see the file header): config.toml names only the `lumen` server, and
     // the user's auth.json is linked in so their sign-in works. The working folder is a separate,
     // fixed, empty folder that is also the child's HOME, so Grok finds no project files there.
-    const home = grokHomeFor(this.userData);
-    const dir = sidebarDirFor(this.userData);
+    const home = this.home;
+    const dir = this.dir;
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     fs.mkdirSync(dir, { recursive: true });
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -571,7 +583,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null }) {
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
@@ -585,11 +597,11 @@ class GrokBuildEngine {
     const userHome = userGrokHome();
     let authBefore = null;
     try { authBefore = linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
-    const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model, maxTurns });
+    const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model, maxTurns, background: this.background });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
-    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun }), cwd: dir });
-    this.active = { tag, emit, signal, child };
+    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun, home, dir }), cwd: dir });
+    this.active = { tag, emit, signal, child, agent: runAgent };
     // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background
     // "leader" process, `grok leader list/kill`, did not show up in Lumen's GROK_HOME in testing.)
     const onAbort = () => this.kill(child);
@@ -603,7 +615,7 @@ class GrokBuildEngine {
     let buffer = '';
     // Lumen's own tool check (see the file header): the first tool call that isn't Lumen's ends the
     // run and the process tree at once, and nothing after it reaches the sidebar.
-    const watch = this.watch ? toolWatch() : () => null;
+    const watch = this.watch ? toolWatch({ terminal: !this.background }) : () => null;
     let offTool = null;
     // Lumen's gate must have seen this turn's UserPromptSubmit before the model says anything: that
     // proves Grok loaded the hooks, so every tool call of the turn goes through Lumen first. A Grok
@@ -726,4 +738,4 @@ class GrokBuildEngine {
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages };

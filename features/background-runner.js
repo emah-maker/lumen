@@ -11,16 +11,24 @@
 // - purchase / send / submit steps ask every time, even on allowed sites;
 // - a page's own jump to a site that isn't allowed is stopped;
 // - MCP-client tools are off unless the user ticked them for the task; private windows have no access.
-// API models only: the Claude Code and Grok Build engines are one CLI session tied to the sidebar chat.
+// Models: an API model (the agent's own loop) or the user's Claude Code / Grok Build CLI. A CLI run is
+// its own process, made for that task (deps.cliEngine: a fresh engine, session, temp folder and MCP tag,
+// nothing shared with the sidebar's CLI session), and drives the browser through Lumen's MCP server:
+// every call it makes arrives tagged with the run and is executed by THIS task's agent (features/
+// ai-agents.js mcpCallTool), so the work tab, allowed sites, taint, and approval cards (Tasks panel;
+// the tool call waits for the answer) are the task's, exactly as for an API run.
+const crypto = require('crypto');
 const { WebContentsView, Notification } = require('electron');
-const { Agent } = require('../agent');
+const { Agent, cliSystemPrompt } = require('../agent');
+const { engineModel } = require('../cli-utils');
+const { LIMIT_NOTICE } = require('../loop-guard');
 const bg = require('./background-agents');
 
 const WORK_TAB = 1; // the id the agent sees for its one tab
 const CLAUDE_WORLD = 1001; // agent.js's isolated world: where page-scripts keep their element registry
 const RISKY_CLICK = /\b(buy|purchase|pay|checkout|check out|place (?:your |the )?order|order now|complete (?:order|purchase)|confirm (?:order|purchase|payment)|send|submit|post|publish|tweet|reply|delete|subscribe|sign up|register|book now|reserve|transfer|donate|apply)\b/i;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const isLocalEngine = (id) => /^(claudecode|grokbuild):/.test(String(id));
+const isLocalEngine = bg.isCliModel;
 
 // The agent, made to work for a task. See the header for what it changes.
 class TaskAgent extends Agent {
@@ -39,6 +47,11 @@ class TaskAgent extends Agent {
     const who = opts.who || 'The AI';
     const ok = await this.askApproval(risk.host, emit, signal, { action: 'tool', who, title: `${who} wants to ${risk.what}`, args: risk.detail });
     if (!ok) throw new Error(`The user did not allow ${who} to ${risk.what}. Do not try again: finish with what you have and say that this step needs the user.`);
+  }
+
+  // The run scope a CLI engine's MCP calls use (set by agent.inTask for a run with a chat: runCli).
+  engineScope() {
+    return this.runScope || null;
   }
 
   async execute(name, input) {
@@ -121,29 +134,31 @@ function create(deps) {
   }
 
   // ---- models
-  const apiModels = () => (deps.modelOptions() || []).filter((o) => o.id && !isLocalEngine(o.id) && o.id !== 'openrouter:__more' && !/chat only/i.test(o.label || ''));
+  // The connected API models, and Claude Code / Grok Build models when installed (and not signed out).
+  const allModels = () => bg.taskModels(deps.modelOptions());
+  const usableModels = () => allModels().filter((m) => m.available);
   function pickModel(wanted) {
-    const list = apiModels();
+    const list = usableModels();
     if (wanted && list.some((o) => o.id === wanted)) return wanted;
     const current = deps.currentModel?.();
     if (current && list.some((o) => o.id === current)) return current;
-    return list[0]?.id || null;
+    return (list.find((o) => o.engine === 'api') || list[0])?.id || null;
   }
+  const cliError = (model) => { const p = bg.cliProblem(model, deps.cliStatus?.()); return p ? deps.t(p.key, p.params) : null; };
 
   // What the "Create" card shows before anything is made: the model, and the sites it may visit.
   function preview({ prompt = '', pageUrl = '', model } = {}) {
-    const list = apiModels();
+    const list = allModels();
     const id = pickModel(model);
-    const current = deps.currentModel?.();
     return {
       enabled: settings().enabled,
       model: id,
       label: list.find((o) => o.id === id)?.label || id || '',
-      models: list.map((o) => ({ id: o.id, label: o.label, group: o.group || '' })),
+      models: list.map((o) => ({ id: o.id, label: o.label, group: o.group || '', engine: o.engine, available: o.available })),
+      cli: bg.cliStates(deps.cliStatus?.()), // Claude Code / Grok Build: ready, not installed, or not signed in
       // Shown without the www twins (creating the task adds them back), so the list stays short.
       sites: bg.allowedSitesFor(prompt, pageUrl || deps.activeUrl?.() || '').filter((s, _i, all) => !(s.startsWith('www.') && all.includes(s.slice(4)))),
       pageUrl: pageUrl || deps.activeUrl?.() || '',
-      cliOnly: !id && Boolean(current) && isLocalEngine(current),
       hasMcp: Boolean(deps.externalTools),
     };
   }
@@ -153,9 +168,11 @@ function create(deps) {
     if (!settings().enabled) throw new Error(deps.t('tasks.error.disabled'));
     if (confirmed !== true) throw new Error(deps.t('tasks.error.confirm'));
     if (!bg.fitsAnother(tasks)) throw new Error(deps.t('tasks.error.full'));
+    if (model && isLocalEngine(model) && cliError(model)) throw new Error(cliError(model)); // said now, not when it runs
     const chosen = pickModel(model);
     if (!chosen) throw new Error(deps.t('tasks.error.noModel'));
-    const task = bg.makeTask({ title, prompt, model: chosen, schedule, allowedSites: Array.isArray(sites) ? sites : bg.allowedSitesFor(prompt, pageUrl), signedIn, allowMcp: Boolean(allowMcp) && Boolean(deps.externalTools), pageUrl, now: now() });
+    // The user's MCP tools reach API models only (a CLI run has Lumen's browser tools and nothing else).
+    const task = bg.makeTask({ title, prompt, model: chosen, schedule, allowedSites: Array.isArray(sites) ? sites : bg.allowedSitesFor(prompt, pageUrl), signedIn, allowMcp: Boolean(allowMcp) && Boolean(deps.externalTools) && !isLocalEngine(chosen), pageUrl, now: now() });
     tasks.push(task);
     tasks = bg.capTasks(tasks);
     saveSoon();
@@ -359,7 +376,7 @@ function create(deps) {
       if (rt.timedOut && !task.error) task.error = deps.t('tasks.error.timeout', { minutes: settings().timeoutMin });
       task.result = text.slice(0, bg.LIMITS.result) || task.result;
       if (rt.stopped) task.error = '';
-      task.runs = [...task.runs, { startedAt: started, endedAt: ended, status, summary: (task.error || text).replace(/\s+/g, ' ').slice(0, 300), cost: task.usage?.cost ?? null, steps: task.stepCount, kind }].slice(-bg.LIMITS.runs);
+      task.runs = [...task.runs, { startedAt: started, endedAt: ended, status, summary: (task.error || text).replace(/\s+/g, ' ').slice(0, 300), cost: task.usage?.cost ?? null, steps: task.stepCount, kind, ...(rt.session ? { session: rt.session } : {}) }].slice(-bg.LIMITS.runs);
       task.status = 'running'; // the state machine has the final say below
       transition(task, status);
       if (kind === 'judge') applyVerdict(task, rt, text);
@@ -373,6 +390,7 @@ function create(deps) {
     (async () => {
       try {
         if (deps.effectiveModel && deps.effectiveModel(task.model) !== task.model) throw new Error(deps.t('tasks.error.modelGone', { model: task.model }));
+        if (isLocalEngine(task.model) && cliError(task.model)) throw new Error(cliError(task.model)); // signed out, or the CLI is gone
         const agent = new TaskAgent(browserFor(rt), () => deps.getClient(), () => ({ adhdMode: false, model: task.model, pageContext: false }), (p) => deps.getKey(p), { riskOf });
         rt.agent = agent;
         agent.baseHosts = new Set(task.allowedSites);
@@ -393,13 +411,57 @@ function create(deps) {
           if (now() - rt.started - rt.waitedMs > settings().timeoutMin * 60000) { rt.timedOut = true; agent.stop(); }
         }, 2000);
         rt.timer.unref?.();
-        await agent.run(promptFor(task, kind), (e) => onEvent(rt, e));
+        if (isLocalEngine(task.model)) await runCli(rt, agent, promptFor(task, kind));
+        else await agent.run(promptFor(task, kind), (e) => onEvent(rt, e));
       } catch (err) {
         task.error = String(err?.message || err).slice(0, 300);
       } finally {
         await finish();
       }
     })();
+  }
+
+  // A run on the user's own Claude Code / Grok Build. Its own engine (deps.cliEngine): a separate process
+  // with its own session, temp folder and MCP tag, so it can run beside a sidebar chat and other tasks.
+  // The agent's tab pin is a scope on the work tab (agent.inTask with the run's messages, which already
+  // count as having read page content), and the engine hands the agent to mcpCallTool (runAgent). Stop,
+  // the timeout and quitting abort the controller: the engine ends the whole process tree. The turn cap
+  // is --max-turns; hitting it is a notice, not a failure.
+  async function runCli(rt, agent, prompt) {
+    const { task } = rt;
+    const kind = bg.engineOfModel(task.model);
+    const cli = await deps.cliEngine?.(kind);
+    if (!cli) throw new Error(deps.t('tasks.error.cliMissing', { name: bg.CLI_ENGINES[kind] }));
+    const controller = new AbortController();
+    agent.controller = controller;
+    rt.cli = cli.engine;
+    const emit = (e) => onEvent(rt, e);
+    try {
+      if (rt.stopped || rt.timedOut) controller.abort();
+      emit({ type: 'turn_start' });
+      const out = await agent.inTask(WORK_TAB, controller.signal, () => cli.engine.run({
+        prompt,
+        images: [],
+        sessionId: crypto.randomUUID(),
+        resume: false,
+        model: engineModel(task.model),
+        maxTurns: bg.cliMaxTurns(deps.maxSteps?.(), rt.kind),
+        systemPrompt: cliSystemPrompt({ model: task.model, adhdMode: false }, kind, { background: true }),
+        signal: controller.signal,
+        emit,
+        runAgent: agent,
+      }), agent.messages);
+      rt.session = out.sessionId || null;
+      if (out.text) rt.turnText = out.text;
+      const usage = bg.cliTaskUsage(task.usage, out, task.model);
+      if (usage) { task.usage = usage; touch(task); }
+      if (out.usage) deps.reportUsage?.(kind, bg.cliUsageReport(out, engineModel(task.model)));
+      if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE });
+      if (out.failed && !task.error && !rt.stopped) task.error = deps.t('tasks.error.cliFailed', { name: bg.CLI_ENGINES[kind] });
+    } finally {
+      agent.controller = null;
+      cli.release();
+    }
   }
 
   function lastText(messages) {

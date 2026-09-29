@@ -98,6 +98,12 @@ function setupAiAgents(deps) {
   // can drive the browser by default. Lumen's own engines (ownsSession) work either way.
   const mcpEnabled = () => readSettings().mcpEnabled === true;
 
+  // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
+  // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.
+  const bgEngines = new Set();
+  // Tests run the CLIs as a fake process (test/fixtures/fake-cli.js): its `spawn` stands in for both engines'.
+  const cliSpawn = () => (require('../test-mode').isTest() && process.env.LUMEN_TEST_CLI_SPAWN ? require(process.env.LUMEN_TEST_CLI_SPAWN).spawn : undefined);
+
   // ---------- Claude Code engine (created on first use) ----------
 
   let claudeCode = null;
@@ -108,7 +114,7 @@ function setupAiAgents(deps) {
   const claudeCodeEngine = () => {
     if (!claudeCode) {
       const { ClaudeCodeEngine } = claudeCodeModule();
-      claudeCode = new ClaudeCodeEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true) });
+      claudeCode = new ClaudeCodeEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn() });
     }
     return claudeCode;
   };
@@ -133,7 +139,7 @@ function setupAiAgents(deps) {
       const { GrokBuildEngine } = grokBuildModule();
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
-      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate });
+      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn() });
     }
     return grokBuild;
   };
@@ -143,8 +149,9 @@ function setupAiAgents(deps) {
   // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
   // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
   async function onTerminalApproval(tag, command) {
-    const engineRun = grokBuild?.owns(tag) ? grokBuild.active : null;
-    if (!engineRun) return 'deny';
+    const owner = grokBuild?.owns(tag) ? grokBuild : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
+    const engineRun = owner ? owner.active : null;
+    if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
     if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
     try {
@@ -168,12 +175,13 @@ function setupAiAgents(deps) {
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
-  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : null);
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : [...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
   agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); } };
   if (require('../test-mode').isTest()) {
     Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
     global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
+    global.__bgEngineCount = () => bgEngines.size;
   }
 
   // Runs one browser tool for an external agent, with the same per-site approval as the sidebar,
@@ -187,28 +195,32 @@ function setupAiAgents(deps) {
     // uses the chat's approvals; anything else is an external agent.
     const owner = engineForSession(session);
     const engineRun = owner ? owner.active : null;
+    // A background task's CLI run brings its own Agent (work tab, approved sites, taint, approval cards
+    // for the Tasks panel): each of its calls runs there, never in the sidebar's Agent or the user's tab.
+    const runAgent = engineRun?.agent || agent;
     const toUi = engineRun ? engineRun.emit : mcpEvent;
     const signal = engineRun ? engineRun.signal : session.controller.signal;
-    const scope = engineRun && agent.engineScope();
+    const scope = engineRun && runAgent.engineScope();
+    if (engineRun?.agent && !scope) return { content: [{ type: 'text', text: 'This background task is not running any more.' }], isError: true };
     // `run` carries the "has read page content" taint (agent.ensureAllowed): the engine's message
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
     const allow = engineRun
-      ? { hosts: agent.approvedHosts, who: owner === grokBuild ? 'Grok' : 'Claude', input: args, run: scope || engineRun }
+      ? { hosts: runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : 'Claude', input: args, run: scope || engineRun }
       : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     const front = scope ? null : agent.browser.activeTab()?.id;
-    const inPin = (fn) => (scope ? agent.inScope(scope, fn) : agent.inTask(front, signal, fn));
-    const label = await inPin(() => agent.describeStep(name, args)).catch(() => null);
+    const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn));
+    const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
     toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
     // an outside agent's call is pinned to the tab in front when it arrives, so the approval card and
     // the action it allows are about the same tab. Stop ends a long wait at once, either way.
     const work = async () => {
-      await agent.ensureAllowed(name, emit, signal, allow);
-      return abortable(agent.execute(name, args), signal);
+      await runAgent.ensureAllowed(name, emit, signal, allow);
+      return abortable(runAgent.execute(name, args), signal);
     };
     try {
       const result = await inPin(work);
@@ -230,7 +242,9 @@ function setupAiAgents(deps) {
       userData: app.getPath('userData'),
       tools: deps.tools,
       callTool: mcpCallTool,
-      enabled: (session) => mcpEnabled() || ownsSession(session),
+      // A bridge that names a run (LUMEN_ENGINE) is served only while that run is live: a stale or foreign
+      // tag is refused, never treated as an outside agent.
+      enabled: (session) => (session.engine ? ownsSession(session) : mcpEnabled()),
       onEvent: mcpEvent,
     });
   }
@@ -475,6 +489,31 @@ function setupAiAgents(deps) {
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild):/.test(String(id)),
     mcpServer: () => mcpServer,
+    // Are the local CLIs there, and signed in (background tasks list them, or say why not).
+    cliStatus: () => ({
+      claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },
+      grokbuild: { installed: grokBuildFound, signedIn: grokBuildSignedIn, enabled: grokSidebar() },
+    }),
+    // A fresh engine for one background run: { engine, release }. It shares nothing live with the
+    // sidebar's engine (its own child, MCP tag and `active` run; Grok also its own GROK_HOME and folder,
+    // both removed by release()), only the CLI's location and the user's sign-in.
+    async backgroundEngine(kind) {
+      const userData = app.getPath('userData');
+      if (kind === 'claudecode') {
+        const engine = new (claudeCodeModule().ClaudeCodeEngine)({ userData, mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn() });
+        engine.bin = await claudeCodeEngine().detect();
+        bgEngines.add(engine);
+        return { engine, release: () => { bgEngines.delete(engine); } };
+      }
+      if (kind === 'grokbuild') {
+        const root = path.join(userData, 'grok-bg', crypto.randomBytes(6).toString('hex'));
+        const engine = new (grokBuildModule().GrokBuildEngine)({ userData, gate: startGrokGate, background: true, home: path.join(root, 'home'), dir: path.join(root, 'dir'), spawn: cliSpawn() });
+        engine.bin = await grokBuildEngine().detect();
+        bgEngines.add(engine);
+        return { engine, release: () => { bgEngines.delete(engine); fs.rm(root, { recursive: true, force: true }, () => {}); } };
+      }
+      return null;
+    },
     // Local agent engines, once each CLI has been found. Listed even when not signed in
     // (signedIn: false) so the setup card can steer the user to sign in instead of the option just
     // silently failing on the first message. Alphabetical, after modelOptions() sorts everything

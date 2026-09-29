@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const tlds = require('../tlds');
-const { describeUsage } = require('./chat-usage');
+const { describeUsage, addUsage } = require('./chat-usage');
 
 const LIMITS = { tasks: 50, steps: 200, runs: 10, result: 24000, title: 80, prompt: 8000, condition: 300, sites: 20 };
 const STATUSES = ['queued', 'running', 'waiting-approval', 'done', 'failed', 'stopped', 'interrupted'];
@@ -43,6 +43,57 @@ function normalizeSettings(raw) {
 
 // The step limit a background run gets: the user's Max steps setting, or 60 when it is Unlimited.
 const backgroundStepLimit = (setting) => (Number.isInteger(setting) && setting > 0 ? Math.min(setting, 1000) : BACKGROUND_STEPS);
+
+// ---- models and engines. A task runs on an API model, or on the user's own Claude Code / Grok Build CLI.
+
+const CLI_ENGINES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' };
+const engineOfModel = (model) => /^claudecode:/.test(String(model)) ? 'claudecode' : /^grokbuild:/.test(String(model)) ? 'grokbuild' : 'api';
+const isCliModel = (model) => engineOfModel(model) !== 'api';
+
+// The models a task may use, from the picker's options: every connected API model (chat-only ones can't
+// act, so no) and each CLI model. A CLI model of a CLI that is not signed in is listed but not available.
+function taskModels(options) {
+  return (options || []).filter((o) => o && o.id && o.id !== 'openrouter:__more' && !/chat only/i.test(o.label || '')).map((o) => {
+    const engine = engineOfModel(o.id);
+    return { id: o.id, label: o.label || o.id, group: o.group || '', engine, available: engine === 'api' || o.signedIn !== false };
+  });
+}
+
+// Why a CLI model can't run a task right now, or null. cli: aiAgents.cliStatus(). The key is a locale
+// key (tasks.error.cli*), the params fill it. 'unknown' sign-in is allowed: the run itself reports it.
+function cliProblem(model, cli) {
+  const engine = engineOfModel(model);
+  if (engine === 'api') return null;
+  const c = (cli || {})[engine];
+  const params = { name: CLI_ENGINES[engine] };
+  if (!c || !c.installed || c.enabled === false) return { key: 'tasks.error.cliMissing', params };
+  if (c.signedIn === false) return { key: 'tasks.error.cliSignedOut', params };
+  return null;
+}
+
+// The state of each CLI for the create card's note: 'ready', 'not-installed' or 'not-signed-in'.
+function cliStates(cli) {
+  return Object.keys(CLI_ENGINES).map((engine) => {
+    const p = cliProblem(`${engine}:default`, cli);
+    return { engine, name: CLI_ENGINES[engine], state: !p ? 'ready' : p.key === 'tasks.error.cliSignedOut' ? 'not-signed-in' : 'not-installed' };
+  });
+}
+
+// --max-turns for a CLI run (the same limit an API run gets from its step budget; a watch check's judge is short).
+const cliMaxTurns = (setting, kind = 'run') => (kind === 'judge' ? 8 : backgroundStepLimit(setting));
+
+// The task's usage after a CLI run: its tokens (usageOf's shape, as the API's) and the list-price cost the
+// CLI reported. null when the run reported neither (a failure before any turn).
+function cliTaskUsage(prev, out, model) {
+  const u = out?.usage;
+  if (!u && typeof out?.cost !== 'number') return null;
+  const raw = u ? { input_tokens: u.inputTokens, output_tokens: u.outputTokens, cache_creation_input_tokens: u.cacheWriteTokens, cache_read_input_tokens: u.cacheReadTokens } : null;
+  return addUsage(prev, { model, usage: raw, cost: typeof out.cost === 'number' ? out.cost : u?.costUSD });
+}
+
+// What a finished CLI run adds to the usage log (features/usage.js record): tagged background, so those
+// records stay apart from the sidebar's (its context bar, its Claude 5-hour share).
+const cliUsageReport = (out, model) => ({ usage: out?.usage || null, rateLimit: out?.rateLimit || null, model: String(model || 'default'), background: true });
 
 // ---- allowed sites
 
@@ -210,7 +261,7 @@ function makeTask({ title, prompt, model, schedule, allowedSites, signedIn = fal
     title: cleanLine(title, LIMITS.title) || (sched.type === 'watch' ? `Watch ${hostOfUrl(sched.url)}` : titleFrom(promptText)),
     prompt: promptText,
     model: String(model),
-    engine: 'api',
+    engine: engineOfModel(model),
     schedule: sched,
     allowedSites: [...new Set(sites)].slice(0, LIMITS.sites),
     signedIn: Boolean(signedIn),
@@ -245,6 +296,7 @@ function sanitizeTask(raw) {
   }));
   const runs = (Array.isArray(raw.runs) ? raw.runs : []).slice(-LIMITS.runs).map((r) => ({
     startedAt: num(r?.startedAt), endedAt: num(r?.endedAt), status: STATUSES.includes(r?.status) ? r.status : 'done', summary: cleanLine(r?.summary, 300), cost: r?.cost === null ? null : num(r?.cost), steps: num(r?.steps), kind: r?.kind === 'watch' || r?.kind === 'judge' ? r.kind : 'run',
+    ...(typeof r?.session === 'string' && /^[\w-]{1,64}$/.test(r.session) ? { session: r.session } : {}), // a CLI run's own session id (never resumed: see features/background-runner.js)
   }));
   const w = raw.watch && typeof raw.watch === 'object' ? raw.watch : null;
   return {
@@ -252,7 +304,7 @@ function sanitizeTask(raw) {
     title: cleanLine(raw.title, LIMITS.title) || 'Background task',
     prompt: clip(raw.prompt, LIMITS.prompt),
     model: cleanLine(raw.model, 120),
-    engine: 'api',
+    engine: engineOfModel(raw.model),
     schedule,
     allowedSites: (Array.isArray(raw.allowedSites) ? raw.allowedSites : []).map((s) => cleanLine(s, 120).toLowerCase()).filter(Boolean).slice(0, LIMITS.sites),
     signedIn: raw.signedIn === true,
@@ -312,7 +364,7 @@ function capTasks(tasks, limit = LIMITS.tasks) {
 function summarize(task, now = Date.now(), pending = []) {
   const next = nextRunAt(task);
   return {
-    id: task.id, title: task.title, status: task.status, model: task.model, schedule: task.schedule, enabled: task.enabled,
+    id: task.id, title: task.title, status: task.status, model: task.model, engine: task.engine || engineOfModel(task.model), schedule: task.schedule, enabled: task.enabled,
     lastRun: task.lastRun, nextRun: next && next > now ? next : null, updatedAt: task.updatedAt, createdAt: task.createdAt,
     cost: describeUsage(task.usage), stepCount: task.stepCount, error: task.error, notice: task.notice, allowedSites: task.allowedSites,
     signedIn: task.signedIn, allowMcp: task.allowMcp, currentUrl: task.currentUrl, pending,
@@ -351,6 +403,7 @@ function createTaskStore({ file, encrypt, decrypt, available = () => true, limit
 
 module.exports = {
   LIMITS, STATUSES, ACTIVE, OCCUPYING, TRANSITIONS, canTransition, DEFAULT_SETTINGS, TIMEOUT_CHOICES, normalizeSettings, backgroundStepLimit,
+  CLI_ENGINES, engineOfModel, isCliModel, taskModels, cliProblem, cliStates, cliMaxTurns, cliTaskUsage, cliUsageReport,
   hostOfUrl, hostFromToken, hostsInText, withWww, allowedSitesFor,
   normalizeSchedule, isRecurring, nextRunAt, isDue, planStarts,
   normalizePageText, digest, parseCondition, watchDecision, parseVerdict,

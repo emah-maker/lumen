@@ -3598,6 +3598,7 @@ const bgTasks = require('./features/background-runner').create({
   effectiveModel, modelOptions, currentModel: () => effectiveModel(), anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), externalTools: mcpClient, maxSteps: () => readSettings().maxSteps,
   reportUsage: (engine, data) => agent.onUsage?.(engine, data),
+  cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
   activeUrl: () => { const u = activeTab()?.webContents.getURL(); return isWebUrl(u) ? u : ''; },
   openTab: (url) => openTab(url), focusApp: () => focusWindow(),
 });

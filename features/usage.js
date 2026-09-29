@@ -133,7 +133,10 @@ function createUsage(deps) {
   }
 
   // One finished turn. `engine`: 'claudecode' | 'grokbuild' | 'anthropic' | 'openai' | …
-  function record(engine, { usage, rateLimit, model } = {}) {
+  // background: a background task's run (features/background-runner.js). Its tokens and cost count as
+  // Lumen's, and its plan-meter reading chains with the sidebar's (each turn is measured against the
+  // reading before it), but it is kept apart: never the sidebar's "last turn" context bar.
+  function record(engine, { usage, rateLimit, model, background = false } = {}) {
     if (!usage) return;
     let limitPoints = null;
     const beforeAt = meter?.at ?? null;
@@ -146,7 +149,7 @@ function createUsage(deps) {
       at: Date.now(), engine, model: model || (usage.models || [])[0] || null,
       inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0,
       cacheReadTokens: usage.cacheReadTokens || 0, cacheWriteTokens: usage.cacheWriteTokens || 0,
-      costUSD: usage.costUSD || 0, limitPoints,
+      costUSD: usage.costUSD || 0, limitPoints, ...(background ? { background: true } : {}),
       contextTokens: (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0), contextWindow: usage.contextWindow || 0,
     };
     records.push(rec);
@@ -218,15 +221,15 @@ function createUsage(deps) {
     const engines = {};
     for (const name of new Set(records.map((r) => r.engine))) {
       const mine = records.filter((r) => r.engine === name);
-      const last = mine[mine.length - 1];
-      engines[name] = { today: sum(today.filter((r) => r.engine === name)), last: { at: last.at, contextTokens: last.contextTokens || 0, contextWindow: last.contextWindow || 0 } };
+      const last = [...mine].reverse().find((r) => !r.background) || { at: 0 }; // a background run's context is not the sidebar chat's
+      engines[name] = { today: sum(today.filter((r) => r.engine === name)), background: sum(today.filter((r) => r.engine === name && r.background)), last: { at: last.at, contextTokens: last.contextTokens || 0, contextWindow: last.contextWindow || 0 } };
     }
     const result = {
       plan: planData,
       meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt, at: meter.at } : null,
       status: latestInfo ? { status: latestInfo.status || null, overage: latestInfo.isUsingOverage ? 'in use' : latestInfo.overageStatus || null } : null,
       lumen: {
-        window: { start: windowStart, ...sum(since(windowStart).filter((r) => r.engine === 'claudecode')) },
+        window: { start: windowStart, ...sum(since(windowStart).filter((r) => r.engine === 'claudecode')), background: sum(since(windowStart).filter((r) => r.engine === 'claudecode' && r.background)).turns },
         today: sum(since(new Date().setHours(0, 0, 0, 0))),
         week: sum(since(now - 7 * 24 * 60 * 60 * 1000)),
         byEngine: Object.fromEntries(Object.entries(byEngine).map(([k, v]) => [k, sum(v)])),
