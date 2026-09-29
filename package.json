@@ -22,6 +22,7 @@
     "electron-chrome-web-store": "^0.13.0",
     "electron-updater": "^6.8.10",
     "openai": "^7.23.0",
+    "qrcode-generator": "^2.0.4",
     "tldts-experimental": "^7.4.15"
   },
   "devDependencies": {
@@ -96,6 +97,7 @@
       "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
     },
     "afterPack": "scripts/after-pack.js",
+    "afterSign": "scripts/after-sign.js",
     "protocols": [
       {
         "name": "Web page",

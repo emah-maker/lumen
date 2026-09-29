@@ -456,7 +456,12 @@ contextBridge.exposeInMainWorld('browser', {
   closeTab: (id) => ipcRenderer.send('tab:close', id),
   switchTab: (id) => ipcRenderer.send('tab:switch', id),
   moveTab: (id, toIndex) => ipcRenderer.send('tab:move', id, toIndex),
-  dropTab: (id) => ipcRenderer.send('tab:drop', id), // released far outside the strip: another window's strip, or a new window
+  // A tab dragged out of the strip: main.js moves it into a window that follows the cursor.
+  dragTabStart: (id, grab) => ipcRenderer.send('tab:dragstart', id, grab),
+  dragTabEnd: () => ipcRenderer.send('tab:dragend'), // the button came up
+  dragTabCancel: () => ipcRenderer.send('tab:dragcancel'), // Escape
+  onTabDropAt: on('tab:dropat'), // { beforeId } while a dragged window hovers this strip, null when it leaves
+  onTabDragWatch: on('tab:dragwatch'), // this window is being dragged: report the release if it sees it
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   groupMenu: (id, point) => ipcRenderer.send('group:context-menu', id, point),
   toggleGroup: (id) => ipcRenderer.send('group:toggle', id),
@@ -468,6 +473,7 @@ contextBridge.exposeInMainWorld('browser', {
   undoOrganize: () => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
+  translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg), // the translate infobar and button (features/translate.js)
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
@@ -483,6 +489,7 @@ contextBridge.exposeInMainWorld('browser', {
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
   onAskSelection: on('ask-selection'),
+  onAttachImage: on('attach-image'), // a screenshot for the sidebar composer (features/screenshot.js)
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
@@ -526,7 +533,8 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images) => ipcRenderer.send('agent:ask', text, runId, images),
+  ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
+  askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
   stop: () => ipcRenderer.send('agent:stop'),
   reset: () => ipcRenderer.send('agent:reset'),
   // The chat history list (renderer/chats.js)
@@ -547,6 +555,8 @@ contextBridge.exposeInMainWorld('assistant', {
   openFullPage: () => ipcRenderer.send('chat:open-page'),
   onRunStart: on('chat:run-start'), // a turn started in the chat page
   onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
+  onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null
+  showAgentTarget: () => ipcRenderer.send('agent:show-target'),
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
@@ -559,6 +569,17 @@ contextBridge.exposeInMainWorld('assistant', {
   onSearchEngine: on('search-engine'),
   onModelsUpdated: on('models-updated'),
   ...testOnly,
+});
+
+// Skills (features/skills.js): the composer's "/" menu. Running one is a normal chat message; managing
+// them is in lumen://settings (settings-preload.js).
+contextBridge.exposeInMainWorld('skillsApi', {
+  menu: () => ipcRenderer.invoke('skills:menu'),
+  context: (options) => ipcRenderer.invoke('skills:context', options),
+  prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
+  draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+  onChanged: on('skills:changed'),
+  onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
 
 // ---- [claude code engine] + [page context]

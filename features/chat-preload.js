@@ -11,7 +11,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
 
   // The same shape the sidebar's window.assistant has, cut down to what a conversation needs.
   contextBridge.exposeInMainWorld('assistant', {
-    ask: (text, runId, images) => ipcRenderer.send('agent:ask', text, runId, images),
+    ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
+    askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs
     stop: () => ipcRenderer.send('agent:stop'),
     reset: () => ipcRenderer.send('agent:reset'),
     chats: {
@@ -41,6 +42,14 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     openSettingsPage: (section) => ipcRenderer.send('settings-page:open', section),
     get: () => ipcRenderer.invoke('prefs:ui'),
     onChange: on('prefs:ui'),
+  });
+  // The "/" menu (features/skills.js); no right-click "Run skill" here: that opens the sidebar.
+  contextBridge.exposeInMainWorld('skillsApi', {
+    menu: () => ipcRenderer.invoke('skills:menu'),
+    context: (options) => ipcRenderer.invoke('skills:context', options),
+    prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
+    draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+    onChanged: on('skills:changed'),
   });
   contextBridge.exposeInMainWorld('lumenExtras', {
     usage: (refresh) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh) }),

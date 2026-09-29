@@ -1,6 +1,7 @@
 // New-tab page. The browser passes everything in the URL hash as JSON:
 //   { favorites: [{ title, url, icon? }], frequent: [{ title, url, icon? }], blocked: number,
-//     look: { background, image (a file: URL in the profile), accent: { light, dark }, clock, name, sections } }
+//     look: { background, image (a file: URL in the profile), accent: { light, dark }, clock, name, sections },
+//     widgets: [{ id, type, title, data, error, loading }] (features/widgets.js; newtab-widgets.js draws them) }
 // (an older plain array means favorites only). Icons are favicons the browser cached locally as
 // data: URLs; the page itself never touches the network.
 const DEFAULTS = [
@@ -24,6 +25,7 @@ function data() {
       frequent: Array.isArray(parsed.frequent) ? parsed.frequent.filter(isWeb) : [],
       blocked: Number.isFinite(parsed.blocked) ? parsed.blocked : null,
       look: lookOf(parsed.look),
+      widgets: Array.isArray(parsed.widgets) ? parsed.widgets : [],
     };
   } catch {
     return { favorites: DEFAULTS, frequent: [], blocked: null, look: lookOf(null) };
@@ -170,12 +172,13 @@ function greeting(now) {
 }
 
 function render() {
-  const { favorites: favs, frequent: freq, blocked, look } = data();
+  const { favorites: favs, frequent: freq, blocked, look, widgets } = data();
   applyLook(look);
   tickClock();
   const now = new Date();
   document.getElementById('date').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   document.getElementById('greeting').textContent = look.name ? `${greeting(now)}, ${look.name}` : greeting(now);
+  window.renderWidgets?.(widgets); // [widgets] newtab-widgets.js
   const box = document.getElementById('sections');
   box.replaceChildren();
   if (look.sections.favorites) box.append(section('Favorites', favorites(favs)));
