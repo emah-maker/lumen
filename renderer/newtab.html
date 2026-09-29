@@ -271,7 +271,7 @@
     .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
     .w-card:hover .w-icon-btn, .w-icon-btn:focus-visible { opacity: 1; }
     .w-icon-btn:hover { background: var(--hover); color: var(--text); }
-    .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible, .wx-day:focus-visible, .wx-dot:focus-visible, .td-add input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible, .wx-day:focus-visible, .wx-dot:focus-visible, .td-add input:focus-visible, .mu-ask input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .w-note { margin: auto 0; padding: 6px 0 2px; color: var(--muted); font-size: 12.5px; }
     .w-note.small { margin: 4px 0 0; padding: 0; font-size: 11.5px; }
     .w-note strong { display: block; color: var(--text); font-weight: 550; font-size: 13px; margin-bottom: 2px; }
@@ -427,6 +427,16 @@
     .td-toast { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 12px; box-shadow: 0 6px 18px var(--shadow); }
     .td-toast span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .td-toast .w-btn { margin: 0; padding: 2px 10px; background: rgba(128, 128, 128, 0.3); color: inherit; }
+
+    /* Muse: the answer scrolls, the question field stays at the bottom. */
+    .muse-card .w-body { display: flex; flex-direction: column; min-height: 0; }
+    .mu-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .mu-p { margin: 0 0 6px; font-size: 12.5px; line-height: 1.45; white-space: pre-line; overflow-wrap: anywhere; }
+    .mu-sources { margin: 4px 0 6px; padding: 0; list-style: none; font-size: 11.5px; }
+    .mu-sources li { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .mu-ask { display: flex; gap: 6px; align-items: center; margin: 8px 0 0; flex: none; }
+    .mu-ask input { flex: 1 1 auto; width: auto; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12.5px; }
+    .mu-ask .w-btn { margin: 0; flex: none; }
 
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }

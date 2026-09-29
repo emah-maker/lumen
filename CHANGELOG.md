@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab widget: Muse, Meta's model (Meta Model API, public preview). It answers a saved prompt on the card (a short daily brief by default, refreshed every six hours at most), you can type a one-off question in the card, and an option grounds answers with web search and shows https sources. Add your own key from dev.meta.ai in Settings; it is stored encrypted and never reaches the page or the settings file. Your prompt, questions and Meta's answers go to Meta and use the key's credit; answers are capped in length. 401 and 429 show as plain messages. Model defaults to `muse-spark-1.3` and can be changed.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.

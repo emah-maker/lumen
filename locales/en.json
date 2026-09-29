@@ -694,5 +694,20 @@
   "settings.translate.never": "Sites never offered translation",
   "settings.translate.neverNone": "No sites.",
   "settings.translate.consent": "Allowed to receive page text",
-  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate."
+  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate.",
+  "widgets.colors": "Colors",
+  "widgets.muse.key": "Meta API key",
+  "widgets.muse.keyPaste": "Paste your Meta API key",
+  "widgets.muse.keySaved": "Saved. Paste a new key to replace it.",
+  "widgets.muse.keyHelp": "Create a key at dev.meta.ai (Meta Model API, public preview). It is stored encrypted by your system and never reaches the new-tab page or your settings file.",
+  "widgets.muse.privacy": "What is sent, and the cost",
+  "widgets.muse.privacyHelp": "Your prompt and every question you type go to Meta, and so do the answers it returns. Each answer uses your key’s credit (about $1.25 per million tokens in and $4.25 per million out, at the time of writing). The card asks about every six hours at most, or when you press Refresh or Ask; check Meta’s current terms and limits.",
+  "widgets.muse.prompt": "Saved prompt",
+  "widgets.muse.promptHelp": "Answered on the card. Keep it short: answers are capped at a few hundred words.",
+  "widgets.muse.model": "Model",
+  "widgets.muse.modelHelp": "Default muse-spark-1.3. Other names from dev.meta.ai work too (muse-spark-1.2, muse-spark-1.1).",
+  "widgets.muse.also": "Also",
+  "widgets.muse.search": "Ground answers with web search (shows sources)",
+  "widgets.muse.searchHelp": "Web search uses a different Meta endpoint and can cost more.",
+  "widgets.muse.colorsHelp": "Only the card’s surface and title follow it."
 }

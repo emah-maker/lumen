@@ -271,4 +271,6 @@ module.exports = function widgetUnits(check) {
   const cal = ics.eventsBetween(['BEGIN:VCALENDAR', 'X-APPLE-CALENDAR-COLOR:#FF2968FF', 'BEGIN:VEVENT', 'UID:a', 'DTSTART:20990101T100000Z', 'COLOR:teal', 'SUMMARY:x', 'END:VEVENT', 'BEGIN:VEVENT', 'UID:b', 'DTSTART:20990101T110000Z', 'COLOR:url(x)', 'SUMMARY:y', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'), { from: Date.parse('2099-01-01T00:00:00Z'), days: 3 });
   check('calendar colors: the feed\'s calendar colour and an event\'s own colour are read and checked', cal.color === '#ff2968' && cal.events[0].color === '#008080' && cal.events[1].color === '', JSON.stringify([cal.color, cal.events.map((e) => e.color)]));
   check('widgets: the colors mode is stored per widget and defaults to Calendar colors', cleanWidget({ id: 'wcolor1', type: 'calendar', url: 'https://example.com/a.ics', colors: 'match' }).colors === 'match' && cleanWidget({ id: 'wcolor2', type: 'calendar', url: 'https://example.com/a.ics', colors: 'neon' }).colors === 'calendar' && cleanWidget({ id: 'wcolor3', type: 'todoist' }).colors === 'calendar' && cleanWidget({ id: 'wcolor4', type: 'weather', place: 'B', lat: 1, lon: 2, colors: 'accent' }).colors === 'accent', '');
+
+  return require('./widget-muse')(check); // Muse: pure logic, and the connector against a fake fetch
 };

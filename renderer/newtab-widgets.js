@@ -401,6 +401,53 @@ const WIDGET_RENDERERS = {
     card.body.append(list);
   },
 
+  // Muse (Meta's model): the saved prompt's answer, its sources (https links only), and a field for one
+  // question. Everything from the network is text (textContent), split into paragraphs.
+  muse(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const paragraphs = (v) => (typeof v === 'string' ? v.slice(0, 6000).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).slice(0, 40) : []);
+    const sourcesOf = (list) => (Array.isArray(list) ? list : []).slice(0, 8).map((s) => ({ url: safeUrl(s?.url), title: text(s?.title, 120) })).filter((s) => s.url);
+    const drawAnswer = (parent, answer, sources, cls) => {
+      const box = el('div', cls);
+      for (const p of paragraphs(answer)) box.append(el('p', 'mu-p', p));
+      const links = sourcesOf(sources);
+      if (links.length) {
+        const list = el('ul', 'mu-sources');
+        list.setAttribute('aria-label', 'Sources');
+        for (const s of links) {
+          const li = el('li');
+          li.append(link(s.url, s.title || s.url));
+          list.append(li);
+        }
+        box.append(list);
+      }
+      parent.append(box);
+    };
+    const wrap = el('div', 'mu-wrap');
+    if (typeof d.notice === 'string' && d.notice) wrap.append(el('p', 'w-note', text(d.notice, 200)));
+    drawAnswer(wrap, d.answer, d.sources, 'mu-answer');
+    if (!paragraphs(d.answer).length) wrap.append(el('p', 'w-empty', 'Nothing yet.'));
+    if (d.asked && typeof d.asked === 'object') {
+      wrap.append(el('div', 'w-day', text(d.asked.question, 500)));
+      drawAnswer(wrap, d.asked.answer, d.asked.sources, 'mu-asked');
+    }
+    const box = el('div', 'mu-ask');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 500;
+    input.placeholder = 'Ask Muse…';
+    input.setAttribute('aria-label', `Ask Muse a question in ${text(w.title, 60)}`);
+    const go = () => { const v = input.value.trim(); if (v) { input.disabled = true; btn.disabled = true; btn.textContent = 'Asking…'; widgetAct(w.id, 'ask', { text: v.slice(0, 500) }); } };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } e.stopPropagation(); });
+    const btn = el('button', 'w-btn', 'Ask');
+    btn.type = 'button';
+    btn.addEventListener('click', go);
+    box.append(input, btn);
+    card.body.append(wrap, box);
+    card.el.classList.add('muse-card');
+  },
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -570,7 +617,7 @@ window.applyWidgetColors = applyWidgetColors;
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3 }; // Muse is left out: a refresh costs money, so only its own button and 6 h age ask
 const asked = new Map();
 function tick() {
   if (document.hidden) return;
@@ -582,7 +629,7 @@ function tick() {
     if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh'); return; }
   }
   const box = document.getElementById('widgets');
-  if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
+  if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
 setInterval(tick, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });

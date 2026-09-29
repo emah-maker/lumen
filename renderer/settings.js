@@ -460,6 +460,7 @@ const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
+  muse: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.7 3.8 1.5-3.8 1.5L8 12.2 6.6 8.5 2.8 7l3.8-1.5z"/><path d="M12.5 11.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -479,7 +480,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, Meta’s Muse, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -619,6 +620,23 @@ async function buildWidgets(card) {
         field('Add-task field', inputs.quick, 'Typed like in Todoist’s quick add: “Pay rent tomorrow 9am”.'), field('New tasks go to', inputs.quickProject, 'Load projects above to pick one.'),
         field('Colors', colors, 'Only the card’s surface and title follow it; priority colors stay.'));
     }
+    // ---- muse: Meta's model: key, saved prompt, model, web search ----
+    function museFields(same) {
+      const m = same?.muse || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.muse ? tr('widgets.muse.keySaved', 'Saved. Paste a new key to replace it.') : tr('widgets.muse.keyPaste', 'Paste your Meta API key'), 'aria-label': tr('widgets.muse.key', 'Meta API key') });
+      inputs.prompt = h('textarea', { id: 'widget-muse-prompt', rows: '3', maxlength: '1000', 'aria-label': tr('widgets.muse.prompt', 'Saved prompt') });
+      inputs.prompt.value = m.prompt || 'Give me a short daily brief: three or four bullet points on what matters today in technology and world news, one line each.';
+      inputs.model = h('input', { type: 'text', id: 'widget-muse-model', maxlength: '64', spellcheck: 'false', placeholder: 'muse-spark-1.3', 'aria-label': tr('widgets.muse.model', 'Model') });
+      inputs.model.value = m.model || 'muse-spark-1.3';
+      inputs.search = chk('widget-muse-search', tr('widgets.muse.search', 'Ground answers with web search (shows sources)'), m.search);
+      fields.replaceChildren(
+        field(tr('widgets.muse.key', 'Meta API key'), inputs.token, tr('widgets.muse.keyHelp', 'Create a key at dev.meta.ai (Meta Model API, public preview). It is stored encrypted by your system and never reaches the new-tab page or your settings file.')),
+        plain(tr('widgets.muse.privacy', 'What is sent, and the cost'), h('span', { class: 'note', text: tr('widgets.muse.privacyHelp', 'Your prompt and every question you type go to Meta, and so do the answers it returns. Each answer uses your key’s credit (about $1.25 per million tokens in and $4.25 per million out, at the time of writing). The card asks about every six hours at most, or when you press Refresh or Ask; check Meta’s current terms and limits.') })),
+        field(tr('widgets.muse.prompt', 'Saved prompt'), inputs.prompt, tr('widgets.muse.promptHelp', 'Answered on the card. Keep it short: answers are capped at a few hundred words.')),
+        field(tr('widgets.muse.model', 'Model'), inputs.model, tr('widgets.muse.modelHelp', 'Default muse-spark-1.3. Other names from dev.meta.ai work too (muse-spark-1.2, muse-spark-1.1).')),
+        plain(tr('widgets.muse.also', 'Also'), h('div', { class: 'widget-checks' }, inputs.search), tr('widgets.muse.searchHelp', 'Web search uses a different Meta endpoint and can cost more.')),
+        field(tr('widgets.colors', 'Colors'), colors, tr('widgets.muse.colorsHelp', 'Only the card’s surface and title follow it.')));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -634,6 +652,8 @@ async function buildWidgets(card) {
           field('Colors', colors, '“Calendar colors” uses the color the feed gives each event; “Match screen” follows your accent color and background.'));
       } else if (type === 'todoist') {
         todoFields(same);
+      } else if (type === 'muse') {
+        museFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -650,6 +670,7 @@ async function buildWidgets(card) {
       if (type === 'weather') {
         return { ...base, city: inputs.city?.value, units: inputs.units.value, wx: { places, units: inputs.units.value, wind: inputs.wind.value, clock: inputs.clock.value, days: Number(inputs.days.value), hours: Number(inputs.hours.value), view: inputs.view.value, show: Object.fromEntries(Object.entries(inputs.show).map(([k, c]) => [k, val(c)])) } };
       }
+      if (type === 'muse') return { ...base, token: inputs.token.value, muse: { prompt: inputs.prompt.value, model: inputs.model.value, search: val(inputs.search) } };
       if (type === 'todoist') {
         const p = inputs.project.selectedOptions[0];
         const q = inputs.quickProject.selectedOptions[0];
