@@ -2641,7 +2641,15 @@ function createWindow() {
   if (TEST_BACKGROUND) { win.setOpacity(0); win.setIgnoreMouseEvents(true); win.setPosition(-5000, -5000); win.showInactive(); }
   // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
   if (process.platform === 'win32' && app.isPackaged) {
-    win.setAppDetails({ appId: APP_ID, appIconPath: instance.appIcon(), appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: 'Lumen' });
+    // Set again once the UI has loaded: the taskbar can read the window's properties before the first
+    // call lands (or after the shell recreates the button), and a repeat is harmless.
+    const taskbarDetails = () => {
+      if (!win || win.isDestroyed()) return;
+      try { win.setAppDetails({ appId: APP_ID, appIconPath: instance.appIcon(), appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: 'Lumen' }); } catch {}
+    };
+    taskbarDetails();
+    win.webContents.once('did-finish-load', taskbarDetails);
+    win.once('show', taskbarDetails);
   }
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
   win.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
