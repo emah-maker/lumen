@@ -104,7 +104,38 @@ function cellsFromBox(id, box, m) {
   return WL.cleanRect(SYSTEM[id].type, { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) }, m.cols);
 }
 
-const api = { SYSTEM, IDS, isSystemId, isSystem, typeOf, labelOf, prefOf, visible, clean, cleanAll, capReal, split, applyLayout, forPage, cellsFromBox };
+// ---- the centred column's own size: the clock (steps) and the search bar (width) ----
+// Settings newTabClockSize / newTabSearchWidth; the page turns them into --clock-size / --search-w on <main>.
+const CLOCK_STEPS = ['s', 'm', 'l', 'xl'];
+const CLOCK_PX = { s: 64, m: 88, l: 120, xl: 160 };
+const CLOCK_DEFAULT = 'm';
+const SEARCH_MIN = 480;
+const SEARCH_MAX = 960;
+const SEARCH_DEFAULT = 640;
+const SEARCH_STEP = 8;
+const cleanClockSize = (v) => (CLOCK_STEPS.includes(v) ? v : null);
+const cleanSearchWidth = (v) => (v === null || v === '' || typeof v === 'boolean' || !Number.isFinite(Number(v)) ? null : Math.min(SEARCH_MAX, Math.max(SEARCH_MIN, Math.round(Number(v)))));
+// A dragged clock height (px) -> the nearest step.
+function clockStepFromPx(px) {
+  if (!Number.isFinite(px)) return CLOCK_DEFAULT;
+  return CLOCK_STEPS.reduce((best, k) => (Math.abs(CLOCK_PX[k] - px) < Math.abs(CLOCK_PX[best] - px) ? k : best), CLOCK_STEPS[0]);
+}
+// One step bigger (+1) or smaller (-1), stopping at the ends.
+const stepClock = (cur, dir) => CLOCK_STEPS[Math.min(CLOCK_STEPS.length - 1, Math.max(0, CLOCK_STEPS.indexOf(cleanClockSize(cur) || CLOCK_DEFAULT) + Math.sign(dir)))];
+// A dragged search width (px) -> a stored one: every 8 px, or the width whose edges sit on a grid line when one is
+// within a few px (grid = { pitch, pad, width }: the columns' pitch, the left padding and the grid's width), clamped.
+function snapSearchWidth(px, grid) {
+  if (!Number.isFinite(px)) return SEARCH_DEFAULT;
+  let best = Math.round(px / SEARCH_STEP) * SEARCH_STEP;
+  if (grid && [grid.pitch, grid.pad, grid.width].every(Number.isFinite) && grid.pitch > 0) {
+    const k = Math.round((grid.width - px) / 2 - grid.pad) / grid.pitch;
+    const line = grid.width - 2 * (grid.pad + Math.round(k) * grid.pitch);
+    if (Math.abs(line - px) <= 6) best = Math.round(line);
+  }
+  return Math.min(SEARCH_MAX, Math.max(SEARCH_MIN, best));
+}
+
+const api = { CLOCK_STEPS, CLOCK_PX, CLOCK_DEFAULT, SEARCH_MIN, SEARCH_MAX, SEARCH_DEFAULT, SEARCH_STEP, cleanClockSize, cleanSearchWidth, clockStepFromPx, stepClock, snapSearchWidth, SYSTEM, IDS, isSystemId, isSystem, typeOf, labelOf, prefOf, visible, clean, cleanAll, capReal, split, applyLayout, forPage, cellsFromBox };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetSystem = api;
 })();

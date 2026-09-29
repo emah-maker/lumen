@@ -522,6 +522,8 @@ async function buildHome(card) {
   name.addEventListener('change', () => save('newTabName', name.value));
   card.append(
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
+    select('newTabClockSize', 'Clock size', 'How big the clock is. In Edit layout on the new-tab page you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
+    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => x - y).map((w) => [w, `${w} px`]), { number: true }),
     toggle('newTabHeader', 'Show the date and greeting', 'Turn off to hide the date and “Good evening” line. In Edit layout on the new-tab page, the ✕ on a section does the same.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),

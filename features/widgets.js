@@ -1393,7 +1393,7 @@ function createWidgets(deps) {
     const widgets = list();
     const rects = WL.flowPack(widgets.map((w) => WL.DEFAULT_SIZE[w.type] || { w: 4, h: 3 }));
     widgets.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
-    save(widgets, { homeWidgetSizes: {} }, []); // and every section back in the centre column
+    save(widgets, { homeWidgetSizes: {}, newTabClockSize: SYS.CLOCK_DEFAULT, newTabSearchWidth: SYS.SEARCH_DEFAULT }, []); // and every section back in the centre column, at its default clock and search size
     deps.onUpdate?.();
     return true;
   }
@@ -1614,7 +1614,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|play|pause|next|previous|ask|buy|sell|resetpf)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -1647,6 +1647,11 @@ function createWidgets(deps) {
       action.items = WL.decode(params.get('l'));
       if (!action.items) return { invalid: true };
       action.dock = (params.get('d') || '').split(',').filter(SYS.isSystemId).slice(0, SYS.IDS.length); // system cards back to the centre column
+    }
+    if (action.do === 'look') { // Edit layout's clock size (k=clock&v=s|m|l|xl) and search bar width (k=search&v=480-960)
+      action.key = params.get('k') === 'clock' ? 'newTabClockSize' : params.get('k') === 'search' ? 'newTabSearchWidth' : null;
+      action.value = action.key === 'newTabClockSize' ? SYS.cleanClockSize(params.get('v')) : action.key ? SYS.cleanSearchWidth(/^\d{3,4}$/.test(params.get('v') || '') ? params.get('v') : null) : null;
+      if (!action.value) return { invalid: true };
     }
     if (action.do === 'create') { // the page's Add widget: open Settings' new-widget form for a kind
       action.type = Object.prototype.hasOwnProperty.call(CONNECTORS, params.get('type')) ? params.get('type') : null;
@@ -1689,6 +1694,7 @@ function createWidgets(deps) {
   async function act(action) {
     if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
     if (action.do === 'restore') return restore(action.id);
+    if (action.do === 'look') { deps.writeSettings({ ...deps.readSettings(), [action.key]: action.value }); deps.onUpdate?.(); return true; }
     if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);

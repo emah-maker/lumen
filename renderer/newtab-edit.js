@@ -81,6 +81,17 @@
     @keyframes w-pop { from { opacity: 0; translate: 0 6px; } }
     @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-picker, body:not(.calm) .w-toast, body:not(.calm) .w-dock-hint { animation: w-pop 160ms ease-out; } }
     body.w-stacked .w-add-tile, body.w-stacked .w-guide { display: none; }
+
+    /* the clock's corner and the search bar's edges (resize handles while editing) */
+    #w-sizers { position: absolute; top: 0; left: 0; width: 100%; height: 0; z-index: 2; pointer-events: none; }
+    #w-sizers[hidden] { display: none; }
+    .w-sz-frame { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 12px; pointer-events: none; }
+    .w-sz-grip { position: absolute; left: 0; top: 0; box-sizing: border-box; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); pointer-events: auto; touch-action: none; outline: none; }
+    .w-sz-grip::after { content: ""; position: absolute; inset: -10px; }
+    .w-sz-grip:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-sz-corner { width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 999px; cursor: nwse-resize; }
+    .w-sz-edge { width: 8px; height: 36px; margin: -18px 0 0 -4px; border-radius: 999px; cursor: ew-resize; }
+    .w-sz-hidden { display: none; }
   `;
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -269,11 +280,15 @@
     hideToast();
     if (!entry) { say(T('newtab.edit.nothing')); update(); return false; }
     let ok = true;
-    if (entry.kind === 'remove') {
+    if (entry.kind === 'look') {
+      ok = restoreLook({ [entry.key]: entry.before });
+      say(T('newtab.edit.undone', { what: T('newtab.edit.what.layout', { title: entry.title }) }));
+    } else if (entry.kind === 'remove') {
       window.widgetAct(entry.id, 'restore');
       say(T('newtab.edit.restored', { title: entry.title }));
     } else {
       ok = Boolean(grid()?.undoLayout(entry));
+      if (entry.look) ok = restoreLook(entry.look) || ok; // Reset layout also put the clock and the search bar back
       say(ok ? T('newtab.edit.undone', { what: entry.title ? T('newtab.edit.what.layout', { title: entry.title }) : T('newtab.edit.reset') }) : T('newtab.edit.nothing'));
     }
     update();
@@ -284,13 +299,175 @@
     const entry = grid()?.snapshot(null);
     if (!entry) return;
     entry.id = entry.before[0]?.id || null;
+    const now = SZ()?.get();
+    if (now && (now.clock !== WS.CLOCK_DEFAULT || now.search !== WS.SEARCH_DEFAULT)) entry.look = { clock: now.clock, search: now.search };
     history.push(entry);
+    SZ()?.preview(WS.CLOCK_DEFAULT, WS.SEARCH_DEFAULT); // the browser writes the defaults too (features/widgets.js resetLayout)
+    placeSoon();
     window.newtabSystem?.untouch(WS.IDS);
     window.widgetAct('wreset', 'reset');
     say(T('newtab.edit.resetDone'));
     update();
   });
   toggle.addEventListener('click', () => grid()?.setEditing(!grid().isEditing()));
+
+  // ---- the clock and the search bar: resize handles (the centre column stays centred) ----
+  // The clock grows in steps (s m l xl): drag the corner or focus it and press Shift+arrows. The search bar changes width
+  // symmetrically around the centre: drag either edge (8 px, or onto a grid line when one is close) or Shift+Left/Right.
+  // A drag previews live (newtabSize.preview); on drop the value is saved (do=look) and put on the Undo stack.
+  const SZ = () => window.newtabSize;
+  const sizers = el('div');
+  sizers.id = 'w-sizers';
+  sizers.hidden = true;
+  const frameClock = el('i', 'w-sz-frame');
+  const frameSearch = el('i', 'w-sz-frame');
+  const gripClock = el('div', 'w-sz-grip w-sz-corner w-ui');
+  const gripL = el('div', 'w-sz-grip w-sz-edge w-ui');
+  const gripR = el('div', 'w-sz-grip w-sz-edge w-ui');
+  for (const f of [frameClock, frameSearch]) f.setAttribute('aria-hidden', 'true');
+  for (const [g, label] of [[gripClock, 'newtab.edit.clock'], [gripL, 'newtab.edit.search'], [gripR, 'newtab.edit.search']]) {
+    g.tabIndex = 0;
+    g.setAttribute('role', 'slider');
+    g.setAttribute('aria-label', T(label));
+    g.title = T(`${label}.hint`);
+  }
+  gripClock.setAttribute('aria-valuemin', '0');
+  gripClock.setAttribute('aria-valuemax', String(WS.CLOCK_STEPS.length - 1));
+  for (const g of [gripL, gripR]) { g.setAttribute('aria-valuemin', String(WS.SEARCH_MIN)); g.setAttribute('aria-valuemax', String(WS.SEARCH_MAX)); }
+  sizers.append(frameClock, frameSearch, gripClock, gripL, gripR);
+  document.body.append(sizers);
+
+  const clockName = (k) => T(`newtab.edit.clock.${k}`);
+  const clockNode = () => document.getElementById('clock');
+  const searchNode = () => document.querySelector('main form');
+  const docRect = (n) => { const r = n.getBoundingClientRect(); return { left: r.left + scrollX, top: r.top + scrollY, width: r.width, height: r.height }; };
+  const put = (node, x, y) => { node.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`; };
+  function placeSizers() {
+    const on = editing && !stacked && SZ();
+    sizers.hidden = !on;
+    if (!on) return;
+    const c = clockNode();
+    const clockOn = Boolean(c) && !c.hidden && c.getClientRects().length > 0;
+    for (const n of [frameClock, gripClock]) n.classList.toggle('w-sz-hidden', !clockOn);
+    if (clockOn) {
+      // the clock is a block as wide as the column; frame just its text
+      const r = docRect(c);
+      const range = document.createRange();
+      range.selectNodeContents(c);
+      const t = range.getBoundingClientRect();
+      const w = Math.max(t.width, 40);
+      const left = t.left + scrollX;
+      frameClock.style.width = `${w + 8}px`;
+      frameClock.style.height = `${r.height + 4}px`;
+      put(frameClock, left - 4, r.top - 2);
+      put(gripClock, left + w + 4, r.top + r.height + 2);
+      const now = SZ().get().clock;
+      gripClock.setAttribute('aria-valuenow', String(WS.CLOCK_STEPS.indexOf(now)));
+      gripClock.setAttribute('aria-valuetext', clockName(now));
+    }
+    const f = searchNode();
+    if (f) {
+      const r = docRect(f);
+      frameSearch.style.width = `${r.width + 8}px`;
+      frameSearch.style.height = `${r.height + 8}px`;
+      put(frameSearch, r.left - 4, r.top - 4);
+      put(gripL, r.left - 4, r.top + r.height / 2);
+      put(gripR, r.left + r.width + 4, r.top + r.height / 2);
+      for (const g of [gripL, gripR]) { g.setAttribute('aria-valuenow', String(SZ().get().search)); g.setAttribute('aria-valuetext', T('newtab.edit.search.sized', { width: SZ().get().search })); }
+    }
+  }
+  let sizerFrame = 0;
+  const placeSoon = () => { if (!sizerFrame) sizerFrame = requestAnimationFrame(() => { sizerFrame = 0; placeSizers(); }); };
+  addEventListener('resize', placeSoon);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(placeSoon).observe(document.querySelector('main'));
+
+  // Set a clock step or search width now, save it (do=look) and, when `record`, put it on the Undo stack.
+  function setLook(key, value, { record = true, from } = {}) {
+    const before = from ?? SZ().get()[key];
+    if (key === 'clock') SZ().preview(value, null); else SZ().preview(null, value);
+    placeSoon();
+    if (before === value) return false;
+    window.widgetAct('wlook', 'look', { k: key, v: String(value) });
+    if (record) {
+      history.push({ kind: 'look', key, before, after: value, title: T(`newtab.edit.${key}`) });
+      update();
+    }
+    say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(value) }) : T('newtab.edit.search.sized', { width: value }));
+    return true;
+  }
+  const gridInfo = () => { const m = grid()?.metrics?.() || grid()?.geometry().m; return m && Number.isFinite(m.pitchX) ? { pitch: m.pitchX, pad: m.pad, width: m.width } : null; };
+
+  function dragSizer(grip, e, onMove) {
+    if (e.button !== 0 || !SZ()) return;
+    e.preventDefault();
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const start = SZ().get();
+    SZ().hold(true);
+    document.body.classList.add('w-dragging');
+    grip.setPointerCapture?.(e.pointerId);
+    let latest = null;
+    const move = (ev) => { latest = onMove(ev.clientX - x0, ev.clientY - y0); placeSoon(); };
+    const end = (ev) => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', end);
+      grip.removeEventListener('pointercancel', end);
+      grip.releasePointerCapture?.(ev.pointerId);
+      SZ().hold(false);
+      document.body.classList.remove('w-dragging');
+      if (ev.type === 'pointercancel' || !latest) { SZ().preview(start.clock, start.search); placeSoon(); return; }
+      setLook(latest.key, latest.value, { from: start[latest.key] });
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+  gripClock.addEventListener('pointerdown', (e) => {
+    const base = WS.CLOCK_PX[SZ()?.get().clock];
+    dragSizer(gripClock, e, (dx, dy) => {
+      const value = WS.clockStepFromPx(base + dy + dx * 0.4);
+      SZ().preview(value, null);
+      return { key: 'clock', value };
+    });
+  });
+  for (const [grip, dir] of [[gripL, -1], [gripR, 1]]) {
+    grip.addEventListener('pointerdown', (e) => {
+      const base = searchNode()?.getBoundingClientRect().width || SZ()?.get().search;
+      dragSizer(grip, e, (dx) => {
+        const value = WS.snapSearchWidth(base + 2 * dir * dx, gridInfo());
+        SZ().preview(null, value);
+        return { key: 'search', value };
+      });
+    });
+  }
+  gripClock.addEventListener('keydown', (e) => {
+    if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    const dir = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (!dir) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const next = WS.stepClock(SZ().get().clock, dir);
+    if (next === SZ().get().clock) say(T('newtab.edit.clock.sized', { size: clockName(next) }));
+    else setLook('clock', next);
+  });
+  for (const grip of [gripL, gripR]) {
+    grip.addEventListener('keydown', (e) => {
+      if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const cur = SZ().get().search;
+      const next = WS.cleanSearchWidth(cur + (e.key === 'ArrowRight' ? 1 : -1) * 2 * WS.SEARCH_STEP);
+      if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
+      else setLook('search', next);
+    });
+  }
+  // Undo / Reset: put a clock size or width back and save it.
+  function restoreLook(look) {
+    let did = false;
+    if (look.clock && look.clock !== SZ().get().clock) did = setLook('clock', look.clock, { record: false }) || did;
+    if (look.search && look.search !== SZ().get().search) did = setLook('search', look.search, { record: false }) || did;
+    return did;
+  }
 
   // ---- snap guides ----
   const lines = [];
@@ -332,6 +509,7 @@
       if (!on) { history.clear(); closePicker(false); hideToast(); }
       update();
       placeTile();
+      placeSoon();
     },
     undo,
   };
@@ -341,7 +519,8 @@
     stacked = Boolean(e.detail?.stacked);
     update();
     placeTile();
+    placeSoon();
   });
-  grid()?.onLayout(() => { update(); placeTile(); });
+  grid()?.onLayout(() => { update(); placeTile(); placeSoon(); });
   update();
 })();

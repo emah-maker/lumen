@@ -173,6 +173,30 @@
     if (stackedNow() !== lastStacked) requestAnimationFrame(refill);
   });
 
+  // The centre column's own size: --clock-size and --search-w on <main> (Settings newTabClockSize / newTabSearchWidth).
+  // apply() is the saved look (ignored while Edit layout is dragging, `hold`); preview() the live value of a drag.
+  // The grid watches <main>'s size, so the cards beside it re-resolve by themselves.
+  const size = { clock: WS.CLOCK_DEFAULT, search: WS.SEARCH_DEFAULT, hold: false };
+  function paint() {
+    mainEl.style.setProperty('--clock-size', `${WS.CLOCK_PX[size.clock]}px`);
+    mainEl.style.setProperty('--search-w', `${size.search}px`);
+  }
+  window.newtabSize = {
+    apply(clock, search) {
+      if (size.hold) return;
+      size.clock = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
+      size.search = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
+      paint();
+    },
+    preview(clock, search) {
+      if (clock) size.clock = WS.cleanClockSize(clock) || size.clock;
+      if (search) size.search = WS.cleanSearchWidth(search) || size.search;
+      paint();
+    },
+    hold(on) { size.hold = Boolean(on); },
+    get: () => ({ clock: size.clock, search: size.search }),
+  };
+
   const isPristine = (id) => WS.isSystemId(id) && !persisted.has(id) && !touched.has(id);
   window.newtabSystem = {
     fill, entries, cards, freeAll, settle, isPristine, isShown: shown,

@@ -163,6 +163,27 @@ module.exports = async function widgetEditUnits(check) {
   check('picker: sections that were hidden first, then every kind; unknown kinds get a name and a generic line', pe[0].kind === 'section' && pe[0].id === 'wsysfavs' && pe[1].label === 'Weather' && pe[2].label === 'Bogus' && pe[2].hint === WE.STRINGS['newtab.edit.type.other.hint'], JSON.stringify(pe));
   check('picker: a translation table wins over English', WE.pickerEntries({ types: ['weather'], table: { 'newtab.edit.type.weather': 'Wetter' } })[0].label === 'Wetter' && WE.text('newtab.edit.undone', { what: 'x' }) === 'Undone: x' && WE.text('nope.key') === 'nope.key', '');
 
+  // ---- the clock's size and the search bar's width ----
+  const SB = require('../settings-backend');
+  check('size: defaults are medium and 640 px', SB.DEFAULTS.newTabClockSize === 'm' && SB.DEFAULTS.newTabSearchWidth === 640 && WS.CLOCK_DEFAULT === 'm' && WS.SEARCH_DEFAULT === 640, '');
+  check('size: clock steps are s/m/l/xl at 64/88/120/160 px; anything else is refused', WS.CLOCK_STEPS.join() === 's,m,l,xl' && WS.CLOCK_STEPS.map((k) => WS.CLOCK_PX[k]).join() === '64,88,120,160' && WS.cleanClockSize('xl') === 'xl' && WS.cleanClockSize('xxl') === null && WS.cleanClockSize(3) === null && WS.cleanClockSize(undefined) === null, '');
+  check('size: the search width is rounded and clamped to 480-960, junk is refused', WS.cleanSearchWidth(100) === 480 && WS.cleanSearchWidth(5000) === 960 && WS.cleanSearchWidth('700') === 700 && WS.cleanSearchWidth(600.6) === 601 && WS.cleanSearchWidth('x') === null && WS.cleanSearchWidth(null) === null && WS.cleanSearchWidth('') === null && WS.cleanSearchWidth(true) === null && WS.cleanSearchWidth(NaN) === null, '');
+  check('size: a dragged clock height snaps to the nearest step', WS.clockStepFromPx(10) === 's' && WS.clockStepFromPx(70) === 's' && WS.clockStepFromPx(80) === 'm' && WS.clockStepFromPx(103) === 'm' && WS.clockStepFromPx(105) === 'l' && WS.clockStepFromPx(139) === 'l' && WS.clockStepFromPx(141) === 'xl' && WS.clockStepFromPx(999) === 'xl' && WS.clockStepFromPx(NaN) === 'm', '');
+  check('size: keyboard steps stop at both ends', WS.stepClock('m', 1) === 'l' && WS.stepClock('xl', 1) === 'xl' && WS.stepClock('s', -1) === 's' && WS.stepClock('m', -5) === 's' && WS.stepClock('bogus', 1) === 'l', '');
+  check('size: a dragged search width snaps to 8 px and stays inside 480-960', WS.snapSearchWidth(643) === 640 && WS.snapSearchWidth(645) === 648 && WS.snapSearchWidth(100) === 480 && WS.snapSearchWidth(2000) === 960 && WS.snapSearchWidth(NaN) === 640 && WS.snapSearchWidth(803) % 8 === 0, '');
+  const gridPx = { pitch: 100, pad: 40, width: 1000 }; // edges on x = 40 + k * 100 -> widths 1000 - 2 * (40 + k * 100) = 920, 720, 520
+  check('size: near a grid line the width snaps onto it (edges on the columns), else to 8 px', WS.snapSearchWidth(716, gridPx) === 720 && WS.snapSearchWidth(922, gridPx) === 920 && WS.snapSearchWidth(660, gridPx) === 664 && WS.snapSearchWidth(600, { pitch: 0, pad: 0, width: 0 }) === 600, [716, 922, 660].map((n) => WS.snapSearchWidth(n, gridPx)).join());
+  check('size: do=look accepts a clock step or a width and nothing else', parse('widget=wlook&do=look&k=clock&v=l').value === 'l' && parse('widget=wlook&do=look&k=clock&v=l').key === 'newTabClockSize'
+    && parse('widget=wlook&do=look&k=search&v=720').value === 720 && parse('widget=wlook&do=look&k=search&v=100').value === 480 && parse('widget=wlook&do=look&k=search&v=99999').invalid === true
+    && parse('widget=wlook&do=look&k=clock&v=huge').invalid === true && parse('widget=wlook&do=look&k=theme&v=dark').invalid === true && parse('widget=wlook&do=look').invalid === true, '');
+  await w.act(parse('widget=wlook&do=look&k=clock&v=xl'));
+  await w.act(parse('widget=wlook&do=look&k=search&v=800'));
+  check('size: do=look is saved to the two settings', settings.newTabClockSize === 'xl' && settings.newTabSearchWidth === 800, JSON.stringify([settings.newTabClockSize, settings.newTabSearchWidth]));
+  await w.act(parse('widget=wreset&do=reset'));
+  check('size: Reset layout puts the clock and the search bar back to the defaults', settings.newTabClockSize === 'm' && settings.newTabSearchWidth === 640, JSON.stringify([settings.newTabClockSize, settings.newTabSearchWidth]));
+  const pageSrc = read('renderer/newtab.html');
+  check('size: the page reads --clock-size and --search-w on <main>, centred, the clock never scrolls', /main \{[^}]*--clock-size: 88px;[^}]*--search-w: 640px;[^}]*width: min\(var\(--search-w\), 88vw\); margin: 0 auto/.test(pageSrc) && /\.clock \{[^}]*font-size: var\(--clock-size\);[^}]*white-space: nowrap; overflow: visible/.test(pageSrc), '');
+
   // ---- the page's files ----
   const en = JSON.parse(read('locales/en.json'));
   const missing = Object.entries(WE.STRINGS).filter(([k, v]) => en[k] !== v).map(([k]) => k);

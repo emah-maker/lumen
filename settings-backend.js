@@ -47,6 +47,8 @@ const DEFAULTS = {
   newTabEffectInteract: true, // [look] the pointer pulls, lights up or pushes the particles
   newTabImage: 0, // [look] when the wallpaper file (newtab-wallpaper.jpg in the profile) was last set; 0: none
   newTabClock: true, // [look] the big clock above the greeting
+  newTabClockSize: 'm', // [look] the clock's size: s | m | l | xl (Edit layout on the page resizes it too)
+  newTabSearchWidth: 640, // [look] the centred column / search bar width in px, 480-960
   newTabName: '', // [look] "Good evening, <name>"
   newTabHeader: true, // [look] the date and greeting (a system card, features/widget-system.js)
   newTabFavorites: true,
@@ -114,6 +116,7 @@ const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: 
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
 const translate = require('./features/translate');
+const WS = require('./features/widget-system'); // the clock's steps and the search bar's width range
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const bool = (v) => v === true;
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
@@ -129,6 +132,8 @@ function validate(key, value) {
     case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
     case 'newTabEffectColor': return ['auto', 'accent', 'rainbow'].includes(value) || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabEffectAmount': case 'newTabEffectSpeed': case 'newTabEffectSize': return pick(value, EFFECT_LEVELS[key], null);
+    case 'newTabClockSize': return WS.cleanClockSize(value);
+    case 'newTabSearchWidth': return WS.cleanSearchWidth(value);
     case 'newTabName': return String(value ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40);
     case 'newTabImage': return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
@@ -258,7 +263,7 @@ function create(deps) {
       effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor),
-      clock: p.newTabClock, name: p.newTabName,
+      clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked === true,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
