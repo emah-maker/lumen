@@ -242,12 +242,14 @@ async function streamTurn({ provider, model, apiKey, system, messages, tools, si
 }
 
 // One non-streaming request that must answer with a JSON object.
-async function completeJSON({ provider, model, apiKey, system, user }) {
+async function completeJSON({ provider, model, apiKey, system, user, maxTokens, temperature, signal }) {
   const res = await clientFor(provider, apiKey).chat.completions.create({
     model,
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     response_format: { type: 'json_object' },
-  });
+    ...(maxTokens ? { max_completion_tokens: maxTokens } : {}),
+    ...(temperature != null ? { temperature } : {}),
+  }, signal ? { signal } : undefined);
   return JSON.parse(res.choices?.[0]?.message?.content || '{}');
 }
 

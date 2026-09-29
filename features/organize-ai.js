@@ -65,7 +65,7 @@ const cleanTitle = (e) => clip(tg.stripSiteSegment(e.title || '', e.url || ''), 
 function groupSummary(g) {
   const shown = sample(g.entries, g.entries.length <= 4 ? 4 : 3);
   const hosts = hostCounts(g.entries);
-  return { i: g.id, n: g.entries.length, x: g.name, h: hosts.slice(0, 2).join(','), w: topWords(g.entries).join(' '), t: shown.map((e) => [e.id, cleanTitle(e)]) };
+  return { i: g.id, n: g.entries.length, x: g.name, h: hosts.slice(0, 2).join(','), w: topWords(g.entries).join(' '), ...(g.ctx ? {} : { t: shown.map((e) => [e.id, cleanTitle(e)]) }) };
 }
 
 // Leftover tabs grouped by host (a host is written once), each [id, title, short description].
@@ -309,7 +309,7 @@ async function pool(items, limit, fn) {
 // ask(wire, { signal }) -> the model's JSON. Phase 1 (local, one step of undo) is applied before any
 // request; phase 2 renames / places / merges in place, guarded so it can't undo the user's own edits.
 // Every failure keeps the local result. onPhase(name, info): 'local' | 'asking' | 'refined' | 'done'.
-async function organizeProgressive({ tabGroups, ask, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false } = {}) {
+async function organizeProgressive({ tabGroups, ask, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false } = {}) {
   const t0 = now();
   const stats = { groups: 0, aiUsed: false, reason: '', cached: false, requests: 0, chunks: 0, failed: '', wire: [], renamed: 0, placed: 0, created: 0, merged: 0, localMs: 0, totalMs: 0 };
   const count = tabGroups.organizeByTopic(null);
@@ -326,7 +326,7 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
   if (signal?.aborted) return finish('cancelled');
 
   const { plan: cachedPlan, pending } = cache.lookup(view);
-  const need = assess({ groups: pending.groups, leftovers: pending.leftovers });
+  const need = alwaysAsk ? { needsAi: true, askableLeftovers: pending.leftovers } : assess({ groups: pending.groups, leftovers: pending.leftovers });
   const cachedEmpty = !cachedPlan.names.size && !cachedPlan.place.size && !cachedPlan.groups.length && !cachedPlan.merges.length;
   const applyPlan = (plan) => {
     const ops = planApply(view, plan);
@@ -345,7 +345,8 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
   const sendView = { groups: pending.groups.length ? pending.groups : [], leftovers: need.askableLeftovers };
   // Groups already named well are only context for placing leftovers: keep them small but present.
   const context = view.groups.filter((g) => !pending.groups.includes(g));
-  if (sendView.leftovers.length && context.length) sendView.groups = [...sendView.groups, ...context];
+  if (sendView.leftovers.length && context.length) sendView.groups = [...sendView.groups, ...context.map((g) => ({ ...g, ctx: true }))]; // already named: only their words are context
+  if (!sendView.groups.length && !sendView.leftovers.length) { stats.cached = !cachedEmpty; if (!cachedEmpty) applyPlan(cachedPlan); return finish('cached'); }
   const chunks = chunkView(sendView, { tabs });
   stats.aiUsed = true;
   stats.chunks = chunks.length;

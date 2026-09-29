@@ -111,7 +111,8 @@ async function main() {
     const cache = oai.createRefineCache();
     const cold = await measureNew(tabs, cache);
     const warm = await measureNew(tabs, cache); // the same tabs again: answers come from the cache
-    const more = await measureNew([...tabs, ...session(3, 99).map((t, i) => ({ ...t, title: `${t.title} extra ${i}` }))], cache); // 3 new tabs
+    const extra = [{ title: 'Nebula astrophotography camera settings', url: 'https://astro.example/nebula-settings', text: '' }, { title: 'Ferret care basics for new owners', url: 'https://pets.example/ferret-care', text: '' }, { title: 'Lockpicking locks for hobbyists', url: 'https://hobby.example/locks', text: '' }];
+    const more = await measureNew([...tabs, ...extra], cache); // 3 new, unrelated tabs: only they go to the model
     console.log(`--- ${n} tabs`);
     console.log(row('before (all tabs)', old));
     console.log(row('after, first time', cold));

@@ -644,6 +644,14 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .organize-tabs:hover { background: var(--hover); }
 .organize-tabs:active { transform: scale(0.96); }
 .organize-tabs.busy svg { animation: spin 1.1s linear infinite; }
+/* Sits in the tab strip's own row, next to the Organize button: web pages cover everything below the strip. */
+.organize-note {
+  flex: none; display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
+  border-radius: 8px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap;
+}
+.organize-note button { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.organize-note button:hover { background: var(--hover); }
+.organize-note button:focus-visible { outline: 2px solid var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .organize-tabs, .organize-tabs.busy svg { animation: none; }
   .group-label:active { transform: none; }

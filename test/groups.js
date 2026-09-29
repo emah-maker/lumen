@@ -118,19 +118,20 @@ const os = require('os');
   // API-path steps on the API: with no key, Organize goes to Claude Code instead (7b).
   await app.evaluate(() => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake';
+    global.__organizeAlwaysAsk = true; // ask the model even when the local groups look clear (the real app skips it then)
     global.__organizeRequest = null;
     global.__agent.getClient = () => ({ messages: { create: async (params) => {
       global.__organizeRequest = JSON.parse(JSON.stringify(params));
-      const tabs = JSON.parse(params.messages[0].content.split('Tabs:\n')[1]);
-      const ids = tabs.map((x) => x.id);
-      return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ groups: [{ name: 'Reading List Stuff Extra', tab_ids: ids.slice(0, 3) }, { name: 'Solo', tab_ids: [ids[3]] }, { name: 'Bad', tab_ids: [999, ids[0]] }] }) }] };
+      const wire = JSON.parse(params.messages[0].content);
+      const ids = Object.values(wire.u || {}).flat().map((x) => x[0]);
+      return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ n: [], p: [], m: [], g: [{ s: 'Reading List Stuff Extra', t: ids.slice(0, 3) }, { s: 'Solo', t: [ids[3]] }, { s: 'Bad', t: [999, ids[0]] }] }) }] };
     } } });
   });
   await app.evaluate(() => global.__organizeTabs());
   g = await groupsNow();
   const req = await app.evaluate(() => global.__organizeRequest);
-  check('organize sends only ids, titles and hosts with a JSON schema', req?.output_config?.format?.type === 'json_schema' && !/untrusted_page_content|PAGE TEXT/.test(JSON.stringify(req)), JSON.stringify(req).slice(0, 200));
-  check('organize applies groups; singletons and unknown ids are dropped', g.length === 1 && g[0].name === 'Reading List Stuff', JSON.stringify(g));
+  check('organize sends only compact summaries (ids, titles, hosts) with a strict JSON schema, small max_tokens and temperature 0', req?.output_config?.format?.type === 'json_schema' && req.max_tokens <= 800 && req.temperature === 0 && !/untrusted_page_content|PAGE TEXT|https?:\/\//.test(JSON.stringify(req.messages)), JSON.stringify(req).slice(0, 300));
+  check('organize: the local groups apply first, the model then adds its group; singletons and unknown ids are dropped', g.length === 1 && g[0].name === 'Reading List Stuff', JSON.stringify(g));
 
   // 7b. Organize through the user's own Claude Code (fake CLI step): no API key involved.
   const cli = await app.evaluate(async () => {
@@ -143,8 +144,8 @@ const os = require('os');
     cc.status = async () => ({ installed: true, signedIn: true });
     global.__cliJson.completeJSON = async (opts) => {
       calls.push({ engine: opts.engine, bin: opts.bin, model: opts.model, user: opts.user, schema: Boolean(opts.schema) });
-      const ids = JSON.parse(opts.user.split('Tabs:\n')[1]).map((x) => x.id);
-      return { groups: [{ name: 'From Claude Code', tab_ids: ids.slice(0, 2) }] };
+      const ids = Object.values(JSON.parse(opts.user).u || {}).flat().map((x) => x[0]);
+      return { n: [], p: [], m: [], g: [{ s: 'From Claude Code', t: ids.slice(0, 2) }] };
     };
     try {
       global.__agent.messages.settings = { ...(saved.settings || {}), model: 'claudecode:opus' };
@@ -165,7 +166,7 @@ const os = require('os');
     }
   });
   check('organize with Claude Code: runs the CLI (Haiku for speed), never the API', cli.calls.length === 1 && cli.calls[0].engine === 'claudecode' && cli.calls[0].bin === 'claude-fake.exe' && cli.calls[0].model === 'haiku' && cli.calls[0].schema, JSON.stringify(cli.calls));
-  check('organize with Claude Code: only ids, titles, hosts and path words are sent', cli.calls[0] && JSON.parse(cli.calls[0].user.split('Tabs:\n')[1]).every((x) => ['id', 'title', 'host'].every((k) => k in x) && Object.keys(x).every((k) => ['id', 'title', 'host', 'path', 'group', 'active'].includes(k)) && !/[?#]/.test(x.path || '')), cli.calls[0]?.user);
+  check('organize with Claude Code: only group summaries and leftover ids, titles and hosts are sent', cli.calls[0] && Object.keys(JSON.parse(cli.calls[0].user)).every((k) => ['g', 'u'].includes(k)) && !/https?:\/\/|[?#]/.test(Object.keys(JSON.parse(cli.calls[0].user).u || {}).join('')), cli.calls[0]?.user);
   check('organize with Claude Code: its groups are applied', cli.picked.includes('From Claude Code'), JSON.stringify(cli.picked));
   check('organize: an API model with no key falls back to Claude Code', cli.noKey.engine === 'claudecode' && cli.noKey.model === 'haiku', JSON.stringify(cli.noKey));
   check('organize: a Grok Build pick runs Grok Build with its model', cli.grok.engine === 'grokbuild' && cli.grok.model === 'grok-4.7', JSON.stringify(cli.grok));

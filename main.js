@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, powerMonitor, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 
@@ -34,6 +34,8 @@ const cliAuth = lazy(() => require('./cli-auth'));
 let anthropicSdk_ = null;
 const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords } = require('./tab-groups');
+const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
+const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
 const { createManagers, pageOf: managerPageOf } = require('./features/managers'); // Bookmarks and Downloads pages
@@ -600,7 +602,13 @@ const tabByContents = (wc) => tabs.find((t) => alive(t) && t.view.webContents ==
 // The extension library reports every newly added tab as activated; ignore those echoes so
 // background tabs stay in the background and our own switches don't loop back.
 // Tab groups share the tabs array; grouped tabs are kept contiguous by tabGroups.arrange().
+// What Organize learned from drags and renames (host / topic word -> group name), kept in the profile.
+const organizeLearner = organizeLearn.createLearner({
+  load: () => readSettings().organizeLearning,
+  save: (state) => writeSettings({ ...readSettings(), organizeLearning: state }),
+});
 const tabGroups = createTabGroups({
+  learned: organizeLearner,
   getTabs: () => tabs,
   setTabs: (list) => { tabs = list; },
   urlOf: (t) => (alive(t) ? realUrl(t.view.webContents) : ''),
@@ -623,7 +631,7 @@ const PAGE_TEXT_WORLD = 1001;
 function readPageText(tab) {
   const wc = tab.view.webContents;
   if (groupingMode() !== 'topic' || !isWebUrl(realUrl(wc))) return;
-  wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `[document.querySelector('meta[name="description"],meta[property="og:description"]')?.content || '', document.querySelector('h1')?.textContent || ''].join(' ').replace(/\\s+/g, ' ').trim().slice(0, 300)` }])
+  wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `[document.querySelector('meta[name="description"],meta[property="og:description"]')?.content || '', document.querySelector('meta[name="keywords"]')?.content || '', document.querySelector('meta[property="og:title"]')?.content || '', document.querySelector('h1')?.textContent || ''].join(' ').replace(/\\s+/g, ' ').trim().slice(0, 300)` }])
     .then((text) => {
       if (!alive(tab) || typeof text !== 'string' || text === tab.pageText) return;
       tab.pageText = text;
@@ -1666,25 +1674,83 @@ function aiOffTab(id) {
 }
 
 let organizing = false;
-// "Organize Tabs with AI": the tabs as they are right now (new ones and their latest titles included).
-// Any failure, refusal or unusable answer falls back to the local topic organizer, so it never ends in an error.
+let organizeAbort = null;
+const refineCache = organizeAi.createRefineCache(); // answers for tabs organized before (until Lumen quits)
+
+// One refinement request (features/organize-ai.js): group summaries and leftover tabs in, names / placements /
+// merges out. Small max_tokens, temperature 0 and a strict schema, on the cheapest model of the chat's provider.
+async function refineGroups(model, wire, signal) {
+  const route = await groupingRoute(String(model));
+  const user = JSON.stringify(wire);
+  if (route.engine) {
+    const { engine, model: engineModelId } = route;
+    const bin = await agent.engines[engine].detect();
+    if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+    const ask = (m) => cliJson.completeJSON({ engine, bin, model: m, system: organizeAi.REFINE_PROMPT, user, schema: organizeAi.REFINE_SCHEMA, userData: app.getPath('userData') });
+    const fast = engine === 'claudecode' ? 'haiku' : engineModelId;
+    try { return await ask(fast); } catch (err) {
+      if (fast === engineModelId || /not signed in|usage limit/i.test(err.message)) throw err;
+      return ask(engineModelId);
+    }
+  }
+  const { provider, model: id } = providers.splitModel(model);
+  if (provider === 'anthropic') {
+    const res = await agent.getClient().messages.create({
+      model: id,
+      max_tokens: organizeAi.REFINE_MAX_TOKENS,
+      temperature: 0,
+      system: organizeAi.REFINE_PROMPT,
+      output_config: { format: { type: 'json_schema', schema: organizeAi.REFINE_SCHEMA } },
+      messages: [{ role: 'user', content: user }],
+    }, { signal });
+    if (res.stop_reason === 'refusal') throw new Error('The model declined to organize these tabs.');
+    return JSON.parse(res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  }
+  const apiKey = providerKey(provider);
+  if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key in Claude settings first.`);
+  return providers.completeJSON({ provider, model: id, apiKey, system: organizeAi.REFINE_PROMPT, user, maxTokens: organizeAi.REFINE_MAX_TOKENS, temperature: 0, signal });
+}
+
+// A short line about what just happened, with an Undo button (the tab strip shows it as a toast).
+function organizeNote(text, { undo = false } = {}) {
+  ui()?.send('tabs:organize-note', { text, undo });
+}
+
+// "Organize Tabs with AI": the local organizer groups the tabs at once (one step of undo); the model then only
+// refines that result in place (names, the few loose tabs it can place, merges), and is skipped when the local
+// result is already clear or the same tabs were organized before. A second click while it refines cancels
+// it and keeps the local groups. Any failure, timeout or unusable answer keeps the local groups too.
 async function organizeTabs() {
-  if (organizing) return;
+  if (organizing) { organizeAbort?.abort(); return; }
   organizing = true;
+  organizeAbort = new AbortController();
   ui()?.send('tabs:organizing', true);
   try {
-    const entries = tabGroups.candidates().slice(0, MAX_ORGANIZE_TABS);
-    if (entries.length < 2) throw new Error(t('organize.tooFew'));
-    const proposal = await proposeGroups(cheapTopicModel(), topicList(entries)).catch(() => null);
-    const count = tabGroups.organizeByTopic(proposal);
+    if (tabGroups.candidates().length < 2) throw new Error(t('organize.tooFew'));
+    const stats = await organizeAi.organizeProgressive({
+      tabGroups,
+      cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
+      signal: organizeAbort.signal,
+      skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
+      alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
+      maxTabs: MAX_ORGANIZE_TABS * 4,
+      ask: (wire, { signal } = {}) => refineGroups(cheapTopicModel(), wire, signal),
+      onPhase: (name) => {
+        if (name === 'local') { sendTabs(); ui()?.send('tabs:organizing', 'refine'); } // the groups are there; the model may still refine them
+        else if (name === 'refined') sendTabs();
+      },
+    });
     sendTabs();
-    if (!count && win && !win.isDestroyed()) {
-      await dialog.showMessageBox(win, { type: 'info', message: t('organize.none'), detail: t('organize.none.detail') });
-    }
+    if (!stats.groups && !stats.created) {
+      if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'info', message: t('organize.none'), detail: t('organize.none.detail') });
+    } else if (stats.reason === 'confident' || stats.reason === 'cached') organizeNote(t('organize.noAi'), { undo: true });
+    else if (stats.reason === 'refined') organizeNote(t('organize.refined'), { undo: true });
+    else if (stats.reason !== 'cancelled') organizeNote(t('organize.localOnly'), { undo: true });
   } catch (err) {
     if (win && !win.isDestroyed()) await dialog.showMessageBox(win, { type: 'warning', message: t('organize.failed'), detail: err.message });
   } finally {
     organizing = false;
+    organizeAbort = null;
     ui()?.send('tabs:organizing', false);
   }
 }
@@ -1749,6 +1815,31 @@ function mergeGroups() {
 function undoOrganize() {
   if (tabGroups.undoOrganize()) sendTabs();
 }
+// "Close Duplicate Tabs" (never automatic): tabs that show exactly the same page, keeping the active one, or a
+// pinned one, or the first. Pinned tabs are never closed.
+function duplicateTabs() {
+  return organizeLearn.findDuplicates(tabs.filter((x) => !x.closing).map((x) => ({ id: x.id, url: tabUrl(x), pinned: Boolean(x.pinned), active: x.id === activeId })));
+}
+function closeDuplicateTabs() {
+  const ids = new Set(duplicateTabs().flatMap((d) => d.close));
+  for (const id of ids) requestCloseTab(id);
+}
+
+// "Organize tabs automatically when idle" (off by default): after N idle minutes, with 8 or more loose tabs,
+// the LOCAL organizer groups them (never the AI) and a toast offers Undo.
+let idleOrganizeKey = null;
+function idleOrganizeTick() {
+  const settings = readSettings();
+  if (settings.organizeWhenIdle !== true) return;
+  try {
+    const pool = tabGroups.loose();
+    const key = organizeAi.setKey(pool);
+    if (!organizeLearn.shouldAutoOrganize({ enabled: true, idleSeconds: powerMonitor.getSystemIdleTime(), idleMinutes: Number(settings.organizeIdleMinutes) || 10, ungrouped: pool.length, key, lastKey: idleOrganizeKey, busy: organizing })) return;
+    idleOrganizeKey = key;
+    if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); }
+  } catch {}
+}
+if (!TEST) setInterval(idleOrganizeTick, 60000).unref();
 
 const colorLabel = (c) => t(`color.${c}`);
 
@@ -1823,9 +1914,11 @@ function tabMenuTemplate(id) {
         ui()?.send('group:rename-start', group.id);
       },
     });
-    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
+    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
     if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
     items.push({ label: t('menu.organizeByTopic'), click: organizeByTopic });
+    const dupCount = duplicateTabs().reduce((n, d) => n + d.close.length, 0);
+    if (dupCount) items.push({ label: t('menu.closeDuplicates', { n: dupCount }), click: closeDuplicateTabs });
     if (tabGroups.state().length > 1) items.push({ label: t('menu.mergeGroups'), click: mergeGroups });
     if (tabGroups.canUndo()) items.push({ label: t('menu.undoOrganize'), click: undoOrganize });
   }
@@ -1952,7 +2045,7 @@ function groupMenu(groupId, { x, y }) {
   if (!group) return;
   Menu.buildFromTemplate([
     { label: t('menu.rename'), click: () => ui()?.send('group:rename-start', groupId) },
-    { label: t('menu.colour'), submenu: tabGroups.GROUP_COLORS.map((c) => ({ label: colorLabel(c), type: 'radio', checked: group.color === c, click: () => { group.color = c; sendTabs(); } })) },
+    { label: t('menu.colour'), submenu: tabGroups.GROUP_COLORS.map((c) => ({ label: colorLabel(c), type: 'radio', checked: group.color === c, click: () => { group.color = c; group.colorLocked = true; sendTabs(); } })) },
     { label: t('menu.newTabInGroup'), click: () => openTab(undefined, { groupId }) },
     { type: 'separator' },
     { label: t('menu.ungroup'), click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
@@ -1966,7 +2059,7 @@ function tabGroupsMenu() {
     { label: t('menu.organizeByTopic'), click: organizeByTopic },
     { label: t('menu.mergeGroups'), enabled: tabGroups.state().length > 1, click: mergeGroups },
     { label: t('menu.undoOrganize'), enabled: tabGroups.canUndo(), click: undoOrganize },
-    { label: t('menu.organizeWithAi'), enabled: !organizing, click: organizeTabs },
+    { label: t('menu.organizeWithAi'), click: organizeTabs }, // while it refines, choosing it again cancels the refinement
     { type: 'separator' },
     { label: t('menu.groupAutomatically'), enabled: false },
     ...[['off', t('menu.off')], ['site', t('menu.bySite')], ['topic', t('menu.byTopic')]].map(([value, label]) => ({ label, type: 'radio', checked: mode === value, click: () => setTabGrouping(value) })),
@@ -3337,6 +3430,9 @@ function moveTab(id, toIndex) {
   if (prev?.groupId && prev.groupId === next?.groupId) target = prev.groupId;
   else if (before && (prev?.groupId === before || next?.groupId === before)) target = before;
   if (target !== before) {
+    const e = tabGroups.entryFor(id);
+    if (e && before) organizeLearner.learnRemoval(e, tabGroups.groups.get(before)?.name);
+    if (e && target) organizeLearner.learnPlacement(e, tabGroups.groups.get(target)?.name);
     tab.groupId = target;
     tab.userRemoved = !target;
   }
@@ -3360,10 +3456,11 @@ ipcMain.on('group:toggle', (_e, id) => {
 ipcMain.on('group:rename', (_e, id, name) => {
   const group = tabGroups.groups.get(id);
   const clean = String(name || '').trim().slice(0, 40);
-  if (group && clean) { group.name = clean; group.auto = false; group.userNamed = true; } // named by the user: automatic grouping and Organize leave it alone
+  if (group && clean) { organizeLearner.learnRename(group.name, clean, tabGroups.groupEntries(id)); group.name = clean; group.auto = false; group.userNamed = true; } // named by the user: automatic grouping and Organize leave it alone
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);
+ipcMain.on('tabs:undo-organize', undoOrganize);
 // The toolbar button toggles the downloads panel (the ⋯ menu keeps its Downloads submenu).
 ipcMain.on('downloads:menu', (_e, anchor) => {
   // A click on the button while the panel is open first blurs (closes) it: that click means close.
@@ -3527,6 +3624,8 @@ ipcMain.handle('settings:get', () => {
     autoGroupTabs: groupingMode() !== 'off',
     tabGrouping: groupingMode(),
     topicAi: readSettings().topicAi === true,
+    organizeWhenIdle: readSettings().organizeWhenIdle === true,
+    organizeLearned: organizeLearner.size(),
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),
     model,
@@ -3697,6 +3796,8 @@ ipcMain.handle('settings:set-model', (_e, id) => {
 ipcMain.handle('settings:set-auto-group', (_e, on) => setAutoGroup(on));
 ipcMain.handle('settings:set-tab-grouping', (_e, mode) => setTabGrouping(mode));
 ipcMain.handle('settings:set-topic-ai', (_e, on) => { writeSettings({ ...readSettings(), topicAi: Boolean(on) }); return true; });
+ipcMain.handle('settings:set-organize-idle', (_e, on) => { writeSettings({ ...readSettings(), organizeWhenIdle: Boolean(on) }); return true; });
+ipcMain.handle('settings:forget-organize-learning', () => { organizeLearner.reset(); return organizeLearner.size(); });
 ipcMain.handle('settings:set-adhd', (_e, on) => {
   writeSettings({ ...readSettings(), adhdMode: Boolean(on) });
   return true;

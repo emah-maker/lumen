@@ -1020,6 +1020,18 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     return out;
   }
 
+  // The idle rule's organizer: only the loose tabs are grouped (local clusters), automatic groups stay as they
+  // are. One step of undo, and nothing recorded when nothing was grouped. Returns how many groups were made.
+  function organizeLoose() {
+    const prev = { undoState, autoUndo, undoSeq };
+    saveUndo();
+    const before = new Set(groups.keys());
+    const count = groupLoose();
+    if (!count) { ({ undoState, autoUndo, undoSeq } = prev); return 0; }
+    spreadColors(new Set([...groups.keys()].filter((id) => !before.has(id))));
+    return count;
+  }
+
   // "Merge Similar Groups": one step of undo, nothing recorded when there was nothing to merge.
   function mergeGroups() {
     const prev = { undoState, autoUndo, undoSeq };
@@ -1085,7 +1097,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   }
 
   return {
-    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, mergeGroups, entryFor: (id) => { const t = tabById(id); return t ? entry(t) : null; }, groupEntries: (id) => members(id).map(entry), organizeView, applyRefinement, organizeSeq: () => (undoState ? undoState.seq : null), undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
+    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, organizeLoose, mergeGroups, entryFor: (id) => { const t = tabById(id); return t ? entry(t) : null; }, groupEntries: (id) => members(id).map(entry), organizeView, applyRefinement, organizeSeq: () => (undoState ? undoState.seq : null), undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
     candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,

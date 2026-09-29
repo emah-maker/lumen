@@ -1864,7 +1864,7 @@ async function organizeAiRuns() {
   }
   {
     const topics = ['Kayak rental prices', 'Tokyo hotel guide', 'Espresso machine review', 'Piano chords lesson', 'Sourdough starter tips', 'Marathon training plan', 'Solar panel cost', 'Linear algebra notes', 'Bird watching gear', 'Watercolor painting basics'];
-    const tabsN = Array.from({ length: 130 }, (_v, i) => (i % 6 === 0 ? [`Qwertyword${i}x Zxcvbnmlk${i}y`, `https://odd${i}.example/${i}`] : [`${topics[i % 10]} part ${i}`, `https://s${i % 11}.example/${i}-${i % 10}`]));
+    const tabsN = Array.from({ length: 130 }, (_v, i) => (i % 6 === 0 ? [`Qwertyword${i}x Zxcvbnmlk${i}y Plumbob${i}z`, `https://odd${i}.example/${i}`] : [`${topics[i % 10]} part ${i}`, `https://s${i % 11}.example/${i}-${i % 10}`]));
     const h = make(tabsN, { base: [] });
     let live = 0; let peak = 0; let calls = 0;
     const { stats } = await run(h, async () => { calls++; live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 25)); live--; return { n: [], p: [], g: [], m: [] }; });

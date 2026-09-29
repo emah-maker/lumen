@@ -123,10 +123,16 @@ async function buildAi(card) {
   const topicRow = row('Use AI to name and group topics', 'Sends only tab titles and site names (like example.com, never full addresses) to the cheapest model of your chat’s provider, or through your own Claude Code or Grok Build when you chat with one (no API key needed). Off: topics are found on this computer.', topicAi);
   topicRow.classList.add('sub-row');
   topicRow.hidden = ai.tabGrouping !== 'topic';
+  const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically when idle', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
+  const idleRow = row('Organize tabs automatically when idle', 'After about 10 idle minutes, with 8 or more ungrouped tabs, Lumen groups them on this computer (never with AI) and offers Undo. Off by default.', idleOrganize);
+  const forgetBtn = h('button', { id: 'ai-forget-organize', text: 'Forget organize learning', onclick: async () => { await S.ai.forgetOrganizeLearning(); forgetBtn.textContent = 'Forgotten'; setTimeout(() => { forgetBtn.textContent = 'Forget organize learning'; }, 2000); } });
+  const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
   card.append(
     row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
     row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, such as recipes or one trip, once 4 or more are loose. Tabs you group or move by hand stay put.', grouping),
     topicRow,
+    idleRow,
+    forgetRow,
     select('maxSteps', tr('settings.ai.maxSteps', 'Max steps per task'), tr('settings.ai.maxStepsDesc', 'How many steps the assistant may take on one request before it wraps up with an answer. Unlimited still stops if it gets stuck in a loop, and you can always press Stop.'),
       [[0, tr('settings.ai.maxSteps.unlimited', 'Unlimited')], ...[30, 60, 120, 250].map((n) => [n, String(n)])], { number: true }),
   );
