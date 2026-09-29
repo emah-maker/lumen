@@ -401,6 +401,65 @@ const WIDGET_RENDERERS = {
     card.body.append(list);
   },
 
+  slack(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const home = safeUrl(d.teamUrl);
+    if (home && !d.reconnect) card.head.append(openLink(home, 'Open Slack'));
+    // Slack refused the stored sign-in: say so, and the button opens this card's settings to sign in again.
+    if (d.reconnect) {
+      const box = el('div', 'sl-reconnect');
+      box.append(el('p', 'w-note', `Slack needs you to reconnect. ${text(d.reason, 160)}`.trim()));
+      const btn = el('button', 'w-btn primary', 'Reconnect');
+      btn.type = 'button';
+      btn.setAttribute('aria-label', `Reconnect ${text(w.title, 60)} in Settings`);
+      btn.addEventListener('click', () => widgetAct(w.id, 'configure'));
+      box.append(btn);
+      card.body.append(box);
+      return;
+    }
+    if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
+    const unread = int(d.unread) || 0;
+    const mentions = int(d.mentions) || 0;
+    const showDms = d.showDms !== false;
+    const showMentions = d.showMentions !== false && (int(d.channelCount) || 0) > 0;
+    const counts = el('div', 'sl-counts');
+    const count = (n, label) => { const c = el('div', 'sl-count'); c.append(el('span', 'sl-n', String(n)), el('span', 'sl-of', label)); return c; };
+    if (showDms) counts.append(count(unread, unread === 1 ? 'unread DM' : 'unread DMs'));
+    if (showMentions) counts.append(count(mentions, mentions === 1 ? 'mention' : 'mentions'));
+    const messages = (Array.isArray(d.messages) ? d.messages : []).filter((m) => m && typeof m === 'object').slice(0, 10);
+    // Small: the counts and the newest message.
+    const small = el('div', 'sl-summary');
+    small.append(counts.cloneNode(true));
+    if (messages[0]) small.append(el('span', 'sl-next', `${text(messages[0].from, 60)}: ${text(messages[0].text, 140)}`));
+    else small.append(el('span', 'sl-next', 'All caught up.'));
+    card.body.append(small);
+    const full = el('div', 'sl-full');
+    if (counts.children.length) full.append(counts);
+    const chats = (Array.isArray(d.dmChats) ? d.dmChats : []).filter((c) => c && typeof c.name === 'string').slice(0, 5);
+    if (showDms && chats.length) {
+      full.append(el('div', 'w-day', 'Unread'));
+      const cl = el('div', 'sl-chats');
+      for (const c of chats) { const r = el('span', 'sl-chat', `${text(c.name, 40)} · ${int(c.unread) || 0}`); cl.append(r); }
+      full.append(cl);
+    }
+    if (!messages.length) full.append(el('p', 'w-empty', showDms || (int(d.channelCount) || 0) ? 'Nothing new.' : 'Pick channels or turn on DMs in Settings.'));
+    const list = el('div', 'w-list');
+    for (const m of messages) {
+      const row = el('div', `w-row${m.unread ? ' unread' : ''}`);
+      const main = el('div', 'w-main');
+      const line = `${text(m.from, 60)}: ${text(m.text, 160)}`;
+      const url = safeUrl(m.url);
+      main.append(url ? link(url, line, '') : el('span', 'w-title', line));
+      const when = Number.isFinite(m.ts) && m.ts > 0 ? agoText(m.ts) : '';
+      main.append(el('span', 'w-sub', [text(m.where, 60), when].filter(Boolean).join(' · ')));
+      row.append(main);
+      list.append(row);
+    }
+    full.append(list);
+    card.body.append(full);
+  },
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -570,7 +629,7 @@ window.applyWidgetColors = applyWidgetColors;
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, slack: 5 * 60e3, calendar: 15 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;

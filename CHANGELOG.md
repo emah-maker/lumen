@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New Slack widget for the new-tab page (default 4x4): unread DM and mention counts and recent messages from up to four channels, read-only. You sign in with your own Slack app over OAuth (Slack requires an https redirect, so approving ends on a page you paste back into Settings), or paste a user token. Tokens, including Slack's rotating refresh token, are stored encrypted and never reach the page; rate limits back off and a refused sign-in shows a Reconnect button. The OAuth pieces (state, PKCE, redirect parsing, expiry, token storage) are in `features/oauth.js` for other sign-in widgets to reuse.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.

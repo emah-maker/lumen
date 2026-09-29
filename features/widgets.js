@@ -22,6 +22,9 @@
 //   summary(c)        one line for Settings' list
 //   fetch(c, x)       -> the card's data: plain JSON (strings, numbers, arrays). renderer/newtab.js
 //                     draws it with textContent only, so nothing from the network is ever markup.
+//   (a connector that signs in with OAuth keeps its tokens as one JSON secret: features/oauth.js packs it,
+//    x.setSecret(json) rewrites it after a refresh, and the sign-in itself is a set of createWidgets methods,
+//    like slackStart/slackFinish/slackDisconnect, that Settings calls)
 //   act(c, action, x) (optional) a page action (the Todoist checkbox): see actionFrom() below
 // and a renderer with the same type in renderer/newtab.js's WIDGET_RENDERERS.
 const ics = require('./ics');
@@ -29,6 +32,8 @@ const WL = require('./widget-layout');
 const TV = require('./todoist-view');
 const WX = require('./weather-view');
 const WC = require('./widget-colors');
+const SL = require('./slack-view');
+const OA = require('./oauth');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -37,6 +42,7 @@ const ENDPOINTS = {
   // from this process; it sees the IP address and nothing else of ours is sent.
   locate: 'https://ipapi.co/json/',
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
+  slack: 'https://slack.com/api', // Web API; sign-in is oauth.v2.access here and slack.com/oauth/v2/authorize (features/slack-view.js)
 };
 const MAX_WIDGETS = 12;
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -228,6 +234,47 @@ const CONNECTORS = {
     },
   },
 
+  // Read-only Slack: unread DM and mention counts and recent messages from chosen channels. Sign-in is
+  // OAuth v2 with the user's own Slack app (features/slack-view.js explains the paste-the-address flow);
+  // the secret is one encrypted JSON string (client id and secret, user token, refresh token, expiry).
+  // Only display text (names, short plain messages, counts) is sent to the page.
+  slack: {
+    label: 'Slack',
+    ttl: 4 * 60e3,
+    secret: 'slack',
+    clean: (c) => ({ slack: SL.cleanConfig(c.slack), colors: WC.cleanMode(c.colors) }),
+    async resolve(input, x) {
+      const pasted = SL.cleanUserToken(input.token);
+      if (typeof input.token === 'string' && input.token.trim() && !pasted) throw new Error('That doesn’t look like a Slack user token (it starts with xoxp-). Or use Sign in with a client ID and secret.');
+      let secret;
+      let who;
+      if (pasted) {
+        who = await x.slack.identify(pasted);
+        secret = OA.packTokens({ access: pasted, userId: who.userId, teamId: who.teamId, teamName: who.teamName, teamUrl: who.teamUrl });
+      } else {
+        if (!OA.unpackTokens(x.secret())?.access) throw new Error('Sign in to Slack first (Open Slack, approve, paste the address), or paste a user token.');
+        who = await x.slack.identify();
+      }
+      const slack = SL.cleanConfig(input.slack);
+      const what = [slack.dms && 'unread DMs', slack.mentions && slack.channels.length && 'mentions', slack.channels.length && `${slack.channels.length} channel${slack.channels.length === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+      return { config: { slack, colors: WC.cleanMode(input.colors) }, secret, message: `Connected to ${who.teamName || 'Slack'}${what ? `: ${what}` : ''}.` };
+    },
+    title: (c) => SL.nameFor(c.slack),
+    summary: (c) => SL.summaryFor(c.slack),
+    async fetch(c, x) {
+      const tok = OA.unpackTokens(x.secret());
+      if (!tok?.access) return { reconnect: true, reason: 'Sign in to Slack in Settings.' };
+      try {
+        const data = await SL.collect((method, params) => x.slack.call(method, params), c.slack, tok, (id) => x.slack.userName(id));
+        return { ...data, reconnect: false };
+      } catch (err) {
+        if (err instanceof SL.SlackError && err.reconnect) return { reconnect: true, reason: err.message, team: tok.teamName };
+        if (err instanceof SL.SlackError && err.code === 'ratelimited') throw new Error('Slack asked Lumen to slow down. It will try again shortly.');
+        throw err;
+      }
+    },
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -324,7 +371,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -405,6 +452,9 @@ function createWidgets(deps) {
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
   let backoffUntil = 0; // after a 429: no requests until then
   let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
+  let slackPending = null; // a Slack sign-in that is waiting for its address: { state, clientId, clientSecret, redirectUri, at }
+  let slackBad = false; // Slack refused the stored sign-in: the cards say Reconnect until it is redone
+  let slackRefreshing = null; // one token refresh at a time (rotation invalidates the old refresh token)
   const now = () => (deps.now ? deps.now() : Date.now());
   const UNDO_MS = deps.undoMs ?? 6000;
 
@@ -480,6 +530,7 @@ function createWidgets(deps) {
     const x = {
       endpoint: (name) => deps.endpoints?.()[name] || ENDPOINTS[name],
       secret: () => secretOverride || (secretName ? deps.getSecret(secretName) : null),
+      setSecret: (value) => { if (secretName) deps.setSecret(secretName, value); },
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -505,6 +556,7 @@ function createWidgets(deps) {
       },
       memo,
       forget,
+      get slack() { return (this._slack ||= slackHelpers(x)); },
       projects: () => todoistProjects(x, x.secret() || ''),
       // "My location": { status: 'consent' | 'off' | 'ok' | 'error', place?, message? }. Nothing is sent
       // before the user agreed; the answer is kept for an hour (in settings, so a restart doesn't ask again).
@@ -529,6 +581,57 @@ function createWidgets(deps) {
       },
     };
     return x;
+  }
+
+  // ---- Slack (features/slack-view.js, features/oauth.js) ----
+  const FORM = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
+  // One Web API call. Slack answers 200 with { ok: false, error } for most failures; 429 carries Retry-After
+  // (request() already backs every widget off for that long).
+  async function slackRequest(x, access, method, params = {}) {
+    const res = await request(`${x.endpoint('slack')}/${method}`, { method: 'POST', max: 1e6, body: OA.form(params), headers: { ...FORM, Authorization: `Bearer ${access}` } });
+    if (res.status === 429) throw new SL.SlackError('ratelimited');
+    let body = null;
+    try { body = JSON.parse(res.body); } catch { /* not JSON */ }
+    if (!body || typeof body !== 'object') throw new Error(res.ok ? 'Slack sent something unexpected.' : `Slack answered ${res.status}.`);
+    if (!body.ok) throw new SL.SlackError(typeof body.error === 'string' ? body.error.replace(/[^\w]/g, '').slice(0, 60) : 'unknown_error');
+    return body;
+  }
+  // The stored sign-in, refreshed first when Slack's rotating token is about to expire.
+  async function slackToken(x) {
+    const tok = OA.unpackTokens(x.secret());
+    if (!tok?.access) throw new SL.SlackError('not_authed');
+    if (OA.isFresh(tok, now())) return tok;
+    if (!tok.refresh || !tok.clientId || !tok.clientSecret) throw new SL.SlackError('token_expired');
+    if (!slackRefreshing) {
+      slackRefreshing = (async () => {
+        const res = await request(`${x.endpoint('slack')}/oauth.v2.access`, { method: 'POST', max: 65536, body: SL.refreshForm({ clientId: tok.clientId, clientSecret: tok.clientSecret, refresh: tok.refresh }), headers: FORM });
+        if (res.status === 429) throw new SL.SlackError('ratelimited');
+        const next = { ...tok, ...SL.parseAccess(res.body, now(), tok) };
+        x.setSecret(OA.packTokens(next));
+        return next;
+      })().finally(() => { slackRefreshing = null; });
+    }
+    return slackRefreshing;
+  }
+  function slackHelpers(x) {
+    return {
+      async call(method, params) {
+        try {
+          return await slackRequest(x, (await slackToken(x)).access, method, params);
+        } catch (err) {
+          if (err instanceof SL.SlackError && err.reconnect && !slackBad) { slackBad = true; deps.onUpdate?.(); }
+          throw err;
+        }
+      },
+      async identify(access) {
+        const r = await slackRequest(x, access || (await slackToken(x)).access, 'auth.test');
+        return { userId: str(r.user_id, 40), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
+      },
+      userName: (id) => x.memo(`slack:user:${id}`, 3600e3, async () => {
+        const u = (await x.slack.call('users.info', { user: id })).user || {};
+        return str(u.profile?.display_name, 60) || str(u.real_name, 60) || str(u.name, 60);
+      }),
+    };
   }
 
   // ---- fetching ----
@@ -703,6 +806,64 @@ function createWidgets(deps) {
     if (!x.secret()) throw new Error('Add your Todoist token first.');
     return [...(await x.projects())].map(([id, p]) => ({ id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
   }
+  // ---- Slack: sign-in (Settings calls these; settings-backend.js opens the approval page) ----
+  const slackReset = () => { slackBad = false; slackRefreshing = null; forget('slack:'); for (const w of list()) if (w.type === 'slack') cache.delete(w.id); deps.onUpdate?.(); };
+  // For Settings: what is stored, never its values (the client id is not secret, so it prefills the form).
+  function slackStatus() {
+    const tok = OA.unpackTokens(deps.getSecret('slack'));
+    return {
+      connected: Boolean(tok?.access), team: tok?.teamName || '', reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
+      clientId: tok?.clientId || slackPending?.clientId || '', hasSecret: Boolean(tok?.clientSecret), redirect: SL.DEFAULT_REDIRECT, scopes: SL.USER_SCOPES, waiting: Boolean(slackPending),
+    };
+  }
+  // Step 1: check the app's client id and secret (the stored secret is kept when the field is left empty),
+  // remember them for the exchange, and return Slack's approval address for settings-backend to open.
+  function slackStart(input) {
+    const i = input && typeof input === 'object' ? input : {};
+    const stored = OA.unpackTokens(deps.getSecret('slack'));
+    const clientId = SL.cleanClientId(i.clientId) || (!i.clientId && stored?.clientId) || '';
+    const clientSecret = SL.cleanClientSecret(i.clientSecret) || (!i.clientSecret && clientId === stored?.clientId && stored?.clientSecret) || '';
+    const redirectUri = SL.cleanRedirect(i.redirect);
+    if (!clientId) throw new Error('Paste your Slack app’s Client ID (Basic Information → App Credentials: two numbers with a dot).');
+    if (!clientSecret) throw new Error('Paste your Slack app’s Client Secret (the same page). It is stored encrypted and never shown again.');
+    if (!redirectUri) throw new Error('The redirect URL must be an https:// address. Add the same one under OAuth & Permissions → Redirect URLs in your Slack app.');
+    slackPending = { state: OA.randomState(), clientId, clientSecret, redirectUri, at: now() };
+    return { url: SL.authorizeUrl({ clientId, redirectUri, state: slackPending.state }), redirectUri };
+  }
+  // Step 2: the address the browser landed on after approving. Checks its state, trades the code for a
+  // user token, learns the workspace, and stores everything encrypted (the code works once).
+  async function slackFinish(pasted) {
+    const p = slackPending;
+    if (!p || now() - p.at > 15 * 60e3) { slackPending = null; throw new Error('That sign-in timed out. Start again with “Open Slack”.'); }
+    const { code } = OA.parseRedirect(pasted, p.state);
+    slackPending = null;
+    const x = helpers('slack');
+    const res = await request(`${x.endpoint('slack')}/oauth.v2.access`, { method: 'POST', max: 65536, body: SL.codeForm({ clientId: p.clientId, clientSecret: p.clientSecret, code, redirectUri: p.redirectUri }), headers: FORM });
+    if (res.status === 429) throw new SL.SlackError('ratelimited');
+    const t = SL.parseAccess(res.body, now());
+    const who = await x.slack.identify(t.access).catch(() => ({}));
+    deps.setSecret('slack', OA.packTokens({ ...t, teamUrl: who.teamUrl, clientId: p.clientId, clientSecret: p.clientSecret }));
+    slackReset();
+    return { message: `Connected to ${t.teamName || 'Slack'}.` };
+  }
+  function slackCancel() { slackPending = null; return true; }
+  // Settings' Disconnect: revoke the token at Slack when possible, then forget everything stored.
+  async function slackDisconnect() {
+    const tok = OA.unpackTokens(deps.getSecret('slack'));
+    slackPending = null;
+    if (tok?.access) await slackRequest(helpers('slack'), tok.access, 'auth.revoke').catch(() => {});
+    deps.setSecret('slack', null);
+    slackReset();
+    return true;
+  }
+  // The channels the signed-in user is in, for Settings' picker.
+  async function slackChannels() {
+    const x = helpers('slack');
+    if (!OA.unpackTokens(x.secret())?.access) throw new Error('Sign in to Slack first.');
+    const out = await x.slack.call('users.conversations', { types: 'public_channel,private_channel', exclude_archived: 'true', limit: '200' });
+    return (Array.isArray(out.channels) ? out.channels : []).filter((c) => c && /^[CG][A-Z0-9]{2,20}$/.test(String(c.id)))
+      .map((c) => ({ id: c.id, name: str(c.name, 80), private: Boolean(c.is_private) })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
+  }
   // ---- weather: places and "My location" ----
   const savedPlaces = () => WX.cleanSaved(deps.readSettings().weatherPlaces);
   const rememberPlaces = (places) => {
@@ -749,6 +910,7 @@ function createWidgets(deps) {
       location: locationState(),
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
+      slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       max: MAX_WIDGETS,
       spans: SPANS,
@@ -830,7 +992,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, move, place, resize, layout, resetLayout, projects, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
 }
 
 module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };
