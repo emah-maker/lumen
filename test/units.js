@@ -2007,6 +2007,16 @@ async function organizeAiRuns() {
   const { view: vConfident } = fresh([['Inbox (3)', 'https://mail.google.com/mail/u/0/#inbox'], ['Spotify - Web Player', 'https://open.spotify.com/']]);
   check('organize-ai: clear groups and only app/search leftovers need no model', !oai.assess(vConfident).needsAi, JSON.stringify(oai.assess(vConfident)));
   check('organize-ai: a leftover with a real title is worth asking about', oai.assess(v1).needsAi && oai.assess(v1).askableLeftovers.length === 1);
+  {
+    const E = (id, title, url) => ({ id, title, url });
+    const sour = { id: 1, name: 'Sourdough', cohesion: 0.5, entries: [E(1, 'Sourdough starter recipe', 'https://www.kingarthurbaking.com/a'), E(2, 'Beginner sourdough bread', 'https://www.theclevercarrot.com/b')] };
+    const loaf = { id: 2, name: 'Dutch Oven', cohesion: 0.5, entries: [E(3, 'Dutch oven sourdough loaf temperature', 'https://www.bonappetit.com/c'), E(4, 'Sourdough crumb too dense', 'https://www.reddit.com/r/Sourdough/d')] };
+    const desk = { id: 3, name: 'Standing Desk', cohesion: 0.5, entries: [E(5, 'Best standing desk 2026', 'https://www.rtings.com/e'), E(6, 'Uplift V2 standing desk review', 'https://www.wirecutter.com/f')] };
+    const f = oai.fragments([sour, loaf, desk]);
+    check('organize-ai: two groups sharing a topic word are flagged as likely fragments, unrelated ones are not', f.length === 1 && f[0].join() === '1,2', JSON.stringify(f));
+    check('organize-ai: likely fragments are worth asking the model about (to merge)', oai.assess({ groups: [sour, loaf], leftovers: [] }).needsAi && !oai.assess({ groups: [sour, desk], leftovers: [] }).needsAi);
+    check('organize-ai: the model gets 8 seconds before the quick grouping is kept', oai.TIMEOUT_MS === 8000);
+  }
   check('organize-ai: a login wall or loading screen is never asked about', !oai.askable({ title: 'Sign in to your account', url: 'https://login.example.com/' }) && !oai.askable({ title: 'Just a moment...', url: 'https://x.example/' }) && !oai.askable({ title: 'Loading…', url: 'https://x.example/' }));
   check('organize-ai: a vague or loose group name is not clear', !oai.clearName({ name: 'Group' }) && !oai.clearName({ name: 'Core Concepts' }) && !oai.clearName({ name: 'Tokyo', cohesion: 0.1 }) && oai.clearName({ name: 'Tokyo Trip', cohesion: 0.6 }));
 

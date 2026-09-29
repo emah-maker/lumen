@@ -1944,9 +1944,11 @@ async function organizeTabs() {
     sendTabs();
     if (!stats.groups && !stats.created) {
       organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // a note that closes itself, not a modal: nothing needs an answer
-    } else if (stats.reason === 'confident' || stats.reason === 'cached') organizeNote(t('organize.noAi'), { undo: true });
-    else if (stats.reason === 'refined') organizeNote(t('organize.refined'), { undo: true });
-    else if (stats.reason !== 'cancelled') organizeNote(t('organize.localOnly'), { undo: true });
+    } else if (stats.reason !== 'cancelled') {
+      const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : /timeout/.test(stats.failed) ? t('organize.slow') : t('organize.localOnly');
+      const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
+      organizeNote(`${how}.${what}`, { undo: true });
+    }
   } catch (err) {
     organizeNote(`${t('organize.failed')}: ${err.message}`);
   } finally {
