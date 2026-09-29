@@ -537,6 +537,31 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const msw = zu.macSwapScript({ pid: 42, dir: mp.dir, root: '/Applications/.Lumen.update/files/Lumen.app', old: mp.old, errFile: "/Users/o'brien/update-error.txt", staging: mp.staging, self: mp.script });
   check('zip update (mac): the script waits for the pid, moves the app aside, moves the new one in, clears quarantine, reopens, and rolls back', msw.startsWith('#!/bin/sh') && msw.includes('PID=42') && msw.includes('kill -0 "$PID"') && msw.includes('mv "$APP" "$OLD"') && msw.includes('mv "$NEW" "$APP"') && msw.includes('mv "$OLD" "$APP"') && msw.includes('xattr -cr "$NEW"') && msw.includes('xattr -cr "$APP"') && msw.includes('open "$APP"') && msw.includes('> "$ERR"'), msw);
   check('zip update (mac): paths with quotes are shell-quoted', msw.includes("ERR='/Users/o'\\''brien/update-error.txt'"), msw.split('\n').find((l) => l.startsWith('ERR')));
+  const mq = zu.macSwapScript({ pid: 42, dir: mp.dir, root: '/Applications/.Lumen.update/files/Lumen.app', old: mp.old, errFile: '/e', staging: mp.staging, self: mp.script, relaunch: false });
+  check('zip update (mac): quitting applies the update without reopening Lumen, and is a no-op when the staged app is gone', !/^\s*open /m.test(mq) && mq.includes('[ -d "$NEW" ] ||') && mq.includes('mv "$NEW" "$APP"') && /^\s*open /m.test(msw) && !msw.includes('[ -d "$NEW" ] ||'), mq);
+  check('zip update (win): relaunch defaults to true and quit-apply passes false to the helper', JSON.parse(hc.args[1]).relaunch === true && JSON.parse(zu.helperCommand({ staged: fakeStaged, execPath: 'C:/A/Lumen/Lumen.exe', errFile: 'e', pid: 1, relaunch: false }).args[1]).relaunch === false, 'relaunch');
+  {
+    // a staged update left by an earlier run: reused only while it is complete
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-staged-unit-'));
+    const exe = path.join(d, 'Lumen', 'Lumen.exe');
+    const sp = zu.swapPaths(exe);
+    const root = path.join(sp.staging, 'files', 'Lumen');
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'Lumen.exe'), 'x');
+    const ok = () => null;
+    check('staged update: no marker means nothing to reuse', zu.readStaged(exe, 'win32', ok) === null, 'no marker');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', sha512: 'h', root: 'files/Lumen' }));
+    const got = zu.readStaged(exe, 'win32', ok);
+    check('staged update: a marker with an intact folder restores the version and paths', got && got.version === '9.9.9' && got.sha512 === 'h' && got.staged.root === root && got.staged.dir === sp.dir && got.staged.old === sp.old, JSON.stringify(got));
+    check('staged update: a damaged exe is refused', zu.readStaged(exe, 'win32', () => 'too small') === null, 'exe');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', root: '../../elsewhere' }));
+    check('staged update: a marker pointing outside the staging folder is not trusted', zu.readStaged(exe, 'win32', ok) === null, 'escape');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), '{not json');
+    check('staged update: an unreadable marker is not trusted', zu.readStaged(exe, 'win32', ok) === null && zu.readMarker(exe) === null, 'garbage');
+    fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', root: 'files/Gone' }));
+    check('staged update: a missing folder is not reused', zu.readStaged(exe, 'win32', ok) === null, 'gone');
+    fs.rmSync(d, { recursive: true, force: true });
+  }
   const macTree = { flat: ['__MACOSX', 'Lumen.app'], none: ['a.txt'] };
   const macLs = (d) => (macTree[d] || []).map((n) => ({ name: n, isDirectory: () => !n.endsWith('.txt') }));
   check('zip update (mac): finds Lumen.app in the unpacked zip', zu.findApp('flat', 'Lumen.app', macLs) === path.join('flat', 'Lumen.app') && zu.findApp('none', 'Lumen.app', macLs) === null, 'app');
@@ -1295,7 +1320,29 @@ async function speedRuns() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+// ---- the Windows swap helper's quit-apply mode (features/swap-helper.js)
+async function swapHelperRuns() {
+  const { swap } = require('../features/swap-helper');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-swaprun-unit-'));
+  const mk = (rel, text) => { fs.mkdirSync(path.dirname(path.join(d, rel)), { recursive: true }); fs.writeFileSync(path.join(d, rel), text); };
+  const opts = (extra = {}) => ({ pid: 2 ** 22 + 1, dir: path.join(d, 'Lumen'), root: path.join(d, 'Lumen.update', 'files'), old: path.join(d, 'Lumen.old'), staging: path.join(d, 'Lumen.update'), exe: path.join(d, 'Lumen', 'Lumen.exe'), errFile: path.join(d, 'err.txt'), minBytes: 1, retryMs: 10, waitMs: 500, ...extra });
+  const started = [];
+  const start = (...a) => started.push(a);
+  mk('Lumen/Lumen.exe', 'MZ old'); mk('Lumen.update/files/Lumen.exe', 'MZ new');
+  const r1 = await swap(opts({ relaunch: false }), start);
+  check('swap helper: quit-apply swaps the folders and starts nothing', r1 === 'swapped' && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ new' && !fs.existsSync(path.join(d, 'Lumen.old')) && !fs.existsSync(path.join(d, 'Lumen.update')) && started.length === 0, `${r1} ${started.length}`);
+  const r2 = await swap(opts({ relaunch: false }), start);
+  check('swap helper: quit-apply with the staged folder already gone is a quiet no-op', r2 === 'noop' && !fs.existsSync(path.join(d, 'err.txt')) && started.length === 0, r2);
+  mk('Lumen.update/files/Lumen.exe', 'MZ newer');
+  const r3 = await swap(opts(), start);
+  check('swap helper: the normal apply still starts the new exe', r3 === 'swapped' && started.length === 1 && started[0][0] === opts().exe, `${r3} ${started.length}`);
+  mk('Lumen.update/files/Lumen.exe', 'tiny');
+  const r4 = await swap(opts({ relaunch: false, minBytes: 1000 }), start);
+  check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
+  fs.rmSync(d, { recursive: true, force: true });
+}
+
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

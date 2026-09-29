@@ -10,6 +10,10 @@
 // has files open) the old version stays, is started again, and `errFile` explains for Settings. If the
 // second rename fails the old folder is put back. Whole folders only: no file from the release is
 // modified, renamed or patched.
+//
+// `relaunch: false` is the quit-apply case (the user quit Lumen, so nothing is started afterwards, not
+// even the old version after a failure). Then a missing staged folder (already swapped, or cleaned up)
+// is a quiet no-op instead of an error.
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -50,20 +54,22 @@ async function retry(fn, tries, delayMs) {
   throw last;
 }
 
-// The swap itself. `o`: { pid, dir, root, old, staging, exe, exeArgs, errFile, waitMs, retryMs, minBytes }.
-// Returns 'swapped' or 'kept'. `start` launches an exe (injectable for tests).
+// The swap itself. `o`: { pid, dir, root, old, staging, exe, exeArgs, errFile, relaunch (default true), waitMs, retryMs, minBytes }.
+// Returns 'swapped', 'kept' or (relaunch false only) 'noop'. `start` launches an exe (injectable for tests).
 async function swap(o, start = launch) {
   const waitMs = o.waitMs ?? 60e3;
   const retryMs = o.retryMs ?? 1000;
+  const relaunch = o.relaunch !== false;
   const fail = (why) => {
     try { fs.writeFileSync(o.errFile, `${why || MESSAGE}\n`); } catch {}
-    start(o.exe, o.exeArgs);
+    if (relaunch) start(o.exe, o.exeArgs);
     return 'kept';
   };
   for (let waited = 0; alive(o.pid); waited += 250) {
     if (waited >= waitMs) return fail();
     await sleep(250);
   }
+  if (!relaunch && !fs.existsSync(o.root)) return 'noop';
   const bad = checkExe(path.join(o.root, path.basename(o.exe)), o.minBytes);
   if (bad) return fail(`The update wasn't applied: ${bad}. The old version was kept.`);
   try { fs.rmSync(o.old, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
@@ -80,7 +86,7 @@ async function swap(o, start = launch) {
   }
   try { fs.rmSync(o.old, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
   try { fs.rmSync(o.staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
-  start(o.exe, o.exeArgs);
+  if (relaunch) start(o.exe, o.exeArgs);
   return 'swapped';
 }
 

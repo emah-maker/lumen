@@ -3649,6 +3649,7 @@ const updates = require('./features/updates').createUpdates({
   beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
 });
 if (TEST) global.__updates = updates;
+app.on('will-quit', () => updates.applyOnQuit()); // a downloaded update installs when the user just quits
 
 const focusWindow = () => {
   if (!win || win.isDestroyed()) return;

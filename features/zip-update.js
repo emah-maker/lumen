@@ -93,7 +93,8 @@ const sq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`; // POSIX single-quoti
 // The macOS swap script (run with /bin/sh). Waits for Lumen (pid) to exit, clears quarantine flags
 // on the new bundle, moves Lumen.app aside as .old and the new one in, relaunches with `open`. If a
 // move fails the old bundle is put back and errFile explains.
-function macSwapScript({ pid, dir, root, old, errFile, staging, self }) {
+function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch = true }) {
+  const open = relaunch ? 'open "$APP"' : ':'; // quit-apply: the user quit, so nothing reopens
   return [
     '#!/bin/sh',
     `PID=${Number(pid)}`,
@@ -105,7 +106,7 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self }) {
     `SELF=${sq(self)}`,
     'fail() {',
     '  echo "Lumen couldn\'t replace its files (is the Applications folder writable for you?). The old version was kept." > "$ERR"',
-    '  open "$APP"',
+    `  ${open}`,
     '  rm -f "$SELF"',
     '  exit 1',
     '}',
@@ -115,13 +116,15 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self }) {
     '  [ "$n" -ge 60 ] && fail',
     '  sleep 1',
     'done',
+    // quit-apply: the staged bundle is gone (already swapped or cleaned up), so there is nothing to do
+    ...(relaunch ? [] : ['[ -d "$NEW" ] || { rm -f "$SELF"; exit 0; }']),
     'rm -rf "$OLD"',
     'xattr -cr "$NEW" 2>/dev/null',
     'if mv "$APP" "$OLD"; then',
     '  if mv "$NEW" "$APP"; then',
     '    xattr -cr "$APP" 2>/dev/null',
     '    rm -rf "$OLD" "$STAGING"',
-    '    open "$APP"',
+    `    ${open}`,
     '    rm -f "$SELF"',
     '    exit 0',
     '  fi',
@@ -130,6 +133,39 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self }) {
     'fail',
     '',
   ].join('\n');
+}
+
+// Remembered next to the unpacked update, written last, so a staging folder without it is an
+// unfinished one.
+const MARKER = 'staged.json';
+function readMarker(execPath, platform = process.platform) {
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(swapPaths(execPath, platform).staging, MARKER), 'utf8'));
+    return m && typeof m.version === 'string' && typeof m.root === 'string' ? m : null;
+  } catch {
+    return null;
+  }
+}
+// A complete staged update left by an earlier run, as { version, sha512, staged }, or null: the
+// marker's folder must still be inside the staging folder and the exe must still look real. Whether
+// the version is newer than the running one is the caller's call.
+function readStaged(execPath, platform = process.platform, checkExe = helper.checkExe) {
+  const m = readMarker(execPath, platform);
+  if (!m || m.root.includes('..') || path.isAbsolute(m.root)) return null;
+  const paths = swapPaths(execPath, platform);
+  const join = platform === 'darwin' ? path.posix.join : path.join;
+  const root = join(paths.staging, m.root);
+  try {
+    if (!fs.statSync(root).isDirectory()) return null;
+    if (platform === 'darwin') {
+      if (!fs.statSync(join(root, 'Contents', 'MacOS')).isDirectory()) return null;
+    } else if (checkExe(join(root, path.basename(execPath)))) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return { version: m.version, sha512: m.sha512 || '', staged: { ...paths, root } };
 }
 
 // Download `url` to `file`, hashing as it goes. net is electron's `net` (or anything with fetch).
@@ -194,7 +230,7 @@ function prepareHelper(execPath, tmp = path.join(os.tmpdir(), 'lumen-update-help
 
 // Fetch, verify and unpack into paths.staging. Returns what launchSwap needs. `platform` is
 // injectable for tests.
-async function stage({ net, asset, files, execPath, onProgress, platform = process.platform }) {
+async function stage({ net, asset, version, files, execPath, onProgress, platform = process.platform }) {
   const paths = swapPaths(execPath, platform);
   const mac = platform === 'darwin';
   const want = expectedHash(files, asset.name);
@@ -210,30 +246,35 @@ async function stage({ net, asset, files, execPath, onProgress, platform = proce
   const name = mac ? path.posix.basename(paths.dir) : path.basename(execPath);
   const root = mac ? findApp(unpacked, name) : findRoot(unpacked, name);
   if (!root) throw new Error(`the update doesn't contain ${name}`);
-  if (mac) return { ...paths, root };
-  const bad = helper.checkExe(path.join(root, name));
-  if (bad) throw new Error(`the update looks damaged: ${bad}`);
-  carryOver(paths.dir, root);
-  return { ...paths, root, helper: prepareHelper(execPath) };
+  if (!mac) {
+    const bad = helper.checkExe(path.join(root, name));
+    if (bad) throw new Error(`the update looks damaged: ${bad}`);
+    carryOver(paths.dir, root);
+  }
+  const staged = mac ? { ...paths, root } : { ...paths, root, helper: prepareHelper(execPath) };
+  const rel = path.relative(paths.staging, root).split(path.sep).join('/');
+  fs.writeFileSync(path.join(paths.staging, MARKER), JSON.stringify({ version: version || '', sha512: want, root: rel }));
+  return staged;
 }
 
 // The Windows helper's command: the copied exe running swap-helper.js in Node mode.
-function helperCommand({ staged, execPath, errFile, pid }) {
+function helperCommand({ staged, execPath, errFile, pid, relaunch = true }) {
   const h = staged.helper;
-  const opts = { pid, dir: staged.dir, root: staged.root, old: staged.old, staging: staged.staging, exe: execPath, errFile };
+  const opts = { pid, dir: staged.dir, root: staged.root, old: staged.old, staging: staged.staging, exe: execPath, errFile, relaunch };
   return { command: h.exe, args: [h.script, JSON.stringify(opts)], options: { detached: true, stdio: 'ignore', windowsHide: true, cwd: h.dir, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } } };
 }
 
-// Start the swap detached; the caller quits Lumen right after.
-function launchSwap({ staged, execPath, errFile, platform = process.platform, pid = process.pid, spawnFn = spawn }) {
+// Start the swap detached; the caller quits Lumen right after. `relaunch: false` (the user quit)
+// swaps without starting Lumen again.
+function launchSwap({ staged, execPath, errFile, relaunch = true, platform = process.platform, pid = process.pid, spawnFn = spawn }) {
   if (platform === 'darwin') {
-    const script = macSwapScript({ pid, dir: staged.dir, root: staged.root, old: staged.old, errFile, staging: staged.staging, self: staged.script });
+    const script = macSwapScript({ pid, dir: staged.dir, root: staged.root, old: staged.old, errFile, staging: staged.staging, self: staged.script, relaunch });
     fs.writeFileSync(staged.script, script, { mode: 0o755 });
     spawnFn('/bin/sh', [staged.script], { detached: true, stdio: 'ignore' }).unref();
     return;
   }
-  const c = helperCommand({ staged: { ...staged, helper: staged.helper || prepareHelper(execPath) }, execPath, errFile, pid });
+  const c = helperCommand({ staged: { ...staged, helper: staged.helper || prepareHelper(execPath) }, execPath, errFile, pid, relaunch });
   spawnFn(c.command, c.args, c.options).unref();
 }
 
-module.exports = { swapPaths, macBundle, canReplace, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, helperCommand, HELPER_FILES, stage, launchSwap };
+module.exports = { swapPaths, macBundle, canReplace, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
