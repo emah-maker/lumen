@@ -9,7 +9,9 @@
 //   enabled()                 the "Show AI research in tabs" setting
 //   isAiOff(url)              the user turned AI off on that site: no tab is opened for it
 //   searchUrl(query)          the user's default search engine URL for a query
-//   openTab(url, {groupId})   opens a background tab in the run's window, returns its id (or null)
+//   openTab(url, {groupId, partition})  opens a background tab in the run's window, returns its id (or null);
+//                             `partition` is RESEARCH_PARTITION: a separate in-memory session (no cookies, storage or
+//                             logins from the user's profile, and nothing it sets reaches that profile)
 //   navigateTab(id, url)      loads a URL in an existing research tab
 //   tabExists(id)             is that tab still open (the user may have closed it)
 //   createGroup(name, ids)    groups tabs, returns the group id
@@ -17,6 +19,10 @@
 //   setReading(id, on)        the "AI is reading" marker on a tab
 // A run key is any object (the agent's task scope) or a string; nothing is opened for a run whose
 // tabs the user closed twice over.
+// The session research tabs live in. No "persist:" prefix, so it is memory only; it is not the private windows'
+// session and not the hidden reader's ('claude-reader'). main.js gives it the same ad blocker, Safe Browsing, proxy and
+// request headers as the normal session, and denies every permission and download.
+const RESEARCH_PARTITION = 'lumen-research';
 const MAX_TABS = 6; // research tabs per run; after that the oldest is navigated to the next page
 const GROUP_COLOR = 'purple';
 const IDLE_MS = 90 * 1000; // an MCP client has no run: its research is "one run" until it goes quiet this long
@@ -77,7 +83,7 @@ function createResearchTabs(deps, { max = MAX_TABS, idleMs = IDLE_MS, now = () =
       run.tabs.push({ id: oldest.id, url, norm });
       return oldest.id;
     }
-    const id = safe(() => deps.openTab(url, run.groupId ? { groupId: run.groupId } : {}));
+    const id = safe(() => deps.openTab(url, { partition: RESEARCH_PARTITION, ...(run.groupId ? { groupId: run.groupId } : {}) }));
     if (id == null) return null;
     if (!run.groupId) run.groupId = safe(() => deps.createGroup(groupName(label), [id]));
     run.tabs.push({ id, url, norm });
@@ -126,4 +132,4 @@ function createResearchTabs(deps, { max = MAX_TABS, idleMs = IDLE_MS, now = () =
   return { begin, finish, has: (key) => runs.has(key), tabCount: (key) => runs.get(key)?.tabs.length || 0 };
 }
 
-module.exports = { createResearchTabs, shortQuery, groupName, normalizeUrl, MAX_TABS, GROUP_COLOR, IDLE_MS };
+module.exports = { createResearchTabs, RESEARCH_PARTITION, shortQuery, groupName, normalizeUrl, MAX_TABS, GROUP_COLOR, IDLE_MS };

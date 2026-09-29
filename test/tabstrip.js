@@ -19,6 +19,9 @@ const os = require('os');
     res.setHeader('Content-Type', 'text/html');
     // A page whose title changes every 30 ms: every change is a tab-strip update.
     if (req.url === '/busy') return res.end('<title>busy</title><script>let n = 0; setInterval(() => { document.title = `busy ${++n}`; }, 30);</script>');
+    // Research tabs (section 12): the page shows the Cookie header it got, and sets a cookie of its own.
+    if (req.url.startsWith('/echo') || req.url === '/plain-echo') { if (req.url === '/echo') res.setHeader('Set-Cookie', 'fromresearch=1; Path=/'); return res.end(`<title>Cookie: ${req.headers.cookie || 'none'}</title><p>echo</p>`); }
+    if (req.url === '/child') return res.end(`<title>Child ${req.headers.cookie || 'none'}</title>`);
     if (req.url === '/opener') return res.end('<title>opener</title><button id="pop" onclick="window.open(\'/popup\', \'pop\', \'width=420,height=320\')">open</button>');
     if (req.url === '/popup') return res.end('<title>popup</title><script>window.brands = JSON.stringify(navigator.userAgentData?.brands || []); setTimeout(() => { window.answer = alert("from the popup"); window.done = true; }, 400);</script>');
     // A cross-site iframe (localhost vs 127.0.0.1) runs in its own process, as Cloudflare's checkbox does.
@@ -348,6 +351,32 @@ const os = require('os');
   // The Sec-CH-UA header says the same thing as the page's JavaScript, on the page and the iframe.
   const jsBrands = await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript('navigator.userAgentData.brands.map((b) => `"${b.brand}";v="${b.version}"`).join(", ")'));
   check('Sec-CH-UA is sent, and matches the page, on the page and a cross-site iframe', seenHints['/xframe'] === jsBrands && seenHints['/frame'] === jsBrands && /Google Chrome/.test(jsBrands), JSON.stringify({ seenHints, jsBrands }));
+
+  // ---- 12. the AI's research tabs open in their own empty session, not the user's profile ----
+  await app.evaluate(({ session }, url) => session.defaultSession.cookies.set({ url, name: 'profile', value: 'secret' }), base);
+  const control = await open(`${base}/plain-echo`);
+  const controlTitle = await app.evaluate((_e, id) => global.__agent.browser.listTabs().find((t) => t.id === id)?.title, control);
+  check('control: a normal tab sends the profile cookie', /profile=secret/.test(controlTitle || ''), controlTitle);
+  await app.evaluate((_e, url) => { global.__agent.browser.research.begin('research-check', { urls: [url] })(); }, `${base}/echo`);
+  const research = () => app.evaluate(({ webContents, session }, url) => {
+    const wc = webContents.getAllWebContents().find((w) => w.getURL() === url);
+    return wc ? { title: wc.getTitle(), isDefault: wc.session === session.defaultSession, persistent: wc.session.isPersistent() } : null;
+  }, `${base}/echo`);
+  await waitFor(async () => (await research())?.title, 8000);
+  const rs = await research();
+  check('a research tab is not in the default session, and its session is memory only', rs && rs.isDefault === false && rs.persistent === false, JSON.stringify(rs));
+  check('it sent none of the profile\'s cookies', rs && rs.title === 'Cookie: none', JSON.stringify(rs));
+  const leaked = await app.evaluate(({ session }) => session.defaultSession.cookies.get({ name: 'fromresearch' }), null);
+  check('what it set did not reach the profile', leaked.length === 0, JSON.stringify(leaked));
+  // A link opened from a research tab stays in the research session (sharing the research cookie jar, never the profile's).
+  await app.evaluate(({ webContents }, [from, to]) => webContents.getAllWebContents().find((w) => w.getURL() === from).executeJavaScript(`window.open(${JSON.stringify(to)}); 1`), [`${base}/echo`, `${base}/child`]);
+  const child = () => app.evaluate(({ webContents, session }, url) => {
+    const wc = webContents.getAllWebContents().find((w) => w.getURL() === url);
+    return wc ? { title: wc.getTitle(), isDefault: wc.session === session.defaultSession } : null;
+  }, `${base}/child`);
+  await waitFor(async () => (await child())?.title, 8000);
+  const cs = await child();
+  check('a tab opened from a research tab stays in the research session', cs && cs.isDefault === false && !/profile=/.test(cs.title) && /fromresearch=1/.test(cs.title), JSON.stringify(cs));
 
   check('no renderer errors', errors.length === 0, errors.join('; '));
   server.close();

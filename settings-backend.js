@@ -309,7 +309,16 @@ function create(deps) {
     const config = { mode };
     if (mode === 'fixed_servers') Object.assign(config, { proxyRules: rules, proxyBypassRules: bypass });
     if (mode === 'pac_script') config.pacScript = pacUrl;
-    return ses().setProxy(config).catch((err) => console.error('Proxy:', err.message));
+    return Promise.all([ses(), ...mirrored].map((target) => target.setProxy(config).catch((err) => console.error('Proxy:', err.message))));
+  }
+  // Other sessions that follow the profile's network settings (proxy, request headers): the research tabs'
+  // isolated session must not go around a proxy the user set, or ignore Do Not Track / language.
+  const mirrored = new Set();
+  function mirrorSession(target) {
+    if (mirrored.has(target)) return;
+    mirrored.add(target);
+    applyProxy();
+    setupHeaders(target);
   }
 
   // ---- request headers: the one onBeforeSendHeaders listener (the ad blocker owns the others) ----
@@ -340,8 +349,8 @@ function create(deps) {
       return false;
     }
   }
-  function setupHeaders() {
-    ses().webRequest.onBeforeSendHeaders((details, callback) => {
+  function setupHeaders(target = ses()) {
+    target.webRequest.onBeforeSendHeaders((details, callback) => {
       const p = prefs();
       const headers = details.requestHeaders;
       if (deps.chromeHintHeaders && sendsClientHints(details.url)) {
@@ -788,7 +797,7 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, attachTab, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    prefs, set, state, start, attachTab, mirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };

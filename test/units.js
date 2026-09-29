@@ -2967,7 +2967,7 @@ async function bgCliRuns() {
       enabled: () => true,
       isAiOff: (url) => /blocked\.example/.test(url),
       searchUrl: (q) => `https://search.example/?q=${encodeURIComponent(q)}`,
-      openTab: (url, o) => { const id = nextId++; log.opened.push({ id, url, groupId: o?.groupId ?? null }); return id; },
+      openTab: (url, o) => { const id = nextId++; log.opened.push({ id, url, groupId: o?.groupId ?? null, partition: o?.partition ?? null }); return id; },
       navigateTab: (id, url) => log.navigated.push({ id, url }),
       tabExists: (id) => !log.closed.has(id),
       createGroup: (name, ids) => { log.groups.push({ name, ids }); return log.groups.length; },
@@ -3000,6 +3000,19 @@ async function bgCliRuns() {
     r.begin(run, { urls: ['https://p6.example/', 'https://p7.example/'] })();
     check('research tabs: past the cap the oldest tabs are navigated, not more tabs opened', log.opened.length === 6 && log.navigated.length === 2 && log.navigated[0].id === 1 && log.navigated[1].id === 2 && log.navigated[0].url === 'https://p6.example/', JSON.stringify(log.navigated));
     check('research tabs: never more than the cap open for a run', r.tabCount(run) === 6, String(r.tabCount(run)));
+  }
+  {
+    // Isolation: every research tab (the search page, first and later sources, in a group or not) is opened in the
+    // research partition: memory only (no "persist:"), so none of the user's cookies or storage go with it.
+    const { r, log } = make();
+    const run = {};
+    r.begin(run, { query: 'q' })();
+    r.begin(run, { urls: ['https://a.example/', 'https://b.example/'] })();
+    check('research tabs: every tab opens in the isolated research partition', log.opened.length === 3 && log.opened.every((o) => o.partition === R.RESEARCH_PARTITION), JSON.stringify(log.opened));
+    check('research tabs: that partition is memory-only, and neither the private windows\' nor the hidden reader\'s', typeof R.RESEARCH_PARTITION === 'string' && R.RESEARCH_PARTITION.length > 0 && !R.RESEARCH_PARTITION.startsWith('persist:') && !/^(lumen-private|claude-reader)/.test(R.RESEARCH_PARTITION), R.RESEARCH_PARTITION);
+    const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
+    check('research tabs: main.js honours only that partition, keeps such tabs out of History, the saved session and Reopen, and passes it to links opened from them',
+      /isolatedPartition = \(p\) => \(p === RESEARCH_PARTITION \? p : null\)/.test(src) && /partition: tab\.isolated \}\)\); \/\/ a link from a research tab/.test(src) && /!t\.isolated && \(isWebUrl/.test(src) && /!isInternal\(url\) && !tab\.isolated/.test(src) && /if \(!tab\.isolated\) recordVisit/.test(src), 'main.js wiring changed');
   }
   {
     const { r, log } = make();

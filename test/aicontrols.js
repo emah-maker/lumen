@@ -272,7 +272,7 @@ const { openSettingsTab } = require('./settings-tab');
   // The sidebar only sends when a model is connected (chat-core.js modelReady). This profile has no key, so give it a fake one
   // (the fake client above answers) and reload the model list, instead of depending on when that list last refreshed.
   await app.evaluate(() => { process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake'; });
-  await ui.evaluate(() => loadModels());
+  await ui.evaluate(() => window.loadModels?.() || eval('loadModels()'));
   await ui.evaluate(() => ask('move it')); // app.js: the sidebar's own send
   const button = await waitFor(() => ui.evaluate(() => Boolean([...document.querySelectorAll('.run-undo button')].find((b) => b.textContent === 'Undo tab changes'))));
   check('the sidebar shows "Undo tab changes" under the reply', button, 'no button');
