@@ -9,7 +9,7 @@ const WC = require('../features/widget-colors');
 const ics = require('../features/ics');
 const { cleanList, cleanWidget } = require('../features/widgets');
 
-module.exports = function widgetUnits(check) {
+module.exports = async function widgetUnits(check) {
   const it = (id, type, x, y, w, h, extra) => ({ id, type, x, y, w, h, ...extra });
   const enc = WL.encode;
   const noOverlap = (items) => items.every((a, i) => items.every((b, j) => i === j || !WL.overlap(a, b)));
@@ -271,4 +271,63 @@ module.exports = function widgetUnits(check) {
   const cal = ics.eventsBetween(['BEGIN:VCALENDAR', 'X-APPLE-CALENDAR-COLOR:#FF2968FF', 'BEGIN:VEVENT', 'UID:a', 'DTSTART:20990101T100000Z', 'COLOR:teal', 'SUMMARY:x', 'END:VEVENT', 'BEGIN:VEVENT', 'UID:b', 'DTSTART:20990101T110000Z', 'COLOR:url(x)', 'SUMMARY:y', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'), { from: Date.parse('2099-01-01T00:00:00Z'), days: 3 });
   check('calendar colors: the feed\'s calendar colour and an event\'s own colour are read and checked', cal.color === '#ff2968' && cal.events[0].color === '#008080' && cal.events[1].color === '', JSON.stringify([cal.color, cal.events.map((e) => e.color)]));
   check('widgets: the colors mode is stored per widget and defaults to Calendar colors', cleanWidget({ id: 'wcolor1', type: 'calendar', url: 'https://example.com/a.ics', colors: 'match' }).colors === 'match' && cleanWidget({ id: 'wcolor2', type: 'calendar', url: 'https://example.com/a.ics', colors: 'neon' }).colors === 'calendar' && cleanWidget({ id: 'wcolor3', type: 'todoist' }).colors === 'calendar' && cleanWidget({ id: 'wcolor4', type: 'weather', place: 'B', lat: 1, lon: 2, colors: 'accent' }).colors === 'accent', '');
+
+  // ---- feed headlines: the RSS / Atom reader (features/feed.js) ----
+  const FD = require('../features/feed');
+  const FEED_NOW = Date.parse('2026-09-29T12:00:00Z');
+  const feedRss = `<?xml version="1.0"?><rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><title>Bloomberg &amp; Co</title>
+    <item><title><![CDATA[Banks <b>draw</b> $11.5B]]></title><link>https://www.bloomberg.com/news/a</link><pubDate>Tue, 29 Sep 2026 11:30:00 GMT</pubDate></item>
+    <item><title>Second &#8211; &lt;i&gt;story&lt;/i&gt;</title><link>/news/b</link><dc:date>2026-09-29T10:00:00Z</dc:date></item>
+    <item><title>No link</title><guid isPermaLink="true">https://example.com/g</guid></item>
+    <item><title>Bad scheme</title><link>javascript:alert(1)</link></item>
+    <item><title></title><link>https://example.com/empty</link></item></channel></rss>`;
+  const r1 = FD.parseFeed(feedRss, { base: 'https://www.bloomberg.com/feeds/x.rss', now: FEED_NOW });
+  check('feed: RSS 2.0 title, items, CDATA and entities', r1.title === 'Bloomberg & Co' && r1.items.length === 4 && r1.items[0].title === 'Banks draw $11.5B' && r1.items[1].title === 'Second – story', JSON.stringify(r1));
+  check('feed: RSS links (absolute, relative resolved, permalink guid) and dates (pubDate, dc:date)', r1.items[0].url === 'https://www.bloomberg.com/news/a' && r1.items[1].url === 'https://www.bloomberg.com/news/b' && r1.items[2].url === 'https://example.com/g' && r1.items[0].time === Date.parse('2026-09-29T11:30:00Z') && r1.items[1].time === Date.parse('2026-09-29T10:00:00Z') && r1.items[2].time === 0, JSON.stringify(r1.items));
+  check('feed: a javascript: link is dropped but the headline stays', r1.items[3].title === 'Bad scheme' && r1.items[3].url === '', JSON.stringify(r1.items[3]));
+  const feedAtom = `<feed xmlns="http://www.w3.org/2005/Atom"><title type="html">&lt;b&gt;Blog&lt;/b&gt;</title>
+    <entry><title type="html">Hello &amp;amp; welcome</title><link rel="self" href="https://e.com/self"/><link rel="alternate" type="text/html" href="https://e.com/1"/><updated>2026-09-29T09:00:00+02:00</updated></entry>
+    <entry><title>Second</title><link href="http://e.com/2"/><published>2026-09-28T09:00:00Z</published><updated>2026-09-29T09:00:00Z</updated></entry>
+    <entry><title>Ftp</title><link href="ftp://e.com/3"/></entry></feed>`;
+  const a1 = FD.parseFeed(feedAtom, { now: FEED_NOW });
+  check('feed: Atom title, alternate link, published/updated, markup stripped', a1.title === 'Blog' && a1.items[0].title === 'Hello & welcome' && a1.items[0].url === 'https://e.com/1' && a1.items[0].time === Date.parse('2026-09-29T07:00:00Z') && a1.items[1].url === 'http://e.com/2' && a1.items[1].time === Date.parse('2026-09-28T09:00:00Z') && a1.items[2].url === '', JSON.stringify(a1));
+  const feedMany = `<rss><channel>${'<item><title>t</title></item>'.repeat(200)}</channel></rss>`;
+  check('feed: the item count is capped', FD.parseFeed(feedMany, { max: 7 }).items.length === 7 && FD.parseFeed(feedMany, { max: 999 }).items.length === FD.MAX_ITEMS, '');
+  check('feed: a date far in the future shows no time', FD.parseFeed('<rss><channel><item><title>x</title><pubDate>Mon, 01 Jan 2035 00:00:00 GMT</pubDate></item></channel></rss>', { now: FEED_NOW }).items[0].time === 0, '');
+  const rejects = (label, xml, want) => { let msg = ''; try { FD.parseFeed(xml); } catch (e) { msg = e.message; } check(`feed: ${label}`, want.test(msg), msg || 'did not throw'); };
+  rejects('an empty body is refused with a message', '', /empty/);
+  rejects('an HTML page is refused', '<!DOCTYPE html><html><body>hi</body></html>', /web page/);
+  rejects('a JSON body is refused', '{"a":1}', /RSS or Atom/);
+  rejects('a feed with no items is refused', '<rss><channel><title>x</title></channel></rss>', /no headlines/);
+  const torn = FD.parseFeed('<rss><channel><title>T</title><item><title>One</title><link>https://a.com/1</link></item><item><title>Two</ti');
+  check('feed: a truncated document keeps what was read', torn.items.length >= 1 && torn.items[0].title === 'One', JSON.stringify(torn));
+  check('feed: unclosed and stray tags do not throw', FD.parseFeed('<rss><channel><item><title>a < b and 3 <3 you</title><link>https://a.com</link></channel>').items[0].title.startsWith('a'), '');
+  // Hostile input
+  rejects('a custom <!ENTITY> (billion laughs) is refused', '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;">]><rss><channel><item><title>&lol2;</title></item></channel></rss>', /entities/);
+  rejects('an external entity (XXE) is refused', '<!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]><rss><channel><item><title>&x;</title></item></channel></rss>', /entities/);
+  const dt = FD.parseFeed('<!DOCTYPE rss PUBLIC "-//x//y" "http://x/y.dtd"><rss><channel><item><title>&lol; &#x41; &#0; &#xD800; &bogus;</title></item></channel></rss>');
+  check('feed: a plain DOCTYPE is skipped; unknown entities stay text, bad numeric ones vanish, nothing expands', dt.items[0].title === '&lol; A &bogus;', dt.items[0].title);
+  rejects('deep nesting is refused', `<rss>${'<a>'.repeat(200)}</rss>`, /deeply/);
+  rejects('too many elements is refused', `<rss><channel>${'<a/>'.repeat(30000)}</channel></rss>`, /too big/);
+  const t0 = Date.now();
+  FD.parseFeed(`<rss><channel><item><title>x</title></item>${'<'.repeat(1.4e6)}</channel></rss>`);
+  FD.parseFeed(`<rss><channel><item><title>x</title></item>${"<a b='".repeat(200000)}</channel></rss>`);
+  FD.parseFeed(`<rss><channel><item><title>x</title></item>${'<!--'.repeat(300000)}</channel></rss>`);
+  check('feed: pathological input is scanned in linear time', Date.now() - t0 < 4000, `${Date.now() - t0} ms`);
+  const feedBig = FD.parseFeed(`<rss><channel><item><title>${'A'.repeat(100000)}</title><link>https://a.com/${'p'.repeat(5000)}</link></item></channel></rss>`).items[0];
+  check('feed: an enormous title is cut and an enormous link dropped', feedBig.title.length === 200 && feedBig.url === '', `${feedBig.title.length} ${feedBig.url.length}`);
+  const feedEvil = FD.parseFeed('<rss><channel><item><title><![CDATA[<script>alert(1)</script><img src=x onerror=alert(2)>Real‮title\u0000\u0007]]></title><link>https://user:pw@a.com/</link></item><item><title>Two</title><link>data:text/html,hi</link></item><item><title>Three</title><link>https://a.com/a b</link></item></channel></rss>').items;
+  check('feed: script/markup/bidi/control characters are stripped; credentials, data: and spaced links dropped', feedEvil[0].title === 'alert(1) Real title' && feedEvil[0].url === '' && feedEvil[1].url === '' && feedEvil[2].url === '', JSON.stringify(feedEvil));
+  check('feed: linkUrl accepts only http(s) without credentials', FD.linkUrl('https://a.com/x') === 'https://a.com/x' && FD.linkUrl('HTTP://a.com') === 'http://a.com/' && ['file:///etc/passwd', 'javascript:1', 'vbscript:x', 'https://a@b.com', 'https://a.com/"x'].every((u) => FD.linkUrl(u) === ''), '');
+  // The connector: config checking and presets
+  check('feed: every preset is an https address with an id and a name', FD.PRESETS.length >= 5 && FD.PRESETS.every((p) => /^https:\/\//.test(p.url) && p.id && p.name) && FD.PRESETS.some((p) => /bloomberg/.test(p.id)) && FD.PRESETS.some((p) => /^hn/.test(p.id)), '');
+  const fw = cleanWidget({ id: 'wfeed01', type: 'feed', url: 'https://www.bloomberg.com/feeds/markets/news.rss', preset: 'bloomberg-markets', name: 'Markets', count: 5 });
+  check('feed: widget config is checked (https only, count clamped, preset must match its address, default size 4x4)', fw && fw.count === 5 && fw.preset === 'bloomberg-markets' && cleanWidget({ id: 'wfeed02', type: 'feed', url: 'http://a.com/rss' }) === null && cleanWidget({ id: 'wfeed03', type: 'feed', url: 'https://a.com/rss', preset: 'hn', count: 99 }).preset === '' && cleanWidget({ id: 'wfeed04', type: 'feed', url: 'https://a.com/rss', count: 99 }).count === 8 && WL.DEFAULT_SIZE.feed.w === 4 && WL.DEFAULT_SIZE.feed.h === 4 && cleanList([{ id: 'wfeed05', type: 'feed', url: 'https://a.com/rss' }])[0].h === 4, JSON.stringify(fw));
+  const { CONNECTORS } = require('../features/widgets');
+  const served = { text: async () => `<rss><channel><title>Site</title>${'<item><title>H</title><link>http://a.com/1</link></item>'.repeat(20)}</channel></rss>` };
+  const fetched = await CONNECTORS.feed.fetch({ url: 'https://a.com/rss', name: '', count: 4 }, served);
+  check('feed: the connector returns source and at most count items with https links', fetched.source === 'Site' && fetched.items.length === 4 && fetched.items[0].url === 'https://a.com/1', JSON.stringify(fetched));
+  let refused = '';
+  await CONNECTORS.feed.resolve({ url: 'http://a.com/rss' }, served).catch((e) => { refused = e.message; });
+  check('feed: Settings refuses a non-https custom address', /https/.test(refused), refused);
 };

@@ -34,15 +34,16 @@ const LIMITS = {
   calendar: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   todoist: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   embed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
+  feed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
 };
 const FALLBACK_LIMITS = { minW: 2, minH: 2, maxW: 12, maxH: 20 };
-const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, embed: { w: 12, h: 6 } };
+const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, embed: { w: 12, h: 6 }, feed: { w: 4, h: 4 } };
 // Quick sizes in edit mode.
 const PRESETS = { small: { w: 3, h: 2 }, medium: { w: 4, h: 3 }, large: { w: 6, h: 5 }, wide: { w: 8, h: 3 }, tall: { w: 3, h: 7 } };
 // What older Lumens stored: a width of 2, 3, 4 or 6 of six columns and, for a web page, a frame height.
 const SPANS = [2, 3, 4, 6];
 const FRAME_PX = { small: 200, medium: 340, large: 500, tall: 720 };
-const LEGACY_ROWS = { weather: 3, calendar: 5, todoist: 5 }; // what auto height came to
+const LEGACY_ROWS = { weather: 3, calendar: 5, todoist: 5, feed: 4 }; // what auto height came to
 const CARD_CHROME = 64; // px of a card around its frame: header, padding
 const SNAPS = ['left', 'right', 'top', 'tl', 'tr', 'bl', 'br'];
 

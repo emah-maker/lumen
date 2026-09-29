@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab widget: Feed headlines. Pick Bloomberg (Markets, Technology, Politics), Hacker News or NPR, or paste any https RSS or Atom address; each headline shows its source and how long ago it was posted, and opens in a new tab. Lumen fetches and reads the feed itself with a small built-in reader that refuses custom XML entities, caps sizes, strips markup from titles and drops non-web links.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.

@@ -460,6 +460,7 @@ const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
+  feed: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5a9.5 9.5 0 0 1 9.5 9.5M3 7.5a5.5 5.5 0 0 1 5.5 5.5"/><circle cx="3.8" cy="12.2" r="1"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -479,7 +480,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, news headlines, your Todoist tasks, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -634,6 +635,21 @@ async function buildWidgets(card) {
           field('Colors', colors, '“Calendar colors” uses the color the feed gives each event; “Match screen” follows your accent color and background.'));
       } else if (type === 'todoist') {
         todoFields(same);
+      } else if (type === 'feed') {
+        const presets = ws.feedPresets || [];
+        const custom = same && !same.preset;
+        inputs.preset = sel('widget-feed', tr('settings.widgets.feed.pick', 'Feed'), [...presets.map((p) => [p.id, p.name]), ['', tr('settings.widgets.feed.custom', 'Custom address…')]], same ? same.preset || '' : presets[0]?.id || '');
+        inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://example.com/feed.xml', maxlength: '2000', 'aria-label': tr('settings.widgets.feed.url', 'Feed address (RSS or Atom)') });
+        inputs.url.value = custom ? same.url : '';
+        inputs.count = sel('widget-feed-count', tr('settings.widgets.feed.count', 'Headlines shown'), [3, 5, 8, 10, 12].map((n) => [n, String(n)]), same?.count || 8);
+        const syncUrl = () => { inputs.url.hidden = inputs.preset.value !== ''; };
+        inputs.preset.addEventListener('change', syncUrl);
+        syncUrl();
+        fields.replaceChildren(
+          field(tr('settings.widgets.feed.pick', 'Feed'), inputs.preset, tr('settings.widgets.feed.pickHint', 'Lumen fetches the feed itself; the new-tab page never goes online. Headlines open in a new tab.')),
+          field(tr('settings.widgets.feed.url', 'Feed address (RSS or Atom)'), inputs.url, tr('settings.widgets.feed.urlHint', 'Only used with Custom address. Must be https://.')),
+          field(tr('settings.widgets.feed.count', 'Headlines shown'), inputs.count),
+          field('Colors', colors));
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -659,6 +675,7 @@ async function buildWidgets(card) {
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
       }
+      if (type === 'feed') return { ...base, feed: inputs.preset.value, url: inputs.url.value, count: Number(inputs.count.value) };
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
     const busy = (on) => { for (const b of form.querySelectorAll('button')) b.disabled = on; };

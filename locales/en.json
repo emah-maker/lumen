@@ -694,5 +694,11 @@
   "settings.translate.never": "Sites never offered translation",
   "settings.translate.neverNone": "No sites.",
   "settings.translate.consent": "Allowed to receive page text",
-  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate."
+  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate.",
+  "settings.widgets.feed.pick": "Feed",
+  "settings.widgets.feed.custom": "Custom address…",
+  "settings.widgets.feed.pickHint": "Lumen fetches the feed itself; the new-tab page never goes online. Headlines open in a new tab.",
+  "settings.widgets.feed.url": "Feed address (RSS or Atom)",
+  "settings.widgets.feed.urlHint": "Only used with Custom address. Must be https://.",
+  "settings.widgets.feed.count": "Headlines shown"
 }

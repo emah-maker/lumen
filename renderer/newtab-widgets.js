@@ -121,6 +121,7 @@ function dayName(date, i) {
 }
 function agoText(ms) {
   const min = Math.max(0, Math.round((Date.now() - ms) / 60e3));
+  if (min >= 1440) return `${Math.round(min / 1440)} d ago`;
   return min < 1 ? 'just now' : min < 60 ? `${min} min ago` : `${Math.round(min / 60)} h ago`;
 }
 
@@ -401,6 +402,29 @@ const WIDGET_RENDERERS = {
     card.body.append(list);
   },
 
+  feed(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const source = text(d.source, 80) || text(w.title, 80);
+    const items = (Array.isArray(d.items) ? d.items : []).filter((i) => i && text(i.title)).slice(0, 12);
+    if (!items.length) { card.body.append(el('p', 'w-empty', 'No headlines right now.')); return; }
+    const list = el('div', 'w-list');
+    items.forEach((i, n) => {
+      const row = el('div', 'w-row feed-row');
+      if (n > 2) row.classList.add('far');
+      if (n > 0) row.classList.add('later');
+      const main = el('div', 'w-main');
+      const title = text(i.title, 200);
+      const url = safeUrl(i.url);
+      main.append(url ? link(url, title, '') : el('span', 'w-title', title));
+      const when = Number.isFinite(i.time) && i.time > 0 ? agoText(i.time) : '';
+      main.append(el('span', 'w-sub', [source, when].filter(Boolean).join(' · ')));
+      row.append(main);
+      list.append(row);
+    });
+    card.body.append(list);
+  },
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -570,12 +594,12 @@ window.applyWidgetColors = applyWidgetColors;
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3, feed: 10 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;
   for (const [id, s] of shownWidgets) {
-    if (s.el.classList.contains('calendar') || s.el.classList.contains('todoist')) shownWidgets.set(id, { key: '', el: s.el });
+    if (s.el.classList.contains('calendar') || s.el.classList.contains('feed') || s.el.classList.contains('todoist')) shownWidgets.set(id, { key: '', el: s.el });
   }
   for (const w of lastList.current) {
     const after = REFRESH_AFTER[w.type];
