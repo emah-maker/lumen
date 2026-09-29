@@ -234,7 +234,7 @@ function create(deps) {
 
   function pump() {
     if (!settings().enabled) return;
-    for (const id of bg.planStarts(tasks, settings().maxConcurrent, now())) {
+    for (const id of bg.planStarts(tasks, Math.min(settings().maxConcurrent, deps.maxBackgroundTasks?.() ?? Infinity), now())) {
       const task = find(id);
       if (task && !runtimes.has(id) && (task.schedule.type !== 'watch' || task.judge)) startRun(task, task.judge ? 'judge' : 'run');
     }

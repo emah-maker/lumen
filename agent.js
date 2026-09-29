@@ -1,5 +1,6 @@
 const { WebContentsView } = require('electron');
-const Anthropic = require('@anthropic-ai/sdk');
+let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only error handling and aborts need the SDK's classes
+const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
 const providers = require('./providers');
 const crypto = require('crypto');
@@ -657,8 +658,8 @@ function runScript(wc, script, timeoutMs = 10000, { mainWorld = false } = {}) {
 // Rejects as soon as the signal aborts, so Stop is immediate even mid-tool.
 function abortable(promise, signal) {
   return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new Anthropic.APIUserAbortError());
-    const onAbort = () => reject(new Anthropic.APIUserAbortError());
+    if (signal.aborted) return reject(new (sdk().APIUserAbortError)());
+    const onAbort = () => reject(new (sdk().APIUserAbortError)());
     signal.addEventListener('abort', onAbort, { once: true });
     promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
   });
@@ -919,7 +920,7 @@ class Agent {
       const tab = this.browser.activeTab();
       await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log);
     } catch (err) {
-      if (controller.signal.aborted || err instanceof Anthropic.APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
+      if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
       repairHistory(messages);
     } finally {
@@ -1831,7 +1832,7 @@ ${out.text}${note}
       const onAbort = () => {
         this.pendingApprovals.delete(approvalId);
         emit({ type: 'approval_done', approvalId, ok: false });
-        reject(new Anthropic.APIUserAbortError());
+        reject(new (sdk().APIUserAbortError)());
       };
       signal.addEventListener('abort', onAbort, { once: true });
       this.pendingApprovals.set(approvalId, (ok) => {
@@ -2227,7 +2228,7 @@ function keepPartialReply(messages, text, model) {
   messages.push(turn);
 }
 
-const isJsonError = (err) => !(err instanceof Anthropic.APIError) && (err instanceof SyntaxError || /\bJSON\b/.test(String(err?.message || '')));
+const isJsonError = (err) => !(err instanceof sdk().APIError) && (err instanceof SyntaxError || /\bJSON\b/.test(String(err?.message || '')));
 
 // A tool's error as the model (and the step row) should see it. A tab that closed mid-action gives
 // Electron's "Object has been destroyed"; say what happened instead.
@@ -2242,13 +2243,13 @@ function describeError(err, auth = null) {
   const other = err.__provider ? providers.describeProviderError(err, err.__provider) : null;
   if (other) return other;
   if (isContextError(err)) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
-  if (err instanceof Anthropic.AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → You and AI.', action: 'settings', signInExpired: true };
-  if (err instanceof Anthropic.AuthenticationError) return { text: 'That API key was rejected. Add a valid key to continue.', action: 'settings' };
-  if (err instanceof Anthropic.PermissionDeniedError) return { text: 'This API key does not have access to the selected model. Pick another in the model menu.' };
-  if (err instanceof Anthropic.RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };
-  if (err instanceof Anthropic.APIConnectionError) return { text: 'Could not reach the Claude API. Check your connection.' };
-  if (err instanceof Anthropic.InternalServerError || err?.status === 529) return { text: 'The Claude API is overloaded or having trouble right now. Try again in a minute.' };
-  if (err instanceof Anthropic.APIError) return { text: `The Claude API returned an error${err.status ? ` (${err.status})` : ''}: ${String(err.message || '').replace(/^\d{3}\s*/, '')}` };
+  if (err instanceof sdk().AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → You and AI.', action: 'settings', signInExpired: true };
+  if (err instanceof sdk().AuthenticationError) return { text: 'That API key was rejected. Add a valid key to continue.', action: 'settings' };
+  if (err instanceof sdk().PermissionDeniedError) return { text: 'This API key does not have access to the selected model. Pick another in the model menu.' };
+  if (err instanceof sdk().RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };
+  if (err instanceof sdk().APIConnectionError) return { text: 'Could not reach the Claude API. Check your connection.' };
+  if (err instanceof sdk().InternalServerError || err?.status === 529) return { text: 'The Claude API is overloaded or having trouble right now. Try again in a minute.' };
+  if (err instanceof sdk().APIError) return { text: `The Claude API returned an error${err.status ? ` (${err.status})` : ''}: ${String(err.message || '').replace(/^\d{3}\s*/, '')}` };
   if (/object has been destroyed/i.test(err?.message || '')) return { text: TAB_CLOSED };
   if (/authentication method|api ?key|credential/i.test(err.message || '')) return { text: 'Set up an AI to start: use your Claude account through Claude Code (pick “Claude Code” in the model menu), or add an API key or sign in with OpenRouter in Settings.', action: 'settings' };
   return { text: String(err.message || err) };
