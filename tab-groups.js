@@ -1,6 +1,7 @@
 // Tab groups: the model, automatic grouping rules, and site names. main.js owns the tabs; this
 // module works on the same array through the accessors passed to createTabGroups().
 const { getDomain } = require('tldts-experimental');
+const knowledge = require('./features/topic-knowledge');
 
 const GROUP_COLORS = ['blue', 'purple', 'pink', 'red', 'orange', 'yellow', 'green', 'gray'];
 
@@ -86,6 +87,7 @@ el los las del una por para con como que mas dias dia paso donde libre gratis
 der die das und ein eine mit von zu für auf ist im den dem
 de da do dos das os um uma com para por mais`.split(/\s+/));
 const TOPIC_THRESHOLD = 0.34;
+const COMMON_WORD_SHARE = Number(process.env.CW || 0.9); // a word this share of the tabs carry says nothing about which group
 // Small pools (2-3 loose tabs) need stronger evidence than a full cluster does before forming a
 // group: fewer members corroborating the same words makes an incidental overlap more likely.
 const LOOSE_PAIR_THRESHOLD = 0.5;
@@ -97,12 +99,15 @@ const CENTROID_MERGE_THRESHOLD = 0.3;
 // that site's template, not a topic - it shouldn't count when linking two tabs of that same site.
 const SITE_TEMPLATE_RATIO = 0.7;
 const SITE_TEMPLATE_PENALTY = 0.15;
-const MAX_GROUP = 12; // a bigger cluster is split again, more strictly
+const MAX_GROUP = 40; // a bigger cluster is split again, more strictly
 const TEXT_WEIGHT = 0.7; // page text (meta description/h1): more deliberate than a URL path, less than the title
 const BIGRAM_VEC_WEIGHT = 0.5; // a 2-word combination is more specific than either word alone
 
 // Brand names (site labels) are never a topic on their own: "youtube"/"reddit" etc.
 const BRAND_WORDS = new Set(Object.entries(KNOWN_SITES).flatMap(([k, v]) => [k, v.toLowerCase().replace(/[^a-z0-9]/g, '')]));
+
+// "JapanTravel" -> "Japan Travel" (subreddit and repository names are written as one word).
+const camelWords = (s) => String(s).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_.-]+/g, ' ');
 
 // Light Porter-style stemming: plurals, then -ing/-ed/-er with a doubled-consonant collapse
 // ("running" -> "runn" -> "run"). Approximate on purpose - only used as a matching key, never shown.
@@ -117,6 +122,22 @@ function stem(w) {
   return s;
 }
 
+// Built-in knowledge (features/topic-knowledge.js) keyed by stem: city -> country, word -> concept,
+// domain -> category.
+const PLACE_OF = new Map();
+for (const [country, cities] of Object.entries(knowledge.PLACES)) for (const city of cities.split(/\s+/)) PLACE_OF.set(stem(city), country);
+const CONCEPT_OF = new Map();
+for (const [concept, words] of Object.entries(knowledge.CONCEPTS)) for (const w of words.split(/\s+/)) CONCEPT_OF.set(stem(w), concept);
+const CATEGORY_OF_SITE = new Map();
+for (const [category, sites] of Object.entries(knowledge.SITE_CATEGORIES)) for (const site of sites.split(/\s+/)) CATEGORY_OF_SITE.set(site, category);
+const categoryOfSite = (url) => CATEGORY_OF_SITE.get(hostname(url)) || CATEGORY_OF_SITE.get(registrableDomain(url)) || '';
+const COUNTRY_KEYS = new Set(Object.keys(knowledge.PLACES).map(stem));
+const INSTITUTION = /\.(edu|gov|mil)$|\.(ac|gov|edu)\.[a-z]{2}$/;
+const PLACE_WEIGHT = 0.8; // a city names its country: nearly as good as the country written out
+const CONCEPT_WEIGHT = 0.35; // "flight" and "hotel" are both travel: a nudge, never a link on its own
+// Similarity-only keys (never a name): trigrams #, vector bigrams ~, repositories @, a site's own name ^, concepts %.
+const isRealKey = (k) => !/^[#~@^%]/.test(k);
+
 // A title that says nothing about the page: it is still loading, behind a bot check, or a login wall.
 // Its address words describe the tab instead, so it can still join the tabs it leads to.
 const TRANSIENT_TITLE = /^\s*(loading|please wait|just a moment|one moment|redirecting|attention required|access denied|checking your browser|untitled|about:blank|new tab|connecting|sign[ -]?in|log[ -]?in|sign[ -]?up|login|register|authenticating|verifying)(?![\p{L}\p{N}])/iu;
@@ -130,10 +151,12 @@ function isTransientTitle(title) {
 function stripSiteSegment(title, url) {
   const parts = String(title).split(/\s+[-|–—·:]\s+/);
   if (parts.length < 2) return title;
-  const label = registrableDomain(url).split('.')[0];
+  const label = registrableDomain(url).split('.')[0].replace(/[^a-z0-9]/g, '');
   const matches = (seg) => {
     const compact = seg.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return compact.length > 1 && (compact === label || BRAND_WORDS.has(compact) || (label && (compact.includes(label) || label.includes(compact))));
+    // "The New York Times" on nytimes.com, "Wall Street Journal" on wsj.com: the initials are in the domain.
+    const initials = seg.toLowerCase().replace(/^the\s+/, '').split(/\s+/).map((w) => w[0]).join('').replace(/[^a-z0-9]/g, '');
+    return compact.length > 1 && (compact === label || BRAND_WORDS.has(compact) || (label && (compact.includes(label) || label.includes(compact))) || (initials.length >= 3 && seg.trim().split(/\s+/).length >= 3 && label.startsWith(initials)));
   };
   if (matches(parts[parts.length - 1])) return parts.slice(0, -1).join(' - ');
   if (matches(parts[0])) return parts.slice(1).join(' - ');
@@ -200,6 +223,16 @@ function repoPageKind(url) {
   return '';
 }
 
+// "ME 2380", "ENGW-1111", "cs3500a" -> "me2380", "engw1111", "cs3500a" (2-5 letters, 3-4 digits).
+function courseCodes(text) {
+  const out = new Set();
+  for (const m of String(text).matchAll(/(?<![\p{L}\p{N}])([A-Za-z]{2,5})[\s-]?(\d{3,4}[A-Za-z]?)(?![\p{L}\p{N}])/gu)) {
+    if (/^(?:iso|rfc|http|utf|ipv|win|gpt|top|mp|usb|ram)$/i.test(m[1]) || /^(?:19|20)\d\d$/.test(m[2])) continue;
+    out.add(`${m[1]}${m[2]}`.toLowerCase());
+  }
+  return out;
+}
+
 function tabWords({ title = '', url = '', text = '', hint = '' }) {
   const words = new Map();
   const bigrams = [];
@@ -223,26 +256,50 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
       }
     }
   };
-  const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(title, url);
-  const titleTokens = tokens(cleanTitle);
-  add(titleTokens, 1, { naming: true, vector: true });
   let pathname = '';
   try { ({ pathname } = new URL(url)); } catch {}
   const domain = registrableDomain(url);
   const label = domain.split('.')[0] || domain;
-  // Down-weighted: same-site tabs shouldn't cluster on the brand alone, only add real topic overlap.
-  if (label && label.length >= 3 && !SEARCH_DOMAINS.has(domain)) add(tokens(label), 0.3);
+  // Reddit: the subreddit is the topic ("r/JapanTravel" = Japan Travel), whatever the thread says.
+  let shownTitle = title;
+  if (domain === 'reddit.com') {
+    const sub = /^\/r\/([^/]+)/i.exec(pathname)?.[1] || /^r\/(\w+)/i.exec(String(title))?.[1];
+    if (sub) {
+      add(tokens(camelWords(sub)), 0.9);
+      shownTitle = String(title).replace(/^r\/\w+\s*[-:·|]?\s*/i, '');
+    }
+  }
+  const repo = repoOf(url);
+  // "acme/billing-api" in a title: the owner is not a topic (two repos of one owner are two topics).
+  if (repo) shownTitle = String(shownTitle).split(/\s+/).map((w) => (w.toLowerCase().startsWith(`${repo.owner}/`) ? w.slice(repo.owner.length + 1) : w)).join(' ');
+  const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(shownTitle, url);
+  const titleTokens = tokens(cleanTitle);
+  add(titleTokens, 1, { naming: true, vector: true });
+  // Course and part numbers: "ME 2380", "ENGW-1111", "CS3500" are one word, and the best name a course's tabs have.
+  for (const code of courseCodes(`${cleanTitle} ${text}`)) words.set(code, { weight: 1, surface: code.toUpperCase() });
+  // Down-weighted, and a key of its own (^): same-site tabs shouldn't cluster on the brand alone, and
+  // "canvas.northeastern.edu" must not link to a page whose title merely says "Northeastern".
+  if (label && label.length >= 3 && !SEARCH_DOMAINS.has(domain)) for (const { key, surface } of tokens(label)) words.set(`^${key}`, { weight: 0.3, surface });
   add(tokens(decodeURIComponent(pathname).replace(/[-_]/g, ' ')), 0.5);
   const q = queryText(url);
   if (q) add(tokens(decodeURIComponent(q.replace(/\+/g, ' '))), 1, { naming: true, vector: true });
   if (text) add(tokens(String(text).slice(0, 500)), TEXT_WEIGHT, { vector: true }); // optional page text (see main.js note)
   // The search a tab was opened from (main.js passes the opener's query): the page is what that search led to.
   if (hint) add(tokens(String(hint).slice(0, 200)), 0.8, { vector: true });
-  const repo = repoOf(url);
   if (repo) {
     words.set(repo.key, { weight: 1.2, surface: repo.name });
     add(tokens(repo.name.replace(/[-_.]/g, ' ')), 0.8);
   }
+  // Places name their country, everyday words name a kind of task, well-known sites a category.
+  for (const [key, { weight }] of [...words]) {
+    if (weight < 0.7 || !isRealKey(key)) continue;
+    const country = PLACE_OF.get(key);
+    if (country && !words.has(stem(country))) words.set(stem(country), { weight: PLACE_WEIGHT, surface: country.charAt(0).toUpperCase() + country.slice(1) });
+    const concept = CONCEPT_OF.get(key);
+    if (concept && !words.has(`%${concept}`)) words.set(`%${concept}`, { weight: CONCEPT_WEIGHT, surface: concept });
+  }
+  const category = categoryOfSite(url);
+  if (category && !words.has(`%${category}`)) words.set(`%${category}`, { weight: CONCEPT_WEIGHT, surface: category });
   words.brand = label && label.length >= 4 && !BRAND_WORDS.has(label) && !SEARCH_DOMAINS.has(domain) ? label : '';
   if (titleTokens.length <= 2) for (const g of charTrigrams(cleanTitle)) if (!words.has(g)) words.set(g, { weight: 0.4, surface: g });
   words.bigrams = bigrams;
@@ -258,7 +315,7 @@ function vectorize(entries) {
   // repo called next.js): then the site's tabs get that word at full strength, so the docs join.
   for (const d of docs) {
     const b = d.words.brand;
-    if (!b) continue;
+    if (!b || INSTITUTION.test(d.site)) continue; // a university or agency's name is not a topic another page can be about
     for (const variant of new Set([b, b.replace(/(js|hq|io|py|css|ui|dev|lang|cli)$/, '')])) {
       if (variant.length < 3) continue;
       const key = stem(variant);
@@ -267,7 +324,7 @@ function vectorize(entries) {
   }
   const df = new Map();
   for (const d of docs) for (const key of d.words.keys()) df.set(key, (df.get(key) || 0) + 1);
-  const informative = (key) => df.get(key) >= 2 && (n < 4 || df.get(key) / n <= 0.8);
+  const informative = (key) => df.get(key) >= 2 && (n < 4 || df.get(key) / n <= COMMON_WORD_SHARE);
   const idf = (key) => Math.log((n + 1) / (df.get(key) + 1)) + 1;
   for (const d of docs) {
     d.vec = new Map();
@@ -299,7 +356,69 @@ function vectorize(entries) {
     for (const i of idxs) for (const k of docs[i].vec.keys()) count.set(k, (count.get(k) || 0) + 1);
     for (const [k, c] of count) if (!k.startsWith('@') && c / idxs.length >= SITE_TEMPLATE_RATIO && df.get(k) === c) for (const i of idxs) docs[i].template.add(k);
   }
+  // Words named in a title, a search or a subreddit (not only in a description) by 2+ tabs: the topic words.
+  const named = new Map();
+  for (const d of docs) for (const [k, { weight }] of d.words) if (weight >= 0.8 && isRealKey(k)) named.set(k, (named.get(k) || 0) + 1);
+  for (const d of docs) d.named = named;
+  docs.df = df;
+  docs.n = n;
   return docs;
+}
+
+// ---------- anchors: a topic word many tabs of two groups share ----------
+//
+// Cosine over whole tabs dilutes a shared topic under everything else a page says (a flights page
+// and a hotels page of one trip have little else in common than "Tokyo"). So besides similarity,
+// two groups are one topic when they share a specific word (title, search, description or
+// subreddit; not the address path or a site's name) that at least ANCHOR_COVER of each group's tabs
+// carry, and a lone tab joins a group whose tabs mostly carry a word it has too.
+const ANCHOR_COVER = 0.25;
+const ANCHOR_OWN_NAMED = 4; // ...and it is named in 4+ titles (a word two tabs happen to share doesn't characterise anything)
+const ANCHOR_OWN = 0.6; // a word this share of a group's tabs carry characterises it
+const ANCHOR_MAX_DF = 0.92; // a word nearly every tab carries says nothing about which group
+function strongSet(d) {
+  if (!d.strong) {
+    d.strong = new Set();
+    for (const k of d.vec.keys()) {
+      const weight = d.words.get(k)?.weight ?? 0;
+      if (isRealKey(k) && (weight >= 0.8 || (weight >= 0.7 && (d.named.get(k) || 0) >= 2))) d.strong.add(k);
+    }
+  }
+  return d.strong;
+}
+const strongCounts = (list) => {
+  const m = new Map();
+  for (const d of list) for (const k of strongSet(d)) m.set(k, (m.get(k) || 0) + 1);
+  return m;
+};
+// -> { key, score } for the best shared word, or null. ca/cb: precomputed strongCounts (optional).
+function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
+  let best = null;
+  // A group (3+ tabs) characterised by a word the other never has (a kitchen renovation, a Tokyo
+  // trip) is not the other's topic just because they share a common word (budget, itinerary). A
+  // shared word only overrides that when it characterises the group as much as its own word does
+  // (every Tokyo tab says Tokyo, whatever else it says), or is a country (Tokyo and Kyoto: Japan).
+  const ownMax = (counts, size, other, named) => (size >= 3 ? Math.max(0, ...[...counts].filter(([k]) => !other.has(k) && !CONCEPT_OF.has(k) && (named.get(k) || 0) >= ANCHOR_OWN_NAMED).map(([, c]) => c / size)) : 0);
+  const named = A[0].named;
+  const ownA = ownMax(ca, A.length, cb, named);
+  const ownB = ownMax(cb, B.length, ca, named);
+  for (const [k, a] of ca) {
+    const b = cb.get(k);
+    if (!b || (n >= 8 && df.get(k) / n > ANCHOR_MAX_DF)) continue;
+    const fa = a / A.length;
+    const fb = b / B.length;
+    const strict = a >= Math.min(2, A.length) && b >= Math.min(2, B.length) && fa >= ANCHOR_COVER && fb >= ANCHOR_COVER;
+    // A small group (a pull-request list, two docs pages) joins a big one that mostly carries the word, even on one tab.
+    const core = (big, count, frac, other, ofrac) => big >= 4 && count >= 3 && frac >= 0.5 && other >= 1 && ofrac >= ANCHOR_COVER;
+    if (!strict && !core(A.length, a, fa, b, fb) && !core(B.length, b, fb, a, fa)) continue;
+    if (!COUNTRY_KEYS.has(k) && ((ownA >= ANCHOR_OWN && fa < ownA - 1e-9) || (ownB >= ANCHOR_OWN && fb < ownB - 1e-9))) {
+      if (process.env.DBG_ANCHOR) console.error(`VETO [${A.map((d) => d.title.slice(0, 14)).join(' / ')}] + [${B.map((d) => d.title.slice(0, 14)).join(' / ')}] via ${k} fa=${fa.toFixed(2)} fb=${fb.toFixed(2)} own=${ownA.toFixed(2)},${ownB.toFixed(2)} cos=${cosine(centroidOf(A), centroidOf(B)).toFixed(2)}`);
+      continue;
+    }
+    const score = Math.min(fa, fb) * (Math.log((n + 1) / (df.get(k) + 1)) + 1);
+    if (!best || score > best.score) best = { key: k, score };
+  }
+  return best;
 }
 
 function cosine(a, b) {
@@ -352,6 +471,50 @@ function libraryName(members, majority) {
   return '';
 }
 
+// A tab in a group of 6+ that shares no topic word with a fair part of the group (a weather page that
+// only says "Boston" among flights to Tokyo) and is not close to the group's centre is let go.
+const PRUNE_MIN_GROUP = 6;
+function pruneWeak(clusters, docs) {
+  const loose = [];
+  const out = clusters.map((c) => {
+    if (c.length < PRUNE_MIN_GROUP) return c;
+    const counts = strongCounts(c.map((i) => docs[i]));
+    const need = Math.max(2, Math.ceil(0.2 * c.length));
+    const keep = c.filter((i) => {
+      const d = docs[i];
+      if ([...strongSet(d)].some((k) => (counts.get(k) || 0) - 1 >= need)) return true;
+      const rest = c.filter((j) => j !== i).map((j) => docs[j]);
+      return cosine(d, centroidOf(rest)) >= PRUNE_KEEP_COSINE;
+    });
+    for (const i of c) if (!keep.includes(i)) loose.push([i]);
+    return keep;
+  });
+  return out.concat(loose);
+}
+const PRUNE_KEEP_COSINE = 0.25;
+
+// clusters: arrays of doc indices. Merges the pair with the best shared anchor until none is left.
+function anchorMerge(clusters, docs) {
+  const out = clusters.map((c) => [...c]);
+  const counts = out.map((c) => strongCounts(c.map((i) => docs[i])));
+  for (;;) {
+    let best = null;
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        if (out[i].length < 2 && out[j].length < 2) continue; // two lone tabs: pass one already compared them
+        const link = anchorLink(out[i].map((k) => docs[k]), out[j].map((k) => docs[k]), docs.df, docs.n, counts[i], counts[j]);
+        if (link && (!best || link.score > best.score)) best = { i, j, score: link.score, key: link.key };
+      }
+    }
+    if (!best) return out;
+    if (process.env.DBG_ANCHOR) console.error(`MERGE [${out[best.i].map((k) => docs[k].title.slice(0, 18)).join(' / ')}] + [${out[best.j].map((k) => docs[k].title.slice(0, 18)).join(' / ')}] via ${best.key} ${best.score.toFixed(2)}`);
+    out[best.i] = out[best.i].concat(out[best.j]);
+    counts[best.i] = strongCounts(out[best.i].map((k) => docs[k]));
+    out.splice(best.j, 1);
+    counts.splice(best.j, 1);
+  }
+}
+
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
 function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   const docs = vectorize(entries);
@@ -396,6 +559,8 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
     merged[best.i] = merged[best.i].concat(merged[best.j]);
     merged.splice(best.j, 1);
   }
+  // Third stage: groups (and lone tabs) that share an anchor word are one topic.
+  if (!process.env.NOANCHOR) merged = anchorMerge(pruneWeak(anchorMerge(merged, docs), docs), docs);
   // No mega-groups: a cluster past MAX_GROUP is re-split at a stricter threshold (a few times); tabs
   // that no longer belong with anyone stay loose rather than being forced into a group.
   const split = (c, at, depth) => (c.length <= MAX_GROUP || depth >= 4 ? [c] : agglomerate(c, at).flatMap((part) => (part.length < 2 ? [] : split(part, at + 0.1, depth + 1))));
@@ -410,7 +575,7 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
     let pairSum = 0;
     for (let x = 0; x < c.length; x++) for (let y = x + 1; y < c.length; y++) pairSum += sim[c[x]][c[y]];
     const cohesion = pairSum / ((c.length * (c.length - 1)) / 2); // mean similarity of member pairs: how tight the group is
-    const isReal = (k) => !/^[#~@]/.test(k); // trigram/vector-bigram/repo keys are similarity-only, never names
+    const isReal = isRealKey; // trigram/vector-bigram/repo/site/concept keys are similarity-only, never names
     // A word (or bigram) has to be a strict majority, not just "at least half": for a 2-member
     // cluster, "half" (ceil(2/2) = 1) would let a word only ONE member has name the pair.
     const majority = Math.floor(members.length / 2) + 1;
@@ -618,13 +783,14 @@ function mergeSimilarGroups(groups) {
   const centroid = new Map(list.map((g) => [g.id, centroidOf(g.members.map((m) => doc.get(m.id)))]));
   const owned = (g) => !g.auto || g.userNamed;
   const clusters = [];
+  const docsOf = (g) => g.members.map((m) => doc.get(m.id));
   for (const g of list) {
     const home = clusters.find((c) => {
       const root = c[0];
       const kind = nameSimilarity(root.name, g.name);
-      if (!kind) return false;
       if (kind === 'exact') return true;
-      if (owned(root) || owned(g)) return false;
+      if (c.some(owned) || owned(g)) return false;
+      if (!kind) return Boolean(anchorLink(c.flatMap(docsOf), docsOf(g), docs.df, docs.n)); // groups formed at different times, one topic
       const sim = cosine(centroid.get(root.id), centroid.get(g.id));
       return kind === 'weak' ? sim >= CENTROID_MERGE_THRESHOLD : sim >= 0.1;
     });
@@ -832,7 +998,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
         for (const id of ids) tabById(id).autoMoves = 1;
       }
     }
-    const merged = groups.size > groupsBefore.length ? mergeSimilar(moves) : { touched: [] };
+    const merged = groups.size > groupsBefore.length || moves.size ? mergeSimilar(moves) : { touched: [] };
     if (!moves.size) return false;
     autoUndo = { seq: ++undoSeq, moves, groups: merged.touched };
     arrange();
@@ -1104,4 +1270,4 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   };
 }
 
-module.exports = { createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
+module.exports = { _vectorize: vectorize, _cosine: cosine, createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
