@@ -67,6 +67,7 @@ const DEFAULTS = {
   tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
+  maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
   autoDownloadUpdates: true, // Windows setup installs: fetch new versions in the background (features/updates.js)
 };
 const RESTART_KEYS = ['hardwareAcceleration', 'forceDarkWebsites'];
@@ -102,6 +103,7 @@ function validate(key, value) {
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
+    case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;

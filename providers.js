@@ -196,9 +196,9 @@ function usageOptions(provider) {
 const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Math.random().toString(36).slice(2, 12)}`);
 
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
-async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit }) {
+async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false }) {
   const stream = await clientFor(provider, apiKey).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider) } : {}), stream: true, ...usageOptions(provider) },
+    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider) },
     { signal },
   );
   let text = '';
