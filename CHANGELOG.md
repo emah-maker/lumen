@@ -4,6 +4,11 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.2.7 (2026-09-28)
+
+- PDF viewer, opening YouTube videos, and browsing local files.
+- Downloads panel, plan usage tracking, new themes, and a reworked tab strip.
+
 ## 0.2.6 (2026-09-28)
 
 - Private windows (Ctrl+Shift+N): nothing is saved, and closing the window clears its data.
