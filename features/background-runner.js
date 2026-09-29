@@ -73,9 +73,11 @@ function create(deps) {
   const ui = () => deps.ui();
 
   // ---- persistence and UI updates
+  let closed = false; // after the final save on quit, the runs being stopped must not overwrite it
   function saveNow() {
     clearTimeout(saveTimer);
     saveTimer = null;
+    if (closed) return;
     try { store.save(tasks); } catch (err) { console.error('[lumen] could not save background tasks:', err.message); }
   }
   function saveSoon() {
@@ -138,7 +140,8 @@ function create(deps) {
       model: id,
       label: list.find((o) => o.id === id)?.label || id || '',
       models: list.map((o) => ({ id: o.id, label: o.label, group: o.group || '' })),
-      sites: bg.allowedSitesFor(prompt, pageUrl || deps.activeUrl?.() || ''),
+      // Shown without the www twins (creating the task adds them back), so the list stays short.
+      sites: bg.allowedSitesFor(prompt, pageUrl || deps.activeUrl?.() || '').filter((s, _i, all) => !(s.startsWith('www.') && all.includes(s.slice(4)))),
       pageUrl: pageUrl || deps.activeUrl?.() || '',
       cliOnly: !id && Boolean(current) && isLocalEngine(current),
       hasMcp: Boolean(deps.externalTools),
@@ -579,8 +582,9 @@ function create(deps) {
 
   function shutdown() {
     clearInterval(ticker);
+    saveNow(); // a running task is saved as running: the next start marks it interrupted
+    closed = true;
     for (const rt of runtimes.values()) { rt.stopped = true; rt.agent?.stop(); }
-    saveNow();
   }
 
   // The "Watch this page" menu item and other entry points: the UI opens its confirmation card.

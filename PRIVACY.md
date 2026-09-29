@@ -6,6 +6,7 @@ Lumen has no account, no servers of its own, no telemetry, no analytics and no c
 
 - **Browsing data:** history, bookmarks, open tabs, downloads, cookies and site data are stored in Lumen's profile folder on your computer.
 - **API keys:** stored encrypted with your operating system's keychain (Windows DPAPI, macOS Keychain, or the Linux secret service). If your system has no keychain, which happens on some Linux setups, Lumen doesn't save keys at all; set them as environment variables instead.
+- **Background tasks:** the request, schedule, steps and result (which can hold text from pages the task read) are stored encrypted the same way, at most 50 tasks; with no keychain they aren't kept between sessions. A task sends data only to your AI provider and the sites you allowed for it. Deleting a task removes it.
 - **Chats with the AI:** stored encrypted the same way, without the page text and tool results that went with them. If your system has no keychain, the chat isn't kept between sessions. **New chat** deletes the saved conversation.
 
 ## What leaves your computer, and to whom
