@@ -374,7 +374,8 @@ function vectorize(entries) {
 // carry, and a lone tab joins a group whose tabs mostly carry a word it has too.
 const ANCHOR_COVER = 0.25;
 const ANCHOR_OWN_NAMED = 4; // ...and it is named in 4+ titles (a word two tabs happen to share doesn't characterise anything)
-const ANCHOR_OWN = 0.6; // a word this share of a group's tabs carry characterises it
+const ANCHOR_OWN = 0.6;
+const ANCHOR_OWN_OTHER = 0.3; // ...and only when the other group has something of its own too // a word this share of a group's tabs carry characterises it
 const ANCHOR_MAX_DF = 0.92; // a word nearly every tab carries says nothing about which group
 function strongSet(d) {
   if (!d.strong) {
@@ -411,7 +412,7 @@ function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
     // A small group (a pull-request list, two docs pages) joins a big one that mostly carries the word, even on one tab.
     const core = (big, count, frac, other, ofrac) => big >= 4 && count >= 3 && frac >= 0.5 && other >= 1 && ofrac >= ANCHOR_COVER;
     if (!strict && !core(A.length, a, fa, b, fb) && !core(B.length, b, fb, a, fa)) continue;
-    if (!COUNTRY_KEYS.has(k) && ((ownA >= ANCHOR_OWN && fa < ownA - 1e-9) || (ownB >= ANCHOR_OWN && fb < ownB - 1e-9))) {
+    if (!COUNTRY_KEYS.has(k) && ((ownA >= ANCHOR_OWN && fa < ownA - 1e-9 && ownB >= ANCHOR_OWN_OTHER) || (ownB >= ANCHOR_OWN && fb < ownB - 1e-9 && ownA >= ANCHOR_OWN_OTHER))) {
       if (process.env.DBG_ANCHOR) console.error(`VETO [${A.map((d) => d.title.slice(0, 14)).join(' / ')}] + [${B.map((d) => d.title.slice(0, 14)).join(' / ')}] via ${k} fa=${fa.toFixed(2)} fb=${fb.toFixed(2)} own=${ownA.toFixed(2)},${ownB.toFixed(2)} cos=${cosine(centroidOf(A), centroidOf(B)).toFixed(2)}`);
       continue;
     }
@@ -427,11 +428,15 @@ function cosine(a, b) {
   let dot = 0;
   let sharedReal = 0; // shared dimensions NOT already discounted as same-site template noise
   let soleKey = null;
+  let trigrams = 0;
   for (const [k, v] of a.vec) if (b.vec.has(k)) {
     const templated = sameSite && a.template?.has(k);
     dot += v * b.vec.get(k) * (templated ? SITE_TEMPLATE_PENALTY : 1);
-    if (!templated) { sharedReal++; soleKey = k; }
+    if (!templated && k[0] !== '^') { sharedReal++; soleKey = k; } // a shared site name never counts as a second word
+    if (k[0] === '#') trigrams++;
   }
+  // Three letter fragments alone ("documentation" / "compilation") are a coincidence unless there are many.
+  if (trigrams === sharedReal && trigrams < 5) return 0;
   // Two otherwise-unrelated tabs whose only REAL overlap is one word: trust it only if that word
   // was strong (title/query weight) in both, same reasoning as the solo-dimension case above. A
   // template-discounted word doesn't count towards "real" overlap, so it can't pad the count and
@@ -451,7 +456,10 @@ function centroidOf(docs) {
     const scaled = (d.template?.has(k) ? SITE_TEMPLATE_PENALTY : 1) * v;
     vec.set(k, (vec.get(k) || 0) + scaled / docs.length);
   }
-  return { vec, norm: Math.hypot(...vec.values()) };
+  // The strongest weight any member gave each word, so the one-shared-word rule in cosine() applies to a group too.
+  const words = new Map();
+  for (const d of docs) for (const [k, { weight }] of d.words || []) if (vec.has(k) && weight > (words.get(k)?.weight ?? 0)) words.set(k, { weight });
+  return { vec, norm: Math.hypot(...vec.values()), words };
 }
 
 // A library or product whose own site is in the cluster and whose name most of the cluster's tabs carry
