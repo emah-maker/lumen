@@ -103,6 +103,19 @@ const fakeClient = (app) => app.evaluate(() => {
   const shown = await ui.evaluate(() => [...document.querySelectorAll('.chat-item')].map((li) => ({ title: li.querySelector('.chat-title').textContent, meta: li.querySelector('.chat-meta').textContent, current: li.classList.contains('current') })));
   check('the list shows both chats, newest first, the open one marked', shown.length === 2 && shown[0].title === 'a brand new topic' && shown[0].current && !shown[1].current, JSON.stringify(shown));
   check('each entry shows its usage', /2\.4k tokens · ~\$0\.02/.test(shown[1]?.meta || ''), shown[1]?.meta);
+  // The model menu opened over the history list is on top of it, not painted under it.
+  await ui.click('.sidebar-head .picker-button');
+  await ui.waitForSelector('.sidebar-head .picker-menu:not([hidden])');
+  const menuOnTop = await ui.evaluate(() => {
+    const menu = document.querySelector('.sidebar-head .picker-menu');
+    const r = menu.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 30));
+    return Boolean(hit && menu.contains(hit));
+  });
+  check('the model menu opened over the chat list is not covered by it', menuOnTop === true, 'covered by the list');
+  await ui.evaluate(() => document.querySelector('.sidebar-head .picker-button').click()); // closes the menu again
+  await ui.waitForSelector('.sidebar-head .picker-menu[hidden]', { state: 'attached' });
+  await ui.waitForSelector('#chat-list:not([hidden]) .chat-item');
   await ui.click(`.chat-item[data-id="${legacyId}"] .chat-open`);
   const reopened = await waitFor(() => ui.evaluate(() => document.getElementById('chat-list').hidden && document.getElementById('messages').textContent));
   check('opening a chat shows its messages', /legacy question about tides/.test(reopened || '') && /Reply 2\./.test(reopened || '') && !/brand new topic/.test(reopened || ''), (reopened || '').slice(0, 200));
