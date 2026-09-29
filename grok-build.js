@@ -499,6 +499,13 @@ class GrokBuildEngine {
     return this.bin;
   }
 
+  // The binary for a run: the one found earlier while it is still on disk (a `where`/`which` spawn per
+  // message cost tens to hundreds of ms before the first token), else a fresh look.
+  async ensureBin() {
+    if (this.bin && exists(this.bin)) return this.bin;
+    return this.detect(true);
+  }
+
   // { installed, signedIn: true|false|'unknown', detail, models } -- detail is the default model a
   // sidebar run gets (asked in Lumen's own GROK_HOME, see checkAuthStatus), when known (there is no
   // account-type distinction to report here, unlike Claude Code), and models the ids `grok models`
@@ -530,7 +537,7 @@ class GrokBuildEngine {
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
   async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', signal, emit }) {
-    const bin = await this.detect(true);
+    const bin = await this.ensureBin();
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };

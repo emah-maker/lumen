@@ -103,7 +103,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await app.evaluate(() => global.__updates.testHooks.setKind('zip', false));
   let id = await openSettings();
   let r = await row(inTab, id);
-  check('a copy that can't swap itself: the automatic-download switch is off-limits', r.autoDisabled === true && !r.checkDisabled, JSON.stringify(r));
+  check('a copy that cannot swap itself: the automatic-download switch is off-limits', r.autoDisabled === true && !r.checkDisabled, JSON.stringify(r));
   await inTab(id, "document.getElementById('updates-check').click()");
   r = await waitFor(async () => { const x = await row(inTab, id); return /available/.test(x.note) && x; });
   check('Check for updates finds 9.9.9 and offers the zip', /Lumen 9\.9\.9 is available/.test(r.note) && r.action === 'Download Lumen-9.9.9-win-x64.zip' && /Checked just now/.test(r.desc), JSON.stringify(r));

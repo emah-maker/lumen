@@ -1818,12 +1818,29 @@ function renderStreaming(el, source) {
   const draw = () => {
     if (!el.renderPending) return; // flushStreaming already drew it
     el.renderPending = false;
-    el.innerHTML = window.renderMarkdown(settledMarkdown(el.source));
+    drawTail(el);
     moveWorkingToEnd();
     scrollToBottom();
   };
-  if (source.length > 12000) setTimeout(draw, 120);
+  if (source.length - (el.stableLen || 0) > 12000) setTimeout(draw, 120);
   else requestAnimationFrame(draw);
+}
+
+// Finished blocks (everything up to the last blank line outside a code fence) are rendered once and
+// left in the DOM; each frame replaces only the nodes after them and parses only the tail text.
+function drawTail(el) {
+  const source = el.source;
+  const stable = window.markdownStableLength(source);
+  const done = el.stableLen || 0;
+  if (el.headNodes === undefined || stable < done) { el.innerHTML = ''; el.headNodes = 0; el.stableLen = 0; }
+  while (el.childNodes.length > el.headNodes) el.lastChild.remove();
+  if (stable > el.stableLen) {
+    el.insertAdjacentHTML('beforeend', window.renderMarkdown(source.slice(el.stableLen, stable)));
+    el.stableLen = stable;
+    el.headNodes = el.childNodes.length;
+  }
+  const tail = settledMarkdown(source.slice(el.stableLen));
+  if (tail) el.insertAdjacentHTML('beforeend', window.renderMarkdown(tail));
 }
 
 // The bubble's final draw, at once and with nothing held back, before a copy button or label goes in.

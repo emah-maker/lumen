@@ -173,10 +173,15 @@ function createUsage(deps) {
     unknown: a.unknown + (r.limitPoints == null && r.engine === 'claudecode' ? 1 : 0),
   }), { turns: 0, tokens: 0, costUSD: 0, limitPoints: null, unknown: 0 });
 
+  const meterIsFresh = (now) => Boolean(meter && meter.resetsAt > now && now - meter.at < FRESH);
+
   // Everything the panel and the meter show.
   async function summary({ refresh = false } = {}) {
-    const planData = await planUsage({ refresh }).catch((err) => ({ available: false, reason: err.message }));
     const now = Date.now();
+    // The sidebar meter asks after every reply; while a turn's own rate_limit_event has the 5-hour
+    // reading fresh, it doesn't need a `claude -p /usage` process (a whole CLI start) each time.
+    const passive = !refresh && meterIsFresh(now);
+    const planData = passive ? (plan?.data || { available: false, reason: 'Not read yet.' }) : await planUsage({ refresh }).catch((err) => ({ available: false, reason: err.message }));
     const windowStart = meter && meter.resetsAt > now ? meter.resetsAt - FIVE_HOURS : now - FIVE_HOURS;
     const since = (t) => records.filter((r) => r.at >= t);
     const byEngine = {};

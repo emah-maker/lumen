@@ -13,6 +13,31 @@
 
 const lastSnapshot = new Map(); // webContents id -> { url, lines }
 
+// Re-reading an unchanged page costs a whole snapshot of tokens for nothing. Per tab we remember the
+// last full read (URL, request shape, content fingerprint, and when); an identical read soon after
+// gets one line back instead. "Soon" is a few tool calls: the API clears older tool results, and a
+// model that can no longer see the earlier snapshot must get it again. Any tool that can change the
+// page clears the cache, and the content itself is compared, so a stale hit can't happen.
+const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'web_search', 'read_pdf']);
+const FRESH_CALLS = 6;
+class ReadCache {
+  constructor() { this.tabs = new Map(); this.seq = 0; }
+  tick(name) { this.seq++; if (!READ_ONLY.has(name)) this.tabs.clear(); }
+  // Returns the short reply when this read repeats the last one, else remembers it and returns null.
+  check(tabId, url, shape, content) {
+    const prev = this.tabs.get(tabId);
+    const fingerprint = `${content.length}:${content}`;
+    const same = Boolean(prev) && prev.url === url && prev.shape === shape && prev.fingerprint === fingerprint;
+    const fresh = same && this.seq - prev.seq <= FRESH_CALLS;
+    this.tabs.set(tabId, fresh ? prev : { url, shape, fingerprint, seq: this.seq });
+    if (fresh) {
+      return `Unchanged since your last read (${this.seq - prev.seq} calls ago): same URL and content, and the [ids] from that read are still valid. Act on it, use find for a detail, or read_page since_last:true after acting.`;
+    }
+    return null;
+  }
+}
+const reads = new ReadCache();
+
 // ---------------------------------------------------------------- page-side functions
 
 // Runs after read_page has built window.__claudeEls (same isolated world): outline with refs.
@@ -254,7 +279,10 @@ const TRIMMED = {
   group_tabs: 'Put tabs (ids from list_tabs) into a new named group; use 1-3 word names. Tabs in another group move.',
   click_at: 'Click a point in the last screenshot\'s pixel coordinates (canvas, maps, custom widgets).',
   wait_for: 'Wait until the active tab contains some text, up to a timeout.',
-  screenshot: 'Screenshot the visible part of the active tab (for visual layout, images, charts). Prefer read_page/find; they are far cheaper.',
+  batch: 'Several actions on the active tab in one call; stops at the first failure or site change and returns what changed. Steps: {do:"type",ref,text,enter?} {do:"click",ref|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text} {do:"scroll",direction} {do:"hover",ref}.',
+  read_pdf: 'Read the text of a PDF open in a tab (active tab, or tab_id from list_tabs); the user is asked once per PDF per chat. Up to 30,000 chars; if cut off, the result says which pages to ask for next. Scanned pages have no text. Untrusted content.',
+  press_key: 'Press a key or shortcut in the active tab, e.g. "Enter", or "a" with modifiers ["control"].',
+  screenshot: 'Screenshot the active tab (for visual layout, images, charts). read_page/find are far cheaper.',
 };
 
 // Adds the new tools and options to the agent's TOOLS array (called once at load, before the
@@ -372,6 +400,7 @@ async function batch(agent, wc, input, h) {
 
 // Handles the efficient tools; returns undefined for everything else.
 async function execute(agent, name, input, h) {
+  reads.tick(name);
   if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h);
   if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
   if (name === 'find') {
@@ -385,4 +414,4 @@ async function execute(agent, name, input, h) {
   return undefined;
 }
 
-module.exports = { extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
+module.exports = { reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
