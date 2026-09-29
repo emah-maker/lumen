@@ -370,4 +370,5 @@ module.exports = async function widgetUnits(check) {
   check('world clock: a stored widget is checked and keeps its colors and size; one without a place is dropped', clockWidget.wc.clock === '24' && clockWidget.colors === 'accent' && clockWidget.w === 4 && clockWidget.h === 3 && cleanWidget({ id: 'wclock02', type: 'worldclock', wc: { places: [] } }) === null && cleanWidget({ id: 'wclock03', type: 'worldclock' }) === null, JSON.stringify(clockWidget));
   const clockList = cleanList([{ id: 'wclock04', type: 'worldclock', wc: { places: [{ name: 'Tokyo', lat: 35.69, lon: 139.69 }] } }, { id: 'wweath04', type: 'weather', place: 'B', lat: 1, lon: 2 }]);
   check('world clock: an older list without positions still lays out, without overlap', clockList.length === 2 && noOverlap(clockList), enc(clockList));
+  return require('./widget-muse')(check); // Muse: pure logic, and the connector against a fake fetch
 };

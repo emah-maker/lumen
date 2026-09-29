@@ -26,7 +26,8 @@
 //   (a connector that signs in with OAuth keeps its tokens as one JSON secret: features/oauth.js packs it,
 //    x.setSecret(json) rewrites it after a refresh, and the sign-in itself is a set of createWidgets methods,
 //    like slackStart/slackFinish/slackDisconnect, that Settings calls)
-//   act(c, action, x) (optional) a page action (the Todoist checkbox, Spotify's play/pause): see actionFrom() below
+//   act(c, action, x) (optional) a page action (the Todoist checkbox, Spotify's play/pause, Muse's ask): see actionFrom() below;
+//                     returning { keep: true } shows the change without fetching the card again
 // and a renderer with the same type in renderer/newtab-widgets.js's WIDGET_RENDERERS.
 //
 // A connector with `secret` keeps one encrypted string under that name (main.js widgetSecret). For a
@@ -50,6 +51,7 @@ const GV = require('./gmail-view');
 const SL = require('./slack-view');
 const OA = require('./oauth');
 const WCK = require('./worldclock-view');
+const MV = require('./muse-view');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -66,6 +68,7 @@ const ENDPOINTS = {
   gmail: 'https://gmail.googleapis.com/gmail/v1',
   slack: 'https://slack.com/api', // Web API; sign-in is oauth.v2.access here and slack.com/oauth/v2/authorize (features/slack-view.js)
   github: 'https://api.github.com',
+  muse: 'https://api.meta.ai/v1', // Meta Model API (OpenAI-style), bearer key
 };
 const MAX_WIDGETS = 12;
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -75,6 +78,7 @@ const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when a
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
 const TIMEOUT = 12e3;
+const MUSE_TIMEOUT = 60e3; // a model answer (with web search) takes longer than a lookup
 
 // Text is only ever shown with textContent, so < and > stay (a task called "<b>" reads "<b>").
 const str = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
@@ -489,6 +493,48 @@ const CONNECTORS = {
     },
   },
 
+  // Meta's Muse model: a saved prompt answered on the card (c.muse, features/muse-view.js), and a
+  // field on the card for one-off questions. One encrypted secret, the API key. Prompts and answers go
+  // to Meta and use the key's credit, so nothing is asked until the card is added, the answer is kept
+  // for hours, and a typed question is kept in memory only (never stored, no history).
+  muse: {
+    label: 'Muse',
+    ttl: 6 * 3600e3,
+    secret: 'muse',
+    clean: (c) => ({ muse: MV.cleanConfig(c.muse), colors: WC.cleanMode(c.colors) }),
+    async resolve(input, x) {
+      const token = typeof input.token === 'string' ? input.token.trim() : '';
+      if (token && !MV.cleanKey(token)) throw new Error('That doesn’t look like a Meta API key (create one at dev.meta.ai).');
+      if (!token && !x.secret()) throw new Error('Paste your Meta API key.');
+      // No request here: checking would spend the key's credit. A wrong key shows on the card.
+      return { config: { muse: MV.cleanConfig(input.muse), colors: WC.cleanMode(input.colors) }, secret: token || undefined, message: 'Saved. The key is used the first time the card loads, and it costs a small amount of your Meta credit each time.' };
+    },
+    title: () => 'Muse',
+    summary: (c) => `${c.muse.model}${c.muse.search ? ' · web search' : ''}`,
+    async fetch(c, x) {
+      const got = await museCall(x, c.muse, null);
+      return { ...got, model: c.muse.model, search: c.muse.search, asked: null };
+    },
+    // Page action ask: one typed question. The answer sits on the card until the next refresh.
+    async act(c, action, x, cached) {
+      if (action.do !== 'ask') return false;
+      const question = MV.cleanQuestion(action.text);
+      if (!question) return false;
+      const t = x.now();
+      if (t - (cached.askedAt || 0) < MIN_REFRESH) { cached.notice = 'Wait a few seconds between questions.'; return { keep: true }; }
+      cached.askedAt = t;
+      try {
+        const got = await museCall(x, c.muse, question);
+        cached.asked = { question, answer: got.answer, sources: got.sources };
+        delete cached.notice;
+      } catch (err) {
+        delete cached.asked;
+        cached.notice = String(err?.message || err).slice(0, 200);
+      }
+      return { keep: true };
+    },
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -523,6 +569,23 @@ function sunFor(x, place) {
     if (!s) throw new Error('The service didn’t say which time zone this is.');
     return s;
   });
+}
+
+// One call to Meta: the saved prompt (no question) or a typed question -> { answer, sources }.
+async function museCall(x, cfg, question) {
+  const key = x.secret();
+  if (!key) throw new Error('Add your Meta API key in Settings.');
+  const req = MV.buildRequest(cfg, question);
+  const res = await x.raw(`${x.endpoint('muse')}/${req.path}`, {
+    method: 'POST', max: MV.MAX_BODY, timeout: MUSE_TIMEOUT, body: JSON.stringify(req.body),
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(MV.errorMessage(res.status, res.body));
+  let json = null;
+  try { json = JSON.parse(res.body); } catch { /* handled below */ }
+  const out = MV.parseResponse(json);
+  if (!out) throw new Error('Muse sent an answer Lumen couldn’t read.');
+  return out;
 }
 
 // Todoist's tasks for a widget's question (a filter query, or a project's own list; the unified API,
@@ -717,7 +780,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, wc: i.wc, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -839,11 +902,11 @@ function createWidgets(deps) {
     if (recent.length >= (Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
     recent.push(t);
   }
-  async function request(url, { method = 'GET', headers = {}, max = 2e6, body } = {}) {
+  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT } = {}) {
     if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
     spend();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT);
+    const timer = setTimeout(() => controller.abort(), timeout);
     let res;
     try {
       res = await deps.fetch(url, { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' });
@@ -903,10 +966,10 @@ function createWidgets(deps) {
   function helpers(secretName, secretOverride) {
     const x = {
       endpoint: (name) => deps.endpoints?.()[name] || ENDPOINTS[name],
+      now,
       secret: () => secretOverride || (secretName ? deps.getSecret(secretName) : null),
       setSecret: (value) => { if (secretName) deps.setSecret(secretName, value); },
       spotifyToken: spotifyTokenFor(secretName),
-      now,
       // A small picture as a data: URL (Spotify's album art), kept for an hour. Throws when it isn't a
       // small enough JPEG, PNG or WebP from Spotify's own host.
       image: (url) => memo(`img:${url}`, 3600e3, async () => {
@@ -1416,10 +1479,14 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|play|pause|next|previous)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|play|pause|next|previous|ask)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
+      if (!action.text) return { invalid: true };
+    }
+    if (action.do === 'ask') {
+      action.text = MV.cleanQuestion(params.get('text'));
       if (!action.text) return { invalid: true };
     }
     if (action.do === 'consent') {
@@ -1499,6 +1566,7 @@ function createWidgets(deps) {
     try {
       const done = await c.act(w, action, helpers(c.secret), entry.data);
       if (!done) return false;
+      if (done.keep) { deps.onUpdate?.(); return true; } // nothing to fetch again (a Muse answer costs money)
       forget('tasks:');
       forget('done:');
       if (done.undo) {

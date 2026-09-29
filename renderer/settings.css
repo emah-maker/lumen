@@ -263,7 +263,7 @@ body.interstitial { display: block; }
 .widget-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
 .widget-fields > :only-child { grid-column: 1 / -1; }
 .widget-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.widget-field input, .widget-field select { width: 100%; background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
+.widget-field input, .widget-field select, .widget-field textarea { width: 100%; background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
 .widget-form > .widget-field { max-width: 50%; }
 .widget-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .widget-buttons > .note { flex: 0 1 auto; min-width: 0; max-width: 60%; }
