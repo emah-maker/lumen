@@ -11,7 +11,10 @@ function reportBounds() {
   const r = heldRect || viewport.getBoundingClientRect();
   const inset = document.body.classList.contains('agent-active') ? 2 : 0;
   const bounds = { x: r.left + inset, y: r.top + inset, width: r.width - inset * 2, height: r.height - inset * 2 };
-  const key = `${Math.round(bounds.x)},${Math.round(bounds.y)},${Math.round(bounds.width)},${Math.round(bounds.height)}`;
+  // The page area's width with the sidebar closed: the new-tab page keeps laying itself out at this
+  // width while the sidebar covers its right side (main.js layout(), features/sidebar-overlay.js).
+  bounds.fullWidth = Math.max(bounds.width, Math.round(document.querySelector('.body').getBoundingClientRect().right - r.left - inset * 2));
+  const key = `${Math.round(bounds.x)},${Math.round(bounds.y)},${Math.round(bounds.width)},${Math.round(bounds.height)},${Math.round(bounds.fullWidth)}`;
   if (key === lastBounds) return; // called every frame during animations; only send changes
   lastBounds = key;
   window.browser.setContentBounds(bounds);

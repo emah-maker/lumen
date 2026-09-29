@@ -38,6 +38,7 @@ const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords } = require('./tab-groups');
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
+const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
 const { createManagers, pageOf: managerPageOf } = require('./features/managers'); // Bookmarks and Downloads pages
@@ -1172,13 +1173,33 @@ function layout() {
     const show = visible && !viewFrozen && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
+    // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
+    // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
+    // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
+    const overlay = visible && !tab.fullscreen && isNewTab(tab.view.webContents.getURL())
+      ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds })
+      : null;
+    setOverlay(tab, overlay);
     if (!visible) continue;
     if (tab.fullscreen) {
       const [width, height] = win.getContentSize();
       tab.view.setBounds({ x: 0, y: 0, width, height });
     } else {
-      tab.view.setBounds(contentBounds);
+      tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
     }
+  }
+}
+// Turn the tab's full-width layout override on, change it or off (only when it changed).
+function setOverlay(tab, params) {
+  if (sidebarOverlay.sameParams(tab.overlay || null, params)) return;
+  const wc = tab.view.webContents;
+  try {
+    if (params) wc.enableDeviceEmulation(params);
+    else wc.disableDeviceEmulation();
+    tab.overlay = params;
+  } catch (err) {
+    console.error('[lumen] sidebar overlay:', err.message);
+    tab.overlay = null;
   }
 }
 
@@ -1245,6 +1266,15 @@ function wireView(tab, url, history = null) {
   });
   wc.on('enter-html-full-screen', () => { tab.fullscreen = true; layout(); });
   wc.on('leave-html-full-screen', () => { tab.fullscreen = false; layout(); });
+  // A new page may come from a fresh renderer that doesn't carry the full-width layout override:
+  // drop it and let layout() put it back if this is still (or now) the new-tab page under the sidebar.
+  wc.on('did-navigate', () => {
+    if (tab.overlay) {
+      try { wc.disableDeviceEmulation(); } catch { /* the page is going away */ }
+      tab.overlay = null;
+    }
+    if (tab.id === activeId) layout();
+  });
   wc.on('zoom-changed', (_e, direction) => {
     zoomBy(wc, direction === 'in' ? 0.5 : -0.5);
   });
@@ -3811,6 +3841,7 @@ ipcMain.on('content-bounds', (_e, bounds) => {
     y: Math.round(bounds.y),
     width: Math.max(0, Math.round(bounds.width)),
     height: Math.max(0, Math.round(bounds.height)),
+    fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
   layout();
 });
