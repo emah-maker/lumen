@@ -4,6 +4,17 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.2.8 (2026-09-29)
+
+- Updates install from inside Lumen on every install type: it downloads the release zip, checks it, and swaps it in when you restart. Per-machine installs, the portable exe and unwritable Mac apps still get a Download prompt.
+- Drag a tab out of the tab strip to open it in its own window, drag it onto another window to join it, or use "Move tab to window" in the tab menu.
+- The sidebar AI can read a PDF you have open, after you allow it for that file.
+- A usage bar for Claude Code and Grok Build.
+- The AI works faster and wastes fewer steps: a clearer prompt, cached prompts, trimmed tool results, and a guard that changes course after repeated failed actions.
+- Google pages that ignore the dark theme are darkened, and the taskbar icon is re-applied after load.
+- Release builds can be Widevine-signed when castLabs EVS credentials are set up.
+- Includes the 0.2.7 changes below, which were never published on their own.
+
 ## 0.2.7 (2026-09-28)
 
 - PDF viewer, opening YouTube videos, and browsing local files.
