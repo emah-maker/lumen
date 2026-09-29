@@ -189,7 +189,8 @@ const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 - `newPage()` opens a Lumen tab, `page.close()` closes it, and `browser.close()` only disconnects.
 - The toolbar says **Lumen is being driven by Playwright (CDP)** while connected; **Stop** disconnects.
 - CDP clients don't get approval cards. Any program on your computer that has the address can use the port while it's on, including on signed-in sites. Turning the setting off closes the proxy immediately.
-- The proxy is the only way in: Lumen starts through a small launcher (`launcher.js`) that gives Chromium a private pipe instead of a debugging port.
+- The proxy is the only way in, and no debugging port is ever opened. On Windows and Linux, Lumen starts through a small launcher (`launcher.js`) that gives Chromium a private pipe. On macOS there is no launcher (it would lose links opened from other apps): `cdp-inproc.js` answers the protocol inside Lumen from each tab's own debugger.
+- Through the macOS (in-process) backend, some browser-level features aren't available and answer with an error: `browser.newContext()`, `context.grantPermissions()`, download events and blocking downloads, window bounds. Clients share one debugger session per tab, so Fetch interception (`page.route`) works for one client at a time, and an iframe or worker that starts paused may already be running when a client resumes it.
 
 ## Token-efficient tools (all AIs)
 
@@ -292,7 +293,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - `agent.js`: agent loop (`claude-opus-5`, streaming, adaptive thinking, web search, browser tools, approvals, ADHD mode)
 - `page-scripts.js`: scripts injected into pages to read and operate them
 - `snapshot.js`: token-efficient tools (compact outline, diffs, find, batch, screenshot options)
-- `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs; `launcher.js` starts Lumen with Chromium's DevTools on a private pipe while it's on
+- `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs; `launcher.js` starts Lumen with Chromium's DevTools on a private pipe while it's on (Windows, Linux); `cdp-inproc.js` serves the same protocol from inside Lumen, with no port, pipe or launcher (macOS; `LUMEN_AUTOMATION_INPROC=1` elsewhere)
 - `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab, settings, history and error pages
 - `scripts/`: build, install and `capture-media.js` (the README's screenshots)
 - `docs/media/`: the README's screenshots and GIFs (not shipped in builds)

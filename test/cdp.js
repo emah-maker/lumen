@@ -12,6 +12,9 @@ const os = require('os');
 const path = require('path');
 
 const PORT = 9339;
+// The in-process backend (cdp-inproc.js): always on macOS, LUMEN_AUTOMATION_INPROC=1 elsewhere.
+// Parts 1 and 2 run the same checks against it; part 3 (the launcher) doesn't apply.
+const INPROC = process.platform === 'darwin' || process.env.LUMEN_AUTOMATION_INPROC === '1';
 const APP_DIR = path.join(__dirname, '..');
 const until = async (fn, ms = 30000) => {
   for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 250))) {
@@ -125,7 +128,8 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
   check('WebSocket without the token is refused', bareWs === 401, bareWs);
   const noToken = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`).then((b) => { b.close(); return 'connected'; }, (err) => err.message);
   check('connectOverCDP without the token fails', /401/.test(noToken), noToken);
-  check('DevToolsActivePort is gone once read', !fs.existsSync(path.join(profile, 'DevToolsActivePort')), 'still there');
+  // (Not with the in-process backend: it never reads Chromium's port, which here is Playwright's own.)
+  if (!INPROC) check('DevToolsActivePort is gone once read', !fs.existsSync(path.join(profile, 'DevToolsActivePort')), 'still there');
 
   const version = await fetch(`${root}/json/version`).then((r) => r.json());
   check('/json/version points at the proxy, token included', version.webSocketDebuggerUrl === `ws://127.0.0.1:${PORT}/${token}/devtools/browser`, JSON.stringify(version));
@@ -171,7 +175,7 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
   check('agent tools work alongside CDP', read.includes('[1] button "Go"'), read);
 
   await browser.close();
-  await ui.waitForTimeout(500);
+  await ui.waitForTimeout(2000); // the pill holds for 1.5 s after the last client leaves (renderer MCP_PILL_HOLD_MS)
   check('disconnecting leaves Lumen running', (await lumenTabs()) >= 1, 'no tabs');
   check('pill clears after disconnect', !(await ui.evaluate(() => document.body.classList.contains('mcp-active'))), 'still active');
 
@@ -185,8 +189,10 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
 
   await app.close();
 
-  // 3. Started the way a user starts it: through launcher.js, Chromium on a private pipe.
-  {
+  // 3. Started the way a user starts it: through launcher.js, Chromium on a private pipe. (macOS and
+  // LUMEN_AUTOMATION_INPROC=1 have no launcher: test/cdp-inproc.js covers those.)
+  if (INPROC) console.log('SKIP  launcher part (the in-process backend has no launcher; see test/cdp-inproc.js)');
+  else {
     const pipeProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cdp-pipe-'));
     fs.writeFileSync(path.join(pipeProfile, 'settings.json'), JSON.stringify({ automationEnabled: true, automationPort: PORT }));
     const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: pipeProfile, LUMEN_TEST_LAUNCHER: '1' };
