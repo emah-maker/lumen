@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('browser', {
   onOrganizing: on('tabs:organizing'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
+  translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg), // the translate infobar and button (features/translate.js)
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
