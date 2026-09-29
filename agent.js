@@ -1774,9 +1774,13 @@ ${out.text}${note}
     }
   }
 
+  // Repeat-read shortcuts (snapshot.js) are for the sidebar's own chat only: MCP clients and direct
+  // calls always get the full page.
+  readDedupe() { return taskScope.getStore()?.gate?.external === false; }
+
   async runTool(name, input) {
     // --- efficiency hook (snapshot.js) ---
-    const efficient = await snapshot.execute(this, name, input, { runScript, scripts });
+    const efficient = await snapshot.execute(this, name, input, { runScript, scripts, dedupe: () => this.readDedupe() });
     if (efficient !== undefined) return efficient;
     // --- end efficiency hook ---
     switch (name) {
@@ -1786,7 +1790,7 @@ ${out.text}${note}
         const elementOffset = Math.max(0, input.element_offset || 0);
         const page = await runScript(wc, scripts.readPage(textOffset, elementOffset));
         const { text, ...rest } = page;
-        const same = snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}`, `${JSON.stringify(rest)}
+        const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}`, `${JSON.stringify(rest)}
 ${text}`);
         if (same) return `<untrusted_page_content>
 ${same}

@@ -270,7 +270,7 @@ const NEW_TOOLS = [
 
 // Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
 const TRIMMED = {
-  read_page: 'Read the active tab. Default (compact) returns an outline with [id] refs for click/type_text/batch; mode:"full" returns raw JSON elements and text (15k-char chunks via text_offset, 150 elements via element_offset). Ids stay valid until the page changes.',
+  read_page: 'Read the active tab. mode:"compact" returns an outline with [id] refs for click/type_text/batch (use this first); mode:"full" returns raw JSON elements and text (15k-char chunks via text_offset, 150 elements via element_offset). Ids stay valid until the page changes.',
   click: 'Click an element by [id] from read_page/find, or by its visible text.',
   type_text: 'Replace an input/textarea/contenteditable value, pick a <select> option by label, or set date/time (e.g. 2026-03-14, 13:30). Use click for checkboxes/radios. press_enter submits.',
   fill_form: 'Fill several fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved submitting.',
@@ -398,9 +398,7 @@ async function batch(agent, wc, input, h) {
 // Handles the efficient tools; returns undefined for everything else.
 async function execute(agent, name, input, h) {
   reads.tick(name);
-  // compact is the default: full (raw JSON + text) only when asked for, or when paging it with offsets.
-  const wantsFull = input.mode === 'full' || input.text_offset > 0 || input.element_offset > 0;
-  if (name === 'read_page' && (input.mode === 'compact' || input.since_last || !wantsFull)) return compact(agent, agent.requireTab(), input, h);
+  if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h);
   if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
