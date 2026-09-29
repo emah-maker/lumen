@@ -52,6 +52,32 @@ const path = require('path');
   l = await look();
   check('Plain has no backdrop and normal text', l.bg === 'plain' && !l.media, JSON.stringify(l));
 
+  // ---- animated effects: loaded only when on, drawn at a capped rate, gone when off
+  const fx = () => page("({ script: [...document.scripts].some((x) => /newtab-effects\\.js$/.test(x.src)), canvas: document.querySelectorAll('#effect').length, w: document.getElementById('effect')?.width || 0, api: typeof window.setBackdropEffect })");
+  let e = await fx();
+  check('with no effect, its script is never loaded', !e.script && !e.canvas && e.api === 'undefined', JSON.stringify(e));
+  check('an unknown effect is refused', (await set('newTabEffect', 'fireworks')).startsWith('ERROR'), 'accepted');
+  for (const name of ['particles', 'stars', 'bubbles', 'snow']) {
+    await set('newTabEffect', name);
+    for (let i = 0; i < 20 && !(e = await fx()).canvas; i++) await sleep(100);
+    const drawn = await page("new Promise((res) => { const c = document.getElementById('effect'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; res(n); })");
+    check(`${name}: one canvas that draws something`, e.script && e.canvas === 1 && e.w > 0 && drawn > 0, JSON.stringify({ e, drawn }));
+  }
+  // The frame rate stays capped (rAF can still run 60 times a second; the effect draws at most 30).
+  const fps = await page(`new Promise((res) => { const c = document.getElementById('effect'); const ctx = c.getContext('2d'); let n = 0; const orig = ctx.clearRect.bind(ctx); ctx.clearRect = (...a) => { n++; return orig(...a); }; setTimeout(() => { ctx.clearRect = orig; res(n); }, 1000); })`);
+  check('an effect draws at most ~30 frames a second', fps <= 32, fps);
+  await set('newTabEffect', 'none');
+  await sleep(400);
+  e = await fx();
+  check('turning it off removes the canvas and stops drawing', e.canvas === 0, JSON.stringify(e));
+  await set('newTabEffect', 'particles');
+  await set('reduceMotion', true);
+  await sleep(400);
+  const still = await page("new Promise((res) => { const ctx = document.getElementById('effect').getContext('2d'); let n = 0; const orig = ctx.clearRect.bind(ctx); ctx.clearRect = (...a) => { n++; return orig(...a); }; setTimeout(() => res(n), 500); })");
+  check('Reduce motion leaves one still frame (nothing animates)', still === 0 && (await fx()).canvas === 1, still);
+  await set('reduceMotion', false);
+  await set('newTabEffect', 'none');
+
   // ---- a picture kept in the profile
   const profile = await app.evaluate(({ app }) => app.getPath('userData'));
   const png = await app.evaluate(({ nativeImage }) => nativeImage.createFromBitmap(Buffer.alloc(40 * 30 * 4, 200), { width: 40, height: 30 }).toJPEG(80).toString('base64'));

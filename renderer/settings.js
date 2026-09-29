@@ -397,6 +397,8 @@ function buildLook(card) {
       onclick: async () => { await save('newTabBackground', value); renderTiles(); } }, h('span', { text: label })));
   }
   card.append(stackRow('New tab background', 'Behind the new-tab page. A picture is resized and kept in your Lumen profile; it never leaves this computer.', tiles, picture));
+  card.append(select('newTabEffect', 'Animated effect', 'Moving particles over the background. Light on purpose: few particles, at most 30 frames a second, paused while the tab is hidden, and still with Reduce motion.',
+    [['none', 'None'], ['particles', 'Particles'], ['stars', 'Stars'], ['bubbles', 'Bubbles'], ['snow', 'Snow']]));
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
   name.addEventListener('change', () => save('newTabName', name.value));

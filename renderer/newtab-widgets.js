@@ -287,4 +287,21 @@ setInterval(() => {
   const box = document.getElementById('widgets');
   if (!box.querySelector('.w-row.done')) window.dispatchEvent(new HashChangeEvent('hashchange'));
 }, 60e3);
+// A framed page (Google Calendar's embed) may focus itself as it loads, and then the search box
+// stops taking typing. Focus that goes into a frame without the pointer on it or a Tab press goes
+// back where it was.
+{
+  let pointerOnFrame = false;
+  let tabbed = 0;
+  let before = null;
+  document.addEventListener('pointerover', (e) => { pointerOnFrame = e.target.classList?.contains('w-frame') ?? false; }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Tab') tabbed = Date.now(); }, true);
+  document.addEventListener('focusin', (e) => { if (!e.target.classList?.contains('w-frame')) before = e.target; });
+  addEventListener('blur', () => setTimeout(() => {
+    const f = document.activeElement;
+    if (!f?.classList?.contains('w-frame') || pointerOnFrame || Date.now() - tabbed < 1000) return;
+    if (before?.isConnected) before.focus({ preventScroll: true });
+    else f.blur();
+  }, 0));
+}
 window.renderWidgets = renderWidgets;
