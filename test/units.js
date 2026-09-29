@@ -1755,6 +1755,34 @@ async function swapHelperRuns() {
   fs.rmSync(d, { recursive: true, force: true });
 }
 
+// ---- screenshot and QR helpers (features/screenshot.js, features/qr.js)
+{
+  const shot = require('../features/screenshot');
+  const qr = require('../features/qr');
+  const when = new Date(2026, 8, 5, 7, 3, 9);
+  check('screenshot: file name is Lumen <site> <timestamp>.png without www.', shot.fileNameFor('https://www.Example.com/a/b?x=1', when) === 'Lumen Example.com 2026-09-05 07.03.09.png'.replace('Example', 'example'), shot.fileNameFor('https://www.Example.com/a', when));
+  check('screenshot: file name has no characters Windows refuses, and a fallback site', !/[/\\:*?"<>|]/.test(shot.fileNameFor('https://[::1]:8080/', when)) && /^Lumen page /.test(shot.fileNameFor('not a url', when)), shot.fileNameFor('https://[::1]:8080/', when));
+  check('screenshot: an existing name gets (2), (3)', shot.uniquePath('/x', 'a.png', (f) => f === path.join('/x', 'a.png') || f === path.join('/x', 'a (2).png')) === path.join('/x', 'a (3).png'), '');
+  const view = { width: 800, height: 600 };
+  check('screenshot: a dragged rectangle is whole numbers inside the view', JSON.stringify(shot.normalizeRect({ x: 10.4, y: 20.6, width: 100.2, height: 50 }, view)) === JSON.stringify({ x: 10, y: 21, width: 101, height: 50 }), JSON.stringify(shot.normalizeRect({ x: 10.4, y: 20.6, width: 100.2, height: 50 }, view)));
+  check('screenshot: a rectangle past the edge is clamped, a backwards drag is flipped', JSON.stringify(shot.normalizeRect({ x: 700, y: 500, width: 300, height: 300 }, view)) === JSON.stringify({ x: 700, y: 500, width: 100, height: 100 }) && JSON.stringify(shot.normalizeRect({ x: 200, y: 200, width: -50, height: -40 }, view)) === JSON.stringify({ x: 150, y: 160, width: 50, height: 40 }), '');
+  check('screenshot: a stray click or NaN is not a selection', shot.normalizeRect({ x: 5, y: 5, width: 2, height: 200 }, view) === null && shot.normalizeRect({ x: NaN, y: 0, width: 10, height: 10 }, view) === null && shot.normalizeRect(null, view) === null, '');
+  check('screenshot: DIP rectangles scale to image pixels and stay inside the image', JSON.stringify(shot.scaleRect({ x: 10, y: 20, width: 100, height: 50 }, 1.5, { width: 1200, height: 900 })) === JSON.stringify({ x: 15, y: 30, width: 150, height: 75 }) && JSON.stringify(shot.scaleRect({ x: 790, y: 590, width: 10, height: 10 }, 1.25, { width: 1000, height: 750 })) === JSON.stringify({ x: 988, y: 738, width: 12, height: 12 }), JSON.stringify(shot.scaleRect({ x: 790, y: 590, width: 10, height: 10 }, 1.25, { width: 1000, height: 750 })));
+  check('screenshot: a full page under the cap is not cut', JSON.stringify(shot.capSize({ width: 1280, height: 5000.2 }, 1)) === JSON.stringify({ width: 1280, height: 5001, cut: false }), JSON.stringify(shot.capSize({ width: 1280, height: 5000.2 }, 1)));
+  check('screenshot: a full page is cut at 16000 output pixels and says so', JSON.stringify(shot.capSize({ width: 1280, height: 30000 }, 2)) === JSON.stringify({ width: 1280, height: 8000, cut: true }) && shot.capSize({ width: 100, height: 16000 }, 1).cut === false, JSON.stringify(shot.capSize({ width: 1280, height: 30000 }, 2)));
+  check('qr: only http(s) addresses, unaltered', qr.checkInput('https://a.example/x?y=1#z').text === 'https://a.example/x?y=1#z' && qr.checkInput('lumen://chat').error === 'scheme' && qr.checkInput('file:///C:/a').error === 'scheme' && qr.checkInput('javascript:alert(1)').error === 'scheme', '');
+  const long = (n) => `https://a.example/${'x'.repeat(n - 18)}`;
+  check('qr: 800 characters is fine, 801 warns, 2000 warns, 2001 is refused', qr.checkInput(long(800)).warn === null && qr.checkInput(long(801)).warn === 'long' && qr.checkInput(long(2000)).ok === true && qr.checkInput(long(2001)).error === 'too-long', '');
+  check('qr: selected text is trimmed, 1 to 500 characters', qr.checkInput('  hi  ', 'text').text === 'hi' && qr.checkInput('   ', 'text').error === 'empty' && qr.checkInput('x'.repeat(500), 'text').ok && qr.checkInput('x'.repeat(501), 'text').error === 'too-long', '');
+  const m = qr.makeMatrix('https://example.com/');
+  check('qr: a short address makes a 25x25 (version 2) grid with the finder squares', m.size === 25 && m.rows.length === 25 && m.rows[0].startsWith('1111111') && m.rows[24].startsWith('1111111') && m.rows[0].endsWith('1111111'), `${m.size} ${m.rows[0]}`);
+  check('qr: a 2000 character address still fits', qr.makeMatrix(long(2000)).size > 100, '');
+  check('qr: text with non-Latin characters encodes', qr.makeMatrix('QR \u65e5\u672c\u8a9e \u2603').size >= 21, '');
+  const bmp = qr.renderBitmap(m, 4, 4);
+  check('qr: the bitmap is black on white with a quiet zone', bmp.width === (25 + 8) * 4 && bmp.buffer.length === bmp.width * bmp.height * 4 && bmp.buffer[0] === 255 && bmp.buffer[((4 * 4) * bmp.width + 4 * 4) * 4] === 0 && bmp.buffer[3] === 255, '');
+  check('qr: saved file name names the site', qr.fileNameFor('https://www.example.com/a', when) === 'Lumen QR example.com 2026-09-05 07.03.09.png' && /^Lumen QR text /.test(qr.fileNameFor('hello', when)), qr.fileNameFor('https://www.example.com/a', when));
+}
+
 // ---- page translation: pure logic (features/translate.js)
 (() => {
   const tr = require('../features/translate');

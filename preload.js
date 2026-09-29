@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('browser', {
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
   onAskSelection: on('ask-selection'),
+  onAttachImage: on('attach-image'), // a screenshot for the sidebar composer (features/screenshot.js)
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),

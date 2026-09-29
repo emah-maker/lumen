@@ -34,7 +34,7 @@ module.exports = [
   { files: ['renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.
   // The chat itself (chat-core.js) is loaded before app.js, which uses it (and sets its chatHost hooks).
-  { files: ['renderer/app.js'], languageOptions: { globals: { t: 'readonly', updateTabAudio: 'readonly', $: 'readonly', ask: 'readonly', chatHost: 'readonly', startChat: 'readonly', TOOL_LABELS: 'readonly', append: 'readonly', showApproval: 'readonly', approvals: 'readonly', resolveApproval: 'readonly', running: 'readonly' } } },
+  { files: ['renderer/app.js'], languageOptions: { globals: { t: 'readonly', updateTabAudio: 'readonly', $: 'readonly', ask: 'readonly', addImages: 'readonly', chatHost: 'readonly', startChat: 'readonly', TOOL_LABELS: 'readonly', append: 'readonly', showApproval: 'readonly', approvals: 'readonly', resolveApproval: 'readonly', running: 'readonly' } } },
   { files: ['renderer/chat-core.js'], languageOptions: { globals: { t: 'readonly' } } },
   // chat-page.js (the full-page chat) is loaded after chat-core.js and uses its helpers; chat-items.js and chat-extras.js use t.
   { files: ['renderer/chat-page.js'], languageOptions: { globals: { t: 'readonly', $: 'readonly', chatHost: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', loadModels: 'readonly', refreshSetup: 'readonly', startChat: 'readonly', beginTurn: 'readonly', turn: 'readonly', runId: 'writable' } } },
