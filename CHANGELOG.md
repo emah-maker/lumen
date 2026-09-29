@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Automation (Playwright over CDP) on macOS no longer opens Chromium's debugging port: Lumen answers the protocol itself, and links opened from other apps keep working.
+
 ## 0.2.11 (2026-09-29)
 
 0.2.10 was tagged but its build stopped at a failing test and was never published; its changes ship here.
