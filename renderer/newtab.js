@@ -1,6 +1,6 @@
 // New-tab page. The browser passes everything in the URL hash as JSON:
 //   { favorites: [{ title, url, icon? }], frequent: [{ title, url, icon? }], blocked: number,
-//     look: { background, image (a file: URL in the profile), accent: { light, dark }, clock, name, sections },
+//     look: { background, image (a file: URL in the profile), effect, still, lite, accent: { light, dark }, clock, name, sections },
 //     widgets: [{ id, type, title, data, error, loading }] (features/widgets.js; newtab-widgets.js draws them) }
 // (an older plain array means favorites only). Icons are favicons the browser cached locally as
 // data: URLs; the page itself never touches the network.
@@ -34,6 +34,7 @@ function data() {
 
 // [look] The page's design from Settings → Appearance, checked field by field.
 const BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
+const EFFECTS = ['particles', 'stars', 'bubbles', 'snow']; // newtab-effects.js
 const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
 function lookOf(l) {
   const look = l && typeof l === 'object' ? l : {};
@@ -42,6 +43,7 @@ function lookOf(l) {
   const sections = look.sections && typeof look.sections === 'object' ? look.sections : {};
   return {
     background, image,
+    effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true, lite: look.lite === true,
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
@@ -63,6 +65,17 @@ function applyLook(look) {
     root.setProperty('--ring', `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, 0.3)`);
   } else { root.removeProperty('--accent'); root.removeProperty('--ring'); }
   document.getElementById('clock').hidden = !look.clock;
+  applyEffect(look);
+}
+// The animated effect's script is loaded the first time one is on, never otherwise.
+let effectScript = null;
+function applyEffect(look) {
+  if (window.setBackdropEffect) { window.setBackdropEffect(look.effect, look); return; }
+  if (look.effect === 'none' || effectScript) return;
+  effectScript = document.createElement('script');
+  effectScript.src = 'newtab-effects.js';
+  effectScript.onload = () => window.setBackdropEffect?.(currentLook.effect, currentLook);
+  document.head.append(effectScript);
 }
 dark.addEventListener('change', () => applyLook(currentLook));
 function tickClock() {

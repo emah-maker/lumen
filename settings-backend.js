@@ -35,6 +35,7 @@ const DEFAULTS = {
   theme: 'system', // nativeTheme.themeSource: also what websites see as prefers-color-scheme
   accentColor: 'blue', // [look] a preset from ACCENTS, or '#rrggbb'
   newTabBackground: 'plain', // [look] plain | aurora | dusk | ocean | forest | sunset | graphite | image
+  newTabEffect: 'none', // [look] an animated layer over the background: none | particles | stars | bubbles | snow
   newTabImage: 0, // [look] when the wallpaper file (newtab-wallpaper.jpg in the profile) was last set; 0: none
   newTabClock: true, // [look] the big clock above the greeting
   newTabName: '', // [look] "Good evening, <name>"
@@ -89,6 +90,7 @@ const ACCENTS = {
   red: ['#ff3b30', '#ff453a'], orange: ['#ff9500', '#ff9f0a'], green: ['#28a745', '#30d158'], teal: ['#30b0c7', '#40c8e0'], graphite: ['#8e8e93', '#98989d'],
 };
 const NEW_TAB_BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
+const NEW_TAB_EFFECTS = ['none', 'particles', 'stars', 'bubbles', 'snow'];
 const HEX = /^#[0-9a-f]{6}$/i;
 const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
@@ -106,6 +108,7 @@ function validate(key, value) {
     case 'theme': return pick(value, ['system', 'light', 'dark'], null);
     case 'accentColor': return ACCENTS[value] || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabBackground': return pick(value, NEW_TAB_BACKGROUNDS, null);
+    case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
     case 'newTabName': return String(value ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40);
     case 'newTabImage': return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
@@ -213,6 +216,8 @@ function create(deps) {
     return {
       background: image ? 'image' : p.newTabBackground === 'image' ? 'plain' : p.newTabBackground,
       image,
+      // Reduce motion draws one still frame; Performance mode keeps the effect sparser and slower.
+      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
       accent: accentOf(p.accentColor),
       clock: p.newTabClock, name: p.newTabName,
       sections: { favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
@@ -458,7 +463,7 @@ function create(deps) {
       default: break;
     }
     if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor'].includes(key)) deps.ui()?.send('prefs:ui', uiPrefs());
-    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
+    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
@@ -727,4 +732,4 @@ function create(deps) {
   };
 }
 
-module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

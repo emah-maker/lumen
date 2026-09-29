@@ -46,6 +46,8 @@
       background: radial-gradient(35% 40% at 80% 20%, rgba(255, 255, 255, 0.16), transparent 70%), radial-gradient(40% 45% at 15% 80%, rgba(255, 255, 255, 0.08), transparent 70%);
       animation: drift 36s var(--ease) infinite alternate;
     }
+    /* [look] An animated effect (newtab-effects.js) sits over the background, under everything else. */
+    #effect { position: fixed; inset: 0; z-index: -1; width: 100vw; height: 100vh; pointer-events: none; }
     body[data-bg="image"] #backdrop { background: #000 var(--wallpaper) center / cover no-repeat; }
     body[data-bg="image"] #backdrop::after { background: linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, rgba(0, 0, 0, 0.12) 40%, rgba(0, 0, 0, 0.45) 100%); inset: 0; }
     @keyframes drift { from { transform: translate3d(-3%, -2%, 0) scale(1); } to { transform: translate3d(3%, 2%, 0) scale(1.08); } }
