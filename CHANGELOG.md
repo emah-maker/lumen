@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Background tasks: let the AI do a job on its own in a hidden tab while you keep browsing (the clock button next to Send, or `/background …`), on a schedule, or watch a page and get told when it changes or a condition holds (`/watch …`, or Watch This Page in the menu). Tasks live in a new Tasks panel with steps, results, cost, and approval cards; they ask before visiting sites you did not list and before buying, sending or submitting anything. Scheduled and watching tasks run only while Lumen is open.
+
 ## 0.2.11 (2026-09-29)
 
 0.2.10 was tagged but its build stopped at a failing test and was never published; its changes ship here.
