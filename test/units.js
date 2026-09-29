@@ -2081,7 +2081,106 @@ async function tabsAskRuns() {
   fs.rmSync(dirS, { recursive: true, force: true });
 })();
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(() => {
+// ---- background tasks: model, allowed sites, schedules, queue, watching, state machine, store (features/background-agents.js)
+async function bgTaskRuns() {
+  const bg = require('../features/background-agents');
+  const NOW = Date.UTC(2026, 8, 29, 12, 0, 0);
+  const mk = (extra = {}) => ({ ...bg.makeTask({ prompt: 'Check example.com for the price', model: 'claude-opus-5', now: NOW }), ...extra });
+
+  // allowed sites
+  check('bg sites: hosts and bare domains in a prompt, not file names', JSON.stringify(bg.hostsInText('Compare https://shop.example.com/a?x=1 with (bar.org/x), see notes.txt and index.js, mail me@x.com')) === JSON.stringify(['shop.example.com', 'bar.org']), JSON.stringify(bg.hostsInText('Compare https://shop.example.com/a?x=1 with (bar.org/x), see notes.txt and index.js, mail me@x.com')));
+  check('bg sites: localhost and ports count', bg.hostsInText('open localhost:3000/a and 127.0.0.1:8080').join() === 'localhost:3000,127.0.0.1:8080', bg.hostsInText('open localhost:3000/a and 127.0.0.1:8080').join());
+  const sites = bg.allowedSitesFor('Find flights on kayak.com', 'https://www.google.com/flights?q=1');
+  check('bg sites: prompt hosts + the current tab, with the www twin', ['kayak.com', 'www.kayak.com', 'www.google.com', 'google.com'].every((s) => sites.includes(s)) && sites.length === 4, sites.join());
+  check('bg sites: only web pages count for the current tab', bg.allowedSitesFor('hello', 'file:///C:/a.html').length === 0 && bg.allowedSitesFor('hello', 'about:blank').length === 0, '');
+
+  // schedules
+  check('bg schedule: now/at/every/watch normalize', bg.normalizeSchedule({ type: 'every', minutes: '30' }).minutes === 30 && bg.normalizeSchedule({ type: 'at', at: '2026-10-01T10:00:00Z' }).at === Date.UTC(2026, 9, 1, 10) && bg.normalizeSchedule({ type: 'watch', url: 'https://a.com/x', minutes: 5 }).minutes === 5, '');
+  for (const [label, bad] of [['every under 5 minutes', { type: 'every', minutes: 1 }], ['at with no time', { type: 'at', at: 'soon' }], ['watch on a file', { type: 'watch', url: 'file:///x' }], ['an unknown type', { type: 'cron' }]]) {
+    let threw = false; try { bg.normalizeSchedule(bad); } catch { threw = true; }
+    check(`bg schedule: ${label} is refused`, threw, '');
+  }
+  const day = 86400000;
+  check('bg next run: a new task runs at once; a finished one-off never again', bg.nextRunAt(mk()) === NOW && bg.nextRunAt(mk({ lastRun: NOW })) === null, '');
+  check('bg next run: "at" waits for its time, and a missed one runs once', bg.nextRunAt(mk({ schedule: { type: 'at', at: NOW + 3600000 } })) === NOW + 3600000 && bg.isDue(mk({ status: 'done', schedule: { type: 'at', at: NOW - day } }), NOW) && !bg.isDue(mk({ status: 'done', schedule: { type: 'at', at: NOW - day }, lastRun: NOW - 1000 }), NOW), '');
+  check('bg next run: "every" is last run + interval, first run at once', bg.nextRunAt(mk({ schedule: { type: 'every', minutes: 60 }, lastRun: NOW })) === NOW + 3600000 && bg.nextRunAt(mk({ schedule: { type: 'every', minutes: 60 } })) === NOW, '');
+  check('bg next run: a paused schedule never comes due; an active task is never due twice', bg.nextRunAt(mk({ schedule: { type: 'every', minutes: 5 }, enabled: false })) === null && !bg.isDue(mk({ status: 'running', schedule: { type: 'every', minutes: 5 }, lastRun: NOW - day }), NOW) && bg.isDue(mk({ status: 'done', schedule: { type: 'every', minutes: 5 }, lastRun: NOW - day }), NOW), '');
+
+  // queue and concurrency
+  const q = (id, status, queuedAt) => mk({ id, status, queuedAt });
+  check('bg queue: oldest first, up to the free slots', bg.planStarts([q('c', 'queued', 3), q('a', 'queued', 1), q('b', 'queued', 2)], 2, NOW + 10).join() === 'a,b', bg.planStarts([q('c', 'queued', 3), q('a', 'queued', 1), q('b', 'queued', 2)], 2, 10).join());
+  check('bg queue: running and waiting tasks hold slots', bg.planStarts([q('r', 'running', 0), q('w', 'waiting-approval', 0), q('a', 'queued', 1)], 2, NOW).length === 0 && bg.planStarts([q('r', 'running', 0), q('a', 'queued', 1), q('b', 'queued', 2)], 2, NOW).join() === 'a', '');
+  check('bg queue: a task queued for later waits', bg.planStarts([q('a', 'queued', NOW + 5000)], 2, NOW).length === 0 && bg.planStarts([q('a', 'queued', NOW + 5000)], 2, NOW + 6000).length === 1, '');
+  check('bg queue: settings clamp concurrency to 1-3', bg.normalizeSettings({ maxConcurrent: 9 }).maxConcurrent === 3 && bg.normalizeSettings({ maxConcurrent: 0 }).maxConcurrent === 1 && bg.normalizeSettings({}).maxConcurrent === 2 && bg.normalizeSettings({ timeoutMin: 45 }).timeoutMin === 30 && bg.normalizeSettings({ enabled: false }).enabled === false, '');
+  check('bg steps: the Max steps setting, or 60 when it is unlimited', bg.backgroundStepLimit(0) === 60 && bg.backgroundStepLimit(undefined) === 60 && bg.backgroundStepLimit(120) === 120, '');
+
+  // watching a page
+  const page1 = 'Widget  \n Price: $10\nOut of stock';
+  check('bg watch: the first look is only a baseline', bg.watchDecision(null, page1, '').action === 'baseline', '');
+  const base = bg.watchDecision(null, page1, '');
+  check('bg watch: an unchanged page (whitespace aside) needs nothing', bg.watchDecision({ hash: base.hash }, 'Widget Price: $10 Out of stock', '').action === 'unchanged', '');
+  check('bg watch: a changed page notifies', bg.watchDecision({ hash: base.hash }, `${page1} now in stock`, '').action === 'notify', '');
+  check('bg watch: a text condition is judged without the model', bg.parseCondition('contains "in stock"').kind === 'text' && bg.parseCondition('“Sold out” disappears').mode === 'absent' && bg.parseCondition('the price drops below $8').kind === 'model' && bg.parseCondition('').kind === 'change', '');
+  const cond = 'contains "in stock"';
+  check('bg watch: text condition not met -> unchanged; met -> notify once', bg.watchDecision({}, page1, cond).action === 'unchanged'
+    && bg.watchDecision({}, `${page1} In Stock`, cond).action === 'notify'
+    && bg.watchDecision({ holding: true }, `${page1} In Stock`, cond).action === 'unchanged'
+    && bg.watchDecision({ holding: true }, page1, cond).holding === false, '');
+  check('bg watch: a judged condition only asks the model when the page changed', bg.watchDecision({ hash: base.hash }, page1, 'price below $8').action === 'judge'
+    && bg.watchDecision({ judgedHash: base.hash }, page1, 'price below $8').action === 'unchanged'
+    && bg.watchDecision({ judgedHash: base.hash }, `${page1}!`, 'price below $8').action === 'judge', '');
+  check('bg watch: the model verdict is parsed', bg.parseVerdict('MATCH\nPrice is $7').match === true && bg.parseVerdict('NO MATCH\nstill $10').match === false && bg.parseVerdict('Maybe').unclear === true, '');
+
+  // state machine and restart
+  check('bg state: allowed and refused transitions', bg.canTransition('queued', 'running') && bg.canTransition('running', 'waiting-approval') && bg.canTransition('waiting-approval', 'running') && bg.canTransition('done', 'queued') && !bg.canTransition('done', 'running') && !bg.canTransition('queued', 'done') && !bg.canTransition('stopped', 'waiting-approval'), '');
+  const running = mk({ status: 'running', updatedAt: NOW - 1000, stepCount: 4 });
+  const back = bg.recoverAfterRestart(running, NOW);
+  check('bg restart: a running task becomes interrupted, with a run record and no immediate re-run', back.status === 'interrupted' && back.runs.length === 1 && back.runs[0].status === 'interrupted' && back.lastRun === NOW && bg.nextRunAt(back) === null, JSON.stringify(back.runs));
+  check('bg restart: waiting-approval too; queued and done stay as they were', bg.recoverAfterRestart(mk({ status: 'waiting-approval' }), NOW).status === 'interrupted' && bg.recoverAfterRestart(mk({ status: 'queued' }), NOW).status === 'queued' && bg.recoverAfterRestart(mk({ status: 'done' }), NOW).status === 'done', '');
+  const rec = bg.recoverAfterRestart(mk({ status: 'running', schedule: { type: 'every', minutes: 60 } }), NOW);
+  check('bg restart: a repeating task keeps its schedule', rec.status === 'interrupted' && bg.nextRunAt(rec) === NOW + 3600000, String(bg.nextRunAt(rec)));
+
+  // creating a task
+  const made = bg.makeTask({ prompt: 'Watch the score at scores.io', model: 'm', pageUrl: 'https://news.com/x', now: NOW });
+  check('bg make: a task freezes its model and derives its sites', made.model === 'm' && made.engine === 'api' && made.status === 'queued' && made.allowedSites.includes('scores.io') && made.allowedSites.includes('news.com') && made.title.length > 0, JSON.stringify(made.allowedSites));
+  const w = bg.makeTask({ model: 'm', schedule: { type: 'watch', url: 'https://shop.com/item', condition: 'contains "in stock"', minutes: 10 }, now: NOW });
+  check('bg make: a watch task is allowed its own page and starts with no baseline', w.allowedSites.includes('shop.com') && w.watch.hash === null && w.prompt.includes('shop.com'), '');
+  let threw = false; try { bg.makeTask({ prompt: '', model: 'm' }); } catch { threw = true; }
+  check('bg make: an empty request is refused', threw, '');
+  const site = bg.makeTask({ prompt: 'x', model: 'm', allowedSites: ['a.com', 'not a host', 'https://b.org/p'] });
+  check('bg make: typed sites are cleaned', site.allowedSites.join() === 'a.com,www.a.com,b.org,www.b.org', site.allowedSites.join());
+
+  // persistence
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-bg-unit-'));
+  const file2 = path.join(dir2, 'bg.json');
+  const enc = (s) => Buffer.from(s).reverse().toString('base64');
+  const dec = (s) => Buffer.from(s, 'base64').reverse().toString();
+  const store = bg.createTaskStore({ file: file2, encrypt: enc, decrypt: dec });
+  const t1 = { ...mk({ id: '0123456789abcdef', title: 'Round trip' }), result: 'secret price 10', steps: [{ name: 'read_page', label: 'Reading the page', at: NOW, ok: true, error: '' }], stepCount: 1 };
+  store.save([t1]);
+  const raw = fs.readFileSync(file2, 'utf8');
+  const loaded = store.load();
+  check('bg store: results are encrypted on disk and round-trip', !raw.includes('secret price') && loaded.length === 1 && loaded[0].result === 'secret price 10' && loaded[0].title === 'Round trip' && loaded[0].steps.length === 1 && loaded[0].allowedSites.includes('example.com'), raw.slice(0, 100));
+  check('bg store: no keychain means nothing is written', (() => { const f = path.join(dir2, 'none.json'); return bg.createTaskStore({ file: f, encrypt: enc, decrypt: dec, available: () => false }).save([t1]) === false && !fs.existsSync(f); })(), '');
+  fs.writeFileSync(file2, '{ broken');
+  check('bg store: a damaged file loads as empty instead of crashing', store.load().length === 0, '');
+  fs.writeFileSync(file2, JSON.stringify({ v: 1, enc: enc(JSON.stringify({ tasks: [{ id: 'x' }, { id: 'fedcba9876543210', schedule: { type: 'every', minutes: 1 } }, { id: 'aaaaaaaaaaaaaaaa', schedule: { type: 'now' }, status: 'bogus', steps: 'no' }] })) }));
+  const tolerant = store.load();
+  check('bg store: unusable entries are dropped, odd fields repaired', tolerant.length === 1 && tolerant[0].id === 'aaaaaaaaaaaaaaaa' && tolerant[0].status === 'interrupted' && Array.isArray(tolerant[0].steps), JSON.stringify(tolerant.map((x) => x.id)));
+  const many = Array.from({ length: 60 }, (_, i) => mk({ id: i.toString(16).padStart(16, '0'), status: 'done', updatedAt: NOW + i }));
+  const capped = bg.capTasks(many);
+  check('bg store: capped at 50, oldest finished one-offs go first', capped.length === 50 && !capped.some((x) => x.updatedAt < NOW + 10) && bg.fitsAnother(many), String(capped.length));
+  const busy = Array.from({ length: 50 }, (_, i) => mk({ id: i.toString(16).padStart(16, '0'), status: i % 2 ? 'running' : 'queued' }));
+  check('bg store: running and queued tasks are never dropped, and a full list refuses more', bg.capTasks(busy).length === 50 && !bg.fitsAnother(busy), '');
+  const rep = Array.from({ length: 51 }, (_, i) => mk({ id: i.toString(16).padStart(16, '0'), status: 'done', schedule: { type: 'every', minutes: 60 } }));
+  check('bg store: scheduled tasks are kept too', bg.capTasks(rep).length === 51 && !bg.fitsAnother(bg.capTasks(rep).slice(0, 50)), '');
+  const s = bg.summarize({ ...mk(), usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, cost: 0.05, unpriced: 0, turns: 2 } }, NOW);
+  check('bg summary: no steps or result text, and the cost line', s.cost.includes('$0.05') && !('result' in s) && !('steps' in s), JSON.stringify(s).slice(0, 200));
+  check('bg badge: running and waiting counts', JSON.stringify(bg.badgeCounts([mk({ status: 'running' }), mk({ status: 'queued' }), mk({ status: 'waiting-approval' }), mk({ status: 'done' })])) === '{"running":2,"waiting":1}', '');
+  fs.rmSync(dir2, { recursive: true, force: true });
+}
+
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
