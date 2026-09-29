@@ -714,9 +714,66 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('trim: old results are cut, images dropped, recent kept whole', trimmed[1].content[0].content.length < 200 && trimmed[2].content[0].content[0].text.includes('omitted') && trimmed[3].content[0].content.length === 5000 && trimmed[6].content[0].content.length === 5000, JSON.stringify(trimmed[1]).slice(0, 120));
   check('trim: does not mutate its input, and small histories pass through', history[1].content[0].content === big && trimToolResults(history.slice(0, 3), { keep: 4 }) === history.slice(0, 3) || trimToolResults(history.slice(0, 3), { keep: 4 }).length === 3, '');
 
+  const { ReadCache } = require('../snapshot');
+  const rc = new ReadCache();
+  check('read cache: first read is full, an identical soon read is one line', rc.check(1, 'https://a.test/', 'c', 'page') === null && /Unchanged/.test(rc.check(1, 'https://a.test/', 'c', 'page') || ''), '');
+  check('read cache: other content, URL, request shape or tab is a full read', rc.check(1, 'https://a.test/', 'c', 'page 2') === null && rc.check(1, 'https://b.test/', 'c', 'page 2') === null && rc.check(1, 'https://b.test/', 'f', 'page 2') === null && rc.check(2, 'https://b.test/', 'f', 'page 2') === null, '');
+  rc.check(1, 'u', 'c', 'x'); rc.tick('click');
+  check('read cache: a click invalidates it, reads and searches do not', rc.check(1, 'u', 'c', 'x') === null && (rc.tick('find'), rc.tick('screenshot'), /Unchanged/.test(rc.check(1, 'u', 'c', 'x') || '')), '');
+  for (let i = 0; i < 8; i++) rc.tick('find');
+  check('read cache: too many calls later the model gets the page again', rc.check(1, 'u', 'c', 'x') === null && /Unchanged/.test(rc.check(1, 'u', 'c', 'x') || ''), '');
+
+  {
+    const { requestFor, DEFAULT_MODEL } = require('../agent');
+    const msgs = (extra) => Object.assign([{ role: 'user', content: 'hi' }, ...extra], { settings: { model: DEFAULT_MODEL } });
+    const a = requestFor(msgs([]).settings, msgs([]));
+    const b = requestFor(msgs([]).settings, msgs([{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'more' }]));
+    const marks = (p) => (JSON.stringify(p).match(/"cache_control"/g) || []).length;
+    check('request: tools + system prefix is identical across turns (cache-stable)', JSON.stringify([a.tools, a.system]) === JSON.stringify([b.tools, b.system]), '');
+    check('request: at most 4 cache breakpoints, one on the last tool and one on system', marks(a) <= 4 && a.tools[a.tools.length - 1].cache_control && a.system[0].cache_control, String(marks(a)));
+    const { isSimpleQuestion } = require('../loop-guard');
+    check('simple turn: plain questions qualify, page or action requests and images do not', isSimpleQuestion('What is the capital of France?') && !isSimpleQuestion('summarize this') && !isSimpleQuestion('Book a table at 7') && !isSimpleQuestion('what is on the left?', 1) && !isSimpleQuestion('see https://x.test') && !isSimpleQuestion('x'.repeat(200)), '');
+    const simple = msgs([]);
+    simple.simpleTurn = simple[0];
+    const sp = requestFor(simple.settings, simple);
+    const later = msgs([{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'more' }]);
+    later.simpleTurn = later[0];
+    const lp = requestFor(later.settings, later);
+    const picked = msgs([]);
+    picked.settings.model = 'claude-sonnet-5';
+    picked.simpleTurn = picked[0];
+    check('simple turn: low effort and small cap on the first turn only, and not on a picked model', sp.output_config.effort === 'low' && sp.max_tokens <= 8000 && lp.max_tokens === 64000 && lp.output_config.effort === 'high' && requestFor(picked.settings, picked).max_tokens === 64000, JSON.stringify([sp.output_config, lp.output_config]));
+    check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
+  }
+
   const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];
   const cached = cacheLastTool(tools);
   check('cache_control: only the last tool is marked, input untouched', cached.filter((t) => t.cache_control).length === 1 && cached[2].cache_control.type === 'ephemeral' && tools[0].cache_control && cacheLastTool([]).length === 0, JSON.stringify(cached));
+}
+
+async function schedulerRuns() {
+  const { runToolUses } = require('../loop-guard');
+  const log = [];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const uses = [{ name: 'read_page', input: {} }, { name: 'find', input: {} }, { name: 'click', input: {} }, { name: 'screenshot', input: {} }, { name: 'read_urls', input: {} }].map((u, i) => ({ ...u, id: `t${i}` }));
+  const out = await runToolUses(uses, {
+    gate: async (u) => { log.push(`gate:${u.id}`); await sleep(1); },
+    exec: async (u) => { log.push(`start:${u.id}`); await sleep(u.id === 't0' ? 30 : 5); log.push(`end:${u.id}`); return u.id; },
+  });
+  check('parallel: results come back in call order', out.map((o) => o.value).join() === 't0,t1,t2,t3,t4', JSON.stringify(out));
+  check('parallel: every gate in a read group runs before any of them starts', log.indexOf('gate:t1') < log.indexOf('start:t0'), log.join(' '));
+  check('parallel: reads overlap (t1 ends before slow t0)', log.indexOf('end:t1') < log.indexOf('end:t0'), log.join(' '));
+  check('parallel: an action waits for the reads before it and runs alone', log.indexOf('end:t0') < log.indexOf('gate:t2') && log.indexOf('end:t2') < log.indexOf('start:t3'), log.join(' '));
+
+  const denied = await runToolUses(uses.slice(0, 3), {
+    gate: async (u) => { if (u.id === 't1') throw new Error('no'); },
+    exec: async (u) => u.id,
+  });
+  check('parallel: a denied gate fails only that call, others still run', denied[0].ok && !denied[1].ok && denied[1].gated && denied[2].ok, JSON.stringify(denied));
+
+  const halted = await runToolUses(uses, { gate: async () => {}, exec: async (u) => { if (u.id === 't1') throw new Error('gone'); return 1; }, halts: (o) => o && o.ok === false });
+  check('parallel: a halting outcome skips the calls after its group', halted[0].ok && !halted[1].ok && halted.slice(2).every((o) => o.skipped), JSON.stringify(halted));
+  check('parallel: read_page since_last and run_script stay sequential', !require('../loop-guard').isParallelRead({ name: 'read_page', input: { since_last: true } }) && !require('../loop-guard').isParallelRead({ name: 'run_script', input: {} }) && require('../loop-guard').isParallelRead({ name: 'read_pdf', input: {} }), '');
 }
 
 async function fuseChecks() {
@@ -1238,7 +1295,7 @@ async function speedRuns() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
