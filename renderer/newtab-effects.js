@@ -172,11 +172,32 @@
     r.colors = colorsOf(r.color);
   }
 
+  // The effect fades behind the content column (text and fields stay clear): 28% visible between
+  // 300 px either side of the centre, full strength beyond 400 px. Drawn into the canvas, since a CSS
+  // mask on a canvas that redraws every frame is re-masked every frame. Not on narrow windows (CSS
+  // lowers the whole layer's opacity there).
+  function fade(r) {
+    if (r.w <= 760) return;
+    const at = (px) => Math.min(1, Math.max(0, px / r.w));
+    const g = r.ctx.createLinearGradient(0, 0, r.w, 0);
+    g.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    g.addColorStop(at(r.w / 2 - 400), 'rgba(0, 0, 0, 0)');
+    g.addColorStop(at(r.w / 2 - 300), 'rgba(0, 0, 0, 0.72)');
+    g.addColorStop(at(r.w / 2 + 300), 'rgba(0, 0, 0, 0.72)');
+    g.addColorStop(at(r.w / 2 + 400), 'rgba(0, 0, 0, 0)');
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    r.ctx.globalCompositeOperation = 'destination-out';
+    r.ctx.fillStyle = g;
+    r.ctx.fillRect(0, 0, r.w, r.h);
+    r.ctx.globalCompositeOperation = 'source-over';
+  }
+
   function draw() {
     const r = run;
     r.ctx.clearRect(0, 0, r.w, r.h);
     EFFECTS[r.name].draw(r.ctx, r.list, r.colors, r.mouse);
     r.ctx.globalAlpha = 1;
+    fade(r);
   }
 
   function frame(t) {
