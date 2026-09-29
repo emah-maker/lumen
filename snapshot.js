@@ -275,7 +275,7 @@ const TRIMMED = {
   type_text: 'Replace an input/textarea/contenteditable value, pick a <select> option by label, or set date/time (e.g. 2026-03-14, 13:30). Use click for checkboxes/radios. press_enter submits.',
   fill_form: 'Fill several fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved submitting.',
   read_urls: 'Read up to 6 pages in parallel in hidden tabs without cookies/logins (use navigate for signed-in pages). Returns title + text.',
-  run_script: 'Run JavaScript in the page (use return; async ok); result is JSON. For extracting tables/lists or repeated operations. Never to bypass confirmation rules.',
+  run_script: 'LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. Only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do it (e.g. extracting a large table), in one call. Never to click, type or navigate, or to bypass confirmation rules.',
   group_tabs: 'Put tabs (ids from list_tabs) into a new named group; use 1-3 word names. Tabs in another group move.',
   click_at: 'Click a point in the last screenshot\'s pixel coordinates (canvas, maps, custom widgets).',
   wait_for: 'Wait until the active tab contains some text, up to a timeout.',
