@@ -731,6 +731,18 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     const marks = (p) => (JSON.stringify(p).match(/"cache_control"/g) || []).length;
     check('request: tools + system prefix is identical across turns (cache-stable)', JSON.stringify([a.tools, a.system]) === JSON.stringify([b.tools, b.system]), '');
     check('request: at most 4 cache breakpoints, one on the last tool and one on system', marks(a) <= 4 && a.tools[a.tools.length - 1].cache_control && a.system[0].cache_control, String(marks(a)));
+    const { isSimpleQuestion } = require('../loop-guard');
+    check('simple turn: plain questions qualify, page or action requests and images do not', isSimpleQuestion('What is the capital of France?') && !isSimpleQuestion('summarize this') && !isSimpleQuestion('Book a table at 7') && !isSimpleQuestion('what is on the left?', 1) && !isSimpleQuestion('see https://x.test') && !isSimpleQuestion('x'.repeat(200)), '');
+    const simple = msgs([]);
+    simple.simpleTurn = simple[0];
+    const sp = requestFor(simple.settings, simple);
+    const later = msgs([{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'more' }]);
+    later.simpleTurn = later[0];
+    const lp = requestFor(later.settings, later);
+    const picked = msgs([]);
+    picked.settings.model = 'claude-sonnet-5';
+    picked.simpleTurn = picked[0];
+    check('simple turn: low effort and small cap on the first turn only, and not on a picked model', sp.output_config.effort === 'low' && sp.max_tokens <= 8000 && lp.max_tokens === 64000 && lp.output_config.effort === 'high' && requestFor(picked.settings, picked).max_tokens === 64000, JSON.stringify([sp.output_config, lp.output_config]));
     check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
   }
 

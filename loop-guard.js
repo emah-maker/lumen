@@ -118,4 +118,12 @@ async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halt
   return outcomes;
 }
 
-module.exports = { RepeatDetector, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };
+// A plain question that needs neither the page nor a tool: short, text only, no link, and none of
+// the words people use when they mean the page or an action. Conservative: when unsure, false.
+const NEEDS_BROWSER = /\b(this|these|that|page|tab|tabs|site|website|here|above|below|screen|click|open|go to|navigate|search|google|find|look up|fill|book|buy|order|add to|sign|log ?in|download|summari[sz]e|summary|tl;?dr|read|scroll|type|select|compare|check|screenshot|form|link|cart|price|video|article|pdf|current|latest|today|now)\b|https?:|www\.|\.(com|org|net|io|dev)\b/i;
+function isSimpleQuestion(text, imageCount = 0) {
+  const t = String(text || '').trim();
+  return imageCount === 0 && t.length > 0 && t.length <= 160 && !NEEDS_BROWSER.test(t);
+}
+
+module.exports = { isSimpleQuestion, RepeatDetector, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };

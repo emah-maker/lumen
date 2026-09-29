@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
 const { addUsage } = require('./features/chat-usage');
-const { RepeatDetector, withNote, trimToolResults, cacheLastTool, runToolUses } = require('./loop-guard');
+const { RepeatDetector, withNote, trimToolResults, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('./features/pdf-text');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
@@ -454,6 +454,13 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic) {
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
   if (cfg.effort) params.output_config = { effort: cfg.effort };
+  // First model turn of a short plain question (runTask flags it; later turns of a run that grew tools
+  // are not): light thinking and a small cap. Only on the default model, so a model the user picked
+  // is used as picked.
+  if (messages.simpleTurn && model === DEFAULT_MODEL && !cfg.legacyThinking && messages[messages.length - 1] === messages.simpleTurn) {
+    params.output_config = { effort: 'low' };
+    params.max_tokens = 8000;
+  }
   return params;
 }
 const TOOL_SCHEMAS = Object.fromEntries(TOOLS.map((t) => [t.name, t.input_schema]));
@@ -922,6 +929,7 @@ class Agent {
     // After a stop, history can end on a user turn (tool results); extend it instead of stacking two.
     if (last?.role === 'user') last.content = [...(Array.isArray(last.content) ? last.content : [{ type: 'text', text: last.content }]), ...blocks];
     else messages.push({ role: 'user', content: blocks });
+    messages.simpleTurn = isSimpleQuestion(userText, images.length) ? messages[messages.length - 1] : null;
 
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
     // Its tool calls arrive over MCP, outside this async context: engineScope() hands them this pin.
