@@ -4,12 +4,13 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.
-- Weather: several places, My location (asks first), hourly and by-day views. Todoist: choose the filter, grouping, sort and fields, undo completing, quick add. Calendar, weather and Todoist can match the screen colors.
-
 ## 0.2.13 (2026-09-29)
 
-- New-tab animated backgrounds (particles, stars, bubbles, snow) that stop when Reduce motion or Performance mode is on, and while the tab is hidden.
+- New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.
+- Weather: several places, My location (asks first), hourly and by-day views. Todoist: choose the filter, grouping, sort and fields, undo completing, quick add. Calendar, weather and Todoist can match the screen colors.
+- New-tab animated backgrounds (particles, stars, bubbles, snow) with color, amount, speed, size and pointer options; they stop when Reduce motion or Performance mode is on, and while the tab is hidden. Fixed the vertical bands that could show across the search box and cards while an effect ran.
+- Background tasks now run on Claude Code and Grok Build too, each in its own process with the same approval cards and no shell access.
+- A usage bar for Grok Build: how full the chat's context is, your own daily or weekly budget if you set one, and a "limit reached" state with the reset time. Grok doesn't publish plan limits, so the bar never claims plan usage.
 
 ## 0.2.12 (2026-09-29)
 
