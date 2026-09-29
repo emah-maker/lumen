@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Background tasks are easier to follow and control. The Tasks panel shows each running task's current step, step count and time, and a queued task's place in line; anything waiting for you appears at the top with its approval card so you can answer from the list. Finished tasks you have not opened get a "New" marker and a dot on the Tasks button.
+- Tasks interrupted by closing Lumen say so when it reopens and can be resumed from what they had done (or retried from the start). Edit and run again changes a task's request, name or sites; Copy result and a list of the pages a run visited were added; a run that fails before writing anything keeps the last good result. Repeating tasks now really are given the previous result to compare with.
+- Notifications: one message per wait instead of one per question, a system notification only when Lumen is not the window in front, and a new option to skip the plain "finished" ones. Questions nobody answers are refused after 15 minutes to 4 hours (your choice) so a task no longer holds its place forever. New menu item: Run a Task in the Background.
+
 ## 0.3.1 (2026-09-29)
 
 - Settings, redesigned like System Settings: a sidebar with search and eleven categories, one category per page in grouped lists, and deeper areas (skills, usage, MCP servers, site permissions, widgets, internals) as their own pages. Rarely used options moved under Advanced. No setting was removed and old `lumen://settings/...` links still open the right place.
