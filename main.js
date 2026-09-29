@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, session, shell, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 
@@ -130,7 +130,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:drop',
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
@@ -170,7 +170,11 @@ app.on('web-contents-created', (_e, contents) => {
 });
 for (const method of ['handle', 'on']) {
   const register = ipcMain[method].bind(ipcMain);
-  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? listener : (event, ...args) => {
+  // With several browser windows, a message from one window's UI, tab, or overlay makes that window
+  // the one the shared handlers below act on (see "browser windows" near createWindow).
+  const enterSenderWindow = (event) => { if (winRecs.size > 1) enterWindow(recOfSender(event?.sender)); };
+  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? (event, ...args) => { enterSenderWindow(event); return listener(event, ...args); } : (event, ...args) => {
+    enterSenderWindow(event);
     if (trustedSender(event, channel)) return listener(event, ...args);
     console.error(`[lumen] refused ${channel} from ${event.sender.getURL?.().slice(0, 80)}`);
     if (method === 'handle') throw new Error('Not allowed');
@@ -1087,7 +1091,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     },
   });
   const id = nextTabId++;
-  const tab = { id, view, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}) };
+  const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}) };
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
@@ -1115,6 +1119,7 @@ const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url ||
 function wireView(tab, url, history = null) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
+  bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
@@ -1133,7 +1138,7 @@ function wireView(tab, url, history = null) {
         },
       };
     }
-    openTab(target, { background: disposition === 'background-tab', openerId: id });
+    withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id }));
     return { action: 'deny' };
   });
   wc.on('enter-html-full-screen', () => { tab.fullscreen = true; layout(); });
@@ -1367,7 +1372,7 @@ function addRestoredTab(url, title, favicon = null) {
   // else the icon the tab showed when the session was saved.
   const icon = faviconStore.get(hostOf(url)) || (/^(https?|data):/.test(favicon || '') ? favicon : null);
   const tab = {
-    id: nextTabId++, view: null, favicon: icon, favicons: icon ? [icon] : [], groupId: null,
+    id: nextTabId++, view: null, rec: curRec, favicon: icon, favicons: icon ? [icon] : [], groupId: null,
     userRemoved: false, settings: false, lastActiveAt: Date.now(),
     sleeping: true, sleepUrl: url, sleepTitle: title || hostOf(url) || 'New Tab', sleepHistory: null,
   };
@@ -1802,6 +1807,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
     tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
     ...audioMenuItems(tab),
+    ...moveWindowItems(id),
     { type: 'separator' },
     { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => clipboard.writeText(url) },
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
@@ -1814,6 +1820,20 @@ function tabMenuTemplate(id) {
     { type: 'separator' },
     { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
   );
+  return items;
+}
+
+// "Move Tab to New Window" (not for a window's only tab) and "Move Tab to Window", one entry per
+// other normal window. Private windows never appear: a tab can't move in or out of one.
+function moveWindowItems(id) {
+  const src = curRec;
+  const items = [];
+  const b = src?.win.getBounds();
+  if (src && tabs.filter((x) => !x.closing).length > 1) {
+    items.push({ label: t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, { x: b.x + 60, y: b.y + 40 }) });
+  }
+  const others = [...winRecs].filter((r) => r !== src && rcAlive(r));
+  if (others.length) items.push({ label: t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabBetween(src, r, id) })) });
   return items;
 }
 
@@ -2491,14 +2511,15 @@ function titleBarOverlay() {
   return { color: '#00000000', symbolColor: dark ? '#f5f5f7' : '#1d1d1f', height: 38 };
 }
 
-function saveSession() {
+// One window's part of the saved session (runs with that window current).
+function sessionEntry() {
   // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
   // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
   const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
   const saved = tabs.filter((t) => isWebUrl(urlOf(t)));
   const urls = saved.map(urlOf);
   const titleOf = (t) => (alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '');
-  writeSettings({ ...readSettings(), session: {
+  return {
     urls,
     titles: saved.map(titleOf), // shown on the restored tabs, which don't load until they're opened
     favicons: saved.map((t) => t.favicon || null), // and their icons, so they aren't all globes
@@ -2506,19 +2527,38 @@ function saveSession() {
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
     groups: tabGroups.snapshot(),
-  } });
+  };
 }
 
-function restoreSession() {
+// Every normal window is saved: the first one in the session's own fields (as before, so older
+// versions still read it), the others under `more`. Private windows are never here.
+function saveSession({ excluding = null } = {}) {
+  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding);
+  if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
+  const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
+  writeSettings({ ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } });
+}
+
+function restoreSession(entry = null) {
   // [settings] On startup: continue where you left off (default), a new tab, or chosen pages.
-  const startup = settingsBackend.startupPlan();
+  // (Only the first window follows this; a window restored from `more` just gets its own tabs.)
+  const startup = entry ? { mode: 'last' } : settingsBackend.startupPlan();
   if (startup.mode === 'newtab') { openTab(); return; }
   if (startup.mode === 'pages') {
     startup.pages.forEach((url, i) => openTab(url, { background: i > 0 }));
     switchTab(tabs[0].id);
     return;
   }
-  const { session: saved } = readSettings();
+  const saved = entry || readSettings().session;
+  restoreTabsFrom(saved);
+  if (!entry && Array.isArray(saved?.more)) {
+    const first = curRec;
+    for (const more of saved.more.slice(0, 9)) createWindow({ restore: more });
+    enterWindow(first);
+  }
+}
+
+function restoreTabsFrom(saved) {
   if (!saved?.urls?.length) {
     openTab();
     return;
@@ -2610,15 +2650,187 @@ function macMenu() {
   ]);
 }
 
+// ---------- browser windows ----------
+// A normal window is a record in winRecs: its BrowserWindow plus the state below. main.js was written
+// for one window, so the variables above (win, tabs, activeId, ...) stay module globals that always
+// hold the CURRENT window's state, and enterWindow() swaps them: the outgoing window's values are
+// kept on its record, the incoming window's are loaded. A message from a window's own UI, tab or
+// overlay (the IPC wrapper above), one of its events (bindContext) and the window gaining focus all
+// make it current; withWindow() borrows a window for one call. With one window nothing swaps at
+// all. Private windows are not in here (features/private-window.js keeps their own tabs).
+const winRecs = new Set();
+let curRec = null;
+const rcAlive = (rec) => Boolean(rec?.win && !rec.win.isDestroyed());
+
+function saveInto(rec) {
+  Object.assign(rec, { win, tabs, activeId, contentBounds, viewFrozen, chatFullTab, uiReady, suggestView, downloadsView, downloadsAnchor, groups: new Map(tabGroups.groups) });
+}
+function loadFrom(rec) {
+  ({ win, tabs, activeId, contentBounds, viewFrozen, chatFullTab, uiReady, suggestView, downloadsView, downloadsAnchor } = rec);
+  tabGroups.groups.clear();
+  for (const [id, group] of rec.groups) tabGroups.groups.set(id, group);
+}
+function enterWindow(rec) {
+  if (!rec || rec === curRec || !winRecs.has(rec)) return;
+  if (curRec) saveInto(curRec);
+  curRec = rec;
+  loadFrom(rec);
+}
+function withWindow(rec, fn) {
+  if (!rec || rec === curRec || !winRecs.has(rec)) return fn();
+  const previous = curRec;
+  enterWindow(rec);
+  try { return fn(); } finally { if (curRec === rec && previous && winRecs.has(previous)) enterWindow(previous); }
+}
+// Runs an emitter's listeners with `getRec()` current, so a background window's tab or page events
+// change that window's tabs, not the focused one's.
+// Focus is the exception: it is the user arriving in that window, so it stays current afterwards.
+function bindContext(emitter, getRec) {
+  if (!emitter || emitter.lumenBound) return;
+  emitter.lumenBound = true;
+  const emit = emitter.emit.bind(emitter);
+  emitter.emit = (...args) => {
+    if (winRecs.size < 2) return emit(...args);
+    const rec = getRec();
+    if (!rec || rec === curRec || !winRecs.has(rec)) return emit(...args);
+    if (args[0] === 'focus') enterWindow(rec);
+    return args[0] === 'focus' ? emit(...args) : withWindow(rec, () => emit(...args));
+  };
+}
+// Which normal window a message came from: its UI, one of its tabs, or its dropdown/panel views.
+function recOfSender(sender) {
+  if (!sender) return null;
+  for (const rec of winRecs) {
+    const live = rec === curRec ? { win, tabs, suggestView, downloadsView } : rec;
+    if (!live.win || live.win.isDestroyed()) continue;
+    if (live.win.webContents === sender || live.suggestView?.webContents === sender || live.downloadsView?.webContents === sender
+      || live.tabs.some((t) => t.view?.webContents === sender)) return rec;
+  }
+  return null;
+}
+const tabsOf = (rec) => (rec === curRec ? tabs : rec.tabs);
+const activeIdOf = (rec) => (rec === curRec ? activeId : rec.activeId);
+
+// ---- moving tabs between windows (tab strip drag, the tab menu)
+// The tab's WebContentsView is re-parented, never recreated: the page keeps its state, scroll,
+// media and typed input. Groups are dropped and a pinned tab arrives unpinned. Runs in the tab's
+// current window and leaves the tab alive but held by no window.
+function releaseTab(tab) {
+  const index = tabs.indexOf(tab);
+  if (index === -1) return false;
+  if (chatFullTab === tab.id) chatFullTab = null;
+  tabs.splice(index, 1);
+  tab.groupId = null;
+  tab.pinned = false;
+  tab.userRemoved = true; // placed by hand: automatic grouping leaves it alone
+  tabGroups.cleanup();
+  if (tab.view) win.contentView.removeChildView(tab.view);
+  if (tabs.length && activeId === tab.id) switchTab(tabs[Math.min(index, tabs.length - 1)].id);
+  else if (tabs.length) sendTabs();
+  else activeId = null;
+  return true;
+}
+// Runs in the receiving window: puts the tab at `index` (after any pinned tabs) and shows it.
+function adoptTab(tab, index) {
+  tab.rec = curRec;
+  const pinned = tabs.filter((t) => t.pinned).length;
+  tabs.splice(Math.max(pinned, Math.min(Number.isInteger(index) ? index : tabs.length, tabs.length)), 0, tab);
+  if (tab.view) {
+    win.contentView.addChildView(tab.view);
+    tab.view.setVisible(false);
+    syncExtensions(() => { try { extensions?.addTab(tab.view.webContents, win); } catch {} });
+  }
+  switchTab(tab.id);
+  tab.view?.webContents.focus();
+}
+const closableTabCount = (rec) => withWindow(rec, () => tabs.filter((t) => !t.closing).length);
+function moveTabBetween(src, dst, tabId, index) {
+  if (!src || !dst || src === dst || !winRecs.has(src) || !winRecs.has(dst) || !rcAlive(src) || !rcAlive(dst)) return false;
+  const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
+  if (!tab) return false;
+  if (!withWindow(src, () => releaseTab(tab))) return false;
+  withWindow(dst, () => adoptTab(tab, index));
+  enterWindow(dst);
+  dst.win.focus();
+  if (!tabsOf(src).length) src.win.close(); // it just lost its last tab
+  return true;
+}
+// A tab can only move into a normal window: a private window's id is not in winRecs.
+function moveTabToWindowId(src, tabId, windowId, index) {
+  const dst = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId);
+  return dst ? moveTabBetween(src, dst, tabId, index) : false;
+}
+// The tab strip of another window under the screen point, and where in it the tab would land.
+async function stripUnder(point, except) {
+  for (const rec of winRecs) {
+    if (rec === except || !rcAlive(rec) || rec.win.isMinimized()) continue;
+    const b = rec.win.getContentBounds();
+    if (point.x < b.x || point.x >= b.x + b.width || point.y < b.y || point.y >= b.y + b.height) continue;
+    const info = await rec.win.webContents.executeJavaScript(`(() => {
+      const strip = document.getElementById('tabs').getBoundingClientRect();
+      return { bottom: strip.bottom, tabs: [...document.querySelectorAll('#tabs .tab')].map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; }) };
+    })()`).catch(() => null);
+    if (!info || point.y - b.y > info.bottom + 6) continue;
+    const before = info.tabs.find((t) => point.x - b.x < t.mid);
+    return { rec, index: before ? tabsOf(rec).findIndex((t) => t.id === before.id) : undefined };
+  }
+  return null;
+}
+function tearOffTab(src, tabId, point) {
+  const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
+  if (!tab || closableTabCount(src) < 2) return false; // the only tab of a window stays where it is
+  const size = src.win.getSize();
+  const area = screen.getDisplayNearestPoint(point).workArea;
+  createWindow({
+    size: { width: size[0], height: size[1] },
+    position: { x: Math.max(area.x, Math.round(point.x - 120)), y: Math.max(area.y, Math.round(point.y - 16)) },
+    adopt: { src, tabId },
+  });
+  return true;
+}
+async function dropTab(src, tabId, point) {
+  const hit = await stripUnder(point, src);
+  if (hit) return moveTabBetween(src, hit.rec, tabId, hit.index);
+  return tearOffTab(src, tabId, point);
+}
+// The window's own label in "Move tab to window": what it is showing, and how many tabs it has.
+const windowLabel = (rec) => withWindow(rec, () => {
+  const tab = tabs.find((x) => x.id === activeId);
+  return `${(tab && tabTitle(tab)) || 'New Tab'} (${tabs.length})`;
+});
+ipcMain.on('tab:drop', (event, id, testPoint) => {
+  const src = recOfSender(event.sender) || curRec;
+  const point = TEST && Number.isFinite(testPoint?.x) && Number.isFinite(testPoint?.y) ? testPoint : screen.getCursorScreenPoint();
+  if (Number.isInteger(id)) dropTab(src, id, { x: Math.round(point.x), y: Math.round(point.y) }).catch((err) => console.error('[lumen] tab drop failed:', err));
+});
+if (TEST) {
+  global.__windows = {
+    list: () => [...winRecs].filter(rcAlive).map((rec) => ({
+      windowId: rec.win.id,
+      uiContentsId: rec.win.webContents.id,
+      tabs: tabsOf(rec).filter((t) => alive(t) || t.sleeping).map((t) => ({ id: t.id, contentsId: alive(t) ? t.view.webContents.id : null, url: alive(t) ? t.view.webContents.getURL() : t.sleepUrl, pinned: Boolean(t.pinned), groupId: t.groupId || null })),
+      activeId: activeIdOf(rec),
+      current: rec === curRec,
+    })),
+    moveTo: (srcWindowId, tabId, windowId, index) => moveTabToWindowId([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, windowId, index),
+    tearOff: (srcWindowId, tabId, point) => tearOffTab([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, point),
+    tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => (tabMenuTemplate(tabId) || []).map((i) => ({ label: i.label, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
+  };
+}
+
 // LUMEN_TEST_BACKGROUND (tests only): the window opens off-screen without taking focus, and with no
 // Dock icon, so test runs don't pull the keyboard away from a Lumen the user is working in.
 const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
-function createWindow() {
+// `adopt` ({ src, tabId }): a tab torn off `src` becomes this window's only tab. `restore`: a saved
+// window from the last session (the session's `more`). Neither: the first window, restoring the session.
+function createWindow({ size = null, position = null, adopt = null, restore = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
-  win = new BrowserWindow({
+  const firstWindow = winRecs.size === 0;
+  const w = new BrowserWindow({
     ...(TEST_BACKGROUND ? { show: false } : {}),
-    width: 1440,
-    height: 920,
+    width: size?.width || 1440,
+    height: size?.height || 920,
+    ...(position || {}),
     minWidth: 800,
     minHeight: 500,
     title: 'Lumen',
@@ -2635,71 +2847,105 @@ function createWindow() {
       additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
     },
   });
-  uiContents.add(win.webContents);
+  const rec = { win: w, tabs: [], activeId: null, contentBounds: { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore) };
+  winRecs.add(rec);
+  enterWindow(rec); // from here on `win`, `tabs` ... are this window's
+  bindContext(w, () => rec);
+  bindContext(w.webContents, () => rec);
+  uiContents.add(w.webContents);
   // Invisible and click-through, but shown (so it paints and screenshots work); macOS keeps part of
   // any window on screen, so moving it away is not enough.
-  if (TEST_BACKGROUND) { win.setOpacity(0); win.setIgnoreMouseEvents(true); win.setPosition(-5000, -5000); win.showInactive(); }
+  if (TEST_BACKGROUND) { w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive(); }
   // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
   if (process.platform === 'win32' && app.isPackaged) {
-    win.setAppDetails({ appId: APP_ID, appIconPath: instance.appIcon(), appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: 'Lumen' });
+    // Set again once the UI has loaded: the taskbar can read the window's properties before the first
+    // call lands (or after the shell recreates the button), and a repeat is harmless.
+    const taskbarDetails = () => {
+      if (w.isDestroyed()) return;
+      try { w.setAppDetails({ appId: APP_ID, appIconPath: instance.appIcon(), appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: 'Lumen' }); } catch {}
+    };
+    taskbarDetails();
+    w.webContents.once('did-finish-load', taskbarDetails);
+    w.once('show', taskbarDetails);
   }
-  Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
-  win.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
-  hardenOwnView(win.webContents, UI_URL);
+  if (firstWindow) Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
+  w.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
+  hardenOwnView(w.webContents, UI_URL);
   // will-navigate doesn't see loads started from the main process: if anything ever points the UI
   // elsewhere, put the UI straight back (the IPC gate already ignores any other document meanwhile).
-  win.webContents.on('did-start-navigation', (details) => {
+  w.webContents.on('did-start-navigation', (details) => {
     if (!details.isMainFrame || details.isSameDocument || isUiUrl(details.url)) return;
-    const wc = win?.webContents;
-    setImmediate(() => { if (wc && !wc.isDestroyed()) wc.loadFile(UI_HTML).catch(() => {}); });
+    const wc = w.webContents;
+    setImmediate(() => { if (!wc.isDestroyed()) wc.loadFile(UI_HTML).catch(() => {}); });
   });
-  win.on('close', saveSession);
+  // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
+  // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
+  w.on('close', () => { if (!quitting) saveSession({ excluding: winRecs.size > 1 ? rec : null }); });
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
-  win.on('closed', () => { uiReady = false; dropDeadWindowViews(); });
+  w.on('closed', () => {
+    uiReady = false;
+    dropDeadWindowViews();
+    winRecs.delete(rec);
+    const next = [...winRecs].find(rcAlive);
+    if (next) enterWindow(next);
+  });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
   // dead window. The tabs themselves live in their own processes and are unaffected.
-  win.webContents.on('render-process-gone', (_e, details) => {
+  w.webContents.on('render-process-gone', (_e, details) => {
     if (details.reason === 'clean-exit' || !ui()) return;
     console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
     ui().reload();
   });
   let uiHungAsked = false;
-  win.webContents.on('unresponsive', () => {
+  w.webContents.on('unresponsive', () => {
     if (uiHungAsked) return;
     uiHungAsked = true;
     dialogs.showMessageBox(win, {
       type: 'warning', buttons: [t('hung.wait'), t('uiHung.reload')], defaultId: 0, cancelId: 0,
       message: t('uiHung.title'),
       detail: t('uiHung.detail'),
-    }).then(({ response }) => { if (response === 1 && ui()) ui().forcefullyCrashRenderer(); });
+    }).then(({ response }) => { if (response === 1 && !w.isDestroyed()) w.webContents.forcefullyCrashRenderer(); });
   });
-  win.webContents.on('responsive', () => { uiHungAsked = false; });
-  win.webContents.on('did-finish-load', () => {
+  w.webContents.on('responsive', () => { uiHungAsked = false; });
+  w.webContents.on('did-finish-load', () => {
     if (!uiReady) return; // the first load: set up below
     sendTabs(); // a reload after a crash: bring the fresh UI up to date
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
   });
-  win.on('focus', () => ui()?.send('window-focus', true));
-  win.on('blur', () => ui()?.send('window-focus', false));
-  win.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
-  win.on('blur', hideSuggestions);
-  win.loadFile(UI_HTML);
-  win.webContents.once('did-finish-load', () => {
+  w.on('focus', () => ui()?.send('window-focus', true));
+  w.on('blur', () => ui()?.send('window-focus', false));
+  w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
+  w.on('blur', hideSuggestions);
+  w.loadFile(UI_HTML);
+  w.webContents.once('did-finish-load', () => {
     createSuggestView();
-    restoreSession();
+    if (adopt) {
+      // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
+      if (!moveTabBetween(adopt.src, rec, adopt.tabId, 0) && !tabs.length) openTab();
+    } else {
+      restoreSession(restore);
+    }
+    rec.pendingRestore = false;
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
     uiReady = true;
     downloads.send(); // last session's downloads: the toolbar button shows when there are any
     openLinksFromOtherApps(pendingLinks.splice(0));
   });
+  return rec;
 }
+let quitting = false; // the app is shutting down: the session was saved by before-quit
+app.on('before-quit', () => {
+  if ([...winRecs].some(rcAlive)) saveSession();
+  quitting = true;
+});
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
-  if (process.platform !== 'darwin' && ui()) win.setTitleBarOverlay(titleBarOverlay());
+  if (process.platform === 'darwin') return;
+  for (const rec of winRecs) if (rcAlive(rec)) { try { rec.win.setTitleBarOverlay(titleBarOverlay()); } catch {} }
 });
 
 // ---------- links from other apps: Lumen as the default browser ----------
@@ -2817,11 +3063,15 @@ const mcpClient = require('./features/mcp-client').create({
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
+// With several windows, a run's tab tools keep acting on the window the run started in (its
+// tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
+let runRec = null;
+const inRun = (fn) => (...args) => (runRec && winRecs.has(runRec) ? withWindow(runRec, () => fn(...args)) : fn(...args));
 const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
-  activeTab: agentActiveTab, tabById: agentTabById, noTabReason, listTabs, openTab, switchTab, closeTab, requestCloseTab,
-  hasUnsavedInput: agentHasUnsavedInput, groupTabs: groupTabsFor, ungroupTabs: ungroupTabsFor, effectiveModel, anthropicAuth,
-  aiOff: (url) => aiSites.isOff(url), tabGroupOf, setTabGroup, // [ai controls]
+  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(openTab), switchTab: inRun(switchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
+  hasUnsavedInput: inRun(agentHasUnsavedInput), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
+  aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
@@ -3091,7 +3341,9 @@ ipcMain.on('agent:ask', (event, text, runId, images = []) => {
     .filter((img) => IMAGE_TYPES.has(img?.media_type) && typeof img.data === 'string' && img.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(img.data))
     .slice(0, 5);
   const generation = chatGeneration;
+  runRec = curRec; // the window this run's tab tools act on (agent:ask came from its UI)
   agent.run(String(text || ''), (msg) => {
+    if (msg.type === 'done' || msg.type === 'error') runRec = null;
     if (!event.sender.isDestroyed()) event.sender.send('agent:event', { ...msg, runId });
     if (msg.type === 'done') saveChat(generation);
     else if (msg.type === 'tool_done') saveChatSoon(generation);

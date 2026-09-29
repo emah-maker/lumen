@@ -25,7 +25,7 @@ for (const [input, want] of [
   ['https://node.js', 'https://node.js'],
   ['about:blank', 'about:blank'],
   // A typed or pasted path opens the file, as in Chrome (spaces included).
-  ['/Users/me/My Page.html', 'file:///Users/me/My%20Page.html'],
+  ['/Users/me/My Page.html', process.platform === 'win32' ? 'file:///C:/Users/me/My%20Page.html' : 'file:///Users/me/My%20Page.html'],
   [`~/Downloads/a b.pdf`, require('url').pathToFileURL(require('os').homedir() + '/Downloads/a b.pdf').href],
   ['C:\\Users\\me\\page one.html', 'file:///C:/Users/me/page%20one.html'],
 ]) check(`"${input}" opens ${want}`, resolveInput(input, 'google') === want, resolveInput(input, 'google'));
@@ -99,8 +99,8 @@ const gbData = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gb-'));
 try {
   const argv = gb.buildArgs({ promptFile: 'p.json', sessionId: 'id', resume: false, systemPrompt: 'sys', cwd: 'cwd' });
   const allows = argv.flatMap((a, i) => (argv[i - 1] === '--allow' ? [a] : []));
-  check('Grok Build allows only Lumen MCP tools and search_tool, not use_tool itself', JSON.stringify(allows) === JSON.stringify(['lumen__*', 'search_tool']) && !argv.includes('use_tool'), JSON.stringify(allows));
-  check('Grok Build denies the terminal and runs under dontAsk', argv.includes('run_terminal_command') && argv[argv.indexOf('--permission-mode') + 1] === 'dontAsk', argv.join(' '));
+  check('Grok Build allows Lumen MCP tools, search_tool and run_terminal_command (gated per call by Lumen\'s own PreToolUse hook), not use_tool itself', JSON.stringify(allows) === JSON.stringify(['lumen__*', 'search_tool', 'run_terminal_command']) && !argv.includes('use_tool'), JSON.stringify(allows));
+  check('Grok Build leaves the terminal to Lumen\'s gate instead of --deny, and runs under dontAsk', !argv.some((a, i) => a === '--deny' && argv[i + 1] === 'run_terminal_command') && argv[argv.indexOf('--permission-mode') + 1] === 'dontAsk', argv.join(' '));
 
   const env = gb.buildEnv({ userData: gbData, base: { PATH: 'x', GROK_HOME: '/users/real/.grok', GROK_CLAUDE_MCPS_ENABLED: '1', GROK_CONFIG: '{}', ELECTRON_RUN_AS_NODE: '1' } });
   check('Grok Build GROK_HOME is Lumen\'s own folder under userData, not the user\'s', env.GROK_HOME === path.join(gbData, 'grok-home') && env.GROK_HOME === gb.grokHomeFor(gbData), env.GROK_HOME);
@@ -113,12 +113,13 @@ try {
   check('Grok Build env: HOME and USERPROFILE are the empty sidebar folder, GROK_HOME Lumen\'s', scrubbed.HOME === path.join(gbData, 'grok-sidebar') && scrubbed.USERPROFILE === scrubbed.HOME && scrubbed.GROK_HOME === gb.grokHomeFor(gbData), JSON.stringify(scrubbed));
 
   // Lumen's own check on the tool calls Grok reports.
-  check('tool check: Lumen\'s tools pass (lumen__read_page, search_tool, use_tool -> lumen__x)', gb.isLumenTool('lumen__read_page') && gb.isLumenTool('search_tool', { query: 'page' }) && gb.isLumenTool('use_tool', { tool_name: 'lumen__x', tool_input: {} }), 'rejected a Lumen tool');
-  check('tool check: other tools are refused (use_tool -> other__x, Bash, run_terminal_command, edit_file)', ![['use_tool', { tool_name: 'other__x' }], ['Bash'], ['run_terminal_command', { command: 'echo' }], ['edit_file'], ['use_tool', {}], ['use_tool', null], ['use_tool', { tool_name: 'xlumen__a' }], ['lumen__'], ['web_search']].some(([n, i]) => gb.isLumenTool(n, i)), 'accepted a non-Lumen tool');
+  check('tool check: Lumen\'s tools pass (lumen__read_page, search_tool, use_tool -> lumen__x, run_terminal_command -- gated per call by the PreToolUse hook, not this check)', gb.isLumenTool('lumen__read_page') && gb.isLumenTool('search_tool', { query: 'page' }) && gb.isLumenTool('use_tool', { tool_name: 'lumen__x', tool_input: {} }) && gb.isLumenTool('run_terminal_command', { command: 'echo' }), 'rejected a Lumen tool');
+  check('tool check: other tools are refused (use_tool -> other__x, Bash, edit_file)', ![['use_tool', { tool_name: 'other__x' }], ['Bash'], ['edit_file'], ['use_tool', {}], ['use_tool', null], ['use_tool', { tool_name: 'xlumen__a' }], ['lumen__'], ['web_search']].some(([n, i]) => gb.isLumenTool(n, i)), 'accepted a non-Lumen tool');
   const streamed = (lines) => { const w = gb.toolWatch(); for (const l of lines) { const bad = w(l); if (bad) return bad; } return null; };
   const ev = (event) => ({ type: 'stream_event', event });
   const useTool = (name, index = 1) => [ev({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: 'c', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ tool_name: name, tool_input: {} }) } }), ev({ type: 'content_block_stop', index })];
-  check('tool check (stream): a built-in is caught at content_block_start', streamed([ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } })]) === 'run_terminal_command', 'missed');
+  check('tool check (stream): a built-in is caught at content_block_start', streamed([ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'edit_file', input: {} } })]) === 'edit_file', 'missed');
+  check('tool check (stream): run_terminal_command is left alone here (Lumen\'s PreToolUse gate already judged it, per call)', streamed([ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } })]) === null, 'caught');
   check('tool check (stream): use_tool is judged by the tool it names', streamed(useTool('lumen__read_page')) === null && streamed(useTool('other__probe')) === 'use_tool other__probe', streamed(useTool('other__probe')));
   check('tool check (stream): a use_tool whose input never parses is refused', streamed([ev({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"tool_na' } }), ev({ type: 'content_block_stop', index: 2 })]) === 'use_tool (unreadable)', 'accepted');
   check('tool check (stream): hosted server tools and whole assistant messages are checked too', streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } })]) === 'web_search' && streamed([{ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'edit_file', input: {} }] } }]) === 'edit_file' && streamed([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'use_tool', input: { tool_name: 'lumen__click' } }] } }]) === null, 'missed');
@@ -249,14 +250,81 @@ async function grokGateServer() {
   }
 }
 
+// The PreToolUse gate's decision for run_terminal_command specifically (mcp-http.js terminalDecision):
+// grokGateServer() above covers the no-onTerminalApproval default (an automatic deny, unchanged from
+// before this existed); this covers the approval flow itself, isolated from the real grok CLI and
+// Electron. "always" is remembered per chat session (the 2nd arg to open(), grok-build.js's Grok
+// session id), not per message tag, and never leaks across chats.
+async function grokTerminalApproval() {
+  const asked = [];
+  const answers = ['once', 'always', 'deny']; // consumed in order, one per ask
+  const gate = await require('../mcp-http').startHttp({
+    tools: [],
+    callTool: async () => ({ content: [], isError: false }),
+    onTerminalApproval: async (tag, command) => { asked.push({ tag, command }); return answers[asked.length - 1]; },
+    terminalHoldMs: 500,
+  });
+  const http = require('http');
+  const post = (url, body) => new Promise((resolve) => {
+    const u = new URL(url);
+    const req = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve({ status: res.statusCode, body: b ? JSON.parse(b) : null })); });
+    req.end(JSON.stringify(body));
+  });
+  const term = (run) => post(run.hookUrl, { hook_event_name: 'PreToolUse', tool_name: 'run_terminal_command', tool_input: { command: 'echo hi' } }).then((r) => r.body?.hookSpecificOutput?.permissionDecision || 'allow');
+  try {
+    const run1 = gate.open('t1', 'chatA'); // message 1 of chat A: asked, 'once' allows just this call
+    check('Grok gate: run_terminal_command with onTerminalApproval asks, and "once" allows that call', await term(run1) === 'allow' && asked.length === 1 && asked[0].command === 'echo hi', JSON.stringify(asked));
+    gate.close('t1');
+
+    const run2 = gate.open('t2', 'chatA'); // message 2, same chat: "once" wasn't remembered, asks again
+    check('Grok gate: "once" is not remembered -- the next message in the same chat asks again', await term(run2) === 'allow' && asked.length === 2, JSON.stringify(asked));
+    gate.close('t2');
+
+    const run3 = gate.open('t3', 'chatA'); // message 3, same chat: "always" (from message 2) is remembered
+    check('Grok gate: "always" is remembered for the rest of this chat -- no third ask', await term(run3) === 'allow' && asked.length === 2, JSON.stringify(asked));
+    gate.close('t3');
+
+    const run4 = gate.open('t4', 'chatB'); // a different chat: never said "always", asked on its own
+    check('Grok gate: a different chat session is asked on its own; another chat\'s "always" doesn\'t leak into it', await term(run4) === 'deny' && asked.length === 3, JSON.stringify(asked));
+    gate.close('t4');
+  } finally {
+    gate.stop();
+  }
+
+  // A stuck onTerminalApproval (never resolves, e.g. a card left unanswered) times out to a deny
+  // instead of hanging -- same fail-closed default as an unreachable gate.
+  const stuckAsked = [];
+  const stuckGate = await require('../mcp-http').startHttp({
+    tools: [],
+    callTool: async () => ({ content: [], isError: false }),
+    onTerminalApproval: async (_tag, command) => { stuckAsked.push(command); return new Promise(() => {}); },
+    terminalHoldMs: 200,
+  });
+  try {
+    const srun = stuckGate.open('s1', 'chatC');
+    const before = Date.now();
+    const decision = await term(srun);
+    check('Grok gate: an unanswered approval times out to a deny (fail-closed), not a hang', decision === 'deny' && Date.now() - before < 5000 && stuckAsked.length === 1, JSON.stringify({ decision, elapsed: Date.now() - before }));
+  } finally {
+    stuckGate.stop();
+  }
+}
+
 async function grokRuns() {
   {
-    const { out, events, kills, spawned } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Let me look.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, 'LEAKED'), gbDone('LEAKED')]);
+    const { out, events, kills, spawned } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Let me look.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'edit_file', input: {} } }), ...gbText(2, 'LEAKED'), gbDone('LEAKED')]);
     const error = events.find((e) => e.type === 'error');
     check('Grok Build run: a built-in tool call kills the process tree at once', kills.length === 1 && kills[0] === spawned.child.pid, JSON.stringify(kills));
-    check('Grok Build run: it ends as failed, with an error naming the tool, and drops the session', out.failed === true && out.sessionId === null && /isn't one of Lumen's \(run_terminal_command\)/.test(error?.text || ''), JSON.stringify({ out, error }));
+    check('Grok Build run: it ends as failed, with an error naming the tool, and drops the session', out.failed === true && out.sessionId === null && /isn't one of Lumen's \(edit_file\)/.test(error?.text || ''), JSON.stringify({ out, error }));
     check('Grok Build run: nothing after the off-limits call reaches the sidebar', !events.some((e) => /LEAKED/.test(e.text || '')) && !/LEAKED/.test(out.text), JSON.stringify(events));
     check('Grok Build run: the child gets the scrubbed env and the empty sidebar folder as cwd', spawned.opts.cwd.endsWith('grok-sidebar') && spawned.opts.env.HOME === spawned.opts.cwd && spawned.opts.stdio[0] === 'ignore' && spawned.opts.shell === false && !Object.keys(spawned.opts.env).some((k) => /API_KEY|TOKEN|SECRET/i.test(k) && !['LUMEN_MCP_TOKEN', 'XAI_API_KEY'].includes(k)), JSON.stringify(spawned.opts));
+  }
+  {
+    // run_terminal_command is no longer an automatic kill here: Lumen's PreToolUse gate (mcp-http.js
+    // terminalDecision) is what judges it now, per call, before it ever runs -- this stream-level
+    // check (the last-resort layer) just needs to leave it alone once it's been reported.
+    const { out, events, kills } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Running it.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, ' Done.'), gbDone('Running it. Done.')]);
+    check('Grok Build run: run_terminal_command in the stream is not killed here (the gate already judged it)', kills.length === 0 && out.failed !== true && out.text === 'Running it.\n\n Done.', JSON.stringify({ out, events, kills }));
   }
   {
     const { out, spawned, gate } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')]);
@@ -271,6 +339,7 @@ async function grokRuns() {
     check('Grok Build run: nothing of an unguarded run reaches the sidebar', !events.some((e) => /LEAKED/.test(e.text || '')) && !/LEAKED/.test(out.text), JSON.stringify(events));
   }
   await grokGateServer();
+  await grokTerminalApproval();
   {
     const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'other__probe'), gbDone('probed')]);
     check('Grok Build run: use_tool on another server is stopped the same way', kills.length === 1 && out.failed && /use_tool other__probe/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, kills }));
@@ -396,7 +465,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const gPlain = gb.buildArgs(g);
   const gModel = gb.buildArgs({ ...g, model: 'grok-4.6' });
   check('Grok Build default passes no --model', !gPlain.includes('--model') && !gPlain.includes('-m'), gPlain.join(' '));
-  check('Grok Build with a model passes --model <id>, keeping its permission rules', flag(gModel, '--model') === 'grok-4.6' && flag(gModel, '--permission-mode') === 'dontAsk' && JSON.stringify(gModel.flatMap((a, i) => (gModel[i - 1] === '--allow' ? [a] : []))) === '["lumen__*","search_tool"]', gModel.join(' '));
+  check('Grok Build with a model passes --model <id>, keeping its permission rules', flag(gModel, '--model') === 'grok-4.6' && flag(gModel, '--permission-mode') === 'dontAsk' && JSON.stringify(gModel.flatMap((a, i) => (gModel[i - 1] === '--allow' ? [a] : []))) === '["lumen__*","search_tool","run_terminal_command"]', gModel.join(' '));
   check('Grok Build never passes a flag-like model', !gb.buildArgs({ ...g, model: '--always-approve' }).includes('--always-approve'), 'flag-like model passed');
 
   const out = 'You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.6\n  - grok-4.5\n';
@@ -419,6 +488,19 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 
 // ---- updates (features/updates.js): who may update, how, and what to download
 {
+  const zu = require('../features/zip-update');
+  const zp = zu.swapPaths(path.join('C:', 'Apps', 'Lumen', 'Lumen.exe'));
+  check('zip update: staging, old copy and script sit next to the install folder', path.dirname(zp.staging) === path.join('C:', 'Apps') && zp.staging.endsWith('Lumen.update') && zp.old.endsWith('Lumen.old') && zp.script.endsWith('Lumen.update.cmd'), JSON.stringify(zp));
+  check('zip update: the expected hash comes from the matching latest.yml entry', zu.expectedHash([{ url: 'a.exe', sha512: 'x' }, { url: 'Lumen-1.0.0-win-x64.zip', sha512: 'zz' }], 'Lumen-1.0.0-win-x64.zip') === 'zz' && zu.expectedHash([], 'a.zip') === '', 'hash');
+  check('zip update: a missing or different hash is refused', zu.hashMatches('a', 'a') && !zu.hashMatches('a', 'b') && !zu.hashMatches('', ''), 'match');
+  const tree = { r: ['Lumen'], 'r/Lumen': ['Lumen.exe', 'x.dll'], flat: ['Lumen.exe'], two: ['a', 'b'] };
+  const fakeLs = (d) => (tree[d.split(path.sep).join('/')] || []).map((n) => ({ name: n, isDirectory: () => !n.includes('.') }));
+  check('zip update: finds the exe at the zip root or inside its single folder', zu.findRoot('flat', 'Lumen.exe', fakeLs) === 'flat' && zu.findRoot('r', 'Lumen.exe', fakeLs) === path.join('r', 'Lumen') && zu.findRoot('two', 'Lumen.exe', fakeLs) === null, 'root');
+  const A = 'C:/A';
+  const sw = zu.swapScript({ pid: 42, dir: `${A}/Lumen`, root: `${A}/Lumen.update/files`, old: `${A}/Lumen.old`, exe: `${A}/Lumen/Lumen.exe`, errFile: 'C:/P/update-error.txt', staging: `${A}/Lumen.update`, self: `${A}/Lumen.update.cmd` });
+  const mv = (a, b) => `move "${A}/${a}" "${A}/${b}"`;
+  check('zip update: the swap script waits for Lumen, renames both folders, restores on failure, relaunches', sw.includes('PID eq 42') && sw.includes(mv('Lumen', 'Lumen.old')) && sw.includes(mv('Lumen.update/files', 'Lumen')) && sw.includes(mv('Lumen.old', 'Lumen')) && sw.includes('update-error.txt') && sw.includes(`start "" "${A}/Lumen/Lumen.exe"`), 'script');
+  check('zip update: only zip copies stage in-app', require('../features/updates').canStage('zip') && !require('../features/updates').canStage('portable') && !require('../features/updates').canStage('nsis'), 'canStage');
   const { disabledReason, installKind, canAutoInstall, isNewer, manualAsset } = require('../features/updates');
   check('updates: off in a development run', disabledReason({ packaged: false, test: false }) === 'dev', disabledReason({ packaged: false }));
   check('updates: off in test mode', disabledReason({ packaged: false, test: true }) === 'test', disabledReason({ packaged: false, test: true }));
@@ -539,6 +621,39 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 }
 
 // ---- Electron fuses: packaged macOS builds turn off NODE_OPTIONS and --inspect; Windows is untouched
+// ---- agent loop guards (loop-guard.js)
+{
+  const { RepeatDetector, withNote, trimToolResults, cacheLastTool } = require('../loop-guard');
+  const d = new RepeatDetector();
+  const click = { element_id: 7 };
+  check('repeat: first failure has no note', d.record('click', click, false) === null, '');
+  check('repeat: second identical failure warns', /failed twice/.test(d.record('click', click, false) || ''), '');
+  check('repeat: third identical failure forces a new strategy', /REPEAT/.test(d.record('click', click, false) || ''), '');
+  const e = new RepeatDetector();
+  const notes = ['a', 'b', 'c', 'd'].map((x) => e.record('click', { text: x }, false));
+  check('repeat: four different failures in a row are flagged', /4 tool calls/.test(notes[3] || '') && !notes[1], JSON.stringify(notes));
+  const f = new RepeatDetector();
+  f.record('navigate', { url: 'a' }, true); f.record('navigate', { url: 'a' }, true);
+  check('repeat: same successful call three times is flagged', /same call 3 times/.test(f.record('navigate', { url: 'a' }, true) || ''), '');
+  const g = new RepeatDetector();
+  const scrolls = [1, 2, 3, 4].map(() => g.record('scroll', { direction: 'down' }, true));
+  check('repeat: scrolling or re-reading repeatedly is not flagged', scrolls.every((n) => n === null), '');
+  g.record('click', click, false);
+  check('repeat: a success breaks a failure run', g.record('click', click, true) === null, '');
+  check('withNote: string, blocks, passthrough', withNote('x', 'n') === 'x\n\nn' && withNote([{ type: 'text', text: 'x' }], 'n').length === 2 && withNote('x', null) === 'x' && withNote({ a: 1 }, 'n').a === 1, '');
+
+  const result = (id, content) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] });
+  const big = 'y'.repeat(5000);
+  const history = [{ role: 'user', content: 'hi' }, result('1', big), result('2', [{ type: 'image', source: {} }, { type: 'text', text: big }]), result('3', big), result('4', big), result('5', big), result('6', big)];
+  const trimmed = trimToolResults(history, { keep: 4, maxChars: 100 });
+  check('trim: old results are cut, images dropped, recent kept whole', trimmed[1].content[0].content.length < 200 && trimmed[2].content[0].content[0].text.includes('omitted') && trimmed[3].content[0].content.length === 5000 && trimmed[6].content[0].content.length === 5000, JSON.stringify(trimmed[1]).slice(0, 120));
+  check('trim: does not mutate its input, and small histories pass through', history[1].content[0].content === big && trimToolResults(history.slice(0, 3), { keep: 4 }) === history.slice(0, 3) || trimToolResults(history.slice(0, 3), { keep: 4 }).length === 3, '');
+
+  const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];
+  const cached = cacheLastTool(tools);
+  check('cache_control: only the last tool is marked, input untouched', cached.filter((t) => t.cache_control).length === 1 && cached[2].cache_control.type === 'ephemeral' && tools[0].cache_control && cacheLastTool([]).length === 0, JSON.stringify(cached));
+}
+
 async function fuseChecks() {
   const afterPack = require('../scripts/after-pack');
   const { FuseV1Options, getCurrentFuseWire } = require('@electron/fuses');
@@ -669,6 +784,26 @@ async function fuseChecks() {
   check('site activity: a cookie domain matches its subdomains and parents', related('example.com', 'www.example.com') && related('www.example.com', 'example.com') && related('a.b', 'a.b'), 'related');
   check('site activity: unrelated domains don\'t match', !related('example.com', 'badexample.com') && !related('ample.com', 'example.com'), 'unrelated');
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ---- the sidebar usage bar (features/usage.js barFor, cli-utils usageOf)
+{
+  const { barFor } = require('../features/usage');
+  const { usageOf } = require('../cli-utils');
+  const plan = { available: true, limits: [{ label: 'Current session', percent: 29, resets: '8:09pm (America/New_York)' }, { label: 'Current week (all models)', percent: 12, resets: 'Oct 2' }] };
+  let b = barFor('claudecode', { plan, meter: null, lumen: { window: { limitPoints: 3 } } });
+  check('usage bar: Claude Code shows the session and weekly limits', b.kind === 'plan' && b.percent === 29 && b.resetsText === '8:09pm' && b.weekly.percent === 12 && b.lumenPoints === 3, JSON.stringify(b));
+  b = barFor('claudecode', { plan: { available: false }, meter: { percent: 140, resetsAt: 5 } });
+  check('usage bar: a live meter reading wins and is clamped to 100', b.percent === 100 && b.resetsAt === 5 && b.weekly === null, JSON.stringify(b));
+  check('usage bar: no plan data and no meter hides the Claude bar', barFor('claudecode', { plan: { available: false } }) === null);
+  const s = { engines: { grokbuild: { today: { turns: 2, tokens: 5000, costUSD: 0.02 }, last: { contextTokens: 50000, contextWindow: 200000 } } } };
+  b = barFor('grokbuild', s);
+  check('usage bar: Grok Build shows context fill, tokens and cost', b.kind === 'context' && b.percent === 25 && b.tokens === 5000 && b.costUSD === 0.02, JSON.stringify(b));
+  b = barFor('grokbuild', { engines: { grokbuild: { today: { turns: 1, tokens: 10, costUSD: 0 }, last: { contextTokens: 10, contextWindow: 0 } } } });
+  check('usage bar: an unknown context window gives no percent, only counts', b.percent === null && b.tokens === 10, JSON.stringify(b));
+  check('usage bar: an engine with no turns today is hidden', barFor('grokbuild', { engines: { grokbuild: { today: { turns: 0, tokens: 0, costUSD: 0 }, last: {} } } }) === null && barFor('grokbuild', {}) === null);
+  const u = usageOf({ usage: { input_tokens: 5 }, modelUsage: { a: { contextWindow: 200000 }, b: { contextWindow: 1000000 } }, total_cost_usd: 0.1 });
+  check('usage bar: usageOf reads the largest context window', u.contextWindow === 1000000 && u.inputTokens === 5, JSON.stringify(u));
 }
 
 // ---- AI chat usage totals (features/chat-usage.js)
@@ -963,7 +1098,52 @@ async function safeBrowsingRuns() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+// ---- read_pdf: text extraction and the per-chat permission gate (features/pdf-text.js)
+async function pdfRuns() {
+  const zlib = require('zlib');
+  const pdfText = require('../features/pdf-text');
+  const objs = [];
+  const add = (dict, stream) => objs.push(stream ? Buffer.concat([Buffer.from(`${dict.replace('>>', `/Length ${stream.length}>>`)}\nstream\n`), stream, Buffer.from('\nendstream')]) : Buffer.from(dict));
+  add('<</Type/Catalog/Pages 2 0 R>>');
+  add('<</Type/Pages/Kids[3 0 R 7 0 R]/Count 2/Resources<</Font<</F1 5 0 R /F2 8 0 R>>>>>>');
+  add('<</Type/Page/Parent 2 0 R/Contents 4 0 R>>');
+  add('<</Filter/FlateDecode>>', zlib.deflateSync(Buffer.from('BT /F1 12 Tf 72 700 Td (Hello \\(PDF\\) world) Tj 0 -14 Td [(Second) -300 (line)] TJ ET')));
+  add('<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>');
+  add('<<>>', Buffer.alloc(0));
+  add('<</Type/Page/Parent 2 0 R/Contents 9 0 R>>');
+  add('<</Type/Font/Subtype/Type0/ToUnicode 10 0 R>>');
+  add('<<>>', Buffer.from('BT /F2 12 Tf <00010002> Tj ET'));
+  add('<<>>', Buffer.from('/CIDInit begincmap 1 begincodespacerange <0000> <FFFF> endcodespacerange 2 beginbfchar <0001> <0048> <0002> <0069> endbfchar endcmap'));
+  const parts = [Buffer.from('%PDF-1.4\n')];
+  objs.forEach((o, i) => parts.push(Buffer.from(`${i + 1} 0 obj\n`), o, Buffer.from('\nendobj\n')));
+  parts.push(Buffer.from('trailer\n<</Root 1 0 R>>\n%%EOF'));
+  const pdf = Buffer.concat(parts);
+
+  const all = pdfText.extractPdfText(pdf);
+  check('pdf text: pages, a compressed stream, escapes, TJ gaps and a ToUnicode font',
+    all.numPages === 2 && all.text.includes('Hello (PDF) world') && all.text.includes('Second line') && all.text.includes('--- Page 2 of 2 ---\nHi') && !all.truncated, JSON.stringify(all));
+  const second = pdfText.extractPdfText(pdf, { pages: '2' });
+  check('pdf text: a page range', second.pages.join() === '2' && !second.text.includes('Hello'), JSON.stringify(second));
+  const cut = pdfText.extractPdfText(pdf, { maxChars: 60 });
+  check('pdf text: output is capped and says where to continue', cut.truncated && cut.next === 2 && cut.pages.join() === '1', JSON.stringify(cut));
+  check('pdf text: ranges parse ("4-", "1-3,7", out of range)', pdfText.parsePageRange('3-', 5).join() === '3,4,5' && pdfText.parsePageRange('1-2,4', 9).join() === '1,2,4' && pdfText.parsePageRange('9', 3).length === 0, 'ranges');
+  let bad = '';
+  try { pdfText.extractPdfText(Buffer.from('hello')); } catch (err) { bad = err.message; }
+  check('pdf text: a file that is not a PDF is refused', /not a PDF/.test(bad), bad);
+
+  const url = require('url').pathToFileURL('/Users/secret-person/Taxes/2025 return.pdf').href;
+  check('pdf card shows the file name only, never the folder', pdfText.pdfName(url) === '2025 return.pdf' && pdfText.pdfName('https://x.test/a/b%20c.pdf?token=1') === 'b c.pdf', pdfText.pdfName(url));
+  const chat = [];
+  const asked = [];
+  const ask = (answer) => async (name) => { asked.push(name); return answer; };
+  check('pdf gate: a denial is refused and not remembered', (await pdfText.requirePdfPermission(chat, url, ask(false))) === false && !chat.pdfAllowed.size, 'denied');
+  check('pdf gate: an allow is asked once per PDF in a chat', (await pdfText.requirePdfPermission(chat, url, ask(true))) === true && (await pdfText.requirePdfPermission(chat, `${url}#page=3`, ask(false))) === true && asked.length === 2, JSON.stringify(asked));
+  check('pdf gate: another PDF, and another chat, ask again', (await pdfText.requirePdfPermission(chat, 'https://x.test/other.pdf', ask(false))) === false && (await pdfText.requirePdfPermission([], url, ask(false))) === false && asked.length === 4, JSON.stringify(asked));
+  const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+  check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
+}
+
+fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

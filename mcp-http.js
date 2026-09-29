@@ -23,7 +23,8 @@ const DENY = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', p
 
 // The gate's rule for one PreToolUse event. MCP calls show under their qualified name
 // (lumen__navigate), not as use_tool; search_tool only searches the catalog, which holds nothing but
-// Lumen's tools (config.toml names one server).
+// Lumen's tools (config.toml names one server). run_terminal_command is judged separately (below):
+// it's the one built-in the user can approve per call, rather than an automatic deny.
 function gateDecision(toolName, toolNames) {
   const n = String(toolName || '');
   if (n === 'search_tool') return null;
@@ -32,15 +33,54 @@ function gateDecision(toolName, toolNames) {
   return DENY(`Only Lumen's browser tools are allowed here (${n.slice(0, 60) || 'unnamed tool'} is not one of them).`);
 }
 
-// { tools, callTool, enabled, onEvent }: as mcp.js startServer. Resolves once listening, with
-// open(tag) -> { mcpUrl, mcpToken, hookUrl }, close(tag), armed(tag), listed(tag), allowed(tag), denied(tag),
-// port and stop().
-function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, holdMs = 8000 }) {
-  const runs = new Map(); // tag -> { mcpToken, hookToken, armed, allowed: [], sessions: Map(id -> session) }
+// Best-effort read of the command Grok wants to run, out of whatever field name its PreToolUse
+// event happens to use for a tool's input (unverified against a real payload -- there was no running
+// Grok Build session to capture one from live; every plausible key is tried, and the raw input is
+// shown as JSON if none match, so the approval card never renders blank).
+function terminalCommand(msg) {
+  const input = msg?.toolInput ?? msg?.tool_input ?? msg?.input ?? msg?.arguments ?? msg?.tool_call?.rawInput ?? msg?.toolCall?.rawInput ?? null;
+  if (input == null) return '(Lumen could not read the command Grok wants to run.)';
+  if (typeof input === 'string') return input.slice(0, 4000);
+  const cmd = input.command ?? input.cmd ?? input.script ?? input.shellCommand ?? input.shell_command;
+  if (typeof cmd === 'string') return cmd.slice(0, 4000);
+  try { return JSON.stringify(input, null, 2).slice(0, 4000); } catch { return '(Lumen could not read the command Grok wants to run.)'; }
+}
+
+// { tools, callTool, enabled, onEvent, onTerminalApproval }: as mcp.js startServer, plus
+// onTerminalApproval(tag, command) -> Promise<'once' | 'always' | 'deny'>, asked the first time a run
+// (by its Grok chat session, not this one message) calls run_terminal_command; 'always' is remembered
+// only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
+// Resolves once listening, with open(tag, chatSessionId) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
+// armed(tag), listed(tag), allowed(tag), denied(tag), port and stop().
+function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, holdMs = 8000, terminalHoldMs = 20000 }) {
+  const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
+  const chatSessionsAllowed = new Set(); // chatSessionId -> terminal commands approved for the rest of this chat
   let port = 0;
   const byMcp = (token) => [...runs.values()].find((r) => same(token, r.mcpToken));
   const byHook = (token) => [...runs.values()].find((r) => same(token, r.hookToken));
   const toolNames = () => tools.map((t) => t.name);
+
+  // The PreToolUse verdict for run_terminal_command specifically: an automatic allow once this chat
+  // has said "always", otherwise held until onTerminalApproval's card is answered (or times out, a
+  // deny -- same fail-closed default as an unreachable gate). No onTerminalApproval wired up (a
+  // caller that never expects Grok to reach this far): deny, same as before this existed.
+  async function terminalDecision(run, msg) {
+    if (run.chatSessionId && chatSessionsAllowed.has(run.chatSessionId)) return null;
+    if (!onTerminalApproval) return DENY("Lumen isn't set up to approve terminal commands here.");
+    const command = terminalCommand(msg);
+    let answer;
+    try {
+      answer = await Promise.race([
+        onTerminalApproval(run.tag, command),
+        new Promise((r) => setTimeout(() => r('deny'), terminalHoldMs)),
+      ]);
+    } catch {
+      answer = 'deny';
+    }
+    if (answer === 'always') { if (run.chatSessionId) chatSessionsAllowed.add(run.chatSessionId); return null; }
+    if (answer === 'once' || answer === true) return null;
+    return DENY('The user did not approve this terminal command.');
+  }
 
   // One MCP session per run (Grok opens one per grok process), answered request by request.
   function mcpSession(run) {
@@ -81,7 +121,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
         if (/^user_?prompt_?submit$/i.test(event)) return json(200, await armed(run));
         if (/^pre_?tool_?use$/i.test(event)) {
           const name = msg?.toolName ?? msg?.tool_name;
-          const verdict = gateDecision(name, toolNames());
+          const verdict = String(name) === 'run_terminal_command' ? await terminalDecision(run, msg) : gateDecision(name, toolNames());
           (verdict ? run.denied : run.allowed).push(String(name));
           return json(200, verdict || undefined);
         }
@@ -106,8 +146,8 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       port = server.address().port;
       resolve({
         port,
-        open(tag) {
-          const run = { tag, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
+        open(tag, chatSessionId = null) {
+          const run = { tag, chatSessionId, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
           runs.set(tag, run);
           return { mcpUrl: `http://127.0.0.1:${port}/mcp`, mcpToken: run.mcpToken, hookUrl: `http://127.0.0.1:${port}/hook/${run.hookToken}` };
         },

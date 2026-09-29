@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('browser', {
   closeTab: (id) => ipcRenderer.send('tab:close', id),
   switchTab: (id) => ipcRenderer.send('tab:switch', id),
   moveTab: (id, toIndex) => ipcRenderer.send('tab:move', id, toIndex),
+  dropTab: (id) => ipcRenderer.send('tab:drop', id), // released far outside the strip: another window's strip, or a new window
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   groupMenu: (id, point) => ipcRenderer.send('group:context-menu', id, point),
   toggleGroup: (id) => ipcRenderer.send('group:toggle', id),

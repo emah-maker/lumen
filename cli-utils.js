@@ -48,6 +48,7 @@ function usageOf(result) {
     cacheReadTokens: Number(u.cache_read_input_tokens) || 0,
     cacheWriteTokens: Number(u.cache_creation_input_tokens) || 0,
     costUSD: Number(result.total_cost_usd) || 0,
+    contextWindow: Math.max(0, ...Object.values(result.modelUsage || {}).map((m) => Number(m?.contextWindow) || 0)),
     models,
   };
 }

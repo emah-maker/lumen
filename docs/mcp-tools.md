@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Gemini CLI](../README.md#use-lumen-from-claude-code-codex-gemini-cli)) offers the same 26 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
+Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Gemini CLI](../README.md#use-lumen-from-claude-code-codex-gemini-cli)) offers the same 27 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
 
 A few things apply to every tool:
 
@@ -75,6 +75,15 @@ Read up to 6 pages in parallel in hidden tabs without cookies/logins (use naviga
 | Parameter | Type | Required |
 |---|---|---|
 | `urls` | string[] | yes |
+
+### `read_pdf`
+
+Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks you first, once per PDF per chat, even with Auto-allow on; the card and the result show the file name, never its folder. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule. Returns up to 30,000 characters; when cut off, the result names the pages to ask for next. Scanned or encrypted PDFs give no text.
+
+| Parameter | Type | Required |
+|---|---|---|
+| `tab_id` | integer | no |
+| `pages` | string ("1-5", "3", "4-", "1-3,7") | no |
 
 ### `run_script`
 

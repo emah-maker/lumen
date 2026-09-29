@@ -63,8 +63,29 @@ jobs:
         shell: bash
         run: node test/models.js && node test/adhd.js && node test/pagecontext.js && node test/providers.js && node test/import.js
 
+      # Widevine VMP signing (scripts/after-pack.js) needs a free castlabs EVS account. Add the
+      # repository secrets EVS_ACCOUNT_NAME and EVS_PASSWD to enable it; without them the build is
+      # unsigned and production DRM (Netflix, Disney+, ...) may not play.
+      - name: Set up Widevine VMP signing
+        id: vmp
+        shell: bash
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+        run: |
+          if [ -z "$EVS_ACCOUNT_NAME" ] || [ -z "$EVS_PASSWD" ]; then
+            echo "::warning::EVS_ACCOUNT_NAME / EVS_PASSWD secrets not set; building without Widevine VMP signing"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            python -m pip install --upgrade castlabs-evs
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
         shell: bash
+        env:
+          EVS_ACCOUNT_NAME: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_ACCOUNT_NAME || '' }}
+          EVS_PASSWD: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_PASSWD || '' }}
         run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
       - name: List build output

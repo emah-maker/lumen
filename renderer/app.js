@@ -144,6 +144,15 @@ function startTabDrag(e, el, id) {
   el.setPointerCapture(e.pointerId);
 }
 
+// Dragged this far outside the strip (or out of the window), releasing the tab hands it to main.js:
+// into another window's strip if the cursor is over one, else into a new window of its own.
+const TEAR_OFF_PX = 36;
+function draggedOut(e) {
+  const bar = $('tabs').getBoundingClientRect();
+  return e.clientY > bar.bottom + TEAR_OFF_PX || e.clientY < bar.top - TEAR_OFF_PX
+    || e.clientX < -TEAR_OFF_PX / 2 || e.clientX > window.innerWidth + TEAR_OFF_PX / 2;
+}
+
 function moveTabDrag(e) {
   if (!drag) return;
   drag.dx = e.clientX - drag.startX;
@@ -158,6 +167,7 @@ function moveTabDrag(e) {
   const first = rects[0].left, last = rects[rects.length - 1].right;
   const dx = Math.max(first - rects[from].left, Math.min(last - rects[from].right, drag.dx));
   drag.el.style.transform = `translateX(${dx}px)`;
+  drag.el.classList.toggle('tearing', draggedOut(e));
   const center = rects[from].left + rects[from].width / 2 + dx;
   let to = rects.findIndex((r) => center < r.left + r.width / 2);
   if (to === -1) to = rects.length - 1;
@@ -172,16 +182,19 @@ function moveTabDrag(e) {
   });
 }
 
-function endTabDrag() {
+function endTabDrag(e) {
   if (!drag) return;
   const { moved, from, to, id, ids } = drag;
+  const out = moved && e?.type === 'pointerup' && draggedOut(e);
   drag = null;
   $('tabs').classList.remove('reordering');
-  [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging'); });
+  [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging', 'tearing'); });
   if (moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
-    if (from !== to) {
+    if (out) {
+      window.browser.dropTab?.(id);
+    } else if (from !== to) {
       // Collapsed groups hide tabs, so the strip's order isn't the full order: land next to the tab we dropped on.
       const without = (lastTabState?.tabs || []).map((t) => t.id).filter((x) => x !== id);
       const index = without.indexOf(ids[to]);
@@ -1788,6 +1801,7 @@ const TOOL_LABELS = {
   group_tabs: (i) => t('tool.group_tabs', { name: i.name ?? '' }),
   ungroup_tabs: () => t('tool.ungroup_tabs'),
   read_urls: () => t('tool.read_urls'),
+  read_pdf: () => t('tool.read_pdf'),
   run_script: () => t('tool.run_script'),
   wait_for: (i) => t('tool.wait_for', { text: i.text ?? '' }),
 };
@@ -2019,6 +2033,9 @@ const approvals = new Map(); // approvalId -> { card, host }
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
 function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted } = {}) {
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
+  // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
+  // an MCP tool's, but "always" only lasts this chat (not a persisted Settings toggle), so its own copy.
+  if (action === 'terminal') return showToolApproval(approvalId, host, { title: openTitle, args, terminal: true });
   const card = document.createElement('div');
   card.className = 'approval';
   card.tabIndex = 0;
@@ -2026,7 +2043,8 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   const agentName = assistantIdentity?.name || t('approval.theAi');
   const opening = action === 'open';
   const scripting = action === 'script';
-  const heading = opening
+  const pdf = action === 'pdf';
+  const heading = pdf ? openTitle || t('approval.pdf', { name: agentName, file: host }) : opening
     ? openTitle || (host ? t('approval.open', { name: agentName, host }) : t('approval.openNew', { name: agentName }))
     : scripting ? openTitle || t('approval.script', { name: agentName, host })
       : t('approval.interact', { name: agentName, host });
@@ -2039,6 +2057,7 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
   detail.className = 'approval-detail';
   detail.textContent = query !== undefined
     ? t('approval.detail.search', { query, host })
+    : pdf ? t('approval.detail.pdf')
     : opening ? t('approval.detail.open')
       : scripting ? t('approval.detail.script')
         : t('approval.detail.interact');
@@ -2076,25 +2095,27 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
 
 // A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
-function showToolApproval(approvalId, host, { title: heading, args, tainted }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false }) {
   const card = document.createElement('div');
-  card.className = 'approval approval-tool';
+  card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   card.setAttribute('aria-label', heading || `Use ${host}?`);
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || `Use ${host}?` });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
-    textContent: tainted
-      ? 'It has read page content in this chat. Check that these details are what you want to send to this server:'
-      : 'This server gets these details:',
+    textContent: terminal
+      ? 'This runs for real on your computer, with your permissions:'
+      : tainted
+        ? 'It has read page content in this chat. Check that these details are what you want to send to this server:'
+        : 'This server gets these details:',
   });
   const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: "Don't allow" });
   const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Allow once' });
-  const always = tainted ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: 'Always allow this tool', title: 'Stop asking for this tool (it still asks after the AI reads a page). Change it in Settings → You and AI.' });
+  const always = tainted && !terminal ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? 'Allow for this chat' : 'Always allow this tool', title: terminal ? 'Stop asking for terminal commands for the rest of this chat. Resets when you start a new chat.' : 'Stop asking for this tool (it still asks after the AI reads a page). Change it in Settings → You and AI.' });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');
@@ -2313,8 +2334,8 @@ window.assistant.onMcpEvent?.((event) => {
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
-      const vars = { client: event.clientName, host: event.host, query: event.query };
-      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
+      const vars = { client: event.clientName, host: event.host, file: event.host, query: event.query };
+      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
       if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = t('mcp.approval.detail.open'); }
       card?.setAttribute('aria-label', title?.textContent || '');

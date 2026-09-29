@@ -54,6 +54,7 @@ Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A
   - click by visible text
   - `fill_form` fills a whole form by field labels
   - `read_urls` reads up to 6 pages in parallel in hidden tabs
+  - `read_pdf` reads the text of a PDF open in a tab, only after you allow that PDF (a card, "Allow the AI to read <file name>?", remembered for that chat; local and web PDFs alike; up to 30,000 characters per call, with page ranges). The text counts as page content, like `read_page`. Scanned pages have no text.
   - `run_script` runs JavaScript in the page for bulk extraction or edits
   - `wait_for` waits for text to appear
   - web search
@@ -67,7 +68,7 @@ Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A
 ![An approval card in the sidebar: an external agent asks to interact with a site](docs/media/mcp-approval.png)
 
 - **New sites.** The first time the AI clicks, types, hovers, presses keys or runs a script on a site in a chat, a card asks you to allow it. The bolt in the sidebar head (**Auto-allow actions**) skips these cards for the sidebar's own AI; agents connected over MCP always ask.
-- **Leaving with what it read.** Once the AI has read content in a chat (`read_page`, `find`, `screenshot`, `run_script`, `read_urls`, `list_tabs`, `batch`, or the page text Lumen sends with your message), navigating to, opening or fetching a site not yet approved in that chat shows a card ("Claude wants to open <host>"), one per new site. Approving adds the site to the chat's approved sites. This lasts for the whole chat and resets on **New chat**; a chat restored after a restart counts as having read content. Approved sites, and everything while Auto-allow is on, skip the card; MCP agents are always asked. This is so a page can't quietly tell the AI to carry what it read off to another site. The same card appears when an approved site redirects to a new one, and before the AI's `web_search` sends its query to DuckDuckGo (the card shows the query).
+- **Leaving with what it read.** Once the AI has read content in a chat (`read_page`, `find`, `screenshot`, `run_script`, `read_urls`, `list_tabs`, `batch`, `read_pdf`, or the page text Lumen sends with your message), navigating to, opening or fetching a site not yet approved in that chat shows a card ("Claude wants to open <host>"), one per new site. Approving adds the site to the chat's approved sites. This lasts for the whole chat and resets on **New chat**; a chat restored after a restart counts as having read content. Approved sites, and everything while Auto-allow is on, skip the card; MCP agents are always asked. This is so a page can't quietly tell the AI to carry what it read off to another site. The same card appears when an approved site redirects to a new one, and before the AI's `web_search` sends its query to DuckDuckGo (the card shows the query).
 - **What it can see of your tabs.** `list_tabs` shows the AI only web pages and blank new tabs, with query strings and `#fragments` removed; internal pages (settings, history) and `file://` tabs are left out, and `switch_tab` can only go to the tabs it lists.
 - **Only web pages.** The AI can only open http and https addresses.
 - **Sensitive steps.** The AI is instructed to stop and ask before purchases, payments, sending messages, posting, deleting data, changing account settings, or submitting personal information, and never to type passwords, card numbers or one-time codes. These are instructions to the model, not hard blocks. What Lumen enforces itself: the values of password fields are never included when the AI reads a page, and `fill_form` does not submit a form when any field failed to fill.
@@ -129,7 +130,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ## Use Lumen from Claude Code, Codex, Gemini CLI
 
-Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 26 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → You and AI → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
+Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 27 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → You and AI → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
 
 ```powershell
 # Claude Code on Windows (PowerShell or cmd). Use claude.cmd: in PowerShell the npm claude.ps1
@@ -249,12 +250,16 @@ Release installers are built by GitHub Actions (`.github/workflows/release.yml`)
 
 `electron` is castlabs' [ECS build](https://github.com/castlabs/electron-releases) (`electron-releases#v44.1.0+wvcus`), which adds a Widevine CDM that stock Electron doesn't have. On startup Lumen calls `components.whenReady()` (with a 10s timeout so a failed/offline CDM download never blocks the window opening) and logs `components.status()`; the CDM itself downloads on first run.
 
-That's enough for sites that accept the plain Widevine CDM. Production DRM providers (Netflix, Disney+, Spotify and others) also check that the binary is **VMP-signed**. The release builds on GitHub are not VMP-signed (the workflow has no castlabs account), so those services may refuse to play in them; a build you make yourself with the setup below is signed. Why it's needed: electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature. One-time setup, then every `npm run dist:win` VMP-signs the build automatically (`scripts/after-pack.js`; it warns and continues the build if any of this isn't set up):
+That's enough for sites that accept the plain Widevine CDM. Production DRM providers (Netflix, Disney+, Spotify and others) also check that the binary is **VMP-signed** by castlabs. An unsigned build still plays where a site accepts software Widevine (L3); services that require a VMP signature may refuse or downgrade. electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature, so Lumen re-signs during packaging (`scripts/after-pack.js`, Windows and macOS). It warns and carries on if signing isn't set up.
+
+**Local builds:** sign up once for a free [castlabs EVS](https://github.com/castlabs/electron-releases/wiki/EVS) account; after that, `npm run dist` signs automatically:
 
 ```
 python -m pip install --upgrade castlabs-evs
 python -m castlabs_evs.account signup      # or: python -m castlabs_evs.account reauth
 ```
+
+**Headless / CI:** set `EVS_ACCOUNT_NAME` and `EVS_PASSWD` instead. The release workflow does this on the Windows and macOS jobs when the repository secrets of the same names exist; without them it builds unsigned.
 
 To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
 
