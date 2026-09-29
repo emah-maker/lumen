@@ -383,6 +383,13 @@ const GROK_BUILD_NOTE = `
 
 You are running inside Grok Build, connected to the user's Lumen browser over MCP. Lumen's browser tools are deferred: find them with search_tool (for example "lumen read page" or "lumen navigate"), then call them with use_tool using the exact names it returns, such as lumen__read_page, lumen__navigate, lumen__click and lumen__web_search. You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error. If search_tool finds no Lumen tools yet, the connection is still starting: search once more, and if they are still missing, say so plainly. Your reply appears in Lumen's sidebar chat.`;
 
+// The system prompt of a CLI engine run. `background`: the run is a background task, whose final reply
+// is saved as the task's result instead of showing in the sidebar chat (features/background-runner.js).
+function cliSystemPrompt(settings, engine, { background = false } = {}) {
+  const note = engine === 'grokbuild' ? GROK_BUILD_NOTE : CLAUDE_CODE_NOTE;
+  return systemFor(settings) + (background ? note.replace("Your reply appears in Lumen's sidebar chat.", "You are running as a background task: your final reply is saved as the task's result.") : note);
+}
+
 // A transcript() image is a data URL (data:<mime>;base64,<data>); turn it back into the API image
 // block shape claude-code.js's stdin message wants. Null for anything malformed (never happens for
 // our own attachments, but transcript() is also used for rendering, so stay defensive).
@@ -2261,4 +2268,4 @@ function describeError(err, auth = null) {
 // Tools offered to external agents over MCP: every browser tool plus the client-side web search.
 const EXTERNAL_TOOLS = OTHER_TOOLS;
 
-module.exports = { requestFor, Agent, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };
+module.exports = { requestFor, Agent, cliSystemPrompt, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };

@@ -124,15 +124,21 @@ function parseAuthStatus(stdout) {
 // CLIs without `auth status`, and any failure (timeout, non-zero exit, ENOENT), resolve 'unknown'.
 function checkAuthStatus(bin) {
   return new Promise((resolve) => {
-    execFile(bin, ['auth', 'status', '--json'], { shell: false, windowsHide: true, timeout: 5000 }, (err, stdout) => {
-      resolve(err ? { signedIn: 'unknown', accountType: null, detail: null } : parseAuthStatus(stdout));
-    });
+    try {
+      execFile(bin, ['auth', 'status', '--json'], { shell: false, windowsHide: true, timeout: 5000 }, (err, stdout) => {
+        resolve(err ? { signedIn: 'unknown', accountType: null, detail: null } : parseAuthStatus(stdout));
+      });
+    } catch { resolve({ signedIn: 'unknown', accountType: null, detail: null }); } // a file that can't be executed at all (spawn EFTYPE)
   });
 }
 
 class ClaudeCodeEngine {
   // mcpCommand(): { command, args, env } for Lumen's bridge. ensureServer(): starts the MCP server.
-  constructor({ userData, mcpCommand, ensureServer }) {
+  // spawn: child_process.spawn, swappable for tests. A background task makes its own instance per run
+  // (features/ai-agents.js backgroundEngine), so `active` and the bin cache are never shared with the sidebar's.
+  constructor({ userData, mcpCommand, ensureServer, spawn: spawnChild = spawn }) {
+    this.kind = 'claudecode';
+    this.spawn = spawnChild;
     this.userData = userData;
     this.mcpCommand = mcpCommand;
     this.ensureServer = ensureServer;
@@ -170,7 +176,9 @@ class ClaudeCodeEngine {
   }
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit }) {
+  // runAgent: the Agent whose gate, approvals and tab this run's MCP calls use (a background task's own;
+  // null: the sidebar's, see mcpCallTool in features/ai-agents.js).
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null }) {
     const bin = await this.ensureBin();
     if (!bin) {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
@@ -186,8 +194,8 @@ class ClaudeCodeEngine {
     const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
-    const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: dir }); // an empty folder: no project settings or files
-    this.active = { tag, emit, signal, child };
+    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: dir }); // an empty folder: no project settings or files
+    this.active = { tag, emit, signal, child, agent: runAgent };
     const onAbort = () => killTree(child); // the CLI starts the MCP bridge as a child, so end the whole tree
     signal.addEventListener('abort', onAbort, { once: true });
 

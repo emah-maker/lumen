@@ -2739,7 +2739,138 @@ async function grokUsageRuns() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => {
+// ---- background tasks on Claude Code / Grok Build: the parts that need no Electron
+async function bgCliRuns() {
+  const bg = require('../features/background-agents');
+  const argAfter = (argv, f) => argv[argv.indexOf(f) + 1];
+  const NOW = Date.UTC(2026, 8, 29, 12, 0, 0);
+
+  // Model eligibility: API models and the CLIs' models; chat-only and "more" entries never; a signed-out CLI is listed but unavailable.
+  const options = [
+    { id: 'claude-opus-5', label: 'Claude Opus 5', group: 'Anthropic' },
+    { id: 'openrouter:__more', label: 'More models…' },
+    { id: 'openrouter:a/b', label: 'Some model (chat only)' },
+    { id: 'claudecode:sonnet', label: 'Claude Code · Sonnet', signedIn: true },
+    { id: 'claudecode:default', label: 'Claude Code', signedIn: false },
+    { id: 'grokbuild:default', label: 'Grok Build (experimental)', signedIn: 'unknown' },
+  ];
+  const list = bg.taskModels(options);
+  check('bg models: API and CLI models are offered, "more" and chat-only are not', list.map((m) => m.id).join() === 'claude-opus-5,claudecode:sonnet,claudecode:default,grokbuild:default', list.map((m) => m.id).join());
+  check('bg models: a signed-out CLI is unavailable; signed in and unknown are available; API models always are', JSON.stringify(list.map((m) => m.available)) === '[true,true,false,true]' && list.map((m) => m.engine).join() === 'api,claudecode,claudecode,grokbuild', JSON.stringify(list));
+  check('bg models: the engine of a model id', bg.engineOfModel('claudecode:opus') === 'claudecode' && bg.engineOfModel('grokbuild:grok-4.7') === 'grokbuild' && bg.engineOfModel('claude-opus-5') === 'api' && bg.engineOfModel('openrouter:a/b') === 'api' && bg.isCliModel('grokbuild:default') && !bg.isCliModel(undefined), '');
+  const ready = { claudecode: { installed: true, signedIn: true }, grokbuild: { installed: true, signedIn: 'unknown', enabled: true } };
+  check('bg models: a CLI that is set up and signed in (or not known to be signed out) has no problem; API models never have one', bg.cliProblem('claudecode:sonnet', ready) === null && bg.cliProblem('grokbuild:default', ready) === null && bg.cliProblem('claude-opus-5', {}) === null, '');
+  check('bg models: signed out, not installed and not connected each give their own message key', bg.cliProblem('claudecode:x', { claudecode: { installed: true, signedIn: false } }).key === 'tasks.error.cliSignedOut' && bg.cliProblem('claudecode:x', { claudecode: { installed: false } }).key === 'tasks.error.cliMissing' && bg.cliProblem('grokbuild:x', { grokbuild: { installed: true, signedIn: true, enabled: false } }).key === 'tasks.error.cliMissing' && bg.cliProblem('claudecode:x', undefined).key === 'tasks.error.cliMissing' && bg.cliProblem('grokbuild:x', { grokbuild: { installed: false } }).params.name === 'Grok Build', '');
+  check('bg models: the create card\'s per-CLI states', JSON.stringify(bg.cliStates({ claudecode: { installed: true, signedIn: false }, grokbuild: { installed: false } }).map((c) => c.state)) === '["not-signed-in","not-installed"]' && bg.cliStates(ready).every((c) => c.state === 'ready'), '');
+  const t = bg.makeTask({ prompt: 'x', model: 'claudecode:opus', now: NOW });
+  check('bg models: a task records its engine, and keeps it through the store', t.engine === 'claudecode' && bg.sanitizeTask(JSON.parse(JSON.stringify(t))).engine === 'claudecode' && bg.makeTask({ prompt: 'x', model: 'claude-opus-5', now: NOW }).engine === 'api' && bg.summarize(t, NOW).engine === 'claudecode', t.engine);
+  const withSession = bg.sanitizeTask({ ...JSON.parse(JSON.stringify(t)), runs: [{ startedAt: 1, endedAt: 2, status: 'done', summary: '', steps: 0, session: '11111111-2222-3333-4444-555555555555' }, { startedAt: 1, endedAt: 2, status: 'done', summary: '', steps: 0, session: 'bad session; rm -rf' }] });
+  check('bg models: a run keeps its CLI session id (only a plain id)', withSession.runs[0].session === '11111111-2222-3333-4444-555555555555' && !('session' in withSession.runs[1]), JSON.stringify(withSession.runs));
+
+  // Concurrency: CLI runs hold slots like any other run; the cap is the settings' (Performance mode passes 1).
+  const mk = (id, model, status, queuedAt) => ({ ...bg.makeTask({ prompt: 'x', model, now: NOW }), id, status, queuedAt });
+  const mixed = [mk('a', 'claudecode:default', 'running', 1), mk('b', 'grokbuild:default', 'waiting-approval', 2), mk('c', 'claudecode:sonnet', 'queued', 3), mk('d', 'claude-opus-5', 'queued', 4)];
+  check('bg queue: two CLI runs (one waiting for an answer) fill the default two slots', bg.planStarts(mixed, 2, NOW + 10).length === 0 && bg.planStarts(mixed, 3, NOW + 10).join() === 'c' && bg.planStarts(mixed, 1, NOW + 10).length === 0, bg.planStarts(mixed, 3, NOW + 10).join());
+  check('bg queue: a CLI task queues behind API tasks by age like any other', bg.planStarts([mk('x', 'claudecode:default', 'queued', 5), mk('y', 'claude-opus-5', 'queued', 4)], 1, NOW + 10).join() === 'y', '');
+
+  // --max-turns: the Max steps setting, or 60 when it is unlimited; a watch check's judge is short.
+  check('bg cli: --max-turns is the Max steps setting, 60 when unlimited, 8 for a watch check', bg.cliMaxTurns(0) === 60 && bg.cliMaxTurns(undefined) === 60 && bg.cliMaxTurns(25) === 25 && bg.cliMaxTurns(0, 'judge') === 8 && bg.cliMaxTurns(25, 'judge') === 8, '');
+
+  // Claude Code's argv for a background run: the sidebar's lock-down, plus the turn cap and the picked model.
+  const cargv = cc.buildArgs({ mcpConfig: '/tmp/m.json', sessionId: 'sess-1', resume: false, systemPrompt: 'S', model: 'sonnet', maxTurns: bg.cliMaxTurns(0) });
+  check('bg cli argv (claude): no built-in tools, only mcp__lumen, strict MCP config, dontAsk, its own session, no resume', cargv[cargv.indexOf('--tools') + 1] === '' && argAfter(cargv, '--allowedTools') === 'mcp__lumen' && cargv.includes('--strict-mcp-config') && argAfter(cargv, '--permission-mode') === 'dontAsk' && argAfter(cargv, '--session-id') === 'sess-1' && !cargv.includes('--resume'), cargv.join(' '));
+  check('bg cli argv (claude): --max-turns 60 and --model from the pick', argAfter(cargv, '--max-turns') === '60' && argAfter(cargv, '--model') === 'sonnet' && !cc.buildArgs({ mcpConfig: 'x', sessionId: 's', systemPrompt: 'S', model: 'default', maxTurns: 60 }).includes('--model'), cargv.join(' '));
+
+  // Grok Build's argv for a background run: the sidebar's, but a terminal command is denied, not allowed.
+  const gargs = { promptFile: '/tmp/p.json', sessionId: 'g-1', resume: false, systemPrompt: 'S', cwd: '/tmp/d', model: 'grok-4.7', maxTurns: bg.cliMaxTurns(0) };
+  const side = gb.buildArgs(gargs);
+  const back = gb.buildArgs({ ...gargs, background: true });
+  const allowed = (a) => a.flatMap((x, i) => (x === '--allow' ? [a[i + 1]] : []));
+  const denied = (a) => a.flatMap((x, i) => (x === '--deny' ? [a[i + 1]] : []));
+  check('bg cli argv (grok): the sidebar\'s argv still allows the terminal (the user answers per call)', allowed(side).includes('run_terminal_command') && !denied(side).includes('run_terminal_command'), side.join(' '));
+  check('bg cli argv (grok): a background run denies the terminal and allows only Lumen\'s tools', denied(back).includes('run_terminal_command') && !allowed(back).includes('run_terminal_command') && allowed(back).join() === 'lumen__*,search_tool' && ['spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output'].every((n) => denied(back).includes(n)), back.join(' '));
+  check('bg cli argv (grok): same lock-down flags, --max-turns 60, its own session, no resume', argAfter(back, '--disallowed-tools') === argAfter(side, '--disallowed-tools') && argAfter(back, '--permission-mode') === 'dontAsk' && back.includes('--no-subagents') && argAfter(back, '--max-turns') === '60' && argAfter(back, '--session-id') === 'g-1' && !back.includes('--resume') && argAfter(back, '--model') === 'grok-4.7' && argAfter(back, '--prompt-file') === '/tmp/p.json', back.join(' '));
+  check('bg cli argv (grok): the sidebar\'s argv is unchanged by the background option existing', JSON.stringify(gb.buildArgs({ ...gargs, background: false })) === JSON.stringify(side) && JSON.stringify(gb.ARGS_BASE) === JSON.stringify(gb.argsBase(false)), '');
+  check('bg cli: Grok\'s tool watch kills on a terminal command in a background run, not in the sidebar', gb.isLumenTool('run_terminal_command', null) === true && gb.isLumenTool('run_terminal_command', null, false) === false && gb.isLumenTool('lumen__read_page', null, false) === true && gb.isLumenTool('use_tool', { tool_name: 'lumen__click' }, false) === true, '');
+  const terminalStream = [gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Running it.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, ' Done.'), gbDone('Running it. Done.')];
+  {
+    const home = path.join(os.tmpdir(), `lumen-bgcli-home-${process.pid}`);
+    const dir = path.join(os.tmpdir(), `lumen-bgcli-dir-${process.pid}`);
+    try {
+      const { out, kills, events, spawned } = await fakeGrokRun(terminalStream, { engine: { background: true, home, dir } });
+      check('bg cli (grok): a background run is killed at once if it reports a terminal command', kills.length === 1 && out.failed === true && out.sessionId === null && /isn't one of Lumen's \(run_terminal_command\)/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, kills, events }));
+      check('bg cli (grok): it runs in its own GROK_HOME and working folder, with the deny in its argv', spawned.opts.env.GROK_HOME === home && spawned.opts.cwd === dir && spawned.opts.env.HOME === dir && fs.existsSync(path.join(home, 'config.toml')) && denied(spawned.argv).includes('run_terminal_command') && argAfter(spawned.argv, '--cwd') === dir, JSON.stringify({ env: spawned.opts.env.GROK_HOME, cwd: spawned.opts.cwd }));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    const sidebar = await fakeGrokRun(terminalStream);
+    check('bg cli (grok): the sidebar run with the same stream is not killed (the gate judged it)', sidebar.kills.length === 0 && !sidebar.out.failed, JSON.stringify(sidebar.out));
+  }
+
+  // Engines made per run share no live state: their own active run, so the same MCP tag never belongs to two.
+  const engA = new cc.ClaudeCodeEngine({ userData: os.tmpdir(), mcpCommand: () => ({}), ensureServer: () => {} });
+  const engB = new cc.ClaudeCodeEngine({ userData: os.tmpdir(), mcpCommand: () => ({}), ensureServer: () => {} });
+  engA.active = { tag: 'a'.repeat(36), agent: 'task-a' };
+  engB.active = { tag: 'b'.repeat(36), agent: 'task-b' };
+  check('bg cli: two engines own only their own run tag, and carry their own agent', engA.owns('a'.repeat(36)) && !engA.owns('b'.repeat(36)) && engB.owns('b'.repeat(36)) && !engB.owns('a'.repeat(36)) && engA.active.agent === 'task-a' && engA.kind === 'claudecode' && !engA.owns('') && !engA.owns(undefined), '');
+  engA.active = null;
+  check('bg cli: an ended run\'s tag is owned by nobody', !engA.owns('a'.repeat(36)), '');
+  const gbEngine = (extra) => new gb.GrokBuildEngine({ userData: os.tmpdir(), gate: async () => null, ...extra });
+  const g1 = gbEngine({ background: true, home: '/x/h1', dir: '/x/d1' });
+  const g2 = gbEngine({});
+  check('bg cli: a background Grok engine has its own home and folder; the sidebar\'s default ones are unchanged', g1.home === '/x/h1' && g1.dir === '/x/d1' && g1.background === true && g1.kind === 'grokbuild' && g2.home === gb.grokHomeFor(os.tmpdir()) && g2.background === false && g2.dir === path.join(os.tmpdir(), 'grok-sidebar'), JSON.stringify({ g1: g1.home, g2: g2.home }));
+  check('bg cli: buildEnv points a background run at its own home and folder', gb.buildEnv({ userData: os.tmpdir(), home: '/x/h1', dir: '/x/d1', base: { PATH: 'p', SECRET_KEY: 's' } }).GROK_HOME === '/x/h1' && gb.buildEnv({ userData: os.tmpdir(), home: '/x/h1', dir: '/x/d1', base: {} }).HOME === '/x/d1' && !('SECRET_KEY' in gb.buildEnv({ userData: os.tmpdir(), base: { SECRET_KEY: 's' } })), '');
+
+  // Per-run tokens on Lumen's local MCP server (Grok): each run has its own; an ended or unknown one is refused.
+  const seen = [];
+  const gate = await require('../mcp-http').startHttp({ tools: [{ name: 'ping', description: 'p', input_schema: { type: 'object' } }], callTool: async (name, _args, session) => { seen.push(session.engine); return { content: [{ type: 'text', text: 'pong' }], isError: false }; } });
+  const http = require('http');
+  const post = (url, body, headers = {}) => new Promise((resolve) => {
+    const u = new URL(url);
+    const req = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: 'POST', headers: { 'content-type': 'application/json', ...headers } }, (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve({ status: res.statusCode, body: b ? JSON.parse(b) : null })); });
+    req.end(JSON.stringify(body));
+  });
+  try {
+    const one = gate.open('run-one', 'g-one');
+    const two = gate.open('run-two', 'g-two');
+    const call = (run, token = run.mcpToken) => post(run.mcpUrl, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ping', arguments: {} } }, { authorization: `Bearer ${token}` });
+    check('bg tokens: every run gets its own MCP token and hook URL', one.mcpToken !== two.mcpToken && one.hookUrl !== two.hookUrl && /^[a-f0-9]{48}$/.test(one.mcpToken), '');
+    await call(one);
+    await call(two);
+    check('bg tokens: a call runs as the run its token names, never the other', seen.join() === 'run-one,run-two', seen.join());
+    check('bg tokens: a token that was never issued is refused', (await call(one, '0'.repeat(48))).status === 401 && (await post(one.hookUrl.replace(/[a-f0-9]{48}$/, '0'.repeat(48)), { hook_event_name: 'PreToolUse', tool_name: 'lumen__ping' })).body?.decision === 'deny', '');
+    gate.close('run-one');
+    check('bg tokens: once a run ends its token is refused and its hook denies, while the other run is unaffected', (await call(one)).status === 401 && (await post(one.hookUrl, { hook_event_name: 'PreToolUse', tool_name: 'lumen__ping' })).body?.decision === 'deny' && (await call(two)).status === 200, '');
+    check('bg tokens: a run\'s token does not open another run\'s hook URL', (await post(two.hookUrl, { hook_event_name: 'PreToolUse', tool_name: 'lumen__ping' })).body?.decision !== 'deny', '');
+  } finally {
+    gate.stop();
+  }
+
+  // Usage: a background run's turn is logged as background, and stays out of the sidebar's own numbers.
+  const out = { text: 'x', sessionId: 's', cost: 0.0123, usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 50, cacheWriteTokens: 10, costUSD: 0.0123, contextWindow: 200000, models: ['m'] } };
+  const report = bg.cliUsageReport(out, 'sonnet');
+  check('bg usage: the report handed to the usage log is tagged background, with the model and the CLI\'s usage', report.background === true && report.model === 'sonnet' && report.usage === out.usage && bg.cliUsageReport({}, undefined).usage === null, JSON.stringify(report));
+  const tu = bg.cliTaskUsage(null, out, 'claudecode:sonnet');
+  check('bg usage: the task\'s own usage has the CLI\'s tokens and its cost, and adds up over runs', tu.input === 1000 && tu.output === 100 && Math.abs(tu.cost - 0.0123) < 1e-9 && bg.cliTaskUsage(tu, out, 'm').turns === 2 && /tokens/.test(bg.summarize({ ...t, usage: tu }, NOW).cost) && bg.cliTaskUsage(null, { failed: true }, 'm') === null, JSON.stringify(tu));
+  const { createUsage } = require('../features/usage');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-bgusage-'));
+  const u = createUsage({ app: { getPath: () => dir }, claudeBin: async () => null, otherActivity: async () => false });
+  const turn = (pct, tokens) => ({ usage: { inputTokens: tokens, outputTokens: 1, models: ['m'], contextWindow: 200000 }, rateLimit: { unifiedWindows: { five_hour: { utilization: pct, resetsAt: Date.now() / 1000 + 3600 } } } });
+  u.record('claudecode', turn(0.10, 5000)); // the sidebar's turn
+  u.record('claudecode', { ...turn(0.14, 90000), background: true }); // a background task's, later
+  u.record('grokbuild', { usage: { inputTokens: 700, outputTokens: 1, models: ['g'], contextWindow: 256000 } });
+  u.record('grokbuild', { usage: { inputTokens: 40000, outputTokens: 1, models: ['g'], contextWindow: 256000 }, background: true });
+  await new Promise((r) => setTimeout(r, 30));
+  const sum = await u.summary({ refresh: false });
+  check('bg usage: the sidebar\'s "last turn" context is its own turn\'s, not the background run\'s', sum.engines.claudecode.last.contextTokens === 5000 && sum.engines.grokbuild.last.contextTokens === 700, JSON.stringify(sum.engines));
+  check('bg usage: background tokens count toward Lumen\'s totals and are counted apart; the 5-hour share keeps chaining', sum.engines.claudecode.today.turns === 2 && sum.engines.claudecode.background.turns === 1 && sum.engines.grokbuild.background.turns === 1 && sum.lumen.window.background === 1 && Math.abs(sum.lumen.window.limitPoints - 4) < 0.01, JSON.stringify({ e: sum.engines, w: sum.lumen.window }));
+  const saved = await new Promise((r) => setTimeout(() => r(JSON.parse(fs.readFileSync(path.join(dir, 'usage.json'), 'utf8')).records), 700));
+  check('bg usage: only the background records carry the tag on disk', saved.filter((r) => r.background).length === 2 && saved.filter((r) => !r.background).length === 2, JSON.stringify(saved.map((r) => r.background)));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
