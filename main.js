@@ -12,6 +12,7 @@ if (process.argv.includes('--mcp')) {
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { netFetch } = require('./net-fetch');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
 const { extensionPermissionLines } = require('./extension-permissions');
@@ -19,6 +20,7 @@ const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput:
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage } = require('./features/chat-usage');
 const providers = require('./providers');
+if (TEST) global.__providers = providers;
 const cliJson = require('./cli-json');
 const { engineModel } = require('./cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./search');
@@ -327,7 +329,7 @@ function getClient() {
   try {
     // With no stored key, the SDK falls back to ANTHROPIC_API_KEY or an `ant auth login` profile.
     const Anthropic = anthropicSdk();
-    client = apiKey ? new Anthropic({ apiKey }) : new Anthropic();
+    client = apiKey ? new Anthropic({ apiKey, fetch: netFetch() }) : new Anthropic({ fetch: netFetch() });
   } catch {
     throw new Error('No API key found. Use your Claude account through Claude Code (pick “Claude Code” in the model menu), or add an API key or sign in with OpenRouter in Settings.');
   }
@@ -3127,6 +3129,7 @@ const agent = new Agent({
   hasUnsavedInput: inRun(agentHasUnsavedInput), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
+  maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // lumen://chat (features/chat-page.js): opens like the Bookmarks page, shares the agent's one chat with the sidebar.
 chatPageRt = chatPage.create({

@@ -6,6 +6,7 @@
 // The OpenAI SDK (also used for Grok and Gemini) loads only when one of them is first used.
 let OpenAIModule = null;
 const OpenAISDK = () => (OpenAIModule ||= require('openai'));
+const { netFetch } = require('./net-fetch');
 
 const PROVIDERS = {
   openai: {
@@ -42,7 +43,7 @@ const CATALOG_TTL = 24 * 60 * 60 * 1000;
 const CURATED = [/^anthropic\/claude/, /^openai\/gpt/, /^google\/gemini/, /^meta-llama\/llama/, /^deepseek\/deepseek/, /^x-ai\/grok/];
 let catalog = null; // { fetchedAt, models: [{ id, name, tools, created }] }
 
-async function openRouterCatalog({ cacheFile, fetchImpl = fetch } = {}) {
+async function openRouterCatalog({ cacheFile, fetchImpl = netFetch() } = {}) {
   const fs = require('fs');
   if (!catalog && cacheFile) { try { catalog = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch {} }
   if (catalog && Date.now() - catalog.fetchedAt < CATALOG_TTL) return catalog;
@@ -86,12 +87,12 @@ function splitModel(id) {
 
 function clientFor(provider, apiKey) {
   const OpenAI = OpenAISDK();
-  return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 2 });
+  return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 2, fetch: netFetch() });
 }
 
 // Does the provider accept this key? { ok: true }, { ok: false, message } when it's rejected, or
 // { ok: null } when it couldn't be checked (offline, or the provider having trouble).
-async function checkKey(provider, apiKey, { fetchImpl = fetch } = {}) {
+async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
   const rejected = { ok: false, message: `${PROVIDERS[provider].label} didn't accept that key. Check it and try again.` };
   try {
     if (provider === 'openrouter') {
@@ -100,7 +101,7 @@ async function checkKey(provider, apiKey, { fetchImpl = fetch } = {}) {
       return { ok: res.ok ? true : null };
     }
     const OpenAI = OpenAISDK();
-    const client = new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 0, timeout: 10000 });
+    const client = new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 0, timeout: 10000, fetch: netFetch() });
     await client.models.list();
     return { ok: true };
   } catch (err) {
@@ -196,9 +197,9 @@ function usageOptions(provider) {
 const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Math.random().toString(36).slice(2, 12)}`);
 
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
-async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit }) {
+async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false }) {
   const stream = await clientFor(provider, apiKey).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider) } : {}), stream: true, ...usageOptions(provider) },
+    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider) },
     { signal },
   );
   let text = '';
@@ -254,7 +255,10 @@ function describeProviderError(err, provider) {
   if (!OpenAIModule || !(err instanceof OpenAIModule.APIError)) return null;
   const label = PROVIDERS[provider]?.label || provider;
   // Offline, DNS, a timeout: there is no HTTP status to report.
-  if (err instanceof OpenAIModule.APIConnectionError) return { text: `Could not reach ${label}. Check your internet connection and try again.` };
+  if (err instanceof OpenAIModule.APIConnectionError) {
+    const why = String(err.cause?.code || err.cause?.message || '').split('\n')[0].slice(0, 80);
+    return { text: `Could not reach ${label}${why ? ` (${why})` : ''}. Check your internet connection and try again.` };
+  }
   if (/context length|maximum context|too many tokens|reduce the length/i.test(String(err.message || ''))) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
   if (err.status === 401 || err.status === 403) return { text: `That ${label} API key was rejected. Add a valid key to continue.`, action: 'settings' };
   if (err.status === 402) return { text: provider === 'openrouter' ? 'Your OpenRouter credits have run out. Add credits at openrouter.ai/settings/credits, or pick a free model.' : `${label} says payment is required. Check your ${label} billing.` };

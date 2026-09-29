@@ -10,7 +10,7 @@ const path = require('path');
 const SUITES = [
   'units', 'cli-json', 'smoke', 'tools', 'ui', 'images', 'models', 'adhd', 'extensions', 'adblock', 'pagecontext',
   'dialogs', 'recovery', 'tasklock', 'tabstrip', 'tabmenu', 'tabui', 'tabsearch', 'downloads', 'hardening', 'exfil', 'aicontrols', 'security-ui', 'safe-browsing', 'a11y', 'updates',
-  'mcp', 'mcpclient', 'settings', 'groups', 'cdp', 'browser', 'home', 'windows', 'tabdetach', 'pagetools', 'managers', 'chats', 'chatpage', 'files', 'usage', 'look',
+  'mcp', 'mcpclient', 'netfetch', 'settings', 'groups', 'cdp', 'browser', 'home', 'windows', 'tabdetach', 'pagetools', 'managers', 'chats', 'chatpage', 'files', 'usage', 'look',
 ];
 
 const picked = process.argv.slice(2);

@@ -12,9 +12,10 @@ class RepeatDetector {
   constructor(limit = 8) {
     this.limit = limit;
     this.calls = [];
+    this.stalled = false; // sticky: the strongest escalation was reached, so the run should wrap up
   }
 
-  reset() { this.calls = []; }
+  reset() { this.calls = []; this.stalled = false; }
 
   // Records a finished call; returns a note for the model, or null.
   record(name, input, ok) {
@@ -26,13 +27,80 @@ class RepeatDetector {
     for (let i = this.calls.length - 1; i >= 0 && this.calls[i].sig === sig && this.calls[i].ok === ok; i--) same++;
     let failStreak = 0;
     for (let i = this.calls.length - 1; i >= 0 && !this.calls[i].ok; i--) failStreak++;
-    const fix = 'Do something different: call read_page mode:"compact" for fresh refs, try click with the visible text, go straight to a URL with navigate, or use find/run_script.';
+    // Strongest tier: a note has not helped, so the loop ends the run with a final answer (see RunBudget).
+    if ((!ok && (same >= 5 || failStreak >= 6)) || (ok && !BENIGN.has(name) && same >= 6)) this.stalled = true;
+    const fix = 'Do something different: call read_page mode:"compact" for fresh refs, try click with the visible text, go straight to a URL with navigate, or use find. Reach for run_script only if no other tool can do it.';
     if (!ok && same >= 3) return `REPEAT: this exact call has failed ${same} times in a row. Retrying it will not help. ${fix} If nothing works, stop and tell the user what is blocking you.`;
     if (!ok && same === 2) return `NOTE: this exact call just failed twice. Re-read the page before trying again; ids and the page may have changed.`;
     if (!ok && failStreak >= 4) return `REPEAT: ${failStreak} tool calls in a row have failed. Stop varying the same approach. ${fix} If it is still failing, stop and tell the user.`;
     if (ok && !BENIGN.has(name) && same >= 3) return `REPEAT: you have made this same call ${same} times with the same input. It is not making progress. ${fix} If the task is already done, stop and answer.`;
     return null;
   }
+}
+
+// Per-run limits, pure so the agent loop stays small. The loop asks it three things: what note (if
+// any) goes on the results of step N, whether step N is the last one (answer in text, tools off), and
+// what to say about run_script. Nothing here blocks a tool; it only advises and picks the wrap-up turn.
+const SAFETY_CEILING = 1000; // "Unlimited" still ends, gracefully, here
+const STEP_CHOICES = [30, 60, 120, 250]; // Settings > You and AI > Max steps per task; 0 = Unlimited
+// The saved setting -> a step limit: a positive whole number, or 0 for unlimited (also for anything unreadable).
+const stepLimit = (v) => (Number.isInteger(v) && v > 0 ? Math.min(v, SAFETY_CEILING) : 0);
+const SCRIPT_FREE = 2; // run_script calls per run before each further one carries a "use a dedicated tool" note
+
+class RunBudget {
+  // limit: the user's Max steps setting (0/unset: unlimited, ended only by the safety ceiling).
+  constructor({ limit = 0, scriptFree = SCRIPT_FREE, warnAt = 0.75 } = {}) {
+    this.finite = stepLimit(limit) > 0;
+    this.max = this.finite ? stepLimit(limit) : SAFETY_CEILING;
+    this.scriptFree = scriptFree;
+    this.warnStep = Math.ceil(this.max * warnAt);
+    this.scripts = 0;
+    this.toolCalls = 0;
+    this.warned = false;
+  }
+
+  // Step (0-based) is the last model turn of the run: it must answer in text.
+  isFinal(step) { return step >= this.max - 1; }
+
+  countCall(name) { this.toolCalls++; if (name === 'run_script') this.scripts++; }
+
+  // Note for a run_script result once the free calls are used up (null before that). Never blocks.
+  scriptNote() {
+    if (this.scripts <= this.scriptFree) return null;
+    return `NOTE: that is run_script call ${this.scripts} in this task. Scripts are a last resort: use read_page, find, click, type_text, navigate, read_urls, web_search or batch for anything they can do. Use another script only if nothing else can, and then do it in one call.`;
+  }
+
+  // Note for the tool results that follow step `step`, or null. Starts at ~75% of the ceiling, then
+  // every step in the last few, and says so plainly on the step before the tool-free final turn.
+  stepNote(step) {
+    const left = this.max - (step + 1); // turns remaining after this one
+    if (left <= 0) return null;
+    if (!this.finite) return left === 1 ? 'FINAL STEP NEXT: tools will be turned off, so you must answer in text. Say what is done and what remains.' : null; // no countdown without a chosen limit
+    if (left === 1) return 'FINAL STEP NEXT: tools will be turned off, so you must answer in text. Say what is done and what remains.';
+    if (step + 1 >= this.warnStep && (!this.warned || left <= 5)) {
+      this.warned = true;
+      return `NOTE: ${left} steps left in this task. Finish it now, or summarize what is done and what remains.`;
+    }
+    return null;
+  }
+}
+
+// Text appended to the last message when the run must end in a plain answer.
+const WRAP_UP = {
+  limit: 'STEP LIMIT REACHED. Do not call any more tools. In plain text, tell the user what you finished, what you found, and what still remains, so they can say "continue".',
+  stalled: 'You keep hitting the same problem and more tool calls will not fix it. Do not call any more tools. In plain text, tell the user what you did, exactly what is blocking you, and what they could try.',
+};
+const LIMIT_NOTICE = 'Reached the step limit. Say "continue" to pick up where it left off.';
+const STALL_NOTICE = 'Stopped retrying a step that kept failing. Say "continue" to try again, or tell me another way.';
+
+// Did a CLI engine (Claude Code or Grok Build) end its run at the turn cap? Their result line says so
+// as subtype error_max_turns (or stop_reason max_turns) rather than success, sometimes with is_error
+// unset, so the caller must check this before treating a non-success result as a failure.
+function turnLimitHit(result) {
+  if (!result || typeof result !== 'object') return false;
+  if (result.subtype === 'error_max_turns' || /^max[_-]?turns/i.test(String(result.stop_reason || ''))) return true;
+  const said = `${(result.errors || []).join(' ')} ${typeof result.result === 'string' ? result.result : ''}`;
+  return result.subtype !== 'success' && /max(imum)?( number of)?[ _-]?turns|turn limit/i.test(said);
 }
 
 function withNote(content, note) {
@@ -126,4 +194,4 @@ function isSimpleQuestion(text, imageCount = 0) {
   return imageCount === 0 && t.length > 0 && t.length <= 160 && !NEEDS_BROWSER.test(t);
 }
 
-module.exports = { isSimpleQuestion, RepeatDetector, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };
+module.exports = { RunBudget, SAFETY_CEILING, STEP_CHOICES, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, turnLimitHit, isSimpleQuestion, RepeatDetector, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };

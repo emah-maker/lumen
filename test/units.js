@@ -739,6 +739,43 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('trim: old results are cut, images dropped, recent kept whole', trimmed[1].content[0].content.length < 200 && trimmed[2].content[0].content[0].text.includes('omitted') && trimmed[3].content[0].content.length === 5000 && trimmed[6].content[0].content.length === 5000, JSON.stringify(trimmed[1]).slice(0, 120));
   check('trim: does not mutate its input, and small histories pass through', history[1].content[0].content === big && trimToolResults(history.slice(0, 3), { keep: 4 }) === history.slice(0, 3) || trimToolResults(history.slice(0, 3), { keep: 4 }).length === 3, '');
 
+  {
+    const { RunBudget, stepLimit, turnLimitHit, WRAP_UP, LIMIT_NOTICE, SAFETY_CEILING } = require('../loop-guard');
+    const fin = new RunBudget({ limit: 60 });
+    const notes = Array.from({ length: 60 }, (_, s) => fin.stepNote(s));
+    check('budget: no note before 75% of a chosen limit', notes.slice(0, 44).every((n) => n === null), '');
+    check('budget: warns at 75% with the steps left', /^NOTE: 15 steps left/.test(notes[44] || ''), String(notes[44]));
+    check('budget: quiet between the first warning and the last five', notes[45] === null && /5 steps left/.test(notes[54] || '') && /1 steps? left|FINAL STEP/.test(notes[58] || ''), JSON.stringify(notes.slice(44, 60)));
+    check('budget: the step before the last says tools go off; the last step is final', /FINAL STEP NEXT/.test(notes[58] || '') && notes[59] === null && fin.isFinal(59) && !fin.isFinal(58), '');
+    const free = new RunBudget();
+    check('budget: unlimited has no countdown, only the safety ceiling wrap-up', free.max === SAFETY_CEILING && Array.from({ length: 900 }, (_, s) => free.stepNote(s)).every((n) => n === null) && /FINAL STEP/.test(free.stepNote(SAFETY_CEILING - 2)) && free.isFinal(SAFETY_CEILING - 1), '');
+    check('budget: stepLimit accepts positive ints, everything else is unlimited', stepLimit(30) === 30 && stepLimit(0) === 0 && stepLimit(undefined) === 0 && stepLimit('60') === 0 && stepLimit(-4) === 0 && stepLimit(1.5) === 0 && stepLimit(99999) === SAFETY_CEILING, '');
+    const sc = new RunBudget();
+    const scriptNotes = [1, 2, 3, 4].map(() => { sc.countCall('run_script'); return sc.scriptNote(); });
+    sc.countCall('click');
+    check('budget: first two run_script calls are clean, later ones get a last-resort note, none blocked', scriptNotes[0] === null && scriptNotes[1] === null && /last resort/.test(scriptNotes[2] || '') && /call 4/.test(scriptNotes[3] || '') && sc.toolCalls === 5 && sc.scripts === 4, JSON.stringify(scriptNotes));
+    const st = new RepeatDetector();
+    for (let i = 0; i < 4; i++) st.record('click', { element_id: 1 }, false);
+    const early = st.stalled;
+    st.record('click', { element_id: 1 }, false);
+    check('repeat: the strongest escalation (5 identical failures) marks the run stalled, weaker ones do not', early === false && st.stalled === true && !new RepeatDetector().stalled, '');
+    const st2 = new RepeatDetector();
+    ['a', 'b', 'c', 'd', 'e', 'f'].forEach((x) => st2.record('click', { text: x }, false));
+    check('repeat: six different failures in a row also stall the run', st2.stalled === true, '');
+    check('wrap-up: texts tell the model to answer without tools; notice offers continue', /Do not call any more tools/.test(WRAP_UP.limit) && /Do not call any more tools/.test(WRAP_UP.stalled) && /Say "continue"/.test(LIMIT_NOTICE), '');
+    check('cli: error_max_turns result is a turn limit, not a failure', turnLimitHit({ type: 'result', subtype: 'error_max_turns', is_error: false, num_turns: 31, session_id: 'x' }) && turnLimitHit({ type: 'result', subtype: 'error_during_execution', is_error: true, stop_reason: 'max_turns' }) && turnLimitHit({ subtype: 'error_during_execution', errors: ['Reached maximum number of turns (30)'] }), '');
+    check('cli: success, cancellations and other errors are not turn limits', !turnLimitHit({ subtype: 'success', is_error: false, stop_reason: 'end_turn', result: 'max turns are 30' }) && !turnLimitHit({ subtype: 'error_during_execution', is_error: true, errors: ['cancelled'] }) && !turnLimitHit(null), '');
+    const cc = require('../claude-code');
+    const gb = require('../grok-build');
+    const ccArgs = (maxTurns) => cc.buildArgs({ mcpConfig: 'm', sessionId: 's', resume: false, systemPrompt: 'p', maxTurns });
+    const gbArgs = (maxTurns) => gb.buildArgs({ promptFile: 'f', sessionId: 's', resume: false, systemPrompt: 'p', cwd: 'c', maxTurns });
+    const flag = (a) => a[a.indexOf('--max-turns') + 1];
+    check('cli args: Claude Code has no cap when unlimited, the chosen cap otherwise', !ccArgs(0).includes('--max-turns') && flag(ccArgs(60)) === '60', '');
+    check('cli args: Grok always has a cap: the chosen one, else 100', flag(gbArgs(120)) === '120' && flag(gbArgs(0)) === '100' && !gb.ARGS_BASE.includes('--max-turns'), '');
+    const { DEFAULTS } = require('../settings-backend');
+    check('setting: maxSteps defaults to unlimited', DEFAULTS.maxSteps === 0, '');
+  }
+
   const { ReadCache } = require('../snapshot');
   const rc = new ReadCache();
   check('read cache: first read is full, an identical soon read is one line', rc.check(1, 'https://a.test/', 'c', 'page') === null && /Unchanged/.test(rc.check(1, 'https://a.test/', 'c', 'page') || ''), '');
@@ -1290,6 +1327,44 @@ async function pdfRuns() {
   check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
 }
 
+// ---- usage: Lumen's share of the account-wide 5-hour meter ignores your other Claude Code use
+async function usageShareRuns() {
+  const { createUsage, otherClaudeActivity } = require('../features/usage');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-share-'));
+  const mkfile = (dir, name, ageMs) => {
+    fs.mkdirSync(path.join(root, dir), { recursive: true });
+    const f = path.join(root, dir, name);
+    fs.writeFileSync(f, '{}');
+    const t = new Date(Date.now() - ageMs);
+    fs.utimesSync(f, t, t);
+  };
+  const since = Date.now() - 60000;
+  mkfile('C--tmp-lumen-cc-AAAA', 's.jsonl', 0);
+  mkfile('C--tmp-lumen-usage-BBBB', 's.jsonl', 0);
+  mkfile('C--proj-other', 'old.jsonl', 3600e3);
+  check('other Claude activity: Lumen\'s own folders and old transcripts do not count', (await otherClaudeActivity(since, root)) === false, 'counted');
+  mkfile('C--proj-other', 'new.jsonl', 1000);
+  check('other Claude activity: a recent transcript elsewhere does', (await otherClaudeActivity(since, root)) === true, 'missed');
+  check('other Claude activity: no projects folder is not activity', (await otherClaudeActivity(since, path.join(root, 'nope'))) === false, 'counted');
+  fs.rmSync(root, { recursive: true, force: true });
+
+  const run = async (other) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-share-u-'));
+    const u = createUsage({ app: { getPath: () => dir }, claudeBin: async () => null, otherActivity: async () => other });
+    const turn = (pct) => ({ usage: { inputTokens: 1, outputTokens: 1, models: ['m'] }, rateLimit: { unifiedWindows: { five_hour: { utilization: pct, resetsAt: Date.now() / 1000 + 3600 } } } });
+    u.record('claudecode', turn(0.10));
+    u.record('claudecode', turn(0.16));
+    await new Promise((r) => setTimeout(r, 30));
+    const points = (await u.summary({ refresh: false })).lumen?.window?.limitPoints;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return points;
+  };
+  const alone = await run(false);
+  check('share of the meter: alone, the second turn is credited with its movement', Math.abs(alone - 6) < 0.01, String(alone));
+  const shared = await run(true);
+  check('share of the meter: with other Claude use in between, it is left unknown, not credited', shared == null, String(shared));
+}
+
 // ---- sidebar speed: incremental markdown tail, cached CLI lookup, passive usage refresh
 async function speedRuns() {
   const { render, stableLength } = require('../renderer/markdown');
@@ -1670,7 +1745,7 @@ async function swapHelperRuns() {
   fs.rmSync(d, { recursive: true, force: true });
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(() => {
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

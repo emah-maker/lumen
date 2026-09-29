@@ -13,6 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, usageOf } = require('./cli-utils');
+const { turnLimitHit } = require('./loop-guard');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -77,9 +78,10 @@ const MODELS = [
 
 // The argv for one message (exported for tests and the report; never joined into a shell string).
 // A resumed session takes --model too: it applies to the rest of the session, as /model does.
-function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default' }) {
+function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0 }) {
   return [
     ...ARGS_BASE,
+    ...(maxTurns > 0 ? ['--max-turns', String(maxTurns)] : []), // unset: no cap
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--mcp-config', mcpConfig, '--append-system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId,
   ];
@@ -168,7 +170,7 @@ class ClaudeCodeEngine {
   }
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', signal, emit }) {
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit }) {
     const bin = await this.ensureBin();
     if (!bin) {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
@@ -181,7 +183,7 @@ class ClaudeCodeEngine {
     const mcpConfig = path.join(dir, 'mcp.json');
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { lumen: { command, args, env: { ...env, LUMEN_USERDATA: this.userData, LUMEN_ENGINE: tag } } } }), { mode: 0o600 });
 
-    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model });
+    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     const child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: dir }); // an empty folder: no project settings or files
@@ -251,6 +253,8 @@ class ClaudeCodeEngine {
       return { text: '', sessionId: null, failed: true };
     }
     const usage = usageOf(result);
+    // The turn cap is not a failure: keep the session so "continue" resumes it (agent.js shows the notice).
+    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: result.total_cost_usd, usage, rateLimit };
     if (!result || result.is_error || result.subtype !== 'success') {
       emit({ type: 'error', ...describeFailure(result?.result || (result?.errors || []).join('\n') || stderr, code) });
       // A resumed session that no longer exists: forget it so the next message starts fresh.

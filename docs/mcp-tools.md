@@ -87,7 +87,7 @@ Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks y
 
 ### `run_script`
 
-Run JavaScript in the page (use return; async ok); result is JSON. For extracting tables/lists or repeated operations. Never to bypass confirmation rules.
+LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. Only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do it (e.g. extracting a large table), in one call. Never to click, type or navigate, or to bypass confirmation rules.
 
 | Parameter | Type | Required |
 |---|---|---|
