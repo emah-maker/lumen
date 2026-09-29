@@ -34,6 +34,8 @@ module.exports = [
   { files: ['renderer/settings-skills.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-mcp-servers.js is loaded after settings.js and uses its helpers.
   { files: ['renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
+  // newtab-widgets.js draws favicon tiles with newtab.js's tile() (loaded after it, called later).
+  { files: ['renderer/newtab-widgets.js'], languageOptions: { globals: { tile: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.
   // The chat itself (chat-core.js) is loaded before app.js, which uses it (and sets its chatHost hooks).
   { files: ['renderer/app.js'], languageOptions: { globals: { t: 'readonly', updateTabAudio: 'readonly', $: 'readonly', ask: 'readonly', addImages: 'readonly', chatHost: 'readonly', startChat: 'readonly', TOOL_LABELS: 'readonly', append: 'readonly', showApproval: 'readonly', approvals: 'readonly', resolveApproval: 'readonly', running: 'readonly' } } },
