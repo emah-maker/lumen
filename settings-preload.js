@@ -14,6 +14,14 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     pickDownloadDir: call('prefs:pick-download-dir'),
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
+    // [widgets] Appearance → Widgets
+    widgets: {
+      state: call('prefs:widgets'),
+      test: call('prefs:widget-test'),
+      save: call('prefs:widget-save'),
+      remove: call('prefs:widget-remove'),
+      move: call('prefs:widget-move'),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     extensions: call('prefs:extensions'),
