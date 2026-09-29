@@ -608,6 +608,39 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 }
 
 // ---- Electron fuses: packaged macOS builds turn off NODE_OPTIONS and --inspect; Windows is untouched
+// ---- agent loop guards (loop-guard.js)
+{
+  const { RepeatDetector, withNote, trimToolResults, cacheLastTool } = require('../loop-guard');
+  const d = new RepeatDetector();
+  const click = { element_id: 7 };
+  check('repeat: first failure has no note', d.record('click', click, false) === null, '');
+  check('repeat: second identical failure warns', /failed twice/.test(d.record('click', click, false) || ''), '');
+  check('repeat: third identical failure forces a new strategy', /REPEAT/.test(d.record('click', click, false) || ''), '');
+  const e = new RepeatDetector();
+  const notes = ['a', 'b', 'c', 'd'].map((x) => e.record('click', { text: x }, false));
+  check('repeat: four different failures in a row are flagged', /4 tool calls/.test(notes[3] || '') && !notes[1], JSON.stringify(notes));
+  const f = new RepeatDetector();
+  f.record('navigate', { url: 'a' }, true); f.record('navigate', { url: 'a' }, true);
+  check('repeat: same successful call three times is flagged', /same call 3 times/.test(f.record('navigate', { url: 'a' }, true) || ''), '');
+  const g = new RepeatDetector();
+  const scrolls = [1, 2, 3, 4].map(() => g.record('scroll', { direction: 'down' }, true));
+  check('repeat: scrolling or re-reading repeatedly is not flagged', scrolls.every((n) => n === null), '');
+  g.record('click', click, false);
+  check('repeat: a success breaks a failure run', g.record('click', click, true) === null, '');
+  check('withNote: string, blocks, passthrough', withNote('x', 'n') === 'x\n\nn' && withNote([{ type: 'text', text: 'x' }], 'n').length === 2 && withNote('x', null) === 'x' && withNote({ a: 1 }, 'n').a === 1, '');
+
+  const result = (id, content) => ({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] });
+  const big = 'y'.repeat(5000);
+  const history = [{ role: 'user', content: 'hi' }, result('1', big), result('2', [{ type: 'image', source: {} }, { type: 'text', text: big }]), result('3', big), result('4', big), result('5', big), result('6', big)];
+  const trimmed = trimToolResults(history, { keep: 4, maxChars: 100 });
+  check('trim: old results are cut, images dropped, recent kept whole', trimmed[1].content[0].content.length < 200 && trimmed[2].content[0].content[0].text.includes('omitted') && trimmed[3].content[0].content.length === 5000 && trimmed[6].content[0].content.length === 5000, JSON.stringify(trimmed[1]).slice(0, 120));
+  check('trim: does not mutate its input, and small histories pass through', history[1].content[0].content === big && trimToolResults(history.slice(0, 3), { keep: 4 }) === history.slice(0, 3) || trimToolResults(history.slice(0, 3), { keep: 4 }).length === 3, '');
+
+  const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];
+  const cached = cacheLastTool(tools);
+  check('cache_control: only the last tool is marked, input untouched', cached.filter((t) => t.cache_control).length === 1 && cached[2].cache_control.type === 'ephemeral' && tools[0].cache_control && cacheLastTool([]).length === 0, JSON.stringify(cached));
+}
+
 async function fuseChecks() {
   const afterPack = require('../scripts/after-pack');
   const { FuseV1Options, getCurrentFuseWire } = require('@electron/fuses');

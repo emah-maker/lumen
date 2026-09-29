@@ -355,7 +355,7 @@ async function batch(agent, wc, input, h) {
       report.push(`${n} ${String(result).split('\n')[0].slice(0, 160)}`);
     } catch (err) {
       report.push(`${n} FAILED: ${err.message}`);
-      report.push(`Stopped at step ${i + 1} of ${steps.length}.`);
+      report.push(`Stopped at step ${i + 1} of ${steps.length}; later steps did not run. Refs may be stale: use the page state below (or find), then retry from this step, using click text where you can.`);
       break;
     }
     // A step that lands on another site ends the batch: the new site needs its own look (and OK).
