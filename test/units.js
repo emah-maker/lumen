@@ -1032,7 +1032,52 @@ async function safeBrowsingRuns() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
+// ---- read_pdf: text extraction and the per-chat permission gate (features/pdf-text.js)
+async function pdfRuns() {
+  const zlib = require('zlib');
+  const pdfText = require('../features/pdf-text');
+  const objs = [];
+  const add = (dict, stream) => objs.push(stream ? Buffer.concat([Buffer.from(`${dict.replace('>>', `/Length ${stream.length}>>`)}\nstream\n`), stream, Buffer.from('\nendstream')]) : Buffer.from(dict));
+  add('<</Type/Catalog/Pages 2 0 R>>');
+  add('<</Type/Pages/Kids[3 0 R 7 0 R]/Count 2/Resources<</Font<</F1 5 0 R /F2 8 0 R>>>>>>');
+  add('<</Type/Page/Parent 2 0 R/Contents 4 0 R>>');
+  add('<</Filter/FlateDecode>>', zlib.deflateSync(Buffer.from('BT /F1 12 Tf 72 700 Td (Hello \\(PDF\\) world) Tj 0 -14 Td [(Second) -300 (line)] TJ ET')));
+  add('<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>');
+  add('<<>>', Buffer.alloc(0));
+  add('<</Type/Page/Parent 2 0 R/Contents 9 0 R>>');
+  add('<</Type/Font/Subtype/Type0/ToUnicode 10 0 R>>');
+  add('<<>>', Buffer.from('BT /F2 12 Tf <00010002> Tj ET'));
+  add('<<>>', Buffer.from('/CIDInit begincmap 1 begincodespacerange <0000> <FFFF> endcodespacerange 2 beginbfchar <0001> <0048> <0002> <0069> endbfchar endcmap'));
+  const parts = [Buffer.from('%PDF-1.4\n')];
+  objs.forEach((o, i) => parts.push(Buffer.from(`${i + 1} 0 obj\n`), o, Buffer.from('\nendobj\n')));
+  parts.push(Buffer.from('trailer\n<</Root 1 0 R>>\n%%EOF'));
+  const pdf = Buffer.concat(parts);
+
+  const all = pdfText.extractPdfText(pdf);
+  check('pdf text: pages, a compressed stream, escapes, TJ gaps and a ToUnicode font',
+    all.numPages === 2 && all.text.includes('Hello (PDF) world') && all.text.includes('Second line') && all.text.includes('--- Page 2 of 2 ---\nHi') && !all.truncated, JSON.stringify(all));
+  const second = pdfText.extractPdfText(pdf, { pages: '2' });
+  check('pdf text: a page range', second.pages.join() === '2' && !second.text.includes('Hello'), JSON.stringify(second));
+  const cut = pdfText.extractPdfText(pdf, { maxChars: 60 });
+  check('pdf text: output is capped and says where to continue', cut.truncated && cut.next === 2 && cut.pages.join() === '1', JSON.stringify(cut));
+  check('pdf text: ranges parse ("4-", "1-3,7", out of range)', pdfText.parsePageRange('3-', 5).join() === '3,4,5' && pdfText.parsePageRange('1-2,4', 9).join() === '1,2,4' && pdfText.parsePageRange('9', 3).length === 0, 'ranges');
+  let bad = '';
+  try { pdfText.extractPdfText(Buffer.from('hello')); } catch (err) { bad = err.message; }
+  check('pdf text: a file that is not a PDF is refused', /not a PDF/.test(bad), bad);
+
+  const url = require('url').pathToFileURL('/Users/secret-person/Taxes/2025 return.pdf').href;
+  check('pdf card shows the file name only, never the folder', pdfText.pdfName(url) === '2025 return.pdf' && pdfText.pdfName('https://x.test/a/b%20c.pdf?token=1') === 'b c.pdf', pdfText.pdfName(url));
+  const chat = [];
+  const asked = [];
+  const ask = (answer) => async (name) => { asked.push(name); return answer; };
+  check('pdf gate: a denial is refused and not remembered', (await pdfText.requirePdfPermission(chat, url, ask(false))) === false && !chat.pdfAllowed.size, 'denied');
+  check('pdf gate: an allow is asked once per PDF in a chat', (await pdfText.requirePdfPermission(chat, url, ask(true))) === true && (await pdfText.requirePdfPermission(chat, `${url}#page=3`, ask(false))) === true && asked.length === 2, JSON.stringify(asked));
+  check('pdf gate: another PDF, and another chat, ask again', (await pdfText.requirePdfPermission(chat, 'https://x.test/other.pdf', ask(false))) === false && (await pdfText.requirePdfPermission([], url, ask(false))) === false && asked.length === 4, JSON.stringify(asked));
+  const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+  check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'agent.js');
+}
+
+fuseChecks().catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });
