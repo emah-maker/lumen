@@ -88,6 +88,7 @@
 /* [usage] plan meter under the page chip */
 .usage-meter { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 6px; padding: 2px 4px; border: 0; background: none; color: var(--muted, #6e6e73); font: inherit; font-size: 11px; text-align: left; border-radius: 6px; cursor: pointer; font-variant-numeric: tabular-nums; }
 .usage-meter[hidden] { display: none; }
+.usage-meter .um-bar[hidden] { display: none; }
 .usage-meter:hover { color: var(--text, inherit); }
 .usage-meter:focus-visible { outline: 2px solid var(--accent, #007aff); outline-offset: 1px; }
 .usage-meter .um-bar { flex: none; width: 44px; height: 4px; border-radius: 2px; background: rgba(127, 127, 127, 0.22); overflow: hidden; }

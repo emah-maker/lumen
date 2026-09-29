@@ -45,6 +45,34 @@ function fiveHourOf(info) {
   return { percent: Number(w.utilization) * 100, resetsAt: Number(w.resetsAt) * 1000 };
 }
 
+// What the sidebar's usage bar shows for one engine, from summary()'s data, or null when there is
+// nothing real to show (the bar stays hidden rather than guess).
+//  - claudecode: the plan's 5-hour limit ({ kind: 'plan', percent, resetsAt | resetsText }), the
+//    weekly limit when the plan has one, and Lumen's share of the window.
+//  - any other CLI engine: { kind: 'context' }, from the turns' own usage: tokens and cost today, and
+//    how full the context window was on the last turn when the CLI reports its size (else percent null).
+function barFor(engine, s) {
+  if (!s) return null;
+  if (engine === 'claudecode') {
+    const limits = s.plan?.available ? s.plan.limits || [] : [];
+    const session = limits.find((l) => /session/i.test(l.label));
+    const week = limits.find((l) => /week/i.test(l.label));
+    const percent = s.meter?.percent ?? session?.percent;
+    if (percent == null || !Number.isFinite(percent)) return null;
+    return {
+      engine, kind: 'plan', percent: Math.max(0, Math.min(100, percent)),
+      resetsAt: s.meter?.resetsAt || null, resetsText: session?.resets?.replace(/\s*\(.*\)$/, '') || null,
+      weekly: week ? { percent: Math.max(0, Math.min(100, week.percent)), resetsText: week.resets?.replace(/\s*\(.*\)$/, '') || null } : null,
+      lumenPoints: s.lumen?.window?.limitPoints ?? null,
+    };
+  }
+  const e = s.engines?.[engine];
+  if (!e || !e.today?.turns || (!e.today.tokens && !e.today.costUSD)) return null;
+  const { contextTokens, contextWindow } = e.last || {};
+  const percent = contextWindow > 0 && contextTokens > 0 ? Math.min(100, (contextTokens / contextWindow) * 100) : null;
+  return { engine, kind: 'context', percent, tokens: e.today.tokens, costUSD: e.today.costUSD, turns: e.today.turns, contextTokens: contextTokens || 0, contextWindow: contextWindow || 0 };
+}
+
 // deps: { app, claudeBin: async () => path | null }
 function createUsage(deps) {
   let records = []; // { at, engine, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSD, limitPoints }
@@ -97,6 +125,7 @@ function createUsage(deps) {
       inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0,
       cacheReadTokens: usage.cacheReadTokens || 0, cacheWriteTokens: usage.cacheWriteTokens || 0,
       costUSD: usage.costUSD || 0, limitPoints,
+      contextTokens: (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0), contextWindow: usage.contextWindow || 0,
     });
     save();
   }
@@ -152,7 +181,14 @@ function createUsage(deps) {
     const since = (t) => records.filter((r) => r.at >= t);
     const byEngine = {};
     for (const r of since(now - 7 * 24 * 60 * 60 * 1000)) (byEngine[r.engine] ||= []).push(r);
-    return {
+    const today = since(new Date().setHours(0, 0, 0, 0));
+    const engines = {};
+    for (const name of new Set(records.map((r) => r.engine))) {
+      const mine = records.filter((r) => r.engine === name);
+      const last = mine[mine.length - 1];
+      engines[name] = { today: sum(today.filter((r) => r.engine === name)), last: { at: last.at, contextTokens: last.contextTokens || 0, contextWindow: last.contextWindow || 0 } };
+    }
+    const result = {
       plan: planData,
       meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt, at: meter.at } : null,
       status: latestInfo ? { status: latestInfo.status || null, overage: latestInfo.isUsingOverage ? 'in use' : latestInfo.overageStatus || null } : null,
@@ -162,7 +198,10 @@ function createUsage(deps) {
         week: sum(since(now - 7 * 24 * 60 * 60 * 1000)),
         byEngine: Object.fromEntries(Object.entries(byEngine).map(([k, v]) => [k, sum(v)])),
       },
+      engines,
     };
+    result.bars = { claudecode: barFor('claudecode', result), grokbuild: barFor('grokbuild', result) };
+    return result;
   }
 
   function clear() { records = []; save(); }
@@ -170,4 +209,4 @@ function createUsage(deps) {
   return { load, record, summary, planUsage, clear, meter: () => meter };
 }
 
-module.exports = { createUsage, parsePlan, fiveHourOf };
+module.exports = { createUsage, parsePlan, fiveHourOf, barFor };
