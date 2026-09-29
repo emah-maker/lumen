@@ -527,6 +527,85 @@ function pathWords(url, max = 6) {
   return [...new Set(words)].slice(0, max).join(' ');
 }
 
+// ---------- merging groups with similar names ----------
+
+const NAME_FILLER = new Set(['a', 'an', 'the', 'to', 'for', 'of', 'and', 'in', 'on', 'with', 'tabs', 'tab', 'pages', 'page', 'links', 'stuff', 'misc', 'other', 'things']);
+// A word that says WHAT KIND of thing the tabs are ("Lumen PRs" vs "Lumen"): a qualifier that keeps two
+// groups apart on names alone.
+const NAME_KIND = new Set(['pr', 'prs', 'issue', 'doc', 'discussion', 'video', 'review', 'pull', 'request', 'news', 'tutorial']);
+
+function nameTokens(name) {
+  return String(name).replace(/\(\d+\)\s*$/, '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w && !NAME_FILLER.has(w)).map(stem);
+}
+
+function levenshtein(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_v, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// How alike two group names are: 'exact' (same words after case, punctuation, plural and "(2)"),
+// 'contain' (one is the other plus plain words: "Flights" / "Flights to Tokyo"), 'close' (a typo apart),
+// 'weak' (they share a real word), or null. "Java" and "JavaScript" are none of these.
+function nameSimilarity(a, b) {
+  const ta = nameTokens(a);
+  const tb = nameTokens(b);
+  if (!ta.length || !tb.length) return null;
+  if ([...ta].sort().join(' ') === [...tb].sort().join(' ')) return 'exact';
+  const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (small.length < big.length && small.every((w) => big.includes(w)) && small.some((w) => w.length >= 4) && big.filter((w) => !small.includes(w)).every((w) => !NAME_KIND.has(w))) return 'contain';
+  const ja = ta.join('');
+  const jb = tb.join('');
+  const len = Math.min(ja.length, jb.length);
+  if (len >= 5 && ja[0] === jb[0] && levenshtein(ja, jb) <= Math.max(1, Math.floor(len / 8))) return 'close';
+  if (ta.some((w) => w.length >= 4 && tb.includes(w))) return 'weak';
+  return null;
+}
+
+// groups: [{ id, name, color, auto, userNamed, domain, members: [entry] }] (the window's own groups).
+// Returns the merges to make: [{ into, from: [ids], name, color, auto, userNamed }]. Deterministic: oldest
+// group first, one pass (a merged group is not compared again), so merging can't ping-pong. By-site
+// groups are left alone. Groups the user made or named only merge with an exact twin, and then the
+// user's name and colour survive; otherwise the more specific name and the oldest group's colour do.
+function mergeSimilarGroups(groups) {
+  const list = groups.filter((g) => !g.domain && g.members.length).sort((a, b) => a.id - b.id);
+  if (list.length < 2) return [];
+  const docs = vectorize(list.flatMap((g) => g.members));
+  const doc = new Map(docs.map((d) => [d.id, d]));
+  const centroid = new Map(list.map((g) => [g.id, centroidOf(g.members.map((m) => doc.get(m.id)))]));
+  const owned = (g) => !g.auto || g.userNamed;
+  const clusters = [];
+  for (const g of list) {
+    const home = clusters.find((c) => {
+      const root = c[0];
+      const kind = nameSimilarity(root.name, g.name);
+      if (!kind) return false;
+      if (kind === 'exact') return true;
+      if (owned(root) || owned(g)) return false;
+      const sim = cosine(centroid.get(root.id), centroid.get(g.id));
+      return kind === 'weak' ? sim >= CENTROID_MERGE_THRESHOLD : sim >= 0.1;
+    });
+    if (home) home.push(g); else clusters.push([g]);
+  }
+  return clusters.filter((c) => c.length > 1).map((c) => {
+    const named = c.find((g) => g.userNamed);
+    const specific = [...c].sort((a, b) => nameTokens(b.name).length - nameTokens(a.name).length || b.name.length - a.name.length || a.id - b.id)[0];
+    const base = named || specific;
+    return {
+      into: c[0].id,
+      from: c.slice(1).map((g) => g.id),
+      name: base.name.replace(/\s*\(\d+\)\s*$/, '') || base.name,
+      color: named ? named.color : c[0].color,
+      auto: c.every((g) => g.auto),
+      userNamed: c.some((g) => g.userNamed),
+    };
+  });
+}
+
 // mode(): 'off' | 'site' | 'topic' (automatic grouping).
 function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode, aiTopics, onChange }) {
   const groups = new Map(); // id -> { id, name, color, collapsed, domain, topic, auto }
@@ -563,6 +642,34 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     const taken = new Set([...groups.values()].filter((g) => g.id !== exceptId).map((g) => g.name.toLowerCase()));
     if (!taken.has(String(name).toLowerCase())) return name;
     for (let n = 2; ; n++) if (!taken.has(`${name} (${n})`.toLowerCase())) return `${name} (${n})`;
+  }
+
+  // One merge pass over this window's groups (see mergeSimilarGroups). `moves`: an automatic pass's
+  // record of where tabs were, so undoAuto can put them back. Returns how many groups went away and
+  // the groups as they were before.
+  function mergeSimilar(moves = null) {
+    const plan = mergeSimilarGroups([...groups.values()].map((g) => ({ ...g, members: members(g.id).filter((t) => !pinned(t)).map(entry) })));
+    const touched = [];
+    let gone = 0;
+    for (const { into, from, name, color, auto, userNamed } of plan) {
+      const keep = groups.get(into);
+      touched.push({ ...keep }, ...from.map((id) => ({ ...groups.get(id) })));
+      for (const id of from) {
+        for (const tab of members(id)) {
+          if (pinned(tab)) continue;
+          if (moves && !moves.has(tab.id)) moves.set(tab.id, id);
+          tab.groupId = into;
+        }
+        groups.delete(id);
+        gone++;
+      }
+      keep.name = uniqueName(name, keep.id).slice(0, 40);
+      keep.color = color;
+      keep.auto = auto;
+      keep.userNamed = userNamed;
+    }
+    if (gone) { arrange(); cleanup(); }
+    return { gone, touched };
   }
 
   const pinned = (t) => Boolean(t.pinned);
@@ -655,6 +762,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // new groups of their own (2+; 4+ loose tabs at the normal threshold, 2-3 need stronger evidence).
   // Every batch is one step for undoOrganize. Returns whether anything changed.
   function autoGroupTopics({ cluster = true } = {}) {
+    const groupsBefore = [...groups.keys()];
     const autoGroups = [...groups.values()].filter((g) => g.auto);
     const moves = new Map(); // tab id -> the group it was in before (null: none)
     const record = (tab) => { if (!moves.has(tab.id)) moves.set(tab.id, tab.groupId || null); };
@@ -684,8 +792,9 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
         for (const id of ids) tabById(id).autoMoves = 1;
       }
     }
+    const merged = groups.size > groupsBefore.length ? mergeSimilar(moves) : { touched: [] };
     if (!moves.size) return false;
-    autoUndo = { seq: ++undoSeq, moves };
+    autoUndo = { seq: ++undoSeq, moves, groups: merged.touched };
     arrange();
     cleanup();
     return true;
@@ -772,7 +881,16 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     }
     arrange();
     cleanup();
-    return count;
+    return count > 0 ? Math.max(count - mergeSimilar().gone, 1) : 0;
+  }
+
+  // "Merge Similar Groups": one step of undo, nothing recorded when there was nothing to merge.
+  function mergeGroups() {
+    const prev = { undoState, autoUndo, undoSeq };
+    saveUndo();
+    const { gone } = mergeSimilar();
+    if (!gone) ({ undoState, autoUndo, undoSeq } = prev);
+    return gone;
   }
 
   // Undoes the most recent thing: an organize, or the last automatic by-topic placement.
@@ -800,8 +918,9 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // Puts the tabs the last automatic pass moved back where they were. They are then left alone, so
   // the same pass doesn't just move them again.
   function undoAuto() {
-    const { moves } = autoUndo;
+    const { moves, groups: touched } = autoUndo;
     autoUndo = null;
+    for (const g of touched || []) groups.set(g.id, { ...g }); // groups a merge changed or removed
     for (const [id, from] of moves) {
       const tab = tabById(id);
       if (!tab) continue;
@@ -819,22 +938,22 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     return order.map((id) => groups.get(id)).filter(Boolean).map(({ id, name, color, collapsed }) => ({ id, name, color, collapsed }));
   };
 
-  const snapshot = () => [...groups.values()].map(({ id, name, color, collapsed, domain, topic, auto }) => ({ id, name, color, collapsed, domain, topic, auto }));
+  const snapshot = () => [...groups.values()].map(({ id, name, color, collapsed, domain, topic, auto, userNamed }) => ({ id, name, color, collapsed, domain, topic, auto, userNamed: Boolean(userNamed) }));
 
   function restore(saved) {
     for (const g of saved || []) {
-      groups.set(g.id, { id: g.id, name: g.name, color: GROUP_COLORS.includes(g.color) ? g.color : 'gray', collapsed: Boolean(g.collapsed), domain: g.domain || null, topic: g.topic || null, auto: g.auto ?? Boolean(g.domain) });
+      groups.set(g.id, { id: g.id, name: g.name, color: GROUP_COLORS.includes(g.color) ? g.color : 'gray', collapsed: Boolean(g.collapsed), domain: g.domain || null, topic: g.topic || null, auto: g.auto ?? Boolean(g.domain), userNamed: Boolean(g.userNamed) });
       nextId = Math.max(nextId, g.id + 1);
     }
     colorIndex = groups.size;
   }
 
   return {
-    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
+    groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, mergeGroups, undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
     candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,
   };
 }
 
-module.exports = { createTabGroups, siteName, registrableDomain, siteKey, topicClusters, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
+module.exports = { createTabGroups, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };

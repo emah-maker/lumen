@@ -1420,6 +1420,104 @@ async function speedRuns() {
   check('sessions: a repo\'s tabs are named for the repo, its docs for the library', gnames.includes('Lumen') && gnames.includes('Next.js'), JSON.stringify(gnames));
 }
 
+// ---- tab groups: merging groups with similar names
+{
+  const tg = require('../tab-groups');
+  const { harness } = require('./topics-bench');
+  const sim = tg.nameSimilarity;
+  check('merge names: case, punctuation, plural and (2) are the same name', sim('React Docs', 'react docs') === 'exact' && sim('Recipes', 'Recipe') === 'exact' && sim('Docs (2)', 'Docs') === 'exact' && sim('Tokyo-Trip!', 'tokyo trip') === 'exact');
+  check('merge names: one name inside the other as whole words', sim('Flights', 'Flights to Tokyo') === 'contain' && sim('Kyoto', 'Kyoto Travel Tabs') === 'contain');
+  check('merge names: a typo apart', sim('Kubernetes', 'Kubernets') === 'close', String(sim('Kubernetes', 'Kubernets')));
+  check('merge names: Java / JavaScript and unrelated names are not similar; a kind word (PRs) only makes names weakly similar', sim('Java', 'JavaScript') === null && sim('Lumen', 'Lumen PRs') === 'weak' && sim('Piano', 'Grand Prix') === null);
+
+  const setup = () => {
+    const h = harness(tg, { withText: false });
+    const mk = (title, url) => h.addTab({ title, url });
+    return { h, mk };
+  };
+  const gid = (t) => t.groupId || null;
+  const names = (h) => h.tg.state().map((g) => g.name);
+
+  // Same name twice, topic overlap: merged into the older group's id, more specific name.
+  let { h, mk } = setup();
+  const a = [mk('Flights to Tokyo', 'https://kayak.example/flights-tokyo'), mk('Tokyo flight deals', 'https://skyscanner.example/tokyo-flights')];
+  const b = [mk('Tokyo hotels', 'https://booking.example/tokyo-hotels'), mk('Tokyo flights cheap', 'https://nerd.example/tokyo-flights')];
+  const ga = h.tg.create('Flights', a.map((t) => t.id), { auto: true, color: 'blue' });
+  const gb = h.tg.create('Flights to Tokyo', b.map((t) => t.id), { auto: true, color: 'red' });
+  check('merge: "Flights" and "Flights to Tokyo" become one group (older id and colour, longer name)', h.tg.mergeGroups() === 1 && h.tg.state().length === 1 && names(h)[0] === 'Flights to Tokyo' && [...a, ...b].every((t) => gid(t) === ga.id) && h.tg.state()[0].color === 'blue' && !h.tg.groups.has(gb.id), JSON.stringify(h.tg.state()));
+  check('merge: one undo reverts the whole pass', h.tg.undoOrganize() && h.tg.state().length === 2 && a.every((t) => gid(t) === ga.id) && b.every((t) => gid(t) === gb.id) && names(h).join() === 'Flights,Flights to Tokyo' && h.tg.state()[1].color === 'red');
+  check('merge: nothing to merge records no undo', (h.tg.mergeGroups(), h.tg.undoOrganize()) && h.tg.mergeGroups() === 1 && h.tg.undoOrganize() && !h.tg.canUndo());
+
+  // Not merged: distinct topics, "Java"/"JavaScript", kind qualifiers, unrelated tabs sharing one word.
+  ({ h, mk } = setup());
+  const j1 = [mk('Java streams', 'https://a.example/java-streams'), mk('Java records', 'https://b.example/java-records')];
+  const j2 = [mk('JavaScript promises', 'https://c.example/promises'), mk('JavaScript closures', 'https://d.example/closures')];
+  h.tg.create('Java', j1.map((t) => t.id), { auto: true });
+  h.tg.create('JavaScript', j2.map((t) => t.id), { auto: true });
+  check('merge: Java and JavaScript stay apart', h.tg.mergeGroups() === 0 && h.tg.state().length === 2);
+  ({ h, mk } = setup());
+  const c1 = [mk('Pull requests lumen', 'https://github.com/o/lumen/pulls'), mk('Fix flicker pull 46', 'https://github.com/o/lumen/pull/46')];
+  const c2 = [mk('Sidebar issue', 'https://github.com/o/lumen/issues/41'), mk('Lumen readme', 'https://github.com/o/lumen')];
+  h.tg.create('Lumen PRs', c1.map((t) => t.id), { auto: true });
+  h.tg.create('Lumen', c2.map((t) => t.id), { auto: true });
+  check('merge: "Lumen" and "Lumen PRs" stay apart on names alone', h.tg.mergeGroups() === 0);
+  ({ h, mk } = setup());
+  const w1 = [mk('Mitosis stages', 'https://a.example/mitosis'), mk('Cell division', 'https://b.example/cell-division')];
+  const w2 = [mk('Hamlet essay', 'https://c.example/hamlet'), mk('Hamlet themes', 'https://d.example/themes')];
+  h.tg.create('Study', w1.map((t) => t.id), { auto: true });
+  h.tg.create('Study Guides', w2.map((t) => t.id), { auto: true });
+  check('merge: weakly similar names with unrelated tabs stay apart', h.tg.mergeGroups() === 0);
+
+  // User-named and user-made groups: only exact twins merge, and the user's name and colour win.
+  ({ h, mk } = setup());
+  const u1 = [mk('Kyoto guide', 'https://a.example/kyoto'), mk('Kyoto temples', 'https://b.example/temples')];
+  const u2 = [mk('Kyoto map', 'https://c.example/map'), mk('Kyoto food', 'https://d.example/food')];
+  const g1 = h.tg.create('Kyoto', u1.map((t) => t.id), { auto: true, color: 'green' });
+  const g2 = h.tg.create('kyoto', u2.map((t) => t.id), { auto: true, color: 'pink' });
+  g2.userNamed = true;
+  g2.auto = false;
+  check('merge: exact twins merge; the user-named group\'s name and colour survive, under the older id', h.tg.mergeGroups() === 1 && h.tg.state().length === 1 && names(h)[0] === 'kyoto' && h.tg.state()[0].color === 'pink' && h.tg.groups.has(g1.id) && h.tg.groups.get(g1.id).userNamed === true, JSON.stringify(h.tg.state()));
+  ({ h, mk } = setup());
+  const n1 = [mk('Kyoto guide', 'https://a.example/kyoto'), mk('Kyoto temples', 'https://b.example/temples')];
+  const n2 = [mk('Kyoto map', 'https://c.example/map'), mk('Kyoto food', 'https://d.example/food')];
+  h.tg.create('Kyoto', n1.map((t) => t.id), { auto: true });
+  const mine = h.tg.create('Kyoto Trip', n2.map((t) => t.id)); // made by the user
+  mine.userNamed = true;
+  check('merge: a user-named group is not merged into a merely similar one', h.tg.mergeGroups() === 0 && h.tg.state().length === 2);
+
+  // Pinned tabs never move; by-site groups are left alone.
+  ({ h, mk } = setup());
+  const p = [mk('Tokyo trip a', 'https://a.example/a'), mk('Tokyo trip b', 'https://b.example/b')];
+  const q = [mk('Tokyo trip c', 'https://c.example/c'), mk('Tokyo trip d', 'https://d.example/d')];
+  h.tg.create('Tokyo Trip', p.map((t) => t.id), { auto: true });
+  h.tg.create('Tokyo Trip', q.map((t) => t.id), { auto: true });
+  q[0].pinned = true;
+  const gq = gid(q[0]);
+  h.tg.mergeGroups();
+  check('merge: a pinned tab is not moved into the merged group', gid(q[0]) === gq && gid(q[1]) === gid(p[0]));
+  ({ h, mk } = setup());
+  const s1 = [mk('a', 'https://one.example/a'), mk('b', 'https://one.example/b')];
+  const s2 = [mk('c', 'https://two.example/c'), mk('d', 'https://two.example/d')];
+  h.tg.create('Docs', s1.map((t) => t.id), { auto: true, domain: 'one.example' });
+  h.tg.create('Docs', s2.map((t) => t.id), { auto: true, domain: 'two.example' });
+  check('merge: by-site groups are left alone', h.tg.mergeGroups() === 0);
+
+  // An organize action merges near-duplicate groups it just made (a model proposing "Recipes" and "Recipe").
+  ({ h, mk } = setup());
+  const r = ['Banana Bread Recipe', 'Cookie Recipes', 'Pancake Recipe', 'Muffin Recipe'].map((t, i) => mk(t, `https://r${i}.example/${i}`));
+  const made = h.tg.applyProposal([{ name: 'Recipes', tab_ids: [r[0].id, r[1].id] }, { name: 'Recipe', tab_ids: [r[2].id, r[3].id] }]);
+  check('organize: near-duplicate proposed groups merge, and undo reverts all of it', made === 1 && h.tg.state().length === 1 && r.every((t) => gid(t) === gid(r[0])) && h.tg.undoOrganize() && r.every((t) => gid(t) === null));
+
+  // The continuous pass merges a group it just formed into a same-named one, and one undo puts it back.
+  ({ h, mk } = setup());
+  const k = [mk('Kyoto temple guide', 'https://a.example/kyoto-temple-guide'), mk('Best Kyoto temples', 'https://b.example/best-kyoto-temples')];
+  h.tg.autoGroup();
+  const first = gid(k[0]);
+  const k2 = [mk('Kyoto temple hours', 'https://c.example/kyoto-temple-hours'), mk('Kyoto temple tickets', 'https://d.example/kyoto-temple-tickets')];
+  h.tg.autoGroup();
+  check('continuous: related tabs end up in one group, not two near-twins', first && k2.every((t) => gid(t) === first) && h.tg.state().length === 1, JSON.stringify(h.tg.state()));
+}
+
 schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

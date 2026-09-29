@@ -1728,6 +1728,10 @@ async function organizeByTopic() {
   sendTabs();
   return count;
 }
+// "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
+function mergeGroups() {
+  if (tabGroups.mergeGroups()) sendTabs();
+}
 function undoOrganize() {
   if (tabGroups.undoOrganize()) sendTabs();
 }
@@ -1808,6 +1812,7 @@ function tabMenuTemplate(id) {
     if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { tabGroups.add(id, g.id); sendTabs(); } })) });
     if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
     items.push({ label: t('menu.organizeByTopic'), click: organizeByTopic });
+    if (tabGroups.state().length > 1) items.push({ label: t('menu.mergeGroups'), click: mergeGroups });
     if (tabGroups.canUndo()) items.push({ label: t('menu.undoOrganize'), click: undoOrganize });
   }
   items.push(
@@ -1945,6 +1950,7 @@ function tabGroupsMenu() {
   const mode = groupingMode();
   return [
     { label: t('menu.organizeByTopic'), click: organizeByTopic },
+    { label: t('menu.mergeGroups'), enabled: tabGroups.state().length > 1, click: mergeGroups },
     { label: t('menu.undoOrganize'), enabled: tabGroups.canUndo(), click: undoOrganize },
     { label: t('menu.organizeWithAi'), enabled: !organizing, click: organizeTabs },
     { type: 'separator' },
@@ -3291,7 +3297,7 @@ ipcMain.on('group:toggle', (_e, id) => {
 ipcMain.on('group:rename', (_e, id, name) => {
   const group = tabGroups.groups.get(id);
   const clean = String(name || '').trim().slice(0, 40);
-  if (group && clean) { group.name = clean; group.auto = false; } // named by the user: automatic grouping and Organize leave it alone
+  if (group && clean) { group.name = clean; group.auto = false; group.userNamed = true; } // named by the user: automatic grouping and Organize leave it alone
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);
