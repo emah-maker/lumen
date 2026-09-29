@@ -9,7 +9,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { registrableDomain } = require('./tab-groups');
 const { related } = require('./features/site-activity');
-const { cleanList: cleanWidgets } = require('./features/widgets');
+const { cleanList: cleanWidgets, cleanSizes } = require('./features/widgets');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
@@ -42,6 +42,11 @@ const DEFAULTS = {
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
+  newTabWidgetsPacked: true, // [widgets] Keep widgets packed: cards slide up into gaps
+  homeWidgetSizes: {}, // [widgets] the last size used per kind of widget (the default for a new one); internal
+  weatherPlaces: [], // [widgets] places saved from weather widgets (features/weather-view.js); internal
+  weatherHere: null, // [widgets] the last "My location" answer { name, lat, lon, at }, kept an hour; internal
+  weatherLocation: 'unset', // [widgets] may Lumen ask an IP service which city this is? unset | granted | denied
   homeWidgets: [], // [widgets] [{ id, type, title, ...config }], in order (features/widgets.js); changed through prefs:widget-*
   forceDarkWebsites: false, // Chromium's auto dark mode (restart)
   defaultZoom: 1,
@@ -135,6 +140,8 @@ function validate(key, value) {
     case 'languages':
       return Array.isArray(value) ? [...new Set(value.map(String).filter(langTag))].slice(0, 12) : null;
     case 'homeWidgets': return cleanWidgets(value);
+    case 'homeWidgetSizes': return cleanSizes(value);
+    case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -221,6 +228,7 @@ function create(deps) {
       accent: accentOf(p.accentColor),
       clock: p.newTabClock, name: p.newTabName,
       sections: { favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
+      widgetsPacked: p.newTabWidgetsPacked !== false,
     };
   }
   // A picture from disk, made at most 2560 px wide and saved as JPEG in the profile, so the page
@@ -470,6 +478,7 @@ function create(deps) {
   async function set(key, value) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
+    if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
     writeSettings({ ...readSettings(), [key]: valid });
@@ -676,6 +685,11 @@ function create(deps) {
     handle('prefs:widget-test', (input) => deps.widgets.test(input));
     handle('prefs:widget-save', async (input, id) => { const out = await deps.widgets.save(input, typeof id === 'string' ? id : null); return { message: out.message, state: deps.widgets.state() }; });
     handle('prefs:widget-remove', (id) => { deps.widgets.remove(String(id)); return deps.widgets.state(); });
+    handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
+    handle('prefs:widget-search', (query) => deps.widgets.search(query));
+    handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });
+    handle('prefs:widget-location', (choice) => { deps.widgets.setLocationConsent(String(choice)); return deps.widgets.state(); });
+    handle('prefs:widget-reset-layout', () => { deps.widgets.resetLayout(); return deps.widgets.state(); });
     handle('prefs:widget-move', (id, delta) => { deps.widgets.move(String(id), Number(delta)); return deps.widgets.state(); });
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
