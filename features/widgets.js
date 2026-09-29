@@ -28,6 +28,7 @@ const ics = require('./ics');
 const WL = require('./widget-layout');
 const TV = require('./todoist-view');
 const WX = require('./weather-view');
+const WC = require('./widget-colors');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -85,7 +86,7 @@ const CONNECTORS = {
     ttl: 15 * 60e3,
     clean: (c) => {
       const wx = WX.cleanConfig(c.wx, c);
-      return wx ? { ...WX.mirrorPlace(wx, null), units: wx.units, wx } : null;
+      return wx ? { ...WX.mirrorPlace(wx, null), units: wx.units, wx, colors: WC.cleanMode(c.colors) } : null;
     },
     async resolve(input, x) {
       let places = WX.cleanPlaces(input.wx?.places);
@@ -99,7 +100,7 @@ const CONNECTORS = {
         message = `Found ${found.name}.`;
       }
       const wx = WX.cleanConfig({ ...input.wx, places, units: pick(input.units, ['f', 'c'], input.wx?.units) }, {});
-      return { config: { ...WX.mirrorPlace(wx, null), units: wx.units, wx }, message };
+      return { config: { ...WX.mirrorPlace(wx, null), units: wx.units, wx, colors: WC.cleanMode(input.colors) }, message };
     },
     title: (c) => (c.wx.places.length > 1 ? 'Weather' : c.wx.places[0].here ? c.wx.places[0].nick || 'My location' : WX.placeLabel(c.wx.places[0])),
     summary: (c) => `${c.wx.places.map((p) => (p.here ? 'My location' : WX.placeLabel(p))).join(', ')} · °${c.wx.units.toUpperCase()}`,
@@ -141,7 +142,7 @@ const CONNECTORS = {
     ttl: 15 * 60e3,
     clean: (c) => {
       const url = httpsUrl(c.url, { allowWebcal: true });
-      return url ? { url, name: str(c.name, 80), count: Math.min(8, Math.max(3, Math.round(num(c.count, 3, 8) ?? 5))) } : null;
+      return url ? { url, name: str(c.name, 80), count: Math.min(8, Math.max(3, Math.round(num(c.count, 3, 8) ?? 5))), colors: WC.cleanMode(c.colors) } : null;
     },
     async resolve(input, x) {
       const url = httpsUrl(input.url, { allowWebcal: true });
@@ -150,7 +151,7 @@ const CONNECTORS = {
       const upcoming = cal.events.filter((e) => e.allDay || e.end > Date.now());
       const events = cal.total === 1 ? '1 event' : `${cal.total} events`;
       return {
-        config: { url, name: cal.name, count: 5 },
+        config: { url, name: cal.name, count: 5, colors: WC.cleanMode(input.colors) },
         message: `${cal.name ? `${cal.name}: ` : ''}${events}, ${upcoming.length} in the next two weeks.`,
       };
     },
@@ -160,8 +161,8 @@ const CONNECTORS = {
       const now = Date.now();
       const cal = ics.eventsBetween(await x.text(c.url, { max: 5e6 }), { from: now, days: 14, limit: 60 });
       const events = cal.events.filter((e) => e.allDay || e.end > now).slice(0, 12)
-        .map(({ title, location, url, allDay, date, start, end }) => ({ title: title || 'Busy', location, url, allDay, date: date || null, start, end }));
-      return { events, name: cal.name };
+        .map(({ title, location, url, color, allDay, date, start, end }) => ({ title: title || 'Busy', location, url, color: color || '', allDay, date: date || null, start, end }));
+      return { events, name: cal.name, color: cal.color || '' };
     },
   },
 
@@ -170,7 +171,7 @@ const CONNECTORS = {
     ttl: 5 * 60e3,
     secret: 'todoist',
     // What it shows is c.todo (features/todoist-view.js); an older widget has none: today and overdue.
-    clean: (c) => ({ todo: TV.cleanConfig(c.todo) }),
+    clean: (c) => ({ todo: TV.cleanConfig(c.todo), colors: WC.cleanMode(c.colors) }),
     async resolve(input, x) {
       const token = typeof input.token === 'string' ? input.token.trim() : '';
       if (token && !/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw new Error('That doesn’t look like a Todoist API token (Settings → Integrations → Developer in Todoist).');
@@ -179,7 +180,7 @@ const CONNECTORS = {
       const tasks = await todoistTasks(x, token || x.secret(), todo);
       const n = tasks.length;
       const what = { todayOverdue: 'due today or overdue', today: 'due today', upcoming: `due in the next ${todo.days} days`, inbox: 'in the Inbox', project: 'in that project', label: 'with that label', all: 'open', custom: 'matching that filter' }[todo.source];
-      return { config: { todo }, secret: token || undefined, message: `Connected. ${n === 1 ? '1 task is' : `${n} tasks are`} ${what}.` };
+      return { config: { todo, colors: WC.cleanMode(input.colors) }, secret: token || undefined, message: `Connected. ${n === 1 ? '1 task is' : `${n} tasks are`} ${what}.` };
     },
     title: (c) => TV.nameFor(c.todo),
     summary: (c) => TV.summaryFor(c.todo),
@@ -323,7 +324,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -412,7 +413,7 @@ function createWidgets(deps) {
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.DEFAULT_SIZE[type] || { w: 4, h: 3 };
   // A changed config invalidates its cached data; its size and place on the page don't.
-  const keyOf = ({ span, height, x, y, w, h, snap, ...rest }) => JSON.stringify(rest);
+  const keyOf = ({ span, height, x, y, w, h, snap, colors, ...rest }) => JSON.stringify(rest);
 
   async function memo(key, ttl, fn) {
     const hit = memoCache.get(key);
@@ -555,7 +556,7 @@ function createWidgets(deps) {
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, layout, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
     });
   }
   function refreshAll({ force = false } = {}) {

@@ -216,6 +216,22 @@ function create(deps) {
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
   const wallpaperFile = () => path.join(app.getPath('userData'), 'newtab-wallpaper.jpg');
+  // The wallpaper's dominant colours (widgets set to "Match screen" tint themselves with them): sampled once
+  // per picture from a 32 px copy, in this process, and kept until the picture changes.
+  let imageColorsCache = { v: 0, colors: [] };
+  function imageColorsFor(version) {
+    if (imageColorsCache.v === version) return imageColorsCache.colors;
+    let colors = [];
+    try {
+      const small = require('electron').nativeImage.createFromPath(wallpaperFile()).resize({ width: 32, height: 32, quality: 'good' });
+      const bgra = small.toBitmap();
+      const rgba = new Uint8ClampedArray(bgra.length);
+      for (let i = 0; i + 3 < bgra.length; i += 4) { rgba[i] = bgra[i + 2]; rgba[i + 1] = bgra[i + 1]; rgba[i + 2] = bgra[i]; rgba[i + 3] = bgra[i + 3]; }
+      colors = require('./features/widget-colors').dominantColors(rgba, 3);
+    } catch (err) { console.error('[lumen] could not sample the background picture:', err.message); }
+    imageColorsCache = { v: version, colors };
+    return colors;
+  }
   function newTabLook() {
     const p = prefs();
     const image = p.newTabBackground === 'image' && p.newTabImage && fs.existsSync(wallpaperFile())
@@ -229,6 +245,7 @@ function create(deps) {
       clock: p.newTabClock, name: p.newTabName,
       sections: { favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked !== false,
+      imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };
   }
   // A picture from disk, made at most 2560 px wide and saved as JPEG in the profile, so the page
