@@ -119,7 +119,7 @@ function stem(w) {
 
 // A title that says nothing about the page: it is still loading, behind a bot check, or a login wall.
 // Its address words describe the tab instead, so it can still join the tabs it leads to.
-const TRANSIENT_TITLE = /^\s*(loading|please wait|just a moment|one moment|redirecting|attention required|access denied|checking your browser|untitled|about:blank|new tab|new tab page|connecting|sign[ -]?in|log[ -]?in|sign[ -]?up|login|register|authenticating|verifying)/i;
+const TRANSIENT_TITLE = /^\s*(loading|please wait|just a moment|one moment|redirecting|attention required|access denied|checking your browser|untitled|about:blank|new tab|connecting|sign[ -]?in|log[ -]?in|sign[ -]?up|login|register|authenticating|verifying)(?![\p{L}\p{N}])/iu;
 function isTransientTitle(title) {
   const t = String(title || '').trim();
   return !t || TRANSIENT_TITLE.test(t) || /^https?:\/\//i.test(t);
