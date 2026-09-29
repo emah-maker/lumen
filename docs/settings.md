@@ -113,6 +113,19 @@ Programs and scripts are held until you agree to keep them, whatever these setti
 | Proxy | `proxy` | `system` | `mode` is `system`, `direct`, `fixed_servers` (with `rules` and `bypass`), `pac_script` (with `pacUrl`) or `auto_detect`. Applies straight away. |
 | Download updates automatically | `autoDownloadUpdates` | on | New versions download in the background and "Restart to update" appears when one is ready. Off: Lumen asks before downloading. Copies that can't replace themselves (portable exe, per-machine install, unwritable Mac app) say when a version is out and download it when you ask. |
 
+## Background tasks
+
+Kept in one `bgTasks` object (Tasks panel > Settings, in the sidebar). Every task runs in a work tab of its own that is not in your tab strip.
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Allow background tasks | `bgTasks.enabled` | on | Off stops running tasks and hides the composer button and menu items. |
+| Tasks at the same time | `bgTasks.maxConcurrent` | 2 | 1 to 3. More wait in line (the panel shows their place). Performance mode can lower it to 1. A task waiting for your answer still holds its place. |
+| Stop a task after | `bgTasks.timeoutMin` | 30 | 10, 30, 60 or 120 minutes of working time; time spent waiting for you does not count. |
+| Notify me when a task finishes or needs me | `bgTasks.notifications` | on | An in-app banner, plus a system notification when Lumen is not the window in front. |
+| Also notify me when a task finishes fine | `bgTasks.notifyDone` | on | Off: only failures, questions, watch alerts and interruptions notify. |
+| Refuse an unanswered question after | `bgTasks.approvalWaitMin` | 60 | 15, 60 or 240 minutes. A card nobody answered is refused (never approved) so the task can finish and free its place. |
+
 ## Extensions
 
 Lists the Chrome Web Store extensions you installed, with **Remove** (deletes the extension and its data) and a link to the Chrome Web Store. Electron can't pause an extension, so there is no on/off switch.

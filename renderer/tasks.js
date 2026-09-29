@@ -16,7 +16,7 @@
   const sidebar = byId('sidebar');
   const live = byId('task-live');
 
-  let state = { tasks: [], badge: { running: 0, waiting: 0 }, settings: { enabled: true, maxConcurrent: 2, notifications: true, timeoutMin: 30 } };
+  let state = { tasks: [], badge: { running: 0, waiting: 0 }, unseen: 0, settings: { enabled: true, maxConcurrent: 2, notifications: true, notifyDone: true, timeoutMin: 30, approvalWaitMin: 60 } };
   let open = null; // task id whose detail is showing, or null for the list
   let detail = null;
   let previousStatus = new Map();
@@ -49,8 +49,29 @@
     if (s.type === 'at') return T('tasks.schedule.at', { time: clock(s.at) });
     return T('tasks.schedule.now');
   };
+  const duration = (ms) => {
+    const m = Math.max(0, Math.floor(ms / 60000));
+    if (m < 1) return T('tasks.duration.seconds', { n: Math.max(1, Math.round(ms / 1000)) });
+    return m < 60 ? T('tasks.duration.minutes', { n: m }) : T('tasks.duration.hours', { n: Math.floor(m / 60), m: m % 60 });
+  };
+  // Where a queued task stands, as a sentence.
+  const queueText = (task) => {
+    const q = task.queue;
+    if (!q) return '';
+    if (q.reason === 'later') return T('tasks.queue.later', { time: clock(q.startsAt) });
+    return q.reason === 'next' ? T('tasks.queue.next') : T('tasks.queue.slots', { position: q.position, busy: q.busy, slots: q.slots });
+  };
+  // The list row's second line: what a running task is doing right now, or why a queued one waits.
+  const liveText = (task) => {
+    if (task.status === 'running') {
+      const time = duration(Date.now() - (task.runningSince || Date.now()));
+      return task.currentStep ? T('tasks.list.step', { step: task.currentStep, n: task.stepCount, time }) : T('tasks.list.starting', { time });
+    }
+    return task.status === 'queued' ? queueText(task) : '';
+  };
   const metaText = (task) => [
     statusText(task.status),
+    task.status === 'queued' ? queueText(task) : '',
     scheduleText(task),
     task.lastRun ? T('tasks.last', { time: ago(task.lastRun) }) : T('tasks.never'),
     task.nextRun && task.status !== 'running' ? T('tasks.next', { time: clock(task.nextRun) }) : '',
@@ -66,6 +87,8 @@
     badge.classList.toggle('waiting', waiting > 0);
     button.setAttribute('aria-label', count ? `${T('tasks.button')}: ${T('tasks.button.badge', { running, waiting })}` : T('tasks.button'));
     byId('toggle-sidebar').classList.toggle('has-task-attention', waiting > 0);
+    button.classList.toggle('has-unseen', !count && state.unseen > 0); // finished while you were elsewhere
+    if (!count && state.unseen > 0) button.setAttribute('aria-label', `${T('tasks.button')}: ${T('tasks.button.unseen', { count: state.unseen })}`);
     const enabled = state.settings.enabled;
     sendBg.hidden = !enabled;
     for (const task of state.tasks) {
@@ -130,16 +153,26 @@
 
   function renderList() {
     const rows = state.tasks.map((task) => {
-      const row = h('button', { type: 'button', className: 'task-row', onclick: () => { open = task.id; render(); } },
+      const live = liveText(task);
+      const row = h('button', { type: 'button', className: `task-row${task.unseen ? ' unseen' : ''}`, onclick: () => { open = task.id; render(); } },
         h('span', { className: `task-dot ${task.status}`, 'aria-hidden': 'true' }),
         h('span', { className: 'task-text' },
           h('span', { className: 'task-title', textContent: task.title }),
           h('span', { className: 'task-meta', textContent: metaText(task) }),
-          task.pending.length ? h('span', { className: 'task-needs', textContent: T('tasks.detail.approvals') }) : null));
+          live && task.status === 'running' ? h('span', { className: 'task-live', textContent: live }) : null,
+          task.pending.length ? h('span', { className: 'task-needs', textContent: T('tasks.detail.approvals') }) : null),
+        task.unseen ? h('span', { className: 'task-new', textContent: T('tasks.list.new') }) : null);
       return h('li', {}, row);
     });
     const list = h('ul', { className: 'chat-items task-items' }, rows);
     const body = [head(T('tasks.title')), h('p', { className: 'task-note', textContent: state.settings.enabled ? T('tasks.note') : T('tasks.disabled') })];
+    // What is waiting for the user comes first, with the same card as in the task's page, so it can be answered from here.
+    const waiting = state.tasks.filter((t) => t.pending.length);
+    if (waiting.length) {
+      body.push(h('section', { className: 'task-needs-you', 'aria-label': T('tasks.list.needsYou') },
+        h('h3', { textContent: T('tasks.list.needsYou') }),
+        waiting.map((t) => h('div', { className: 'task-needs-item' }, h('button', { type: 'button', className: 'task-link', textContent: t.title, onclick: () => { open = t.id; render(); } }), t.pending.map((p) => approvalCard(t, p))))));
+    }
     if (state.tasks.length) body.push(list);
     else body.push(h('p', { className: 'chat-list-empty', textContent: T('tasks.empty') }));
     body.push(settingsBlock());
@@ -152,12 +185,15 @@
     const check = (label, on, key) => h('label', { className: 'task-check' }, h('input', { type: 'checkbox', checked: on, onchange: (e) => set({ [key]: e.target.checked }) }), label);
     const max = h('select', { 'aria-label': T('tasks.settings.max'), onchange: (e) => set({ maxConcurrent: Number(e.target.value) }) }, [1, 2, 3].map((n) => h('option', { value: n, textContent: String(n), selected: n === s.maxConcurrent })));
     const timeout = h('select', { 'aria-label': T('tasks.settings.timeout'), onchange: (e) => set({ timeoutMin: Number(e.target.value) }) }, [10, 30, 60, 120].map((n) => h('option', { value: n, textContent: T('tasks.settings.timeout.n', { n }), selected: n === s.timeoutMin })));
+    const wait = h('select', { 'aria-label': T('tasks.settings.approvalWait'), onchange: (e) => set({ approvalWaitMin: Number(e.target.value) }) }, [15, 60, 240].map((n) => h('option', { value: n, textContent: n >= 60 ? T('tasks.settings.approvalWait.h', { n: n / 60 }) : T('tasks.settings.approvalWait.n', { n }), selected: n === s.approvalWaitMin })));
     return h('details', { className: 'task-settings' },
       h('summary', { textContent: T('tasks.settings') }),
       check(T('tasks.settings.enabled'), s.enabled, 'enabled'),
       h('label', { className: 'task-field' }, h('span', { textContent: T('tasks.settings.max') }), max),
       h('label', { className: 'task-field' }, h('span', { textContent: T('tasks.settings.timeout') }), timeout),
-      check(T('tasks.settings.notify'), s.notifications, 'notifications'));
+      h('label', { className: 'task-field' }, h('span', { textContent: T('tasks.settings.approvalWait') }), wait),
+      check(T('tasks.settings.notify'), s.notifications, 'notifications'),
+      check(T('tasks.settings.notifyDone'), s.notifyDone, 'notifyDone'));
   }
 
   // ---- one task
@@ -186,11 +222,22 @@
     const back = iconBtn(BACK, T('tasks.back'), () => { open = null; render(); }, 'icon-btn task-back');
     const actions = h('div', { className: 'task-actions' });
     if (active) actions.append(btn(T('tasks.act.stop'), () => api.stop(task.id).then(refresh)));
-    if (!active || task.status === 'queued') actions.append(btn(task.status === 'done' ? T('tasks.act.run') : (['failed', 'interrupted', 'stopped'].includes(task.status) ? T('tasks.act.retry') : T('tasks.act.run')), () => api.run(task.id).then(refresh), 'btn primary'));
+    // Interrupted (or failed part-way): Resume goes on from what it did, Retry starts over.
+    if (task.resumable && !active) {
+      const resume = btn(T('tasks.act.resumeRun'), () => api.run(task.id, { resume: true }).then(refresh), 'btn primary');
+      resume.title = T('tasks.act.resumeRun.hint');
+      actions.append(resume);
+    }
+    if (!active || task.status === 'queued') actions.append(btn(task.status === 'done' ? T('tasks.act.run') : (['failed', 'interrupted', 'stopped'].includes(task.status) ? T('tasks.act.retry') : T('tasks.act.run')), () => api.run(task.id).then(refresh), task.resumable ? 'btn' : 'btn primary'));
+    if (!active) actions.append(btn(T('tasks.act.edit'), () => editTask(task)));
     if (task.schedule.type === 'every' || task.schedule.type === 'watch') actions.append(btn(task.enabled === false ? T('tasks.act.resume') : T('tasks.act.pause'), () => api.enable(task.id, task.enabled === false).then(refresh)));
     actions.append(btn(T('tasks.act.schedule'), () => editSchedule(task)));
     if (task.currentUrl) actions.append(btn(T('tasks.act.openPage'), () => api.openPage(task.id)));
-    if (task.result) actions.append(btn(T('tasks.act.continue'), () => continueInChat(task)));
+    if (task.result) {
+      actions.append(btn(T('tasks.act.continue'), () => continueInChat(task)));
+      const copy = btn(T('tasks.act.copy'), async () => { try { await navigator.clipboard.writeText(detail.result); copy.textContent = T('tasks.act.copied'); setTimeout(() => { copy.textContent = T('tasks.act.copy'); }, 1500); } catch {} });
+      actions.append(copy);
+    }
     let armed = false;
     const del = btn(T('tasks.act.delete'), () => {
       if (!armed) { armed = true; del.textContent = T('tasks.act.deleteSure'); del.classList.add('armed'); setTimeout(() => { armed = false; del.textContent = T('tasks.act.delete'); del.classList.remove('armed'); }, 3000); return; }
@@ -200,6 +247,7 @@
 
     const body = h('div', { className: 'task-detail' },
       h('p', { className: 'task-status' }, h('span', { className: `task-dot ${task.status}`, 'aria-hidden': 'true' }), h('span', { textContent: metaText(task) })),
+      task.status === 'running' && liveText(task) ? h('p', { className: 'task-live', textContent: liveText(task) }) : null,
       task.error ? h('p', { className: 'task-error', textContent: task.error }) : null,
       task.notice ? h('p', { className: 'task-notice', textContent: task.notice }) : null,
       task.watching ? h('p', { className: 'task-meta', textContent: [task.watching.checkedAt ? T('tasks.watch.checked', { time: ago(task.watching.checkedAt) }) : T('tasks.watch.none'), task.watching.holding ? T('tasks.watch.holding') : ''].filter(Boolean).join(' · ') }) : null,
@@ -210,6 +258,7 @@
       h('p', { className: 'task-meta', textContent: T('tasks.create.mayVisit', { sites: task.allowedSites.join(', ') || '-' }) }));
 
     body.append(h('h3', { textContent: T('tasks.detail.result') }));
+    if (task.result && task.resultOld) body.push(h('p', { className: 'task-notice', textContent: T('tasks.detail.resultOld') }));
     if (task.result) {
       const result = h('div', { className: 'msg assistant task-result' });
       result.innerHTML = window.renderMarkdown(task.result);
@@ -217,6 +266,11 @@
       body.append(result);
     } else body.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
 
+    // Where the task went, as links that open in tabs of the user's own.
+    if (task.pages?.length) {
+      body.append(h('h3', { textContent: T('tasks.detail.pages') }));
+      body.append(h('ul', { className: 'task-pages' }, task.pages.map((u) => h('li', {}, h('a', { href: u, textContent: u.replace(/^https?:\/\//, ''), title: u, onclick: (e) => { e.preventDefault(); window.browser.newTab(u); } })))));
+    }
     if (task.steps.length) {
       body.append(h('h3', { textContent: T('tasks.detail.steps') }));
       if (task.stepCount > task.steps.length) body.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.steps.more', { count: task.stepCount - task.steps.length }) }));
@@ -227,6 +281,33 @@
       body.append(h('ul', { className: 'task-runs' }, [...task.runs].reverse().map((r) => h('li', {}, h('span', { className: `task-dot ${r.status}`, 'aria-hidden': 'true' }), `${clock(r.endedAt || r.startedAt)} · ${statusText(r.status)}${r.summary ? ` · ${r.summary.slice(0, 90)}` : ''}`))));
     }
     panel.replaceChildren(head(task.title, back), h('div', { className: 'task-scroll' }, body));
+  }
+
+  // Edit and run again: change the request (or, for a watch, only the name and sites) and save, or save and run.
+  function editTask(task) {
+    const isWatch = task.schedule.type === 'watch';
+    const title = h('input', { type: 'text', value: task.title, maxLength: 80 });
+    title.setAttribute('aria-label', T('tasks.edit.title'));
+    const prompt = h('textarea', { rows: 4, value: task.prompt });
+    prompt.setAttribute('aria-label', T('tasks.edit.prompt'));
+    const sites = h('input', { type: 'text', value: task.allowedSites.filter((x, _i, all) => !(x.startsWith('www.') && all.includes(x.slice(4)))).join(', '), spellcheck: false });
+    sites.setAttribute('aria-label', T('tasks.edit.sites'));
+    const error = h('p', { className: 'task-error', hidden: true });
+    const save = async (andRun) => {
+      const patch = { title: title.value, sites: sites.value.split(',').map((x) => x.trim()).filter(Boolean) };
+      if (!isWatch) patch.prompt = prompt.value;
+      const res = await api.edit(task.id, patch, { run: andRun });
+      if (!res.ok) { error.textContent = res.error; error.hidden = false; return; }
+      await refresh();
+    };
+    const card = h('div', { className: 'task-edit' },
+      h('label', { className: 'task-field stack' }, h('span', { textContent: T('tasks.edit.title') }), title),
+      isWatch ? null : h('label', { className: 'task-field stack' }, h('span', { textContent: T('tasks.edit.prompt') }), prompt),
+      h('label', { className: 'task-field stack' }, h('span', { textContent: T('tasks.edit.sites') }), sites),
+      error,
+      h('div', { className: 'approval-actions' }, btn(T('tasks.create.cancel'), () => card.remove()), btn(T('tasks.edit.save'), () => save(false)), btn(T('tasks.edit.saveRun'), () => save(true), 'btn primary')));
+    panel.querySelector('.task-detail').prepend(card);
+    (isWatch ? title : prompt).focus();
   }
 
   // "Continue in chat": a fresh chat with the result in the message box, ready to send.
@@ -282,7 +363,7 @@
     const fields = scheduleFields(initial);
     const error = h('p', { className: 'task-error', hidden: true });
     const card = h('div', { className: 'task-edit' }, fields.node, error,
-      h('div', { className: 'approval-actions' }, btn(T('tasks.create.cancel'), () => render()), btn(T('tasks.schedule.save'), async () => {
+      h('div', { className: 'approval-actions' }, btn(T('tasks.create.cancel'), () => card.remove()), btn(T('tasks.schedule.save'), async () => {
         const res = await api.schedule(task.id, fields.get());
         if (!res.ok) { error.textContent = res.error; error.hidden = false; return; }
         await refresh();
@@ -407,6 +488,8 @@
 
   button.onclick = () => (panel.hidden ? openPanel() : closePanel(true));
   panel.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !creating) { e.preventDefault(); if (open) { open = null; render(); } else closePanel(true); } });
+  // Elapsed times tick while a task runs (the state itself only changes on a step).
+  setInterval(() => { if (!panel.hidden && !panel.querySelector('.task-edit') && state.tasks.some((t) => t.status === 'running')) render(); }, 20000);
   api.onState((s) => { state = s; applyState(); if (!panel.hidden) render(); });
   api.onToast(toast);
   api.onOpen(({ id } = {}) => openPanel(id || null));
