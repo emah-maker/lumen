@@ -461,6 +461,7 @@ const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
+  spotify: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M4.9 6.2c2.2-.7 4.7-.5 6.6.6M5.3 8.3c1.8-.5 3.7-.3 5.2.5M5.7 10.3c1.4-.4 2.7-.2 3.9.4"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -480,7 +481,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, what is playing on Spotify, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -620,6 +621,41 @@ async function buildWidgets(card) {
         field('Add-task field', inputs.quick, 'Typed like in Todoist’s quick add: “Pay rent tomorrow 9am”.'), field('New tasks go to', inputs.quickProject, 'Load projects above to pick one.'),
         field('Colors', colors, 'Only the card’s surface and title follow it; priority colors stay.'));
     }
+    // ---- spotify: the user's own Client ID, then Connect (OAuth PKCE in a tab; the token stays in the browser) ----
+    function spotifyFields(same) {
+      inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '64', placeholder: '32-character Client ID', value: same?.clientId || '', 'aria-label': 'Spotify Client ID' });
+      inputs.art = chk('widget-spotify-art', 'Show the album art', same ? same.art !== false : true);
+      const status = h('span', { class: 'note', role: 'status', id: 'widget-spotify-status' });
+      const connect = h('button', { id: 'widget-spotify-connect', text: ws.secrets.spotify ? 'Reconnect' : 'Connect Spotify' });
+      const disconnect = h('button', { id: 'widget-spotify-disconnect', class: 'danger', text: 'Disconnect', hidden: !ws.secrets.spotify });
+      const drawStatus = () => {
+        status.textContent = ws.secrets.spotify ? 'Connected. Lumen holds an encrypted sign-in; it never reaches the new-tab page.' : 'Not connected yet.';
+        connect.textContent = ws.secrets.spotify ? 'Reconnect' : 'Connect Spotify';
+        disconnect.hidden = !ws.secrets.spotify;
+      };
+      connect.addEventListener('click', async () => {
+        connect.disabled = true;
+        flash(note, 'Waiting for Spotify in the tab that just opened…', 'ok');
+        try {
+          const r = await S.widgets.spotifySignIn(inputs.clientId.value);
+          ws = await S.widgets.state();
+          drawStatus();
+          flash(note, r.message || (r.ok ? 'Spotify is connected.' : 'Spotify sign-in did not finish.'), r.ok ? 'ok' : 'warn');
+        } catch (err) { flash(note, String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+        connect.disabled = false;
+      });
+      disconnect.addEventListener('click', async () => { await S.widgets.spotifyDisconnect(); ws = await S.widgets.state(); drawStatus(); flash(note, 'Spotify is disconnected.', 'ok'); });
+      drawStatus();
+      fields.replaceChildren(
+        plain('Set up', h('ol', { class: 'note' },
+          h('li', { text: 'In the Spotify Developer Dashboard, create an app (Web API).' }),
+          h('li', { text: `Add this Redirect URI to it: ${ws.spotify?.redirect || ''}` }),
+          h('li', { text: 'Paste its Client ID below, then press Connect. No client secret is needed.' })), 'Playback controls (play, pause, next, previous) need Spotify Premium.'),
+        field('Client ID', inputs.clientId),
+        plain('Account', h('div', { class: 'widget-inline' }, connect, disconnect, status)),
+        plain('Show', h('div', { class: 'widget-checks' }, inputs.art)),
+        field('Colors', colors, 'Only the card’s surface and title follow it.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -635,6 +671,8 @@ async function buildWidgets(card) {
           field('Colors', colors, '“Calendar colors” uses the color the feed gives each event; “Match screen” follows your accent color and background.'));
       } else if (type === 'todoist') {
         todoFields(same);
+      } else if (type === 'spotify') {
+        spotifyFields(same);
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -660,6 +698,7 @@ async function buildWidgets(card) {
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
       }
+      if (type === 'spotify') return { ...base, clientId: inputs.clientId.value, art: val(inputs.art) };
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
     const busy = (on) => { for (const b of form.querySelectorAll('button')) b.disabled = on; };
@@ -695,13 +734,13 @@ async function buildWidgets(card) {
     renderFields();
     syncWidth();
     renderList();
-    (inputs.city || inputs.url || inputs.token)?.focus();
+    (inputs.city || inputs.url || inputs.token || inputs.clientId)?.focus();
     form.scrollIntoView?.({ block: 'nearest' });
   }
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, Spotify (now playing, with play, pause, next and previous), or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit layout (or press and hold a card) lets you drag any card, Favorites and the search box too, anywhere, resize it from any edge, snap it to a side, add widgets and undo.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page

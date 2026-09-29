@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - New-tab page: Edit layout is now a button on the page itself (bottom right, always there). Turn it on to drag, resize or hide any card, and the page's own sections too: the clock and greeting, the search box, Favorites, Frequently visited and Privacy behave like widget cards on the same grid. Nothing moves until you move something, and Reset layout puts every section back in the centre. An Add widget tile and picker put new widgets (or a hidden section) on the page without opening Settings; snap guides show what a card lines up with; removing a card, moving it or resetting can be undone (Undo button, Ctrl+Z, or the toast). Arrow keys move a focused card, Shift and arrows resize it, Ctrl+Alt and arrows snap it, and each step is announced to screen readers. It stays still with Reduce motion or Performance mode, and the page still never goes online.
+- New-tab widget: Spotify. A now-playing card (title, artist, album art, live progress) with play, pause, next and previous. You bring your own Spotify Client ID and sign in once from Settings (OAuth with PKCE through a loopback address, no client secret); Lumen keeps the refresh token encrypted, does all the talking to Spotify itself, and gives the page only text and a small picture. Shows a calm message when nothing is playing or no device is active, renews expired sign-ins by itself, and backs off when Spotify says to slow down. Playback controls need Spotify Premium.
 
 ## 0.2.13 (2026-09-29)
 

@@ -22,7 +22,7 @@
 //   summary(c)        one line for Settings' list
 //   fetch(c, x)       -> the card's data: plain JSON (strings, numbers, arrays). renderer/newtab.js
 //                     draws it with textContent only, so nothing from the network is ever markup.
-//   act(c, action, x) (optional) a page action (the Todoist checkbox): see actionFrom() below
+//   act(c, action, x) (optional) a page action (the Todoist checkbox, Spotify's play/pause): see actionFrom() below
 // and a renderer with the same type in renderer/newtab.js's WIDGET_RENDERERS.
 const ics = require('./ics');
 const WL = require('./widget-layout');
@@ -31,6 +31,7 @@ const WX = require('./weather-view');
 const WC = require('./widget-colors');
 const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
+const SV = require('./spotify-view');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -39,6 +40,8 @@ const ENDPOINTS = {
   // from this process; it sees the IP address and nothing else of ours is sent.
   locate: 'https://ipapi.co/json/',
   todoist: 'https://api.todoist.com/api/v1', // the unified API (REST v2 was shut down)
+  spotify: 'https://api.spotify.com/v1',
+  spotifyAccounts: 'https://accounts.spotify.com', // sign-in and tokens (PKCE: no client secret)
 };
 const MAX_WIDGETS = 12;
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -230,6 +233,59 @@ const CONNECTORS = {
     },
   },
 
+  // Now playing (Spotify Web API). The user's own Client ID is in the config; the refresh token is the
+  // encrypted secret (OAuth Authorization Code + PKCE, signed in from Settings: spotifyStart() below).
+  // The short-lived access token lives only in memory here. The album picture is fetched here and goes
+  // to the page as a data: URL, so the page never learns an address or a token.
+  spotify: {
+    label: 'Spotify',
+    ttl: 20e3,
+    secret: 'spotify',
+    clean: (c) => {
+      const cfg = SV.cleanConfig(c);
+      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      const clientId = SV.cleanClientId(input.clientId);
+      if (!clientId) throw new Error('Paste your Spotify app’s Client ID (32 letters and digits).');
+      if (!x.secret()) throw new Error('Connect Spotify first (the Connect button).');
+      const me = await spotifyCall(x, { clientId }, 'GET', '/me');
+      if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
+      let name = '';
+      try { name = str(JSON.parse(me.body)?.display_name, 60); } catch { /* the name is only for the message */ }
+      return { config: { clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
+    },
+    title: () => 'Spotify',
+    summary: (c) => `Now playing${c.art ? '' : ' · no album art'}`,
+    async fetch(c, x) {
+      if (!x.secret()) throw new Error('Connect Spotify in Settings.');
+      const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
+      if (res.status !== 204 && !res.ok) throw new Error(SV.playerError(res.status, res.body));
+      let body = null;
+      if (res.status !== 204 && res.body) {
+        try { body = JSON.parse(res.body); } catch { throw new Error('Spotify sent something unexpected.'); }
+      }
+      const { images, ...data } = SV.normalizePlayback(body, x.now());
+      let art = '';
+      if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
+      return { ...data, art };
+    },
+    // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
+    async act(c, action, x, cached) {
+      const req = SV.actionRequest(action.do);
+      if (!req) return false;
+      const res = await spotifyCall(x, c, req.method, req.path);
+      if (!res.ok) throw new Error(SV.playerError(res.status, res.body));
+      if (action.do === 'play' || action.do === 'pause') {
+        cached.progressMs = Math.round(SV.progressNow(cached, x.now()));
+        cached.at = x.now();
+        cached.state = action.do === 'play' ? 'playing' : 'paused';
+      }
+      delete cached.notice;
+      return { delay: 700 };
+    },
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -307,6 +363,47 @@ async function completedToday(x) {
   });
 }
 
+// One call to the Spotify Web API with a fresh access token. A 401 gets one refresh and one retry;
+// a 429 already backs every request off (request() below) and reads as a calm message.
+async function spotifyCall(x, cfg, method, path, body) {
+  const go = async (force) => {
+    const token = await spotifyAccess(x, cfg.clientId, force);
+    return x.raw(`${x.endpoint('spotify')}${path}`, {
+      method, max: 262144, body: body ? JSON.stringify(body) : undefined,
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    });
+  };
+  let res = await go(false);
+  if (res.status === 401) res = await go(true);
+  return res;
+}
+// The access token: the one in memory while it lasts, else a new one from the refresh token (kept
+// encrypted; Spotify may send a new refresh token, which replaces the old).
+async function spotifyAccess(x, clientId, force = false) {
+  const s = x.session;
+  if (!force && s.access && s.exp > x.now()) return s.access;
+  if (!s.pending) {
+    s.pending = (async () => {
+      const refresh = x.secret();
+      if (!refresh) throw new Error('Connect Spotify in Settings.');
+      const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
+        method: 'POST', max: 65536, body: SV.tokenForm('refresh', { clientId, refresh }),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      });
+      if (!res.ok) {
+        if (res.status === 400 || res.status === 401) s.access = null;
+        throw new Error(SV.tokenError(res.status, res.body));
+      }
+      const t = SV.parseToken(res.body, x.now(), refresh);
+      s.access = t.access;
+      s.exp = t.exp;
+      if (t.refresh !== refresh) x.setSecret(t.refresh);
+    })().finally(() => { s.pending = null; });
+  }
+  await s.pending;
+  return s.access;
+}
+
 // Whether a page lets itself be shown in a frame on the new-tab page, and its title. The new-tab
 // page is a file: page, so X-Frame-Options (any value) and a CSP frame-ancestors directive (any
 // list: even "*" doesn't match file:, as test/widgets.js checks) always refuse it.
@@ -326,7 +423,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 200) : '', todo: i.todo, wx: i.wx, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 64) : '', art: i.art };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -406,6 +503,7 @@ function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo }
   const recent = []; // times of recent network requests (the rate limit)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
+  const sessions = new Map(); // secret name -> { access, exp, pending }: short-lived tokens, in memory only
   let backoffUntil = 0; // after a 429: no requests until then
   let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
   const now = () => (deps.now ? deps.now() : Date.now());
@@ -472,7 +570,8 @@ function createWidgets(deps) {
         if (size > max) { chunks.push(value.subarray(0, value.length - (size - max))); await reader.cancel().catch(() => {}); break; }
         chunks.push(value);
       }
-      return { ok: res.ok, status: res.status, headers: res.headers, url: res.url, body: Buffer.concat(chunks).toString('utf8'), truncated: size > max };
+      const bytes = Buffer.concat(chunks);
+      return { ok: res.ok, status: res.status, headers: res.headers, url: res.url, body: bytes.toString('utf8'), bytes, truncated: size > max };
     } finally {
       clearTimeout(timer);
     }
@@ -483,10 +582,23 @@ function createWidgets(deps) {
     if (res.status === 429) return new Error('The service is busy. Lumen will try again shortly.');
     return new Error(`The server answered ${res.status}.`);
   };
+  const sessionFor = (name) => { if (!name) return {}; if (!sessions.has(name)) sessions.set(name, {}); return sessions.get(name); };
   function helpers(secretName, secretOverride) {
     const x = {
       endpoint: (name) => deps.endpoints?.()[name] || ENDPOINTS[name],
       secret: () => secretOverride || (secretName ? deps.getSecret(secretName) : null),
+      setSecret: (value) => { if (secretName) deps.setSecret(secretName, value); },
+      session: sessionFor(secretName),
+      now,
+      // A small picture as a data: URL (Spotify's album art), kept for an hour. Throws when it isn't a
+      // small enough JPEG, PNG or WebP from Spotify's own host.
+      image: (url) => memo(`img:${url}`, 3600e3, async () => {
+        if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
+        const res = await request(url, { max: SV.MAX_ART_BYTES + 1, headers: { Accept: 'image/*' } });
+        const data = res.ok && !res.truncated ? SV.dataUrl(res.bytes) : null;
+        if (!data) throw new Error('That picture can’t be shown.');
+        return data;
+      }),
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -633,7 +745,7 @@ function createWidgets(deps) {
     cache.delete(id);
     // The last widget that used a token takes the token with it.
     const secret = gone && CONNECTORS[gone.type].secret;
-    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) deps.setSecret(secret, null);
+    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) { deps.setSecret(secret, null); sessions.delete(secret); }
     deps.onUpdate?.();
     return true;
   }
@@ -713,6 +825,41 @@ function createWidgets(deps) {
     if (!x.secret()) throw new Error('Add your Todoist token first.');
     return [...(await x.projects())].map(([id, p]) => ({ id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 200);
   }
+  // ---- Spotify: sign-in (main.js opens the browser and the loopback listener) ----
+  // Returns what main.js needs: the address to open, the state to check on return, and exchange(code),
+  // which trades the code for tokens (the PKCE verifier stays in here) and stores the refresh token encrypted.
+  function spotifyStart(clientIdInput) {
+    const clientId = SV.cleanClientId(clientIdInput);
+    if (!clientId) throw new Error('Paste your Spotify app’s Client ID first (32 letters and digits).');
+    const p = SV.pkce();
+    const x = helpers('spotify');
+    return {
+      url: SV.authorizeUrl(x.endpoint('spotifyAccounts'), { clientId, challenge: p.challenge, state: p.state }),
+      state: p.state,
+      async exchange(code) {
+        if (typeof code !== 'string' || !/^[\w.~-]{1,2000}$/.test(code)) throw new Error('Spotify sent something unexpected.');
+        const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
+          method: 'POST', max: 65536, body: SV.tokenForm('code', { clientId, code, verifier: p.verifier }),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        });
+        if (!res.ok) throw new Error(SV.tokenError(res.status, res.body));
+        const t = SV.parseToken(res.body, now());
+        deps.setSecret('spotify', t.refresh);
+        Object.assign(x.session, { access: t.access, exp: t.exp });
+        for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+        deps.onUpdate?.();
+        return true;
+      },
+    };
+  }
+  // Settings' Disconnect: forget the refresh token (Spotify's own account page can revoke the app too).
+  function spotifyDisconnect() {
+    deps.setSecret('spotify', null);
+    sessions.delete('spotify');
+    for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+    deps.onUpdate?.();
+    return true;
+  }
   // ---- weather: places and "My location" ----
   const savedPlaces = () => WX.cleanSaved(deps.readSettings().weatherPlaces);
   const rememberPlaces = (places) => {
@@ -764,12 +911,13 @@ function createWidgets(deps) {
       spans: SPANS,
       edit: typeof edit === 'string' ? edit : null,
       create: edit?.create || null, // the page's Add widget picked a kind: Settings opens the new-widget form for it
+      spotify: { redirect: SV.REDIRECT_URI },
     };
   }
 
   // ---- page actions ----
   // The new-tab page asks by loading itself with ?widget=<id>&do=<action>[&task=<id>] (like its Ask
-  // AI box): refresh, complete, undo (&task), add (&text), place (&to=<index>), size (&span, &height),
+  // AI box): refresh, complete, undo (&task), add (&text), play, pause, next, previous (Spotify), place (&to=<index>), size (&span, &height),
   // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure. main.js cancels that navigation and passes
   // the URL here. Null when it isn't one; { invalid: true } when it is one that is refused.
   function actionFrom(url) {
@@ -778,7 +926,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|play|pause|next|previous)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -870,7 +1018,7 @@ function createWidgets(deps) {
       if (done.undone) entry.undo = null;
       deps.onUpdate?.(); // the task leaves the card at once
       entry.at = 0; // and the list is fetched again
-      setTimeout(() => refresh(w).catch(() => {}), done.undo ? 800 : 0);
+      setTimeout(() => refresh(w).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
       return true;
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);
@@ -882,7 +1030,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect };
 }
 
 module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS };

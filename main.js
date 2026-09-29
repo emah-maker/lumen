@@ -51,6 +51,7 @@ const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
+const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -136,7 +137,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|cli|import|mcp|automation|claudecode|skills):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -4197,6 +4198,55 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
     authTab = openTab(url).id;
   });
+}));
+
+// ---- Spotify widget sign-in (OAuth Authorization Code + PKCE, no client secret): the user's own Client
+// ID, Spotify asks in an ordinary tab, then redirects to the registered loopback address with a code.
+// features/widgets.js trades the code for tokens and stores the refresh token encrypted (widgetSecret).
+let cancelSpotifySignIn = null;
+ipcMain.handle('spotify:cancel', () => { cancelSpotifySignIn?.(); return true; });
+ipcMain.handle('spotify:disconnect', () => widgets.spotifyDisconnect());
+ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) => {
+  cancelSpotifySignIn?.(); // one sign-in at a time
+  let session;
+  try { session = widgets.spotifyStart(clientId); } catch (err) { resolve({ ok: false, message: err.message }); return; }
+  let authTab = null;
+  let done = false;
+  const finish = (result) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    clearInterval(watch);
+    cancelSpotifySignIn = null;
+    server.close();
+    if (authTab && tabs.some((x) => x.id === authTab)) setTimeout(() => { if (tabs.some((x) => x.id === authTab)) closeTab(authTab); }, 1200);
+    resolve(result);
+  };
+  cancelSpotifySignIn = () => finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
+  // Closing the sign-in tab cancels at once, instead of waiting for the 5-minute timeout.
+  const watch = setInterval(() => { if (authTab && !tabs.some((x) => x.id === authTab)) cancelSpotifySignIn?.(); }, 700);
+  const page = (title, text) => `<title>${title}</title><body style="font:15px system-ui;padding:40px">${text}</body>`;
+  const server = require('http').createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname !== '/callback') { res.writeHead(404).end(); return; }
+    if (url.searchParams.get('state') !== session.state) { res.writeHead(400).end(); return; } // not our sign-in: ignore, keep waiting
+    if (url.searchParams.get('error')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Not connected', 'Spotify was not connected. You can close this tab.'));
+      finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
+      return;
+    }
+    try {
+      await session.exchange(url.searchParams.get('code'));
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Connected', 'Spotify is connected to Lumen. You can close this tab.'));
+      finish({ ok: true, message: t('spotify.connected') });
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Sign-in failed', 'Spotify sign-in failed. Close this tab and try again.'));
+      finish({ ok: false, message: t('spotify.failed', { error: err.message }) });
+    }
+  });
+  const timer = setTimeout(() => finish({ ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
+  server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: SPOTIFY_REDIRECT_PORT }) }));
+  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; });
 }));
 
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)

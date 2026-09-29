@@ -404,6 +404,27 @@
     @container card (max-height: 149px) { .calendar .later { display: none; } }
     @container card (max-height: 299px) { .calendar .far, .calendar .w-day.later { display: none; } }
     @container card (max-width: 240px) { .w-time { width: 48px; } .w-fallback { flex-wrap: wrap; } }
+    /* Spotify: title and artist on a small card; the album art, the controls and the progress bar as the card grows. */
+    .sp-wrap { display: flex; gap: 12px; align-items: center; flex: 1 1 auto; min-height: 0; }
+    .sp-art { display: none; flex: none; width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: var(--field); }
+    .sp-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .sp-title { font-size: 13.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .sp-artist, .sp-album { color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .sp-album, .sp-controls, .sp-progress { display: none; }
+    .sp-controls { align-items: center; justify-content: center; gap: 10px; margin-top: 8px; }
+    .sp-btn { appearance: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text); cursor: default; outline: none; transition: background-color 150ms ease-out; }
+    .sp-btn:hover { background: var(--hover); }
+    .sp-btn:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .sp-btn svg { width: 14px; height: 14px; fill: currentColor; }
+    .sp-btn.main { width: 36px; height: 36px; background: var(--text); color: var(--bg); }
+    .sp-btn.main:hover { background: var(--text); opacity: 0.85; }
+    .sp-progress { align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .sp-bar { flex: 1 1 auto; height: 3px; border-radius: 2px; background: var(--field); overflow: hidden; }
+    .sp-bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--accent); }
+    .sp-card-idle .sp-title { font-weight: 500; color: var(--muted); }
+    @container card (min-width: 190px) and (min-height: 100px) { .sp-controls { display: flex; } }
+    @container card (min-width: 260px) and (min-height: 130px) { .sp-art { display: block; } .sp-album, .sp-progress { display: flex; } .sp-album { display: block; } }
+    @container card (max-height: 129px) { .sp-progress { display: none; } }
     /* Todoist: a count and the next task on a small card, the list (with what the settings switch on) on a bigger one. */
     .td-summary { display: flex; flex-direction: column; justify-content: center; min-height: 0; flex: 1 1 auto; }
     .td-count { font-size: 34px; line-height: 1; font-weight: 250; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
