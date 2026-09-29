@@ -1786,6 +1786,11 @@ ${out.text}${note}
         const elementOffset = Math.max(0, input.element_offset || 0);
         const page = await runScript(wc, scripts.readPage(textOffset, elementOffset));
         const { text, ...rest } = page;
+        const same = snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}`, `${JSON.stringify(rest)}
+${text}`);
+        if (same) return `<untrusted_page_content>
+${same}
+</untrusted_page_content>`;
         return `<untrusted_page_content>\n${JSON.stringify(rest)}\n\nPAGE TEXT:\n${text}\n</untrusted_page_content>`;
       }
       case 'screenshot': {

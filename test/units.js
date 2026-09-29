@@ -714,6 +714,15 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('trim: old results are cut, images dropped, recent kept whole', trimmed[1].content[0].content.length < 200 && trimmed[2].content[0].content[0].text.includes('omitted') && trimmed[3].content[0].content.length === 5000 && trimmed[6].content[0].content.length === 5000, JSON.stringify(trimmed[1]).slice(0, 120));
   check('trim: does not mutate its input, and small histories pass through', history[1].content[0].content === big && trimToolResults(history.slice(0, 3), { keep: 4 }) === history.slice(0, 3) || trimToolResults(history.slice(0, 3), { keep: 4 }).length === 3, '');
 
+  const { ReadCache } = require('../snapshot');
+  const rc = new ReadCache();
+  check('read cache: first read is full, an identical soon read is one line', rc.check(1, 'https://a.test/', 'c', 'page') === null && /Unchanged/.test(rc.check(1, 'https://a.test/', 'c', 'page') || ''), '');
+  check('read cache: other content, URL, request shape or tab is a full read', rc.check(1, 'https://a.test/', 'c', 'page 2') === null && rc.check(1, 'https://b.test/', 'c', 'page 2') === null && rc.check(1, 'https://b.test/', 'f', 'page 2') === null && rc.check(2, 'https://b.test/', 'f', 'page 2') === null, '');
+  rc.check(1, 'u', 'c', 'x'); rc.tick('click');
+  check('read cache: a click invalidates it, reads and searches do not', rc.check(1, 'u', 'c', 'x') === null && (rc.tick('find'), rc.tick('screenshot'), /Unchanged/.test(rc.check(1, 'u', 'c', 'x') || '')), '');
+  for (let i = 0; i < 8; i++) rc.tick('find');
+  check('read cache: too many calls later the model gets the page again', rc.check(1, 'u', 'c', 'x') === null && /Unchanged/.test(rc.check(1, 'u', 'c', 'x') || ''), '');
+
   const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];
   const cached = cacheLastTool(tools);
   check('cache_control: only the last tool is marked, input untouched', cached.filter((t) => t.cache_control).length === 1 && cached[2].cache_control.type === 'ephemeral' && tools[0].cache_control && cacheLastTool([]).length === 0, JSON.stringify(cached));

@@ -13,6 +13,31 @@
 
 const lastSnapshot = new Map(); // webContents id -> { url, lines }
 
+// Re-reading an unchanged page costs a whole snapshot of tokens for nothing. Per tab we remember the
+// last full read (URL, request shape, content fingerprint, and when); an identical read soon after
+// gets one line back instead. "Soon" is a few tool calls: the API clears older tool results, and a
+// model that can no longer see the earlier snapshot must get it again. Any tool that can change the
+// page clears the cache, and the content itself is compared, so a stale hit can't happen.
+const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'web_search', 'read_pdf']);
+const FRESH_CALLS = 6;
+class ReadCache {
+  constructor() { this.tabs = new Map(); this.seq = 0; }
+  tick(name) { this.seq++; if (!READ_ONLY.has(name)) this.tabs.clear(); }
+  // Returns the short reply when this read repeats the last one, else remembers it and returns null.
+  check(tabId, url, shape, content) {
+    const prev = this.tabs.get(tabId);
+    const fingerprint = `${content.length}:${content}`;
+    const same = Boolean(prev) && prev.url === url && prev.shape === shape && prev.fingerprint === fingerprint;
+    const fresh = same && this.seq - prev.seq <= FRESH_CALLS;
+    this.tabs.set(tabId, fresh ? prev : { url, shape, fingerprint, seq: this.seq });
+    if (fresh) {
+      return `Unchanged since your last read (${this.seq - prev.seq} calls ago): same URL and content, and the [ids] from that read are still valid. Act on it, use find for a detail, or read_page since_last:true after acting.`;
+    }
+    return null;
+  }
+}
+const reads = new ReadCache();
+
 // ---------------------------------------------------------------- page-side functions
 
 // Runs after read_page has built window.__claudeEls (same isolated world): outline with refs.
@@ -245,7 +270,7 @@ const NEW_TOOLS = [
 
 // Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
 const TRIMMED = {
-  read_page: 'Read the active tab. mode:"compact" returns an outline with [id] refs for click/type_text/batch (use this first); mode:"full" returns raw JSON elements and text (15k-char chunks via text_offset, 150 elements via element_offset). Ids stay valid until the page changes.',
+  read_page: 'Read the active tab. Default (compact) returns an outline with [id] refs for click/type_text/batch; mode:"full" returns raw JSON elements and text (15k-char chunks via text_offset, 150 elements via element_offset). Ids stay valid until the page changes.',
   click: 'Click an element by [id] from read_page/find, or by its visible text.',
   type_text: 'Replace an input/textarea/contenteditable value, pick a <select> option by label, or set date/time (e.g. 2026-03-14, 13:30). Use click for checkboxes/radios. press_enter submits.',
   fill_form: 'Fill several fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved submitting.',
@@ -372,7 +397,10 @@ async function batch(agent, wc, input, h) {
 
 // Handles the efficient tools; returns undefined for everything else.
 async function execute(agent, name, input, h) {
-  if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h);
+  reads.tick(name);
+  // compact is the default: full (raw JSON + text) only when asked for, or when paging it with offsets.
+  const wantsFull = input.mode === 'full' || input.text_offset > 0 || input.element_offset > 0;
+  if (name === 'read_page' && (input.mode === 'compact' || input.since_last || !wantsFull)) return compact(agent, agent.requireTab(), input, h);
   if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
@@ -385,4 +413,4 @@ async function execute(agent, name, input, h) {
   return undefined;
 }
 
-module.exports = { extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
+module.exports = { reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
