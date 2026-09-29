@@ -31,9 +31,13 @@ function processes() {
   });
 }
 // The process started by `parentPid` running launcher.js, the browser it started, and every process under that.
-function launchedTree(parentPid) {
+// The launcher a launch started. The first process hands over and exits; Windows keeps its pid as
+// the launcher's parent, but macOS and Linux re-parent the orphan to pid 1, so a launcher that is
+// new since the launch (`before`) and now belongs to pid 1 counts too.
+const launcherPids = () => new Set(processes().filter((p) => /launcher\.js/.test(p.cmd)).map((p) => p.pid));
+function launchedTree(parentPid, before = new Set()) {
   const all = processes();
-  const launcher = all.find((p) => p.ppid === parentPid && /launcher\.js/.test(p.cmd));
+  const launcher = all.find((p) => /launcher\.js/.test(p.cmd) && (p.ppid === parentPid || (p.ppid === 1 && !before.has(p.pid))));
   const browser = launcher && all.find((p) => p.ppid === launcher.pid && !/--type=/.test(p.cmd));
   const tree = new Set(browser ? [browser.pid] : []);
   for (let grew = true; grew;) {
@@ -188,9 +192,10 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
     const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: pipeProfile, LUMEN_TEST_LAUNCHER: '1' };
     let log = '';
     const launch = (args = []) => {
+      const before = launcherPids();
       const child = spawn(require('electron'), [APP_DIR, ...args], { env, stdio: ['ignore', 'ignore', 'pipe'] });
       child.stderr.on('data', (d) => { log += d; });
-      return { child, exited: new Promise((resolve) => child.on('exit', resolve)) };
+      return { child, before, exited: new Promise((resolve) => child.on('exit', resolve)) };
     };
     const first = launch();
     const tokenFile = path.join(pipeProfile, 'automation-token');
@@ -200,7 +205,7 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
     const up = await until(async () => (await pipeList()).length >= 1);
     check('pipe: the proxy answers with the token', up, log.slice(-500));
     check('pipe: the first process hands over and exits', (await Promise.race([first.exited, new Promise((r) => setTimeout(() => r('running'), 5000))])) === 0, 'still running');
-    const { launcher, browser, tree } = launchedTree(first.child.pid);
+    const { launcher, browser, tree } = launchedTree(first.child.pid, first.before);
     check('pipe: Lumen runs under launcher.js, without a debugging port switch', launcher && browser && !/remote-debugging/.test(browser.cmd), JSON.stringify({ launcher, browser }));
     check('pipe: no DevToolsActivePort file', !fs.existsSync(path.join(pipeProfile, 'DevToolsActivePort')), 'written');
     if (process.platform === 'win32' && browser) {
@@ -239,7 +244,7 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
     const second = launch([`${site}/forwarded`]);
     const secondCode = await Promise.race([second.exited, new Promise((r) => setTimeout(() => r('running'), 15000))]);
     const forwarded = await until(async () => (await pipeList()).some((t) => t.url.endsWith('/forwarded')), 10000);
-    check('pipe: a second launch passes its link to the running Lumen', secondCode === 0 && forwarded && !launchedTree(second.child.pid).launcher, `exit ${secondCode}`);
+    check('pipe: a second launch passes its link to the running Lumen', secondCode === 0 && forwarded && !launchedTree(second.child.pid, second.before).launcher, `exit ${secondCode}`);
 
     // Quitting Lumen ends the launcher too.
     if (browser) quit(browser.pid);
@@ -250,7 +255,7 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
     // And the other way round: the launcher going away closes the pipe, and Chromium quits.
     const third = launch();
     await until(async () => (await pipeList()).length >= 1);
-    const again3 = launchedTree(third.child.pid);
+    const again3 = launchedTree(third.child.pid, third.before);
     if (again3.launcher) forceKill(again3.launcher.pid);
     const browserGone = await until(() => again3.browser && !alive(again3.browser.pid), 20000);
     check('pipe: Lumen quits when the launcher is killed', browserGone, JSON.stringify(again3.browser));

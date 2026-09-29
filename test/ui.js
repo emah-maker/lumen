@@ -132,7 +132,11 @@ const path = require('path');
   }, text);
   let good = 0;
   const bad = [];
-  for (let i = 0; i < 30; i++) {
+  // Typing goes to the OS-focused contents, which a LUMEN_TEST_BACKGROUND window never is (it must
+  // not take focus from the user's own apps), so those runs skip this stress test.
+  const focusRuns = process.env.LUMEN_TEST_BACKGROUND ? 0 : 30;
+  if (!focusRuns) console.log('SKIP  address bar focus stress (needs a focused window; LUMEN_TEST_BACKGROUND is set)');
+  for (let i = 0; i < focusRuns; i++) {
     await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((r) => t.webContents.once('did-stop-loading', r)); }, `${base}/p${i}`);
     await app.evaluate((_e, n) => { const list = global.__agent.browser.listTabs(); global.__agent.browser.switchTab(list[n % list.length].id); }, i);
     if (i % 3 === 0) await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
@@ -150,7 +154,7 @@ const path = require('path');
     await ui.keyboard.press('Escape');
     await ui.keyboard.press('Escape');
   }
-  check(`address bar keeps focus and every character (${good}/30)`, good === 30, JSON.stringify(bad.slice(0, 3)));
+  if (focusRuns) check(`address bar keeps focus and every character (${good}/30)`, good === 30, JSON.stringify(bad.slice(0, 3)));
   const shown = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.filter((v) => v.getVisible?.() && v.getBounds().height > 0 && v.webContents?.getURL().includes('suggest.html')).length);
   check('no suggestion view left over the page', shown === 0, shown);
   server.close();

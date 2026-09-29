@@ -1,5 +1,6 @@
 // New-tab page. The browser passes everything in the URL hash as JSON:
-//   { favorites: [{ title, url, icon? }], frequent: [{ title, url, icon? }], blocked: number }
+//   { favorites: [{ title, url, icon? }], frequent: [{ title, url, icon? }], blocked: number,
+//     look: { background, image (a file: URL in the profile), accent: { light, dark }, clock, name, sections } }
 // (an older plain array means favorites only). Icons are favicons the browser cached locally as
 // data: URLs; the page itself never touches the network.
 const DEFAULTS = [
@@ -15,18 +16,58 @@ const label = (b) => (typeof b.title === 'string' && b.title.trim() ? b.title.tr
 function data() {
   try {
     const parsed = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-    if (Array.isArray(parsed)) return { favorites: parsed.filter(isWeb), frequent: [], blocked: null };
+    if (Array.isArray(parsed)) return { favorites: parsed.filter(isWeb), frequent: [], blocked: null, look: lookOf(null) };
     return {
       search: parsed.search && typeof parsed.search.url === 'string' && /^https:\/\//.test(parsed.search.url) ? parsed.search : null,
       assistant: parsed.assistant && typeof parsed.assistant.name === 'string' ? parsed.assistant : null,
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites.filter(isWeb) : DEFAULTS,
       frequent: Array.isArray(parsed.frequent) ? parsed.frequent.filter(isWeb) : [],
       blocked: Number.isFinite(parsed.blocked) ? parsed.blocked : null,
+      look: lookOf(parsed.look),
     };
   } catch {
-    return { favorites: DEFAULTS, frequent: [], blocked: null };
+    return { favorites: DEFAULTS, frequent: [], blocked: null, look: lookOf(null) };
   }
 }
+
+// [look] The page's design from Settings → Appearance, checked field by field.
+const BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
+const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
+function lookOf(l) {
+  const look = l && typeof l === 'object' ? l : {};
+  const image = typeof look.image === 'string' && /^file:\/\/\/[^"'()\\\s]+$/.test(look.image) ? look.image : null;
+  const background = BACKGROUNDS.includes(look.background) && (look.background !== 'image' || image) ? look.background : 'plain';
+  const sections = look.sections && typeof look.sections === 'object' ? look.sections : {};
+  return {
+    background, image,
+    accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
+    clock: look.clock !== false,
+    name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
+    sections: { favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
+  };
+}
+const dark = matchMedia('(prefers-color-scheme: dark)');
+let currentLook = lookOf(null);
+function applyLook(look) {
+  currentLook = look;
+  document.body.dataset.bg = look.background;
+  document.body.classList.toggle('on-media', look.background !== 'plain');
+  document.body.style.setProperty('--wallpaper', look.image ? `url("${look.image}")` : 'none');
+  const accent = (dark.matches || look.background !== 'plain' ? look.accent.dark : look.accent.light) || null;
+  const root = document.documentElement.style;
+  if (accent) {
+    root.setProperty('--accent', accent);
+    const n = parseInt(accent.slice(1), 16);
+    root.setProperty('--ring', `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, 0.3)`);
+  } else { root.removeProperty('--accent'); root.removeProperty('--ring'); }
+  document.getElementById('clock').hidden = !look.clock;
+}
+dark.addEventListener('change', () => applyLook(currentLook));
+function tickClock() {
+  const el = document.getElementById('clock');
+  if (!el.hidden) el.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '');
+}
+setInterval(tickClock, 1000);
 
 // A stable hue per site for monogram tiles.
 function hueOf(text) {
@@ -129,14 +170,17 @@ function greeting(now) {
 }
 
 function render() {
-  const { favorites: favs, frequent: freq, blocked } = data();
+  const { favorites: favs, frequent: freq, blocked, look } = data();
+  applyLook(look);
+  tickClock();
   const now = new Date();
   document.getElementById('date').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  document.getElementById('greeting').textContent = greeting(now);
+  document.getElementById('greeting').textContent = look.name ? `${greeting(now)}, ${look.name}` : greeting(now);
   const box = document.getElementById('sections');
-  box.replaceChildren(section('Favorites', favorites(favs)));
-  if (freq.length) box.append(section('Frequently Visited', frequent(freq)));
-  if (blocked !== null) box.append(section('Privacy', privacy(blocked)));
+  box.replaceChildren();
+  if (look.sections.favorites) box.append(section('Favorites', favorites(favs)));
+  if (look.sections.frequent && freq.length) box.append(section('Frequently Visited', frequent(freq)));
+  if (look.sections.privacy && blocked !== null) box.append(section('Privacy', privacy(blocked)));
 }
 
 // "/" jumps to the search field, like many sites; typing elsewhere is left alone.

@@ -422,7 +422,7 @@ const load = (id) => {
   return loaded[id].exports;
 };
 ((require) => {
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const { injectBrowserAction } = require('electron-chrome-extensions/browser-action');
 
 // Before any page script runs: tells main this view has the UI's preload, so main.js's backstop
@@ -451,6 +451,8 @@ contextBridge.exposeInMainWorld('browser', {
   setChatFull: (on) => ipcRenderer.send('chat:full', on),
   warmView: () => ipcRenderer.invoke('view:warm'),
   newTab: (url) => ipcRenderer.send('tab:new', url),
+  // Dropped files: the page can't see paths, so they're resolved here (webUtils) and main.js opens them.
+  openFiles: (files) => ipcRenderer.send('files:open', [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
   closeTab: (id) => ipcRenderer.send('tab:close', id),
   switchTab: (id) => ipcRenderer.send('tab:switch', id),
   moveTab: (id, toIndex) => ipcRenderer.send('tab:move', id, toIndex),
@@ -560,6 +562,9 @@ contextBridge.exposeInMainWorld('lumenExtras', {
   // [ai controls] sites where the user turned AI off (features/ai-sites.js)
   aiSiteState: (url) => ipcRenderer.invoke('settings:ai-site-state', url), // { site, off }
   setAiSite: (site, off) => ipcRenderer.invoke('settings:set-ai-site', site, off),
+  // [usage] the plan's limits and Lumen's share (features/usage.js)
+  usage: (refresh) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh) }),
+  openUsage: () => ipcRenderer.send('settings-page:open', 'usage'),
 });
 // ---- [/claude code engine] + [/page context]
 })(load);

@@ -80,6 +80,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 
 const SECTIONS = [
   { id: 'you-and-ai', title: 'You and AI', build: buildAi },
+  { id: 'usage', title: 'Usage', build: buildUsage }, // [usage]
   { id: 'appearance', title: 'Appearance', build: buildAppearance },
   { id: 'search', title: 'Search engine', build: buildSearch },
   { id: 'startup', title: 'On startup', build: buildStartup },
@@ -337,6 +338,72 @@ function buildAppearance(card) {
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
     toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
   );
+  buildLook(card);
+}
+
+// ---------- [look] accent color and the new-tab page ----------
+const ACCENT_SWATCHES = [['blue', 'Blue'], ['indigo', 'Indigo'], ['purple', 'Purple'], ['pink', 'Pink'], ['red', 'Red'], ['orange', 'Orange'], ['green', 'Green'], ['teal', 'Teal'], ['graphite', 'Graphite']];
+const BACKGROUND_CHOICES = [['plain', 'Plain'], ['aurora', 'Aurora'], ['dusk', 'Dusk'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['sunset', 'Sunset'], ['graphite', 'Graphite']];
+function applyPageAccent() {
+  const hex = st?.accent && (matchMedia('(prefers-color-scheme: dark)').matches ? st.accent.dark : st.accent.light);
+  const style = document.documentElement.style;
+  if (!hex) { style.removeProperty('--accent'); style.removeProperty('--accent-soft'); style.removeProperty('--ring'); return; }
+  const n = parseInt(hex.slice(1), 16);
+  style.setProperty('--accent', hex);
+  style.setProperty('--accent-soft', `rgb(${n >> 16} ${(n >> 8) & 255} ${n & 255} / 0.14)`);
+  style.setProperty('--ring', `rgb(${n >> 16} ${(n >> 8) & 255} ${n & 255} / 0.3)`);
+}
+function buildLook(card) {
+  // Accent: one swatch per color, plus any color.
+  const swatches = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Accent color' });
+  const custom = h('input', { type: 'color', class: 'swatch-custom', 'aria-label': 'Custom accent color', title: 'Any color' });
+  const renderSwatches = () => {
+    const current = st.prefs.accentColor;
+    for (const b of swatches.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.value === current));
+    custom.classList.toggle('on', /^#/.test(current));
+    custom.value = /^#/.test(current) ? current : st.accent?.light || '#007aff';
+  };
+  for (const [value, label] of ACCENT_SWATCHES) {
+    swatches.append(h('button', { type: 'button', role: 'radio', class: `swatch accent-${value}`, 'data-value': value, title: label, 'aria-label': label,
+      onclick: async () => { await save('accentColor', value); renderSwatches(); } }));
+  }
+  custom.addEventListener('change', async () => { await save('accentColor', custom.value); renderSwatches(); });
+  swatches.append(custom);
+  card.append(row('Accent color', 'Buttons, links, the selected tab and focus rings, across Lumen and its pages.', swatches));
+
+  // The new-tab page: background, clock, greeting, sections.
+  const tiles = h('div', { class: 'bg-tiles', role: 'radiogroup', 'aria-label': 'New tab background' });
+  const picture = h('div', { class: 'controls' });
+  const renderTiles = () => {
+    for (const t of tiles.querySelectorAll('button')) t.setAttribute('aria-checked', String(t.dataset.value === st.prefs.newTabBackground));
+    const has = Boolean(st.prefs.newTabImage);
+    picture.replaceChildren(...[
+      h('button', { id: 'pick-wallpaper', text: has ? 'Change picture…' : 'Use a picture…', onclick: async () => { try { st = await S.pickWallpaper(); } catch (err) { alertLine(picture, err.message); } renderTiles(); } }),
+      has ? h('button', { text: 'Remove picture', onclick: async () => { st = await S.removeWallpaper(); renderTiles(); } }) : null,
+    ].filter(Boolean));
+    tiles.querySelector('[data-value="image"]').hidden = !has;
+  };
+  for (const [value, label] of [...BACKGROUND_CHOICES, ['image', 'Your picture']]) {
+    tiles.append(h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${value}`, 'data-value': value, 'aria-label': label, title: label,
+      onclick: async () => { await save('newTabBackground', value); renderTiles(); } }, h('span', { text: label })));
+  }
+  card.append(stackRow('New tab background', 'Behind the new-tab page. A picture is resized and kept in your Lumen profile; it never leaves this computer.', tiles, picture));
+  const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
+  name.value = st.prefs.newTabName || '';
+  name.addEventListener('change', () => save('newTabName', name.value));
+  card.append(
+    toggle('newTabClock', 'Show a clock on the new-tab page', null),
+    row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
+    toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
+    toggle('newTabFrequent', 'Show frequently visited sites', null),
+    toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
+  );
+  renderSwatches();
+  renderTiles();
+}
+function alertLine(host, text) {
+  host.querySelector('.note.error')?.remove();
+  host.append(h('span', { class: 'note error', role: 'alert', text }));
 }
 
 async function buildSearch(card) {
@@ -486,11 +553,66 @@ async function buildDownloads(card) {
       h('span', { class: 'grow', text: d.name }),
       h('span', { class: 'note', text: d.state === 'progressing' ? (d.total ? `${Math.round((d.received / d.total) * 100)}%` : 'Downloading') : d.state === 'completed' ? bytes(d.total || d.received) : d.state }),
       d.state === 'completed' ? h('button', { text: 'Show in folder', onclick: () => S.showDownload(d.id) }) : null))
-      : [h('span', { class: 'note', text: 'No downloads this session.' })]));
+      : [h('span', { class: 'note', text: 'No downloads yet.' })]));
   };
-  card.append(stackRow('Downloads this session', null, list, h('div', { class: 'controls' },
+  card.append(stackRow('Recent downloads', 'Kept across restarts. The toolbar’s download button shows them too, and you can drag files out of it.', list, h('div', { class: 'controls' },
     h('button', { id: 'downloads-clear', text: 'Clear list', onclick: async () => { await S.clearDownloads(); render(); } }))));
   render();
+}
+
+// ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
+const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
+const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', anthropic: 'Claude (API key)' };
+function meterRow(label, percent, note) {
+  const p = Math.max(0, Math.min(100, Number(percent) || 0));
+  const fill = h('i');
+  fill.style.width = `${p}%`; // through the CSSOM: the page's CSP drops inline style attributes
+  const bar = h('div', { class: 'meter', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(p)), 'aria-label': label }, fill);
+  bar.classList.toggle('high', p >= 80);
+  return stackRow(label, note, h('div', { class: 'meter-line' }, bar, h('span', { class: 'meter-value', text: `${Math.round(p)}%` })));
+}
+async function buildUsage(card) {
+  const body = h('div', { class: 'usage' });
+  const render = async (refresh) => {
+    body.replaceChildren(row('Checking your usage…', null));
+    const u = await S.usage({ refresh }).catch((err) => ({ error: err.message }));
+    if (!u || u.error) { body.replaceChildren(row('Usage isn’t available', u?.error || 'No answer.')); return; }
+    const parts = [];
+    // The plan (from `claude /usage`, or the latest turn's reading).
+    if (u.plan?.available && u.plan.limits.length) {
+      for (const l of u.plan.limits) parts.push(meterRow(l.label === 'Current session' ? '5-hour limit (current session)' : l.label, l.percent, l.resets ? `Resets ${l.resets}` : null));
+    } else if (u.meter) {
+      parts.push(meterRow('5-hour limit', u.meter.percent, `Resets ${new Date(u.meter.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`));
+    } else {
+      parts.push(row('Your Claude plan', u.plan?.reason ? `Couldn’t read it: ${u.plan.reason}` : 'Chat once with “Claude · your account (Claude Code)” to see your limits here.'));
+    }
+    const EXTRA = { 'in use': 'In use: you’re past your plan’s limit and on extra usage.', rejected: 'Off for your plan: at the limit, Claude waits for the reset.', allowed: 'Available: past the limit, Claude can keep going on extra usage.' };
+    if (u.status?.overage) parts.push(row('Extra usage', EXTRA[u.status.overage] || String(u.status.overage).replace(/_/g, ' ')));
+
+    // Lumen's share.
+    const w = u.lumen.window;
+    const share = w.limitPoints != null
+      ? `≈ ${w.limitPoints < 1 ? '<1' : Math.round(w.limitPoints)} of those points came from Lumen's sidebar${w.unknown ? ` (${w.unknown} turn${w.unknown === 1 ? '' : 's'} couldn’t be measured)` : ''}.`
+      : w.turns ? 'How far each turn moved the meter shows up after your next chat.' : 'No Claude Code chats in Lumen in this window.';
+    parts.push(row('Lumen’s sidebar, this 5-hour window', `${w.turns} turn${w.turns === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens · ${dollars(w.costUSD)} at API prices. ${share}`));
+    const mcp = (u.plan?.contributions || []).map((c) => `${c.lumen}% in the last ${c.period}`).join(', ');
+    if (mcp) parts.push(row('Claude Code driving Lumen (MCP)', `Share of this Mac’s Claude Code usage from Lumen’s browser tools: ${mcp}.`));
+
+    const engines = Object.entries(u.lumen.byEngine);
+    const list = h('div', { class: 'list', id: 'usage-engines' }, engines.length
+      ? engines.map(([id, e]) => h('div', { class: 'item' },
+        h('span', { class: 'grow', text: ENGINE_NAMES[id] || id }),
+        h('span', { class: 'note', text: `${e.turns} turn${e.turns === 1 ? '' : 's'} · ${tokens(e.tokens)} tokens${e.costUSD ? ` · ${dollars(e.costUSD)} at API prices` : ''}` })))
+      : [h('span', { class: 'note', text: 'Nothing yet.' })]);
+    parts.push(stackRow('Lumen, last 7 days', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.', list));
+    parts.push(row('', null,
+      h('button', { id: 'usage-refresh', text: 'Refresh', onclick: () => render(true) }),
+      h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));
+    body.replaceChildren(...parts);
+  };
+  card.append(row('What counts', 'Limits are shared by everything on your Claude account: Claude Code in a terminal, claude.ai and the Claude apps. The share from Lumen is approximate.'), body);
+  render(false);
 }
 
 const COMMON_LANGUAGES = ['en-US', 'en-GB', 'fr', 'de', 'es', 'it', 'pt-BR', 'pt-PT', 'nl', 'sv', 'da', 'nb', 'fi', 'pl', 'cs', 'ru', 'uk', 'tr', 'el', 'ar', 'he', 'hi', 'ja', 'ko', 'zh-CN', 'zh-TW', 'vi', 'th', 'id'];
@@ -654,7 +776,9 @@ function refreshRestartNotes() {
 }
 function applyPageClasses() {
   document.documentElement.classList.toggle('reduce-motion', Boolean(st.prefs.reduceMotion));
+  applyPageAccent(); // [look]
 }
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (st) applyPageAccent(); });
 
 // ---------- navigation and search ----------
 

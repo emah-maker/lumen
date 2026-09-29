@@ -36,6 +36,7 @@ const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
 const { createManagers, pageOf: managerPageOf } = require('./features/managers'); // Bookmarks and Downloads pages
 const { createSiteActivity } = require('./features/site-activity');
+const { createUsage } = require('./features/usage');
 const { createDialogs } = require('./features/dialogs');
 const { createSiteSecurity } = require('./features/site-security');
 const { createAiSites, siteOf: aiSiteOf } = require('./features/ai-sites'); // [ai controls] "Turn off AI on this site"
@@ -122,13 +123,13 @@ const UI_ONLY_IPC = new Set([
   'content-bounds', 'view:freeze', 'view:thaw', 'chat:full', 'view:warm',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize',
-  'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader',
+  'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
-  'pagecontext:get', 'pagecontext:set', 'ui:strings',
+  'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen',
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -667,6 +668,8 @@ async function setupExtensions() {
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
   ses.registerPreloadScript({ id: 'lumen-webstore', type: 'frame', filePath: path.join(__dirname, 'features', 'webstore-preload.js') });
+  // Keeps the library's extension APIs out of Chromium's own PDF viewer, which they broke (see the file).
+  ses.registerPreloadScript({ id: 'lumen-pdf-viewer', type: 'frame', filePath: path.join(__dirname, 'features', 'pdf-viewer-preload.js') });
   ElectronChromeExtensions.handleCRXProtocol(ses); // extension icons in the toolbar
   extensions = new ElectronChromeExtensions({
     license: 'GPL-3.0',
@@ -764,6 +767,7 @@ function showAppMenu({ x, y }) {
   const wc = activeTab()?.webContents;
   Menu.buildFromTemplate([
     { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
+    { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
     { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
     { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
     { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
@@ -901,6 +905,63 @@ function hideSuggestions() {
   if (suggestView) suggestView.setVisible(false);
 }
 
+// The downloads panel, drawn over the page under the toolbar button (renderer/downloads.html).
+// Unlike the suggestions dropdown it takes focus while open (for Escape and the keyboard) and
+// closes as soon as it loses it: a click anywhere else, switching apps.
+const DOWNLOADS_PANEL_URL = pathToFileURL(path.join(__dirname, 'renderer', 'downloads-panel.html')).href;
+const PANEL_WIDTH = 400;
+let downloadsView = null;
+let downloadsAnchor = null;
+function createDownloadsView() {
+  downloadsView = new WebContentsView({
+    webPreferences: { preload: path.join(__dirname, 'downloads-preload.js'), sandbox: true, contextIsolation: true },
+  });
+  downloadsView.setBackgroundColor('#00000000');
+  downloadsView.setVisible(false);
+  win.contentView.addChildView(downloadsView);
+  hardenOwnView(downloadsView.webContents, DOWNLOADS_PANEL_URL);
+  downloadsView.webContents.on('blur', () => setTimeout(() => { if (!downloadsView?.webContents.isFocused()) hideDownloadsPanel(); }, 0));
+  downloadsView.webContents.loadFile(path.join(__dirname, 'renderer', 'downloads-panel.html'));
+}
+function placeDownloadsPanel(height) {
+  if (!downloadsView || !downloadsAnchor || !win || win.isDestroyed()) return;
+  const [width] = win.getContentSize();
+  const x = Math.max(8, Math.min(downloadsAnchor.right - PANEL_WIDTH + 16, width - PANEL_WIDTH - 8));
+  downloadsView.setBounds({ x: Math.round(x), y: Math.round(downloadsAnchor.bottom), width: PANEL_WIDTH, height: Math.round(Math.min(height, win.getContentSize()[1] - downloadsAnchor.bottom - 8)) });
+}
+function showDownloadsPanel(anchor) {
+  if (!win || win.isDestroyed()) return;
+  if (!downloadsView || downloadsView.webContents.isDestroyed()) createDownloadsView();
+  downloadsAnchor = anchor;
+  hideSuggestions();
+  win.contentView.addChildView(downloadsView); // re-adding moves it to the top
+  placeDownloadsPanel(160);
+  const open = () => {
+    downloadsView.webContents.send('downloads:list', downloads.panelList());
+    downloadsView.webContents.send('downloads:open');
+    downloadsView.setVisible(true);
+    downloadsView.webContents.focus();
+  };
+  if (downloadsView.webContents.isLoading()) downloadsView.webContents.once('did-finish-load', open);
+  else open();
+}
+let downloadsHiddenAt = 0;
+function hideDownloadsPanel() {
+  if (!downloadsView || !downloadsView.getVisible()) return;
+  downloadsView.setVisible(false);
+  downloadsHiddenAt = Date.now();
+  const wc = activeTab()?.webContents;
+  if (win?.isFocused()) (wc || ui())?.focus();
+}
+const fromDownloadsPanel = (event) => downloadsView && !downloadsView.webContents.isDestroyed() && event.sender === downloadsView.webContents;
+ipcMain.on('downloads:act', (event, action, id) => { if (fromDownloadsPanel(event) && typeof id === 'number') downloads.act(id, String(action)); });
+ipcMain.on('downloads:all', (event) => { if (fromDownloadsPanel(event)) { hideDownloadsPanel(); managers.open('downloads'); } }); // the Downloads page
+ipcMain.on('downloads:drag', (event, id) => { if (fromDownloadsPanel(event) && typeof id === 'number') downloads.drag(id, event.sender); });
+ipcMain.on('downloads:clear', (event) => { if (fromDownloadsPanel(event)) downloads.clearFinished(); });
+ipcMain.on('downloads:folder', (event) => { if (fromDownloadsPanel(event)) { downloads.openFolder(); hideDownloadsPanel(); } });
+ipcMain.on('downloads:close', (event) => { if (fromDownloadsPanel(event)) hideDownloadsPanel(); });
+ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event) && Number.isFinite(height)) placeDownloadsPanel(Math.max(120, Math.min(height, 640))); });
+
 // ---------- tabs ----------
 
 // The URL a tab is "really" on: error pages report the address that failed.
@@ -932,6 +993,7 @@ function tabState() {
           url: isInternal(url) ? '' : url,
           loading: false,
           favicon: t.favicon || null,
+          favicons: t.favicons || (t.favicon ? [t.favicon] : []),
           page: null,
           error: false,
           zoom: 100,
@@ -951,6 +1013,7 @@ function tabState() {
         url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: t.favicon || null,
+        favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url) || managerPageOf(url), // Lumen's own pages get their own icon
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
         error: isErrorPage(wc.getURL()),
@@ -1078,15 +1141,27 @@ function wireView(tab, url, history = null) {
   wc.on('zoom-changed', (_e, direction) => {
     zoomBy(wc, direction === 'in' ? 0.5 : -0.5);
   });
+  // Chromium only reports a page's icons when they differ from the last ones this webContents
+  // reported, and never reports "none": a reload, or the next page of the same site with the same
+  // icon, gets no event at all. So the icon isn't cleared when a navigation starts (a download or a
+  // 204 never commits, and a same-icon page would never get it back); a committed http(s) page keeps
+  // the last reported icons until new ones arrive, and any other page (new tab, error, data:) has none.
+  // Every candidate is kept, in Electron's (alphabetical) order: the tab strip falls through to the
+  // next one when an icon doesn't load. A new webContents (a woken tab) reports its page's icons
+  // afresh; until it does, the woken tab keeps showing the ones from before it slept.
+  tab.faviconUrls = tab.favicons || [];
   wc.on('page-favicon-updated', (_e, favicons) => {
-    tab.favicon = favicons[0];
+    tab.faviconUrls = favicons.filter((u) => typeof u === 'string' && u);
+    tab.favicons = tab.faviconUrls;
+    tab.favicon = tab.favicons[0] || null;
     sendTabs();
-    if (favicons[0]) cacheFavicon(wc.getURL(), favicons[0]);
+    if (tab.favicons.length) cacheFavicon(wc.getURL(), tab.favicons);
+  });
+  wc.on('did-navigate', (_e, url) => {
+    tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
+    tab.favicon = tab.favicons[0] || null;
   });
   wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id); });
-  wc.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) tab.favicon = null;
-  });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
@@ -1287,9 +1362,12 @@ function wakeTab(tab) {
 // A tab from the saved session that hasn't been opened yet: a sleeping tab (above) with no view,
 // which switchTab() wakes the first time it's shown. Starting Lumen loads only the active tab
 // instead of every tab of the last session at once.
-function addRestoredTab(url, title) {
+function addRestoredTab(url, title, favicon = null) {
+  // The new-tab page's cached copy (offline-safe, but kept only for favorites and frequent sites),
+  // else the icon the tab showed when the session was saved.
+  const icon = faviconStore.get(hostOf(url)) || (/^(https?|data):/.test(favicon || '') ? favicon : null);
   const tab = {
-    id: nextTabId++, view: null, favicon: faviconStore.get(hostOf(url)) || null, groupId: null,
+    id: nextTabId++, view: null, favicon: icon, favicons: icon ? [icon] : [], groupId: null,
     userRemoved: false, settings: false, lastActiveAt: Date.now(),
     sleeping: true, sleepUrl: url, sleepTitle: title || hostOf(url) || 'New Tab', sleepHistory: null,
   };
@@ -1904,6 +1982,7 @@ function newTabUrl() {
     blocked: adblock.total(), // ads/trackers blocked on open tabs
     search: engineFor(readSettings().searchEngine),
     assistant: homeAssistant(),
+    look: settingsBackend.newTabLook(), // [look] background, accent, clock, name, which sections show
   };
   return `${NEW_TAB_URL}#${encodeURIComponent(JSON.stringify(data))}`;
 }
@@ -1937,19 +2016,23 @@ function askFromHome(event, url, tabId) {
 }
 
 // When a favorite or frequently visited site shows its favicon, keep a small copy for the new-tab page.
-async function cacheFavicon(pageUrl, iconUrl) {
+// iconUrls: the page's candidates; the first one that downloads as a small image is kept.
+async function cacheFavicon(pageUrl, iconUrls) {
   const host = hostOf(pageUrl);
-  if (!host || faviconStore.has(host) || !/^https?:/.test(iconUrl)) return;
+  if (!host || faviconStore.has(host)) return;
   // Only sites the new-tab page shows: favorites and frequently visited ones.
   if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host)) return;
-  try {
-    const res = await net.fetch(iconUrl);
-    const type = res.headers.get('content-type') || '';
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (!res.ok || !type.startsWith('image/') || bytes.length > 40000) return;
-    faviconStore.set(host, `data:${type.split(';')[0]};base64,${bytes.toString('base64')}`);
-  } catch {
-    // Favicon unavailable; the new-tab page shows a letter instead.
+  for (const iconUrl of iconUrls.filter((u) => /^https?:/.test(u))) {
+    try {
+      const res = await net.fetch(iconUrl);
+      const type = res.headers.get('content-type') || '';
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (!res.ok || !type.startsWith('image/') || bytes.length > 40000) continue;
+      faviconStore.set(host, `data:${type.split(';')[0]};base64,${bytes.toString('base64')}`);
+      return;
+    } catch {
+      // This candidate is unavailable; try the next (with none, the new-tab page shows a letter).
+    }
   }
 }
 
@@ -1988,6 +2071,8 @@ function bookmarksMenu() {
 const downloads = createDownloads({
   app, session, dialog, shell, ui,
   win: () => win,
+  panel: () => (downloadsView && !downloadsView.webContents.isDestroyed() ? downloadsView.webContents : null),
+  fallbackIcon: () => require('electron').nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 32 }),
   downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   onChange: () => managers?.pushDownloads(),
@@ -2142,6 +2227,7 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && input.shift && key === 'a') openTabSearch();
   else if (mod && key === 't') openTab();
+  else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
   else if (mod && key === 'l') focusAddress();
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
@@ -2306,6 +2392,7 @@ function saveSession() {
   writeSettings({ ...readSettings(), session: {
     urls,
     titles: saved.map(titleOf), // shown on the restored tabs, which don't load until they're opened
+    favicons: saved.map((t) => t.favicon || null), // and their icons, so they aren't all globes
     active: Math.max(0, saved.findIndex((t) => t.id === activeId)),
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
@@ -2333,7 +2420,7 @@ function restoreSession() {
   saved.urls.forEach((url, i) => {
     // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
     if (i === active) activeTabId = openTab(url, { background: true }).id;
-    const tab = i === active ? tabs.find((t) => t.id === activeTabId) : addRestoredTab(url, saved.titles?.[i]);
+    const tab = i === active ? tabs.find((t) => t.id === activeTabId) : addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
     const groupId = saved.groupIds?.[i];
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
@@ -2359,6 +2446,7 @@ function macMenu() {
         { label: t('menu.newPrivateWindow'), ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
         { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: () => { if (closedTabs.length) openTab(closedTabs.pop()); } },
         { label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch },
+        { label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog },
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: focusAddress },
         { type: 'separator' },
         { label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
@@ -2401,8 +2489,13 @@ function macMenu() {
   ]);
 }
 
+// LUMEN_TEST_BACKGROUND (tests only): the window opens off-screen without taking focus, and with no
+// Dock icon, so test runs don't pull the keyboard away from a Lumen the user is working in.
+const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 function createWindow() {
+  if (TEST_BACKGROUND) app.dock?.hide();
   win = new BrowserWindow({
+    ...(TEST_BACKGROUND ? { show: false } : {}),
     width: 1440,
     height: 920,
     minWidth: 800,
@@ -2422,6 +2515,9 @@ function createWindow() {
     },
   });
   uiContents.add(win.webContents);
+  // Invisible and click-through, but shown (so it paints and screenshots work); macOS keeps part of
+  // any window on screen, so moving it away is not enough.
+  if (TEST_BACKGROUND) { win.setOpacity(0); win.setIgnoreMouseEvents(true); win.setPosition(-5000, -5000); win.showInactive(); }
   // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
   if (process.platform === 'win32' && app.isPackaged) {
     win.setAppDetails({ appId: APP_ID, appIconPath: instance.appIcon(), appIconIndex: 0, relaunchCommand: `"${process.execPath}"`, relaunchDisplayName: 'Lumen' });
@@ -2466,7 +2562,7 @@ function createWindow() {
   });
   win.on('focus', () => ui()?.send('window-focus', true));
   win.on('blur', () => ui()?.send('window-focus', false));
-  win.on('resize', () => { hideSuggestions(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
+  win.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   win.on('blur', hideSuggestions);
   win.loadFile(UI_HTML);
   win.webContents.once('did-finish-load', () => {
@@ -2475,6 +2571,7 @@ function createWindow() {
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
     uiReady = true;
+    downloads.send(); // last session's downloads: the toolbar button shows when there are any
     openLinksFromOtherApps(pendingLinks.splice(0));
   });
 }
@@ -2488,7 +2585,21 @@ nativeTheme.on('updated', () => {
 // A link clicked in another app arrives as a command-line argument (at launch, or through
 // 'second-instance' when Lumen is already running) or, on macOS, as 'open-url'.
 const pendingLinks = [];
-const linksIn = (argv) => argv.slice(1).filter((arg) => /^https?:\/\//i.test(arg));
+// Files too: Finder's Open With and double-clicks arrive as 'open-file' on macOS; Windows "Open
+// with" passes the path as an argument. Only existing files and folders are opened.
+function fileUrlsFor(paths, { filesOnly = false } = {}) {
+  return paths.filter((p) => {
+    if (typeof p !== 'string' || !path.isAbsolute(p)) return false;
+    try { const st = fs.statSync(p); return filesOnly ? st.isFile() : st.isFile() || st.isDirectory(); } catch { return false; }
+  }).map((p) => pathToFileURL(p).href);
+}
+// From a command line only files count: run from source, Electron's own arguments include the app
+// folder (and flags), which must not open as a tab.
+const appDir = path.resolve(app.getAppPath());
+const linksIn = (argv) => [
+  ...argv.slice(1).filter((arg) => /^https?:\/\//i.test(arg)),
+  ...fileUrlsFor(argv.slice(1).filter((arg) => !arg.startsWith('-') && !path.resolve(arg).startsWith(appDir)), { filesOnly: true }),
+];
 function openLinksFromOtherApps(urls) {
   if (!urls.length) return;
   if (!uiReady) { pendingLinks.push(...urls); return; }
@@ -2497,6 +2608,18 @@ function openLinksFromOtherApps(urls) {
 }
 pendingLinks.push(...linksIn(process.argv));
 app.on('open-url', (event, url) => { event.preventDefault(); openLinksFromOtherApps([url]); });
+app.on('open-file', (event, filePath) => { event.preventDefault(); openLinksFromOtherApps(fileUrlsFor([filePath])); });
+// File > Open File… (Cmd/Ctrl+O): pages, PDFs, images, text and media open in tabs, as in Chrome.
+const OPENABLE = ['html', 'htm', 'xhtml', 'shtml', 'mhtml', 'svg', 'pdf', 'txt', 'md', 'json', 'xml', 'csv', 'log', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac'];
+async function openFileDialog() {
+  if (!win || win.isDestroyed()) return;
+  const { canceled, filePaths } = await electronDialog.showOpenDialog(win, {
+    title: 'Open File',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Web pages, PDFs, images and media', extensions: OPENABLE }, { name: 'All Files', extensions: ['*'] }],
+  });
+  if (!canceled) openLinksFromOtherApps(fileUrlsFor(filePaths));
+}
 // Registering is the user's choice (the ⋯ menu), never done silently. Windows then needs its own
 // Default apps page to confirm; macOS asks by itself.
 function makeDefaultBrowser() {
@@ -2580,7 +2703,13 @@ const agent = new Agent({
   aiOff: (url) => aiSites.isOff(url), tabGroupOf, setTabGroup, // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+// [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
+// and the sidebar's meter.
+const usage = createUsage({ app, claudeBin: () => require('./claude-code').findClaude() });
+agent.onUsage = (engine, data) => usage.record(engine, data);
+ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
 if (TEST) {
+  global.__usage = usage;
   global.__agent = agent;
   global.__fitContext = require('./agent').fitContext;
   global.__mcp = () => aiAgents.mcpServer();
@@ -2603,7 +2732,7 @@ if (TEST) {
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
-  global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu() };
+  global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };
   global.__patchSettings = (patch) => writeSettings({ ...readSettings(), ...patch });
   // The tab menu's Mute Tab / Mute Site items (a native menu the tests can't click)
   global.__tabAudioMenu = (id, label) => {
@@ -2619,6 +2748,10 @@ if (TEST) {
 // ---------- [settings] lumen://settings ----------
 
 const settingsBackend = settingsPage.create({
+  usage, // [usage] You and AI → Usage
+  // [look] New-tab pages already open take a new background, accent or layout at once (the page
+  // reads its design from its hash, so a hash change is enough: no reload, nothing typed is lost).
+  refreshNewTabs: () => { for (const t of tabs) if (alive(t) && isNewTab(t.view.webContents.getURL())) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(newTabUrl())}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {}); },
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
@@ -2714,6 +2847,8 @@ ipcMain.on('chat:full', (_e, on) => {
   chatFullTab = on ? activeId : null;
   layout();
 });
+// Files dropped on the window (the UI resolves their paths with webUtils; see preload.js).
+ipcMain.on('files:open', (_e, paths) => { if (Array.isArray(paths)) openLinksFromOtherApps(fileUrlsFor(paths.slice(0, 20))); });
 ipcMain.on('tab:new', (_e, url) => {
   const internal = url && settingsPage.parseSettingsInput(url); // [settings] lumen://settings
   if (internal) openSettingsPage(internal.section);
@@ -2772,7 +2907,13 @@ ipcMain.on('group:rename', (_e, id, name) => {
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);
-ipcMain.on('downloads:menu', (_e, { x, y }) => Menu.buildFromTemplate([...downloads.menu(), { type: 'separator' }, { label: 'Show All Downloads', click: () => managers.open('downloads') }]).popup({ window: win, x: Math.round(x), y: Math.round(y) }));
+// The toolbar button toggles the downloads panel (the ⋯ menu keeps its Downloads submenu).
+ipcMain.on('downloads:menu', (_e, anchor) => {
+  // A click on the button while the panel is open first blurs (closes) it: that click means close.
+  if (downloadsView?.getVisible() || Date.now() - downloadsHiddenAt < 300) { hideDownloadsPanel(); return; }
+  const n = (v) => (Number.isFinite(v) ? v : 0);
+  showDownloadsPanel({ right: n(anchor?.right ?? anchor?.x), bottom: n(anchor?.bottom ?? anchor?.y) });
+});
 ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
 ipcMain.on('nav:go', (_e, text) => {
   const wc = activeTab()?.webContents;
@@ -3156,6 +3297,8 @@ app.whenReady().then(async () => {
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
+  downloads.load(); // the list from last time (downloads.json)
+  usage.load(); // [usage] the log from earlier sessions (usage.json)
   downloads.setup();
   siteActivity.watch(session.defaultSession);
   loadChat();

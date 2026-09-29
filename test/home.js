@@ -99,36 +99,40 @@ const path = require('path');
     }
     await new Promise((r) => setTimeout(r, 200));
   });
-  for (const mode of ['search', 'ask']) {
-    await ctrlT();
-    if (mode === 'ask') {
-      await inTab("document.querySelector('[data-mode=ask]')?.click()");
+  // These type through the OS-focused contents, which a LUMEN_TEST_BACKGROUND window never is.
+  if (process.env.LUMEN_TEST_BACKGROUND) console.log('SKIP  typing into a fresh new tab (needs a focused window; LUMEN_TEST_BACKGROUND is set)');
+  else {
+    for (const mode of ['search', 'ask']) {
       await ctrlT();
+      if (mode === 'ask') {
+        await inTab("document.querySelector('[data-mode=ask]')?.click()");
+        await ctrlT();
+      }
+      await typeNative('abc');
+      await sleep(200);
+      const value = await ui.evaluate(() => document.getElementById('address').value);
+      check(`new tab (${mode} mode): typing without a click lands in the address bar`, value === 'abc', JSON.stringify(value));
+      await ui.keyboard.press('Escape');
+      await ui.keyboard.press('Escape');
     }
-    await typeNative('abc');
-    await sleep(200);
-    const value = await ui.evaluate(() => document.getElementById('address').value);
-    check(`new tab (${mode} mode): typing without a click lands in the address bar`, value === 'abc', JSON.stringify(value));
-    await ui.keyboard.press('Escape');
-    await ui.keyboard.press('Escape');
+    // Still in Ask AI mode: Enter in the address bar on the new-tab page asks the assistant, as the
+    // page's own box would; an address typed there still opens.
+    await app.evaluate(() => { global.__homePrompts = []; });
+    await ctrlT();
+    await typeNative('how tall is everest');
+    await ui.keyboard.press('Enter');
+    prompts = [];
+    for (let i = 0; i < 30 && !prompts.length; i++) { await sleep(300); prompts = await app.evaluate(() => global.__homePrompts); }
+    check('Ask AI mode: a question in the address bar goes to the assistant', prompts.some((p) => p.includes('how tall is everest')), JSON.stringify(prompts));
+    check('…and the tab stays on the new-tab page', /newtab\.html/.test(await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL())), '');
+    await ui.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 }).catch(() => {});
+    await ctrlT();
+    await typeNative('example.com');
+    await ui.keyboard.press('Enter');
+    let opened = '';
+    for (let i = 0; i < 30 && !/example\.com/.test(opened); i++) { await sleep(300); opened = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()); }
+    check('Ask AI mode: an address in the address bar still opens', /example\.com/.test(opened), opened);
   }
-  // Still in Ask AI mode: Enter in the address bar on the new-tab page asks the assistant, as the
-  // page's own box would; an address typed there still opens.
-  await app.evaluate(() => { global.__homePrompts = []; });
-  await ctrlT();
-  await typeNative('how tall is everest');
-  await ui.keyboard.press('Enter');
-  prompts = [];
-  for (let i = 0; i < 30 && !prompts.length; i++) { await sleep(300); prompts = await app.evaluate(() => global.__homePrompts); }
-  check('Ask AI mode: a question in the address bar goes to the assistant', prompts.some((p) => p.includes('how tall is everest')), JSON.stringify(prompts));
-  check('…and the tab stays on the new-tab page', /newtab\.html/.test(await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL())), '');
-  await ui.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 }).catch(() => {});
-  await ctrlT();
-  await typeNative('example.com');
-  await ui.keyboard.press('Enter');
-  let opened = '';
-  for (let i = 0; i < 30 && !/example\.com/.test(opened); i++) { await sleep(300); opened = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()); }
-  check('Ask AI mode: an address in the address bar still opens', /example\.com/.test(opened), opened);
   await ctrlT();
   await inTab("document.querySelector('[data-mode=search]')?.click()");
   // Yielding to the address bar when it is clicked while the tab loads: see the stress test in ui.js.

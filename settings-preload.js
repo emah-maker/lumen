@@ -12,6 +12,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     clearDownloads: call('prefs:clear-downloads'),
     showDownload: call('prefs:open-download'),
     pickDownloadDir: call('prefs:pick-download-dir'),
+    pickWallpaper: call('prefs:pick-wallpaper'), // [look]
+    removeWallpaper: call('prefs:remove-wallpaper'),
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     extensions: call('prefs:extensions'),
@@ -25,6 +27,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     restartTab: call('prefs:restart-tab'),
     internals: call('prefs:internals'),
     strings: call('settings:strings'), // the page's text in the system's language (features/i18n.js)
+    // You and AI → Usage (features/usage.js)
+    usage: call('prefs:usage'),
+    clearUsage: call('prefs:clear-usage'),
     // About → Updates (features/updates.js)
     updates: {
       state: call('settings:updates-state'),
