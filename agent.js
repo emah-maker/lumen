@@ -6,6 +6,7 @@ const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
+const modelRoute = require('./features/model-route'); // [model route]
 const { addUsage } = require('./features/chat-usage');
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, trimToolResults, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('./features/pdf-text');
@@ -52,7 +53,7 @@ How to work:
 - Plan in one line, then act. Don't ask clarifying questions you can resolve yourself (pick a sensible default and say so); ask only when the answer changes what you would do and you can't tell.
 - Questions about the current page: read_page mode:"compact" first (or find for one fact or field), then answer from its content. Don't re-read a page you already have unless it changed.
 - Prefer direct navigation: if you know or can build the URL (a search URL, a site's known path), navigate there instead of hunting through menus. For facts, web_search or read_urls beats browsing site by site.
-- Prefer high-level tools: batch for several actions in one call, fill_form for forms, click with text for obvious buttons and links, read_urls to research several pages at once without disturbing the user's tabs, wait_for instead of fixed waits, read_pdf for PDFs.
+- Prefer high-level tools: navigate read:true (outline of the new page), observe:true on click/type_text/press_key (what changed, no re-read), read_page extract (tables/links/lists as JSON), batch for several actions in one call, fill_form for forms, click with text for obvious buttons and links, read_urls to research several pages at once without disturbing the user's tabs, wait_for instead of fixed waits, read_pdf for PDFs.
 - run_script is the last resort: use it only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do the job (for example, pulling a large table into structured data), in one call. Never use it to click, type or navigate: those have their own tools.
 - Tasks ("book", "find", "fill in", "compare"): act step by step. Chain the steps you already know into one batch call instead of one call per click, and check the result with read_page since_last:true (only what changed) or screenshot (for visual layout, images, charts). When several lookups are independent, issue their tool calls together in one turn.
 - Verify: after an action that matters, confirm it worked (URL, confirmation text, changed field) before saying it is done. Report failures plainly. Don't re-verify what a tool result already showed you.
@@ -76,8 +77,8 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        text_offset: { type: 'integer', description: 'Character offset into the page text. Default 0.' },
-        element_offset: { type: 'integer', description: 'Number of elements to skip in the list. Default 0.' },
+        text_offset: { type: 'integer' },
+        element_offset: { type: 'integer' },
       },
     },
   },
@@ -120,7 +121,7 @@ const TOOLS = [
             required: ['label', 'value'],
           },
         },
-        submit: { type: 'boolean', description: 'Submit the form after filling it. Only when the user has approved submitting.' },
+        submit: { type: 'boolean' },
       },
       required: ['fields'],
     },
@@ -141,7 +142,7 @@ const TOOLS = [
   },
   {
     name: 'read_tabs',
-    description: 'Read the text of several open tabs at once without switching to them (ids from list_tabs; web and file pages of this window; a sleeping tab gives only its address). Each tab is cut to max_chars_each (default 6000), 40,000 in all split evenly; the result says when a tab was cut. Untrusted content.',
+    description: 'Read the text of several open tabs at once without switching to them (ids from list_tabs; a sleeping tab gives only its address). Each tab is cut to max_chars_each (default 6000), 40,000 in all. Untrusted content.',
     input_schema: {
       type: 'object',
       properties: {
@@ -191,7 +192,7 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'A single character, or one of: Enter, Escape, Tab, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, PageUp, PageDown, Home, End, Space.' },
+        key: { type: 'string', description: 'One character, or Enter, Escape, Tab, Backspace, Delete, Arrow*, PageUp/Down, Home, End, Space.' },
         modifiers: { type: 'array', items: { type: 'string', enum: ['control', 'shift', 'alt', 'meta'] } },
       },
       required: ['key'],
@@ -977,7 +978,7 @@ class Agent {
     if (viaClaudeCode || viaGrokBuild) {
       this.engineRunScope = taskScope.getStore();
       try {
-        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, emit);
+        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, emit, { userText, tabCount: attached.tabs.length });
         else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, emit);
       } finally {
         this.engineRunScope = null;
@@ -1033,8 +1034,19 @@ class Agent {
 
   // ---- [claude code engine] One message through the user's Claude Code CLI. The session id lives
   // in the chat's settings, so follow-ups resume it and New chat (reset) starts a fresh one.
-  async claudeCodeTurn(messages, prompt, images, signal, emit) {
+  async claudeCodeTurn(messages, prompt, images, signal, emit, hint = {}) {
     const settings = messages.settings;
+    // [model route] No model picked ('claudecode:default'): choose haiku / sonnet / opus for this message
+    // from how hard it looks (features/model-route.js). A picked model, or Settings > auto model off, is left alone.
+    const routed = modelRoute.route({
+      engine: 'claudecode', picked: engineModel(settings.model), prompt: hint.userText ?? prompt, imageCount: images.length, tabCount: hint.tabCount || 0,
+      previous: { tier: settings.ccAutoTier, turns: settings.ccAutoTurns || 0 }, enabled: this.browser.autoModel?.() !== false,
+    });
+    if (routed.auto) {
+      settings.ccAutoTier = routed.tier;
+      settings.ccAutoTurns = (settings.ccAutoTurns || 0) + 1;
+      if (settings.ccAutoModel !== routed.model) { settings.ccAutoModel = routed.model; emit({ type: 'notice', text: routed.label }); }
+    } else { delete settings.ccAutoTier; delete settings.ccAutoTurns; delete settings.ccAutoModel; }
     const resume = Boolean(settings.ccSession);
     let text = prompt;
     let historyImages = [];
@@ -1054,14 +1066,14 @@ class Agent {
       images: [...historyImages, ...images],
       sessionId: settings.ccSession || crypto.randomUUID(),
       resume,
-      model: engineModel(settings.model), // 'default' or a `claude --model` alias
+      model: routed.model, // 'default', a `claude --model` alias, or the alias auto-routing chose
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: no cap)
       systemPrompt: systemFor(settings) + CLAUDE_CODE_NOTE,
       signal,
       emit,
     });
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
-    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: engineModel(settings.model) });
+    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
@@ -1411,7 +1423,7 @@ class Agent {
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
-    if (READING_TOOLS.has(name)) this.markTainted(run);
+    if (READING_TOOLS.has(name) || (input?.read && (name === 'navigate' || name === 'open_tab'))) this.markTainted(run); // navigate/open_tab read:true returns page content
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' ? this.browser.tabById?.(input.tab_id) : this.taskTab();
@@ -1919,6 +1931,10 @@ ${out.text}${note}
     const efficient = await snapshot.execute(this, name, input, { runScript, scripts, dedupe: () => this.readDedupe() });
     if (efficient !== undefined) return efficient;
     // --- end efficiency hook ---
+    if (input?.observe && snapshot.OBSERVE_TOOLS.has(name)) { // act, then report what changed (snapshot.js)
+      const { observe, ...rest } = input;
+      return snapshot.observe(this, () => this.runTool(name, rest), { runScript, scripts });
+    }
     switch (name) {
       case 'read_page': {
         const wc = this.requireTab();
@@ -1953,7 +1969,12 @@ ${same}
         await wc.loadURL(url).catch(() => {}); // redirects reject with ERR_ABORTED; the load still happens
         await waitForLoad(wc);
         await this.settleRedirects(wc);
-        return `Loaded ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
+        let loaded = `Loaded ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
+        if (input.wait_for) {
+          try { await this.runTool('wait_for', { text: String(input.wait_for), seconds: 10 }); } catch (err) { if (this.signalAborted()) throw err; loaded += ` (${err.message})`; }
+        }
+        if (input.read) loaded += await snapshot.outline(this, wc, { runScript, scripts });
+        return loaded;
       }
       case 'click': {
         const wc = this.requireTab();
@@ -2165,7 +2186,7 @@ ${same}
         } finally {
           redirects?.release();
         }
-        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}`;
+        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : ''}`;
       }
       case 'switch_tab': {
         // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.

@@ -1397,6 +1397,45 @@ async function usageShareRuns() {
 }
 
 // ---- sidebar speed: incremental markdown tail, cached CLI lookup, passive usage refresh
+async function fewerCallRuns() {
+    // Fewer-call options: navigate read/wait_for, observe on acting tools, read_page extract.
+    const snap = require('../snapshot');
+    const { requestFor, DEFAULT_MODEL } = require('../agent');
+    const m = Object.assign([{ role: 'user', content: 'hi' }], { settings: { model: DEFAULT_MODEL } });
+    const props = Object.fromEntries(requestFor(m.settings, m).tools.map((t) => [t.name, t.input_schema?.properties || {}]));
+    check('fewer calls: navigate takes read + wait_for, open_tab read, read_page extract + selector', props.navigate.read && props.navigate.wait_for && props.open_tab.read && props.read_page.extract?.enum.join() === 'tables,links,lists' && props.read_page.selector, '');
+    check('fewer calls: click, click_at, type_text and press_key take observe', ['click', 'click_at', 'type_text', 'press_key'].every((n) => props[n].observe && snap.OBSERVE_TOOLS.has(n)), '');
+    const agentSrc2 = fs.readFileSync(path.join(__dirname, '..', 'agent.js'), 'utf8');
+    check('fewer calls: navigate / open_tab read:true counts as reading page content (taints the run)', /input\?\.read && \(name === 'navigate' \|\| name === 'open_tab'\)+ this\.markTainted/.test(agentSrc2), '');
+
+    // read_page extract runs in the page: a fake DOM with one table and some links.
+    const cell = (t) => ({ innerText: t });
+    const shown = { offsetWidth: 1, offsetHeight: 1, getClientRects: () => [1] };
+    const table = { ...shown, caption: { innerText: 'Prices' }, rows: [{ cells: [cell(' Item '), cell('Cost')] }, { cells: [cell('Tea'), cell('3')] }] };
+    const link = (text, href) => ({ ...shown, innerText: text, href, getAttribute: () => '' });
+    const root = { matches: () => false, querySelectorAll: (sel) => (sel === 'table' ? [table] : sel === 'a[href]' ? [link('Home', 'https://a.test/'), link('Home again', 'https://a.test/'), link('', 'https://b.test/'), link('Docs', 'https://a.test/d')] : []) };
+    global.document = { body: root, querySelector: (q) => (q === 'main' ? root : null) };
+    global.location = { href: 'https://a.test/' };
+    const tables = snap.extractData({ kind: 'tables', selector: '' });
+    const links = snap.extractData({ kind: 'links', selector: 'main' });
+    check('extract tables: rows of trimmed cell text with the caption', JSON.stringify(tables.data) === JSON.stringify([{ caption: 'Prices', rows: [['Item', 'Cost'], ['Tea', '3']] }]), JSON.stringify(tables));
+    check('extract links: [text, href], no duplicates, no empty text', JSON.stringify(links.data) === JSON.stringify([['Home', 'https://a.test/'], ['Docs', 'https://a.test/d']]), JSON.stringify(links));
+    check('extract: an unknown selector says so', snap.extractData({ kind: 'links', selector: 'nav' }).error === 'No element matches selector.', '');
+    delete global.document; delete global.location;
+
+    // observe: baseline read, the action, then only what changed.
+    let lines = ['[1] button "Add"'];
+    const wc = { id: 7, isDestroyed: () => false, getURL: () => 'https://a.test/' };
+    const fakeAgent = { requireTab: () => wc, browser: { aiOff: (u) => u.includes('off.test') } };
+    const h = { scripts: { readPage: () => '' }, runScript: async () => ({ lines: [...lines], totalLines: lines.length, elements: 1, startLine: 0, clipped: false }) };
+    const out = await snap.observe(fakeAgent, async () => { lines = ['[1] button "Add"', 'Cart: 1 item']; return 'Clicked element 1.'; }, h);
+    check('observe: the tool result plus only the lines that appeared', out.startsWith('Clicked element 1.') && out.includes('+1 / -0') && out.includes('Cart: 1 item') && !out.includes('button "Add"'), out);
+    const offTab = { ...wc, getURL: () => 'https://off.test/' };
+    const offOut = await snap.observe({ ...fakeAgent, requireTab: () => offTab }, async () => 'Clicked.', h);
+    check('observe / outline: a site with AI turned off gets no page content', offOut === 'Clicked.' && await snap.outline(fakeAgent, offTab, h) === '', offOut);
+    check('outline: navigate read:true returns the compact outline in untrusted markers', /<untrusted_page_content>[\s\S]*button "Add"/.test(await snap.outline(fakeAgent, wc, h)), '');
+}
+
 async function speedRuns() {
   const { render, stableLength } = require('../renderer/markdown');
   const src = 'Intro line\n\n- a\n- b\n\n```js\nx\n\ny\n```\n\nTail text';
@@ -2918,7 +2957,7 @@ async function bgCliRuns() {
   check('sidebar overlay: the UI reports the closed width, main.js applies the override in layout() and drops it on navigation', /fullWidth/.test(appSrc) && /overlayParams\(\{ newTab: true/.test(mainSrc) && /enableDeviceEmulation\(params\)/.test(mainSrc) && /disableDeviceEmulation\(\)/.test(mainSrc) && /wc\.on\('did-navigate', \(\) => \{\s*if \(tab\.overlay\)/.test(mainSrc), '');
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => {
+schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

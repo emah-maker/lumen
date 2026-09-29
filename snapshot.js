@@ -208,6 +208,29 @@ function findMatches(opts) {
   return { matches: [...c, ...t], url: location.href, title: document.title };
 }
 
+// read_page extract: tables, links or lists as JSON (what run_script was used for), optionally within a selector.
+function extractData(opts) {
+  const root = opts.selector ? document.querySelector(opts.selector) : document.body;
+  if (!root) return { error: 'No element matches selector.' };
+  const clean = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const shown = (el) => Boolean(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const within = (sel) => [...(root.matches(sel) ? [root] : []), ...root.querySelectorAll(sel)].filter(shown);
+  let data;
+  if (opts.kind === 'tables') {
+    data = within('table').slice(0, 5).map((t) => ({
+      caption: clean(t.caption && t.caption.innerText, 100),
+      rows: [...t.rows].slice(0, 60).map((r) => [...r.cells].slice(0, 12).map((c) => clean(c.innerText, 120))),
+    }));
+  } else if (opts.kind === 'lists') {
+    data = within('ul,ol').slice(0, 8).map((l) => [...l.children].slice(0, 40).map((li) => clean(li.innerText, 160)));
+  } else {
+    const seen = new Set();
+    data = within('a[href]').map((a) => [clean(a.innerText || a.getAttribute('aria-label'), 100), a.href])
+      .filter(([text, href]) => text && !seen.has(href) && seen.add(href)).slice(0, 80);
+  }
+  return { url: location.href, kind: opts.kind, data };
+}
+
 const serialize = (fn, arg) => `(${fn.toString()})(${JSON.stringify(arg)})`;
 
 // ---------------------------------------------------------------- tool definitions
@@ -217,14 +240,18 @@ const READ_PAGE_EXTRA = {
   since_last: { type: 'boolean', description: 'compact: only what changed since your last read.' },
   start_line: { type: 'integer', description: 'compact: continue a clipped outline.' },
   hrefs: { type: 'boolean', description: 'compact: include link URLs.' },
+  extract: { type: 'string', enum: ['tables', 'links', 'lists'], description: 'Return these as JSON instead of a page read.' },
+  selector: { type: 'string', description: 'extract: limit to this CSS selector.' },
 };
+// Tools that can also report what changed on the page after they act (see observe).
+const OBSERVE_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key']);
 
 const SCREENSHOT_EXTRA = {
-  max_width: { type: 'integer', description: 'Output width in px (default 1024, max 1600). Smaller is cheaper.' },
-  quality: { type: 'integer', description: 'JPEG quality 30–90 (default 60).' },
+  max_width: { type: 'integer', description: 'Width px (default 1024, max 1600).' },
+  quality: { type: 'integer', description: '30-90 (default 60).' },
   region: {
     type: 'object',
-    description: 'Crop to this rectangle in page CSS pixels (not usable with click_at).',
+    description: 'Crop, in page CSS px (no click_at).',
     properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } },
     required: ['x', 'y', 'width', 'height'],
   },
@@ -242,7 +269,7 @@ const NEW_TOOLS = [
   },
   {
     name: 'batch',
-    description: 'Run several actions on the active tab in one call; stops at the first failure or when the page moves to another site. Returns what changed, so no follow-up read_page is needed. Steps: {do:"type",ref,text,enter?} {do:"click",ref|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text} {do:"scroll",direction} {do:"hover",ref}. Confirmation rules still apply.',
+    description: 'Several actions on the active tab in one call; stops at the first failure or site change and returns what changed. Steps: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text} scroll{direction} hover{ref}.',
     input_schema: {
       type: 'object',
       properties: {
@@ -256,7 +283,7 @@ const NEW_TOOLS = [
               text: { type: 'string' },
               enter: { type: 'boolean' },
               key: { type: 'string' },
-              modifiers: { type: 'array', items: { type: 'string', enum: ['control', 'shift', 'alt', 'meta'] } },
+              modifiers: { type: 'array', items: { type: 'string' } },
               direction: { type: 'string', enum: ['up', 'down'] },
             },
             required: ['do'],
@@ -271,19 +298,19 @@ const NEW_TOOLS = [
 // Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
 const pdfText = require('./features/pdf-text');
 const TRIMMED = {
-  read_page: 'Read the active tab. mode:"compact" returns an outline with [id] refs for click/type_text/batch (use this first); mode:"full" returns raw JSON elements and text (15k-char chunks via text_offset, 150 elements via element_offset). Ids stay valid until the page changes.',
-  click: 'Click an element by [id] from read_page/find, or by its visible text.',
+  read_page: 'Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.',
+  navigate: 'Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.',
+  click: 'Click by [id] from read_page/find, or by visible text. observe:true (also on click_at, type_text, press_key) returns what changed: no follow-up read.',
   type_text: 'Replace an input/textarea/contenteditable value, pick a <select> option by label, or set date/time (e.g. 2026-03-14, 13:30). Use click for checkboxes/radios. press_enter submits.',
-  fill_form: 'Fill several fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved submitting.',
+  fill_form: 'Fill fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved.',
   read_urls: 'Read up to 6 pages in parallel in hidden tabs without cookies/logins (use navigate for signed-in pages). Returns title + text.',
-  run_script: 'LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. Only when read_page, find, click, type_text, navigate, read_urls, web_search, read_pdf and batch cannot do it (e.g. extracting a large table), in one call. Never to click, type or navigate, or to bypass confirmation rules.',
+  run_script: 'LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. Only when nothing else can do it, in one call. Never to click, type or navigate, or to bypass confirmation rules.',
   group_tabs: 'Put tabs (ids from list_tabs) into a new named group; use 1-3 word names. Tabs in another group move.',
   click_at: 'Click a point in the last screenshot\'s pixel coordinates (canvas, maps, custom widgets).',
   wait_for: 'Wait until the active tab contains some text, up to a timeout.',
-  batch: 'Several actions on the active tab in one call; stops at the first failure or site change and returns what changed. Steps: {do:"type",ref,text,enter?} {do:"click",ref|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text} {do:"scroll",direction} {do:"hover",ref}.',
   read_pdf: pdfText.READ_PDF_DESCRIPTION,
   press_key: 'Press a key or shortcut in the active tab, e.g. "Enter", or "a" with modifiers ["control"].',
-  screenshot: 'Screenshot the active tab (for visual layout, images, charts). read_page/find are far cheaper.',
+  screenshot: 'Screenshot the active tab (layout, images, charts). read_page/find are far cheaper.',
 };
 
 // Adds the new tools and options to the agent's TOOLS array (called once at load, before the
@@ -293,6 +320,10 @@ function extendTools(TOOLS) {
     if (tool.name === 'read_page') Object.assign(tool.input_schema.properties, READ_PAGE_EXTRA);
     if (tool.name === 'screenshot') tool.input_schema.properties = { ...tool.input_schema.properties, ...SCREENSHOT_EXTRA };
     if (TRIMMED[tool.name]) tool.description = TRIMMED[tool.name];
+    const props = tool.input_schema.properties;
+    if (OBSERVE_TOOLS.has(tool.name)) props.observe = { type: 'boolean' };
+    if (tool.name === 'navigate') Object.assign(props, { read: { type: 'boolean' }, wait_for: { type: 'string' } });
+    if (tool.name === 'open_tab') props.read = { type: 'boolean' };
   }
   TOOLS.push(...NEW_TOOLS.map((tool) => ({ ...tool, eager_input_streaming: true })));
 }
@@ -332,6 +363,27 @@ async function compact(agent, wc, input, h) {
     if (result.clipped) body += `\n… outline clipped at ${result.totalLines} lines (${result.elements} controls). Use find, or start_line:${result.startLine + result.lines.length}.`;
   }
   return `<untrusted_page_content>\n${body}\n</untrusted_page_content>`;
+}
+
+// The page's outline after a navigation (navigate / open_tab read:true), or '' when it can't be shown.
+async function outline(agent, wc, h) {
+  if (wc.isDestroyed() || agent.browser.aiOff?.(wc.getURL())) return '';
+  try { return `
+${await compact(agent, wc, { mode: 'compact', max_chars: 4000 }, h)}`; } catch { return ''; }
+}
+
+// Runs an acting tool and appends what changed on the page (the batch diff), so no read_page follows.
+async function observe(agent, run, h) {
+  const can = (wc) => !wc.isDestroyed() && !agent.browser.aiOff?.(wc.getURL());
+  const before = agent.requireTab();
+  if (can(before)) await compact(agent, before, { mode: 'compact' }, h).catch(() => {}); // the baseline
+  const result = await run();
+  if (typeof result !== 'string') return result;
+  const tab = agent.requireTab();
+  if (!can(tab)) return result;
+  const diff = await compact(agent, tab, { mode: 'compact', since_last: true, summary: true }, h).catch(() => '');
+  return `${result}
+${diff}`;
 }
 
 async function screenshot(agent, wc, input, h) {
@@ -403,6 +455,15 @@ async function batch(agent, wc, input, h) {
 async function execute(agent, name, input, h) {
   reads.tick(name);
   if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h);
+  if (name === 'read_page' && input.extract) {
+    const wc = agent.requireTab();
+    const r = await h.runScript(wc, serialize(extractData, { kind: input.extract, selector: input.selector ? String(input.selector) : '' }), 15000);
+    const json = JSON.stringify(r);
+    return `<untrusted_page_content>
+${json.length > 20000 ? `${json.slice(0, 20000)}
+[truncated: ${json.length} chars; use selector]` : json}
+</untrusted_page_content>`;
+  }
   if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
@@ -415,4 +476,4 @@ async function execute(agent, name, input, h) {
   return undefined;
 }
 
-module.exports = { reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
+module.exports = { OBSERVE_TOOLS, observe, outline, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
