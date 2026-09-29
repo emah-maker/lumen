@@ -69,7 +69,8 @@ function tickClock() {
   const el = document.getElementById('clock');
   if (!el.hidden) el.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '');
 }
-setInterval(tickClock, 1000);
+setInterval(() => { if (!document.hidden) tickClock(); }, 10000); // shows minutes only: no need to wake every second, or while hidden
+document.addEventListener('visibilitychange', () => { if (!document.hidden) tickClock(); });
 
 // A stable hue per site for monogram tiles.
 function hueOf(text) {
