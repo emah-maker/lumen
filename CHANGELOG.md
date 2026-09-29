@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab widget: Spotify. A now-playing card (title, artist, album art, live progress) with play, pause, next and previous. You bring your own Spotify Client ID and sign in once from Settings (OAuth with PKCE through a loopback address, no client secret); Lumen keeps the refresh token encrypted, does all the talking to Spotify itself, and gives the page only text and a small picture. Shows a calm message when nothing is playing or no device is active, renews expired sign-ins by itself, and backs off when Spotify says to slow down. Playback controls need Spotify Premium.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.

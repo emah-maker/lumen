@@ -26,6 +26,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       savedPlaces: call('prefs:widget-saved-places'),
       location: call('prefs:widget-location'),
       resetLayout: call('prefs:widget-reset-layout'),
+      spotifySignIn: call('spotify:sign-in'), // OAuth PKCE in a tab (main.js); the Client ID goes in, tokens never come out
+      spotifyCancel: call('spotify:cancel'),
+      spotifyDisconnect: call('spotify:disconnect'),
     },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),

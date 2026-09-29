@@ -44,6 +44,17 @@ const ICON_REFRESH = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 6
 const ICON_LOCATE = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><path d="M6 .8v1.8M6 9.4v1.8M.8 6h1.8M9.4 6h1.8"/></svg>';
 const ICON_REPEAT = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 5.5V5a2 2 0 0 1 2-2h5M9 1.5 10.5 3 9 4.5M10 6.5V7a2 2 0 0 1-2 2H3M3 10.5 1.5 9 3 7.5"/></svg>';
 
+const SP_ICONS = { // Spotify card buttons (constant markup)
+  prev: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3h1.7v10H3.5zM13 3.4v9.2L6.2 8z"/></svg>',
+  next: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 3h1.7v10h-1.7zM3 3.4v9.2L9.8 8z"/></svg>',
+  play: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z"/></svg>',
+  pause: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h2.6v10H4zM9.4 3H12v10H9.4z"/></svg>',
+};
+const spClock = (millis) => {
+  const s = Math.floor(Math.max(0, millis) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -260,6 +271,86 @@ const WIDGET_RENDERERS = {
     }
     card.body.append(wrap);
     if (typeof d.hereNote === 'string' && d.hereNote && places.length) card.body.append(el('p', 'w-note small', text(d.hereNote, 200)));
+  },
+
+  // Now playing. Everything is a checked string or number set with textContent; the album picture is a
+  // data: URL that main made from bytes it sniffed itself; the buttons ask main to call Spotify.
+  spotify(w, card) {
+    const d = w.data;
+    card.head.append(refreshButton(w));
+    const open = typeof d.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(d.url) ? d.url : null;
+    if (open) card.head.append(openLink(open, 'Open in Spotify'));
+    const state = d.state === 'playing' || d.state === 'paused' ? d.state : 'idle';
+    card.el.classList.toggle('sp-card-idle', state === 'idle');
+    if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
+    const title = text(d.title, 200);
+    const wrap = el('div', 'sp-wrap');
+    const art = typeof d.art === 'string' && d.art.length < 200000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(d.art) ? d.art : '';
+    if (art) {
+      const img = document.createElement('img');
+      img.className = 'sp-art';
+      img.alt = '';
+      img.src = art;
+      wrap.append(img);
+    }
+    const info = el('div', 'sp-text');
+    if (state === 'idle') {
+      info.append(el('span', 'sp-title', 'Nothing is playing'), el('span', 'sp-artist', text(d.device, 60) ? `${text(d.device, 60)} is ready` : 'Start Spotify on any device'));
+    } else {
+      info.append(el('span', 'sp-title', title), el('span', 'sp-artist', text(d.artist, 200)));
+      if (text(d.album, 120)) info.append(el('span', 'sp-album', text(d.album, 120)));
+    }
+    wrap.append(info);
+    card.body.append(wrap);
+    const button = (name, label, act, cls = 'sp-btn') => {
+      const b = el('button', cls);
+      b.type = 'button';
+      b.innerHTML = SP_ICONS[name]; // constant markup
+      b.setAttribute('aria-label', label);
+      b.title = label;
+      b.addEventListener('click', () => widgetAct(w.id, act));
+      return b;
+    };
+    const controls = el('div', 'sp-controls');
+    if (state === 'idle') { // nothing to skip: Play resumes on the last device (Spotify says if there is none)
+      controls.append(button('play', 'Play on Spotify', 'play', 'sp-btn main'));
+      card.body.append(controls);
+      return;
+    }
+    controls.append(button('prev', 'Previous track', 'previous'), state === 'playing' ? button('pause', 'Pause', 'pause', 'sp-btn main') : button('play', 'Play', 'play', 'sp-btn main'), button('next', 'Next track', 'next'));
+    card.body.append(controls);
+    // Progress: main sends where the playhead was and when; this page moves it on once a second.
+    const duration = Number.isFinite(d.durationMs) && d.durationMs > 0 ? d.durationMs : 0;
+    if (duration) {
+      const at = Number.isFinite(d.at) ? d.at : Date.now();
+      const from = Number.isFinite(d.progressMs) ? d.progressMs : 0;
+      const bar = el('div', 'sp-bar');
+      const fill = document.createElement('i');
+      bar.append(fill);
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', `${title} progress`);
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
+      const elapsed = el('span', 'sp-elapsed');
+      const total = el('span', 'sp-total', spClock(duration));
+      const progress = el('div', 'sp-progress');
+      progress.append(elapsed, bar, total);
+      card.body.append(progress);
+      const draw = () => {
+        const now = Math.min(duration, Math.max(0, from + (state === 'playing' ? Math.max(0, Date.now() - at) : 0)));
+        elapsed.textContent = spClock(now);
+        fill.style.width = `${(now / duration) * 100}%`;
+        bar.setAttribute('aria-valuenow', String(Math.round((now / duration) * 100)));
+        return now;
+      };
+      draw();
+      if (state === 'playing') {
+        const timer = setInterval(() => {
+          if (!progress.isConnected) { clearInterval(timer); return; } // the card was redrawn or removed
+          if (!document.hidden && draw() >= duration) clearInterval(timer);
+        }, 1000);
+      }
+    }
   },
 
   todoist(w, card) {
@@ -570,7 +661,7 @@ window.applyWidgetColors = applyWidgetColors;
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;
