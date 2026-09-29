@@ -338,6 +338,14 @@ browser-action-list { display: flex; align-items: center; min-height: 28px; --br
 .viewport { position: relative; overflow: hidden; flex: 1; min-width: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--hairline); }
 /* While the AI drives the tab, the page is inset 2px inside a solid accent frame. */
 body.agent-active .viewport { background: var(--accent); }
+/* The user is looking at a different tab than the one the AI works in: no frame around the wrong page. */
+body.agent-active.agent-away .viewport { background: var(--surface); }
+.working-in { flex-basis: 100%; display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 6px; padding: 3px 8px; border: none; border-radius: 8px; background: var(--accent-soft); color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.working-in[hidden] { display: none; }
+.working-in:hover { background: var(--hover); }
+.working-in:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.working-in .agent-dot { flex: none; }
+.working-in span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sidebar {
   position: relative; overflow: hidden;
@@ -506,6 +514,33 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .send:disabled { background: var(--field); color: var(--faint); box-shadow: none; transform: scale(0.92); }
 .send.stop svg { display: none; }
 .send.stop::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--on-accent); animation: pop-in var(--t-snappy) var(--spring-bouncy); }
+
+/* ---------- "@" tabs: chips above the composer, the picker, the once-per-chat confirm ---------- */
+.tab-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 4px; }
+.tab-chips[hidden], .tabs-confirm[hidden], .tabs-picker[hidden] { display: none; }
+.tab-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; height: 22px; padding: 0 2px 0 8px; border-radius: 11px; background: var(--accent-soft); color: var(--text); font-size: 12px; animation: pop-in var(--t-snappy) var(--spring-bouncy); }
+.tab-chip.all { background: var(--accent); color: var(--on-accent); }
+.tab-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.tab-chip-remove { display: grid; place-items: center; width: 18px; height: 18px; flex: none; border: none; border-radius: 50%; background: transparent; color: inherit; opacity: 0.7; }
+.tab-chip-remove svg { width: 9px; height: 9px; stroke-width: 1.5; }
+.tab-chip-remove:hover, .tab-chip-remove:focus-visible { opacity: 1; background: rgb(0 0 0 / 0.14); }
+.tab-chip-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tab-chip.all .tab-chip-remove:focus-visible { outline-color: var(--on-accent); }
+.tabs-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0 6px; font-size: 12px; color: var(--text); }
+.tabs-confirm span { flex: 1 1 100%; }
+.tabs-picker {
+  position: absolute; z-index: 5; left: 0; right: 0; bottom: calc(100% + 6px); max-height: 260px; overflow-y: auto; padding: 4px;
+  border-radius: 12px; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+}
+.tabs-opt { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.tabs-opt.active { background: var(--hover); }
+.tabs-opt-title { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs-opt-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs-opt-badge { margin-left: 6px; padding: 0 5px; border-radius: 6px; background: var(--accent-soft); color: var(--muted); font-size: 10px; }
+.tabs-opt.quick { border-top: 1px solid var(--hairline); border-radius: 0 0 8px 8px; }
+.tabs-opt.quick + .tabs-opt.quick { border-top: none; border-radius: 8px; }
+.msg-tabs { margin-top: 6px; font-size: 11px; opacity: 0.8; }
+.msg-tabs:first-child { margin-top: 0; }
 
 .attachments { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 6px; }
 .attachment { position: relative; width: 52px; height: 52px; border-radius: 9px; overflow: hidden; box-shadow: 0 0 0 1px var(--hairline), 0 4px 10px -4px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); animation: pop-in var(--t-snappy) var(--spring-bouncy); }

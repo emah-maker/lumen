@@ -531,7 +531,8 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images) => ipcRenderer.send('agent:ask', text, runId, images),
+  ask: (text, runId, images, tabIds) => ipcRenderer.send('agent:ask', text, runId, images, tabIds),
+  askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
   stop: () => ipcRenderer.send('agent:stop'),
   reset: () => ipcRenderer.send('agent:reset'),
   // The chat history list (renderer/chats.js)
@@ -552,6 +553,8 @@ contextBridge.exposeInMainWorld('assistant', {
   openFullPage: () => ipcRenderer.send('chat:open-page'),
   onRunStart: on('chat:run-start'), // a turn started in the chat page
   onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
+  onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null
+  showAgentTarget: () => ipcRenderer.send('agent:show-target'),
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]

@@ -158,10 +158,14 @@ function setupAiAgents(deps) {
   }
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
-  const engineForSession = (session) => (claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : null);
+  const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : null);
   const ownsSession = (session) => Boolean(engineForSession(session));
   agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); } };
-  if (require('../test-mode').isTest()) Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
+  if (require('../test-mode').isTest()) {
+    Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
+    global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
+  }
 
   // Runs one browser tool for an external agent, with the same per-site approval as the sidebar,
   // and shows each call as a step in the sidebar.
@@ -170,7 +174,6 @@ function setupAiAgents(deps) {
     if (problem) return { content: [{ type: 'text', text: `Invalid input: ${problem}` }], isError: true };
     session.approvedHosts ||= new Set();
     const stepId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const label = await agent.describeStep(name, args).catch(() => null);
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
     const owner = engineForSession(session);
@@ -184,6 +187,11 @@ function setupAiAgents(deps) {
     const allow = engineRun
       ? { hosts: agent.approvedHosts, who: owner === grokBuild ? 'Grok' : 'Claude', input: args, run: scope || engineRun }
       : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
+    // The step's label is worked out in the same tab the call will act on (a click's label names the
+    // element in that tab), not in whichever tab is in front while the user looks elsewhere.
+    const front = scope ? null : agent.browser.activeTab()?.id;
+    const inPin = (fn) => (scope ? agent.inScope(scope, fn) : agent.inTask(front, signal, fn));
+    const label = await inPin(() => agent.describeStep(name, args)).catch(() => null);
     toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
@@ -194,7 +202,7 @@ function setupAiAgents(deps) {
       return abortable(agent.execute(name, args), signal);
     };
     try {
-      const result = await (scope ? agent.inScope(scope, work) : agent.inTask(agent.browser.activeTab()?.id, signal, work));
+      const result = await inPin(work);
       toUi({ type: 'tool_done', id: stepId, ok: true });
       return { content: toMcpContent(result), isError: false };
     } catch (err) {

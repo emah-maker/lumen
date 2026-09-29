@@ -38,6 +38,8 @@ module.exports = [
   { files: ['renderer/chat-core.js'], languageOptions: { globals: { t: 'readonly' } } },
   // chat-page.js (the full-page chat) is loaded after chat-core.js and uses its helpers; chat-items.js and chat-extras.js use t.
   { files: ['renderer/chat-page.js'], languageOptions: { globals: { t: 'readonly', $: 'readonly', chatHost: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', loadModels: 'readonly', refreshSetup: 'readonly', startChat: 'readonly', beginTurn: 'readonly', turn: 'readonly', runId: 'writable' } } },
+  // tabs-ask.js ("@" tabs in the composer) is loaded after chat-core.js and uses t and updateSend.
+  { files: ['renderer/tabs-ask.js'], languageOptions: { globals: { t: 'readonly', updateSend: 'readonly' } } },
   // chats.js is loaded after app.js and uses its helpers.
   { files: ['renderer/chats.js'], languageOptions: { globals: { $: 'readonly', clearChatView: 'readonly', showHistory: 'readonly' } } },
   // tab-search-match.js and app.js are loaded before tab-search.js and are used by it.
