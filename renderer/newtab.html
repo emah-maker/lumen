@@ -389,6 +389,21 @@
     .w-day:first-child { padding-top: 0; }
     .w-time { flex: none; width: 58px; padding-top: 1px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .w-bar { flex: none; width: 3px; align-self: stretch; margin: 2px 0; border-radius: 2px; background: var(--ev, var(--accent)); opacity: 0.85; }
+    /* World clock: one row per place; the time is ticked by the page (newtab-widgets.js). */
+    .w-card.worldclock .w-body { overflow-y: auto; }
+    .wc-list { display: flex; flex-direction: column; gap: 2px; }
+    .wc-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 2px; }
+    .wc-row + .wc-row { border-top: 0.5px solid var(--hover); }
+    .wc-icon { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
+    .wc-icon .wx-icon { width: 22px; height: 22px; }
+    .wc-row[data-day="night"] .wc-icon { opacity: 0.85; }
+    .wc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+    .wc-city { font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .wc-sub { display: none; gap: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
+    .wc-time { flex: none; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .wc-sun { display: none; flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    @container card (min-height: 120px) { .wc-sub { display: flex; } }
+    @container card (min-width: 330px) { .wc-row.has-sun .wc-sun { display: block; } }
     /* Colors setting (calendar, weather, todoist): "Match screen", "Accent only" and "Monochrome" tint the card from
        the page's own colours; the text colours are derived to stay at 4.5:1 or better on the tinted surface. */
     body .w-card.tinted { background: var(--w-surface); box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--w-text) 14%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--w-text); --text: var(--w-text); --muted: color-mix(in srgb, var(--w-text) 70%, var(--w-surface)); --faint: color-mix(in srgb, var(--w-text) 45%, var(--w-surface)); --hover: color-mix(in srgb, var(--w-text) 9%, transparent); --field: color-mix(in srgb, var(--w-text) 10%, transparent); transition: transform 260ms var(--ease), box-shadow 200ms var(--ease), scale 200ms var(--ease), background-color 300ms ease-out; }
@@ -469,6 +484,7 @@
   <script src="favicons.js"></script>
   <script src="../features/widget-layout.js"></script>
   <script src="../features/widget-colors.js"></script>
+  <script src="../features/worldclock-view.js"></script>
   <script src="newtab-widgets.js"></script>
   <script src="newtab-widgets-grid.js"></script>
   <script src="newtab.js"></script>

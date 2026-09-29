@@ -6,6 +6,7 @@ const WL = require('../features/widget-layout');
 const TV = require('../features/todoist-view');
 const WX = require('../features/weather-view');
 const WC = require('../features/widget-colors');
+const WCK = require('../features/worldclock-view');
 const ics = require('../features/ics');
 const { cleanList, cleanWidget } = require('../features/widgets');
 
@@ -271,4 +272,41 @@ module.exports = function widgetUnits(check) {
   const cal = ics.eventsBetween(['BEGIN:VCALENDAR', 'X-APPLE-CALENDAR-COLOR:#FF2968FF', 'BEGIN:VEVENT', 'UID:a', 'DTSTART:20990101T100000Z', 'COLOR:teal', 'SUMMARY:x', 'END:VEVENT', 'BEGIN:VEVENT', 'UID:b', 'DTSTART:20990101T110000Z', 'COLOR:url(x)', 'SUMMARY:y', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'), { from: Date.parse('2099-01-01T00:00:00Z'), days: 3 });
   check('calendar colors: the feed\'s calendar colour and an event\'s own colour are read and checked', cal.color === '#ff2968' && cal.events[0].color === '#008080' && cal.events[1].color === '', JSON.stringify([cal.color, cal.events.map((e) => e.color)]));
   check('widgets: the colors mode is stored per widget and defaults to Calendar colors', cleanWidget({ id: 'wcolor1', type: 'calendar', url: 'https://example.com/a.ics', colors: 'match' }).colors === 'match' && cleanWidget({ id: 'wcolor2', type: 'calendar', url: 'https://example.com/a.ics', colors: 'neon' }).colors === 'calendar' && cleanWidget({ id: 'wcolor3', type: 'todoist' }).colors === 'calendar' && cleanWidget({ id: 'wcolor4', type: 'weather', place: 'B', lat: 1, lon: 2, colors: 'accent' }).colors === 'accent', '');
+
+  // ---- world clock: zones, clocks and sun times (features/worldclock-view.js) ----
+  check('world clock: the default size is 4x3', WL.DEFAULT_SIZE.worldclock.w === 4 && WL.DEFAULT_SIZE.worldclock.h === 3, JSON.stringify(WL.DEFAULT_SIZE.worldclock));
+  check('world clock: it is resized within the same limits as the other cards', WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).w === 12 && WL.cleanRect('worldclock', { x: 0, y: 0, w: 99, h: 1 }).h === 2, '');
+  check('world clock: time zone names are checked (a real IANA name, or nothing)', WCK.cleanTz('Asia/Tokyo') === 'Asia/Tokyo' && WCK.cleanTz('America/Argentina/Buenos_Aires') === 'America/Argentina/Buenos_Aires' && WCK.cleanTz('UTC') === 'UTC' && WCK.cleanTz('Mars/Olympus') === null && WCK.cleanTz('<b>/x') === null && WCK.cleanTz('../../etc') === null && WCK.cleanTz('') === null && WCK.cleanTz(42) === null && WCK.cleanTz('A/'.repeat(40)) === null, '');
+  const jan = Date.UTC(2026, 0, 15, 12, 0, 0); // winter: New York is UTC-5, London UTC+0
+  const jul = Date.UTC(2026, 6, 15, 12, 0, 0); // summer: New York UTC-4, London UTC+1
+  check('world clock: offsets follow daylight saving time', WCK.offsetMinutes(jan, 'America/New_York') === -300 && WCK.offsetMinutes(jul, 'America/New_York') === -240 && WCK.offsetMinutes(jan, 'Europe/London') === 0 && WCK.offsetMinutes(jul, 'Europe/London') === 60, [WCK.offsetMinutes(jan, 'America/New_York'), WCK.offsetMinutes(jul, 'America/New_York')].join());
+  check('world clock: half-hour and 45-minute zones', WCK.offsetMinutes(jan, 'Asia/Kolkata') === 330 && WCK.offsetMinutes(jan, 'Asia/Kathmandu') === 345, '');
+  const tokyo = WCK.zoneParts(Date.UTC(2026, 11, 31, 23, 30, 5), 'Asia/Tokyo'); // 08:30:05 on New Year's Day there
+  check('world clock: the wall clock in a zone crosses the date line (Tokyo is already tomorrow)', tokyo.date === '2027-01-01' && tokyo.hour === 8 && tokyo.minute === 30 && tokyo.second === 5 && tokyo.minutes === 510, JSON.stringify(tokyo));
+  check('world clock: midnight is hour 0, never 24', WCK.zoneParts(Date.UTC(2026, 0, 15, 5, 0, 0), 'America/New_York').hour === 0, '');
+  check('world clock: how far ahead or behind you a zone is', WCK.relativeLabel(180) === '+3 h' && WCK.relativeLabel(-570) === '-9:30 h' && WCK.relativeLabel(0) === 'same time' && WCK.relativeLabel(NaN) === 'same time' && WCK.relativeLabel(345) === '+5:45 h', '');
+  const clockAt = Date.UTC(2026, 0, 15, 21, 5, 9);
+  check('world clock: 12-hour, 24-hour and seconds', /^4:05\s?PM$/.test(WCK.timeText(clockAt, 'America/New_York', { clock: '12' })) && WCK.timeText(clockAt, 'America/New_York', { clock: '24' }) === '16:05' && WCK.timeText(clockAt, 'America/New_York', { clock: '24', seconds: true }) === '16:05:09', WCK.timeText(clockAt, 'America/New_York', { clock: '12' }));
+  check('world clock: the date is the place\'s own', WCK.dateText(clockAt, 'Pacific/Auckland') === 'Fri, Jan 16' && WCK.dateText(clockAt, 'America/New_York') === 'Thu, Jan 15', WCK.dateText(clockAt, 'Pacific/Auckland'));
+  const sunDay = { sunrise: '06:12', sunset: '19:48' };
+  check('world clock: day and night around sunrise and sunset', WCK.isDaylight({ minutes: 6 * 60 + 11 }, sunDay) === false && WCK.isDaylight({ minutes: 6 * 60 + 12 }, sunDay) === true && WCK.isDaylight({ minutes: 19 * 60 + 47 }, sunDay) === true && WCK.isDaylight({ minutes: 19 * 60 + 48 }, sunDay) === false && WCK.isDaylight({ minutes: 0 }, sunDay) === false, '');
+  check('world clock: a sunset after midnight (sunrise later than sunset on the clock) still works', WCK.isDaylight({ minutes: 60 }, { sunrise: '20:00', sunset: '02:00' }) === true && WCK.isDaylight({ minutes: 12 * 60 }, { sunrise: '20:00', sunset: '02:00' }) === false, '');
+  check('world clock: polar or missing sun times are unknown, not a guess', WCK.isDaylight({ minutes: 600 }, { sunrise: null, sunset: null }) === null && WCK.isDaylight({ minutes: 600 }, null) === null && WCK.isDaylight({ minutes: 600 }, { sunrise: '25:99', sunset: 'x' }) === null, '');
+  check('world clock: the day record is found by the place\'s own date', WCK.dayFor([{ date: '2026-09-29' }, { date: '2026-09-30' }], '2026-09-30').date === '2026-09-30' && WCK.dayFor([{ date: '2026-09-29' }], '2026-10-05') === null && WCK.dayFor(null, 'x') === null, '');
+  const clockPlaces = WCK.cleanPlaces([
+    { name: 'Tokyo, Japan', lat: 35.6895, lon: 139.6917, tz: 'Asia/Tokyo', nick: ' Home  base ' }, { name: 'Tokyo again', lat: 35.69, lon: 139.69 }, // the same place
+    { name: '<b>Paris</b>, France', lat: 48.8534, lon: 2.3488, tz: 'Nope/Zone' }, { name: 'No coords' }, { name: 'Far', lat: 999, lon: 0 }, null, 'x',
+  ]);
+  check('world clock: places are checked, de-duplicated, stripped of markup, and their zone names validated', clockPlaces.length === 2 && clockPlaces[0].tz === 'Asia/Tokyo' && clockPlaces[0].nick === 'Home base' && clockPlaces[1].tz === undefined && !/[<>]/.test(clockPlaces[1].name) && WCK.placeLabel(clockPlaces[0]) === 'Home base' && WCK.placeLabel(clockPlaces[1]) === 'b Paris /b', JSON.stringify(clockPlaces));
+  check('world clock: at most eight places', WCK.cleanPlaces(Array.from({ length: 20 }, (_, i) => ({ name: `P${i}`, lat: i * 3, lon: i * 5 }))).length === 8, '');
+  const clockCfg = WCK.cleanConfig({ places: [{ name: 'Oslo, Norway', lat: 59.91, lon: 10.75 }], clock: '13', seconds: 'yes', show: { sun: false } });
+  check('world clock: config defaults (system clock, no seconds, date and offset on) and it needs a place', clockCfg.clock === 'auto' && clockCfg.seconds === false && clockCfg.show.sun === false && clockCfg.show.date === true && clockCfg.show.offset === true && WCK.cleanConfig({ places: [] }) === null && WCK.cleanConfig(null) === null, JSON.stringify(clockCfg));
+  const sunAnswer = WCK.shapeSun({ timezone: 'Europe/Oslo', daily: { time: ['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'], sunrise: ['2026-09-29T07:11', '2026-09-30T07:13', null, 'x'], sunset: ['2026-09-29T18:59', '2026-09-30T18:56', null, 'x'] } }, null);
+  check('world clock: the sun answer becomes the zone name and up to three days of "HH:MM"', sunAnswer.tz === 'Europe/Oslo' && sunAnswer.days.length === 3 && sunAnswer.days[0].sunrise === '07:11' && sunAnswer.days[0].sunset === '18:59' && sunAnswer.days[2].sunrise === null, JSON.stringify(sunAnswer));
+  check('world clock: without a zone name in the answer the place\'s own is used; with neither (or a bad one) it is refused', WCK.shapeSun({ daily: {} }, { tz: 'Asia/Tokyo' }).tz === 'Asia/Tokyo' && WCK.shapeSun({ timezone: '<script>' }, {}) === null && WCK.shapeSun(null, null) === null, '');
+  check('world clock: the request sends only the place and asks only for the two sun times', (() => { const q = WCK.sunParams({ lat: 1.5, lon: -2.5 }); return q.latitude === '1.5' && q.longitude === '-2.5' && q.daily === 'sunrise,sunset' && q.timezone === 'auto' && Object.keys(q).length === 5; })(), '');
+  const clockWidget = cleanWidget({ id: 'wclock01', type: 'worldclock', wc: { places: [{ name: 'Tokyo, Japan', lat: 35.69, lon: 139.69, tz: 'Asia/Tokyo' }], clock: '24' }, colors: 'accent', x: 0, y: 0, w: 4, h: 3 });
+  check('world clock: a stored widget is checked and keeps its colors and size; one without a place is dropped', clockWidget.wc.clock === '24' && clockWidget.colors === 'accent' && clockWidget.w === 4 && clockWidget.h === 3 && cleanWidget({ id: 'wclock02', type: 'worldclock', wc: { places: [] } }) === null && cleanWidget({ id: 'wclock03', type: 'worldclock' }) === null, JSON.stringify(clockWidget));
+  const clockList = cleanList([{ id: 'wclock04', type: 'worldclock', wc: { places: [{ name: 'Tokyo', lat: 35.69, lon: 139.69 }] } }, { id: 'wweath04', type: 'weather', place: 'B', lat: 1, lon: 2 }]);
+  check('world clock: an older list without positions still lays out, without overlap', clockList.length === 2 && noOverlap(clockList), enc(clockList));
 };

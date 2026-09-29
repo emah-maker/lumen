@@ -458,6 +458,7 @@ function buildLook(card) {
 // (and from a card's gear in edit mode on the new-tab page, which opens this editor).
 const WIDGET_ICONS = {
   weather: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><path d="M6 1.2v1M1.2 6h1M2.6 2.6l.7.7M9.4 2.6l-.7.7"/><path d="M6.5 14h5.3a2.6 2.6 0 0 0 .3-5.2 3.5 3.5 0 0 0-6.6 1A2.2 2.2 0 0 0 6.5 14z"/></svg>',
+  worldclock: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.2V8l2.6 1.6M2 8h12M8 2c-2 1.8-2 10.2 0 12M8 2c2 1.8 2 10.2 0 12"/></svg>',
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
@@ -479,7 +480,7 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const renderList = () => {
     add.hidden = ws.widgets.length >= ws.max || Boolean(formHost.firstChild);
-    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, your calendar, your Todoist tasks, or any web page.' })); return; }
+    if (!ws.widgets.length) { list.replaceChildren(h('p', { class: 'note widget-empty', text: 'No widgets yet. Add the weather, a world clock, your calendar, your Todoist tasks, or any web page.' })); return; }
     list.replaceChildren(...ws.widgets.map((w, i) => h('div', { class: 'item widget-item', 'data-id': w.id, 'data-type': w.type },
       widgetIcon(w.type),
       h('div', { class: 'grow widget-text' }, h('span', { class: 'widget-title', text: w.title }), h('span', { class: 'note', text: `${w.label} · ${w.summary}` })),
@@ -510,6 +511,7 @@ async function buildWidgets(card) {
     const plain = (label, control, hint) => h('div', { class: 'widget-field' }, h('span', { class: 'label', text: label }), control, hint ? h('span', { class: 'note', text: hint }) : null);
     let places = (existing?.type === 'weather' && existing.wx?.places ? existing.wx.places : []).map((p) => ({ ...p }));
     let projects = [];
+    let clockPlaces = (existing?.type === 'worldclock' && existing.wc?.places ? existing.wc.places : []).map((p) => ({ ...p }));
     const colors = sel('widget-colors', 'Colors', WIDGET_COLORS, existing?.colors || 'calendar');
 
     // ---- weather: places, units, sections ----
@@ -570,6 +572,42 @@ async function buildWidgets(card) {
         plain('Show', h('div', { class: 'widget-checks' }, Object.values(inputs.show)), 'The card also shows more or less depending on its size.'),
         field('Colors', colors, '“Match screen” tints the card from your accent color and background.'));
     }
+    // ---- world clock: places, clock format, what each row shows ----
+    function clockFields(same) {
+      const wc = same?.wc || {};
+      const placesBox = h('div', { class: 'wx-edit-places', id: 'widget-places' });
+      const found = h('div', { class: 'wx-edit-found', id: 'widget-found' });
+      const drawPlaces = () => {
+        placesBox.replaceChildren(...clockPlaces.map((p, i) => h('div', { class: 'item wx-edit-place' },
+          h('span', { class: 'grow', text: p.tz ? `${p.name} (${p.tz})` : p.name }),
+          h('input', { type: 'text', class: 'wx-nick', maxlength: '30', placeholder: tr('widgets.worldclock.nickname', 'Nickname'), 'aria-label': tr('widgets.worldclock.nicknameFor', 'Nickname for {name}', { name: p.name }), value: p.nick || '', onchange: (e) => { clockPlaces[i] = { ...clockPlaces[i], nick: e.target.value.trim() || undefined }; } }),
+          h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${p.name} up`, disabled: i === 0, onclick: () => { [clockPlaces[i - 1], clockPlaces[i]] = [clockPlaces[i], clockPlaces[i - 1]]; drawPlaces(); } }),
+          h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${p.name} down`, disabled: i === clockPlaces.length - 1, onclick: () => { [clockPlaces[i + 1], clockPlaces[i]] = [clockPlaces[i], clockPlaces[i + 1]]; drawPlaces(); } }),
+          h('button', { class: 'danger', text: 'Remove', 'aria-label': `Remove ${p.name}`, onclick: () => { clockPlaces.splice(i, 1); drawPlaces(); } }))));
+        if (!clockPlaces.length) placesBox.append(h('p', { class: 'note', text: tr('widgets.worldclock.noPlaces', 'No places yet: search below.') }));
+      };
+      inputs.city = h('input', { type: 'text', id: 'widget-city', placeholder: tr('widgets.worldclock.search', 'City or ZIP code'), maxlength: '80', 'aria-label': tr('widgets.worldclock.searchLabel', 'Search for a place') });
+      const search = async () => {
+        const q = inputs.city.value.trim();
+        if (q.length < 2) return;
+        found.replaceChildren(h('span', { class: 'note', text: 'Searching…' }));
+        try {
+          const out = await S.widgets.search(q);
+          found.replaceChildren(...(out.length ? out.map((r) => h('button', { class: 'plain', text: `+ ${r.name}`, onclick: () => { if (clockPlaces.length < 8 && !clockPlaces.some((p) => Math.abs(p.lat - r.lat) < 0.01 && Math.abs(p.lon - r.lon) < 0.01)) clockPlaces.push({ name: r.name, lat: r.lat, lon: r.lon, ...(r.tz ? { tz: r.tz } : {}) }); found.replaceChildren(); inputs.city.value = ''; drawPlaces(); } })) : [h('span', { class: 'note', text: `No place called “${q}” was found.` })]));
+        } catch (err) { found.replaceChildren(h('span', { class: 'note error', text: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })); }
+      };
+      inputs.city.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+      inputs.clock = sel('widget-clock', 'Clock', [['auto', 'System'], ['12', '12-hour'], ['24', '24-hour']], wc.clock || 'auto');
+      const show = wc.show || {};
+      inputs.seconds = chk('widget-show-seconds', tr('widgets.worldclock.seconds', 'Seconds'), wc.seconds === true);
+      inputs.show = { date: chk('widget-show-date', tr('widgets.worldclock.date', 'Date'), show.date !== false), offset: chk('widget-show-offset', tr('widgets.worldclock.offset', 'Hours ahead or behind you'), show.offset !== false), sun: chk('widget-show-sun', tr('widgets.worldclock.sun', 'Sunrise and sunset'), show.sun !== false) };
+      drawPlaces();
+      fields.replaceChildren(
+        plain(tr('widgets.worldclock.places', 'Places'), h('div', null, placesBox, h('div', { class: 'widget-inline' }, inputs.city, h('button', { id: 'widget-search', text: 'Search', onclick: search })), found), tr('widgets.worldclock.hint', 'Sunrise and sunset come from Open-Meteo (free, no account); only the place goes to it. The time itself is worked out on the page and needs no network.')),
+        field('Clock', inputs.clock),
+        plain(tr('widgets.worldclock.show', 'Show'), h('div', { class: 'widget-checks' }, [inputs.seconds, ...Object.values(inputs.show)])),
+        field('Colors', colors, '“Match screen” tints the card from your accent color and background.'));
+    }
     // ---- todoist: what to show ----
     function todoFields(same) {
       const t = same?.todo || {};
@@ -627,6 +665,8 @@ async function buildWidgets(card) {
       const same = existing?.type === type ? existing : null;
       if (type === 'weather') {
         weatherFields(same);
+      } else if (type === 'worldclock') {
+        clockFields(same);
       } else if (type === 'calendar') {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'webcal://… or https://….ics', 'aria-label': 'Calendar address (ICS)' });
         inputs.url.value = same?.url || '';
@@ -649,6 +689,9 @@ async function buildWidgets(card) {
       const base = { type, title: title.value, span: width.value, colors: colors.value };
       if (type === 'weather') {
         return { ...base, city: inputs.city?.value, units: inputs.units.value, wx: { places, units: inputs.units.value, wind: inputs.wind.value, clock: inputs.clock.value, days: Number(inputs.days.value), hours: Number(inputs.hours.value), view: inputs.view.value, show: Object.fromEntries(Object.entries(inputs.show).map(([k, c]) => [k, val(c)])) } };
+      }
+      if (type === 'worldclock') {
+        return { ...base, city: inputs.city?.value, wc: { places: clockPlaces, clock: inputs.clock.value, seconds: val(inputs.seconds), show: Object.fromEntries(Object.entries(inputs.show).map(([k, c]) => [k, val(c)])) } };
       }
       if (type === 'todoist') {
         const p = inputs.project.selectedOptions[0];
@@ -700,7 +743,7 @@ async function buildWidgets(card) {
 
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every card its default size, packed in order', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
+  card.append(stackRow('Widgets', 'Cards on the new-tab page: weather (several places, My location), a world clock with sunrise and sunset, a calendar (ICS), Todoist, or any web page. Lumen fetches them; the page itself never goes online. On the new-tab page, Edit widgets (or press and hold a card) lets you drag them anywhere, resize from any edge, snap to a side and set what each shows.', list, formHost, h('div', { class: 'controls start' }, add, reset, listNote)));
   renderList();
   const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
   if (target) openForm(target); // a card's gear on the new-tab page

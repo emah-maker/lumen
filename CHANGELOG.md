@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab World clock widget: up to eight places with a live clock, the date, how many hours ahead or behind you they are, and today's sunrise and sunset with a day or night icon. Search places in Settings (Open-Meteo, free, no account); Lumen fetches only the sun times, and the clocks tick on the page from time zone names with no network. 12/24-hour, optional seconds, and it matches the screen colors like the other cards.
+
 ## 0.2.13 (2026-09-29)
 
 - New-tab widgets sit on a free grid: drag them anywhere (beside the search box too), resize from any edge, snap to a side or the top, and the others move out of the way. Edit widgets (or press and hold) wiggles them like a home screen. Existing widgets keep their order and sizes.

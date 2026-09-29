@@ -694,5 +694,17 @@
   "settings.translate.never": "Sites never offered translation",
   "settings.translate.neverNone": "No sites.",
   "settings.translate.consent": "Allowed to receive page text",
-  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate."
+  "settings.translate.consentNone": "None yet: Lumen asks the first time you translate.",
+  "widgets.worldclock.date": "Date",
+  "widgets.worldclock.hint": "Sunrise and sunset come from Open-Meteo (free, no account); only the place goes to it. The time itself is worked out on the page and needs no network.",
+  "widgets.worldclock.nickname": "Nickname",
+  "widgets.worldclock.nicknameFor": "Nickname for {name}",
+  "widgets.worldclock.noPlaces": "No places yet: search below.",
+  "widgets.worldclock.offset": "Hours ahead or behind you",
+  "widgets.worldclock.places": "Places",
+  "widgets.worldclock.search": "City or ZIP code",
+  "widgets.worldclock.searchLabel": "Search for a place",
+  "widgets.worldclock.seconds": "Seconds",
+  "widgets.worldclock.show": "Show",
+  "widgets.worldclock.sun": "Sunrise and sunset"
 }
