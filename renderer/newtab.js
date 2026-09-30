@@ -168,7 +168,7 @@ function tile(b, size) {
   };
   // A locally cached favicon first, then the icon bundled for default favorites, then a letter.
   const bundled = (window.BUNDLED_ICONS || {})[host(b.url)];
-  const icon = typeof b.icon === 'string' && b.icon.startsWith('data:image/') ? b.icon : bundled;
+  const icon = typeof b.icon === 'string' && (b.icon.startsWith('data:image/') || /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z]+$/i.test(b.icon)) ? b.icon : bundled;
   if (icon) {
     const img = new Image(size, size);
     img.alt = '';

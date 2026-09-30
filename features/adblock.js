@@ -95,15 +95,28 @@ function createAdblock(deps) {
   ];
   async function setup() {
     const { ElectronBlocker, fromElectronDetails } = require('@ghostery/adblocker-electron');
-    blocker = await ElectronBlocker.fromPrebuiltFull(fetch, {
-      path: path.join(deps.app.getPath('userData'), 'adblock-engine.bin'),
-      read: fs.promises.readFile,
-      write: fs.promises.writeFile,
-    });
-    if (require('../test-mode').isTest()) global.__adblockEngine = blocker;
+    const base = path.join(deps.app.getPath('userData'), 'adblock-engine.bin');
+    const patched = path.join(deps.app.getPath('userData'), 'adblock-engine-signin.bin');
+    const PATCH = `1|${SIGN_IN_EXCEPTIONS.join('|')}`;
     // Annoyance lists hide Google's One Tap prompt and block its sign-in script; signing in with Google on a site
-    // must keep working, so those are always let through.
-    try { blocker.updateFromDiff({ added: SIGN_IN_EXCEPTIONS }); } catch { /* the network check below still lets them through */ }
+    // must keep working, so those are always let through. Patching the engine takes ~0.4 s, so the patched engine
+    // is kept (tagged with the lists it was built from) and a launch just loads it.
+    try {
+      const meta = JSON.parse(await fs.promises.readFile(`${patched}.json`, 'utf8'));
+      const baseStat = await fs.promises.stat(base);
+      if (meta.patch === PATCH && meta.baseMtime === baseStat.mtimeMs && meta.baseSize === baseStat.size) blocker = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(patched)));
+    } catch { blocker = null; }
+    if (!blocker) {
+      blocker = await ElectronBlocker.fromPrebuiltFull(fetch, { path: base, read: fs.promises.readFile, write: fs.promises.writeFile });
+      // Patched after the window is up (the network check below lets sign-in through meanwhile), then kept.
+      setTimeout(() => {
+        try { blocker.updateFromDiff({ added: SIGN_IN_EXCEPTIONS }); } catch { return; }
+        fs.promises.stat(base).then((st) => fs.promises.writeFile(patched, blocker.serialize())
+          .then(() => fs.promises.writeFile(`${patched}.json`, JSON.stringify({ patch: PATCH, baseMtime: st.mtimeMs, baseSize: st.size }))))
+          .catch(() => {});
+      }, 3000).unref?.();
+    }
+    if (require('../test-mode').isTest()) global.__adblockEngine = blocker;
     blocker.onBeforeRequest = (details, callback) => {
       if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
       const page = details.webContents?.getURL() || details.referrer || '';

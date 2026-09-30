@@ -1022,6 +1022,7 @@ function recordVisit(url, title) {
   entry.last = Date.now();
   if (title) entry.title = title;
   history.set(url, entry);
+  historyVersion++;
   saveHistorySoon();
 }
 
@@ -2476,9 +2477,11 @@ function importBrowser(id, profilePath) {
       entry.visits = Math.max(entry.visits, h.visits);
       entry.last = Math.max(entry.last, h.last);
       if (!entry.title && h.title) entry.title = h.title;
+      historyVersion++;
     } else {
       history.set(h.url, { url: h.url, title: h.title, visits: h.visits, last: h.last });
       addedHistory++;
+      historyVersion++;
     }
   }
   saveHistorySoon();
@@ -2554,7 +2557,16 @@ function bookmarks() {
 }
 
 // Sites visited often (at least 3 times), one per host, skipping favorites and CAPTCHA pages.
+let historyVersion = 0; // bumped on every visit or import: frequentSites is remembered until it changes
+let frequentMemo = null;
 function frequentSites(limit = 6) {
+  const key = `${historyVersion}|${history.size}|${limit}|${bookmarks().length}`;
+  if (frequentMemo?.key === key) return frequentMemo.out;
+  const out = frequentSitesNow(limit);
+  frequentMemo = { key, out };
+  return out;
+}
+function frequentSitesNow(limit) {
   const favoriteHosts = new Set(bookmarks().map((b) => hostOf(b.url)));
   const seen = new Set();
   const out = [];
@@ -2568,8 +2580,25 @@ function frequentSites(limit = 6) {
   return out;
 }
 
+// A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images), written once.
+const faviconFiles = new Map(); // data URL hash -> file URL
+function faviconFile(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+  const key = require('crypto').createHash('sha1').update(dataUrl).digest('hex').slice(0, 20);
+  if (faviconFiles.has(key)) return faviconFiles.get(key);
+  const m = dataUrl.match(/^data:image\/([a-z+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
+  if (!m) return dataUrl; // (not base64: passed as it is)
+  const dir = path.join(app.getPath('userData'), 'favicon-cache');
+  const file = path.join(dir, `${key}.${m[1].replace(/\+.*/, '').replace('jpeg', 'jpg')}`);
+  try {
+    if (!fs.existsSync(file)) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, Buffer.from(m[2], 'base64')); }
+  } catch { return dataUrl; }
+  const url = pathToFileURL(file).href;
+  faviconFiles.set(key, url);
+  return url;
+}
 function newTabUrl() {
-  const withIcon = (b) => { const icon = faviconStore.get(hostOf(b.url)); return icon ? { ...b, icon } : b; };
+  const withIcon = (b) => { const icon = faviconFile(faviconStore.get(hostOf(b.url))); return icon ? { ...b, icon } : b; };
   const data = {
     favorites: bookmarks().filter((b) => !b.folder).slice(0, 12).map(withIcon),
     frequent: frequentSites().map(withIcon),
@@ -5602,16 +5631,16 @@ app.whenReady().then(async () => {
   siteActivity.watch(session.defaultSession);
   loadChat();
   loadHistory();
-  // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs.
-  await setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
-  // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
-  // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
-  // doesn't hold up the window.
   // Until the ad blocker takes over onBeforeRequest (it sends pages to the same gate), or if it
   // fails to start, pages still go through Safe Browsing's check.
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
   safeBrowsing.refresh().catch(() => {});
+  // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
+  // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
+  // doesn't hold up the window. They load while the extensions start (the two don't depend on each other).
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
+  // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs.
+  await setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
   perf.mark('adblockReady');
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
