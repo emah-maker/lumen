@@ -589,6 +589,69 @@ async function grokRuns() {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// Grok Build warm-up (features/grok-warmup.js): only when enabled, only after the first tab (afterLook), never a
+// model request (no spawn, no exec), and the first message reuses what it prepared.
+async function grokWarmupRuns() {
+  const gb = require('../src/ai/grok-build');
+  const { createGrokWarmup } = require('../src/features/grok-warmup');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-grokwarm-'));
+  const userHome = path.join(tmp, 'user');
+  fs.mkdirSync(userHome);
+  fs.writeFileSync(path.join(userHome, 'auth.json'), 'tok');
+  const oldHome = process.env.GROK_HOME;
+  process.env.GROK_HOME = userHome;
+  let gates = 0;
+  const gate = { open: () => ({ mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: 't', hookUrl: 'h' }), close() {}, armed: () => true, listed: () => true };
+  let spawns = 0;
+  let execs = 0;
+  const spawn = () => {
+    spawns++;
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    setImmediate(() => {
+      child.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'hi', session_id: 's' })}\n`);
+      setImmediate(() => child.emit('close', 0));
+    });
+    return child;
+  };
+  const eng = new gb.GrokBuildEngine({ userData: tmp, gate: async () => { gates++; return gate; }, spawn, exec: () => { execs++; } });
+  eng.bin = process.execPath; // found (no lookup)
+  let on = false;
+  let found = true;
+  const resume = new EventEmitter();
+  const w = createGrokWarmup({ enabled: () => on, engine: () => eng, found: () => found, powerMonitor: resume });
+  w.watchResume();
+  const cfg = path.join(eng.home, 'config.toml');
+
+  check('warm-up: nothing before the first tab has loaded (afterLook not called yet)', await w.warm() === false && gates === 0 && !fs.existsSync(cfg), String(gates));
+  check('warm-up: setting off (or Grok Build not in use): afterLook prepares nothing', await w.afterLook() === false && gates === 0 && !fs.existsSync(cfg), String(gates));
+  on = true;
+  found = false;
+  check('warm-up: Grok Build not installed: nothing', await w.warm() === false && gates === 0, String(gates));
+  found = true;
+  check('warm-up: enabled and loaded: the gate starts and config, gate script and sign-in link are written', await w.warm() === true && gates === 1 && fs.existsSync(cfg) && fs.existsSync(path.join(eng.home, gb.GATE_FILE)) && fs.readFileSync(path.join(eng.home, 'auth.json'), 'utf8') === 'tok', String(gates));
+  check('warm-up: never a model request or another grok process (no spawn, no exec)', spawns === 0 && execs === 0, JSON.stringify({ spawns, execs }));
+  check('warm-up: pokes within a minute cost nothing', await w.warm() === false && gates === 1, String(gates));
+  const m1 = fs.statSync(cfg).mtimeMs;
+  await sleep(30);
+  const r = await eng.run({ prompt: 'p', sessionId: 'sess', resume: false, systemPrompt: 'SYS', signal: new AbortController().signal, emit: () => {} });
+  check('warm-up: the first message reuses the prepared state (gate not started again, files untouched, binary not looked up)', r.text === 'hi' && spawns === 1 && gates === 1 && fs.statSync(cfg).mtimeMs === m1 && eng.bin === process.execPath, JSON.stringify({ spawns, gates }));
+  // The prepared state is taken by that message; a later one re-prepares cheaply (cached binary and gate, unchanged files).
+  const r2 = await eng.run({ prompt: 'p', sessionId: 'sess', resume: true, systemPrompt: 'SYS', signal: new AbortController().signal, emit: () => {} });
+  check('warm-up: a later message re-prepares cheaply (files not rewritten)', r2.text === 'hi' && fs.statSync(cfg).mtimeMs === m1, '');
+  // After the machine wakes: prepared again from scratch, but only while enabled.
+  const before = w.stats.warmed;
+  resume.emit('resume');
+  await sleep(50);
+  check('warm-up: re-warms after resume while enabled (still no process)', w.stats.warmed === before + 1 && spawns === 2, JSON.stringify(w.stats));
+  on = false;
+  resume.emit('resume');
+  await sleep(30);
+  check('warm-up: no re-warm after resume once turned off (takes effect at once)', w.stats.warmed === before + 1, JSON.stringify(w.stats));
+  if (oldHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = oldHome;
+}
+
 function routeRuns() {
   const { route, tierFor } = require('../src/features/model-route');
   const heavy = { tier: 'heavy', turns: 2 };
@@ -948,6 +1011,7 @@ async function warmAndQuietRuns() {
   await engineRuns();
   await snapshotRuns();
   await grokRuns();
+  await grokWarmupRuns();
   routeRuns();
   transcriptRuns();
   promptRuns();
