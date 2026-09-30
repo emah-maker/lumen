@@ -40,6 +40,7 @@ const PROVIDERS = {
 // ---------- OpenRouter's model catalog (GET /models, kept for 24 hours) ----------
 
 const CATALOG_TTL = 24 * 60 * 60 * 1000;
+const CATALOG_TIMEOUT_MS = 10000;
 const CURATED = [/^anthropic\/claude/, /^openai\/gpt/, /^google\/gemini/, /^meta-llama\/llama/, /^deepseek\/deepseek/, /^x-ai\/grok/];
 let catalog = null; // { fetchedAt, models: [{ id, name, tools, created }] }
 
@@ -47,9 +48,21 @@ async function openRouterCatalog({ cacheFile, fetchImpl = netFetch() } = {}) {
   const fs = require('fs');
   if (!catalog && cacheFile) { try { catalog = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch {} }
   if (catalog && Date.now() - catalog.fetchedAt < CATALOG_TTL) return catalog;
-  const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/models`, { headers: PROVIDERS.openrouter.headers });
-  if (!res.ok) throw new Error(`OpenRouter models: HTTP ${res.status}`);
-  catalog = { fetchedAt: Date.now(), models: parseOpenRouterModels(await res.json()) };
+  // Offline, slow or failing: the last copy (however old) rather than no list; a request that hangs gives up at 10 s.
+  let fresh;
+  try {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctrl && setTimeout(() => ctrl.abort(), CATALOG_TIMEOUT_MS);
+    try {
+      const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/models`, { headers: PROVIDERS.openrouter.headers, ...(ctrl ? { signal: ctrl.signal } : {}) });
+      if (!res.ok) throw new Error(`OpenRouter models: HTTP ${res.status}`);
+      fresh = parseOpenRouterModels(await res.json());
+    } finally { clearTimeout(timer); }
+  } catch (err) {
+    if (catalog?.models?.length) return catalog;
+    throw err;
+  }
+  catalog = { fetchedAt: Date.now(), models: fresh };
   if (cacheFile) { try { fs.writeFileSync(cacheFile, JSON.stringify(catalog)); } catch {} }
   return catalog;
 }

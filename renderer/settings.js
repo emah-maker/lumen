@@ -168,7 +168,7 @@ async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g && !m.id.endsWith(':__more')).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); return o; })));
+    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); return o; })));
   card.append(
     row('Model', 'The model the assistant in the sidebar uses.', h('select', {
       id: 'ai-model',
@@ -178,7 +178,15 @@ async function buildAi(card) {
   );
   const modelPicker = card.querySelector('#ai-model');
   modelPicker.parentElement.classList.add('picker-host');
-  window.lumenPicker(modelPicker, { recentKey: 'model' });
+  // "More models…" opens OpenRouter's whole catalog here too (renderer/model-catalog.js).
+  let catalog = null;
+  const settingsPicker = window.lumenPicker(modelPicker, {
+    recentKey: 'model',
+    onMore: () => {
+      catalog ||= window.lumenModelCatalog({ mainSelect: modelPicker, anchor: settingsPicker.button, host: modelPicker.parentElement, fetchModels: () => S.ai.openRouterModels(), onBack: () => settingsPicker.open(), onFail: (text) => { const n = modelPicker.parentElement.querySelector('.catalog-fail') || modelPicker.parentElement.appendChild(h('span', { class: 'catalog-fail', role: 'status' })); flash(n, text, 'err'); } });
+      catalog.open();
+    },
+  });
   const refreshModels = async () => {
     ai = await S.ai.get();
     modelPicker.replaceChildren(...modelOptions());

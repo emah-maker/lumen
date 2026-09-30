@@ -14,8 +14,10 @@
 //
 // options: label(o) (the button's text, overriding provider + name), recentKey (share recent picks), extra()
 // (rows added at the end: [{ label, detail, run }], e.g. "Search every OpenRouter model"), anchor (open under
-// another element; the picker's own button is then hidden).
-window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false } = {}) => {
+// another element; the picker's own button is then hidden), onMore(value) (an option with data-more is an action,
+// "More models…": it runs this and never becomes the value), filters ([{ key, label, test(option) }]: chips under the
+// search field, each narrowing the list), wide (a wider menu, for long catalog names).
+window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false, onMore = null, filters = [], wide = false } = {}) => {
   const uid = `pk${Math.random().toString(36).slice(2, 8)}`;
   const nameOf = (o) => o.dataset.name || o.textContent;
   const groupOf = (o) => (o.parentElement?.tagName === 'OPTGROUP' ? o.parentElement.label : '');
@@ -61,7 +63,25 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   const live = Object.assign(document.createElement('span'), { className: 'picker-sr' });
   live.setAttribute('role', 'status');
   live.setAttribute('aria-live', 'polite');
-  menu.append(head, search, list, live);
+  // Filter chips (the OpenRouter catalog: Free, Can act in tabs, 128K+ context): toggles, several at once.
+  const on = new Set();
+  const chips = Object.assign(document.createElement('div'), { className: 'picker-chips', hidden: !filters.length });
+  chips.setAttribute('role', 'group');
+  chips.setAttribute('aria-label', tr('picker.filters', 'Filters'));
+  for (const f of filters) {
+    const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'picker-chip', textContent: f.label });
+    chip.setAttribute('aria-pressed', 'false');
+    chip.addEventListener('pointerdown', (e) => e.preventDefault()); // the search field keeps the focus
+    chip.addEventListener('click', () => {
+      if (on.has(f.key)) on.delete(f.key); else on.add(f.key);
+      chip.setAttribute('aria-pressed', String(on.has(f.key)));
+      expanded = new Set();
+      render();
+    });
+    chips.append(chip);
+  }
+  const passes = (o) => o.dataset.more || filters.every((f) => !on.has(f.key) || f.test(o));
+  menu.append(head, search, chips, list, live);
   let loading = false;
   let centreNext = false; // on open, the current model is scrolled to the middle, with its neighbours in view
   select.classList.add('picker-native');
@@ -79,6 +99,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     where.hidden = !where.textContent || select.querySelectorAll('optgroup').length < 2;
     button.title = option ? [groupOf(option), name, option.value].filter(Boolean).join(' · ') : '';
     button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent].filter(Boolean).join(': '));
+    requestAnimationFrame(fitTag); // a new name (or the list reloaded): shortened again to the room there is
   };
   // The provider tag shows when the header has room for tag and name together (measured against the space the
   // picker's row leaves it, not the button's own width, which the tag itself changes).
@@ -118,15 +139,25 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   const LONG = 6;
   const SHOWN = 5;
 
+  let activeEl = null;
   function setActive(i, scroll = true) {
-    if (!rows.length) { active = -1; owner().removeAttribute('aria-activedescendant'); return; }
+    if (!rows.length) { active = -1; activeEl?.classList.remove('active'); activeEl = null; owner().removeAttribute('aria-activedescendant'); return; }
     active = Math.max(0, Math.min(rows.length - 1, i));
-    rows.forEach((r, k) => r.el.classList.toggle('active', k === active));
+    if (activeEl !== rows[active].el) { activeEl?.classList.remove('active'); activeEl = rows[active].el; activeEl.classList.add('active'); }
     owner().setAttribute('aria-activedescendant', rows[active].el.id);
     if (scroll) rows[active].el.scrollIntoView({ block: centreNext ? 'center' : 'nearest' }); // the list's scroll-padding keeps it clear of the sticky heading
     centreNext = false;
   }
-  const hold = (el) => el.addEventListener('pointerdown', (e) => e.preventDefault()); // keeps the focus where it is
+  // One set of listeners on the list, not three per row (a catalog has hundreds): what a row does is kept here.
+  const act = new WeakMap(); // row -> what a click does
+  list.addEventListener('pointerdown', (e) => { if (e.target.closest('.picker-item')) e.preventDefault(); }); // keeps the focus where it is
+  list.addEventListener('click', (e) => { const el = e.target.closest('.picker-item'); if (el) act.get(el)?.(); });
+  list.addEventListener('pointermove', (e) => {
+    const el = e.target.closest('.picker-item');
+    if (!el || el === activeEl) return;
+    const k = rows.findIndex((r) => r.el === el);
+    if (k !== -1) setActive(k, false);
+  });
   const BADGES = { free: ['picker.badge.free', 'free'], 'chat only': ['picker.badge.chatOnly', 'chat only'], preview: ['picker.badge.preview', 'preview'], 'sign in': ['picker.badge.signIn', 'sign in'], experimental: ['picker.badge.experimental', 'experimental'] };
   const badgeText = (b) => (BADGES[b] ? tr(BADGES[b][0], BADGES[b][1]) : b);
   let recentRow = false;
@@ -146,9 +177,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     el.title = [nameOf(o), o.dataset.more ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
     el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', ')); // what a screen reader says
-    hold(el);
-    el.addEventListener('click', () => choose(o.value));
-    el.addEventListener('pointermove', () => { const k = rows.findIndex((r) => r.el === el); if (k !== active) setActive(k, false); });
+    act.set(el, () => choose(o.value));
     rows.push({ el, value: o.value });
     return el;
   }
@@ -158,8 +187,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     el.setAttribute('aria-selected', 'false');
     el.append(Object.assign(document.createElement('span'), { className: 'picker-line', textContent }));
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
-    hold(el);
-    el.addEventListener('click', handler);
+    act.set(el, handler);
     return el;
   }
   function heading(textContent, count) {
@@ -194,6 +222,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     }
     const groups = new Map();
     for (const o of all) {
+      if (!passes(o)) continue;
       const sc = score(o, words);
       if (!sc) continue;
       const g = groupOf(o);
@@ -215,23 +244,23 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       if (g && (headings || words.length || ordered.length > 1 || out.length)) { const h = heading(g, members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
-      actions.forEach((m, i) => section.append(row(m.o, `${n}-a${i}`)));
       if (folded) {
         const reveal = members[SHOWN].o.value;
         const more = actionRow(`m${n}`, tr('picker.showAll', 'Show all {n}', { n: members.length }), '', () => { expanded.add(g); focusValue = reveal; render(); });
         rows.push({ el: more, expand: g, reveal });
-        section.insertBefore(more, section.children[SHOWN + (section.firstElementChild?.classList.contains('picker-group') ? 1 : 0)] || null);
+        section.append(more);
       }
+      actions.forEach((m, i) => section.append(row(m.o, `${n}-a${i}`)));
       out.push(section);
       n++;
     }
     const anyModel = rows.some((r) => r.value != null);
-    empty.hidden = anyModel || !words.length;
-    empty.textContent = loading ? tr('picker.loading', 'Loading models…') : tr('picker.none', 'No models match “{q}”', { q: search.value.trim() });
+    empty.hidden = anyModel || (!words.length && !on.size);
+    empty.textContent = loading ? tr('picker.loading', 'Loading models…') : words.length ? tr('picker.none', 'No models match “{q}”', { q: search.value.trim() }) : tr('picker.noneFiltered', 'No models match these filters');
     if (loading) empty.hidden = false;
     out.push(empty); // right after the models, before any extra rows
     const found = rows.filter((r) => r.value != null).length;
-    const said = loading ? empty.textContent : words.length ? (found === 1 ? tr('picker.countOne', '1 model') : found ? tr('picker.count', '{n} models', { n: found }) : empty.textContent) : '';
+    const said = loading ? empty.textContent : words.length || on.size ? (found === 1 ? tr('picker.countOne', '1 model') : found ? tr('picker.count', '{n} models', { n: found }) : empty.textContent) : '';
     if (live.textContent !== said) live.textContent = said;
     if (title) head.querySelector('.picker-title').textContent = loading ? tr('picker.loading', 'Loading models…') : tr(title, title, { n: all.filter((o) => !o.dataset.more).length });
     for (const [i, x] of (extra?.(search.value.trim()) || []).entries()) {
@@ -258,7 +287,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const box = clipBox();
     const left0 = Math.max(0, box.left) + 8;
     const right0 = Math.min(window.innerWidth, box.right) - 8;
-    const width = Math.max(220, Math.min(360, right0 - left0));
+    const width = Math.max(220, Math.min(wide ? 420 : 360, right0 - left0));
     const below = window.innerHeight - b.bottom - 12;
     const above = b.top - 12;
     const up = below < 260 && above > below;
@@ -284,8 +313,10 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   function outside(e) { if (!menu.contains(e.target) && e.target !== button && !button.contains(e.target) && !(anchor && anchor.contains(e.target))) close(false); }
   function choose(value) {
     if (value == null) return;
+    const more = select.querySelector(`option[value="${CSS.escape(value)}"]`)?.dataset.more;
+    if (more && onMore) { close(false); onMore(value); return; } // an action, not a value: the button never shows it
     close();
-    if (!select.querySelector(`option[value="${CSS.escape(value)}"]`)?.dataset.more) remember(value);
+    if (!more) remember(value);
     if (select.value === value) return;
     select.value = value;
     select.dispatchEvent(new Event('change', { bubbles: true }));
@@ -319,7 +350,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   button.addEventListener('keydown', (e) => {
     if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); open(); }
   });
-  search.addEventListener('input', () => { expanded = new Set(); render(); });
+  let typing = 0;
+  search.addEventListener('input', () => {
+    expanded = new Set();
+    clearTimeout(typing);
+    if (options().length > 80) typing = setTimeout(render, 50); else render();
+  });
   const page = () => Math.max(1, Math.floor(list.clientHeight / 44));
   function onKey(e) {
     if (e.key === 'ArrowDown') setActive(active + 1);
@@ -329,10 +365,11 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     else if ((e.key === 'Home' || e.key === 'End') && (e.target !== search || !search.value)) setActive(e.key === 'Home' ? 0 : rows.length - 1);
     else if (e.key === 'Enter') { rows[active]?.el.click(); }
     else if (e.key === 'Escape') { if (search.value) { search.value = ''; render(); } else if (onBack) { close(false); onBack(); } else close(); }
-    else if (e.key === 'Tab' && onBack && head.querySelector('.picker-back')) {
-      // Between the search field and the Back button, instead of leaving the list.
-      const back = head.querySelector('.picker-back');
-      (document.activeElement === back ? owner() : back).focus();
+    else if (e.key === 'Tab' && (head.querySelector('.picker-back') || filters.length)) {
+      // Around Back, the search field and the chips, instead of leaving the list.
+      const stops = [head.querySelector('.picker-back'), owner(), ...chips.children].filter((x) => x && !x.hidden);
+      const at = stops.indexOf(document.activeElement);
+      stops[(at + (e.shiftKey ? -1 : 1) + stops.length) % stops.length].focus();
     }
     else if (e.key === 'Tab') { close(false); return; }
     else if (search.hidden && e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {

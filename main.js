@@ -5225,7 +5225,7 @@ ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
 // exchanged for a key; the key is stored encrypted like a pasted one).
 ipcMain.handle('openrouter:models', async () => {
   const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE() });
-  return models.map(({ id, name, tools }) => ({ id, name, tools }));
+  return models.map(({ id, name, tools, context, pricePerM, free }) => ({ id, name, tools, context, pricePerM, free }));
 });
 function saveProviderKey(provider, key) {
   const settings = readSettings();

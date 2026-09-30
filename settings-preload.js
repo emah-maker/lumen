@@ -88,6 +88,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),
       setModel: call('settings:set-model'),
+      openRouterModels: call('openrouter:models'), // OpenRouter's whole catalog, for "More models…"
       setAdhdMode: call('settings:set-adhd'),
       setAutoGroup: call('settings:set-auto-group'),
       setTabGrouping: call('settings:set-tab-grouping'),

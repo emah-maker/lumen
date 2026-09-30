@@ -121,6 +121,7 @@ function setAssistantIdentity(group) {
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
 const modelPicker = window.lumenPicker($('model'), {
   recentKey: 'model',
+  onMore: () => openModelSearch(), // "More models…" opens the catalog; it is never the select's value, even for a frame
   // (The OpenRouter group has its own "More models…" row; a search adds a way to look the words up there too.)
   extra: (q) => (q && modelGroups.has('openrouter:__more') ? [{ label: t('models.searchFor', { q }), detail: t('models.more.detail'), run: (text) => openModelSearch(text) }] : []),
 });
@@ -162,77 +163,16 @@ async function loadModels() {
   setAssistantIdentity(current?.group);
 }
 window.assistant.onModelsUpdated?.(() => loadModels());
-// "More models…" (OpenRouter): every model OpenRouter has, in the same picker (search, vendor headings, readable
-// names, "chat only" badges, recents), opened under the model button. Its list is loaded once per session.
-let openRouterSelect = null;
-let catalogLoading = false;
-let openRouterPicker = null;
-async function openModelSearch(query = '') {
-  if (!openRouterSelect) {
-    openRouterSelect = Object.assign(document.createElement('select'), { hidden: true });
-    openRouterSelect.setAttribute('aria-label', t('models.search'));
-    document.querySelector('.model-picker').append(openRouterSelect);
-    openRouterPicker = window.lumenPicker(openRouterSelect, { recentKey: 'model', anchor: modelPicker.button, title: 'models.allOpenRouter', placeholder: t('models.search'), headings: true, onBack: () => modelPicker.open() });
-    // A pick here becomes the main picker's value and goes through its one change handler (the "Now using" notice,
-    // the "from your next message" note, refreshSetup, focus back to the prompt, and what to do if it is refused).
-    openRouterSelect.addEventListener('change', () => {
-      const main = $('model');
-      const picked = openRouterSelect.selectedOptions[0];
-      if (!picked) return;
-      if (![...main.options].some((o) => o.value === picked.value)) {
-        const o = picked.cloneNode(true);
-        o.dataset.provider = 'OpenRouter';
-        (main.querySelector('optgroup[label="OpenRouter"]') || main).append(o);
-      }
-      main.value = picked.value;
-      main.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-  }
-  openRouterSelect.value = $('model').value;
-  if (openRouterSelect.options.length) { openRouterPicker.open(query); return; }
-  // First time: the list opens at once, saying it is loading, and fills in when the catalog arrives (one fetch,
-  // however often it is asked for meanwhile).
-  openRouterPicker.setLoading(true);
-  openRouterPicker.open(query);
-  if (catalogLoading) return;
-  catalogLoading = true;
-  let models = [];
-  try { models = await window.assistant.openRouterModels(); } catch { models = []; }
-  catalogLoading = false;
-  openRouterPicker.setLoading(false);
-  if (!models.length) { openRouterPicker.close(true); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.loadFailed') })); return; }
-  // Vendors by the names OpenRouter itself gives them ("NVIDIA: …", "MiniMax: …": the most common prefix of that
-  // vendor's model names), the best-known first, then A–Z.
-  const VENDORS = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', 'x-ai': 'xAI', 'meta-llama': 'Meta', mistralai: 'Mistral', deepseek: 'DeepSeek', qwen: 'Qwen', openrouter: 'OpenRouter' };
-  const FIRST = ['anthropic', 'openai', 'google', 'x-ai', 'meta-llama', 'mistralai', 'deepseek', 'qwen'];
-  const prefixes = new Map();
-  for (const m of models) {
-    const v = String(m.id).split('/')[0];
-    const p = String(m.name).includes(':') ? String(m.name).split(':')[0].trim() : '';
-    if (!p) continue;
-    const counts = prefixes.get(v) || new Map();
-    counts.set(p, (counts.get(p) || 0) + 1);
-    prefixes.set(v, counts);
-  }
-  const vendorName = (v) => VENDORS[v] || [...(prefixes.get(v) || new Map())].sort((a, b) => b[1] - a[1])[0]?.[0] || v.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-  const short = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
-  const vendors = new Map();
-  for (const m of models) {
-    const vendor = String(m.id).split('/')[0];
-    if (!vendors.has(vendor)) vendors.set(vendor, Object.assign(document.createElement('optgroup'), { label: vendorName(vendor) }));
-    const o = Object.assign(document.createElement('option'), { value: `openrouter:${m.id}`, textContent: m.name, title: m.id });
-    o.dataset.name = String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : m.name;
-    // (No provider tag here: every row is OpenRouter's, so it would match every search.)
-    const price = !Number.isFinite(m.pricePerM) ? '' : m.pricePerM === 0 ? t('models.free') : t('models.price', { n: m.pricePerM < 1 ? m.pricePerM.toFixed(2) : String(Math.round(m.pricePerM * 10) / 10) });
-    const bits = [m.context ? t('models.context', { n: short(m.context) }) : '', price].filter(Boolean);
-    if (bits.length) o.dataset.detail = bits.join(' · ');
-    o.dataset.badges = [m.free ? 'free' : '', m.tools ? '' : 'chat only'].filter(Boolean).join(',');
-    vendors.get(vendor).append(o);
-  }
-  const rank = (v) => { const i = FIRST.indexOf(v); return i === -1 ? FIRST.length : i; };
-  openRouterSelect.replaceChildren(...[...vendors].sort((a, b) => rank(a[0]) - rank(b[0]) || a[1].label.localeCompare(b[1].label)).map(([, g]) => g));
-  openRouterSelect.value = $('model').value;
-  openRouterPicker.refresh();
+// "More models…" (OpenRouter): every model OpenRouter has, in the same picker (renderer/model-catalog.js), opened
+// under the model button.
+let catalog = null;
+function openModelSearch(query = '') {
+  catalog ||= window.lumenModelCatalog({
+    mainSelect: $('model'), anchor: modelPicker.button, host: document.querySelector('.model-picker'),
+    fetchModels: () => window.assistant.openRouterModels(), onBack: () => modelPicker.open(),
+    onFail: (text) => append(Object.assign(document.createElement('div'), { className: 'notice', textContent: text })),
+  });
+  catalog.open(query);
 }
 
 $('model').addEventListener('change', async (e) => {
