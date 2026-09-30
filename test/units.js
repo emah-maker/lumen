@@ -2488,6 +2488,11 @@ async function swapHelperRuns() {
   const other = { ...strip, key: 'v', bounds: { x: 1000, y: 100, width: 800, height: 600 } };
   check('drag: the first strip under the cursor wins', stripHit({ x: 1100, y: 120 }, [strip, other])?.key === 'v');
   check('drag: no strips, no hit', stripHit({ x: 1, y: 1 }, []) === null);
+  const front = { ...strip, key: 'f', bounds: { x: 50, y: 110, width: 800, height: 600 } };
+  check("drag: a front window's page hides the strip behind it", stripHit({ x: 300, y: 115 + 60 }, [front, strip]) === null && stripHit({ x: 300, y: 112 }, [front, strip])?.key === 'f', JSON.stringify(stripHit({ x: 300, y: 175 }, [front, strip])));
+  check('drag: a window that takes no tabs (private) blocks the strip behind it', stripHit({ x: 300, y: 120 }, [{ bounds: { x: 0, y: 0, width: 500, height: 500 }, occluder: true }, strip]) === null);
+  const { fitToDisplay } = require('../features/tab-drag-math');
+  check('drag: a torn-off window shrinks to fit a smaller display', JSON.stringify(fitToDisplay({ width: 2400, height: 900 }, area)) === JSON.stringify({ width: 1920, height: 900 }));
 }
 
 // ---- ask across open tabs (features/tabs-ask.js, renderer/tabs-ask-core.js, read_tabs in agent.js)

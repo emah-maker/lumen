@@ -31,27 +31,41 @@
     .card.on { opacity: 1; transform: none; }
     .head { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; }
     .icon { width: 16px; height: 16px; flex: none; border-radius: 4px; object-fit: contain; }
-    .icon.blank { background: var(--edge); }
+    /* No usable favicon (a Lumen page, a site without one): the globe the tab strip shows. */
+    .icon.blank { background: var(--muted); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.25'%3E%3Cpath d='M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z'/%3E%3C/svg%3E") center / 16px 16px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.25'%3E%3Cpath d='M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z'/%3E%3C/svg%3E") center / 16px 16px no-repeat; border-radius: 0; }
     .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
     .shot { position: relative; height: var(--shot-h, 180px); background: var(--page); border-top: 0.5px solid var(--edge); transition: height 240ms var(--spring), opacity 160ms ease-out; }
     .shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top left; opacity: 0; transition: opacity 140ms ease-out; }
     .shot img.loaded { opacity: 1; }
-    /* Over a tab strip: the card becomes the tab it will be there. */
-    .card.compact { width: 220px; border-radius: 10px; }
-    .card.compact .shot { height: 0; opacity: 0; }
-    .card.compact .head::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+    /* Over a tab strip: the tab itself shows in the strip, so the card shrinks away towards it. */
+    .card.compact { opacity: 0; transform: scale(0.82) translateY(-8px); transition: opacity 120ms ease-out, transform 200ms var(--spring); }
+    /* Dropped while its window is still getting ready: it stays, breathing, until the window takes its place. */
+    .card.wait { opacity: 1; transform: none; animation: breathe 900ms ease-in-out infinite alternate; }
+    @keyframes breathe { to { opacity: 0.72; transform: scale(0.985); } }
+    /* Several tabs dragged together: the count, and the edges of the cards stacked behind. */
+    .count { display: none; flex: none; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+    .card.many .count { display: block; }
+    .stack { position: absolute; left: var(--pad); top: var(--pad); width: calc(100% - var(--pad) * 2); bottom: var(--pad); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow), inset 0 0 0 0.5px var(--edge); opacity: 0; transform: none; transition: opacity 180ms ease-out, transform 260ms var(--spring), width 240ms var(--spring); }
+    .stack.one { transform: translate(5px, -5px) scale(0.985); }
+    .stack.two { transform: translate(10px, -10px) scale(0.97); }
+    body.many.on .stack.one { opacity: 0.75; }
+    body.many.on.three .stack.two { opacity: 0.45; }
+    body.compact .stack { opacity: 0 !important; }
+    body.leaving .stack { opacity: 0 !important; }
     /* The drag ends: into a window of its own (the window fades in where the card is), into a strip, or back. */
     .card.drop { opacity: 0; transform: scale(1.04); transition: opacity 160ms ease-out, transform 200ms var(--spring); }
     .card.join { opacity: 0; transform: scale(0.9); transition: opacity 120ms ease-out, transform 160ms ease-out; }
     .card.cancel { opacity: 0; transform: scale(0.9) translateY(-6px); transition: opacity 140ms ease-out, transform 180ms ease-out; }
     @media (prefers-reduced-motion: reduce) {
-      .card, .card *, .card.drop, .card.join, .card.cancel { transition-duration: 1ms !important; transform: none !important; }
+      .card, .card *, .card.drop, .card.join, .card.cancel, .stack { transition-duration: 1ms !important; transform: none !important; animation: none !important; }
     }
   </style>
 </head>
 <body>
+  <div class="stack two" aria-hidden="true"></div>
+  <div class="stack one" aria-hidden="true"></div>
   <div class="card" id="card">
-    <div class="head"><img class="icon blank" id="icon" alt="" /><span class="title" id="title"></span></div>
+    <div class="head"><img class="icon blank" id="icon" alt="" /><span class="title" id="title"></span><span class="count" id="count"></span></div>
     <div class="shot"><img id="shot" alt="" /></div>
   </div>
   <script src="drag-card.js"></script>

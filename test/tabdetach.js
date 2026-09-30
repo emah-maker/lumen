@@ -81,14 +81,14 @@ const http = require('http');
     check('the tab menu offers Move Tab to New Window', menu1.some((i) => i.label === 'Move Tab to New Window' && i.enabled), JSON.stringify(menu1.map((i) => i.label)));
     check('...and no "to Window" entry while there is one window', !menu1.some((i) => i.label === 'Move Tab to Window'), JSON.stringify(menu1.map((i) => i.label)));
 
-    // ---- the menu's tear-off: a pinned tab arrives unpinned, the same WebContents, no reload
+    // ---- the menu's tear-off: a pinned tab stays pinned, the same WebContents, no reload
     await app.evaluate((_e, id) => global.__pinTab(id, true), a.id);
     await app.evaluate((_e, [w, id]) => global.__windows.tearOff(w, id, { x: 300, y: 300 }), [win1, a.id]);
     const two = await waitFor(async () => { const l = await windows(); return l.length === 2 && others(l)[0]?.tabs.length === 1 ? l : null; });
     check('Move Tab to New Window makes a second window', Boolean(two), JSON.stringify(await windows()));
     const menuW2 = others(two)[0];
     const menuMoved = menuW2?.tabs[0];
-    check('the new window holds the same WebContents and URL, unpinned and ungrouped', menuMoved?.contentsId === a.contentsId && menuMoved.url === `${base}/a` && !menuMoved.pinned && !menuMoved.groupId, JSON.stringify(menuMoved));
+    check('the new window holds the same WebContents and URL, still pinned, ungrouped', menuMoved?.contentsId === a.contentsId && menuMoved.url === `${base}/a` && menuMoved.pinned && !menuMoved.groupId, JSON.stringify(menuMoved));
     check('the source keeps its other tabs', winOf(two, win1).tabs.some((t) => t.id === b.id) && !winOf(two, win1).tabs.some((t) => t.id === a.id), JSON.stringify(two));
     check('the page was not reloaded: script state, typed text, scroll and title survive', stateOk(await keptState(a.contentsId)), JSON.stringify(await keptState(a.contentsId)));
     const menu2 = await app.evaluate((_e, [w, id]) => global.__windows.tabMenu(w, id), [win1, b.id]);
@@ -101,10 +101,18 @@ const http = require('http');
     // ---- drag out of the strip: a card follows the cursor; the tab stays in its window until the release
     const win1Tabs = () => windows().then((l) => winOf(l, win1).tabs.map((t) => t.id));
     const uiCount = (windowId, selector) => app.evaluate(({ BrowserWindow }, [id, sel]) => BrowserWindow.fromId(id).webContents.executeJavaScript(`document.querySelectorAll(${JSON.stringify(sel)}).length`), [windowId, selector]);
+    // The open drop slot in a window's strip: the id of the tab right after it ('end' if none), or null.
+    const slotBefore = (windowId) => app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).webContents.executeJavaScript(`(() => {
+      const s = document.querySelector('#tabs .tab-drop-slot.open');
+      if (!s) return null;
+      let n = s.nextElementSibling;
+      while (n && !n.classList.contains('tab')) n = n.nextElementSibling;
+      return n ? Number(n.dataset.id) : 'end';
+    })()`), windowId);
     const hold = await app.evaluate(() => global.__windows.cardHold());
     const cardAt = (p) => waitFor(async () => { const s = await dragState(); return s?.cardAt && s.cardAt.x === p.x - hold.x && s.cardAt.y === p.y - hold.y ? s : null; }, 3000);
     await emit(win1, 'tab:switch', initialId); // make win1 current
-    await app.evaluate((_e, id) => global.__pinTab(id, true), a.id); // ...pinned, to see it arrive unpinned
+    await app.evaluate((_e, id) => global.__pinTab(id, true), a.id); // ...pinned, to see it stay pinned
     await cursor({ x: 900, y: 500 });
     await emit(win1, 'tab:dragstart', a.id, { x: 300, y: 15, stripX: 150 });
     const dragging = await dragState();
@@ -122,7 +130,7 @@ const http = require('http');
     check('released over no strip: the tab becomes a window of its own', Boolean(dropped) && (await dragState()) === null, JSON.stringify(await windows()));
     const w2id = dropped && others(dropped)[0].windowId;
     const w2 = dropped && winOf(dropped, w2id);
-    check('it holds the same WebContents, unpinned and ungrouped; the source keeps its other tabs', w2?.tabs[0].contentsId === a.contentsId && !w2.tabs[0].pinned && !w2.tabs[0].groupId && winOf(dropped, win1).tabs.some((t) => t.id === b.id), JSON.stringify(dropped));
+    check('it holds the same WebContents, still pinned, ungrouped; the source keeps its other tabs', w2?.tabs[0].contentsId === a.contentsId && w2.tabs[0].pinned && !w2.tabs[0].groupId && winOf(dropped, win1).tabs.some((t) => t.id === b.id), JSON.stringify(dropped));
     check('the page was not reloaded', stateOk(await keptState(a.contentsId)), JSON.stringify(await keptState(a.contentsId)));
     check('the new window opens with the tab under the release point (grab offset kept)', Boolean(await boundsAt(w2id, 1100 - 150, 600 - 15)), JSON.stringify(await winBounds(w2id)));
     check('...at the size of the window it came from', (await winBounds(w2id)).width === srcSize.width && (await winBounds(w2id)).height === srcSize.height, JSON.stringify([await winBounds(w2id), srcSize]));
@@ -135,27 +143,28 @@ const http = require('http');
     await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).setBounds({ x: 1150, y: 150, width: 800, height: 600 }), w2id);
     await emit(win1, 'tab:switch', initialId);
     await app.evaluate((_e, id) => global.__pinTab(id, false), b.id);
+    await app.evaluate((_e, [w, id]) => global.__windows.pin(w, id, false), [w2id, a.id]); // it stayed pinned; a loose strip to drop into
     await cursor({ x: 900, y: 500 });
     await emit(win1, 'tab:dragstart', b.id, { x: 300, y: 15, stripX: 150 });
     check('a second tab starts a card drag the same way', (await dragState())?.card === true, JSON.stringify(await dragState()));
     await cursor({ x: 1150 + 3, y: 150 + 15 });
     const hoverStart = await waitFor(async () => { const s = await dragState(); return s?.hover?.windowId === w2id ? s : null; });
     check('over the start of another strip: the insertion point is before its first tab', hoverStart?.hover.beforeId === a.id, JSON.stringify(hoverStart));
-    check('that strip shows the insertion marker', Boolean(await waitFor(async () => (await uiCount(w2id, '.tab.drop-before')) === 1)));
+    check('that strip opens a slot before its first tab', Boolean(await waitFor(async () => (await slotBefore(w2id)) === a.id)), await slotBefore(w2id));
     await cursor({ x: 1150 + 780, y: 150 + 15 });
     const hoverEnd = await waitFor(async () => { const s = await dragState(); return s?.hover?.windowId === w2id && s.hover.beforeId === null ? s : null; });
     check('past its last tab: the insertion point is the end', Boolean(hoverEnd), JSON.stringify(await dragState()));
-    check('...and the marker moves to the end', Boolean(await waitFor(async () => (await uiCount(w2id, '.tab.drop-end')) === 1 && (await uiCount(w2id, '.tab.drop-before')) === 0)));
+    check('...and the slot moves to the end (one open slot only)', Boolean(await waitFor(async () => (await slotBefore(w2id)) === 'end' && (await uiCount(w2id, '.tab-drop-slot.open')) === 1)), await slotBefore(w2id));
     await cursor({ x: 1150 + 300, y: 150 + 400 });
     const hoverNone = await waitFor(async () => { const s = await dragState(); return s && !s.hover ? s : null; });
-    check("over that window's page area (not the strip) there is no insertion point", Boolean(hoverNone) && (await uiCount(w2id, '.tab.drop-before, .tab.drop-end')) === 0, JSON.stringify(await dragState()));
+    check("over that window's page area (not the strip) there is no insertion point", Boolean(hoverNone) && Boolean(await waitFor(async () => (await uiCount(w2id, '.tab-drop-slot')) === 0)), JSON.stringify(await dragState()));
     await cursor({ x: 1150 + 3, y: 150 + 15 });
     await waitFor(async () => (await dragState())?.hover?.windowId === w2id);
     await emit(win1, 'tab:dragend');
     const joined = await waitFor(async () => { const l = await windows(); const w = winOf(l, w2id); return l.length === 2 && w?.tabs.length === 2 ? l : null; });
     check('released over the strip: the tab joins that window, no new window', Boolean(joined) && (await dragState()) === null, JSON.stringify(await windows()));
     check('it lands at the index under the cursor (the start) and is the active tab', winOf(joined, w2id)?.tabs[0].id === b.id && winOf(joined, w2id).activeId === b.id && winOf(joined, w2id).tabs[0].contentsId === b.contentsId, JSON.stringify(joined));
-    check('the marker is cleared', (await uiCount(w2id, '.tab.drop-before, .tab.drop-end')) === 0);
+    check('the tab takes the slot: none is left behind', Boolean(await waitFor(async () => (await uiCount(w2id, '.tab-drop-slot')) === 0)));
 
     // ---- over its own strip: the tab moves along it
     await emit(win1, 'tab:switch', initialId);
