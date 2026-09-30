@@ -10,6 +10,8 @@
 // Extensions and the ad blocker are tied to the default session and don't run here either.
 const path = require('path');
 const crypto = require('crypto');
+const googleAuth = require('../browser/google-auth-identity');
+const firefoxProfile = googleAuth.firefoxProfile(process.platform);
 const { pathToFileURL } = require('url');
 
 const UI_HTML = path.join(__dirname, '..', 'renderer', 'private.html');
@@ -65,8 +67,10 @@ function createPrivateWindows(deps) {
     if (deps.mirrorSession) deps.mirrorSession(ses);
     else if (deps.chromeHintHeaders) {
       ses.webRequest.onBeforeSendHeaders((details, callback) => {
-        const headers = details.requestHeaders;
-        if (/^https:/.test(details.url)) {
+        let headers = details.requestHeaders;
+        if (googleAuth.isAuthUrl(details.url)) {
+          headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile); // Google's sign-in hosts see Firefox
+        } else if (/^https:/.test(details.url)) {
           for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];
           Object.assign(headers, deps.chromeHintHeaders);
         }

@@ -107,9 +107,10 @@ function withHints(headers, hints) {
 //    took effect in that renderer),
 //  - window.chrome with app, csi and loadTimes (Electron pages have no window.chrome; Google looks for it),
 //  - the functions it adds answer toString() like native ones.
-function identityPatch() {
+function identityPatch(skipHostSource) {
   try {
     if (/^(file|lumen|chrome-extension|chrome|devtools):$/.test(location.protocol)) return;
+    if (new RegExp(skipHostSource, 'i').test(location.hostname)) return; // Google's sign-in hosts get a Firefox identity instead (google-auth-identity.js)
     const shown = new WeakMap(); // function -> the text toString() gives for it
     const native = (fn) => { shown.set(fn, `function ${fn.name}() { [native code] }`); return fn; };
     const toString = Function.prototype.toString;
@@ -171,7 +172,7 @@ function identityPatch() {
     // A page that locked something down: it keeps what it has.
   }
 }
-const IDENTITY_SCRIPT = `(${identityPatch})();`;
+const IDENTITY_SCRIPT = `(${identityPatch})(${JSON.stringify(require('./google-auth-identity').HOST_SOURCE)});`;
 
 module.exports = {
   chromeBrands, userAgent, windowsPlatformVersion, uaMetadata,
