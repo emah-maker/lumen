@@ -1261,6 +1261,17 @@ function sendTabs() {
   sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession({ background: true }); }, 3000);
 }
 
+// A page's own busy events (loading, title, favicon, in-page navigations) arrive in bursts: they send the strip
+// one state per turn of the event loop, per window. Moves, opens and closes still send at once (sendTabs).
+const tabsSoon = new Set();
+function sendTabsSoon() {
+  const rec = curRec;
+  if (!rec) { sendTabs(); return; }
+  if (tabsSoon.has(rec)) return;
+  tabsSoon.add(rec);
+  setImmediate(() => { tabsSoon.delete(rec); if (rcAlive(rec)) withWindow(rec, sendTabs); });
+}
+
 function activeTab() {
   const tab = tabs.find((t) => t.id === activeId);
   return alive(tab) ? { id: tab.id, webContents: tab.view.webContents } : null;
@@ -1482,10 +1493,12 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   // afresh; until it does, the woken tab keeps showing the ones from before it slept.
   tab.faviconUrls = tab.favicons || [];
   wc.on('page-favicon-updated', (_e, favicons) => {
-    tab.faviconUrls = favicons.filter((u) => typeof u === 'string' && u);
+    const next = favicons.filter((u) => typeof u === 'string' && u);
+    if (next.join('\n') === (tab.favicons || []).join('\n')) return; // the same icons again: nothing to redraw
+    tab.faviconUrls = next;
     tab.favicons = tab.faviconUrls;
     tab.favicon = tab.favicons[0] || null;
-    sendTabs();
+    sendTabsSoon();
     if (tab.favicons.length && !tab.isolated) cacheFavicon(wc.getURL(), tab.favicons);
   });
   wc.on('did-navigate', (_e, url) => {
@@ -1568,7 +1581,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   });
   wc.on('context-menu', (_e, params) => showContextMenu(wc, params));
   for (const event of ['did-start-loading', 'did-stop-loading', 'page-title-updated', 'did-navigate', 'did-navigate-in-page']) {
-    wc.on(event, sendTabs);
+    wc.on(event, sendTabsSoon);
   }
   wc.on('before-input-event', (event, input) => handleShortcut(event, input));
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
