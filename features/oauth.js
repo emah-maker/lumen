@@ -221,7 +221,10 @@ async function beginSignIn({ authorizeBase, tokenUrl, clientId, clientSecret, sc
 // refresh is running share it. A revoked grant clears the stored refresh token and throws an
 // OAuthError with reconnect: true, so callers show "Reconnect" instead of failing every time.
 function createSession({ tokenUrl, post, load, save, now = Date.now, messages = {} }) {
-  const msg = { reconnect: 'Google signed Lumen out. Connect again in Settings.', client: 'Google doesn’t accept that Client ID or secret. Check them in Settings, then connect again.', rate: 'Google asked Lumen to slow down. It will try again shortly.', ...messages };
+  // messages may be a function, read each time (the built-in client and an own one need different advice).
+  const base = { reconnect: 'Google signed Lumen out. Connect again in Settings.', client: 'Google doesn’t accept that Client ID or secret. Check them in Settings, then connect again.', rate: 'Google asked Lumen to slow down. It will try again shortly.' };
+  const msgNow = () => ({ ...base, ...(typeof messages === 'function' ? messages() : messages) });
+  const msg = new Proxy({}, { get: (_t, k) => msgNow()[k] });
   let token = null; // { access, exp }: never stored, never sent to a page
   let pending = null;
   const connected = () => Boolean(load()?.refresh);

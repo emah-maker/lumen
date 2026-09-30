@@ -1106,6 +1106,10 @@ function createWidgets(deps) {
         tokenUrl, post: formPost, now,
         load: () => OA.decodeCreds(deps.getSecret(name)),
         save: (c) => deps.setSecret(name, c ? OA.encodeCreds(c) : null),
+        // With Lumen's own client there is no ID or secret to check: the advice is to connect again.
+        messages: () => (name === 'gmail' && googleClient() && [undefined, '', googleClient().clientId].includes(OA.decodeCreds(deps.getSecret('gmail'))?.clientId)
+          ? { client: 'Google stopped accepting Lumen’s sign-in for Gmail. Connect again in Settings; if that fails, add your own Client ID there.', reconnect: 'Google signed Lumen out of Gmail. Connect again from the Gmail card or Settings.' }
+          : {}),
       }));
     }
     return sessions.get(name);
@@ -1452,7 +1456,7 @@ function createWidgets(deps) {
     const flow = await OA.beginSignIn({
       authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: GV.SCOPE, extra: GV.AUTH_EXTRA, post: formPost, now, timeoutMs: deps.signInMs,
       openExternal: (url) => { if (!url.startsWith(`${authBase}?`)) throw new Error('Refusing to open that address.'); return deps.openExternal(url); },
-      messages: { title: 'Lumen', done: 'Gmail is connected to Lumen. You can close this tab.', denied: 'Gmail was not connected. You can close this tab.' },
+      messages: { title: 'Lumen', done: 'You can close this tab and go back to Lumen, which finishes connecting Gmail.', denied: 'Gmail was not connected. You can close this tab.' },
     });
     signIn = flow;
     try {
@@ -1506,7 +1510,7 @@ function createWidgets(deps) {
   // Best effort: tell Google the refresh token is no longer wanted.
   function revokeGoogle(creds) {
     if (!creds?.refresh) return Promise.resolve(false);
-    return formPost(deps.endpoints?.().googleRevoke || ENDPOINTS.googleRevoke, new URLSearchParams({ token: creds.refresh }).toString()).then(() => true, () => false);
+    return formPost(deps.endpoints?.().googleRevoke || ENDPOINTS.googleRevoke, new URLSearchParams({ token: creds.refresh }).toString()).then((r) => Boolean(r?.ok), () => false);
   }
   // Forget the sign-in (the client id and secret stay, so connecting again is one click).
   async function gmailDisconnect() {
@@ -1514,9 +1518,10 @@ function createWidgets(deps) {
     signIn?.cancel();
     if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '' }));
     staleGmail();
-    await revokeGoogle(creds);
+    lastRevoke = await revokeGoogle(creds);
     return true;
   }
+  let lastRevoke = null; // whether Google confirmed the last disconnect's revoke (Settings says so only then)
   // Settings' project picker for a Todoist widget (a token typed but not saved yet may be given).
   async function projects(token) {
     const t = typeof token === 'string' ? token.trim() : '';
@@ -1689,7 +1694,7 @@ function createWidgets(deps) {
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
-      gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified) }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
+      gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified), revoked: lastRevoke }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       feedPresets: FEED.PRESETS.map(({ id, name }) => ({ id, name })),

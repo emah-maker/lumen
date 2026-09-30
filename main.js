@@ -1377,7 +1377,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
         action: 'allow',
         overrideBrowserWindowOptions: popupWindowOptions(),
         outlivesOpener: true,
-        createWindow: (options) => popupWindow(options, settings, tab.isolated, target),
+        // No page yet means a person's Shift+click on a link, not a page's sign-in popup: it opens as a normal tab.
+        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tab.isolated, target, tab) : withWindow(tab.rec, () => openTab(target, { openerId: id, partition: tab.isolated })).webContents),
       };
     }
     // A tab. When a page's script asked for it (window.open), the page gets that new window back and it keeps
@@ -1387,15 +1388,17 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // closes it. When there is no page yet (Ctrl+click, a middle-click: Electron hands over only the address), the
     // tab is opened the usual way, loading the address, and its page is what Electron gets back.
     // (about:blank too: a page may open a blank window and set its address after an async step, as payments do.)
-    if (!tab.isolated && WebContentsView && (isWebUrl(target) || target === 'about:blank')) {
+    if (WebContentsView && (isWebUrl(target) || target === 'about:blank')) {
       return {
         action: 'allow',
         outlivesOpener: true,
+        // The user's page settings (font sizes, spell check, plugins for protected video), as every tab has.
+        overrideBrowserWindowOptions: { webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) } },
         createWindow: (options) => {
           const background = disposition === 'background-tab';
-          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id })).webContents;
+          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id, partition: tab.isolated })).webContents;
           const view = new WebContentsView({ webContents: options.webContents });
-          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view }));
+          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view, partition: tab.isolated }));
           return options.webContents;
         },
       };
@@ -1450,6 +1453,11 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   });
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
+  });
+  // Google's "This browser or app may not be secure" page: a note says what to try, instead of a dead end.
+  wc.on('did-navigate', (_e, navUrl) => {
+    if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl))) return;
+    withWindow(tab.rec, () => organizeNote('Google didn’t accept this sign-in. Try again in a new tab, or turn off a VPN or proxy if one is on. If Google still refuses, sign in once in Chrome on this computer, then try here again.'));
   });
   // A crashed page (or one out of memory) was left blank with no way back. Show a "This page
   // crashed" page with Reload instead; the crashed page's own entry stays in history behind it.
@@ -1672,7 +1680,7 @@ async function hasUnsavedInput(wc) {
 // away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with
 // typed form input. On any doubt this returns false and the tab is left alone.
 async function canSleep(tab) {
-  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing || agent.usingTab(tab.id)) return false;
+  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing || tab.openPopups > 0 || agent.usingTab(tab.id)) return false;
   const wc = tab.view.webContents;
   if (!isWebUrl(realUrl(wc)) || wc.isLoading() || wc.isCurrentlyAudible()) return false;
   return !(await hasUnsavedInput(wc));
@@ -2762,14 +2770,22 @@ const popupWindowOptions = () => ({
   autoHideMenuBar: true,
   backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
   icon: path.join(__dirname, 'assets', 'icon.png'),
-  webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) },
 });
-function popupWindow(options, noIdentity = false, partition = null, url = null) {
+function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null) {
   const child = new BrowserWindow({ ...options, ...popupWindowOptions(), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
   const wc = child.webContents;
-  if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet (Shift+click): it loads the address itself
   popupPartition.set(wc, partition);
-  if (!noIdentity) applyChromeIdentity(wc);
+  if (!noIdentity) applyChromeIdentity(wc); // before anything loads
+  if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet: it loads the address itself
+  // A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
+  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
+    if (!isMainFrame || code === -3) return;
+    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
+    wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
+  });
+  // While a sign-in popup is open, the tab that opened it doesn't go to sleep (it would lose the page it reports back to).
+  if (openerTab) { openerTab.openPopups = (openerTab.openPopups || 0) + 1; child.on('closed', () => { openerTab.openPopups = Math.max(0, (openerTab.openPopups || 1) - 1); }); }
   // The title bar says which site this is (a popup has no address bar), with a lock when the connection is secure.
   const titleFor = () => { try { const u = new URL(wc.getURL()); return `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host}${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`; } catch { return wc.getTitle() || 'Lumen'; } };
   const retitle = () => { if (!child.isDestroyed()) child.setTitle(titleFor()); };

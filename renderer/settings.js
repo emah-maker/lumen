@@ -962,7 +962,8 @@ async function buildWidgets(card) {
       // the user's own Google Cloud client moves under Advanced (it still wins when its Client ID is filled in).
       const builtin = Boolean(ws.gmailClient?.builtin);
       const own = () => Boolean(inputs.clientId.value.trim());
-      const connectLabel = () => (builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
+      // Connected, it stays: "Sign in again" switches account or mends a sign-in Google ended.
+      const connectLabel = () => (connected() ? tr('settings.gmail.signInAgain', 'Sign in again') : builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
       const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: connectLabel() });
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
@@ -979,8 +980,8 @@ async function buildWidgets(card) {
       inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = accountRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
       const draw = () => {
         disconnect.hidden = !connected();
-        connect.hidden = connected();
         connect.textContent = connectLabel();
+        connect.className = connected() ? '' : 'primary big';
         if (!status.textContent) { status.textContent = connected() ? tr('settings.gmail.connected', 'A Google account is connected.') : tr('settings.gmail.notConnected', 'Not connected yet.'); status.className = `sp-status${connected() ? ' on' : ''}`; }
       };
       connect.addEventListener('click', async () => {
@@ -1009,7 +1010,9 @@ async function buildWidgets(card) {
       disconnect.addEventListener('click', async () => {
         ws = await S.widgets.gmailDisconnect();
         status.textContent = '';
-        flash(status, tr('settings.gmail.disconnected', 'Disconnected. Lumen also asked Google to revoke access.'), 'ok');
+        flash(status, ws?.gmailClient?.revoked === false
+          ? tr('settings.gmail.disconnectedLocal', 'Disconnected on this computer. Google didn’t confirm the revoke; remove Lumen at myaccount.google.com/permissions to be sure.')
+          : tr('settings.gmail.disconnected', 'Disconnected. Google confirmed Lumen no longer has access.'), 'ok');
         draw();
       });
       draw();
