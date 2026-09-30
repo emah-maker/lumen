@@ -152,19 +152,55 @@
       <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
         <div class="empty" id="empty">
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>
+          <section class="welcome" id="welcome" hidden aria-labelledby="welcome-title">
+            <h2 class="welcome-title" id="welcome-title" data-i18n="welcome.title">Welcome to Lumen</h2>
+            <p class="welcome-lead" data-i18n="welcome.lead">A browser with an AI that reads and works in your tabs, and asks before it acts. Three quick steps; skip any of them.</p>
+            <ol class="welcome-steps">
+              <li class="welcome-step" id="welcome-step-ai">
+                <span class="welcome-num" aria-hidden="true">1</span>
+                <div class="welcome-body">
+                  <p class="welcome-step-title" data-i18n="welcome.ai">Connect an AI</p>
+                  <p class="welcome-step-detail" id="welcome-ai-detail" data-i18n="welcome.ai.detail">Pick one way in. You can add others later in Settings.</p>
+                  <div id="welcome-ai-slot"></div>
+                </div>
+              </li>
+              <li class="welcome-step" id="welcome-step-import">
+                <span class="welcome-num" aria-hidden="true">2</span>
+                <div class="welcome-body">
+                  <p class="welcome-step-title" data-i18n="welcome.import">Bring your bookmarks and history</p>
+                  <p class="welcome-step-detail" data-i18n="welcome.import.detail">From another browser on this computer. Passwords and cookies stay there.</p>
+                  <div class="welcome-actions" id="welcome-import-actions"></div>
+                  <p class="welcome-note" id="welcome-import-note" role="status"></p>
+                </div>
+              </li>
+              <li class="welcome-step" id="welcome-step-default">
+                <span class="welcome-num" aria-hidden="true">3</span>
+                <div class="welcome-body">
+                  <p class="welcome-step-title" data-i18n="welcome.default">Make Lumen your default browser</p>
+                  <p class="welcome-step-detail" data-i18n="welcome.default.detail">Links from other apps (mail, chat, documents) then open here.</p>
+                  <div class="welcome-actions"><button class="btn" type="button" id="welcome-make-default" data-i18n="welcome.default.button">Make default</button></div>
+                  <p class="welcome-note" id="welcome-default-note" role="status"></p>
+                </div>
+              </li>
+            </ol>
+            <div class="welcome-foot">
+              <button class="btn primary" type="button" id="welcome-done" data-i18n="welcome.done">Start browsing</button>
+            </div>
+          </section>
           <div class="setup" id="setup" hidden>
             <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
-            <button class="setup-option" type="button" id="setup-keys">
-              <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
-              <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
+            <p class="setup-pending" id="setup-pending" role="status" hidden></p>
+            <button class="setup-option" type="button" id="setup-claude-code">
+              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
+              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
             </button>
             <button class="setup-option" type="button" id="setup-openrouter">
               <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
               <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
             </button>
-            <button class="setup-option" type="button" id="setup-claude-code">
-              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
-              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
+            <button class="setup-option" type="button" id="setup-keys">
+              <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
+              <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
             </button>
           </div>
           <div class="chips">

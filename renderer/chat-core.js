@@ -41,6 +41,92 @@ async function refreshSetup() {
       ? t('setup.claudeCode.signedOut')
       : t('setup.claudeCode.ready');
   optional('setup-claude-code').disabled = !s.claudeCode;
+  const ready = Boolean(s.model) && !pickSignedOut;
+  if (welcoming) {
+    $('setup').hidden = ready;
+    const step = $('welcome-step-ai');
+    step.classList.toggle('done', ready);
+    $('welcome-ai-detail').textContent = ready
+      ? t('welcome.ai.ready', { name: s.models.find((m) => m.id === s.model)?.label || s.model })
+      : t('welcome.ai.detail');
+  }
+  if (ready && pendingAsk && !running) {
+    const p = pendingAsk;
+    pendingAsk = null;
+    optional('setup-pending').hidden = true;
+    optional('setup').classList.remove('attention');
+    await loadModels();
+    if (welcoming) finishWelcome({ focus: false });
+    if (prompt.value.trim() === p.text.trim()) { prompt.value = ''; autosize(); updateSend(); }
+    ask(p.text, p.images, p.tabs);
+  }
+}
+// A question asked before any AI was connected: kept (in the box too), and sent once one is.
+let pendingAsk = null;
+
+// ---------- first-run welcome (the sidebar only; features/setup.js) ----------
+
+// A fresh install opens the sidebar on this: connect an AI (the setup card, inside step 1), import bookmarks and
+// history, become the default browser. Every step can be skipped; Start browsing ends it for good.
+const welcome = document.getElementById('welcome');
+let welcoming = false;
+async function showWelcome() {
+  if (!welcome || welcoming) return;
+  const st = await window.assistant.setup?.state().catch(() => null);
+  if (!st?.welcome) return;
+  welcoming = true;
+  welcome.hidden = false;
+  $('empty').classList.add('welcoming');
+  $('welcome-ai-slot').append($('setup'));
+  // Import: one button per browser found; the result is said in the step.
+  const actions = $('welcome-import-actions');
+  const note = $('welcome-import-note');
+  if (!st.browsers?.length) { note.textContent = t('welcome.import.none'); $('welcome-step-import').classList.add('skipped'); }
+  actions.replaceChildren(...(st.browsers || []).map((b) => {
+    const btn = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: b.label });
+    btn.onclick = async () => {
+      for (const other of actions.querySelectorAll('button')) other.disabled = true;
+      note.className = 'welcome-note';
+      note.textContent = t('welcome.import.running', { browser: b.label });
+      const r = await window.assistant.setup.importFrom(b.id).catch((err) => ({ ok: false, error: err.message }));
+      for (const other of actions.querySelectorAll('button')) other.disabled = false;
+      note.textContent = r.ok ? t('welcome.import.done', { browser: r.label, bookmarks: r.bookmarks.toLocaleString(), history: r.history.toLocaleString() }) : t('welcome.import.failed', { error: r.error });
+      note.classList.toggle('err', !r.ok);
+      if (r.ok) $('welcome-step-import').classList.add('done');
+    };
+    return btn;
+  }));
+  showDefault(st.isDefault);
+  refreshSetup();
+  welcome.querySelector('.setup-option:not(:disabled)')?.focus({ preventScroll: true });
+}
+function showDefault(isDefault) {
+  if (!welcome) return;
+  $('welcome-step-default').classList.toggle('done', Boolean(isDefault));
+  $('welcome-make-default').hidden = Boolean(isDefault);
+  if (isDefault) $('welcome-default-note').textContent = t('welcome.default.done');
+}
+if (welcome) {
+  $('welcome-make-default').onclick = async () => {
+    const r = await window.assistant.setup.makeDefault().catch(() => null);
+    const note = $('welcome-default-note');
+    if (r?.opened === 'windows-settings') note.textContent = t(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual');
+    else showDefault(r?.isDefault);
+  };
+  // Back from the system's Default apps page: did it take?
+  window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then(showDefault).catch(() => {}); });
+  $('welcome-done').onclick = () => finishWelcome();
+  window.assistant.setup?.onWelcome?.(() => showWelcome());
+}
+function finishWelcome({ focus = true } = {}) {
+  if (!welcoming) return;
+  welcoming = false;
+  window.assistant.setup.done().catch(() => {});
+  welcome.hidden = true;
+  $('empty').classList.remove('welcoming');
+  $('empty').querySelector('.chips')?.before($('setup')); // the setup card back in its place
+  refreshSetup();
+  if (focus) prompt.focus();
 }
 optional('setup-claude-code').onclick = async () => {
   // Signed out a moment ago? Ask the CLI again first (the user may have just run /login).
@@ -48,10 +134,12 @@ optional('setup-claude-code').onclick = async () => {
   if (status?.signedIn !== false && await window.assistant.setModel('claudecode:default')) await loadModels();
   refreshSetup();
 };
-$('setup-keys').onclick = openAiSettings;
+$('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
 optional('setup-openrouter').onclick = async () => {
+  // (The full-page chat can't sign in itself, by design: Settings does it there.)
+  if (!window.assistant.openRouterSignIn) { window.lumenPrefs?.openSettingsPage('ai-keys'); return; }
   const btn = optional('setup-openrouter');
   const title = btn.querySelector('.setup-name') || btn;
   if (openRouterPending) { window.assistant.cancelOpenRouterSignIn?.(); return; }
@@ -472,8 +560,16 @@ function ask(text, images = [], tabs = null) {
     queueControls(entry);
     return;
   }
-  // Nothing connected: show the setup card instead of sending a message that can only error.
+  // Nothing connected: the question is kept (back in the box) and sent as soon as an AI is connected.
   if (!modelReady) {
+    pendingAsk = { text, images, tabs };
+    if (!prompt.value.trim() && text) { prompt.value = text; autosize(); updateSend(); }
+    const pending = optional('setup-pending');
+    pending.textContent = t('setup.pending');
+    pending.hidden = false;
+    optional('setup').classList.remove('attention');
+    void optional('setup').offsetWidth; // (the highlight plays again on a second try)
+    optional('setup').classList.add('attention');
     if (!messages.querySelector('.msg')) { refreshSetup(); return; }
     append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') }));
     return;

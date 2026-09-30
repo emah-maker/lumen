@@ -235,22 +235,29 @@ const tabTools = require('./features/tab-tools').create({ onChange: () => sendTa
 let settingsCache = null;
 const settingsFile = require('./settings-file'); // crash-safe read/write (see settings-file.js)
 
+let settingsFileExisted = null; // (at this launch's first read: a fresh install has none, see features/setup.js)
 function readSettings() {
-  if (!settingsCache) settingsCache = settingsFile.loadJson(SETTINGS_FILE());
+  if (!settingsCache) {
+    if (settingsFileExisted === null) settingsFileExisted = fs.existsSync(SETTINGS_FILE());
+    settingsCache = settingsFile.loadJson(SETTINGS_FILE());
+  }
   return { ...settingsCache };
 }
 
 let settingsGen = 0; // bumped by every write: an async write that is no longer the latest doesn't land
+// Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
+// with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
 function writeSettings(settings) {
-  settingsCache = { ...settings };
-  settingsGen++;
-  settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
-}
-// The periodic session save: the same data, written off the main thread (a sync write took ~28 ms of input time).
-function writeSettingsAsync(settings) {
   settingsCache = { ...settings };
   const gen = ++settingsGen;
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen);
+}
+const writeSettingsAsync = writeSettings; // (the periodic session save)
+// Closing a window and quitting: on disk before the process can go away.
+function writeSettingsNow(settings) {
+  settingsCache = { ...settings };
+  settingsGen++;
+  settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
 const aiSites = createAiSites({ readSettings, writeSettings });
 
@@ -1872,7 +1879,9 @@ function switchTab(id, { wake = true } = {}) {
   return true;
 }
 
-function closeTab(id, { destroyed = false } = {}) {
+// `user`: the user closed it (a sleeping tab's ✕, Close group); a tab closed by code (a sign-in tab closing
+// itself, an extension) never takes its window with it.
+function closeTab(id, { destroyed = false, user = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
   if (chatFullTab === id) chatFullTab = null;
@@ -1892,11 +1901,12 @@ function closeTab(id, { destroyed = false } = {}) {
   if (!destroyed && alive(tab)) tab.view.webContents.close();
   if (tabs.length === 0) {
     // Closing a window's last tab (Ctrl+W, its ✕, the tab menu: `closing`, set by requestCloseTab) closes the
-    // window, as in Chrome. A page that went away on its own leaves a fresh tab instead: the window is never
-    // lost to that.
-    if (!destroyed || tab.closing) {
+    // window, as in Chrome: hidden at once (no frame of an empty strip over the page), then closed. A page that
+    // went away on its own, or a tab closed by code, leaves a fresh tab instead: the window is never lost to that.
+    if (user || tab.closing) {
       const rec = curRec;
       sendTabs();
+      try { rec.win.hide(); } catch {}
       setImmediate(() => { if (rcAlive(rec)) rec.win.close(); });
       return;
     }
@@ -1915,7 +1925,7 @@ function closeTab(id, { destroyed = false } = {}) {
 // closeTab({ destroyed: true }), already wired to every tab's 'destroyed' event, finishes the job.
 function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
-  if (!alive(tab)) { closeTab(id); return; }
+  if (!alive(tab)) { closeTab(id, { user: true }); return; }
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
@@ -2483,7 +2493,7 @@ function groupMenu(groupId, { x, y }) {
     ...moveGroupItems(groupId),
     { type: 'separator' },
     { label: t('menu.ungroup'), click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
-    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id)) },
+    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id, { user: true })) },
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
 
@@ -2589,6 +2599,16 @@ async function runImport(id) {
     await dialog.showMessageBox(win, { type: 'warning', message: t('import.failed'), detail: err.message });
   }
 }
+
+// First run, import without a dialog, and the default browser (features/setup.js).
+const setup = require('./features/setup').create({
+  app, shell, readSettings, writeSettings, importer, importBrowser: (id) => importBrowser(id), freshInstall: () => settingsFileExisted === false,
+});
+ipcMain.handle('settings:setup-state', () => setup.state());
+ipcMain.handle('settings:setup-done', () => { setup.welcomeDone(); return true; });
+ipcMain.handle('settings:default-browser', () => setup.isDefault());
+ipcMain.handle('settings:make-default', () => setup.makeDefault());
+ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 
 function importMenu() {
   const found = importer.detectBrowsers();
@@ -3365,7 +3385,7 @@ function saveSession({ excluding = null, background = false } = {}) {
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
-  if (background) writeSettingsAsync(next); else writeSettings(next); // (closing and quitting write at once)
+  if (background) writeSettingsAsync(next); else writeSettingsNow(next); // (closing and quitting write at once)
 }
 
 function restoreSession(entry = null) {
@@ -4554,12 +4574,16 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     // After an update, the release notes come up once, a moment after the restored tabs (only the
     // first normal window asks; whatsNew.check runs once per launch).
     if (firstWindow) setTimeout(() => { if (!w.isDestroyed()) whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message)); }, 1200);
+    // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
+    if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
+    if (firstWindow) setTimeout(() => setup.isDefault().catch(() => {}), 2000).unref?.(); // (for the app menu's item)
   }
   return rec;
 }
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
+  else if (settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
   quitting = true;
 });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -4610,13 +4634,10 @@ async function openFileDialog() {
 }
 // Registering is the user's choice (the ⋯ menu), never done silently. Windows then needs its own
 // Default apps page to confirm; macOS asks by itself.
-function makeDefaultBrowser() {
-  // Run from source (`electron .`), the registered command must include the app folder.
-  const args = process.defaultApp ? [process.execPath, [path.resolve(process.argv[1] || '.')]] : [];
-  for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme, ...args);
-  if (process.platform === 'win32') shell.openExternal('ms-settings:defaultapps').catch(() => {});
-}
-const isDefaultBrowser = () => app.isDefaultProtocolClient('https');
+// (features/setup.js: on Windows Lumen registers as a browser so Default apps can offer it, and the user's real
+// choice is read back, not the protocol handler.)
+function makeDefaultBrowser() { setup.makeDefault().catch(() => {}); }
+const isDefaultBrowser = () => setup.lastDefault() ?? false;
 
 function groupTabsFor(name, ids) {
   const known = ids.filter((id) => tabs.some((t) => t.id === id));

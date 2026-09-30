@@ -907,3 +907,30 @@ body.agent-active .msg.user .msg-edit { display: none; }
 /* A reply that ended without text (stopped, or on a step): only its Regenerate. */
 .msg.assistant.reply-actions-only { height: 22px; margin: 4px 0 16px; }
 .msg.assistant.reply-actions-only .reply-regen { position: static; opacity: 0.75; }
+
+/* First-run welcome (renderer/chat-core.js showWelcome): three steps, each can be skipped. */
+.empty.welcoming .empty-title, .empty.welcoming > .chips { display: none; }
+.welcome { text-align: left; margin: 4px 0 8px; }
+.welcome-title { margin: 0 0 6px; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; color: var(--text); }
+.welcome-lead { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.welcome-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.welcome-step { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; }
+.welcome-num { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--field); color: var(--muted); font-size: 12px; font-weight: 600; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
+.welcome-step.done .welcome-num { background: var(--accent); color: #fff; font-size: 0; }
+.welcome-step.done .welcome-num::before { content: '✓'; font-size: 13px; }
+.welcome-step-title { margin: 2px 0 2px; font-weight: 600; color: var(--text); }
+.welcome-step-detail { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.welcome-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.welcome-actions:empty { display: none; }
+.welcome-note { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.welcome-note:empty { display: none; }
+.welcome-note.err { color: var(--danger); }
+.welcome .setup { margin-top: 8px; }
+.welcome .setup-title { display: none; } /* (the step already says it) */
+.welcome-foot { display: flex; justify-content: flex-end; margin-top: 18px; }
+/* The setup card: its title reads as a heading, and it asks for attention when a question waits on it. */
+.setup-title { font-size: 13px; color: var(--text); }
+.setup-pending { margin: 0 0 4px; padding: 7px 10px; border-radius: 8px; background: var(--accent-soft, var(--field)); color: var(--text); font-size: 12px; }
+.setup.attention .setup-option { animation: setup-attention 900ms var(--ease-out, ease-out) 1; }
+@keyframes setup-attention { 30% { box-shadow: 0 0 0 2px var(--accent); } }
+:root.pref-reduce-motion .setup.attention .setup-option { animation: none; }

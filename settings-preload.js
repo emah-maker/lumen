@@ -139,6 +139,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       setAutomation: call('automation:set'),
       importBrowsers: call('import:browsers'),
       importFrom: call('import:run'),
+      importQuiet: call('import:quiet'), // the result back to the page, no dialog
+      isDefaultBrowser: call('settings:default-browser'),
+      makeDefaultBrowser: call('settings:make-default'),
       onCliProgress: (cb) => ipcRenderer.on('cli:progress', (_e, text) => cb(text)),
     },
   });
