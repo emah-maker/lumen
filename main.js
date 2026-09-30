@@ -789,7 +789,7 @@ const privateWindows = createPrivateWindows({
   // Its sign-in popups behave as normal ones: page settings, an error page when a load fails, the "Google refused" note.
   popupWebPreferences: () => settingsBackend.tabWebPreferences(false),
   popupFailPage: (wc) => popupFailPage(wc),
-  googleRefusedGuard: (wc) => googleRefusedGuard(wc),
+  googleRefusedGuard: (wc, opts) => googleRefusedGuard(wc, opts),
   popupBackground: () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
 });
 if (TEST) global.__private = privateWindows;
@@ -1468,7 +1468,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
-  googleRefusedGuard(wc, (text) => withWindow(tab.rec, () => organizeNote(`${t('google.refused.title')}. ${text}`)));
+  googleRefusedGuard(wc, { inTab: true, win: () => (rcAlive(tab.rec) ? tab.rec.win : null) });
   // A crashed page (or one out of memory) was left blank with no way back. Show a "This page
   // crashed" page with Reload instead; the crashed page's own entry stays in history behind it.
   wc.on('render-process-gone', (_e, details) => {
@@ -2784,17 +2784,17 @@ const popupWindowOptions = () => ({
 });
 // Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
 // strip; for popups and private windows (no strip) a small dialog over the window.
-const googleRefusedText = (wc) => (identified.has(wc)
-  ? t('google.refused.tips')
-  : t('google.refused.debugger')); // Lumen couldn't present itself as Chrome here: another debugger holds the page
-function googleRefusedGuard(wc, notify) {
+const googleRefusedText = (wc, inTab) => (!identified.has(wc)
+  ? t('google.refused.debugger') // Lumen couldn't present itself as Chrome here: another debugger holds the page
+  : t(inTab ? 'google.refused.tipsTab' : 'google.refused.tips'));
+// win: the window to show the dialog over (a tab's browser window); by default the popup's own.
+function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
   let shown = 0;
   const check = (_e, navUrl) => {
     if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl)) || Date.now() - shown < 10000) return;
     shown = Date.now();
-    if (notify) { notify(googleRefusedText(wc)); return; }
-    const win = BrowserWindow.fromWebContents(wc);
-    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc), buttons: ['OK'] }).catch(() => {});
+    const win = winOf?.() || BrowserWindow.fromWebContents(wc);
+    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc, inTab), buttons: ['OK'] }).catch(() => {});
   };
   wc.on('did-navigate', check);
   wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads

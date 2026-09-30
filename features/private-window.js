@@ -102,7 +102,7 @@ function createPrivateWindows(deps) {
     // Only web pages (and the private new-tab page) in a private tab.
     wc.on('will-navigate', (event) => { if (!isWebUrl(event.url) && !sameFile(event.url, NEWTAB_URL)) event.preventDefault(); });
     deps.chromeIdentity?.(wc);
-    deps.googleRefusedGuard?.(wc);
+    deps.googleRefusedGuard?.(wc, { inTab: true, win: () => rec.win });
     pageMenu(rec, wc);
     wc.setWindowOpenHandler(({ url, disposition }) => popupOrTab(rec, url, disposition));
     wc.on('destroyed', () => closeTab(rec, tab.id, { destroyed: true }));

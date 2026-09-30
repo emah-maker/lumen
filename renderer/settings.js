@@ -975,7 +975,7 @@ async function buildWidgets(card) {
       const builtin = Boolean(ws.gmailClient?.builtin);
       const own = () => Boolean(inputs.clientId.value.trim());
       // Connected, it stays: "Sign in again" switches account or mends a sign-in Google ended.
-      const connectLabel = () => (connected() ? tr('settings.gmail.signInAgain', 'Sign in again') : builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
+      const connectLabel = () => (connected() || ws.gmailSignedOut ? tr('settings.gmail.signInAgain', 'Sign in again') : builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
       const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: connectLabel() });
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
@@ -995,7 +995,8 @@ async function buildWidgets(card) {
         connect.textContent = connectLabel();
         connect.className = connected() ? '' : 'primary big';
         if (!status.textContent) {
-          status.textContent = connected() ? (ws.gmailAccount ? tr('settings.gmail.connectedAs', 'Connected as {email}.', { email: ws.gmailAccount }) : tr('settings.gmail.connected', 'A Google account is connected.')) : tr('settings.gmail.notConnected', 'Not connected yet.');
+          status.textContent = connected() ? (ws.gmailAccount ? tr('settings.gmail.connectedAs', 'Connected as {email}.', { email: ws.gmailAccount }) : tr('settings.gmail.connected', 'A Google account is connected.'))
+            : ws.gmailSignedOut ? tr('settings.gmail.signedOut', 'Google signed Lumen out of {email}. Sign in again to see your inbox.', { email: ws.gmailSignedOut }) : tr('settings.gmail.notConnected', 'Not connected yet.');
           status.className = `sp-status${connected() ? ' on' : ''}`;
         }
       };
@@ -1014,7 +1015,8 @@ async function buildWidgets(card) {
           status.textContent = '';
           flash(status, r.message, 'ok');
         } catch (err) {
-          flash(status, clean(err), 'err');
+          if (/cancel/i.test(clean(err))) status.textContent = ''; // the user's own Cancel: back to how it was
+          else flash(status, clean(err), 'err');
         }
         clearTimeout(hint);
         connect.disabled = false;
@@ -1045,8 +1047,8 @@ async function buildWidgets(card) {
       gmailWatch = async () => {
         if (!accountRow.isConnected || connect.disabled || armed) return; // a sign-in or a confirm is under way
         const next = await S.widgets.state();
-        const was = `${Boolean(ws.connections?.gmail)}|${ws.gmailAccount || ''}`;
-        const now = `${Boolean(next.connections?.gmail)}|${next.gmailAccount || ''}`;
+        const was = `${Boolean(ws.connections?.gmail)}|${ws.gmailAccount || ''}|${ws.gmailSignedOut || ''}`;
+        const now = `${Boolean(next.connections?.gmail)}|${next.gmailAccount || ''}|${next.gmailSignedOut || ''}`;
         ws = next;
         if (was === now) return; // nothing about this account changed: its message stays
         status.textContent = '';

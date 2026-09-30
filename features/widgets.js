@@ -1468,6 +1468,7 @@ function createWidgets(deps) {
       } catch (err) {
         // Lumen's own client: the user typed no Client ID, so "check them in Settings" would point nowhere.
         if (builtin && err?.kind === 'client') throw new Error('Lumen’s Google sign-in isn’t available right now. Update Lumen, or use your own Google Cloud client (Settings › Gmail › Advanced).');
+        if (err?.kind === 'timeout') flow.userCancelled = true; // (no focus steal for someone who walked away)
         if (err?.kind === 'timeout') throw new Error(builtin && !googleClient()?.verified ? 'Sign-in timed out. If Google said Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen next time; if it said “Access blocked”, use your own Google Cloud client (Settings › Gmail › Advanced).' : 'Sign-in timed out. Try again.');
         throw err;
       }
@@ -1708,6 +1709,7 @@ function createWidgets(deps) {
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
       gmailAccount: OA.decodeCreds(deps.getSecret('gmail'))?.refresh ? OA.decodeCreds(deps.getSecret('gmail'))?.email || '' : '', // which one, when known
+      gmailSignedOut: !OA.decodeCreds(deps.getSecret('gmail'))?.refresh ? OA.decodeCreds(deps.getSecret('gmail'))?.email || '' : '', // Google ended this account's sign-in (a disconnect forgets the address)
       gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified), revoked: lastRevoke }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
