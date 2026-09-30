@@ -692,15 +692,17 @@ function domQuiet({ quietMs, capMs, extendMs = 700 }) {
     const markers = () => {
       try { return [...document.querySelectorAll('[aria-busy="true"], [role="progressbar"]:not([aria-valuenow="100"]), progress:not([value])')].filter(shown); } catch { return []; }
     };
-    const before = new Set(markers()); // (already there when the action's effects began: not this action's load)
-    const loading = () => markers().some((el) => !before.has(el));
+    // Markers that outlived a whole wait before (a spinner that never goes) are this page's furniture: ignored.
+    // Any other visible one counts, including one the click itself showed before this check began.
+    const known = (globalThis.__lumenStaticMarkers ||= new WeakSet());
+    const loading = () => markers().some((el) => !known.has(el));
     // Quiet, but the page shows a new loading marker (a fetch after a click): one more wait, up to extendMs.
     const done = (why) => {
       if (why === 'quiet' && !extended && loading()) {
         extended = true;
         clearTimeout(timer);
         clearTimeout(cap);
-        cap = setTimeout(() => finish('busy'), extendMs);
+        cap = setTimeout(() => { for (const el of markers()) known.add(el); finish('busy'); }, extendMs); // (outlived it: furniture)
         poll = setInterval(() => { if (!loading()) finish('quiet'); }, 50);
         return;
       }
@@ -1337,7 +1339,7 @@ class Agent {
   // "summarize this page", "click the login button"). A picked model, or a resumed session's pinned tier,
   // is exactly what routing gives. A different model at send just replaces the process. A pre-warmed process
   // that no message takes is released after ~3 min, and pre-warming backs off after failures (claude-code.js).
-  prewarm(text = '') {
+  prewarm(text = '', { retried = false } = {}) {
     const messages = this.messages;
     const settings = messages?.settings;
     if (!settings || !String(settings.model).startsWith('claudecode:') || this.engineRunScope || this.running) return false;
@@ -1349,7 +1351,8 @@ class Agent {
     // Still starting (its model not known yet): the typed words are looked at again once it has started.
     if (cc.isWarm?.() && typed && cc.warmModel && cc.warmModel() === null) {
       clearTimeout(this.prewarmRetry);
-      this.prewarmRetry = setTimeout(() => { try { this.prewarm(typed); } catch {} }, 1500);
+      if (retried) return false; // (once: a warm-up that never reports its model is left alone)
+      this.prewarmRetry = setTimeout(() => { if (!this.running) { try { this.prewarm(typed, { retried: true }); } catch {} } }, 1500);
       this.prewarmRetry.unref?.();
       return false;
     }

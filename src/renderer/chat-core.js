@@ -1471,10 +1471,13 @@ const prewarm = (force = false) => {
   const stage = length >= 40 ? 2 : length >= 12 ? 1 : 0;
   const reroute = stage > prewarmStage;
   if (running || (!force && !reroute && Date.now() - prewarmAt < 20000)) return;
+  if (force && prompt.value === prewarmSent) return; // (blur with nothing new typed: nothing to re-route)
   prewarmAt = Date.now();
   prewarmStage = Math.max(prewarmStage, stage);
+  prewarmSent = prompt.value;
   try { window.assistant?.prewarm?.(prompt.value); } catch {}
 };
+let prewarmSent = '';
 prompt.addEventListener('blur', () => { if (prompt.value.trim()) prewarm(true); else prewarmStage = 0; });
 prompt.addEventListener('focus', () => prewarm());
 prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });

@@ -883,9 +883,17 @@ async function warmAndQuietRuns() {
     page([]);
     let r = await timed(domQuiet({ quietMs: 30, capMs: 400 }));
     check('quiet page: settles after the quiet window', r.why === 'quiet' && r.ms < 150, JSON.stringify(r));
-    page([marker()]);
-    r = await timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 300 }));
-    check('a spinner already there before the action: no extra wait', r.why === 'quiet' && r.ms < 150, JSON.stringify(r));
+    const shownByClick = page([marker()]);
+    const p0 = timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 300 }));
+    setTimeout(() => shownByClick.splice(0), 100);
+    r = await p0;
+    check('a spinner the click already showed: waited for until it goes', r.why === 'quiet' && r.ms >= 90 && r.ms < 280, JSON.stringify(r));
+    const furniture = marker();
+    page([furniture]);
+    r = await timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 150 }));
+    const again = await timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 150 }));
+    check('a spinner that never goes: one capped wait, then ignored on the page', r.why === 'busy' && again.why === 'quiet' && again.ms < 120, JSON.stringify([r, again]));
+    delete globalThis.__lumenStaticMarkers;
     const els = page([]);
     const p1 = timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 300 }));
     els.push(marker(false));
@@ -903,6 +911,7 @@ async function warmAndQuietRuns() {
     r = await p3;
     check('a spinner that stays: the extension is capped', r.why === 'busy' && r.ms >= 190 && r.ms < 400, JSON.stringify(r));
   } finally {
+    delete globalThis.__lumenStaticMarkers;
     delete global.document;
     delete global.MutationObserver;
   }
