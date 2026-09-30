@@ -238,9 +238,17 @@ function readSettings() {
   return { ...settingsCache };
 }
 
+let settingsGen = 0; // bumped by every write: an async write that is no longer the latest doesn't land
 function writeSettings(settings) {
   settingsCache = { ...settings };
+  settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
+}
+// The periodic session save: the same data, written off the main thread (a sync write took ~28 ms of input time).
+function writeSettingsAsync(settings) {
+  settingsCache = { ...settings };
+  const gen = ++settingsGen;
+  settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen);
 }
 const aiSites = createAiSites({ readSettings, writeSettings });
 
@@ -1250,7 +1258,7 @@ function sendTabs() {
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
   clearTimeout(sessionTimer);
-  sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession(); }, 3000);
+  sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession({ background: true }); }, 3000);
 }
 
 function activeTab() {
@@ -1342,6 +1350,7 @@ function makeSpareNewTab() {
   if (TEST || spareNewTab || !app.isReady()) return;
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
   view.webContents.loadURL(newTabUrl()).catch(() => {});
@@ -1351,11 +1360,11 @@ function takeSpareNewTab() {
   const s = spareNewTab;
   if (!s) return null;
   spareNewTab = null;
-  const fresh = s.ready && !s.view.webContents.isDestroyed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)) && Date.now() - s.at < 30 * 60e3;
+  const fresh = s.ready && !s.view.webContents.isDestroyed() && !s.view.webContents.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)); // (no age limit: its data comes with the tab)
   if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
   return s.view;
 }
-const spareSoon = () => setTimeout(makeSpareNewTab, 1500).unref?.();
+const spareSoon = () => setTimeout(makeSpareNewTab, 400).unref?.();
 
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
@@ -2588,7 +2597,7 @@ function bookmarks() {
 let historyVersion = 0; // bumped on every visit or import: frequentSites is remembered until it changes
 let frequentMemo = null;
 function frequentSites(limit = 6) {
-  const key = `${historyVersion}|${history.size}|${limit}|${bookmarks().length}`;
+  const key = `${historyVersion}|${history.size}|${limit}|${bookmarks().map((b) => b.url).join(' ')}`;
   if (frequentMemo?.key === key) return frequentMemo.out;
   const out = frequentSitesNow(limit);
   frequentMemo = { key, out };
@@ -2617,7 +2626,8 @@ function faviconFile(dataUrl) {
   const m = dataUrl.match(/^data:image\/([a-z+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
   if (!m) return dataUrl; // (not base64: passed as it is)
   const dir = path.join(app.getPath('userData'), 'favicon-cache');
-  const file = path.join(dir, `${key}.${m[1].replace(/\+.*/, '').replace('jpeg', 'jpg')}`);
+  const ext = { 'x-icon': 'ico', 'vnd.microsoft.icon': 'ico', 'svg+xml': 'svg', jpeg: 'jpg' }[m[1].toLowerCase()] || m[1].toLowerCase().replace(/[^a-z0-9]/g, '');
+  const file = path.join(dir, `${key}.${ext}`);
   try {
     if (!fs.existsSync(file)) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, Buffer.from(m[2], 'base64')); }
   } catch { return dataUrl; }
@@ -3293,11 +3303,12 @@ function sessionEntry() {
 
 // Every normal window is saved: the first one in the session's own fields (as before, so older
 // versions still read it), the others under `more`. Private windows are never here.
-function saveSession({ excluding = null } = {}) {
+function saveSession({ excluding = null, background = false } = {}) {
   const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r));
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
-  writeSettings({ ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } });
+  const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
+  if (background) writeSettingsAsync(next); else writeSettings(next); // (closing and quitting write at once)
 }
 
 function restoreSession(entry = null) {
