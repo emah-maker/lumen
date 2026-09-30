@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.4.1 (2026-09-30)
+
+- 0.4.0 was tagged but never published: Lumen stopped at start-up before opening a window. That is fixed, and this release has everything listed under 0.4.0.
+- OpenRouter: the model picker's short list shows each family's model itself instead of its rate-limited ":free" variant (the free ones are still under More models).
 - The code moved under `src/` (`src/main.js`, with `ai/`, `automation/`, `browser/`, `settings/` and `preload/` beside `features/`, `renderer/` and `locales/`); the repository root now holds only configuration and docs. Nothing changes for users: MCP setups that run `<app>/mcp.js` keep working, and the website no longer ships inside the app.
 
 ## 0.4.0 (2026-09-30)
