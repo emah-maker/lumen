@@ -61,7 +61,12 @@ function createDialogs(deps) {
   function raise() {
     if (!overlay || overlay.webContents.isDestroyed() || !overlay.getVisible() || !host || host.isDestroyed()) return;
     const kids = host.contentView.children;
-    if (kids[kids.length - 1] !== overlay) host.contentView.addChildView(overlay); // (layout() runs per frame while the sidebar animates)
+    if (kids[kids.length - 1] !== overlay) {
+      // Re-adding can drop the view's focus: give it back only if it had it (never steal it from the page).
+      const hadFocus = overlay.webContents.isFocused();
+      host.contentView.addChildView(overlay); // (layout() runs per frame while the sidebar animates)
+      if (hadFocus && !overlay.webContents.isDestroyed()) overlay.webContents.focus();
+    }
   }
 
   // A dialog tied to a tab (`owner`) is cancelled the moment that tab navigates away or is closed,

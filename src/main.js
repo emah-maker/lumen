@@ -1230,6 +1230,7 @@ function tabState() {
   const defaultZoomPercent = Math.round((settingsBackend.prefs().defaultZoom || 1) * 100);
   return {
     groups: tabGroups.state(),
+    organizable: tabGroups.organizableCount(), // what Organize would regroup (the strip shows its button by this)
     // A sleeping tab has no view/webContents to read from; it still gets a row, built from the
     // snapshot sleepTab() took (title/url/favicon/group), with a 'sleeping' flag for the tab strip.
     // A tab being closed leaves the strip at once, as in Chrome; it comes back only if the page asks
@@ -1370,13 +1371,15 @@ function layout() {
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
   raiseOverlays();
 }
-// Layering (bottom to top): the UI view, tab views, suggestions, downloads panel, dialogs. A tab view added later
+const { overlaysToRaise } = require('./features/overlay-order');
+// Layering (bottom to top): the UI view, tab views, Spotify card, suggestions, downloads panel, tool overlay, dialogs. A tab view added later
 // (a new tab, a woken one) lands above an overlay that is showing and would hide it; put those back on top, in order.
 function raiseOverlays() {
   if (!win || win.isDestroyed()) return;
-  const order = [suggestView, downloadsView].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
-  const topTab = () => Math.max(-1, ...tabs.filter((t) => t.view).map((t) => win.contentView.children.indexOf(t.view)));
-  for (const v of order) if (win.contentView.children.indexOf(v) < topTab()) win.contentView.addChildView(v);
+  // Fixed order, bottom to top: spotify, suggestions, downloads, tool overlay (dialogs: dialogs.raise below).
+  const order = [spotifyWeb.view(), suggestView, downloadsView, toolOverlay.viewFor(win)].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
+  // Only when one is under a tab (or they are out of order): then all are re-added in order, so two never swap.
+  for (const v of overlaysToRaise(win.contentView.children, tabs.filter((t) => t.view).map((t) => t.view), order)) win.contentView.addChildView(v);
   dialogs.raise();
 }
 // Turn the tab's full-width layout override on, change it or off (only when it changed).
@@ -2215,7 +2218,7 @@ async function organizeTabs() {
     });
     back(sendTabs);
     if (!stats.groups && !stats.created) {
-      back(() => organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`, { undo: tabGroups.canUndo() })); // a note that closes itself, not a modal: nothing needs an answer (Undo if old automatic groups were dissolved)
+      back(() => organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer. Nothing was changed (organizeByTopic rolls back), so no Undo
     } else if (stats.reason !== 'cancelled') {
       const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : /timeout/.test(stats.failed) ? t('organize.slow') : t('organize.localOnly');
       const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
@@ -2283,15 +2286,10 @@ function scheduleAiTopics() {
 }
 
 // "Organize Tabs by Topic" (tab menu, ⋯ → Tab Groups): regroups loose tabs and automatic groups.
+// The same flow as the strip's Organize button (Organizing... state, summary with Undo, the same messages).
 async function organizeByTopic() {
-  let proposal = null;
-  if (tabGroups.candidates().length < 2) { organizeNote(tooFewMessage().message); return 0; } // say why, rather than do nothing
-  if (readSettings().topicAi === true) {
-    proposal = await proposeGroups(cheapTopicModel(), topicList(tabGroups.candidates())).catch(() => null); // falls back to local
-  }
-  const count = tabGroups.organizeByTopic(proposal);
-  sendTabs();
-  return count;
+  await organizeTabs();
+  return tabGroups.canUndo() ? tabGroups.organizeCounts().web : 0;
 }
 // "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
 function mergeGroups() {
