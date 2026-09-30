@@ -3,11 +3,29 @@ const fs = require('fs');
 const path = require('path');
 
 // Lumen.exe is Electron's unmodified binary (scripts/build.js), so its own icon is Electron's: every
-// place Windows shows Lumen's icon has to be pointed at an .ico instead. The installed copy's
-// icon.ico (scripts/install-windows.ps1) or, in the setup installer's copy, the app's own.
+// place Windows shows Lumen's icon has to be pointed at an .ico instead. The app's own assets/icon.ico
+// first: every build and every update ships it at the same place. The icon.ico that
+// scripts/install-windows.ps1 puts next to the exe is not in the release zip, so an update's swap
+// deleted it and left the shortcuts pointing at nothing (Windows then shows the exe's, Electron's).
 function appIcon() {
+  const own = path.join(__dirname, '..', 'assets', 'icon.ico');
   const installed = path.join(path.dirname(process.execPath), 'icon.ico');
-  return fs.existsSync(installed) ? installed : path.join(__dirname, '..', 'assets', 'icon.ico');
+  return fs.existsSync(own) || !fs.existsSync(installed) ? own : installed;
+}
+
+// Explorer's "Open with", Default apps and the like name a program by its exe's description, which for
+// Electron's binary is "Electron". Windows takes a FriendlyAppName from the registry over it (per user,
+// no admin), and caches the description it read in MuiCache: set both to Lumen. Runs at startup,
+// in the background.
+function fixAppName(app) {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  const exe = process.execPath;
+  const values = [
+    [`HKCU\\Software\\Classes\\Applications\\${path.basename(exe)}`, 'FriendlyAppName'],
+    ['HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache', `${exe}.FriendlyAppName`],
+  ];
+  const { execFile } = require('child_process');
+  for (const [key, name] of values) execFile('reg.exe', ['add', key, '/v', name, '/t', 'REG_SZ', '/d', 'Lumen', '/f'], { windowsHide: true, timeout: 8000 }, () => {});
 }
 
 // Per-user paths (what `--install-shortcuts` writes to) plus the all-users equivalents: a
@@ -18,6 +36,9 @@ function appIcon() {
 const shortcutDirs = (app) => [
   app.getPath('desktop'),
   path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+  // Pinned to the taskbar: Windows keeps its own copy of the shortcut here, and draws the pinned
+  // button from it (not from the running window), so a stale icon here is the one on the taskbar.
+  path.join(app.getPath('appData'), 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar'),
   ...(process.env.PUBLIC ? [path.join(process.env.PUBLIC, 'Desktop')] : []),
   ...(process.env.ProgramData ? [path.join(process.env.ProgramData, 'Microsoft', 'Windows', 'Start Menu', 'Programs')] : []),
 ];
@@ -27,7 +48,7 @@ const shortcutDirs = (app) => [
 function installShortcuts(app, shell, appId) {
   const exe = process.execPath;
   const options = { target: exe, cwd: path.dirname(exe), icon: appIcon(), iconIndex: 0, appUserModelId: appId, description: 'Lumen, the AI browser' };
-  for (const dir of shortcutDirs(app)) {
+  for (const dir of shortcutDirs(app).filter((d) => !/User Pinned/i.test(d))) { // pinning is the user's choice
     shell.writeShortcutLink(path.join(dir, 'Lumen.lnk'), 'create', options);
     fs.rmSync(path.join(dir, 'Claude Browser.lnk'), { force: true }); // the shortcut from before the rename
   }
@@ -56,15 +77,17 @@ function shortcutsIn(dir) {
 // installer's do, and so can one made by hand or left from an old install under another name
 // (a stray Electron.lnk with Lumen's app ID put Electron's icon on the taskbar). Point every
 // shortcut to this exe on the Desktop or in the Start menu at Lumen's icon. Runs at startup; a
-// no-op once they're right.
-function fixShortcutIcons(app, shell) {
+// no-op once they're right. A shortcut naming an .ico that no longer exists (an update removed it)
+// counts as wrong too.
+function fixShortcutIcons(app, shell, exists = fs.existsSync) {
   if (process.platform !== 'win32' || !app.isPackaged) return;
   const exe = path.resolve(process.execPath).toLowerCase();
   for (const dir of shortcutDirs(app)) {
     for (const file of shortcutsIn(dir)) {
       try {
         const link = shell.readShortcutLink(file);
-        if (path.resolve(link.target || '').toLowerCase() !== exe || /\.ico$/i.test(link.icon || '')) continue;
+        const icon = String(link.icon || '').replace(/,\s*-?\d+$/, '');
+        if (path.resolve(link.target || '').toLowerCase() !== exe || (/\.ico$/i.test(icon) && exists(icon))) continue;
         shell.writeShortcutLink(file, 'update', { icon: appIcon(), iconIndex: 0 });
       } catch {} // someone else's shortcut, or one we can't read: leave it
     }
@@ -131,4 +154,4 @@ function acquireInstanceLock(app) {
   return false;
 }
 
-module.exports = { appIcon, installShortcuts, fixShortcutIcons, acquireInstanceLock, listenForSecondInstances };
+module.exports = { appIcon, fixAppName, installShortcuts, fixShortcutIcons, acquireInstanceLock, listenForSecondInstances };

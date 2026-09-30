@@ -149,6 +149,10 @@
     renderMeter();
   }
   select?.addEventListener('change', () => setTimeout(() => refreshUsage(false)));
+  // Another chat is open (New chat, one from the chat list, or a new topic starting its own chat):
+  // Grok's context bar is that chat's, empty for a new one. Main has switched chats by then.
+  $('new-chat')?.addEventListener('click', () => setTimeout(() => refreshUsage(false), 50));
+  window.chatUsageMeter = { refresh: () => refreshUsage(false) };
   window.assistant?.onEvent?.((event) => {
     const w = event.type === 'rate_limit' && event.info?.unifiedWindows?.five_hour;
     if (w && usage?.bars?.claudecode) {

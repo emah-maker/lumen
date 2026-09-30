@@ -42,13 +42,15 @@
 
   async function openChat(id) {
     const view = await api.open(id);
-    if (!view) { await render(); return; } // gone (deleted, or unreadable on this machine)
+    if (!view) { await render(); return false; } // gone (deleted, or unreadable on this machine)
     clearChatView();
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);
+    window.chatUsageMeter?.refresh(); // the context bar follows the chat that is open now
     closePanel(false);
     prompt.focus();
+    return true;
   }
 
   async function openPanel() {
@@ -77,6 +79,7 @@
   // A chat started or stopped running, needs an OK, or finished unseen: its row's mark changes.
   api.onChanged?.(() => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
 
-  // openChat(id): a notification was clicked (app.js); the open chat stays as it is.
-  window.chatList = { refreshUsage, open: openPanel, close: closePanel, openChat: async (id) => { const { current } = await api.list(); if (id && id !== current) await openChat(id); } };
+  // openChat(id): a notification was clicked (app.js), or a message moves back to the last chat
+  // (chat-core.js askOnNewTopic). The chat already open stays as it is. True when that chat is open.
+  window.chatList = { refreshUsage, open: openPanel, close: closePanel, openChat: async (id) => { if (!id) return false; const { current } = await api.list(); return id === current ? true : openChat(id); } };
 })();

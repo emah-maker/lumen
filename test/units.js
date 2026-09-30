@@ -763,6 +763,11 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     for (const file of Object.keys(links)) links[file].icon = appIcon();
     fixShortcutIcons(fakeApp(true), shell);
     check('icon: shortcuts that already have the .ico are not rewritten', updates.length === 0, JSON.stringify(updates));
+    // An update's swap removed the icon.ico next to the exe that the shortcuts named.
+    const gone = path.join(dir, 'Programs', 'Lumen', 'icon.ico');
+    links[path.join(desktop, 'Lumen.lnk')].icon = `${gone},0`;
+    fixShortcutIcons(fakeApp(true), shell);
+    check('icon: a shortcut naming an .ico that no longer exists is pointed at one that does', updates.length === 1 && updates[0].f === path.join(desktop, 'Lumen.lnk') && fs.existsSync(updates[0].icon), JSON.stringify(updates));
   }
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -922,6 +927,27 @@ async function fuseChecks() {
   await afterPack.default({ appOutDir: out, electronPlatformName: 'linux', packager });
   check('fuses: the hook never flips a non-mac build', calls.length === 1, JSON.stringify(calls));
   fs.rmSync(out, { recursive: true, force: true });
+}
+
+// ---- A new topic starts a new chat (renderer/chat-topic.js): only when nothing ties it to the chat so far
+{
+  const { isNewTopic } = require('../renderer/chat-topic');
+  const said = ['How do I center a div with flexbox in CSS?', 'Use display: flex; justify-content: center; align-items: center on the parent container.'];
+  for (const [text, want] of [
+    ['What is a good recipe for banana bread?', true],
+    ['Recommend some sci-fi novels for a long flight', true],
+    ['Tokyo weather', true],
+    ['How do I do it with grid instead?', false], // refers back
+    ['why?', false],
+    ['what about vertically only', false],
+    ['make it shorter', false],
+    ['summarize', false], // too short to tell
+    ['Does flexbox work in old Safari?', false], // shares a word
+    ['Can you center text inside a button?', false],
+    ['css grid tutorial', false],
+    ['thanks! now how do I book a flight to Tokyo', false], // opens like a reply
+  ]) check(`chat topic: "${text}" is ${want ? 'a new topic' : 'the same chat'}`, isNewTopic(text, said) === want, isNewTopic(text, said));
+  check('chat topic: an empty chat never splits', isNewTopic('What is a good recipe for banana bread?', []) === false);
 }
 
 // ---- Tab search matching (renderer/tab-search-match.js) and tab audio (features/tab-tools.js)

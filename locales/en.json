@@ -59,6 +59,8 @@
   "chat.copyFailed": "Could not copy",
   "chat.image": "image",
   "chat.imageN": "Image {n}",
+  "chat.newTopic": "New topic, so this is a new chat.",
+  "chat.newTopic.back": "Keep in last chat",
   "chat.queued": "Sends when this reply finishes: “{text}”",
   "chat.setupAi": "Set up AI",
   "chat.setupNeeded": "Set up an AI in Settings to keep chatting.",

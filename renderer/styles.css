@@ -150,7 +150,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab.dragging.tearing { opacity: 0.6; scale: 0.96; }
 /* The tab has left for a window of its own (main.js drives that drag): it keeps its DOM node, which holds
    the pointer, but takes no room. */
-.tab.dragging.handed { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
+.tab.dragging.handed, .tab.held { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
 /* Another window's tab is being dragged over this strip: where it would land. */
 .tab.drop-before::before, .tab.drop-end::after { content: ''; position: absolute; top: 2px; bottom: 2px; width: 3px; border-radius: 2px; background: var(--accent); z-index: 4; }
 .tab.drop-before::before { left: -3px; }
@@ -501,6 +501,10 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } }
 
 .notice { color: var(--muted); font-size: 12px; margin: 8px 0; }
+/* A message on a new topic started a new chat: the way back to the last one. */
+.notice-action { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
+.notice-action:hover { text-decoration: underline; }
+.notice-action:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .error { color: var(--danger); font-size: 12px; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--danger-soft); }
 .error .btn { display: block; margin-top: 8px; height: 26px; font-size: 12px; color: var(--text); background: var(--surface-raised); }
 
