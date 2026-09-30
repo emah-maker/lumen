@@ -116,8 +116,7 @@ const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const isWebUrl = (url) => /^https?:\/\//i.test(url);
 
 // Look like stock Chrome; sites (notably Google) treat unknown browser tokens as bots.
-const UA_PLATFORM = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; Intel Mac OS X 10_15_7' }[process.platform] || 'X11; Linux x86_64';
-app.userAgentFallback = `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
+app.userAgentFallback = require('./browser/chrome-identity').userAgent(process.platform, process.versions.chrome); // (browser/chrome-identity.js)
 // Google's sign-in on other sites (One Tap, "Sign in with Google") uses FedCM when the browser says it is Chrome.
 // Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
 app.commandLine.appendSwitch('disable-features', 'FedCm');
@@ -2935,51 +2934,23 @@ const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
 if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
-// (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol.
-const CHROME_MAJOR = process.versions.chrome.split('.')[0];
-// Chrome's brand list, built the way Chromium builds it (GenerateBrandVersionList): the made-up
-// "Not…A…Brand" entry and the order of the three both follow from the major version, so a
-// hard-coded list gives Lumen away as soon as Chromium moves on. Chromium 152 gives
-// Chromium, Not?A_Brand/24, Google Chrome; Chrome 154 gives Chromium, Google Chrome, Not A(Brand/99.
-function chromeBrands(full) {
-  const seed = Number(CHROME_MAJOR);
-  const chars = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'];
-  const greaseVersion = ['8', '99', '24'][seed % 3];
-  const list = [
-    { brand: `Not${chars[seed % chars.length]}A${chars[(seed + 1) % chars.length]}Brand`, version: full ? `${greaseVersion}.0.0.0` : greaseVersion },
-    { brand: 'Chromium', version: full ? process.versions.chrome : CHROME_MAJOR },
-    { brand: 'Google Chrome', version: full ? process.versions.chrome : CHROME_MAJOR },
-  ];
-  const order = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]][seed % 6];
-  const shuffled = [];
-  list.forEach((b, i) => { shuffled[order[i]] = b; });
-  return shuffled;
-}
-// What Chrome reports as Windows' platformVersion (the UniversalApiContract version, not "10.0"): 10.0.0 or lower on
-// Windows 10, 13-14 on Windows 11 21H2, 15 on 22H2/23H2, 19 on 24H2 and later. Read from the build number.
-function windowsPlatformVersion() {
-  const build = Number(String(require('os').release()).split('.')[2]) || 0;
-  return build >= 26100 ? '19.0.0' : build >= 22621 ? '15.0.0' : build >= 22000 ? '14.0.0' : '10.0.0';
-}
-const UA_METADATA = {
-  brands: chromeBrands(false),
-  fullVersionList: chromeBrands(true),
-  platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux',
-  // Chrome on a Mac reports the real macOS version (26.0.0), not an empty string.
-  platformVersion: process.platform === 'win32' ? windowsPlatformVersion() : process.platform === 'darwin' ? process.getSystemVersion() : '',
-  architecture: process.arch === 'arm64' ? 'arm' : 'x86', // Chrome on Apple Silicon says "arm"
-  bitness: '64',
-  model: '',
-  mobile: false,
-};
+// (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
+// brand list, headers and window.chrome all come from browser/chrome-identity.js so they agree.
+const CHROME_IDENTITY = require('./browser/chrome-identity');
+// Google's sign-in hosts refuse a Chrome-shaped Electron whatever it reports; they get a Firefox identity instead
+// (browser/google-auth-identity.js): Firefox's User-Agent, no client hints, Firefox's navigator, no window.chrome.
+const GOOGLE_AUTH = require('./browser/google-auth-identity');
+const FIREFOX_PROFILE = GOOGLE_AUTH.firefoxProfile(process.platform);
+const UA_METADATA = CHROME_IDENTITY.uaMetadata({
+  chromeVersion: process.versions.chrome, platform: process.platform, arch: process.arch,
+  release: require('os').release(), systemVersion: process.platform === 'darwin' ? process.getSystemVersion() : '',
+});
 // The same identity for the Sec-CH-UA request headers, which Chrome sends on every request to a
 // secure origin. Requests from tabs otherwise go out with none at all (and the browser's own with
 // Electron's Chromium-only list): a Chrome user agent without them is what bot checks look for.
-const UA_HINT_HEADERS = {
-  'Sec-CH-UA': UA_METADATA.brands.map((b) => `"${b.brand}";v="${b.version}"`).join(', '),
-  'Sec-CH-UA-Mobile': '?0',
-  'Sec-CH-UA-Platform': `"${UA_METADATA.platform}"`,
-};
+const UA_HINT_HEADERS = CHROME_IDENTITY.lowEntropyHeaders(UA_METADATA);
+// Sec-CH-UA-Arch, -Platform-Version, -Full-Version-List… for an origin whose response asked for them (settings-backend.js).
+const uaHighEntropyHeaders = (hints) => CHROME_IDENTITY.highEntropyHeaders(UA_METADATA, hints);
 // The override only covers the tab's own frame. Cross-origin iframes and workers are separate
 // targets that would still say "Chromium", and Cloudflare's checkbox (an iframe from
 // challenges.cloudflare.com) fails a page whose frames disagree. So auto-attach to each one, paused
@@ -2994,8 +2965,17 @@ const popupWindowOptions = () => ({
 });
 // Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
 // strip; for popups and private windows (no strip) a small dialog over the window.
+// Automation on: Chromium's remote-debugging pipe (or port) is open, which Google can read as a bot.
+const automationIsOn = () => Boolean(readSettings().automationEnabled);
+function turnAutomationOff() { // what Settings → Advanced → Automation does when switched off, then a restart
+  try { writeSettings({ ...readSettings(), automationEnabled: false }); } catch {}
+  try { fs.rmSync(path.join(app.getPath('userData'), 'automation-token'), { force: true }); } catch {} // (a new address when it is turned on again)
+  app.relaunch();
+  app.quit();
+}
 const googleRefusedText = (wc, inTab) => (!identified.has(wc)
   ? t('google.refused.debugger') // Lumen couldn't present itself as Chrome here: another debugger holds the page
+  : automationIsOn() ? t('google.refused.automation')
   : t(inTab ? 'google.refused.tipsTab' : 'google.refused.tips'));
 // win: the window to show the dialog over (a tab's browser window); by default the popup's own.
 function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
@@ -3004,7 +2984,11 @@ function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
     if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl)) || Date.now() - shown < 10000) return;
     shown = Date.now();
     const win = winOf?.() || BrowserWindow.fromWebContents(wc);
-    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc, inTab), buttons: ['OK'] }).catch(() => {});
+    const offer = identified.has(wc) && automationIsOn(); // one click to the likely fix
+    if (win && !win.isDestroyed()) {
+      electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc, inTab), buttons: offer ? [t('google.refused.turnOff'), 'OK'] : ['OK'], defaultId: 0, cancelId: offer ? 1 : 0 })
+        .then(({ response }) => { if (offer && response === 0) turnAutomationOff(); }).catch(() => {});
+    }
   };
   wc.on('did-navigate', check);
   wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads
@@ -3059,17 +3043,44 @@ function applyChromeIdentity(wc) {
   }
   identified.add(wc);
   const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
+  const firefox = { userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform }; // no userAgentMetadata: Firefox has no client hints
+  const basic = { userAgent: override.userAgent, userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }; // (if this DevTools rejects the newest metadata fields, the brands still apply)
+  const send = (method, params, sessionId) => wc.debugger.sendCommand(method, params, sessionId);
   // Workers have no Emulation domain; Network sets the same thing there.
-  const identify = (sessionId) => wc.debugger.sendCommand('Emulation.setUserAgentOverride', override, sessionId)
-    .catch(() => wc.debugger.sendCommand('Network.setUserAgentOverride', override, sessionId)).catch(() => {});
-  const autoAttach = (sessionId) => wc.debugger.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
+  // asFirefox: the target is a Google sign-in page (see GOOGLE_AUTH): nothing of Chrome's brands may show there.
+  const identify = (sessionId, asFirefox = false) => (asFirefox
+    ? send('Emulation.setUserAgentOverride', firefox, sessionId).catch(() => send('Network.setUserAgentOverride', firefox, sessionId)).catch(() => {})
+    : send('Emulation.setUserAgentOverride', override, sessionId)
+      .catch(() => send('Emulation.setUserAgentOverride', basic, sessionId))
+      .catch(() => send('Network.setUserAgentOverride', override, sessionId))
+      .catch(() => send('Network.setUserAgentOverride', basic, sessionId)).catch(() => {}));
+  // window.chrome and navigator.webdriver, at document start in every frame (browser/chrome-identity.js); not in workers.
+  // (Both scripts name the hosts they act on: the Chrome one skips Google's sign-in hosts, the Firefox one runs only there.)
+  const script = (sessionId) => Promise.all([
+    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
+    send('Page.addScriptToEvaluateOnNewDocument', { source: GOOGLE_AUTH.firefoxScript(FIREFOX_PROFILE), runImmediately: true }, sessionId).catch(() => {}),
+  ]);
+  const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
-    Promise.all([identify(sessionId), targetInfo.type === 'iframe' ? autoAttach(sessionId) : null])
-      .finally(() => wc.debugger.sendCommand('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
+    const frame = targetInfo.type === 'iframe';
+    Promise.all([identify(sessionId, frame && GOOGLE_AUTH.isAuthUrl(targetInfo.url)), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
+      .finally(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
   });
-  identify();
+  // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
+  // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
+  // settings-backend.js and the navigator by the script above, so neither waits on this.)
+  let asFirefox = false;
+  const follow = (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    const want = GOOGLE_AUTH.isAuthUrl(details.url);
+    if (want !== asFirefox) { asFirefox = want; identify(undefined, want); }
+  };
+  wc.on('did-start-navigation', follow);
+  wc.on('did-redirect-navigation', follow);
+  identify(undefined, GOOGLE_AUTH.isAuthUrl(wc.getURL()) ? (asFirefox = true) : false);
+  script();
   autoAttach();
 }
 
@@ -5225,6 +5236,7 @@ const settingsBackend = settingsPage.create({
   showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
   peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
+  chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
   tabContents: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => t.view.webContents),
