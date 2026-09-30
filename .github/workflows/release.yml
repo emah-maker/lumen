@@ -94,6 +94,7 @@ jobs:
           # paste-your-own-client flow. An installed app's client secret is not confidential (RFC 8252).
           LUMEN_GOOGLE_CLIENT_ID: ${{ secrets.LUMEN_GOOGLE_CLIENT_ID }}
           LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}
+          LUMEN_GOOGLE_VERIFIED: ${{ vars.LUMEN_GOOGLE_VERIFIED }} # '1' once Google has approved the built-in client's Gmail access
         run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
       - name: List the zip in latest.yml

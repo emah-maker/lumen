@@ -1370,18 +1370,25 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: popupWindowOptions(),
-        createWindow: (options) => popupWindow(options, settings, tab.isolated),
+        outlivesOpener: true,
+        createWindow: (options) => popupWindow(options, settings, tab.isolated, target),
       };
     }
     // A tab. When a page's script asked for it (window.open), the page gets that new window back and it keeps
     // window.opener, as in Chrome: sign-in code that opens a window and watches or redirects it keeps working.
     // Lumen adopts the new window's page into a tab instead of making a window for it.
+    // A tab opened this way outlives the page that opened it (outlivesOpener): closing or sleeping that page never
+    // closes it. When there is no page yet (Ctrl+click, a middle-click: Electron hands over only the address), the
+    // tab is opened the usual way, loading the address, and its page is what Electron gets back.
     if (!tab.isolated && WebContentsView && isWebUrl(target)) {
       return {
         action: 'allow',
+        outlivesOpener: true,
         createWindow: (options) => {
+          const background = disposition === 'background-tab';
+          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id })).view.webContents;
           const view = new WebContentsView({ webContents: options.webContents });
-          withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id, view }));
+          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view }));
           return options.webContents;
         },
       };
@@ -2744,9 +2751,11 @@ const popupWindowOptions = () => ({
   icon: path.join(__dirname, 'assets', 'icon.png'),
   webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
 });
-function popupWindow(options, noIdentity = false, partition = null) {
-  const child = new BrowserWindow({ ...options, ...popupWindowOptions(), webContents: options.webContents, webPreferences: { ...options.webPreferences, ...popupWindowOptions().webPreferences } });
+function popupWindow(options, noIdentity = false, partition = null, url = null) {
+  const child = new BrowserWindow({ ...options, ...popupWindowOptions(), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
   const wc = child.webContents;
+  if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet (Shift+click): it loads the address itself
+  popupPartition.set(wc, partition);
   if (!noIdentity) applyChromeIdentity(wc);
   // The title bar says which site this is (a popup has no address bar), with a lock when the connection is secure.
   const titleFor = () => { try { const u = new URL(wc.getURL()); return `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host}${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`; } catch { return wc.getTitle() || 'Lumen'; } };
@@ -2761,12 +2770,13 @@ function popupWindow(options, noIdentity = false, partition = null) {
   if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
   wc.setWindowOpenHandler(({ url, disposition }) => {
     if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
-    if (disposition === 'new-window') return { action: 'allow', overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition) };
-    openTab(url, { background: disposition === 'background-tab', partition }); // a research tab's popup keeps to its session
+    if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url) };
+    withWindow(curRec, () => openTab(url, { background: disposition === 'background-tab', partition })); // a research tab's popup keeps to its session
     return { action: 'deny' };
   });
   return wc;
 }
+const popupPartition = new WeakMap(); // a popup's page -> the research session it belongs to (null: the profile's)
 const identified = new WeakSet();
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
@@ -2805,16 +2815,16 @@ function showContextMenu(wc, p) {
   const selection = p.selectionText.trim();
   if (p.linkURL && isWebUrl(p.linkURL)) {
     items.push(
-      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: isolatedOf(wc) }) },
+      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) },
       { label: t('menu.copyLink'), click: () => clipboard.writeText(p.linkURL) },
       { type: 'separator' },
     );
   }
   if (p.mediaType === 'image' && p.srcURL) {
-    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) }) });
+    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) });
     items.push({ label: t('menu.copyImage'), click: () => wc.copyImageAt(p.x, p.y) }, { type: 'separator' });
   }
-  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) }), copy: (text) => clipboard.writeText(text) }));
+  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
   } else if (selection) {

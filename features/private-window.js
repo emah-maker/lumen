@@ -111,28 +111,45 @@ function createPrivateWindows(deps) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: '#1d1530', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } },
+        outlivesOpener: true,
         createWindow: (options) => {
-          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: '#1d1530', webContents: options.webContents });
-          deps.chromeIdentity?.(child.webContents);
-          child.webContents.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
-          return child.webContents;
+          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: '#1d1530', ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false } }) });
+          const wc = child.webContents;
+          if (!options?.webContents) wc.loadURL(url).catch(() => {});
+          deps.chromeIdentity?.(wc);
+          // The title bar says which site this is (a popup has no address bar), private and with a lock when secure.
+          const retitle = () => { if (child.isDestroyed()) return; try { const u = new URL(wc.getURL()); child.setTitle(`${u.protocol === 'https:' ? '🔒 ' : ''}${u.host} — Private${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`); } catch { child.setTitle('Lumen (Private)'); } };
+          wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });
+          wc.on('did-navigate', retitle);
+          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); } });
+          wc.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
+          return wc;
         },
+      };
+    }
+    // A tab: a page's window.open gets that window back (it keeps window.opener), as in normal windows.
+    if (isWebUrl(url) && (disposition === 'foreground-tab' || disposition === 'background-tab')) {
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        createWindow: (options) => (options?.webContents ? openTab(rec, url, { background: disposition === 'background-tab', webContents: options.webContents }) : openTab(rec, url, { background: disposition === 'background-tab' }))?.view.webContents,
       };
     }
     if (isWebUrl(url)) openTab(rec, url, { background: disposition === 'background-tab' });
     return { action: 'deny' };
   }
 
-  function openTab(rec, url, { background = false } = {}) {
+  // webContents: a page that already exists (a window.open), adopted as this tab.
+  function openTab(rec, url, { background = false, webContents = null } = {}) {
     if (!alive(rec)) return null;
-    const view = new WebContentsView({ webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    const view = webContents ? new WebContentsView({ webContents }) : new WebContentsView({ webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false } });
     const tab = { id: nextId++, view };
     rec.tabs.push(tab);
     rec.win.contentView.addChildView(view);
     wireTab(rec, tab);
     if (!background || !rec.activeId) rec.activeId = tab.id;
     layout(rec);
-    if (url && isWebUrl(url)) view.webContents.loadURL(url).catch(() => {});
+    if (webContents) { /* adopted: already on its way to its address */ } else if (url && isWebUrl(url)) view.webContents.loadURL(url).catch(() => {});
     else view.webContents.loadFile(NEWTAB_HTML).catch(() => {});
     if (rec.activeId === tab.id && !url) rec.win.webContents.send('private:focus-address');
     sendState(rec);

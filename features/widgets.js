@@ -1490,7 +1490,8 @@ function createWidgets(deps) {
     show('Finish signing in, in your browser. Lumen is waiting…');
     // Google never comes back when it blocks the sign-in ("Access blocked", an unverified-app page): after a minute,
     // the card says what may have happened and what to do, instead of only waiting.
-    const hint = setTimeout(() => { if (attempt === pageSignIns && !sessionFor('gmail').connected()) show(GMAIL_BLOCKED_HINT); }, 60000);
+    const usesBuiltin = !GC.resolveClient({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).error && GC.resolveClient({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).source === 'builtin';
+    const hint = setTimeout(() => { if (attempt === pageSignIns && !sessionFor('gmail').connected()) show(usesBuiltin ? GMAIL_BLOCKED_HINT : 'Still waiting. Finish signing in, in your browser, or try again.'); }, 60000);
     hint.unref?.();
     gmailConnect({ clientId: w.clientId })
       .then(() => Promise.all(list().filter((x) => x.type === 'gmail').map((x) => refresh(x, { force: true }).catch(() => {}))))
@@ -1684,7 +1685,7 @@ function createWidgets(deps) {
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
-      gmailClient: { builtin: Boolean(googleClient()) }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
+      gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified) }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       feedPresets: FEED.PRESETS.map(({ id, name }) => ({ id, name })),
