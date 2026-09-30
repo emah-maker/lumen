@@ -42,12 +42,13 @@
 
   async function openChat(id) {
     const view = await api.open(id);
-    if (!view) { await render(); return; } // gone (deleted, or unreadable on this machine)
+    if (!view) { await render(); return false; } // gone (deleted, or unreadable on this machine)
     clearChatView();
     showHistory(view.items);
     refreshUsage(view.usage);
     closePanel(false);
     prompt.focus();
+    return true;
   }
 
   async function openPanel() {
@@ -74,5 +75,5 @@
   api.onUsage(refreshUsage);
   api.list().then((r) => refreshUsage(r.currentUsage)).catch(() => {});
 
-  window.chatList = { refreshUsage, open: openPanel, close: closePanel };
+  window.chatList = { refreshUsage, open: openPanel, close: closePanel, openChat };
 })();

@@ -196,6 +196,19 @@ const http = require('http');
     await app.evaluate((_e, [from, id, to]) => global.__windows.moveTo(from, id, to), [w4.windowId, a.id, win1]);
     await waitFor(async () => (await windows()).length === 1);
 
+    // ---- a tab that starts moving readies a window, so pulling it out lands in one at once
+    await emit(win1, 'tab:switch', initialId);
+    await emit(win1, 'tab:dragprep');
+    const spareId = await waitFor(() => app.evaluate(() => global.__windows.spare()));
+    check('moving a tab readies a hidden window, left out of the window list', Boolean(spareId) && (await windows()).length === 1, JSON.stringify([spareId, await windows()]));
+    await cursor({ x: 900, y: 500 });
+    await emit(win1, 'tab:dragstart', b.id, { x: 300, y: 15, stripX: 150 });
+    const quick = await dragState();
+    check('the tear-off goes into that window straight away (no wait for a new window to load)', quick?.ready === true && quick.windowId === spareId && (await windows()).length === 2, JSON.stringify(quick));
+    check('...with the same WebContents', winOf(await windows(), spareId)?.tabs[0]?.contentsId === b.contentsId, JSON.stringify(await windows()));
+    await emit(win1, 'tab:dragcancel');
+    check('Escape puts it back and closes that window', Boolean(await waitFor(async () => (await windows()).length === 1 && (await dragState()) === null)), JSON.stringify(await windows()));
+
     // ---- Escape while a torn-off tab is in flight: it goes back where it was, pinned again
     await emit(win1, 'tab:switch', b.id);
     await app.evaluate((_e, id) => global.__pinTab(id, true), b.id);

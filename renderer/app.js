@@ -201,6 +201,7 @@ function moveTabDrag(e) {
     hideHoverCard();
     drag.el.classList.add('dragging');
     $('tabs').classList.add('reordering');
+    window.browser.dragTabPrep?.(); // main readies a window, so pulling the tab out shows it at once
   }
   const { rects, from } = drag;
   const first = rects[0].left, last = rects[rects.length - 1].right;

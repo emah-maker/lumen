@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- A message on a new topic starts a new chat in the sidebar, so each chat stays about one thing. Follow-ups ("why?", "make it shorter", anything sharing a word with the chat) stay put, and the notice has "Keep in last chat" to move the message back.
+- Pulling a tab out of the strip shows it in its new window straight away: a window is readied as soon as the tab starts moving, and it only appears once the tab has painted, with no empty or wrongly sized frame first.
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

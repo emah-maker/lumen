@@ -156,7 +156,7 @@ const UI_ONLY_IPC = new Set([
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -200,14 +200,20 @@ for (const method of ['handle', 'on']) {
   const register = ipcMain[method].bind(ipcMain);
   // With several browser windows, a message from one window's UI, tab, or overlay makes that window
   // the one the shared handlers below act on (see "browser windows" near createWindow).
-  const enterSenderWindow = (event) => { if (winRecs.size > 1) enterWindow(recOfSender(event?.sender)); };
-  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? (event, ...args) => { enterSenderWindow(event); return listener(event, ...args); } : (event, ...args) => {
-    enterSenderWindow(event);
+  // A window kept ready for a tear-off (prepareDragWindow) is entered for its own message only: it never
+  // becomes the window everything else acts on.
+  const inSenderWindow = (event, run) => {
+    const rec = winRecs.size > 1 ? recOfSender(event?.sender) : null;
+    if (isSpare(rec)) return withWindow(rec, run);
+    enterWindow(rec);
+    return run();
+  };
+  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? (event, ...args) => inSenderWindow(event, () => listener(event, ...args)) : (event, ...args) => inSenderWindow(event, () => {
     if (trustedSender(event, channel)) return listener(event, ...args);
     console.error(`[lumen] refused ${channel} from ${event.sender.getURL?.().slice(0, 80)}`);
     if (method === 'handle') throw new Error('Not allowed');
     return undefined;
-  });
+  }));
 }
 let tabs = []; // { id, view, favicon }
 let activeId = null;
@@ -2160,7 +2166,7 @@ function moveWindowItems(id) {
   if (src && tabs.filter((x) => !x.closing).length > 1) {
     items.push({ label: t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, { x: b.x + 60, y: b.y + 40 }) });
   }
-  const others = [...winRecs].filter((r) => r !== src && rcAlive(r));
+  const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
   if (others.length) items.push({ label: t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabBetween(src, r, id) })) });
   return items;
 }
@@ -2901,7 +2907,7 @@ function sessionEntry() {
 // Every normal window is saved: the first one in the session's own fields (as before, so older
 // versions still read it), the others under `more`. Private windows are never here.
 function saveSession({ excluding = null } = {}) {
-  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding);
+  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r));
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   writeSettings({ ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } });
@@ -3130,7 +3136,7 @@ function moveTabBetween(src, dst, tabId, index, { focus = true } = {}) {
 }
 // A tab can only move into a normal window: a private window's id is not in winRecs.
 function moveTabToWindowId(src, tabId, windowId, index) {
-  const dst = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId);
+  const dst = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win.id === windowId);
   return dst ? moveTabBetween(src, dst, tabId, index) : false;
 }
 // ---- dragging a tab out of the strip (Chrome-style): main.js drives the drag
@@ -3161,7 +3167,7 @@ async function refreshDragStrips(d) {
   try {
     const next = new Map();
     for (const rec of [...winRecs]) {
-      if (rec === d.rec || !rcAlive(rec) || rec.win.isMinimized()) continue;
+      if (rec === d.rec || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized()) continue;
       const g = await stripGeometry(rec);
       if (g) next.set(rec, g);
     }
@@ -3169,8 +3175,63 @@ async function refreshDragStrips(d) {
   } finally { d.refreshing = false; }
 }
 function setDragOpacity(d, value) {
+  if (d.hidden && value !== 1) return; // not painted yet: dragReady's whenPainted sets it
   if (!TEST_BACKGROUND && rcAlive(d.rec)) { try { d.rec.win.setOpacity(value); } catch {} }
 }
+// A window is only shown once it has painted what it now holds: its strip with the tab, and the tab's
+// page at its place. It goes on screen fully transparent (so both actually paint), then appears in one
+// step, instead of flashing an empty or half-laid-out window before the tab turns up. Capped, so a busy
+// page never holds it back for long.
+function whenPainted(rec, tab, then) {
+  const frames = 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))';
+  const waits = [rec.win.webContents.executeJavaScript(frames, true).catch(() => {})];
+  if (tab && alive(tab)) {
+    try { tab.view.webContents.invalidate(); } catch {}
+    waits.push(tab.view.webContents.executeJavaScript(frames, true).catch(() => {}));
+  }
+  let done = false;
+  const go = () => { if (!done) { done = true; if (rcAlive(rec)) then(); } };
+  Promise.all(waits).then(go);
+  setTimeout(go, 160);
+}
+const tabById = (rec, id) => tabsOf(rec).find((t) => t.id === id);
+
+// ---- a window made ready for a tear-off before it happens
+// Pressing a tab and moving it prepares a hidden window (its UI loaded), so a tab pulled out of the strip
+// lands in a window straight away instead of waiting for a new window's UI to load. One at a time; it is
+// left out of the saved session, the drop targets, the tab menu and the window list, and closes after a
+// while unused or with the last window.
+let spareRec = null;
+let spareIdle = null;
+const SPARE_IDLE_MS = 30000;
+function closeSpare() {
+  clearTimeout(spareIdle);
+  const rec = spareRec;
+  spareRec = null;
+  if (rcAlive(rec) && rec.prepared) rec.win.close();
+}
+function prepareDragWindow(src) {
+  if (tabDrag || !rcAlive(src) || !winRecs.has(src) || closableTabCount(src) < 2) return;
+  clearTimeout(spareIdle);
+  spareIdle = setTimeout(closeSpare, SPARE_IDLE_MS);
+  if (rcAlive(spareRec)) return;
+  const size = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+  spareRec = createWindow({ size: { width: size.width, height: size.height }, hidden: true, prepared: true, boundsFrom: src });
+  enterWindow(src); // the user is still in the window they pressed the tab in
+}
+// The prepared window, if it has loaded and still fits: it stops being a spare and becomes the drag window.
+function takeSpare(size) {
+  const rec = spareRec;
+  if (!rcAlive(rec) || !rec.prepared || !rec.preparedReady) return null;
+  spareRec = null;
+  clearTimeout(spareIdle);
+  rec.prepared = false;
+  rec.win.setSize(size.width, size.height);
+  const items = agent.transcript(); // what a new window's UI is sent once its tab is in (createWindow)
+  if (items.length) rec.win.webContents.send('agent:history', { items });
+  return rec;
+}
+const isSpare = (rec) => Boolean(rec?.prepared);
 function setDragHover(d, hit) {
   const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId;
   if (same) return;
@@ -3204,7 +3265,15 @@ function dragReady(d) {
   d.stripsAt = Date.now();
   refreshDragStrips(d);
   if (!d.single) {
-    if (!TEST_BACKGROUND && rcAlive(d.rec)) { d.rec.win.setOpacity(DRAG_OPACITY); d.rec.win.showInactive(); }
+    if (!TEST_BACKGROUND && rcAlive(d.rec)) {
+      d.hidden = true;
+      d.rec.win.setOpacity(0);
+      d.rec.win.showInactive();
+      whenPainted(d.rec, tabById(d.rec, d.tabId), () => {
+        d.hidden = false;
+        setDragOpacity(d, tabDrag !== d ? 1 : d.hover ? DRAG_OVER_STRIP_OPACITY : DRAG_OPACITY);
+      });
+    }
     d.rec.win.webContents.send('tab:dragwatch'); // its page ends the drag too if it is the one that sees the release
   }
   d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
@@ -3272,7 +3341,16 @@ function beginTabDrag(src, tabId, grab) {
     d.size = { width: size.width, height: size.height };
     d.grab = { x: grab.stripX, y: grab.y };
     const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), screen.getDisplayNearestPoint(cursor).workArea);
-    d.rec = createWindow({ size: d.size, position: { x: at.x, y: at.y }, hidden: true, adopt: { src, tabId, focus: false, done: (ok) => { if (ok) dragReady(d); else if (tabDrag === d) { clearInterval(d.timer); tabDrag = null; } } } });
+    const spare = takeSpare(d.size);
+    if (spare) {
+      // A window was made ready when the tab was pressed: the tab moves in now.
+      spare.win.setPosition(at.x, at.y);
+      d.rec = spare;
+      if (!moveTabBetween(src, spare, tabId, 0, { focus: false })) { tabDrag = null; spare.win.close(); return false; }
+      dragReady(d);
+    } else {
+      d.rec = createWindow({ size: d.size, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src, adopt: { src, tabId, focus: false, done: (ok) => { if (ok) dragReady(d); else if (tabDrag === d) { clearInterval(d.timer); tabDrag = null; } } } });
+    }
   }
   d.timer = setInterval(tickTabDrag, 12);
   return true;
@@ -3282,6 +3360,11 @@ ipcMain.on('tab:dragstart', (event, id, grab) => {
   const src = recOfSender(event.sender); // a private window's UI is not in winRecs: refused
   if (!src || !Number.isInteger(id)) return;
   beginTabDrag(src, id, { x: num(grab?.x), y: num(grab?.y), stripX: num(grab?.stripX) });
+});
+// A tab started moving in the strip: it may be pulled out next, so have a window ready for it.
+ipcMain.on('tab:dragprep', (event) => {
+  const src = recOfSender(event.sender);
+  if (src && !isSpare(src)) prepareDragWindow(src);
 });
 // The release (or Escape) as seen by a page of the dragged window or of the window it came from.
 const dragEnder = (reason) => (event) => {
@@ -3295,10 +3378,21 @@ function tearOffTab(src, tabId, point) {
   if (!tab || closableTabCount(src) < 2) return false; // the only tab of a window stays where it is
   const size = src.win.getSize();
   const area = screen.getDisplayNearestPoint(point).workArea;
-  createWindow({
+  // Hidden until the tab has arrived and painted (see whenPainted), then shown and focused in one go.
+  const rec = createWindow({
     size: { width: size[0], height: size[1] },
     position: { x: Math.max(area.x, Math.round(point.x - 120)), y: Math.max(area.y, Math.round(point.y - 16)) },
-    adopt: { src, tabId },
+    hidden: true,
+    boundsFrom: src,
+    adopt: {
+      src, tabId, focus: false,
+      done: () => {
+        if (!rcAlive(rec) || TEST_BACKGROUND) return;
+        rec.win.setOpacity(0);
+        rec.win.showInactive();
+        whenPainted(rec, tabById(rec, tabId), () => { rec.win.setOpacity(1); rec.win.focus(); });
+      },
+    },
   });
   return true;
 }
@@ -3309,7 +3403,7 @@ const windowLabel = (rec) => withWindow(rec, () => {
 });
 if (TEST) {
   global.__windows = {
-    list: () => [...winRecs].filter(rcAlive).map((rec) => ({
+    list: () => [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).map((rec) => ({
       windowId: rec.win.id,
       uiContentsId: rec.win.webContents.id,
       tabs: tabsOf(rec).filter((t) => alive(t) || t.sleeping).map((t) => ({ id: t.id, contentsId: alive(t) ? t.view.webContents.id : null, url: alive(t) ? t.view.webContents.getURL() : t.sleepUrl, pinned: Boolean(t.pinned), groupId: t.groupId || null })),
@@ -3319,6 +3413,7 @@ if (TEST) {
     moveTo: (srcWindowId, tabId, windowId, index) => moveTabToWindowId([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, windowId, index),
     setCursor: (point) => { global.__testCursor = point; }, // null: the real cursor
     setDragTimeout: (ms) => { tabDragTimeoutMs = ms; },
+    spare: () => (rcAlive(spareRec) && spareRec.preparedReady ? spareRec.win.id : null), // prepareDragWindow's window, once loaded
     dragState: () => tabDrag && {
       windowId: tabDrag.rec.win.id, ready: tabDrag.ready, single: tabDrag.single,
       hover: tabDrag.hover && { windowId: tabDrag.hover.rec.win.id, beforeId: tabDrag.hover.beforeId },
@@ -3334,7 +3429,10 @@ if (TEST) {
 const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // `adopt` ({ src, tabId }): a tab torn off `src` becomes this window's only tab. `restore`: a saved
 // window from the last session (the session's `more`). Neither: the first window, restoring the session.
-function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false } = {}) {
+// `prepared`: a hidden window for a tear-off that may come (prepareDragWindow): it loads its UI and waits.
+// `boundsFrom`: a window of the same size whose page area this one starts with, so the tab's page is at
+// its place from the first frame instead of jumping there once this window's UI reports its own.
+function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
   const w = new BrowserWindow({
@@ -3358,7 +3456,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
     },
   });
-  const rec = { win: w, tabs: [], activeId: null, contentBounds: { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore) };
+  const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
+  const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore) };
   winRecs.add(rec);
   enterWindow(rec); // from here on `win`, `tabs` ... are this window's
   bindContext(w, () => rec);
@@ -3391,14 +3490,16 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   });
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
-  w.on('close', () => { if (!quitting) saveSession({ excluding: winRecs.size > 1 ? rec : null }); });
+  w.on('close', () => { if (!quitting) saveSession({ excluding: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).length > 1 ? rec : null }); });
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
   w.on('closed', () => {
     uiReady = false;
     dropDeadWindowViews();
     winRecs.delete(rec);
-    const next = [...winRecs].find(rcAlive);
+    if (rec === spareRec) spareRec = null;
+    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) closeSpare(); // no windows left to tear a tab off
+    const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
     if (next) enterWindow(next);
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
@@ -3432,6 +3533,12 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.loadFile(UI_HTML);
   w.webContents.once('did-finish-load', () => {
     createSuggestView();
+    if (rec.prepared) {
+      // Ready for a tear-off (takeSpare); no tabs until then.
+      uiReady = true;
+      rec.preparedReady = true;
+      return;
+    }
     if (adopt) {
       // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
       const adopted = moveTabBetween(adopt.src, rec, adopt.tabId, 0, { focus: adopt.focus !== false });

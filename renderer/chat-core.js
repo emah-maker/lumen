@@ -956,9 +956,37 @@ $('composer').addEventListener('submit', async (e) => {
   prompt.value = '';
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
-  ask(text, images, tabs);
+  if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs);
   updateSend();
 });
+
+// A typed message with nothing in common with the open chat (renderer/chat-topic.js) starts a new
+// chat, as the New chat button would; the last one stays in the chat list. The notice it leaves has
+// a way back: the message moves to the last chat and is asked there. The sidebar only (it has the
+// chat list), and never for images or "@" tabs, which are hard to judge by their words.
+async function askOnNewTopic(text, images, tabs) {
+  if (running || images.length || tabs?.ids?.length || !text || !window.chatTopic || !window.chatList?.openChat) return false;
+  if (!messages.querySelector('.msg.assistant:not(.streaming)')) return false;
+  const said = [...messages.querySelectorAll('.msg.user, .msg.assistant')].map((el) => el.textContent);
+  if (!window.chatTopic.isNewTopic(text, said)) return false;
+  const previous = await window.assistant.chats?.list().then((r) => r.current).catch(() => null);
+  if (!previous || running) return false;
+  $('new-chat').click();
+  const notice = append(Object.assign(document.createElement('div'), { className: 'notice topic-split' }));
+  const back = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('chat.newTopic.back') });
+  notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
+  back.onclick = async () => {
+    back.disabled = true;
+    if (running) window.assistant.stop();
+    // The chat just started for it goes (it holds only this message), then the last one opens.
+    const current = await window.assistant.chats.list().then((r) => r.current).catch(() => null);
+    if (current && current !== previous) await window.assistant.chats.remove(current).catch(() => {});
+    if (await window.chatList.openChat(previous)) ask(text);
+    else back.disabled = false;
+  };
+  ask(text);
+  return true;
+}
 
 document.querySelectorAll('.chip').forEach((chip) => {
   // A starter that works on all open tabs sends them along (after the once-per-chat confirm when there are many).

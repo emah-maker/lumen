@@ -478,6 +478,10 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } }
 
 .notice { color: var(--muted); font-size: 12px; margin: 8px 0; }
+/* A message on a new topic started a new chat: the way back to the last one. */
+.notice-action { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
+.notice-action:hover { text-decoration: underline; }
+.notice-action:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .error { color: var(--danger); font-size: 12px; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--danger-soft); }
 .error .btn { display: block; margin-top: 8px; height: 26px; font-size: 12px; color: var(--text); background: var(--surface-raised); }
 

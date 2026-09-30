@@ -862,6 +862,27 @@ async function fuseChecks() {
   fs.rmSync(out, { recursive: true, force: true });
 }
 
+// ---- A new topic starts a new chat (renderer/chat-topic.js): only when nothing ties it to the chat so far
+{
+  const { isNewTopic } = require('../renderer/chat-topic');
+  const said = ['How do I center a div with flexbox in CSS?', 'Use display: flex; justify-content: center; align-items: center on the parent container.'];
+  for (const [text, want] of [
+    ['What is a good recipe for banana bread?', true],
+    ['Recommend some sci-fi novels for a long flight', true],
+    ['Tokyo weather', true],
+    ['How do I do it with grid instead?', false], // refers back
+    ['why?', false],
+    ['what about vertically only', false],
+    ['make it shorter', false],
+    ['summarize', false], // too short to tell
+    ['Does flexbox work in old Safari?', false], // shares a word
+    ['Can you center text inside a button?', false],
+    ['css grid tutorial', false],
+    ['thanks! now how do I book a flight to Tokyo', false], // opens like a reply
+  ]) check(`chat topic: "${text}" is ${want ? 'a new topic' : 'the same chat'}`, isNewTopic(text, said) === want, isNewTopic(text, said));
+  check('chat topic: an empty chat never splits', isNewTopic('What is a good recipe for banana bread?', []) === false);
+}
+
 // ---- Tab search matching (renderer/tab-search-match.js) and tab audio (features/tab-tools.js)
 {
   const { rank, itemScore } = require('../renderer/tab-search-match');
