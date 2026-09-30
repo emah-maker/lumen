@@ -2475,6 +2475,9 @@ async function swapHelperRuns() {
   check('model names: readable names, OpenAI style kept, dates and vendors dropped', names.join('|') === 'GPT-5.6|GPT-5.6 mini|o3 pro|Gemini 2.5 Flash-Lite|Grok 4.7|Claude Opus 5.5', names.join('|'));
   check('model names: preview and chat-only become badges', MN.badgesFor('gemini-2.5-pro-preview-05-06', { chatOnly: true }).join() === 'chat only,preview', MN.badgesFor('gemini-2.5-pro-preview-05-06', { chatOnly: true }).join());
   const ranked = MN.rankModels(['o1', 'o3', 'o3-pro', 'o3-pro-2025-06-10', 'o4-mini', 'o1-mini', 'o3-mini', 'o1-pro', 'o3-deep', 'o4-deep', 'o1-preview', 'o3-2025-04-16', 'gpt-5.6', 'gpt-5.6-mini', 'gpt-4o', 'gpt-4o-2024-08-06'], 12);
+  const both = MN.rankModels(['gpt-5.6', 'gpt-5.6-mini', 'gpt-5.6-nano', 'gpt-5', 'gpt-5-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo', 'o3', 'o3-pro', 'o3-mini', 'o1', 'o1-pro', 'o4-mini', 'gpt-4-turbo', 'gpt-4'], 16);
+  check('model names: a long GPT list does not crowd out the o-series either', ['o3', 'o3-pro', 'o4-mini', 'o1'].every((id) => both.includes(id)) && both.includes('gpt-5.6'), both.join());
+  check('model names: dashed versions and bare stamps read well', MN.prettyModel('grok-4-1-fast-reasoning') === 'Grok 4.1 Fast Reasoning' && MN.prettyModel('gemini-exp-1206') === 'Gemini Experimental 1206' && MN.prettyModel('gemini-2.0-flash-001') === 'Gemini 2.0 Flash', [MN.prettyModel('grok-4-1-fast-reasoning'), MN.prettyModel('gemini-exp-1206'), MN.prettyModel('gemini-2.0-flash-001')].join('|'));
   check('model names: the newest GPT models survive a long o-series list, and dated duplicates go', ranked[0] === 'gpt-5.6' && ranked.includes('gpt-5.6-mini') && !ranked.includes('o3-pro-2025-06-10') && !ranked.includes('gpt-4o-2024-08-06') && ranked.length === 12, ranked.join());
 }
 // ---- tab drag geometry (features/tab-drag-math.js)

@@ -636,7 +636,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .sidebar.dropping .composer { box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-soft); transform: scale(1.02); }
 
 .model-picker { position: relative; display: inline-flex; align-items: center; border-radius: 7px; transition: background-color var(--t-fast) ease-out; }
-.model-picker:hover { background: var(--hover); }
+.model-picker:hover:not(:has(.picker-menu:hover)) { background: var(--hover); } /* not while the pointer is in its (child) menu */
 .model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; margin-left: -6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-picker .picker-button:focus-visible { outline: 2px solid var(--accent); }
 .model-picker svg { position: absolute; right: 4px; width: 12px; height: 12px; color: var(--muted); pointer-events: none; }
@@ -818,13 +818,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .setup-option:disabled { opacity: 0.7; }
 .setup-name { font-weight: 500; }
 .setup-detail { color: var(--muted); font-size: 12px; }
-/* Fits the sidebar at its 300px minimum (the sidebar clips whatever runs past its edge). */
-.picker-menu.model-search { position: absolute; display: block; width: min(300px, calc(var(--sidebar-width, 360px) - 28px)); left: -6px; top: calc(100% + 4px); padding: 4px; }
-.picker-menu.model-search .picker-item { display: block; padding-left: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.model-search .picker-item:hover { background: var(--hover); }
-.model-search-input { width: 100%; height: 28px; margin-bottom: 4px; padding: 0 8px; border: none; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; outline: none; }
-.model-search-list { max-height: 320px; overflow-y: auto; color: var(--muted); }
-.model-search-list .picker-item { color: var(--text); padding-left: 10px; }
 
 
 /* ---------- AI agents over MCP (session B) ---------- */

@@ -118,7 +118,11 @@ function setAssistantIdentity(group) {
   if (pill) pill.textContent = t('agent.usingTab', { name: who.name });
 }
 
-window.lumenPicker($('model'), { recentKey: 'model' });
+// "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
+const modelPicker = window.lumenPicker($('model'), {
+  recentKey: 'model',
+  extra: () => (modelGroups.has('openrouter:__more') ? [{ label: t('models.searchAll'), detail: t('models.more.detail'), run: (q) => openModelSearch(q) }] : []),
+});
 
 // Whether there is any model to talk to right now (main's settings:get is the single source of
 // truth); ask() below checks this before sending, instead of letting a request fail with an error.
@@ -141,8 +145,10 @@ async function loadModels() {
     option.title = m.detail;
     // The picker's row (picker.js): readable name, the id or a note under it, and badges.
     if (m.name) option.dataset.name = m.name;
+    if (m.provider) option.dataset.provider = m.provider;
     if (m.detail) option.dataset.detail = m.detail;
     if (m.badges?.length) option.dataset.badges = m.badges.join(',');
+    if (m.title) option.title = m.title;
     if (m.more) option.dataset.more = '1';
     groups.get(m.group).append(option);
   }
@@ -155,43 +161,39 @@ async function loadModels() {
   setAssistantIdentity(current?.group);
 }
 window.assistant.onModelsUpdated?.(() => loadModels());
-// "More models…" (OpenRouter): a searchable list of every model, under the picker.
-async function openModelSearch() {
-  document.querySelector('.model-search')?.remove();
-  const box = Object.assign(document.createElement('div'), { className: 'picker-menu model-search' });
-  const input = Object.assign(document.createElement('input'), { type: 'search', placeholder: t('models.search'), className: 'model-search-input' });
-  input.setAttribute('aria-label', t('models.search'));
-  const list = Object.assign(document.createElement('div'), { className: 'model-search-list', textContent: t('models.loading') });
-  list.setAttribute('role', 'listbox');
-  box.append(input, list);
-  document.querySelector('.model-picker').append(box);
-  input.focus();
-  const close = () => { box.remove(); document.removeEventListener('pointerdown', outside, true); };
-  const outside = (e) => { if (!box.contains(e.target)) close(); };
-  document.addEventListener('pointerdown', outside, true);
-  let models = [];
-  try { models = await window.assistant.openRouterModels(); } catch { list.textContent = t('models.loadFailed'); return; }
-  const render = () => {
-    const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
-    const hits = models.filter((m) => words.every((w) => `${m.id} ${m.name}`.toLowerCase().includes(w))).slice(0, 60);
-    list.replaceChildren(...hits.map((m) => {
-      const item = Object.assign(document.createElement('div'), { className: 'picker-item', tabIndex: -1, textContent: m.tools ? m.name : t('models.chatOnly', { name: m.name }), title: m.id });
-      item.setAttribute('role', 'option');
-      item.dataset.id = m.id;
-      item.addEventListener('click', async () => {
-        close();
-        if (await window.assistant.setModel(`openrouter:${m.id}`)) await loadModels();
-      });
-      return item;
-    }));
-    if (!hits.length) list.textContent = t('models.none');
-  };
-  input.addEventListener('input', render);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') close();
-    else if (e.key === 'Enter') list.querySelector('.picker-item')?.click();
-  });
-  render();
+// "More models…" (OpenRouter): every model OpenRouter has, in the same picker (search, vendor headings, readable
+// names, "chat only" badges, recents), opened under the model button. Its list is loaded once per session.
+let openRouterSelect = null;
+let openRouterPicker = null;
+async function openModelSearch(query = '') {
+  if (!openRouterSelect) {
+    openRouterSelect = Object.assign(document.createElement('select'), { hidden: true });
+    openRouterSelect.setAttribute('aria-label', t('models.search'));
+    document.querySelector('.model-picker').append(openRouterSelect);
+    openRouterPicker = window.lumenPicker(openRouterSelect, { recentKey: 'model', anchor: modelPicker.button });
+    openRouterSelect.addEventListener('change', async () => {
+      if (await window.assistant.setModel(openRouterSelect.value)) await loadModels();
+      modelPicker.button.focus();
+    });
+  }
+  if (!openRouterSelect.options.length) {
+    let models = [];
+    try { models = await window.assistant.openRouterModels(); } catch { models = []; }
+    if (!models.length) { append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.loadFailed') })); return; }
+    const vendors = new Map();
+    for (const m of models) {
+      const vendor = String(m.id).split('/')[0];
+      if (!vendors.has(vendor)) vendors.set(vendor, Object.assign(document.createElement('optgroup'), { label: (String(m.name).split(':')[0] || vendor).trim() }));
+      const o = Object.assign(document.createElement('option'), { value: `openrouter:${m.id}`, textContent: m.name, title: m.id });
+      o.dataset.name = String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : m.name;
+      o.dataset.provider = 'OpenRouter';
+      if (!m.tools) o.dataset.badges = 'chat only';
+      vendors.get(vendor).append(o);
+    }
+    openRouterSelect.replaceChildren(...[...vendors.values()].sort((a, b) => a.label.localeCompare(b.label)));
+  }
+  openRouterSelect.value = $('model').value;
+  openRouterPicker.open(query);
 }
 
 $('model').addEventListener('change', async (e) => {

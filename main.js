@@ -363,7 +363,7 @@ let cliLoginValid = null;
 const modelNames = require('./features/model-names');
 function modelOptions() {
   const groups = [];
-  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, name: label, detail })) });
+  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, name: label, provider: 'Claude', detail })) });
   for (const [provider, info] of Object.entries(providers.PROVIDERS)) {
     if (!providerKey(provider)) continue;
     const list = [...(providerModels[provider] || info.defaults)];
@@ -375,9 +375,9 @@ function modelOptions() {
       // name: the readable model name the picker shows; badges: what it can't do or how settled it is. The raw id is the detail.
       const name = modelNames.prettyModel(model) || model;
       const snap = modelNames.snapshotOf(model);
-      return { id: `${provider}:${model}`, label: name, name, badges: modelNames.badgesFor(model, { chatOnly }), detail: `${model}${snap ? ' · snapshot' : ''}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}` };
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges: modelNames.badgesFor(model, { chatOnly }), detail: snap ? `Snapshot ${snap}` : chatOnly ? 'Can’t act in your tabs' : '', title: model };
     });
-    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), detail: t('models.more.detail'), more: true });
+    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });
   }
   groups.sort((a, b) => a.label.localeCompare(b.label));
