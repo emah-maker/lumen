@@ -294,25 +294,25 @@ The images in this README are captured from a throwaway profile by `node scripts
 
 ## Layout
 
-- `main.js`: window, tabs (`WebContentsView`), shortcuts, menus, settings, permissions, history and suggestions, extensions, IPC
-- `features/`: parts split out of main.js: `ai-agents.js` (MCP, CDP automation, the Claude Code and Grok Build engines; automation.js, claude-code.js and grok-build.js load on first use), `adblock.js`, `dialogs.js`, `downloads.js`, `instance.js` (single instance, shortcuts), `updates.js` (new versions from GitHub Releases), and page preloads: `adblock-preload.js` (the ad blocker's scriptlets at document start), `select-contrast-preload.js` (readable `<select>` menus on dark-styled sites), `webstore-preload.js` (keeps the Chrome Web Store's install API working after an extension loads)
-- `settings-backend.js`, `renderer/settings.*`: lumen://settings, the one place for settings
-- `tab-groups.js`: groups by site and by topic (local TF-IDF clustering), undo
-- `extensions-dnr-preload.js`: `browser` alias and chrome.declarativeNetRequest for extensions (rules kept, not applied; content blockers with static rulesets are refused at install)
-- `mcp.js`: MCP server for external agents (stdio bridge + local authenticated channel)
-- `mcp-http.js`: Lumen's MCP server and tool-call gate over local HTTP, for the sidebar's Grok Build engine
-- `claude-code.js`: the "your Claude account" engine (runs your own `claude` CLI headless)
-- `cli-auth.js`: sign-in with the Anthropic CLI (`ant`), installed from its GitHub release if missing
-- `providers.js`: OpenAI / Grok / Gemini / OpenRouter adapter (Chat Completions, history conversion, OpenRouter catalog)
-- `importer.js`, `search.js`: browser import and search engines
-- `agent.js`: agent loop (`claude-opus-5`, streaming, adaptive thinking, web search, browser tools, approvals, ADHD mode)
-- `page-scripts.js`: scripts injected into pages to read and operate them
-- `snapshot.js`: token-efficient tools (compact outline, diffs, find, batch, screenshot options)
-- `automation.js`: opt-in CDP endpoint for Playwright, filtered to the user's tabs; `launcher.js` starts Lumen with Chromium's DevTools on a private pipe while it's on (Windows, Linux); `cdp-inproc.js` serves the same protocol from inside Lumen, with no port, pipe or launcher (macOS; `LUMEN_AUTOMATION_INPROC=1` elsewhere)
-- `renderer/`: browser chrome UI, sidebar, suggestion dropdown, new-tab, settings, history and error pages
-- `scripts/`: build, install and `capture-media.js` (the README's screenshots)
-- `docs/media/`: the README's screenshots and GIFs (not shipped in builds)
-- `test/`: Playwright suites (`node test/<name>.js`; `npm test` runs the core set): smoke, units (settings file, address bar input, importer), tools, ui (address bar, find, focus stress, sidebar layout), tabstrip (clicks, overflow, pinning, lazy restore), browser, recovery (crashes, hung pages, links from other apps), downloads, tasklock (the agent stays on its tab), agentic, images, models, providers (incl. OpenRouter), import, groups (incl. topics), cli, mcp, adhd, crash, extensions, adblock, home, cdp, efficiency, claudecode, pagecontext (every engine), dialogs, settings, setup, hardening (UI window and reader session lockdown), exfil (the AI's approval gate: redirects, searches, batch steps and scripts), updates (the updater with a stand-in, never the network), security-ui (the certificate warning page and the lock icon), cli-json (one-shot Claude Code and Grok Build runs for tab grouping), grokgate (Grok Build's tool check, with the real `grok` CLI), files (PDF viewer, local files), usage (plan limits and Lumen's share, with a stand-in CLI), look (accent color and the new-tab page's design). `LUMEN_TEST_BACKGROUND=1 npm test` runs every window invisible and never takes focus, so you can keep working in your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP
+The Electron main process is `main.js`; most features live in `features/` as a pure part (tested in Node) plus a `create…()` that main.js wires in.
+
+| Where | What |
+|---|---|
+| `main.js` | windows, tabs (`WebContentsView`), shortcuts, menus, permissions, history and suggestions, extensions, IPC |
+| `agent.js`, `snapshot.js`, `page-scripts.js`, `loop-guard.js` | the sidebar's agent loop (default model `claude-opus-5-5`), its token-efficient page tools, the scripts it runs in pages, and its repeat guard |
+| `providers.js`, `claude-code.js`, `grok-build.js`, `cli-*.js` | model adapters (OpenAI, Grok, Gemini, OpenRouter) and the Claude Code / Grok Build engines that run your own CLI |
+| `mcp.js`, `mcp-http.js`, `automation.js`, `cdp-inproc.js`, `launcher.js` | MCP server for outside agents, and the opt-in CDP endpoint for Playwright |
+| `settings-backend.js`, `settings-file.js`, `renderer/settings.*` | lumen://settings, the one place for settings |
+| `*-preload.js`, `preload.js` (bundled to `preload.bundle.js`) | preloads for the UI, dialogs, downloads, history, suggestions and extensions |
+| `tab-groups.js`, `importer.js`, `search.js`, `favicon-store.js`, `tlds.js` | tab grouping (site and topic), browser import, search engines, favicons, address bar input |
+| `features/` | split-out features, in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `private-*`, `safe-browsing`, `site-security`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`) |
+| `renderer/` | the browser's own pages: toolbar and tab strip, sidebar, new-tab page and its widgets, settings, history, managers, dialogs |
+| `locales/` | UI strings (`en.json`) used through `t()` |
+| `scripts/` | build, packaging hooks, `test-all.js`, `capture-media.js` (the README's media), `measure-*.js` benchmarks |
+| `docs/` | reference pages (below) and `docs/media/` (the README's screenshots and GIFs, not shipped in builds) |
+| `test/` | Playwright suites, one file per area (`node test/<name>.js`), and `*-units.js` pure-logic checks run from `test/units.js` |
+
+**Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
 
 ## License
 
