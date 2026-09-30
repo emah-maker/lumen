@@ -1247,6 +1247,7 @@ function tabState() {
 }
 
 let sessionTimer = null;
+let sessionDirtySince = 0; // when the first unsaved tab change came
 let agentTargetHook = null; // set where the agent exists: tells the sidebar which tab its task works in
 // Tab moves made as one (several tabs going to another window) send each window's strip one update at the
 // end, instead of one per step, so the strips never show the halfway states.
@@ -1268,8 +1269,10 @@ function sendTabs() {
   ui()?.send('tabs', tabState());
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
+  // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose title ticks).
   clearTimeout(sessionTimer);
-  sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession({ background: true }); }, 3000);
+  if (!sessionDirtySince) sessionDirtySince = Date.now();
+  sessionTimer = setTimeout(() => { sessionDirtySince = 0; if (win && !win.isDestroyed()) saveSession({ background: true }); }, Math.max(0, Math.min(3000, sessionDirtySince + 15000 - Date.now())));
 }
 
 // A page's own busy events (loading, title, favicon, in-page navigations) arrive in bursts: they send the strip
@@ -1414,8 +1417,10 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   if (spare) {
     // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
     tab.spareFilling = true;
-    wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
-      .catch(() => wc.loadURL(url).catch(() => {}))
+    // (At most 100 ms: an occluded or minimized window draws no frames, and the tab must not stay blank.)
+    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
+      .catch(() => wc.loadURL(url).catch(() => {}));
+    Promise.race([filled, new Promise((r) => setTimeout(r, 100))])
       .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
   }
 
@@ -1730,7 +1735,10 @@ function wakeTab(tab) {
 function addRestoredTab(url, title, favicon = null) {
   // The new-tab page's cached copy (offline-safe, but kept only for favorites and frequent sites),
   // else the icon the tab showed when the session was saved.
-  const icon = faviconStore.get(hostOf(url)) || (/^(https?|data):/.test(favicon || '') ? favicon : null);
+  // (As a file in favicon-cache, not a data: address: that would ride along in every tab-strip update and save.)
+  const saved = typeof favicon === 'string' ? favicon : '';
+  const icon = faviconFile(faviconStore.get(hostOf(url)))
+    || (saved.startsWith('data:image/') ? faviconFile(saved) : /^https?:/.test(saved) || FAVICON_FILE_URL.test(saved) ? saved : null);
   const tab = {
     id: nextTabId++, view: null, rec: curRec, favicon: icon, favicons: icon ? [icon] : [], groupId: null,
     userRemoved: false, settings: false, lastActiveAt: Date.now(),
@@ -2637,11 +2645,12 @@ function bookmarks() {
 let historyVersion = 0; // bumped on every visit or import: frequentSites is remembered until it changes
 let frequentMemo = null;
 function frequentSites(limit = 6) {
-  const key = `${historyVersion}|${history.size}|${limit}|${bookmarks().map((b) => b.url).join(' ')}`;
-  if (frequentMemo?.key === key) return frequentMemo.out;
-  const out = frequentSitesNow(limit);
-  frequentMemo = { key, out };
-  return out;
+  // One memo at the largest size asked for (the new-tab page asks for 6, the favicon cache for 12): the two
+  // never evict each other.
+  const size = Math.max(limit, 12);
+  const key = `${historyVersion}|${history.size}|${size}|${bookmarks().map((b) => b.url).join(' ')}`;
+  if (frequentMemo?.key !== key) frequentMemo = { key, out: frequentSitesNow(size) };
+  return frequentMemo.out.slice(0, limit);
 }
 function frequentSitesNow(limit) {
   const favoriteHosts = new Set(bookmarks().map((b) => hostOf(b.url)));
@@ -2659,6 +2668,7 @@ function frequentSitesNow(limit) {
 
 // A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images), written once.
 const faviconFiles = new Map(); // data URL hash -> file URL
+const FAVICON_FILE_URL = /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z0-9]+$/i;
 function faviconFile(dataUrl) {
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
   const key = require('crypto').createHash('sha1').update(dataUrl).digest('hex').slice(0, 20);
@@ -5838,8 +5848,10 @@ app.whenReady().then(async () => {
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
-  await extending;
-  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
+  // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
+  const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
+  await atMost(extending);
+  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await atMost(blocking);
   perf.mark('adblockReady');
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
