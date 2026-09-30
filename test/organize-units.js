@@ -228,4 +228,60 @@ function organized(specs) {
   check('GOV.UK and .gov pages join the Government group, not one named "GOV"', gov.same(0, 1) && gov.same(0, 2) && gov.name(0) === 'Government' && !gov.same(0, 3), gov.name(0));
 }
 
+// 18. a window that is all about one thing: the word every tab carries is the topic, not noise (once nothing else grouped)
+{
+  const parts = ['food reviews', 'toys diy', 'beds best', 'vets near me', 'adoption centers', 'grooming tips', 'litter types', 'vaccines schedule'];
+  for (const n of [4, 6, 8]) {
+    const r = organized(parts.slice(0, n).map((w, i) => [`Kitten ${w}`, `https://s${i}.example/${i}`]));
+    check(`${n} kitten tabs on ${n} sites are one group named Kitten`, Array.from({ length: n }, (_, i) => r.same(0, i)).every(Boolean) && /kitten/i.test(r.name(0)), `${r.name(0)} ${r.same(0, n - 1)}`);
+  }
+  const mid = organized(parts.slice(0, 4).map((w, i) => [`Best ${w} for kitten owners`, `https://s${i}.example/${i}`]));
+  check('"kitten" inside the title counts too', mid.same(0, 3) && /kitten/i.test(mid.name(0)), mid.name(0));
+  const withNoise = organized([...parts.slice(0, 4).map((w, i) => [`Kitten ${w}`, `https://s${i}.example/${i}`]), ['Sourdough bread recipe', 'https://x.example/1'], ['Mortgage rates today', 'https://y.example/2'], ['React hooks guide', 'https://z.example/3']]);
+  check('kitten tabs among unrelated ones: still one group, the others loose', withNoise.same(0, 3) && !withNoise.same(0, 4) && !withNoise.name(4), withNoise.name(4));
+  const one = window_(parts.slice(0, 4).map((w, i) => [`Kitten ${w}`, `https://s${i}.example/${i}`, { userRemoved: true }]));
+  check('a window of one topic: organize makes the one group (not "no groups")', one.g.organizeByTopic() === 1 && one.g.state().length === 1);
+  // the same word on one site is that site's template unless it opens every title
+  const weather = organized(Array.from({ length: 6 }, (_, i) => [`Weather in Moscow ${i}`, `https://forecastly.example/p/${i}`]));
+  check('6 "Weather in Moscow N" tabs of one host are one group', [1, 2, 3, 4, 5].every((i) => weather.same(0, i)) && /moscow|weather/i.test(weather.name(0)), weather.name(0));
+  const mdn = organized(['Fetch API', 'Array.map', 'CSS grid', 'Canvas API'].map((t, i) => [`${t} - Web APIs | MDN`, `https://developer.mozilla.org/en-US/docs/${i}`]));
+  check("a site's trailing tagline (\"Web APIs | MDN\") on every tab never names the group", !/api|mdn|web/i.test(mdn.name(0)), mdn.name(0));
+  const nav = organized(['Acme', 'Bolt', 'Cedar', 'Dune'].map((t, i) => [`${t} dashboard`, `https://s${i}.example/${i}`]));
+  check('"dashboard" on every tab of four sites is nav, not a topic', !nav.same(0, 1) && !nav.same(2, 3), nav.name(0));
+  const plants = organized([['Intro to ferns', 'https://plantwiki.example/a'], ['Fern watering schedule', 'https://plantwiki.example/b'], ['Growing moss indoors', 'https://plantwiki.example/c'], ['Succulent care basics', 'https://plantwiki.example/d'], ['Orchid repotting', 'https://plantwiki.example/e'], ['Bonsai pruning', 'https://plantwiki.example/f']]);
+  check('6 plant tabs of one site are one group, not "Ferns" and 4 loose', [1, 2, 3, 4, 5].every((i) => plants.same(0, i)) && /plant/i.test(plants.name(0)), `${plants.name(0)} ${plants.name(2)}`);
+}
+
+// 19. tabs of one errand that share no word: a concept draws them together (finance, machine learning, fitness)
+{
+  const fin = organized([['Roth IRA limits', 'https://www.fidelity.com/roth'], ['Vanguard index funds', 'https://investor.vanguard.com/funds'], ['401k rollover guide', 'https://www.nerdwallet.com/401k'], ['Tax return 2025 deadlines', 'https://www.irs.gov/filing'], ['Easy Banana Bread Recipe', 'https://a.example/banana-bread']]);
+  check('Roth IRA, Vanguard funds, 401k rollover and the IRS tax page: Finance', [1, 2, 3].every((i) => fin.same(0, i)) && fin.name(0) === 'Finance' && !fin.same(0, 4), fin.name(0));
+  const brokers = organized([['Fidelity - Portfolio', 'https://www.fidelity.com/'], ['Vanguard - Funds', 'https://investor.vanguard.com/'], ['Schwab Brokerage', 'https://www.schwab.com/'], ['Robinhood', 'https://robinhood.com/']]);
+  check('Fidelity / Vanguard / Schwab / Robinhood: Finance', [1, 2, 3].every((i) => brokers.same(0, i)) && brokers.name(0) === 'Finance', brokers.name(0));
+  const irs = organized([['Where is my refund? | Internal Revenue Service', 'https://www.irs.gov/refunds'], ['Driver license renewal - California DMV', 'https://www.dmv.ca.gov/portal/'], ['Universal Credit - GOV.UK', 'https://www.gov.uk/universal-credit'], ['Roth IRA limits', 'https://www.fidelity.com/roth']]);
+  check('the IRS among government pages (one money tab) stays Government', irs.same(0, 1) && irs.same(0, 2) && !irs.same(0, 3) && irs.name(0) === 'Government', irs.name(0));
+  const ml = organized([['Machine learning course - Coursera', 'https://www.coursera.org/learn/ml'], ['Attention is all you need', 'https://arxiv.org/abs/1706.03762'], ['Transformers explained', 'https://huggingface.co/blog/transformers'], ['Gradient descent visualized', 'https://distill.pub/gd'], ['Neural network basics', 'https://3blue1brown.com/nn'],
+    ['Python asyncio tutorial', 'https://realpython.com/async'], ['Python dataclasses', 'https://docs.python.org/3/library/dataclasses.html'], ['PyTorch tutorials', 'https://pytorch.org/tutorials']]);
+  check('Coursera, arXiv, Hugging Face, Distill, 3Blue1Brown: Machine learning', [1, 2, 3, 4].every((i) => ml.same(0, i)) && /machine learning/i.test(ml.name(0)), ml.name(0));
+  check('PyTorch joins Machine learning, not Python', ml.same(0, 7) && !ml.same(5, 7) && ml.same(5, 6), `${ml.name(7)} / ${ml.name(5)}`);
+  const fit = organized([['Best running shoes 2026', 'https://runnersworld.example/shoes'], ['Marathon training plan 16 weeks', 'https://runners.example/plan'], ['Couch to 5K', 'https://nhs.uk/c25k'], ['Sourdough starter guide', 'https://www.kingarthurbaking.com/sourdough']]);
+  check('running shoes, marathon plan and Couch to 5K: Fitness', [1, 2].every((i) => fit.same(0, i)) && fit.name(0) === 'Fitness' && !fit.same(0, 3), fit.name(0));
+  const few = organized([['Roth IRA limits', 'https://www.fidelity.com/roth'], ['Vanguard index funds', 'https://investor.vanguard.com/funds'], ['Quarterly zebra', 'https://a.example/1'], ['Plumbing 101', 'https://b.example/2']]);
+  check('two money tabs are not enough to make a concept group', !few.same(0, 1), few.name(0));
+}
+
+// 20. Russian: filler words and case endings do not hide the dish or the city
+{
+  const borsch = organized([['Рецепт борща', 'https://a.ru/1'], ['Борщ классический', 'https://b.ru/2'], ['Как варить борщ', 'https://c.ru/3'], ['Вкусный борща рецепт', 'https://d.ru/4']]);
+  check('4 borscht tabs: one group named Борщ (not Рецепт)', [1, 2, 3].every((i) => borsch.same(0, i)) && borsch.name(0) === 'Борщ', borsch.name(0));
+  const moscow = organized([['Погода в Москве', 'https://a.ru/1'], ['Москва отели', 'https://b.ru/2'], ['Достопримечательности Москвы', 'https://c.ru/3'], ['Новости Москвы сегодня', 'https://d.ru/4']]);
+  check('4 Moscow tabs: one group named Москва (weather included, not "Travel")', [1, 2, 3].every((i) => moscow.same(0, i)) && moscow.name(0) === 'Москва', moscow.name(0));
+  const keys = (t) => tg.tokens(t).map((x) => x.key);
+  check('tokens: рецепт, купить, погода, новости are filler', keys('Рецепт борща').length === 1 && keys('Купить ноутбук').length === 1 && keys('Погода в Москве').length === 1 && keys('Новости Москвы').length === 1, keys('Рецепт борща Купить ноутбук Погода в Москве').join());
+  const family = (w) => new Set(w.split(' ').map((x) => keys(x)[0])).size;
+  check('stemWord: one key for every case (борщ, Москва, Россия, вкусный, отель)', family('борщ борща борщу борщом борще борщи') === 1 && family('москва москвы москве москву москвой') === 1 && family('россия россии россию россией') === 1 && family('красный красного красной красную красные') === 1 && family('отель отеля отелю отеле отели отелей') === 1);
+  const pies = organized([['Рецепт пирога с яблоками', 'https://a.ru/1'], ['Рецепты пирогов', 'https://b.ru/2'], ['Погода в Москве', 'https://c.ru/3'], ['Купить ноутбук', 'https://d.ru/4']]);
+  check('a group of pies is named for the dictionary form, Пирог', pies.same(0, 1) && pies.name(0) === 'Пирог', pies.name(0));
+}
+
 process.exit(failed ? 1 : 0);

@@ -2309,34 +2309,9 @@ function scheduleAiTopics() {
   }, 2500);
 }
 
-// "Organize Tabs by Topic" (tab menu, ⋯ → Tab Groups): regroups loose tabs and automatic groups.
-// The same flow as the strip's Organize button (Organizing... state, summary with Undo, the same messages). With
-// "Use AI to name and group topics" on, the model's proposal groups the tabs instead (same feedback around it).
-async function organizeByTopic() {
-  if (readSettings().topicAi !== true) return organizeTabs();
-  if (organizing) return 0;
-  organizing = true;
-  const rec = curRec;
-  const back = (fn) => withWindow(rec, fn);
-  ui()?.send('tabs:organizing', true);
-  try {
-    if (tabGroups.candidates().length < 2) throw tooFewMessage();
-    const proposal = await proposeGroups(cheapTopicModel(), topicList(tabGroups.candidates())).catch(() => null); // falls back to local
-    return back(() => {
-      const count = tabGroups.organizeByTopic(proposal);
-      sendTabs();
-      if (!count) organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // rolled back: nothing changed, no Undo
-      else organizeNote(t('organize.summary', { groups: count }), { undo: true });
-      return count;
-    });
-  } catch (err) {
-    back(() => organizeNote(err.tooFew ? err.message : `${t('organize.failed')}: ${err.message}`));
-    return 0;
-  } finally {
-    organizing = false;
-    back(() => ui()?.send('tabs:organizing', false));
-  }
-}
+// "Organize Tabs" (tab menu, Tab Groups, and the strip's button) is organizeTabs: the local organizer groups, and with "Use AI to
+// name and group topics" on a model only refines that result in place. It never proposes the groups itself.
+const organizeByTopic = organizeTabs; // the name the test hook (__organizeByTopic) and scripts/capture-media.js call
 // "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
 function mergeGroups() {
   if (tabGroups.mergeGroups()) sendTabs();
@@ -2616,8 +2591,8 @@ function moveGroupItems(groupId) {
   return items;
 }
 
-// The one "Organize Tabs" item: with AI on it is the refining run (choosing it again while it refines cancels it), else the local one.
-const organizeFromMenu = () => (readSettings().topicAi === true ? organizeTabs() : organizeByTopic());
+// The one "Organize Tabs" item: the local run, refined by a model when AI is on (choosing it again while it refines cancels it).
+const organizeFromMenu = organizeTabs;
 
 function tabGroupsMenu() {
   const mode = groupingMode();
@@ -5942,7 +5917,7 @@ const aiAgents = setupAiAgents({
 // ---------- updates from GitHub Releases (features/updates.js) ----------
 
 const updates = require('./features/updates').createUpdates({
-  app, ipcMain, session, ui, readSettings, writeSettings, test: TEST,
+  app, ipcMain, session, ui, readSettings, writeSettings, test: TEST, t,
   prefs: () => settingsBackend.prefs(),
   startupDelayMs: () => perfMode.limits().startupDelayMs,
   beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do

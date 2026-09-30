@@ -59,9 +59,21 @@ const CONCEPTS = {
   housing: 'apartment rent rental lease landlord mortgage realtor tenant',
   sports: 'nba nfl mlb nhl playoff finals championship coach quarterback',
   health: 'symptom diagnosis medication doctor clinic therapy nutrition workout',
-  finance: 'stock invest investing bond dividend portfolio inflation savings loan',
+  finance: 'stock invest investing investor bond dividend portfolio inflation savings loan roth ira 401k 403b rollover retirement retire brokerage etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase',
+  tax: 'tax taxes irs',
+  ml: 'machine neural gradient backpropagation pytorch tensorflow keras llm llms gpt transformer transformers embedding embeddings huggingface arxiv kaggle tensor deeplearning',
+  fitness: 'fitness gym cardio run running runner runners marathon jog jogging c25k couch strava garmin pegasus parkrun triathlon yoga pilates crossfit deadlift squat hiit',
+  plants: 'plant plants fern ferns moss succulent succulents orchid orchids bonsai garden gardening seedling houseplant houseplants cactus cacti repot repotting prune pruning compost fertilizer perennial',
   music: 'chord lyric guitar piano song album playlist',
 };
+
+// Concepts whose tabs form a group of their own (tab-groups.js conceptGroups) when three or more loose tabs carry them and nothing
+// else took those tabs: "Roth IRA", "Vanguard funds" and "401k rollover" share no word, but are one errand. concept -> group name.
+// Only concepts that name one topic; "shopping" or "travel" words turn up in tabs about anything.
+const CONCEPT_GROUPS = { finance: 'Finance', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants' };
+// Concepts whose tabs may JOIN such a group but never start one: the tax office beside a Roth IRA and a 401k is money, three pages of
+// an agency are government ("Government" takes them, tab-groups.js FALLBACK_CATEGORIES).
+const CONCEPT_JOINS = { finance: ['tax'] };
 
 // registrable domain (or full host) -> category. Same category names as CONCEPTS where they overlap.
 const SITE_CATEGORIES = {
@@ -74,7 +86,10 @@ const SITE_CATEGORIES = {
   housing: 'zillow.com apartments.com redfin.com streeteasy.com trulia.com realtor.com',
   dev: 'github.com gitlab.com stackoverflow.com stackexchange.com developer.mozilla.org npmjs.com pypi.org docs.docker.com hub.docker.com dev.to',
   sports: 'espn.com basketball-reference.com nba.com nfl.com mlb.com',
-  finance: 'reuters.com bloomberg.com cnbc.com wsj.com marketwatch.com federalreserve.gov',
+  finance: 'reuters.com bloomberg.com cnbc.com wsj.com marketwatch.com federalreserve.gov fidelity.com vanguard.com schwab.com robinhood.com etrade.com nerdwallet.com investopedia.com coinbase.com',
+  tax: 'irs.gov',
+  ml: 'arxiv.org huggingface.co distill.pub 3blue1brown.com paperswithcode.com pytorch.org tensorflow.org kaggle.com fast.ai deeplearning.ai',
+  fitness: 'strava.com runnersworld.com myfitnesspal.com bodybuilding.com garmin.com parkrun.com',
 };
 
 // hint (a group name, as shown) -> sites that nearly always mean it. Loose tabs of one hint form a
@@ -128,4 +143,4 @@ const FALLBACK_CATEGORIES = [
   { name: 'News & social', weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
 ];
 
-module.exports = { FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };
+module.exports = { FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

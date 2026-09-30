@@ -95,6 +95,7 @@ der die das und ein eine mit von zu für auf ist im den dem
 de da do dos das os um uma com para por mais
 как что это для при все или его ещё тоже так уже они чем про над под без`.split(/\s+/));
 const TOPIC_THRESHOLD = 0.34;
+const TOPIC_HOSTS = 4; // a word that every tab says is a topic, not noise, when this many sites use it (vectorize)
 const COMMON_WORD_SHARE = Number(process.env.CW || 0.9); // a word this share of the tabs carry says nothing about which group
 // Small pools (2-3 loose tabs) need stronger evidence than a full cluster does before forming a
 // group: fewer members corroborating the same words makes an incidental overlap more likely.
@@ -130,6 +131,10 @@ function stem(w) {
   if (s.length > 3 && /[^s]s$/.test(s)) s = s.slice(0, -1);
   return s;
 }
+
+// Words of a site's chrome rather than of a page's subject, and site names: never exempt from the too-common cutoff (vectorize).
+const NAV_WORDS = new Set('dashboard overview settings account accounts pricing profile menu contact support cart inbox feed explore browse catalog store shop products product category categories directory archive portal'.split(' ').map(stem));
+const BRAND_KEYS = new Set([...BRAND_WORDS].map(stem));
 
 // Built-in knowledge (features/topic-knowledge.js) keyed by stem: city -> country, word -> concept,
 // domain -> category.
@@ -280,7 +285,12 @@ function sharedRun(titles, need) {
   return best.replace(new RegExp(`([A-Za-z0-9])(?=[${script}])|([${script}])(?=[A-Za-z0-9])`, 'gu'), (m) => `${m} `); // "Python編程" -> "Python 編程"
 }
 // Endings of Russian (and Ukrainian) nouns and adjectives: "Берлин", "Берлина", "в Берлине" are one word.
-const CYRILLIC_ENDING = /(?:ами|ями|ого|его|ому|ему|ыми|ими|ах|ях|ов|ев|ей|ой|ом|ем|ую|юю|ая|яя|ое|ее|ые|ие|ых|их|ам|ям|а|я|у|ю|ы|и|е|о)$/;
+const CYRILLIC_ENDING = /(?:ами|ями|ого|его|ому|ему|ыми|ими|ией|ии|ах|ях|ов|ев|ей|ой|ом|ем|ую|юю|ая|яя|ое|ее|ые|ие|ых|их|ам|ям|ым|им|ый|ий|ию|ия|ью|а|я|ь|у|ю|ы|и|е|о)$/;
+// Words that say what kind of page it is, not what it is about ("Рецепт борща", "Купить iPhone", "Погода в Москве"): the Russian
+// counterpart of CJK_FILLER_WORDS. Written in any case (compared by stemWord's key), so one form of each is enough.
+const RU_FILLER = new Set(`рецепт купить покупка цена погода новости лучший отзыв отзывы скачать смотреть онлайн бесплатно сегодня
+вкусный простой классический быстрый домашний сайт официальный интернет заказать доставка характеристики инструкция совет способ
+обзор сравнение рейтинг список вопросы такое можно нужно очень какой какие сколько почему где когда`.split(/\s+/).map((w) => stemWord(w)));
 function stemWord(w) {
   if (/[Ѐ-ӿ]/.test(w)) { const base = w.length > 3 ? w.replace(CYRILLIC_ENDING, '') : w; return base.length >= 3 ? base : w; } // "борща" and "борщ" meet; never under 3 letters
   return stem(w);
@@ -291,7 +301,9 @@ function tokens(text) {
     if (CJK.test(raw)) { out.push(...cjkTokens(raw)); continue; }
     const w = raw.toLowerCase();
     if (w.length < 3 || /^\d+$/.test(w) || STOPWORDS.has(w)) continue;
-    out.push({ key: stemWord(w), surface: raw });
+    const key = stemWord(w);
+    if (RU_FILLER.has(key)) continue;
+    out.push({ key, surface: raw });
   }
   return out;
 }
@@ -388,6 +400,9 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
     if (written[0] && /^\p{Lu}/u.test(written[0])) for (const t of tokens(written[0])) words.capital.add(t.key);
   }
   add(titleTokens, 1, { naming: true, vector: true });
+  // The words of the title's first segment ("Weather in Moscow 3 - Forecastly": the part before the separator): where a topic sits, as against a site's
+  // nav label or tagline, which trail. See vectorize's `exempt`.
+  words.lead = new Set(tokens(cleanTitle.split(/\s+[-|–—·:]\s+/)[0]).map((t) => t.key));
   // Course and part numbers: "ME 2380", "ENGW-1111", "CS3500" are one word, and the best name a course's tabs have.
   for (const code of courseCodes(`${cleanTitle} ${text}`)) words.set(code, { weight: 1, surface: code.toUpperCase() });
   // Down-weighted, and a key of its own (^): same-site tabs shouldn't cluster on the brand alone, and
@@ -420,7 +435,7 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
 }
 
 // TF-IDF vectors for a set of entries, idf computed over just this set ("current tabs").
-function vectorize(entries) {
+function vectorize(entries, { allowCommon = false } = {}) {
   const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url), siteKey: siteKey(e.url), siteHint: siteHint(e.url) || e.aiHint || '' }));
   const n = docs.length;
   // A site's own name ("nextjs.org", "zod.dev") is brand noise between two of its own pages, but
@@ -437,7 +452,21 @@ function vectorize(entries) {
   }
   const df = new Map();
   for (const d of docs) for (const key of d.words.keys()) df.set(key, (df.get(key) || 0) + 1);
-  const informative = (key) => df.get(key) >= 2 && (n < 4 || df.get(key) / n <= COMMON_WORD_SHARE);
+  // A word nearly every tab carries is usually noise, but in a window that is all about one thing it IS the topic ("Kitten food",
+  // "Kitten toys", ... on four sites). Kept (allowCommon: topicClusters asks once nothing else grouped) when it is written in the
+  // titles, is no nav word or brand, and either four sites use it or it opens every title (same-site nav labels and taglines trail it).
+  const exempt = new Set();
+  if (n >= 4) {
+    for (const [k, c] of df) {
+      if (c / n <= COMMON_WORD_SHARE || !isRealKey(k) || NAV_WORDS.has(k) || BRAND_KEYS.has(k)) continue;
+      const titled = docs.filter((d) => (d.words.get(k)?.weight ?? 0) >= 0.8);
+      if (titled.length < 4 || titled.length < c * 0.75) continue;
+      if (new Set(titled.map((d) => d.siteKey || d.url)).size >= TOPIC_HOSTS || titled.every((d) => d.words.lead.has(k))) exempt.add(k);
+    }
+  }
+  docs.hasCommon = exempt.size > 0;
+  if (!allowCommon) exempt.clear();
+  const informative = (key) => df.get(key) >= 2 && (n < 4 || df.get(key) / n <= COMMON_WORD_SHARE || exempt.has(key));
   const idf = (key) => Math.log((n + 1) / (df.get(key) + 1)) + 1;
   for (const d of docs) {
     d.vec = new Map();
@@ -467,12 +496,12 @@ function vectorize(entries) {
     if (idxs.length < 2) continue;
     const count = new Map();
     for (const i of idxs) for (const k of docs[i].vec.keys()) count.set(k, (count.get(k) || 0) + 1);
-    for (const [k, c] of count) if (!k.startsWith('@') && c / idxs.length >= SITE_TEMPLATE_RATIO && df.get(k) === c) for (const i of idxs) docs[i].template.add(k);
+    for (const [k, c] of count) if (!k.startsWith('@') && !exempt.has(k) && c / idxs.length >= SITE_TEMPLATE_RATIO && df.get(k) === c) for (const i of idxs) docs[i].template.add(k);
   }
   // Words named in a title, a search or a subreddit (not only in a description) by 2+ tabs: the topic words.
   const named = new Map();
   for (const d of docs) for (const [k, { weight }] of d.words) if (weight >= 0.8 && isRealKey(k)) named.set(k, (named.get(k) || 0) + 1);
-  for (const d of docs) d.named = named;
+  for (const d of docs) { d.named = named; d.exempt = exempt; }
   docs.df = df;
   docs.n = n;
   return docs;
@@ -518,7 +547,7 @@ function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
   const ownB = ownMax(cb, B.length, ca, named);
   for (const [k, a] of ca) {
     const b = cb.get(k);
-    if (!b || (n >= 8 && df.get(k) / n > ANCHOR_MAX_DF)) continue;
+    if (!b || (n >= 8 && df.get(k) / n > ANCHOR_MAX_DF && !A[0].exempt.has(k))) continue;
     // A lone tab that names a product or brand and only shares a place with the group ("Купить iPhone в Москве" among
     // Moscow weather and news) is not of that topic: same rule as cosine()'s.
     const lone = A.length === 1 ? A[0] : B.length === 1 ? B[0] : null;
@@ -568,7 +597,7 @@ function cosine(a, b) {
 const NAME_ONLY_PENALTY = 1;
 // Title/search words of a tab that no other tab shares (dropped from its vector as uninformative).
 function ownWords(d) {
-  if (d.own === undefined) { d.own = 0; for (const [k, { weight }] of d.words || []) if (weight >= 0.8 && isRealKey(k) && !d.vec.has(k)) d.own++; }
+  if (d.own === undefined) { d.own = 0; for (const [k, { weight }] of d.words || []) if (weight >= 0.8 && isRealKey(k) && !d.vec.has(k)) d.own += d.words.mixed && /^[a-z0-9]+$/.test(k) ? 3 : 1; } // a brand written in Latin letters among Russian words says a lot
   return d.own;
 }
 
@@ -762,6 +791,51 @@ function siteJoin(clusters, docs) {
   return { clusters: kept.concat(fresh), hinted };
 }
 
+// Sixth stage: a concept that names one topic (knowledge.CONCEPT_GROUPS: finance, machine learning, fitness, plants) draws together
+// the tabs still loose or in small groups that mostly carry it, though they share no word ("Roth IRA", "Vanguard funds", "401k
+// rollover"; Coursera, arXiv and Distill): three tabs or more make a group named for the concept. A big group that mostly carries it
+// takes them in instead, and a tab that carries it in a group that mostly doesn't ("PyTorch tutorials" among Python pages) moves to it.
+// Returns the new clusters and the ones that were drawn together (by cluster, for naming).
+const CONCEPT_SMALL = 3;
+const CONCEPT_PULL_MAX_COS = 0.6; // a tab this close to the rest of its group stays there
+function conceptGroups(clusters, docs) {
+  const out = clusters.map((c) => [...c]);
+  const formed = new Map(); // cluster (array) -> the concept name
+  for (const [concept, label] of Object.entries(knowledge.CONCEPT_GROUPS)) {
+    const key = `%${concept}`;
+    const has = (i) => docs[i].words.has(key);
+    const mostly = (c) => c.filter(has).length * 2 > c.length;
+    const big = out.filter((c) => c.length > CONCEPT_SMALL && mostly(c)).sort((a, b) => b.length - a.length)[0];
+    const parts = out.filter((c) => c.length <= CONCEPT_SMALL && mostly(c));
+    let home = big;
+    if (!home && parts.reduce((n, c) => n + c.length, 0) >= 3 && parts.length >= 2) {
+      home = parts[0];
+      formed.set(home, label);
+    }
+    if (!home) continue;
+    if (big || parts.reduce((n, c) => n + c.length, 0) >= 3) {
+      for (const c of parts) if (c !== home) { home.push(...c); out.splice(out.indexOf(c), 1); }
+    }
+    // Tabs of a concept that may only join (the tax office beside retirement accounts).
+    const joins = (knowledge.CONCEPT_JOINS[concept] || []).map((j) => `%${j}`);
+    for (const c of out.filter((o) => o !== home && o.length <= CONCEPT_SMALL && o.filter((i) => joins.some((j) => docs[i].words.has(j))).length * 2 > o.length)) {
+      home.push(...c);
+      out.splice(out.indexOf(c), 1);
+    }
+    // A member that carries the concept where the group mostly doesn't, and is not close to the rest of it.
+    for (const c of [...out]) {
+      if (c === home || c.length < 3 || mostly(c)) continue;
+      for (const i of c.filter(has)) {
+        const rest = c.filter((j) => j !== i).map((j) => docs[j]);
+        if (cosine(docs[i], centroidOf(rest)) >= CONCEPT_PULL_MAX_COS) continue;
+        c.splice(c.indexOf(i), 1);
+        home.push(i);
+      }
+    }
+  }
+  return { clusters: out, formed };
+}
+
 // The broad category of a tab (knowledge.FALLBACK_CATEGORIES) from its host, then its title: a category object or null.
 // Strong host first, then the title words, then a weak host (a news site that also carries a review).
 const hostMatches = (host, sites) => sites.split(/\s+/).some((s) => (s.endsWith('.*') ? host.startsWith(`${s.slice(0, -2)}.`) && host.split('.').length >= 3 : host === s || host.endsWith(`.${s}`)));
@@ -777,10 +851,20 @@ function categoryOf({ url, title }) {
 
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
 // categories: the local organizer's last resort for what the words left loose (see the stage after the split below).
-function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = false } = {}) {
-  const docs = vectorize(entries);
+function topicClusters(entries, opts = {}) {
+  const first = clusterPass(entries, opts, false);
+  // A quarter of the tabs or more left loose and a word every tab carries: the window is about that word (four sites of kitten pages,
+  // or Moscow's weather, hotels and sights beside a lone "Купить ... в Москве"). Ask again with it kept; the better answer wins.
+  if (first.hasCommon && first.reduce((k, c) => k + c.ids.length, 0) * 4 < entries.length * 3) {
+    const again = clusterPass(entries, opts, true);
+    if (again.reduce((k, c) => k + c.ids.length, 0) > first.reduce((k, c) => k + c.ids.length, 0)) return again;
+  }
+  return first;
+}
+function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false } = {}, allowCommon = false) {
+  const docs = vectorize(entries, { allowCommon });
   const n = docs.length;
-  if (n < 2) return [];
+  if (n < 2) return Object.assign([], { hasCommon: false });
   const sim = docs.map((a) => docs.map((b) => cosine(a, b)));
   // Average-linkage agglomerative clustering, merging the closest pair while above the threshold.
   const link = (x, y) => { let s = 0; for (const i of x) for (const j of y) s += sim[i][j]; return s / (x.length * y.length); };
@@ -825,11 +909,17 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
   if (!process.env.NOABSORB) merged = conceptAbsorb(merged, docs);
   // Fifth stage: loose tabs by their site and its hint.
   const hintOf = new Map(); // sorted member indices -> the hint a cluster was formed on
+  const conceptOf = new Map(); // ... and the concept that drew a cluster together (names it before anything else)
   const idsKey = (c) => [...c].sort((x, y) => x - y).join(',');
   if (!process.env.NOSITEJOIN) {
     const joined = siteJoin(merged, docs);
     merged = joined.clusters;
     for (const [c, hint] of joined.hinted) hintOf.set(idsKey(c), hint);
+  }
+  if (!process.env.NOCONCEPT) {
+    const drawn = conceptGroups(merged, docs);
+    merged = drawn.clusters;
+    for (const [c, label] of drawn.formed) conceptOf.set(idsKey(c), label);
   }
   // No mega-groups: a cluster past MAX_GROUP is re-split at a stricter threshold (a few times); tabs
   // that no longer belong with anyone stay loose rather than being forced into a group.
@@ -876,7 +966,7 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
   const titleCase = (w) => (w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1) : w);
   const titleCasePhrase = (s) => s.split(/\s+/).map(titleCase).join(' ');
   const clip = (s) => (s.length <= 24 ? s : (s.slice(0, 24).replace(/\s+\S*$/, '') || s.slice(0, 24)));
-  return clusters.filter((c) => c.length >= 2).map((c) => {
+  const named = clusters.filter((c) => c.length >= 2).map((c) => {
     const members = c.map((i) => docs[i]);
     let pairSum = 0;
     for (let x = 0; x < c.length; x++) for (let y = x + 1; y < c.length; y++) pairSum += sim[c[x]][c[y]];
@@ -892,11 +982,15 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
     const surface = (k) => members.find((d) => d.words.has(k)).words.get(k).surface;
     // A Russian word is written in whatever case the title needs ("в Москве", "Москвы"): the group is named for the
     // dictionary form among those its tabs use (no ending, then -а/-я), else the form most of them use.
-    const formRank = (w) => (CYRILLIC_ENDING.test(w.toLowerCase()) ? (/[ая]$/i.test(w) ? 1 : 2) : 0);
+    const isDictionary = (w) => /(?:ый|ий|ь)$/i.test(w) || !CYRILLIC_ENDING.test(w.toLowerCase()); // "борщ", "красный", "отель"
+    const formRank = (w) => (isDictionary(w) ? 0 : /[ая]$/i.test(w) ? 1 : 2);
     const bestSurface = (k) => {
       if (!/[Ѐ-ӿ]/.test(k)) return surface(k);
       const count = new Map();
       for (const d of members) if (d.words.has(k)) { const w = d.words.get(k).surface; count.set(w, (count.get(w) || 0) + 1); }
+      const forms = [...count.keys()];
+      // Only -ов/-ом/-ем forms, no bare one ("пирога", "пирогов"): a masculine noun, whose dictionary form is the bare stem.
+      if (!forms.some(isDictionary) && forms.some((w) => /(?:ов|ев|ом|ем)$/i.test(w))) return k.charAt(0).toUpperCase() + k.slice(1);
       return [...count].sort((x, y) => formRank(x[0]) - formRank(y[0]) || y[1] - x[1] || x[0].length - y[0].length)[0][0];
     };
     const words2 = (e) => (/[Ѐ-ӿ]/.test(e.key) ? e.key.split('|').map(bestSurface).join(' ') : e.surface);
@@ -935,7 +1029,8 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
     const oneSite = members.length >= 3 && topSite && topSiteCount / members.length >= SITE_DOMINANT && !SEARCH_DOMAINS.has(topSite);
     const kindOfSite = (n) => knowledge.BROAD_HINTS.has(n) || knowledge.FALLBACK_CATEGORIES.some((k) => k.name === n); // a name that says a KIND of site
     let name;
-    if (oneSite && !(topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) && (!top || kindOfSite(hintOf.get(idsKey(c)) || sharedHint))) {
+    if (conceptOf.has(idsKey(c))) name = conceptOf.get(idsKey(c));
+    else if (oneSite && !(topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) && (!top || kindOfSite(hintOf.get(idsKey(c)) || sharedHint))) {
       const lead = members.find((d) => d.siteKey === topSite);
       name = siteName(lead.url, lead.title);
     } else if (hintOf.has(idsKey(c))) name = hintOf.get(idsKey(c));
@@ -961,6 +1056,7 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
     if (dotted) name = `${name}${String(dotted.title).match(new RegExp(`\\b${name}(\\.(?:js|ts|py|io))\\b`, 'i'))[1]}`;
     return { name: clip(name), ids: members.map((d) => d.id), key: top?.[0] || null, cohesion };
   });
+  return Object.assign(named, { hasCommon: docs.hasCommon });
 }
 
 // ---------- incremental placement: where does ONE tab belong among the groups that already exist? ----------
