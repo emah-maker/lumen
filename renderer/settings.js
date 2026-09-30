@@ -494,6 +494,56 @@ function buildLook(card) {
   renderSwatches();
 }
 
+// [look] A row of choices for one setting (radio buttons, arrow keys move between them), saved at once.
+// `content(value, label)` draws a choice; `after` runs once one is saved.
+function choices(key, label, cls, options, content, after) {
+  const group = h('div', { class: cls, role: 'radiogroup', 'aria-label': label, id: `pref-${key}` });
+  const buttons = options.map(([value, text]) => h('button', { type: 'button', role: 'radio', 'data-value': String(value), 'aria-label': text, title: text,
+    onclick: async () => { paint(String(value)); await save(key, value); after?.(value); } }, content(value, text)));
+  const paint = (v) => { for (const b of buttons) { const on = b.dataset.value === v; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; } };
+  group.addEventListener('keydown', (e) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const i = buttons.findIndex((b) => b.getAttribute('aria-checked') === 'true');
+    const next = buttons[(i + step + buttons.length) % buttons.length];
+    next.click();
+    next.focus();
+  });
+  group.append(...buttons);
+  paint(String(st.prefs[key]));
+  group.repaint = () => paint(String(st.prefs[key]));
+  return group;
+}
+// [look] The clock's styles and the greeting's fonts (features/clock-styles.js lists them; newtab.html draws them),
+// each previewed in its own face; settings.css has the same font stacks.
+function buildClockStyle() {
+  const styles = (st.clockStyles || []).map((s) => [s.id, s.label]);
+  const fonts = (st.greetingFonts || []).map((f) => [f.id, f.label]);
+  const greetingFace = (v) => (v === 'match' ? (st.prefs.newTabClockStyle === 'bold' ? 'classic' : st.prefs.newTabClockStyle) : v);
+  let greetingTiles = null;
+  const clockTiles = choices('newTabClockStyle', 'Clock style', 'clock-tiles', styles, (v, text) => [
+    h('span', { class: `ct-face cs-${v}`, 'aria-hidden': 'true' }, v === 'bold' ? [h('span', { text: '09' }), h('span', { text: '41' })] : '9:41'),
+    h('span', { class: 'ct-label', text }),
+  ], () => { // "Match clock" follows the new face
+    const match = greetingTiles?.querySelector('[data-value="match"] .ct-face');
+    if (match) match.className = `ct-face gf-${greetingFace('match')}`;
+  });
+  greetingTiles = fonts.length ? choices('newTabGreetingFont', 'Greeting font', 'clock-tiles greeting-tiles', fonts, (v, text) => [
+    h('span', { class: `ct-face gf-${greetingFace(v)}`, 'aria-hidden': 'true', text: 'Hello' }),
+    h('span', { class: 'ct-label', text }),
+  ]) : null;
+  const seg = (key, label, options) => choices(key, label, 'segctl', options, (v, text) => text);
+  return { clock: [
+    stackRow('Clock style', 'The clock’s typeface and layout. Classic is the original look.', clockTiles),
+    row('Hours', 'Automatic follows your system language.', seg('newTabClockHours', 'Hours', [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']])),
+    toggle('newTabClockSeconds', 'Show seconds', null),
+    toggle('newTabClockDate', 'Show the date', 'The date with the clock. In Thin it sits above the time.'),
+    row('Behind the clock', 'A card behind the clock and date. Glass blurs the background behind it.', seg('newTabClockCard', 'Behind the clock', [['none', 'None'], ['soft', 'Soft'], ['glass', 'Glass']])),
+    toggle('newTabClockShadow', 'Stronger text shadow', 'Makes the clock and greeting easier to read over a background or picture.'),
+  ], greeting: greetingTiles ? [stackRow('Greeting font', 'The typeface of “Good evening”. Match clock uses the clock’s.', greetingTiles)] : [] };
+}
+
 // Home: the new-tab page's background, clock, greeting and sections, and its widgets (a sub-page).
 async function buildHome(card) {
 
@@ -522,12 +572,15 @@ async function buildHome(card) {
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
   name.addEventListener('change', () => save('newTabName', name.value));
+  const clockStyle = buildClockStyle();
   card.append(
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
     select('newTabClockSize', 'Clock size', 'How big the clock is. In Edit layout on the new-tab page you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
+    ...clockStyle.clock, // [look]
     select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => x - y).map((w) => [w, `${w} px`]), { number: true }),
     toggle('newTabHeader', 'Show the date and greeting', 'Turn off to hide the date and “Good evening” line. In Edit layout on the new-tab page, the ✕ on a section does the same.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
+    ...clockStyle.greeting, // [look]
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
