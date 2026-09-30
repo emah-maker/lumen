@@ -1219,17 +1219,66 @@ async function buildWidgets(card) {
         ], 'Lumen fetches the address itself, without your cookies, and shows only text from it: a recipe can’t run code.'));
       } else if (type === 'tradingview') {
         const tv = same?.tv || {};
-        inputs.symbol = h('input', { type: 'text', id: 'widget-tv-symbol', maxlength: '52', spellcheck: 'false', autocomplete: 'off', placeholder: 'NASDAQ:AAPL', 'aria-label': 'Symbol', value: tv.symbol || '' });
-        inputs.view = sel('widget-tv-view', 'Style', [['chart', 'Full chart'], ['mini', 'Mini chart']], tv.view || 'chart');
+        inputs.symbol = h('input', { type: 'text', id: 'widget-tv-symbol', maxlength: '52', spellcheck: 'false', autocomplete: 'off', placeholder: 'NASDAQ:AAPL', 'aria-label': 'Symbol', value: tv.view === 'watchlist' ? '' : tv.symbol || '' });
+        inputs.view = sel('widget-tv-view', 'Style', [['chart', 'Full chart'], ['mini', 'Mini chart'], ['watchlist', 'Watchlist']], tv.view || 'chart');
         inputs.interval = sel('widget-tv-interval', 'Interval', [['1', '1 minute'], ['5', '5 minutes'], ['15', '15 minutes'], ['30', '30 minutes'], ['60', '1 hour'], ['240', '4 hours'], ['D', '1 day'], ['W', '1 week'], ['M', '1 month']], tv.interval || 'D');
         inputs.theme = sel('widget-tv-theme', 'Theme', [['auto', 'Follow light and dark mode'], ['light', 'Light'], ['dark', 'Dark']], tv.theme || 'auto');
+        // Watchlist: the symbols as TradingView's own "Export list" writes them, one "###Name" line per section.
+        inputs.symbols = h('textarea', { id: 'widget-tv-symbols', rows: '8', spellcheck: 'false', class: 'code', 'aria-label': 'Symbols', placeholder: '###Indices\nSPCFD:SPX\nTVC:NDQ\n###Stocks\nNASDAQ:AAPL\nNASDAQ:TSLA' });
+        inputs.symbols.value = Array.isArray(tv.symbols) ? tv.symbols.join('\n') : '';
+        inputs.chart = h('input', { type: 'checkbox', class: 'switch', id: 'widget-tv-chart', role: 'switch', 'aria-label': 'Chart on top', checked: tv.chart === true });
+        inputs.sync = h('input', { type: 'checkbox', class: 'switch', id: 'widget-tv-sync', role: 'switch', 'aria-label': 'Keep in sync with TradingView', checked: tv.sync !== false });
+        let linked = tv.list || null; // { id, name } of the account list these symbols came from
+        inputs.tvLinked = () => linked;
+        const lists = h('select', { id: 'widget-tv-lists', 'aria-label': 'Your TradingView watchlists', hidden: true });
+        const tvNote = h('span', { class: 'note', role: 'status', id: 'widget-tv-note', text: linked ? `From “${linked.name}” in your TradingView account.` : '' });
+        let got = [];
+        let filling = false; // the import writing the box, not the person typing in it
+        const use = (l) => {
+          linked = l ? { id: l.id, name: l.name } : null;
+          if (l) inputs.symbols.value = l.symbols.join('\n');
+          flash(tvNote, l ? `${l.count} symbols from “${l.name}”.` : '', 'ok');
+          filling = true;
+          inputs.symbols.dispatchEvent(new Event('input', { bubbles: true })); // autosave sees the change
+          filling = false;
+        };
+        lists.addEventListener('change', () => use(got.find((l) => String(l.id) === lists.value)));
+        const signIn = h('button', { type: 'button', id: 'widget-tv-signin', text: 'Sign in to TradingView', hidden: true, onclick: () => S.openUrl('https://www.tradingview.com/accounts/signin/') });
+        const load = h('button', { type: 'button', id: 'widget-tv-import', text: 'Import from TradingView', onclick: async () => {
+          load.disabled = true;
+          flash(tvNote, 'Reading your TradingView watchlists…', '');
+          try {
+            const r = await S.widgets.tvLists();
+            got = r.lists || [];
+            signIn.hidden = r.signedIn;
+            if (!r.signedIn) { lists.hidden = true; flash(tvNote, 'You’re not signed in to TradingView in Lumen. Sign in, then press Import again.', 'err'); return; }
+            if (!got.length) { lists.hidden = true; flash(tvNote, 'Your TradingView account has no watchlists with symbols yet.', 'err'); return; }
+            lists.replaceChildren(...got.map((l) => h('option', { value: String(l.id), text: `${l.name} (${l.count})` })));
+            lists.hidden = got.length < 2;
+            const pickOne = got.find((l) => linked && l.id === linked.id) || got.find((l) => l.active) || got[0];
+            lists.value = String(pickOne.id);
+            use(pickOne);
+          } catch (err) { flash(tvNote, clean(err), 'err'); } finally { load.disabled = false; }
+        } });
+        // Typing over an imported list unlinks it: the card then shows exactly what's typed.
+        inputs.symbols.addEventListener('input', () => { if (!filling && linked) { linked = null; flash(tvNote, 'Edited here, so it no longer syncs with TradingView. Import again to link it.', ''); } });
+        const symbolRow = block('Symbol', 'As TradingView writes it: NASDAQ:AAPL, NYSE:SPY, BINANCE:BTCUSDT, FX:EURUSD, or just AAPL. You can also change it on the chart itself.', inputs.symbol);
+        const listRows = [
+          block('Symbols', 'One per line or separated by commas, up to 60. A line like ###Tech starts a section (each section is a tab). You can paste the .txt from TradingView’s “Export list”, or import a list straight from your account.', inputs.symbols, h('div', { class: 'sp-actions' }, load, lists, signIn), tvNote),
+          setting('Keep in sync', inputs.sync, 'For an imported list: Lumen reads it from your TradingView account every 15 minutes, so symbols you add or remove there show up here.'),
+          setting('Chart on top', inputs.chart, 'A chart of the row you pick above the list. Off, it’s just the list, like TradingView’s home-screen widget.'),
+        ];
+        const intervalRow = setting('Interval', inputs.interval, 'The bar size the full chart opens with (the mini chart and the watchlist pick a date range near it).');
+        const syncView = () => { const w = inputs.view.value === 'watchlist'; symbolRow.hidden = w; for (const r of listRows) r.hidden = !w; };
+        inputs.view.addEventListener('change', syncView);
         fields.replaceChildren(
           section('Chart', [
-            block('Symbol', 'As TradingView writes it: NASDAQ:AAPL, NYSE:SPY, BINANCE:BTCUSDT, FX:EURUSD, or just AAPL. You can also change it on the chart itself.', inputs.symbol),
-            setting('Style', inputs.view, 'The full chart has TradingView’s tools and date ranges; the mini chart is a small price line.'),
-            setting('Interval', inputs.interval, 'The bar size the full chart opens with (the mini chart picks a date range near it).'),
+            symbolRow, ...listRows,
+            setting('Style', inputs.view, 'The full chart has TradingView’s tools and date ranges; the mini chart is a small price line; the watchlist is rows of symbols with price and change.'),
+            intervalRow,
             setting('Theme', inputs.theme),
-          ], 'No account or key. The chart is TradingView’s own page in a frame: TradingView sees that you opened it, and its quotes come under TradingView’s terms. Not investment advice.'));
+          ], 'No key. The chart is TradingView’s own page in a frame: TradingView sees that you opened it, and its quotes come under TradingView’s terms. Importing reads only your watchlists’ names and symbols, with your TradingView sign-in in Lumen. Not investment advice.'));
+        syncView();
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -1277,7 +1326,11 @@ async function buildWidgets(card) {
       if (type === 'countdown') return { ...base, cd: { label: inputs.label.value, date: inputs.date.value, time: inputs.time.value } };
       if (type === 'timer') return { ...base, tm: { pomodoro: inputs.mode.value === 'pomodoro', work: Number(inputs.work.value), rest: Number(inputs.rest.value) } };
       if (type === 'custom') return { ...base, recipe: inputs.recipe.value };
-      if (type === 'tradingview') return { ...base, tv: { symbol: inputs.symbol.value, view: inputs.view.value, interval: inputs.interval.value, theme: inputs.theme.value } };
+      if (type === 'tradingview') {
+        const tv = { symbol: inputs.symbol.value, view: inputs.view.value, interval: inputs.interval.value, theme: inputs.theme.value };
+        if (tv.view === 'watchlist') Object.assign(tv, { symbols: inputs.symbols.value, chart: inputs.chart.checked, list: inputs.tvLinked() || undefined, sync: inputs.sync.checked });
+        return { ...base, tv };
+      }
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
     // Disable every button while a check or save runs, and put back exactly the ones that were already off.

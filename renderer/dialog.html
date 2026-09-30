@@ -75,6 +75,22 @@
     #checkbox-row { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; color: var(--muted); font-size: 13px; cursor: default; }
     #checkbox-row[hidden] { display: none; }
     #checkbox-row input { accent-color: var(--accent); width: 14px; height: 14px; }
+    /* Release notes (kind "notes", features/whats-new.js): a wider card, one section per version. */
+    #card.wide { width: 560px; }
+    #notes { margin: 12px 0 0; user-select: text; }
+    #notes[hidden], #more[hidden], #notes-link[hidden] { display: none; }
+    .release + .release { margin-top: 14px; padding-top: 12px; border-top: 0.5px solid var(--border); }
+    .release h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+    .release h3 .date { margin-left: 6px; color: var(--muted); font-weight: 400; }
+    .release ul { margin: 0; padding-left: 18px; }
+    .release li, .release p { margin: 0 0 6px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+    .release p { color: var(--muted); }
+    .release code { font: 12px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; padding: 0 3px; border-radius: 4px; background: var(--field); }
+    #more { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+    #notes-link { display: inline-block; margin: 10px 0 0; color: var(--accent); font-size: 13px; text-decoration: none; cursor: pointer; }
+    #notes-link:hover { text-decoration: underline; }
+    #notes-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+    #card.wide #checkbox-row { margin-top: 12px; }
     #buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     .btn {
       height: 30px; padding: 0 14px; border: none; border-radius: 8px; background: var(--field); color: var(--text);
@@ -104,6 +120,9 @@
           <p id="message"></p>
           <p id="detail" hidden></p>
           <div id="fields" hidden></div>
+          <div id="notes" hidden></div>
+          <p id="more" hidden></p>
+          <a id="notes-link" hidden target="_blank" rel="noopener noreferrer"></a>
           <label id="checkbox-row" hidden><input type="checkbox" id="checkbox" /><span id="checkbox-label"></span></label>
         </div>
       </div>
