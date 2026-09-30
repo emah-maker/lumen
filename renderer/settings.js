@@ -592,10 +592,10 @@ async function buildHome(card) {
   const clockStyle = buildClockStyle();
   card.append(
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
-    select('newTabClockSize', 'Clock size', 'How big the clock is. Its room is kept, so changing it never moves the search box or your cards. In Edit layout you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
+    select('newTabClockSize', 'Clock size', 'How big the clock is. It grows into the space above it, so the search box and your cards stay put; where cards leave no room, it is drawn a step smaller. In Edit layout you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
     ...clockStyle.clock, // [look]
-    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. Automatic fills the column; a wider bar stops at the cards beside it rather than moving them. In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => x - y).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
-    toggle('newTabHeader', 'Show the date and greeting', 'Turn off to hide the date and “Good evening” line. Its room is kept, so nothing else on the page moves.'),
+    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. Automatic fills the column. A wider bar is drawn only as wide as the cards beside it allow (the setting is kept for wider windows). In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => x - y).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
+    toggle('newTabHeader', 'Show the clock, date and greeting', 'Turn off to hide the whole top of the page: the clock, the date and the “Good evening” line.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
     ...clockStyle.greeting, // [look]
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
@@ -968,14 +968,14 @@ async function buildWidgets(card) {
       const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
         h('span', { class: 'note', text: 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.' }),
         // Said before the user tries, not after five silent minutes: until Google approves it, not every account can use it.
-        builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google shows “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced.') }) : null);
+        builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', id: 'widget-gmail-unverified', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google shows “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced.') }) : null);
       const adv = advanced([
         builtin ? h('div', { class: 'row stack' }, h('span', { class: 'note', text: tr('settings.gmail.ownHint', 'Optional. Sign in with Google works without this. To use a Google Cloud project of your own instead, paste its Desktop app client here; it is then used instead of Lumen’s.') })) : null,
         helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
         setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, 'From the same client. Stored encrypted by your system.'),
       ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !builtin && !g.clientId);
       adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : 'Advanced';
-      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); });
+      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = accountRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
       const draw = () => {
         disconnect.hidden = !connected();
         connect.hidden = connected();
@@ -988,7 +988,7 @@ async function buildWidgets(card) {
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
         // After a minute, what may have happened (Google never comes back when it blocks the sign-in).
-        const hint = setTimeout(() => flash(status, tr('settings.gmail.stillWaiting', 'Still waiting. If Google showed “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced, or Cancel and try again.'), 'warn'), 60000);
+        const hint = setTimeout(() => flash(status, builtin && !own() ? tr('settings.gmail.stillWaiting', 'Still waiting. If Google showed “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced, or Cancel and try again.') : tr('settings.gmail.stillWaitingOwn', 'Still waiting. Finish signing in, in your browser, or Cancel and try again.'), 'warn'), 60000);
         try {
           const r = await S.widgets.gmailConnect({ clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value });
           ws = r.state;

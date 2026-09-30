@@ -25,21 +25,18 @@
       }
     }
     html, body { margin: 0; min-height: 100%; }
+    html { scrollbar-gutter: stable; } /* a scrollbar appearing never narrows the page (and the column's column count) */
     body {
       background: var(--bg); color: var(--text);
       font: 13px/1.45 system-ui, -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased; letter-spacing: -0.005em;
     }
     ::selection { background: var(--ring); }
-    /* A fixed top padding (not a share of the window's height): the centre column starts at the same place in any
-       window, so the cards below it keep theirs when the window is resized. */
-    main { --clock-size: 88px; --search-w: 640px; width: min(var(--search-w), 88vw); margin: 0 auto; padding: 88px 0 48px; }
-    /* The header keeps room for its tallest look (the biggest clock, the tallest style, date and greeting shown:
-       newtab-system.js measures it as --header-reserve), with the clock sitting at its bottom, next to the search
-       box. So a bigger clock, another style, or the date and greeting turned off or on never moves the search box,
-       the sections, or any card on the page; a hidden header keeps its room, invisibly. */
-    main > header { display: flex; flex-direction: column; justify-content: flex-end; min-height: var(--header-reserve, 0px); }
-    main > header[hidden] { display: flex !important; visibility: hidden; }
+    /* The search box sits at the same height whatever the clock looks like: a bigger clock, another style or a card
+       behind it takes room from the space above it (--main-pad, set by newtab-system.js), so the search box, the
+       sections and every card stay where they are. (The top padding is fixed px, not a share of the window's height,
+       so resizing the window doesn't move them either.) */
+    main { --clock-size: 88px; --search-w: 640px; width: min(var(--search-w), 88vw); margin: 0 auto; padding: var(--main-pad, 88px) 0 48px; }
 
     /* [look] Backgrounds (Settings → Appearance → New tab page). On anything but Plain, text turns
        light and the cards become frosted glass over the picture or gradient. */

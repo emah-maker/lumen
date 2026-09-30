@@ -132,7 +132,8 @@ function snapSearchWidth(px, grid) {
     const line = grid.width - 2 * (grid.pad + Math.round(k) * grid.pitch);
     if (Math.abs(line - px) <= 6) best = Math.round(line);
   }
-  return Math.min(SEARCH_MAX, Math.max(SEARCH_MIN, best));
+  best = Math.min(SEARCH_MAX, Math.max(SEARCH_MIN, best));
+  return best === SEARCH_DEFAULT ? best + SEARCH_STEP : best; // 640 is stored for "Automatic"; a dragged width is never it
 }
 
 const api = { CLOCK_STEPS, CLOCK_PX, CLOCK_DEFAULT, SEARCH_MIN, SEARCH_MAX, SEARCH_DEFAULT, SEARCH_STEP, cleanClockSize, cleanSearchWidth, clockStepFromPx, stepClock, snapSearchWidth, SYSTEM, IDS, isSystemId, isSystem, typeOf, labelOf, prefOf, visible, clean, cleanAll, capReal, split, applyLayout, forPage, cellsFromBox };

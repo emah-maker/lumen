@@ -52,7 +52,7 @@
   const stacked = () => !m || m.cols === 1;
 
   // ---- drawing ----
-  function measure() {
+  function measure(quiet = false) {
     const width = document.documentElement.clientWidth;
     // The centre column's blocks, measured on the page (offsetTop is the page's, not the transform-animated box): the
     // search block (header, search box, its mode row) sets where the rows start, the sections docked below add to the
@@ -70,7 +70,7 @@
     o = { cols: m.cols, obstacle, packed: body.dataset.wpack === '1' && !window.newtabSize?.held?.(), rows: WL.pageRows(window.innerHeight, m) };
     body.classList.toggle('w-stacked', m.cols === 1);
     if (m.cols === 1 && editing) setEditing(false);
-    announceMode();
+    if (!quiet) announceMode();
   }
   // The toolbar (newtab-edit.js) follows: editing or not, and whether the window is too narrow to edit.
   function announceMode() {
@@ -589,10 +589,11 @@
     centreFits: () => {
       if (!items.length || stacked()) return true;
       const keep = { m, o };
-      measure();
-      const ob = o.obstacle && { ...o.obstacle, y: o.obstacle.y + WL.bannerRows(view, o) };
+      measure(true);
+      // Against the cards' saved places, not where the last layout drew them (which may already have been pushed).
+      const ob = o.obstacle && { ...o.obstacle, y: o.obstacle.y + WL.bannerRows(items, o) };
       ({ m, o } = keep);
-      lastBlockers = ob ? view.filter((it) => !it.snap || it.snap !== 'top').filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
+      lastBlockers = ob ? items.filter((it) => it.snap !== 'top').filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
       return lastBlockers.length === 0;
     },
     // Outline, for a moment, the cards that stopped the last clock or search-bar resize.

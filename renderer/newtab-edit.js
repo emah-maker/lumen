@@ -390,7 +390,8 @@
       put(frameSearch, r.left - 4, r.top - 4);
       put(gripL, r.left - 4, r.top + r.height / 2);
       put(gripR, r.left + r.width + 4, r.top + r.height / 2);
-      for (const g of [gripL, gripR]) { g.setAttribute('aria-valuenow', String(SZ().get().search)); g.setAttribute('aria-valuetext', T('newtab.edit.search.sized', { width: SZ().get().search })); }
+      const drawn = Math.round(r.width); // Automatic is announced as the width it is drawn at
+      for (const g of [gripL, gripR]) { g.setAttribute('aria-valuenow', String(drawn)); g.setAttribute('aria-valuetext', T('newtab.edit.search.sized', { width: drawn })); }
     }
   }
   let sizerFrame = 0;
@@ -529,13 +530,14 @@
       if (!plainKey(e)) return;
       // The default width is drawn to fill the column's columns: step from what is drawn, not the stored 640.
       const stored = SZ().get().search;
-      const cur = stored === WS.SEARCH_DEFAULT ? WS.cleanSearchWidth(Math.round((searchNode()?.getBoundingClientRect().width || stored) / WS.SEARCH_STEP) * WS.SEARCH_STEP) : stored;
+      const cur = stored === WS.SEARCH_DEFAULT ? WS.cleanSearchWidth(Math.floor((searchNode()?.getBoundingClientRect().width || stored) / WS.SEARCH_STEP) * WS.SEARCH_STEP) : stored;
       const step = 2 * WS.SEARCH_STEP;
       const to = { ArrowRight: cur + step, ArrowUp: cur + step, ArrowLeft: cur - step, ArrowDown: cur - step, PageUp: cur + 4 * step, PageDown: cur - 4 * step, Home: WS.SEARCH_MIN, End: WS.SEARCH_MAX }[e.key];
       if (to === undefined) return;
       e.preventDefault();
       e.stopPropagation();
-      const next = WS.cleanSearchWidth(to);
+      let next = WS.cleanSearchWidth(to);
+      if (next === WS.SEARCH_DEFAULT) next += to > cur ? WS.SEARCH_STEP : -WS.SEARCH_STEP; // 640 is kept for "Automatic"
       if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
       else setLook('search', next, { grip, from: cur });
     });
