@@ -1290,7 +1290,7 @@ function sendTabsSoon() {
   if (!rec) { sendTabs(); return; }
   if (tabsSoon.has(rec)) return;
   tabsSoon.add(rec);
-  setImmediate(() => { tabsSoon.delete(rec); if (rcAlive(rec)) withWindow(rec, sendTabs); });
+  setTimeout(() => { tabsSoon.delete(rec); if (rcAlive(rec)) withWindow(rec, sendTabs); }, 16); // (one frame: a load's events arrive in separate turns)
 }
 
 function activeTab() {
@@ -1396,7 +1396,7 @@ function takeSpareNewTab() {
   if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
   return s.view;
 }
-const spareSoon = () => setTimeout(makeSpareNewTab, 400).unref?.();
+const spareSoon = () => setTimeout(makeSpareNewTab, 60).unref?.(); // (after this tab's first frame is under way)
 
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
@@ -1414,6 +1414,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
       ...(isolated ? { partition: isolated } : {}),
     },
   });
+  // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
+  if (plainNewTab && !spare && !adopted) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
   tabs.push(tab);
@@ -5844,7 +5846,7 @@ app.whenReady().then(async () => {
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
-  instance.fixShortcutIcons(app, shell);
+  setTimeout(() => instance.fixShortcutIcons(app, shell), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app); // Explorer says Lumen, not Electron
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
@@ -5876,7 +5878,7 @@ app.whenReady().then(async () => {
   perf.mark('adblockReady');
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
-  setTimeout(makeSpareNewTab, 4000).unref?.(); // a new-tab page ready for the first Ctrl+T
+  setTimeout(makeSpareNewTab, 1500).unref?.(); // a new-tab page ready for the first Ctrl+T
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours

@@ -116,6 +116,9 @@ function createAdblock(deps) {
       engine = fresh;
       cosmetics = fresh.onInjectCosmeticFilters;
       headers = fresh.onHeadersReceived;
+      // The wired-in instance keeps only its handlers and config: its lists now point at the new engine's, so
+      // the old engine's ~18 MB is freed instead of kept for the session.
+      for (const key of Object.keys(blocker)) if (typeof blocker[key] !== 'function' && key !== 'config' && key !== 'contexts' && key in fresh) blocker[key] = fresh[key];
       if (isTest) global.__adblockEngine = fresh;
     };
     // The slow jobs run in a worker thread (features/adblock-worker.js); `refresh` fetches new lists first.
@@ -140,9 +143,16 @@ function createAdblock(deps) {
           .then(() => fs.promises.writeFile(`${patched}.json`, JSON.stringify({ patch: PATCH, baseMtime: st.mtimeMs, baseSize: st.size }))))
           .catch(() => {});
       }, 3000).unref?.();
-    } else if (!isTest && baseStat && Date.now() - baseStat.mtimeMs > LISTS_MAX_AGE_MS) {
-      // Lists a day old: new ones are fetched and built in the background a minute in, and used from then on.
-      setTimeout(async () => { if (await inWorker(true)) await loadPatched().catch(() => {}); }, 60000).unref?.();
+    }
+    // Lists a day old: new ones are fetched and built in the background (a minute in, then checked every few
+    // hours while Lumen stays open), and used from then on.
+    const refreshIfOld = async () => {
+      const st = await fs.promises.stat(base).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > LISTS_MAX_AGE_MS && (await inWorker(true))) await loadPatched().catch(() => {});
+    };
+    if (!isTest) {
+      setTimeout(refreshIfOld, 60000).unref?.();
+      setInterval(refreshIfOld, 6 * 60 * 60 * 1000).unref?.();
     }
     let engine = blocker;
     if (isTest) global.__adblockEngine = blocker;
