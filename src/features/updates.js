@@ -13,6 +13,9 @@
 //              Windows portable exe (a single exe unpacks to a temp folder, so there is no install
 //              to replace), or Linux. They show "Lumen vX is available" with a Download button (the
 //              zip, the Mac dmg, or the releases page). Lumen never runs an installer.
+//              A Mac copy run from the dmg, a translocated path or ~/Downloads-like spot it can't
+//              write is "misplaced": it is offered app.moveToApplicationsFolder() once at launch
+//              and from Settings, after which it updates itself like any other (macPlacement).
 // electron-updater is only the release checker now: it reads latest*.yml and reports the version;
 // it downloads and installs nothing.
 // Never in test mode (unless a test asks for it), a development run, or the `--mcp` bridge.
@@ -49,6 +52,21 @@ function installKind({ platform, execPath, env = {}, exists = fs.existsSync, pro
 // only runs for the kinds that could use it.
 function updateMode({ kind, replaceable }) {
   return ['nsis', 'zip', 'mac'].includes(kind) && replaceable() ? 'stage' : 'manual';
+}
+
+// Where a Mac copy runs from: { misplaced, why }. Gatekeeper's App Translocation runs a quarantined
+// app from a random read-only mount (/AppTranslocation/), and a copy opened straight from the
+// dmg lives on a read-only /Volumes image: neither can swap itself, so the old flow fell back to
+// "download the dmg again". Those, and any copy outside the Applications folders that can't be
+// written, are offered app.moveToApplicationsFolder() instead. A copy in Applications that just
+// isn't writable (standard user) isn't misplaced: moving wouldn't help.
+function macPlacement({ execPath, home = '', replaceable = true }) {
+  const p = String(execPath || '');
+  if (/\/AppTranslocation\//.test(p)) return { misplaced: true, why: 'translocated' };
+  if (replaceable) return { misplaced: false, why: null };
+  if (p.startsWith('/Volumes/')) return { misplaced: true, why: 'dmg' };
+  const inApps = p.startsWith('/Applications/') || (home && p.startsWith(`${home.replace(/\/$/, '')}/Applications/`));
+  return inApps ? { misplaced: false, why: null } : { misplaced: true, why: 'unwritable' };
 }
 
 // Is version `a` newer than `b`? "1.2.3" style, an optional "v", and a pre-release ("-beta.1")
@@ -108,10 +126,17 @@ function createUpdates(deps) {
   const zipMod = () => (testStager || require('./zip-update'));
   let testStager = null;
   let testQuit = null;
+  let testMove = null;
   let kind = installKind({ platform: process.platform, execPath: process.execPath, env: process.env });
   // Only probe the install folder (it creates and removes a small file) when updates are on.
   // (Test mode never does: it runs from the source tree, and tests pick a mode with setKind.)
   let mode = reason || deps.test ? 'manual' : updateMode({ kind, replaceable: () => zipMod().canReplace(process.execPath) });
+  // A Mac copy running from the dmg, a translocated path or somewhere unwritable: Settings offers
+  // "Move to Applications" instead of a dmg download (see macPlacement).
+  let placement = { misplaced: false, why: null };
+  if (kind === 'mac' && !reason && !deps.test) {
+    placement = macPlacement({ execPath: process.execPath, home: require('os').homedir(), replaceable: mode === 'stage' });
+  }
   // An x64 build running under Rosetta on Apple silicon should move to the arm64 build.
   const arch = process.platform === 'darwin' && app.runningUnderARM64Translation ? 'arm64' : process.arch;
   let updater = null;
@@ -141,7 +166,8 @@ function createUpdates(deps) {
     autoDownload: autoDownload(),
     disabled: reason,
     dismissed: Boolean(state.version) && dismissed === state.version,
-    asset: state.version && !canSelfUpdate() ? manualAsset({ kind, version: state.version, arch, files: info?.files }) : null,
+    misplaced: placement.misplaced ? placement.why : null, // why this Mac copy can't update itself where it runs
+    asset: state.version && !canSelfUpdate() && !placement.misplaced ? manualAsset({ kind, version: state.version, arch, files: info?.files }) : null,
     releasesUrl: RELEASES_URL,
   });
   const publish = () => deps.ui()?.send('updates:state', snapshot());
@@ -204,8 +230,23 @@ function createUpdates(deps) {
 
   // The prompt's one button: restart into a downloaded update, download one (automatic downloads
   // off, or a retry), or fetch the right file for a copy that can't swap itself.
+  // Electron asks "Move to Applications folder?" itself, copies the app, relaunches from there
+  // and (for a dmg) unmounts it. An older Lumen.app already in Applications is replaced.
+  function moveToApplications() {
+    if (!placement.misplaced) return snapshot();
+    try {
+      deps.beforeInstall?.();
+      (testMove || ((o) => app.moveToApplicationsFolder(o)))({ conflictHandler: (type) => type === 'exists' });
+    } catch (err) {
+      setState({ status: 'error', error: short(err) });
+    }
+    return snapshot();
+  }
+
   async function apply() {
-    if (reason || !state.version) return snapshot();
+    if (reason) return snapshot();
+    if (placement.misplaced) return moveToApplications(); // the one button for such a copy
+    if (!state.version) return snapshot();
     if (canSelfUpdate()) {
       if (state.status === 'downloaded' && staged) {
         deps.beforeInstall?.(); // the session and chat are saved before the swap
@@ -278,6 +319,14 @@ function createUpdates(deps) {
     // An update that was unpacked but never applied leaves a big folder next to the install: use it
     // if it is complete and newer, else clear it.
     if (canSelfUpdate()) restoreStaged(lastSwapFailed);
+    // First launch from the dmg / Downloads: ask once, right away, to move to Applications (the
+    // native dialog; declining is remembered, Settings keeps the button).
+    if (placement.misplaced && !deps.readSettings().movePromptedAt) {
+      setTimeout(() => {
+        deps.writeSettings({ ...deps.readSettings(), movePromptedAt: Date.now() });
+        moveToApplications();
+      }, 2500).unref?.();
+    }
     wire(getUpdater());
     timer = setTimeout(function tick() {
       check();
@@ -290,6 +339,8 @@ function createUpdates(deps) {
     useUpdater: (u) => { clearTimeout(timer); updater = lookOnly(u); wire(u); },
     useStager: (z) => { testStager = z; },
     stubQuit: (fn) => { testQuit = fn; },
+    stubMove: (fn) => { testMove = fn; },
+    setPlacement: (p) => { placement = p; publish(); },
     setKind: (k, replaceable = true) => { kind = k; mode = updateMode({ kind: k, replaceable: () => replaceable }); publish(); },
     restore: (lastSwapFailed) => restoreStaged(lastSwapFailed),
     reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; blockedVersion = null; publish(); },
@@ -298,4 +349,4 @@ function createUpdates(deps) {
   return { start, check, apply, applyOnQuit, state: snapshot, testHooks };
 }
 
-module.exports = { createUpdates, disabledReason, installKind, updateMode, isNewer, stageAsset, manualAsset, RELEASES_URL };
+module.exports = { createUpdates, disabledReason, installKind, updateMode, macPlacement, isNewer, stageAsset, manualAsset, RELEASES_URL };

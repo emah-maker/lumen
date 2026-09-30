@@ -25,7 +25,8 @@
     const busy = u.status === 'downloading' && u.canSelfUpdate;
     const failed = u.status === 'error' && u.canSelfUpdate && Boolean(u.version);
     // A copy with automatic downloads on says nothing until the update is downloading or ready.
-    const offer = u.status === 'available' && (!u.canSelfUpdate || !u.autoDownload);
+    // (A misplaced Mac copy, run from the dmg, stays quiet here: Settings has its Move to Applications button.)
+    const offer = u.status === 'available' && !u.misplaced && (!u.canSelfUpdate || !u.autoDownload);
     pill.hidden = Boolean(u.disabled) || u.dismissed || !(ready || busy || failed || offer);
     if (pill.hidden) return;
     const key = ready ? 'updates.ready' : busy ? 'updates.downloading' : failed ? 'updates.failed' : 'updates.available';
