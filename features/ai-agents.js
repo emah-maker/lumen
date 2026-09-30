@@ -103,21 +103,29 @@ function setupAiAgents(deps) {
   const bgEngines = new Set();
   // Tests run the CLIs as a fake process (test/fixtures/fake-cli.js): its `spawn` stands in for both engines'.
   const cliSpawn = () => (require('../test-mode').isTest() && process.env.LUMEN_TEST_CLI_SPAWN ? require(process.env.LUMEN_TEST_CLI_SPAWN).spawn : undefined);
+  // The fake CLI (test/fixtures/fake-cli.js) speaks only the stdio bridge and reads one message to
+  // the end of stdin: under it Claude Code runs one process per message over the bridge, as before.
+  const oneShotClaude = () => Boolean(cliSpawn());
 
   // ---------- Claude Code engine (created on first use) ----------
+  // Its MCP connection is Lumen's local HTTP server (startHttpGate, as Grok's), with a token per CLI
+  // process, else the stdio bridge; the sidebar's CLI stays running between a chat's messages.
 
   let claudeCode = null;
   let claudeCodeFound = false;
   let claudeCodeSignedIn = 'unknown'; // true | false | 'unknown' — mirrors claudeCode.status().signedIn
   let claudeCodeDetail = null; // subscription label (e.g. 'enterprise'), when known
   const claudeCodeModule = () => require('../claude-code');
+  const newClaudeCode = (extra = {}) => new (claudeCodeModule().ClaudeCodeEngine)({
+    userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), gate: oneShotClaude() ? null : startHttpGate, keepAlive: !oneShotClaude(), spawn: cliSpawn(), ...extra,
+  });
   const claudeCodeEngine = () => {
-    if (!claudeCode) {
-      const { ClaudeCodeEngine } = claudeCodeModule();
-      claudeCode = new ClaudeCodeEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn() });
-    }
+    claudeCode ||= newClaudeCode();
     return claudeCode;
   };
+  // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends.
+  agent.onEngineReset = () => claudeCode?.release();
+  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
@@ -166,12 +174,15 @@ function setupAiAgents(deps) {
     }
   }
 
+  // Lumen's local HTTP MCP server (mcp-http.js): Grok's tools and gate, and Claude Code's tools.
+  // Only Lumen's own live engine runs are served (a token per run or CLI process).
   let grokGate = null;
   function startGrokGate() {
     grokGate ||= require('../mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval })
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }
+  const startHttpGate = startGrokGate;
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
@@ -190,11 +201,15 @@ function setupAiAgents(deps) {
     const problem = deps.validateToolInput(name, args);
     if (problem) return { content: [{ type: 'text', text: `Invalid input: ${problem}` }], isError: true };
     session.approvedHosts ||= new Set();
-    const stepId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
     const owner = engineForSession(session);
     const engineRun = owner ? owner.active : null;
+    // A kept Claude Code process between messages owns its session, but no message is running to act for.
+    if (owner && !engineRun) return { content: [{ type: 'text', text: 'No message is in progress in Lumen for this call.' }], isError: true };
+    // Claude Code may already show this call's row, from while its input was still streaming (claude-code.js claimStep).
+    const early = engineRun ? owner.claimStep?.(name) || null : null;
+    const stepId = early || `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // A background task's CLI run brings its own Agent (work tab, approved sites, taint, approval cards
     // for the Tasks panel): each of its calls runs there, never in the sidebar's Agent or the user's tab.
     const runAgent = engineRun?.agent || agent;
@@ -212,8 +227,10 @@ function setupAiAgents(deps) {
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     const front = scope ? null : agent.browser.activeTab()?.id;
     const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn));
-    const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
-    toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
+    if (!early) {
+      const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
+      toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
+    }
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
     // an outside agent's call is pinned to the tab in front when it arrives, so the approval card and
@@ -501,10 +518,10 @@ function setupAiAgents(deps) {
     async backgroundEngine(kind) {
       const userData = app.getPath('userData');
       if (kind === 'claudecode') {
-        const engine = new (claudeCodeModule().ClaudeCodeEngine)({ userData, mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn() });
+        const engine = newClaudeCode({ keepAlive: false }); // one message, then its process ends
         engine.bin = await claudeCodeEngine().detect();
         bgEngines.add(engine);
-        return { engine, release: () => { bgEngines.delete(engine); } };
+        return { engine, release: () => { engine.release(); bgEngines.delete(engine); } };
       }
       if (kind === 'grokbuild') {
         const root = path.join(userData, 'grok-bg', crypto.randomBytes(6).toString('hex'));

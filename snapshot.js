@@ -339,8 +339,29 @@ const ACTING = ['batch'];
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
 
-async function compact(agent, wc, input, h) {
-  await h.runScript(wc, h.scripts.readPage(0, 0)); // builds the element registry the refs point into
+// read_page's registry pass alone: the same walk and labels that build window.__claudeEls (so ids
+// match what click / type_text resolve), without the page's full innerText and the element list it
+// returns. Cut from page-scripts.js readPage at the line that stores the registry; if that line
+// ever moves, the full read runs instead. Cached per readPage source.
+const REGISTRY_MARK = 'window.__claudeEls = registry;';
+let registryCache = { src: null, script: null };
+function registryScript(scripts) {
+  const src = scripts.readPage(0, 0);
+  if (registryCache.src === src) return registryCache.script;
+  const at = src.indexOf(REGISTRY_MARK);
+  const script = at < 0 || !src.includes('accessibleName') ? src
+    : `${src.slice(0, at)}${REGISTRY_MARK}
+    registry.forEach((entry) => { entry.label = accessibleName(entry.el).slice(0, 80); });
+    return { totalElements: registry.length };
+  })()`;
+  registryCache = { src, script };
+  return script;
+}
+
+// dedupe: a read the model asked for itself (read_page), in the sidebar's own chat (h.dedupe): an
+// identical read soon after the last one gets the short "unchanged" line (ReadCache).
+async function compact(agent, wc, input, h, { dedupe = false } = {}) {
+  await h.runScript(wc, registryScript(h.scripts)); // builds the element registry the refs point into
   const result = await h.runScript(wc, serialize(compactOutline, {
     maxChars: Math.min(Math.max(Number(input.max_chars) || 6000, 1000), 20000),
     blockChars: 280,
@@ -365,6 +386,8 @@ async function compact(agent, wc, input, h) {
   } else {
     body = `${input.since_last && previous ? '(new page)\n' : ''}${result.lines.join('\n')}`;
     if (result.clipped) body += `\n… outline clipped at ${result.totalLines} lines (${result.elements} controls). Use find, or start_line:${result.startLine + result.lines.length}.`;
+    const same = dedupe && !input.since_last && h.dedupe?.() ? reads.check(wc.id, url, `c|${input.start_line || 0}|${Boolean(input.hrefs)}`, body) : null;
+    if (same) body = same;
   }
   return `<untrusted_page_content>\n${body}\n</untrusted_page_content>`;
 }
@@ -418,6 +441,9 @@ async function screenshot(agent, wc, input, h) {
 async function batch(agent, wc, input, h) {
   const steps = Array.isArray(input.steps) ? input.steps.slice(0, 12) : [];
   if (!steps.length) throw new Error('batch needs at least one step.');
+  // The baseline the closing diff compares with (as observe takes): without it the diff was against
+  // whatever was read last, often another page, and said "Now on a new page" after a same-page batch.
+  if (!wc.isDestroyed() && !agent.browser.aiOff?.(wc.getURL())) await compact(agent, wc, { mode: 'compact' }, h).catch(() => {});
   const startHost = hostOf(wc.getURL());
   const report = [];
   for (const [i, step] of steps.entries()) {
@@ -458,7 +484,7 @@ async function batch(agent, wc, input, h) {
 // Handles the efficient tools; returns undefined for everything else.
 async function execute(agent, name, input, h) {
   reads.tick(name);
-  if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h);
+  if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h, { dedupe: true });
   if (name === 'read_page' && input.extract) {
     const wc = agent.requireTab();
     const r = await h.runScript(wc, serialize(extractData, { kind: input.extract, selector: input.selector ? String(input.selector) : '' }), 15000);
@@ -471,7 +497,7 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
-    await h.runScript(wc, h.scripts.readPage(0, 0));
+    await h.runScript(wc, registryScript(h.scripts)); // the refs it returns point into this registry
     const r = await h.runScript(wc, serialize(findMatches, { query: String(input.query || ''), max: Math.min(Math.max(Number(input.max) || 8, 1), 20) }));
     if (!r.matches.length) return `No matches for "${input.query}" on ${r.url}.`;
     return `<untrusted_page_content>\n${r.matches.join('\n')}\n</untrusted_page_content>`;
@@ -480,4 +506,4 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   return undefined;
 }
 
-module.exports = { OBSERVE_TOOLS, observe, outline, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
+module.exports = { OBSERVE_TOOLS, observe, outline, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };

@@ -1,6 +1,7 @@
 // Lumen's MCP server and tool gate over local HTTP, for the sidebar's Grok Build engine
-// (grok-build.js). Grok connects to Lumen directly (no bridge process to start, so Lumen's tools are
-// up before Grok's first model call), and Grok asks Lumen about every tool call before running it.
+// (grok-build.js) and Claude Code engine (claude-code.js, MCP only: a token per CLI process, no hooks).
+// Both connect to Lumen directly (no bridge process to start, so Lumen's tools are up before the
+// first model call), and Grok asks Lumen about every tool call before running it.
 //
 //  - POST /mcp: MCP over streamable HTTP, one JSON-RPC message per request, answered as plain JSON
 //    (no SSE stream: Lumen's tools answer once). `Authorization: Bearer <run token>`; the token names
