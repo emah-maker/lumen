@@ -19,9 +19,14 @@
       document.documentElement.classList.toggle('still', Boolean(data.still)); // Lumen's Reduce motion
       const icon = $('icon');
       icon.onerror = () => { icon.removeAttribute('src'); icon.classList.add('blank'); };
-      if (imageOk(data.favicon, true)) { icon.src = data.favicon; icon.classList.remove('blank'); } else { icon.removeAttribute('src'); icon.classList.add('blank'); }
+      icon.className = 'icon';
+      const colour = data.group && String(data.group.color || '').replace(/[^a-z]/g, '');
+      if (colour) { icon.removeAttribute('src'); icon.classList.add('dot', `g-${colour}`); } // a group: its colour
+      else if (imageOk(data.favicon, true)) icon.src = data.favicon;
+      else { icon.removeAttribute('src'); icon.classList.add('blank'); }
       $('shot').classList.remove('loaded');
       $('shot').removeAttribute('src');
+      if (imageOk(data.shot, false)) { $('shot').classList.add('loaded', 'instant'); $('shot').src = data.shot; } // taken before the drag: shown at once
       card.style.setProperty('--shot-h', `${Math.max(60, Math.round(Number(data.shotHeight) || 180))}px`);
       card.className = count > 1 ? 'card many' : 'card';
       void card.offsetWidth; // start the grow-in from the small state
@@ -32,6 +37,7 @@
     shot(src) {
       if (!imageOk(src, false)) return;
       const img = $('shot');
+      img.classList.remove('instant');
       img.onload = () => img.classList.add('loaded');
       img.src = src;
     },

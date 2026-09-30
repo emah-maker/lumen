@@ -34,14 +34,15 @@ contextBridge.exposeInMainWorld('browser', {
   moveTab: (id, toIndex, done) => ipcRenderer.send('tab:move', id, toIndex, Boolean(done)), // done: the strip is waiting to show the tab in its slot
   moveTabs: (ids, beforeId, groupId) => ipcRenderer.send('tab:move-block', ids, beforeId, groupId), // several tabs (a selection, a group) as one block
   // A tab dragged out of the strip: main.js moves it into a window that follows the cursor.
-  dragTabPrep: () => ipcRenderer.send('tab:dragprep'), // a tab is heading out of the strip: a tear-off may follow
+  dragTabPrep: (id) => ipcRenderer.send('tab:dragprep', id), // a tab is heading out of the strip: a tear-off may follow
   onTabDragDone: on('tab:dragdone'), // a dropped tab has been placed: show it again if it stayed here
   dragTabStart: (id, grab) => ipcRenderer.send('tab:dragstart', id, grab),
   dragTabEnd: () => ipcRenderer.send('tab:dragend'), // the button came up
   dragTabCancel: () => ipcRenderer.send('tab:dragcancel'), // Escape
   onTabDropAt: on('tab:dropat'), // { beforeId } while a dragged window hovers this strip, null when it leaves
   onTabDragAbort: on('tab:dragabort'), // main gave up on a drag whose release never came
-  onTabArrived: on('tab:arrived'), // this new window was just given dragged tabs ({ count }): announced
+  onTabArrived: on('tab:arrived'),
+  onTabMovedHere: on('tab:moved-here'), // tabs moved into this window from the tab menu: { ids, title } // this new window was just given dragged tabs ({ count }): announced
   dragTabMove: () => ipcRenderer.send('tab:dragmove'), // the pointer moved during a drag main.js drives
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),

@@ -2248,7 +2248,7 @@ function moveWindowItems(id) {
     items.push({ label: n > 1 ? t('menu.moveTabsToNewWindow', { n }) : t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, cascadedWindowPoint(src.win), ids) });
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
-  if (others.length) items.push({ label: n > 1 ? t('menu.moveTabsToWindow', { n }) : t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabsBetween(src, r, ids, undefined, { active: id }) })) });
+  if (others.length) items.push({ label: n > 1 ? t('menu.moveTabsToWindow', { n }) : t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => { if (moveTabsBetween(src, r, ids, undefined, { active: id })) arrivedFromMenu(r, ids); } })) });
   return items;
 }
 
@@ -2359,7 +2359,7 @@ function moveGroupItems(groupId) {
     items.push({ label: t('menu.moveGroupToNewWindow'), click: () => tearOffTab(src, lead, cascadedWindowPoint(src.win), moving.ids, moving.group) });
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
-  if (others.length) items.push({ label: t('menu.moveGroupToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabsBetween(src, r, moving.ids, undefined, { active: lead, group: moving.group }) })) });
+  if (others.length) items.push({ label: t('menu.moveGroupToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => { if (moveTabsBetween(src, r, moving.ids, undefined, { active: lead, group: moving.group })) arrivedFromMenu(r, moving.ids); } })) });
   return items;
 }
 
@@ -3452,6 +3452,13 @@ function groupForMove(rec, groupId) {
     return ids.length ? { ids, group: { name: g.name, color: g.color, userNamed: Boolean(g.userNamed), colorLocked: Boolean(g.colorLocked), collapsed: Boolean(g.collapsed) } } : null;
   });
 }
+// Tabs moved into `rec` from the menu (no drag, no slot): its strip says so to screen readers, and a
+// multi-selection stays selected there, as in Chrome.
+function arrivedFromMenu(rec, ids) {
+  if (!rcAlive(rec)) return;
+  const title = withWindow(rec, () => { const t0 = tabs.find((t) => t.id === ids[0]); return t0 ? tabTitle(t0) : ''; });
+  rec.win.webContents.send('tab:moved-here', { ids, title });
+}
 // The tabs a drag or the tab menu acts on: the window's multi-selection (as the strip last reported it,
 // 'tab:selection') when `id` is part of it, in strip order; otherwise just `id`.
 function tabsActedOn(rec, id, hint = null) {
@@ -3499,7 +3506,10 @@ const DRAG_OVER_STRIP_OPACITY = 0.55; // an only-tab window being dragged: see t
 async function stripGeometry(rec) {
   const info = await rec.win.webContents.executeJavaScript(`(() => {
     const strip = document.getElementById('tabs').getBoundingClientRect();
-    return { hidden: document.visibilityState === 'hidden', bottom: strip.bottom, tabs: [...document.querySelectorAll('#tabs .tab')].filter((el) => !el.matches('.handed, .held, .gathered')).map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; }) };
+    // stripDropTargets (app.js): tabs and group labels on show, a label standing for its group's first tab.
+    const tabs = typeof stripDropTargets === 'function' ? stripDropTargets()
+      : [...document.querySelectorAll('#tabs .tab')].filter((el) => !el.matches('.handed, .held, .gathered')).map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; });
+    return { hidden: document.visibilityState === 'hidden', bottom: strip.bottom, tabs };
   })()`).catch(() => null);
   // Chromium marks a window 'hidden' when other windows (any app's) cover it completely: not a target.
   return info && !info.hidden && { rec, bottom: info.bottom, tabs: info.tabs };
@@ -3597,6 +3607,17 @@ const cardCall = (fn, ...args) => {
   dragCard.win.webContents.executeJavaScript(`window.lumenCard && window.lumenCard.${fn}(...${JSON.stringify(args)})`).catch(() => {});
 };
 // Resolves once the page's snapshot has been taken (or couldn't be): the tab's window may show another tab after that.
+// The page snapshot for the card, taken when a tab is first pulled towards the edge ('tab:dragprep'), so
+// the card shows the page from its first frame instead of an empty panel that fills in a moment later.
+let prepShot = null; // { tabId, src, at }
+function snapshotFor(tab) {
+  if (!alive(tab)) return Promise.resolve(null);
+  const scale = Math.max(1, ...screen.getAllDisplays().map((x) => x.scaleFactor || 1)); // sharp on any display it is dragged to
+  return tab.view.webContents.capturePage().then((image) => {
+    if (image.isEmpty()) return null;
+    return `data:image/jpeg;base64,${image.resize({ width: Math.round(CARD_WIDTH * scale), quality: 'good' }).toJPEG(82).toString('base64')}`;
+  }).catch(() => null);
+}
 function showDragCard(d, tab, cursor) {
   d.cardAt = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
   if (TEST_BACKGROUND) return Promise.resolve();
@@ -3610,18 +3631,16 @@ function showDragCard(d, tab, cursor) {
     if (tabDrag !== d) return;
     const icons = d.ghost?.favicons?.length ? d.ghost.favicons : tab.favicon ? [tab.favicon] : [];
     const favicon = icons.find((u) => typeof u === 'string' && (u.startsWith('https:') || u.startsWith('data:image/'))) || null;
-    cardCall('show', { title: tabTitle(tab) || 'New Tab', favicon, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain() });
+    // A group dragged by its label is the group on the card too: its name and colour, as the slot shows it.
+    const group = d.group ? { name: d.group.name, color: d.group.color } : null;
+    cardCall('show', { title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain(), shot: early });
     card.win.showInactive();
   });
-  // The page as it looks now, scaled for the card (at the screen's pixel density).
-  if (!alive(tab)) return Promise.resolve();
-  const scale = Math.max(1, ...screen.getAllDisplays().map((x) => x.scaleFactor || 1)); // sharp on any display it is dragged to
-  const shot = tab.view.webContents.capturePage().then((image) => {
-    if (tabDrag !== d || image.isEmpty()) return;
-    const small = image.resize({ width: Math.round(CARD_WIDTH * scale), quality: 'good' });
-    card.loaded.then(() => { if (tabDrag === d) cardCall('shot', `data:image/jpeg;base64,${small.toJPEG(82).toString('base64')}`); });
-  }).catch(() => {});
-  return Promise.race([shot, new Promise((r) => setTimeout(r, 250))]);
+  const early = prepShot && prepShot.tabId === tab.id && Date.now() - prepShot.at < 4000 ? prepShot.src : null;
+  prepShot = null;
+  // A fresh snapshot anyway (the page may have changed since the hint); the card swaps it in quietly.
+  const shot = snapshotFor(tab).then((src) => { if (src && tabDrag === d) card.loaded.then(() => { if (tabDrag === d) cardCall('shot', src); }); });
+  return Promise.race([shot, new Promise((r) => setTimeout(r, early ? 0 : 250))]);
 }
 // While its tab is out on the card, a window shows the tab beside it (as Chrome does), not a page whose tab
 // has left the strip; Escape brings the dragged tab back to the front.
@@ -3630,7 +3649,11 @@ function stepAside(d) {
   withWindow(d.rec, () => {
     if (!d.ids.includes(activeId)) return;
     const i = tabs.findIndex((t) => t.id === activeId);
-    const stay = tabs.slice(i).find((t) => !d.ids.includes(t.id) && !t.closing) || tabs.slice(0, i).reverse().find((t) => !d.ids.includes(t.id) && !t.closing);
+    // A neighbour the strip shows: one hidden in a collapsed group would come to the front unseen.
+    const ok = (t) => !d.ids.includes(t.id) && !t.closing;
+    const shown = (t) => ok(t) && !(t.groupId && tabGroups.groups.get(t.groupId)?.collapsed);
+    const near = (test) => tabs.slice(i).find(test) || tabs.slice(0, i).reverse().find(test);
+    const stay = near(shown) || near(ok);
     if (!stay) return;
     d.origActive = activeId;
     // A sleeping neighbour is only brought to the front of the strip. Waking it would reload the
@@ -3664,7 +3687,7 @@ function hideDragCard(d, kind) {
 // closes after a while unused or with the last window.
 let spareRec = null;
 let spareIdle = null;
-const SPARE_IDLE_MS = 30000;
+const SPARE_IDLE_MS = 180000; // kept warm a few minutes: a quick flick-and-drop then finds it ready
 function closeSpare() {
   clearTimeout(spareIdle);
   const rec = spareRec;
@@ -3735,7 +3758,13 @@ function tickTabDrag() {
   if (Date.now() - d.stripsAt > 120) { d.stripsAt = Date.now(); refreshDragStrips(d); }
   const hit = tabDragMath.stripHit(cursor, dropTargets(d));
   // A group is shown (and lands) after a group it is over, never inside it.
-  const beforeId = hit && d.group ? withWindow(hit.key, () => { const i = tabs.findIndex((t) => t.id === hit.beforeId); return i === -1 ? null : tabs[outsideGroups(i)]?.id ?? null; }) : hit?.beforeId;
+  const beforeId = hit && d.group ? withWindow(hit.key, () => {
+    const rest = tabs.filter((t) => !d.ids.includes(t.id)); // the dragged group's own tabs are not where it lands
+    let i = rest.findIndex((t) => t.id === hit.beforeId);
+    if (i === -1) return null;
+    while (i > 0 && i < rest.length && rest[i - 1].groupId && rest[i - 1].groupId === rest[i].groupId) i++;
+    return rest[i]?.id ?? null;
+  }) : hit?.beforeId;
   setDragHover(d, hit && { rec: hit.key, beforeId: beforeId ?? null });
 }
 // Every window that could be under the cursor, front first: the strips a tab can join, and the windows that
@@ -3924,9 +3953,12 @@ ipcMain.on('tab:dragmove', (event) => {
   if (tabDrag && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
 });
 // A tab is being pulled towards the edge of the strip: it may come out next, so have a window ready.
-ipcMain.on('tab:dragprep', (event) => {
+ipcMain.on('tab:dragprep', (event, tabId) => {
   const src = recOfSender(event.sender);
-  if (src && !isSpare(src) && !tabDrag) prepareDragWindow(src);
+  if (!src || isSpare(src) || tabDrag) return;
+  prepareDragWindow(src);
+  const tab = Number.isInteger(tabId) && !TEST_BACKGROUND ? tabById(src, tabId) : null;
+  if (tab) snapshotFor(tab).then((shot) => { if (shot && !tabDrag) prepShot = { tabId, src: shot, at: Date.now() }; });
 });
 // The release (or Escape) as seen by the window the tab is dragged from (or, for an only-tab drag, the
 // window being dragged).
@@ -5272,6 +5304,8 @@ app.on('second-instance', (_e, argv) => { focusWindow(); openLinksFromOtherApps(
 
 app.whenReady().then(async () => {
   perf.mark('ready');
+  // The drag card's window, made once things are quiet, so the first tear-off of a session shows it at once.
+  setTimeout(() => { if (!TEST_BACKGROUND) dragCardWindow(); }, 8000);
   if (process.argv.includes('--install-shortcuts')) {
     instance.installShortcuts(app, shell, APP_ID);
     app.quit();
