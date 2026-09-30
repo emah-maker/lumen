@@ -1463,17 +1463,20 @@ function autosize() {
 // Claude Code's process starts while the user types (main: agent.prewarm, a no-op for any other engine); at most every 20 s.
 let prewarmAt = 0;
 // The composer's text so far is passed along (the model guess routes it); the main side backs off after failures.
-let prewarmedText = false; // (the first words typed get one re-route: a focus pre-warmed with a guess)
-const prewarm = () => {
-  const typed = prompt.value.trim().length >= 12;
-  const reroute = typed && !prewarmedText;
-  if (running || (!reroute && Date.now() - prewarmAt < 20000)) return;
+// The words typed re-route a guessed warm-up at a first phrase (12 characters) and again at a sentence (40), and
+// when the box loses focus with text in it; main keeps the process unless they route to another model.
+let prewarmStage = 0;
+const prewarm = (force = false) => {
+  const length = prompt.value.trim().length;
+  const stage = length >= 40 ? 2 : length >= 12 ? 1 : 0;
+  const reroute = stage > prewarmStage;
+  if (running || (!force && !reroute && Date.now() - prewarmAt < 20000)) return;
   prewarmAt = Date.now();
-  if (typed) prewarmedText = true;
+  prewarmStage = Math.max(prewarmStage, stage);
   try { window.assistant?.prewarm?.(prompt.value); } catch {}
 };
-prompt.addEventListener('blur', () => { if (!prompt.value.trim()) prewarmedText = false; });
-prompt.addEventListener('focus', prewarm);
+prompt.addEventListener('blur', () => { if (prompt.value.trim()) prewarm(true); else prewarmStage = 0; });
+prompt.addEventListener('focus', () => prewarm());
 prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message

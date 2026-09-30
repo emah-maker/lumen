@@ -678,25 +678,30 @@ async function waitForLoad(wc, timeoutMs = 8000) {
 // In the page (Claude's isolated world, same DOM): resolves once the DOM has had no mutations for
 // quietMs, or after capMs on a page that never settles (an animation, a ticker: mutations that never pause
 // for quietMs within capMs, so a constantly animating page costs ~capMs per action, not 1.5 s).
-function domQuiet({ quietMs, capMs }) {
+function domQuiet({ quietMs, capMs, extendMs = 700 }) {
   return new Promise((resolve) => {
     let timer = null;
     let cap = null;
+    let poll = null;
     let observer = null;
     let extended = false;
-    const finish = (why) => { clearTimeout(timer); clearTimeout(cap); observer?.disconnect(); resolve(why); };
-    const loading = () => {
-      try { return Boolean(document.querySelector('[aria-busy="true"], [role="progressbar"]:not([aria-valuenow="100"]), progress:not([value])')); } catch { return false; }
+    const finish = (why) => { clearTimeout(timer); clearTimeout(cap); clearInterval(poll); observer?.disconnect(); resolve(why); };
+    // A loading marker the user can see (a spinner, a progress bar, a busy region): hidden or static ones
+    // left in the page from before the action don't count.
+    const shown = (el) => el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length > 0;
+    const markers = () => {
+      try { return [...document.querySelectorAll('[aria-busy="true"], [role="progressbar"]:not([aria-valuenow="100"]), progress:not([value])')].filter(shown); } catch { return []; }
     };
-    // Quiet, but the page says an update is still coming (a fetch after a click): one more wait, up to ~700 ms.
+    const before = new Set(markers()); // (already there when the action's effects began: not this action's load)
+    const loading = () => markers().some((el) => !before.has(el));
+    // Quiet, but the page shows a new loading marker (a fetch after a click): one more wait, up to extendMs.
     const done = (why) => {
       if (why === 'quiet' && !extended && loading()) {
         extended = true;
+        clearTimeout(timer);
         clearTimeout(cap);
-        cap = setTimeout(() => finish('busy'), 700);
-        timer = setTimeout(() => { if (!loading()) finish('quiet'); }, 250);
-        const poll = setInterval(() => { if (!loading()) { clearInterval(poll); finish('quiet'); } }, 50);
-        setTimeout(() => clearInterval(poll), 750);
+        cap = setTimeout(() => finish('busy'), extendMs);
+        poll = setInterval(() => { if (!loading()) finish('quiet'); }, 50);
         return;
       }
       finish(why);
@@ -1341,7 +1346,14 @@ class Agent {
     const typed = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     const plan = this.claudeCodePlan(messages, typed || PREWARM_GUESS, 0, 0);
     // Already warm: kept, unless the words typed since route to another model (the guess is then replaced once).
-    if (cc.isWarm?.() && !(typed && cc.warmModel && cc.warmModel() !== null && cc.warmModel() !== (plan.spawn.model || 'default'))) return false;
+    // Still starting (its model not known yet): the typed words are looked at again once it has started.
+    if (cc.isWarm?.() && typed && cc.warmModel && cc.warmModel() === null) {
+      clearTimeout(this.prewarmRetry);
+      this.prewarmRetry = setTimeout(() => { try { this.prewarm(typed); } catch {} }, 1500);
+      this.prewarmRetry.unref?.();
+      return false;
+    }
+    if (cc.isWarm?.() && !(typed && cc.warmModel && cc.warmModel() !== (plan.spawn.model || 'default'))) return false;
     if (!plan.resume) this.prewarmed = { messages, id: plan.spawn.sessionId };
     cc.warm(plan.spawn, { speculative: true });
     return true;
@@ -2740,4 +2752,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET };
+module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };

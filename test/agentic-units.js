@@ -681,7 +681,7 @@ async function settleRuns() {
     let fire = null;
     class FakeObserver { constructor(cb) { fire = cb; } observe() { if (mutateEveryMs) this.tick = setInterval(() => fire([]), mutateEveryMs); } disconnect() { clearInterval(this.tick); } }
     const start = Date.now();
-    vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: FakeObserver, setTimeout, clearTimeout }).then((why) => resolve({ why, ms: Date.now() - start }));
+    vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: FakeObserver, setTimeout, clearTimeout, setInterval, clearInterval }).then((why) => resolve({ why, ms: Date.now() - start }));
   });
   const still = await runQuiet(0);
   check('settle: a page with no mutations is quiet after ~100 ms', still.why === 'quiet' && still.ms >= 90 && still.ms < 400, JSON.stringify(still));
@@ -691,7 +691,7 @@ async function settleRuns() {
     let fire = null;
     class Obs { constructor(cb) { fire = cb; } observe() { let n = 0; this.tick = setInterval(() => { if (++n > 4) clearInterval(this.tick); else fire([]); }, 40); } disconnect() { clearInterval(this.tick); } }
     const start = Date.now();
-    vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: Obs, setTimeout, clearTimeout }).then((why) => resolve({ why, ms: Date.now() - start }));
+    vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: Obs, setTimeout, clearTimeout, setInterval, clearInterval }).then((why) => resolve({ why, ms: Date.now() - start }));
   }));
   check('settle: a burst of mutations that then pauses still resolves quiet', bursty.why === 'quiet' && bursty.ms < 500, JSON.stringify(bursty));
 }
@@ -864,6 +864,77 @@ async function toolCallRuns() {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+
+// Round 6: the busy-page extension counts only new, visible loading markers; the stale signed-out check; the
+// warm model; a re-route asked for while the guess is still starting.
+async function warmAndQuietRuns() {
+  const { domQuiet, Agent } = require('../src/ai/agent');
+  const cc = require('../src/ai/claude-code');
+  // A fake page: markers the test adds or removes; mutations never fire (a quiet page).
+  const page = (initial) => {
+    const els = [...initial];
+    global.document = { documentElement: {}, querySelectorAll: () => els };
+    global.MutationObserver = class { observe() {} disconnect() {} };
+    return els;
+  };
+  const marker = (visible = true) => ({ getAttribute: () => null, getClientRects: () => (visible ? [1] : []) });
+  const timed = async (p) => { const t = Date.now(); const why = await p; return { why, ms: Date.now() - t }; };
+  try {
+    page([]);
+    let r = await timed(domQuiet({ quietMs: 30, capMs: 400 }));
+    check('quiet page: settles after the quiet window', r.why === 'quiet' && r.ms < 150, JSON.stringify(r));
+    page([marker()]);
+    r = await timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 300 }));
+    check('a spinner already there before the action: no extra wait', r.why === 'quiet' && r.ms < 150, JSON.stringify(r));
+    const els = page([]);
+    const p1 = timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 300 }));
+    els.push(marker(false));
+    r = await p1;
+    check('a hidden marker: no extra wait', r.why === 'quiet' && r.ms < 150, JSON.stringify(r));
+    const els2 = page([]);
+    const p2 = timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 300 }));
+    els2.push(marker());
+    setTimeout(() => els2.splice(0), 120);
+    r = await p2;
+    check('a new visible spinner: waited for until it goes (not the whole extension)', r.why === 'quiet' && r.ms >= 100 && r.ms < 280, JSON.stringify(r));
+    const els3 = page([]);
+    const p3 = timed(domQuiet({ quietMs: 30, capMs: 400, extendMs: 200 }));
+    els3.push(marker());
+    r = await p3;
+    check('a spinner that stays: the extension is capped', r.why === 'busy' && r.ms >= 190 && r.ms < 400, JSON.stringify(r));
+  } finally {
+    delete global.document;
+    delete global.MutationObserver;
+  }
+
+  const can = cc.ClaudeCodeEngine.prototype.canPrewarm;
+  check('a fresh "signed out" blocks pre-warming', can.call({ warmBlock: { until: 0 }, statusCache: { at: Date.now(), value: { signedIn: false } } }) === false, '');
+  check('a "signed out" older than 30 s no longer does', can.call({ warmBlock: { until: 0 }, statusCache: { at: Date.now() - 60000, value: { signedIn: false } } }) === true, '');
+  check('backoff still blocks', can.call({ warmBlock: { until: Date.now() + 60000 }, statusCache: null }) === false, '');
+
+  const wm = cc.ClaudeCodeEngine.prototype.warmModel;
+  const key = cc.procKey({ bin: 'claude', sessionId: 's', systemPrompt: 'x', model: 'haiku', maxTurns: 0 });
+  check('warmModel: the kept process\'s model', wm.call({ proc: { key, exited: false, turn: null }, warming: 0 }) === 'haiku', '');
+  check('warmModel: unknown while one is starting', wm.call({ proc: { key, exited: false, turn: null }, warming: 1 }) === null, '');
+
+  // Typed words while the guess is still starting: tried again once it has started, then replaced if they route elsewhere.
+  let warmed = null;
+  let starting = true;
+  const fake = {
+    messages: { settings: { model: 'claudecode:default' } },
+    engines: { claudecode: { warm: (spawn) => { warmed = spawn.model; }, canPrewarm: () => true, isWarm: () => true, warmModel: () => (starting ? null : 'haiku') } },
+    claudeCodePlan: (_m, text) => ({ resume: true, spawn: { model: /analy[sz]e/.test(text) ? 'opus' : 'haiku' } }),
+  };
+  fake.prewarm = Agent.prototype.prewarm.bind(fake);
+  check('re-route while starting: nothing replaced yet', fake.prewarm('please analyze this long report in depth') === false && warmed === null, String(warmed));
+  starting = false;
+  await new Promise((r) => setTimeout(r, 1600));
+  check('re-route while starting: tried again once started, and the other model warmed', warmed === 'opus', String(warmed));
+  clearTimeout(fake.prewarmRetry);
+  warmed = null;
+  check('same model typed: the warm process is kept', fake.prewarm('open youtube please') === false && warmed === null, String(warmed));
+}
+
 (async () => {
   await engineRuns();
   await snapshotRuns();
@@ -874,6 +945,7 @@ async function toolCallRuns() {
   searchRuns();
   await settleRuns();
   await toolCallRuns();
+  await warmAndQuietRuns();
   if (failures) { console.log(`\n${failures} agentic check(s) failed`); process.exit(1); }
   console.log('\nAll agentic checks passed');
 })().catch((err) => { console.error(err); process.exit(1); });
