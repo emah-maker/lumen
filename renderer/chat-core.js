@@ -727,6 +727,10 @@ window.assistant.onEvent((event) => {
 // While a reply streams, hold back a trailing link that hasn't finished arriving
 // ("[text](https://…" with no closing parenthesis yet), so raw markdown never flashes.
 function settledMarkdown(source) {
+  if (window.markdownInMath?.(source)) {
+    const at = Math.max(source.lastIndexOf('$$'), source.lastIndexOf('\\['));
+    if (at !== -1) return settledMarkdown(source.slice(0, at));
+  }
   const open = source.lastIndexOf('[');
   if (open === -1) return source;
   const tail = source.slice(open);
