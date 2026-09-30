@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Small screens and windows: the ⋯ menu no longer fills the screen or opens with scroll arrows. When there is not enough room below the button (for example a 1280x720 laptop at 150% scaling), less-used sections fold into submenus (More Tools, This Page, Zoom, Tabs and Files, AI Chat and Tasks); every command and shortcut is still there. The menu also lines up with the button's right edge and stays inside the window. Also: extension icons and the "Lumen is using this tab" pill no longer push the ⋯ and AI buttons out of an 800px window, the address text starts at the left in narrow windows and no longer runs under the buttons at its right end, a long model name no longer hides the sidebar's buttons, and the model search fits the narrowest sidebar. Address suggestions, the downloads panel, long page alerts and tall extension popups scroll instead of running off the window or screen, and Settings in a narrow tab shows its sections as one row across the top.
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

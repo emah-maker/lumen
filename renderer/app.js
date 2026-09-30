@@ -1056,9 +1056,18 @@ $('reader').onclick = () => window.browser.toggleReader?.();
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
-  window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom) });
+  // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
+  window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom), right: Math.round(r.right) });
 };
 $('agent-stop').onclick = () => window.assistant.stop();
+// The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
+// it, so the field's padding has to clear however many are showing: styles.css reads their width
+// from --omnibox-end-w. A fixed 62px only cleared two, and the URL ran under the rest.
+{
+  const omnibox = $('omnibox');
+  const end = omnibox.querySelector('.omnibox-end');
+  new ResizeObserver(() => omnibox.style.setProperty('--omnibox-end-w', `${Math.ceil(end.offsetWidth)}px`)).observe(end);
+}
 
 // ---------- find in page ----------
 
