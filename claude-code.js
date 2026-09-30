@@ -386,6 +386,7 @@ class ClaudeCodeEngine {
     const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns }, { fresh });
     if (!proc) return notInstalled();
     const reused = proc.turns > 0;
+    if (!reused) emit({ type: 'status', text: 'Starting Claude Code…' }); // (its first message: the working line says why it waits)
     proc.turns++;
     const { tag } = proc;
     this.active = { tag, emit, signal, child: proc.child, agent: runAgent };

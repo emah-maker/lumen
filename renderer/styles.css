@@ -934,3 +934,9 @@ body.agent-active .msg.user .msg-edit { display: none; }
 .setup.attention .setup-option { animation: setup-attention 900ms var(--ease-out, ease-out) 1; }
 @keyframes setup-attention { 30% { box-shadow: 0 0 0 2px var(--accent); } }
 :root.pref-reduce-motion .setup.attention .setup-option { animation: none; }
+/* A passing status beside the working dots ("Starting Claude Code…"). */
+.working[data-status] { width: auto; height: auto; overflow: visible; background: none; }
+.working[data-status]::before { display: none; }
+.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: nowrap; animation: status-pulse 1.6s ease-in-out infinite; }
+@keyframes status-pulse { 50% { opacity: 0.55; } }
+:root.pref-reduce-motion .working[data-status]::after { animation: none; }

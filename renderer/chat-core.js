@@ -828,6 +828,9 @@ window.assistant.onEvent((event) => {
   // clear, or the toolbar's "waiting for approval" badge stayed on.
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
   if (!turn || event.runId !== runId) return;
+  // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
+  if (event.type === 'status') { if (turn.working) turn.working.dataset.status = event.text || ''; return; }
+  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
   switch (event.type) {
     case 'turn_start':
     case 'text_block':
