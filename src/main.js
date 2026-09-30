@@ -12,11 +12,26 @@ if (process.argv.includes('--mcp')) {
   return;
 }
 const fs = require('fs');
+// Automation on, where Chromium needs a private pipe (launcher.js): this first process only starts Lumen again
+// and leaves. Decided here, before ~100 ms of modules a process that exits at once would never use.
+let earlyAutomation; // (undefined: not decided here, see prepareAutomation below)
+if (!TEST && !process.argv.includes('--install-shortcuts')) {
+  const early = require('path').join(app.getPath('userData'), 'settings.json');
+  if (fs.existsSync(early)) { // (a profile still to be carried over from the old name decides later, as before)
+    let s = {};
+    try { s = require('./settings/settings-file').loadJson(early); } catch {}
+    earlyAutomation = s.automationEnabled ? require('./features/ai-agents').prepareAutomation(app, s) : null;
+    if (earlyAutomation?.relaunch) {
+      require('./automation/launcher').handOver(app, () => require('./features/instance').acquireInstanceLock(app));
+      return;
+    }
+  }
+}
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
-const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
+const { installChromeWebStore, installExtension, uninstallExtension, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
 const { extensionPermissionLines } = require('./browser/extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
@@ -288,7 +303,7 @@ if (readSettings().favicons) {
 // Outside AI agents (MCP, CDP automation, Claude Code): features/ai-agents.js. The automation
 // switch must be set before ready.
 const { setupAiAgents, prepareAutomation } = require('./features/ai-agents');
-const automationPlan = prepareAutomation(app, readSettings());
+const automationPlan = earlyAutomation !== undefined ? earlyAutomation : prepareAutomation(app, readSettings());
 // With automation on, this first process only starts Lumen again through launcher.js (which gives
 // Chromium a private pipe instead of a debugging port) and leaves, before it opens anything. A copy
 // started while Lumen runs passes its links on and quits, the same as without automation.
@@ -894,6 +909,8 @@ async function setupExtensions() {
   };
   await installChromeWebStore({
     session: ses,
+    loadExtensions: false, // (loaded below: registered before the first tabs, their workers started after)
+    autoUpdate: false, // (checked below, once they are loaded)
     beforeInstall: async ({ localizedName, manifest }) => {
       if (isContentBlocker(manifest, localizedName)) {
         await dialog.showMessageBox(win, {
@@ -914,6 +931,16 @@ async function setupExtensions() {
       return { action: response === 1 ? 'allow' : 'deny' };
     },
   });
+  // Installed extensions: registered now (tabs are created with them in chrome.tabs); their background service
+  // workers, which took ~100-500 ms each one after another before the first tab, start once the tabs are going.
+  const workerScopes = [];
+  await loadAllExtensions({ extensions: ses.extensions, serviceWorkers: { startWorkerForScope: (scope) => { workerScopes.push(scope); return Promise.resolve(); } } },
+    path.join(app.getPath('userData'), 'Extensions'));
+  tabsGate.then(() => setTimeout(() => { for (const scope of workerScopes) ses.serviceWorkers.startWorkerForScope(scope).catch(() => console.error(`Failed to start worker for ${scope}`)); }, 300));
+  // Store extensions' updates: looked for once the first tab has loaded, then every 5 hours, as the library did.
+  const checkUpdates = () => updateExtensions(ses).catch((err) => console.error('[lumen] extension update check failed:', err?.message || err));
+  firstTabLoaded.then(() => setTimeout(checkUpdates, 30000).unref?.());
+  setInterval(checkUpdates, 5 * 60 * 60 * 1000).unref?.();
 }
 
 function extensionsMenu() {
@@ -1422,7 +1449,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     },
   });
   // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
-  if (plainNewTab && !spare && !adopted) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
+  if ((plainNewTab || settings || historyPage || managerPage) && !spare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
+    try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
   tabs.push(tab);
@@ -1462,6 +1490,7 @@ const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url ||
 function wireView(tab, url, history = null, { loaded = false } = {}) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
+  wc.once('did-stop-loading', () => setTimeout(markFirstTabLoaded, 200));
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
@@ -1835,6 +1864,7 @@ let addressTouchedAt = 0;
 // kept its blinking caret while you typed somewhere else.
 ipcMain.on('address:touched', () => {
   addressTouchedAt = ++uiEventSeq;
+  if (!suggestView && win && !win.isDestroyed()) createSuggestView(); // (typing is coming: ready before the first key's list)
   if (!ui()?.isFocused()) ui()?.focus();
   const wc = activeTab()?.webContents;
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
@@ -4446,6 +4476,10 @@ const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // its place from the first frame instead of jumping there once this window's UI reports its own.
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let tabsGateOpen = false;
+// The first tab (restored or new) has finished loading, or 8 s have passed: the spare new-tab page, the
+// suggestions renderer, the CLI checks and the extension update check start then, not while it loads.
+let markFirstTabLoaded = () => {};
+const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
 let openTabsGate = () => {};
 const tabsGate = new Promise((resolve) => { openTabsGate = () => { tabsGateOpen = true; resolve(); }; });
 function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
@@ -4548,7 +4582,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('blur', hideSuggestions);
   w.loadFile(UI_HTML);
   w.webContents.once('did-finish-load', () => {
-    createSuggestView();
+    firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); });
     if (rec.prepared) {
       // Ready for a tear-off (takeSpare); no tabs until then.
       uiReady = true;
@@ -5169,6 +5203,7 @@ const settingsBackend = settingsPage.create({
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
   showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
+  peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
@@ -5865,7 +5900,7 @@ app.whenReady().then(async () => {
   instance.listenForSecondInstances(app, focusWindow);
   setTimeout(() => instance.fixShortcutIcons(app, shell), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app); // Explorer says Lumen, not Electron
-  aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
+  aiAgents.start({ after: firstTabLoaded }); // MCP server, CDP automation (if on), Claude Code detection (once the first tab has loaded)
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
   downloads.load(); // the list from last time (downloads.json)
@@ -5884,17 +5919,18 @@ app.whenReady().then(async () => {
   // doesn't hold up the window. They load while the extensions start (the two don't depend on each other).
   // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs; the window itself
   // (its UI, ~0.5 MB of scripts) loads meanwhile, and its tabs come once both are ready (tabsGate).
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
+  createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
   const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
-  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
-  createWindow();
   // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
   const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
   await atMost(Promise.all([extending, fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin')) ? blocking : null]));
   perf.mark('adblockReady');
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
-  setTimeout(makeSpareNewTab, 1500).unref?.(); // a new-tab page ready for the first Ctrl+T
+  setTimeout(markFirstTabLoaded, 8000).unref?.(); // (a first tab that never finishes doesn't hold these back)
+  firstTabLoaded.then(() => makeSpareNewTab()); // a new-tab page ready for the first Ctrl+T, once the first tab has loaded
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours

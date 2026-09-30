@@ -378,9 +378,17 @@ function create(deps) {
       return false;
     }
   }
+  // Every request asks: the prefs are worked out again only when the settings change (a new cache object).
+  let hot = null;
+  const hotPrefs = () => {
+    const ref = deps.peekSettings?.();
+    if (!ref) return prefs();
+    if (hot?.ref !== ref) hot = { ref, value: prefs() };
+    return hot.value;
+  };
   function setupHeaders(target = ses()) {
     target.webRequest.onBeforeSendHeaders((details, callback) => {
-      const p = prefs();
+      const p = hotPrefs();
       const headers = details.requestHeaders;
       if (deps.chromeHintHeaders && sendsClientHints(details.url)) {
         for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];

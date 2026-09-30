@@ -389,13 +389,24 @@ You are running inside Claude Code, connected to the user's Lumen browser over M
 // so rather than improvise with a tool it doesn't have.
 const GROK_BUILD_NOTE = `
 
-You are running inside Grok Build, connected to the user's Lumen browser over MCP. Lumen's browser tools are deferred: find them with search_tool (for example "lumen read page" or "lumen navigate"), then call them with use_tool using the exact names it returns, such as lumen__read_page, lumen__navigate, lumen__click and lumen__web_search. You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error. If search_tool finds no Lumen tools yet, the connection is still starting: search once more, and if they are still missing, say so plainly. Your reply appears in Lumen's sidebar chat.`;
+You are running inside Grok Build, connected to the user's Lumen browser over MCP. Lumen's browser tools are deferred, but you already know them: call them with use_tool directly, by these exact names (arguments in brackets, ? = optional), without a search_tool first: {TOOLS}. Only if use_tool says a tool is unknown, look it up once with search_tool (for example "lumen read page"); if Lumen's tools are still missing, the connection is starting: try once more, then say so plainly. You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error. Your reply appears in Lumen's sidebar chat.`;
+// Lumen's tools with their arguments, for GROK_BUILD_NOTE: Grok then calls use_tool at once instead of spending a
+// search_tool round trip (a model call, ~2-5 s) on every turn that acts. Made once, from the tools Lumen serves.
+let grokTools = null;
+function grokToolList() {
+  return (grokTools ||= EXTERNAL_TOOLS.map((tool) => {
+    const props = tool.input_schema?.properties || {};
+    const required = new Set(tool.input_schema?.required || []);
+    return `lumen__${tool.name}(${Object.keys(props).map((k) => (required.has(k) ? k : `${k}?`)).join(', ')})`;
+  }).join(', '));
+}
 
 // GROK_BUILD_NOTE plus the model answering, so "what model are you?" gets the real one. Claude
 // Code's own system prompt names its model; Grok Build is told here. `model`: the model Grok reported
 // for this chat's pick, else the picked id, else the default `grok models` reports; null: unknown.
 function grokBuildNote(model) {
-  return model ? `${GROK_BUILD_NOTE} The model answering is ${model} (xAI's Grok); if the user asks which model you are, say ${model}.` : GROK_BUILD_NOTE;
+  const note = GROK_BUILD_NOTE.replace('{TOOLS}', grokToolList());
+  return model ? `${note} The model answering is ${model} (xAI's Grok); if the user asks which model you are, say ${model}.` : note;
 }
 
 // CLAUDE_CODE_NOTE plus what Claude Code's own system prompt used to give before --system-prompt

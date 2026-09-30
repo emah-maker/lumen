@@ -144,8 +144,8 @@ function createAdblock(deps) {
       try {
         worker = new (require('worker_threads').Worker)(path.join(__dirname, 'adblock-worker.js'), { workerData: { base, patched, exceptions: SIGN_IN_EXCEPTIONS, patch: PATCH, refresh } });
       } catch { resolve(false); return; }
-      worker.once('message', (m) => resolve(Boolean(m?.ok)));
-      worker.once('error', () => resolve(false));
+      worker.once('message', (m) => { if (!m?.ok) console.error('[lumen] ad-block worker:', m?.error); resolve(Boolean(m?.ok)); });
+      worker.once('error', (err) => { console.error('[lumen] ad-block worker failed:', err?.message || err); resolve(false); });
       worker.once('exit', () => resolve(false));
       worker.unref();
     });
@@ -194,16 +194,24 @@ function createAdblock(deps) {
     const scriptletsFor = (event, url) => {
       if (typeof url !== 'string' || !on(url)) return [];
       const { hostname, domain } = parse(url);
+      // (Scriptlets are chosen by host: remembered per host for this engine, so a page's many frames answer at once.)
+      if (scriptletCache.engine !== engine) { scriptletCache.engine = engine; scriptletCache.map.clear(); }
+      const cached = scriptletCache.map.get(hostname || '');
+      if (cached) return cached;
       try {
-        return engine.getCosmeticsFilters({
+        const out = engine.getCosmeticsFilters({
           url, hostname: hostname || '', domain: domain || '',
           getBaseRules: false, getInjectionRules: true, getExtendedRules: false, getRulesFromHostname: true, getRulesFromDOM: false,
           callerContext: { frameId: event.frameId, processId: event.processId },
         }).scripts;
+        if (scriptletCache.map.size > 300) scriptletCache.map.clear();
+        scriptletCache.map.set(hostname || '', out);
+        return out;
       } catch {
         return [];
       }
     };
+    const scriptletCache = { engine: null, map: new Map() };
     electron.ipcMain.on('lumen-adblock:scriptlets', (event, url) => { event.returnValue = scriptletsFor(event, url); });
     // Ghostery's own preload still brings the CSS (and DOM-based updates); its scripts are dropped
     // here because adblock-preload.js already ran them, earlier.
