@@ -2481,6 +2481,18 @@ async function swapHelperRuns() {
   check('model names: dashed versions and bare stamps read well', MN.prettyModel('grok-4-1-fast-reasoning') === 'Grok 4.1 Fast Reasoning' && MN.prettyModel('gemini-exp-1206') === 'Gemini Experimental 1206' && MN.prettyModel('gemini-2.0-flash-001') === 'Gemini 2.0 Flash', [MN.prettyModel('grok-4-1-fast-reasoning'), MN.prettyModel('gemini-exp-1206'), MN.prettyModel('gemini-2.0-flash-001')].join('|'));
   check('model names: the newest GPT models survive a long o-series list, and dated duplicates go', ranked[0] === 'gpt-5.6' && ranked.includes('gpt-5.6-mini') && !ranked.includes('o3-pro-2025-06-10') && !ranked.includes('gpt-4o-2024-08-06') && ranked.length === 12, ranked.join());
 }
+// ---- the model picker's search (renderer/picker-match.js)
+{
+  const PM = require('../renderer/picker-match');
+  const f = (name, id, group = '') => ({ name, id, group, badges: '' });
+  const hit = (q, fields) => PM.score(fields, q) > 0;
+  check('picker search: versions and sizes are found', hit('2.5', f('Gemini 2.5 Flash', 'gemini-2.5-flash')) && hit('gemini 2.5', f('Gemini 2.5 Flash', 'gemini-2.5-flash')) && hit('4o', f('GPT-4o mini', 'gpt-4o-mini')) && hit('opus 5.5', f('Opus 5.5', 'claude-opus-5-5')) && hit('gpt 5.6', f('GPT-5.6', 'gpt-5.6')) && hit('gpt5', f('GPT-5.6', 'gpt-5.6')) && hit('70b', f('Llama 3.3 70B', 'meta-llama/llama-3.3-70b')) && hit('k2', f('Kimi K2', 'moonshotai/kimi-k2')), '');
+  check('picker search: no mid-word matches', !hit('mini', f('Gemini 2.5 Pro', 'gemini-2.5-pro')) && !hit('5', f('Gemini Pro', 'gemini-pro-15x')) && hit('mini', f('GPT-5.6 mini', 'gpt-5.6-mini')), '');
+  check('picker search: a provider name puts its group first', PM.score(f('Opus 5.5', 'claude-opus-5-5', 'Claude'), 'claude') > PM.score(f('Claude Sonnet 5', 'anthropic/claude-sonnet-5', 'OpenRouter'), 'claude'), '');
+  const MN = require('../features/model-names');
+  check('model names: Non-Reasoning, GPT-OSS, o1 preview as a badge only', MN.prettyModel('grok-4-fast-non-reasoning') === 'Grok 4 Fast Non-Reasoning' && MN.prettyModel('gpt-oss-120b') === 'GPT-OSS 120B' && MN.prettyModel('o1-preview') === 'o1', [MN.prettyModel('grok-4-fast-non-reasoning'), MN.prettyModel('gpt-oss-120b'), MN.prettyModel('o1-preview')].join('|'));
+  check('model names: a dated preview of a listed model is dropped', !MN.rankModels(['gemini-2.5-flash', 'gemini-2.5-flash-preview-09-2025', 'gemini-2.5-pro'], 12).includes('gemini-2.5-flash-preview-09-2025'), '');
+}
 // ---- tab drag geometry (features/tab-drag-math.js)
 {
   const { clampToDisplay, windowBoundsFor, stripHit, grabPoint, placeOnWorkArea } = require('../features/tab-drag-math');

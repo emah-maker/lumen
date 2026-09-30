@@ -59,3 +59,8 @@
 .picker-extra .picker-detail { font-weight: 400; }
 .picker-empty { padding: 14px 16px 16px; color: var(--muted); font-size: 12.5px; }
 .picker-empty[hidden] { display: none; }
+.picker-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; color: var(--text); font-size: 12px; font-weight: 600; }
+.picker-head[hidden] { display: none; }
+.picker-back { appearance: none; border: 0; background: transparent; color: color-mix(in srgb, var(--text) 70%, transparent); font: inherit; font-size: 16px; line-height: 1; width: 22px; height: 22px; border-radius: 6px; cursor: default; }
+.picker-back:hover, .picker-back:focus-visible { background: var(--hover, rgb(127 127 127 / 0.14)); outline: none; }
+.picker-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -171,7 +171,7 @@ async function openModelSearch(query = '') {
     openRouterSelect = Object.assign(document.createElement('select'), { hidden: true });
     openRouterSelect.setAttribute('aria-label', t('models.search'));
     document.querySelector('.model-picker').append(openRouterSelect);
-    openRouterPicker = window.lumenPicker(openRouterSelect, { recentKey: 'model', anchor: modelPicker.button });
+    openRouterPicker = window.lumenPicker(openRouterSelect, { recentKey: 'model', anchor: modelPicker.button, title: 'models.allOpenRouter', placeholder: t('models.search'), headings: true, onBack: () => modelPicker.open() });
     openRouterSelect.addEventListener('change', async () => {
       if (await window.assistant.setModel(openRouterSelect.value)) await loadModels();
       modelPicker.button.focus();
@@ -186,10 +186,20 @@ async function openModelSearch(query = '') {
   try { models = await window.assistant.openRouterModels(); } catch { models = []; }
   openRouterPicker.setLoading(false);
   if (!models.length) { openRouterPicker.close(false); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.loadFailed') })); return; }
-  // Vendors by their own names, the best-known first, then A–Z.
-  const VENDORS = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', 'x-ai': 'xAI', 'meta-llama': 'Meta', mistralai: 'Mistral', deepseek: 'DeepSeek', qwen: 'Qwen', cohere: 'Cohere', perplexity: 'Perplexity', 'z-ai': 'Z.ai', moonshotai: 'Moonshot' };
+  // Vendors by the names OpenRouter itself gives them ("NVIDIA: …", "MiniMax: …": the most common prefix of that
+  // vendor's model names), the best-known first, then A–Z.
+  const VENDORS = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', 'x-ai': 'xAI', 'meta-llama': 'Meta', mistralai: 'Mistral', deepseek: 'DeepSeek', qwen: 'Qwen', openrouter: 'OpenRouter' };
   const FIRST = ['anthropic', 'openai', 'google', 'x-ai', 'meta-llama', 'mistralai', 'deepseek', 'qwen'];
-  const vendorName = (v) => VENDORS[v] || v.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  const prefixes = new Map();
+  for (const m of models) {
+    const v = String(m.id).split('/')[0];
+    const p = String(m.name).includes(':') ? String(m.name).split(':')[0].trim() : '';
+    if (!p) continue;
+    const counts = prefixes.get(v) || new Map();
+    counts.set(p, (counts.get(p) || 0) + 1);
+    prefixes.set(v, counts);
+  }
+  const vendorName = (v) => VENDORS[v] || [...(prefixes.get(v) || new Map())].sort((a, b) => b[1] - a[1])[0]?.[0] || v.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   const short = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
   const vendors = new Map();
   for (const m of models) {
@@ -197,8 +207,9 @@ async function openModelSearch(query = '') {
     if (!vendors.has(vendor)) vendors.set(vendor, Object.assign(document.createElement('optgroup'), { label: vendorName(vendor) }));
     const o = Object.assign(document.createElement('option'), { value: `openrouter:${m.id}`, textContent: m.name, title: m.id });
     o.dataset.name = String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : m.name;
-    o.dataset.provider = 'OpenRouter';
-    const bits = [m.context ? t('models.context', { n: short(m.context) }) : '', Number.isFinite(m.pricePerM) ? t('models.price', { n: m.pricePerM < 1 ? m.pricePerM.toFixed(2) : String(Math.round(m.pricePerM * 10) / 10) }) : ''].filter(Boolean);
+    // (No provider tag here: every row is OpenRouter's, so it would match every search.)
+    const price = !Number.isFinite(m.pricePerM) ? '' : m.pricePerM === 0 ? t('models.free') : t('models.price', { n: m.pricePerM < 1 ? m.pricePerM.toFixed(2) : String(Math.round(m.pricePerM * 10) / 10) });
+    const bits = [m.context ? t('models.context', { n: short(m.context) }) : '', price].filter(Boolean);
     if (bits.length) o.dataset.detail = bits.join(' · ');
     if (!m.tools) o.dataset.badges = 'chat only';
     vendors.get(vendor).append(o);

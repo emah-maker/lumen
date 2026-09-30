@@ -20,7 +20,7 @@ const LOWER_AFTER = new Set(['gpt', 'o']);
 const SETTLEDNESS = /^(preview|exp|experimental|beta)$/i;
 
 function nameFrom(s, { keepStatus = false } = {}) {
-  if (/^o\d/.test(s)) return s.split('-').join(' '); // o3, o4-mini -> "o4 mini"
+  if (/^o\d/.test(s)) return s.split('-').filter((p, i) => keepStatus || i === 0 || !SETTLEDNESS.test(p)).join(' '); // o3, o4-mini -> "o4 mini"
   const parts = s.split('-');
   // "4-1" after the family is a version written with a dash (grok-4-1-fast): 4.1.
   if (/^\d$/.test(parts[1] || '') && /^\d$/.test(parts[2] || '')) parts.splice(1, 2, `${parts[1]}.${parts[2]}`);
@@ -29,6 +29,8 @@ function nameFrom(s, { keepStatus = false } = {}) {
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
     if (i > 0 && !keepStatus && SETTLEDNESS.test(p)) continue; // shown as a badge instead (badgesFor)
+    if (p.toLowerCase() === 'non' && parts[i + 1]) { out.push(` Non-${WORDS[parts[i + 1].toLowerCase()] || parts[i + 1].charAt(0).toUpperCase() + parts[i + 1].slice(1)}`); i++; continue; } // "Non-Reasoning"
+    if (family === 'gpt' && i === 1 && p.toLowerCase() === 'oss') { out.push('-OSS'); continue; } // "GPT-OSS"
     if (i === 0) { family = p.toLowerCase(); out.push(WORDS[family] || p.charAt(0).toUpperCase() + p.slice(1)); continue; }
     if (/^[a-z]?\d+[bkm]$/i.test(p)) { out.push(` ${p.toUpperCase()}`); continue; } // a size: "120B", "27B", "A22B"
     if (/^\d+(\.\d+)*[a-z]?$/.test(p)) { out.push(family === 'gpt' && out.length === 1 ? `-${p}` : ` ${p}`); continue; } // GPT-5.6, Gemini 2.5
@@ -80,7 +82,9 @@ const newestFirst = (a, b) => versionOf(b) - versionOf(a) || statusOf(a) - statu
 function rankModels(ids, max = 12) {
   const list = [...new Set((ids || []).map(String).filter(Boolean))];
   const aliases = new Set(list.filter((id) => !snapshotOf(id)));
-  const kept = list.filter((id) => !snapshotOf(id) || !aliases.has(withoutDate(id)));
+  // A dated snapshot goes when its alias is listed, as does a dated preview of it ("…-flash-preview-09-2025").
+  const baseOf = (id) => withoutDate(id).replace(/-(preview|exp)$/, '');
+  const kept = list.filter((id) => !snapshotOf(id) || (!aliases.has(withoutDate(id)) && !aliases.has(baseOf(id))));
   const families = new Map();
   for (const id of kept.sort(newestFirst)) { const f = familyOf(id); if (!families.has(f)) families.set(f, []); families.get(f).push(id); }
   const order = [...families.keys()]; // already newest family first (sorted above)

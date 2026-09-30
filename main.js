@@ -370,13 +370,16 @@ function modelOptions() {
   for (const [provider, info] of Object.entries(providers.PROVIDERS)) {
     if (!providerKey(provider)) continue;
     const list = [...(providerModels[provider] || info.defaults)];
-    // OpenRouter: a model picked from "More models…" joins the short list.
+    // OpenRouter: models picked from "More models…" (the last few) join the short list.
     const saved = providers.splitModel(readSettings().model || '');
-    if (provider === 'openrouter' && saved.provider === 'openrouter' && !list.includes(saved.model)) list.push(saved.model);
+    if (provider === 'openrouter') {
+      for (const m of [...(readSettings().recentOpenRouter || []), ...(saved.provider === 'openrouter' ? [saved.model] : [])]) if (typeof m === 'string' && !list.includes(m)) list.push(m);
+    }
     const entries = list.map((model) => {
       const chatOnly = !providers.canUseTools(provider, model);
       // name: the readable model name the picker shows; badges: what it can't do or how settled it is. The raw id is the detail.
-      const name = modelNames.prettyModel(model) || model;
+      // OpenRouter rows are named as OpenRouter names them (as its catalog shows them); the others from their id.
+      const name = (provider === 'openrouter' && providers.openRouterName(model)) || modelNames.prettyModel(model) || model;
       const snap = modelNames.snapshotOf(model);
       return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges: modelNames.badgesFor(model, { chatOnly }), detail: snap ? `Snapshot ${snap}` : chatOnly ? 'Can’t act in your tabs' : '', title: model };
     });
@@ -5345,7 +5348,10 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   // Any OpenRouter model can be picked from "More models…" once there is a key.
   const pickedFromMore = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(id)) && Boolean(providerKey('openrouter'));
   if (id === 'openrouter:__more' || (!pickedFromMore && !modelOptions().some((o) => o.id === id))) return false;
-  writeSettings({ ...readSettings(), model: id });
+  const s = readSettings();
+  // The last few OpenRouter models picked from its catalog stay in the short list, so switching between them is one click.
+  const recentOpenRouter = pickedFromMore ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
+  writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
   return agent.setModel(id) ? 'next-message' : true;
 });

@@ -449,7 +449,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* The model name gives way to the buttons, not the other way round: at the 300px minimum width six
    buttons take ~190px, and a long name (up to 220px) used to push Settings and New chat out of the
    sidebar, which clips. The picker button ellipsizes (styles below). */
-.sidebar-head .model-picker { min-width: 96px; margin-right: 8px; } /* the model's name always keeps room to be read */
+.sidebar-head .model-picker { min-width: 78px; margin-right: 8px; } /* the name keeps room to be read, and the buttons still fit at 300 px */
 .sidebar-head .model-picker .picker-button { max-width: min(220px, 100%); }
 #dock-to-side { display: none; } /* only meaningful, and only shown, while chat-full (below) */
 

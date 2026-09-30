@@ -13,7 +13,7 @@ const PROVIDERS = {
     label: 'OpenAI',
     baseURL: undefined,
     defaults: ['gpt-5.6', 'gpt-5.6-mini'],
-    include: (id) => /^(gpt-|o\d)/.test(id) && !/(audio|realtime|tts|transcribe|image|search|embedding|instruct|moderation|codex)/.test(id),
+    include: (id) => /^(gpt-|o\d)/.test(id) && !/(audio|realtime|tts|transcribe|image|search|embedding|instruct|moderation|codex|deep-research|computer-use)/.test(id) && !/-pro(-|$)/.test(id), // -pro: Responses API only
   },
   xai: {
     label: 'Grok',
@@ -25,7 +25,7 @@ const PROVIDERS = {
     label: 'Gemini',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     defaults: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-    include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live)/.test(id),
+    include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live|computer-use|robotics)/.test(id),
   },
   // One key for many companies' models. Ids look like "anthropic/claude-opus-5.5".
   openrouter: {
@@ -275,4 +275,11 @@ function describeProviderError(err, provider) {
   return { text: err.status ? `${label} error ${err.status}: ${err.message}` : `${label} error: ${err.message}` };
 }
 
-module.exports = { PROVIDERS, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+// OpenRouter's own name for a model, without its vendor ("Anthropic: Claude Opus 5.5" -> "Claude Opus 5.5"), if known.
+function openRouterName(model) {
+  const m = catalog?.models?.find((x) => x.id === model);
+  if (!m?.name) return null;
+  return String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : m.name;
+}
+
+module.exports = { PROVIDERS, openRouterName, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
