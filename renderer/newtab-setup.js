@@ -60,11 +60,34 @@ const FORMS = {
   },
   tradingview(s) {
     const tv = s.tv || {};
-    const symbol = input('text', tv.symbol, { maxlength: '52', placeholder: 'NASDAQ:AAPL', spellcheck: 'false', autocomplete: 'off' });
-    const view = select([['chart', 'Full chart'], ['mini', 'Mini chart']], tv.view || 'chart');
+    const symbol = input('text', tv.view === 'watchlist' ? '' : tv.symbol, { maxlength: '52', placeholder: 'NASDAQ:AAPL', spellcheck: 'false', autocomplete: 'off' });
+    const view = select([['chart', 'Full chart'], ['mini', 'Mini chart'], ['watchlist', 'Watchlist']], tv.view || 'chart');
     const interval = select(INTERVALS, tv.interval || 'D');
     const theme = select([['auto', 'Follow light and dark mode'], ['light', 'Light'], ['dark', 'Dark']], tv.theme || 'auto');
-    return { nodes: [field('Symbol', symbol, 'Like NASDAQ:AAPL, BINANCE:BTCUSDT or SPX.'), field('Style', view), field('Interval', interval), field('Theme', theme)], read: () => ({ tv: { symbol: symbol.value, view: view.value, interval: interval.value, theme: theme.value } }), first: symbol };
+    const saved = Array.isArray(tv.symbols) ? tv.symbols.join('\n') : '';
+    const symbols = el('textarea', 'ws-code');
+    symbols.rows = 6;
+    symbols.spellcheck = false;
+    symbols.placeholder = '###Stocks\nNASDAQ:AAPL\nNASDAQ:TSLA';
+    symbols.value = saved;
+    const chart = select([['no', 'Just the list'], ['yes', 'Chart on top']], tv.chart ? 'yes' : 'no');
+    const symbolField = field('Symbol', symbol, 'Like NASDAQ:AAPL, BINANCE:BTCUSDT or SPX.');
+    const listFields = [
+      field('Symbols', symbols, tv.list ? `Synced with “${str(tv.list.name, 60)}” in your TradingView account; editing here unlinks it.` : 'One per line; ###Name starts a section. To import a list from your TradingView account, use Settings → Widgets.'),
+      field('Layout', chart),
+    ];
+    const sync = () => { const w = view.value === 'watchlist'; symbolField.hidden = w; for (const f of listFields) f.hidden = !w; };
+    view.addEventListener('change', sync);
+    sync();
+    const read = () => {
+      const out = { symbol: symbol.value, view: view.value, interval: interval.value, theme: theme.value };
+      if (out.view === 'watchlist') {
+        Object.assign(out, { symbols: symbols.value, chart: chart.value === 'yes' });
+        if (tv.list && symbols.value === saved) Object.assign(out, { list: tv.list, sync: tv.sync }); // untouched: stays linked
+      }
+      return { tv: out };
+    };
+    return { nodes: [symbolField, field('Style', view), ...listFields, field('Interval', interval), field('Theme', theme)], read, first: view.value === 'watchlist' ? symbols : symbol };
   },
   custom(s) {
     const area = el('textarea', 'ws-code');

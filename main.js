@@ -55,6 +55,7 @@ const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
+const { ACCOUNT_URL: TVW_ACCOUNT_URL } = require('./features/tradingview-view'); // [widgets] TradingView watchlist import
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
 const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
@@ -4288,6 +4289,7 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {
@@ -4299,6 +4301,31 @@ const widgets = createWidgets({
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 if (TEST) global.__widgets = widgets;
+
+// [widgets] The user's TradingView watchlists, for the TradingView widget's import and sync: one fixed
+// address (features/tradingview-view.js ACCOUNT_URL), GET only, read with the normal session's cookies so
+// it answers for the account signed in on tradingview.com in Lumen. No redirects, answer capped at 1 MB.
+function tradingviewAccountLists() {
+  return new Promise((resolve, reject) => {
+    const req = net.request({ url: TVW_ACCOUNT_URL, method: 'GET', session: session.defaultSession, useSessionCookies: true, redirect: 'error', cache: 'no-store' });
+    req.setHeader('Accept', 'application/json');
+    const timer = setTimeout(() => { req.abort(); reject(new Error('TradingView took too long')); }, 15e3);
+    const done = (fn, v) => { clearTimeout(timer); fn(v); };
+    req.on('response', (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (c) => { size += c.length; if (size > 1 << 20) { req.abort(); done(reject, new Error('TradingView sent too much')); } else chunks.push(c); });
+      res.on('end', () => {
+        if (res.statusCode === 401 || res.statusCode === 403) return done(resolve, []); // signed out: no lists
+        if (res.statusCode !== 200) return done(reject, new Error(`TradingView answered ${res.statusCode}`));
+        try { done(resolve, JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { done(reject, new Error('TradingView sent something unexpected')); }
+      });
+      res.on('error', (err) => done(reject, err));
+    });
+    req.on('error', (err) => done(reject, err));
+    req.end();
+  });
+}
 // [widgets] The Spotify widget's Web player (features/spotify-web.js): one persistent view in the normal session.
 const spotifyWeb = SW.createSpotifyWeb({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready

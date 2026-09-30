@@ -763,6 +763,7 @@ function create(deps) {
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
+    handle('prefs:widget-tv-lists', () => deps.widgets.tradingviewLists());
     // A "Where do I get this?" link on a widget's page: only these fixed addresses, chosen by name, open in the browser.
     const WIDGET_HELP = {
       todoist: 'https://app.todoist.com/app/settings/integrations/developer', github: 'https://github.com/settings/personal-access-tokens', twelvedata: 'https://twelvedata.com/account/api-keys',

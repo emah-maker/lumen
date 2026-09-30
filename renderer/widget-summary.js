@@ -122,6 +122,12 @@ function widgetSummary(w, ctx = {}) {
       }
       case 'tradingview': {
         const t = w.tv || {};
+        if (t.view === 'watchlist') {
+          const n = (Array.isArray(t.symbols) ? t.symbols : []).filter((x) => typeof x === 'string' && !x.startsWith('###')).length;
+          parts.push(t.list && t.list.name ? t.list.name : 'Watchlist', `${n} symbol${n === 1 ? '' : 's'}`);
+          if (t.list && t.sync !== false) parts.push('synced');
+          break;
+        }
         parts.push(t.symbol || 'No symbol yet');
         parts.push(t.view === 'mini' ? 'mini chart' : ({ 1: '1 minute', 5: '5 minutes', 15: '15 minutes', 30: '30 minutes', 60: '1 hour', 240: '4 hours', D: '1 day', W: '1 week', M: '1 month' }[t.interval] || ''));
         break;
