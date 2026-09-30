@@ -2298,6 +2298,7 @@ window.assistant.onOpenChat?.(async ({ id } = {}) => {
   if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
   await window.chatList?.openChat?.(id);
 });
+window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install: the sidebar opens on its welcome (chat-core.js)
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');

@@ -235,22 +235,29 @@ const tabTools = require('./features/tab-tools').create({ onChange: () => sendTa
 let settingsCache = null;
 const settingsFile = require('./settings/settings-file'); // crash-safe read/write (see settings-file.js)
 
+let settingsFileExisted = null; // (at this launch's first read: a fresh install has none, see features/setup.js)
 function readSettings() {
-  if (!settingsCache) settingsCache = settingsFile.loadJson(SETTINGS_FILE());
+  if (!settingsCache) {
+    if (settingsFileExisted === null) settingsFileExisted = fs.existsSync(SETTINGS_FILE());
+    settingsCache = settingsFile.loadJson(SETTINGS_FILE());
+  }
   return { ...settingsCache };
 }
 
 let settingsGen = 0; // bumped by every write: an async write that is no longer the latest doesn't land
+// Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
+// with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
 function writeSettings(settings) {
-  settingsCache = { ...settings };
-  settingsGen++;
-  settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
-}
-// The periodic session save: the same data, written off the main thread (a sync write took ~28 ms of input time).
-function writeSettingsAsync(settings) {
   settingsCache = { ...settings };
   const gen = ++settingsGen;
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen);
+}
+const writeSettingsAsync = writeSettings; // (the periodic session save)
+// Closing a window and quitting: on disk before the process can go away.
+function writeSettingsNow(settings) {
+  settingsCache = { ...settings };
+  settingsGen++;
+  settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
 const aiSites = createAiSites({ readSettings, writeSettings });
 
@@ -1247,6 +1254,7 @@ function tabState() {
 }
 
 let sessionTimer = null;
+let sessionDirtySince = 0; // when the first unsaved tab change came
 let agentTargetHook = null; // set where the agent exists: tells the sidebar which tab its task works in
 // Tab moves made as one (several tabs going to another window) send each window's strip one update at the
 // end, instead of one per step, so the strips never show the halfway states.
@@ -1268,8 +1276,10 @@ function sendTabs() {
   ui()?.send('tabs', tabState());
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
+  // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose title ticks).
   clearTimeout(sessionTimer);
-  sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession({ background: true }); }, 3000);
+  if (!sessionDirtySince) sessionDirtySince = Date.now();
+  sessionTimer = setTimeout(() => { sessionDirtySince = 0; if (win && !win.isDestroyed()) saveSession({ background: true }); }, Math.max(0, Math.min(3000, sessionDirtySince + 15000 - Date.now())));
 }
 
 // A page's own busy events (loading, title, favicon, in-page navigations) arrive in bursts: they send the strip
@@ -1414,8 +1424,10 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   if (spare) {
     // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
     tab.spareFilling = true;
-    wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
-      .catch(() => wc.loadURL(url).catch(() => {}))
+    // (At most 100 ms: an occluded or minimized window draws no frames, and the tab must not stay blank.)
+    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
+      .catch(() => wc.loadURL(url).catch(() => {}));
+    Promise.race([filled, new Promise((r) => setTimeout(r, 100))])
       .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
   }
 
@@ -1730,7 +1742,10 @@ function wakeTab(tab) {
 function addRestoredTab(url, title, favicon = null) {
   // The new-tab page's cached copy (offline-safe, but kept only for favorites and frequent sites),
   // else the icon the tab showed when the session was saved.
-  const icon = faviconStore.get(hostOf(url)) || (/^(https?|data):/.test(favicon || '') ? favicon : null);
+  // (As a file in favicon-cache, not a data: address: that would ride along in every tab-strip update and save.)
+  const saved = typeof favicon === 'string' ? favicon : '';
+  const icon = faviconFile(faviconStore.get(hostOf(url)))
+    || (saved.startsWith('data:image/') ? faviconFile(saved) : /^https?:/.test(saved) || FAVICON_FILE_URL.test(saved) ? saved : null);
   const tab = {
     id: nextTabId++, view: null, rec: curRec, favicon: icon, favicons: icon ? [icon] : [], groupId: null,
     userRemoved: false, settings: false, lastActiveAt: Date.now(),
@@ -1864,7 +1879,9 @@ function switchTab(id, { wake = true } = {}) {
   return true;
 }
 
-function closeTab(id, { destroyed = false } = {}) {
+// `user`: the user closed it (a sleeping tab's ✕, Close group); a tab closed by code (a sign-in tab closing
+// itself, an extension) never takes its window with it.
+function closeTab(id, { destroyed = false, user = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
   if (chatFullTab === id) chatFullTab = null;
@@ -1884,11 +1901,12 @@ function closeTab(id, { destroyed = false } = {}) {
   if (!destroyed && alive(tab)) tab.view.webContents.close();
   if (tabs.length === 0) {
     // Closing a window's last tab (Ctrl+W, its ✕, the tab menu: `closing`, set by requestCloseTab) closes the
-    // window, as in Chrome. A page that went away on its own leaves a fresh tab instead: the window is never
-    // lost to that.
-    if (!destroyed || tab.closing) {
+    // window, as in Chrome: hidden at once (no frame of an empty strip over the page), then closed. A page that
+    // went away on its own, or a tab closed by code, leaves a fresh tab instead: the window is never lost to that.
+    if (user || tab.closing) {
       const rec = curRec;
       sendTabs();
+      try { rec.win.hide(); } catch {}
       setImmediate(() => { if (rcAlive(rec)) rec.win.close(); });
       return;
     }
@@ -1907,7 +1925,7 @@ function closeTab(id, { destroyed = false } = {}) {
 // closeTab({ destroyed: true }), already wired to every tab's 'destroyed' event, finishes the job.
 function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
-  if (!alive(tab)) { closeTab(id); return; }
+  if (!alive(tab)) { closeTab(id, { user: true }); return; }
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
@@ -2475,7 +2493,7 @@ function groupMenu(groupId, { x, y }) {
     ...moveGroupItems(groupId),
     { type: 'separator' },
     { label: t('menu.ungroup'), click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
-    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id)) },
+    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id, { user: true })) },
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
 
@@ -2582,6 +2600,16 @@ async function runImport(id) {
   }
 }
 
+// First run, import without a dialog, and the default browser (features/setup.js).
+const setup = require('./features/setup').create({
+  app, shell, readSettings, writeSettings, importer, importBrowser: (id) => importBrowser(id), freshInstall: () => settingsFileExisted === false,
+});
+ipcMain.handle('settings:setup-state', () => setup.state());
+ipcMain.handle('settings:setup-done', () => { setup.welcomeDone(); return true; });
+ipcMain.handle('settings:default-browser', () => setup.isDefault());
+ipcMain.handle('settings:make-default', () => setup.makeDefault());
+ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
+
 function importMenu() {
   const found = importer.detectBrowsers();
   if (!found.length) return [{ label: t('menu.noBrowsers'), enabled: false }];
@@ -2637,11 +2665,12 @@ function bookmarks() {
 let historyVersion = 0; // bumped on every visit or import: frequentSites is remembered until it changes
 let frequentMemo = null;
 function frequentSites(limit = 6) {
-  const key = `${historyVersion}|${history.size}|${limit}|${bookmarks().map((b) => b.url).join(' ')}`;
-  if (frequentMemo?.key === key) return frequentMemo.out;
-  const out = frequentSitesNow(limit);
-  frequentMemo = { key, out };
-  return out;
+  // One memo at the largest size asked for (the new-tab page asks for 6, the favicon cache for 12): the two
+  // never evict each other.
+  const size = Math.max(limit, 12);
+  const key = `${historyVersion}|${history.size}|${size}|${bookmarks().map((b) => b.url).join(' ')}`;
+  if (frequentMemo?.key !== key) frequentMemo = { key, out: frequentSitesNow(size) };
+  return frequentMemo.out.slice(0, limit);
 }
 function frequentSitesNow(limit) {
   const favoriteHosts = new Set(bookmarks().map((b) => hostOf(b.url)));
@@ -2659,6 +2688,7 @@ function frequentSitesNow(limit) {
 
 // A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images), written once.
 const faviconFiles = new Map(); // data URL hash -> file URL
+const FAVICON_FILE_URL = /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z0-9]+$/i;
 function faviconFile(dataUrl) {
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
   const key = require('crypto').createHash('sha1').update(dataUrl).digest('hex').slice(0, 20);
@@ -3355,7 +3385,7 @@ function saveSession({ excluding = null, background = false } = {}) {
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
-  if (background) writeSettingsAsync(next); else writeSettings(next); // (closing and quitting write at once)
+  if (background) writeSettingsAsync(next); else writeSettingsNow(next); // (closing and quitting write at once)
 }
 
 function restoreSession(entry = null) {
@@ -4544,12 +4574,16 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     // After an update, the release notes come up once, a moment after the restored tabs (only the
     // first normal window asks; whatsNew.check runs once per launch).
     if (firstWindow) setTimeout(() => { if (!w.isDestroyed()) whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message)); }, 1200);
+    // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
+    if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
+    if (firstWindow) setTimeout(() => setup.isDefault().catch(() => {}), 2000).unref?.(); // (for the app menu's item)
   }
   return rec;
 }
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
+  else if (settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
   quitting = true;
 });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -4600,13 +4634,10 @@ async function openFileDialog() {
 }
 // Registering is the user's choice (the ⋯ menu), never done silently. Windows then needs its own
 // Default apps page to confirm; macOS asks by itself.
-function makeDefaultBrowser() {
-  // Run from source (`electron .`), the registered command must include the app folder.
-  const args = process.defaultApp ? [process.execPath, [path.resolve(process.argv[1] || '.')]] : [];
-  for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme, ...args);
-  if (process.platform === 'win32') shell.openExternal('ms-settings:defaultapps').catch(() => {});
-}
-const isDefaultBrowser = () => app.isDefaultProtocolClient('https');
+// (features/setup.js: on Windows Lumen registers as a browser so Default apps can offer it, and the user's real
+// choice is read back, not the protocol handler.)
+function makeDefaultBrowser() { setup.makeDefault().catch(() => {}); }
+const isDefaultBrowser = () => setup.lastDefault() ?? false;
 
 function groupTabsFor(name, ids) {
   const known = ids.filter((id) => tabs.some((t) => t.id === id));
@@ -5838,8 +5869,10 @@ app.whenReady().then(async () => {
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
-  await extending;
-  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
+  // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
+  const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
+  await atMost(extending);
+  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await atMost(blocking);
   perf.mark('adblockReady');
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them

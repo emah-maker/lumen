@@ -56,6 +56,15 @@
           <p class="empty-title" >Ask anything, or give Lumen a task on the tab you were just on.</p>
           <div class="setup" id="setup" hidden>
             <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
+            <p class="setup-pending" id="setup-pending" role="status" hidden></p>
+            <button class="setup-option" type="button" id="setup-claude-code">
+              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
+              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
+            </button>
+            <button class="setup-option" type="button" id="setup-openrouter">
+              <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
+              <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
+            </button>
             <button class="setup-option" type="button" id="setup-keys">
               <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
               <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>

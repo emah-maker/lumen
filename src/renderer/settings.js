@@ -68,6 +68,15 @@ function select(key, label, desc, options, { number = false, after } = {}) {
   return row(label, desc, el);
 }
 const status = (id) => h('span', { class: 'note', id });
+// Where each provider hands out API keys (Settings → AI and agents → API keys, "Get a key").
+const KEY_PAGES = {
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  openai: 'https://platform.openai.com/api-keys',
+  xai: 'https://console.x.ai/',
+  gemini: 'https://aistudio.google.com/apikey',
+  openrouter: 'https://openrouter.ai/keys',
+};
+const importSummary = (r) => `Imported from ${r.label}: ${r.bookmarks === 1 ? '1 bookmark' : `${r.bookmarks.toLocaleString()} bookmarks`} and ${r.history === 1 ? '1 history entry' : `${r.history.toLocaleString()} history entries`}.`;
 const flash = (el, text, cls = 'ok') => { el.textContent = text; el.className = `note ${cls}`; };
 const langName = (() => {
   let names;
@@ -81,7 +90,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['startup', 'On startup'], ['languages', 'Language'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['languages', 'Language'], ['import', 'Import'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
@@ -110,7 +119,8 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
+  'you-and-ai': { cat: 'ai' }, 'ai-keys': { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' },
+  'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
 };
@@ -191,12 +201,17 @@ async function buildAi(card) {
     extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
     onMore: () => openCatalog(),
   });
+  const noModels = h('p', { class: 'note', id: 'ai-model-empty', text: 'No AI connected yet. Add a key or sign in under Accounts and keys below.' });
+  modelPicker.parentElement.append(noModels);
+  const showEmpty = () => { noModels.hidden = ai.models.length > 0; modelPicker.hidden = !ai.models.length; settingsPicker.button?.toggleAttribute('hidden', !ai.models.length); };
   const refreshModels = async () => {
     ai = await S.ai.get();
+    showEmpty();
     modelPicker.replaceChildren(...modelOptions());
     if (ai.model) modelPicker.value = ai.model;
     modelPicker.pickerSync?.();
   };
+  showEmpty();
   S.ai.onModelsUpdated?.(() => { refreshModels(); catalog?.refreshOpen(); }); // picked in the sidebar, or a fresher catalog: Settings shows it too
   const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role: 'switch', 'aria-label': 'Short, focused answers', checked: ai.adhdMode, onchange: (e) => S.ai.setAdhdMode(e.target.checked) });
   const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
@@ -266,8 +281,9 @@ async function buildAi(card) {
     keys.replaceChildren(...entries.map(([provider, info]) => {
       const line = h('div', { class: 'item key', 'data-provider': provider });
       const state = info.stored ? 'Saved' : info.env ? 'From environment' : 'Not set';
-      const view = () => line.replaceChildren(...[
-        h('span', { class: 'grow', text: info.label }),
+      const rowNote = status();
+      const view = (message = '', cls = 'ok') => { line.replaceChildren(...[
+        h('span', { class: 'grow' }, info.label, KEY_PAGES[provider] && !info.stored && !info.env ? h('a', { class: 'key-get', href: KEY_PAGES[provider], text: 'Get a key', onclick: (e) => { e.preventDefault(); S.openUrl(KEY_PAGES[provider]); } }) : null),
         h('span', { class: `note key-state${info.stored || info.env ? ' set' : ''}`, text: state }),
         h('button', { text: info.stored ? 'Change' : 'Add', 'aria-label': `${info.stored ? 'Change' : 'Add'} ${info.label} key`, onclick: edit }),
         provider === 'openrouter' && !info.stored ? h('button', {
@@ -283,10 +299,12 @@ async function buildAi(card) {
             try { r = await S.ai.openRouterSignIn(); } catch (err) { r = { ok: false, message: `OpenRouter sign-in failed: ${err.message}` }; }
             await refreshModels();
             renderKeys();
-            if (!r.ok && !r.cancelled) alert(r.message);
+            if (!r.ok && !r.cancelled) keys.querySelector(`[data-provider="openrouter"]`)?.showMessage?.(r.message, 'err');
           },
         }) : null,
-      ].filter(Boolean));
+        message ? (flash(rowNote, message, cls), rowNote) : null,
+      ].filter(Boolean)); };
+      line.showMessage = (text, cls) => view(text, cls);
       const edit = () => {
         const input = h('input', { type: 'password', class: 'grow', autocomplete: 'off', placeholder: `${info.label} API key`, 'aria-label': `${info.label} API key` });
         const note = status();
@@ -296,7 +314,7 @@ async function buildAi(card) {
             const r = provider === 'anthropic' ? await S.ai.setKey(value) : await S.ai.setProviderKey(provider, value);
             await refreshModels();
             renderKeys();
-            if (r?.unverified) alert(`Saved. ${info.label} couldn't be reached to check the key, so it will be checked on your first message.`);
+            if (r?.unverified) keys.querySelector(`[data-provider="${provider}"]`)?.showMessage?.(`Saved. ${info.label} couldn’t be reached to check the key, so it’s checked on your first message.`, 'warn');
           } catch (err) { flash(note, String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
         };
         const saveKey = () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); };
@@ -305,7 +323,7 @@ async function buildAi(card) {
           h('span', { class: 'key-name', text: info.label }), input,
           h('button', { text: 'Save', onclick: saveKey }),
           info.stored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put('') }) : null,
-          h('button', { class: 'plain', text: 'Cancel', onclick: view }),
+          h('button', { class: 'plain', text: 'Cancel', onclick: () => view() }),
           note,
         ].filter(Boolean));
         input.focus();
@@ -315,7 +333,7 @@ async function buildAi(card) {
     }));
   };
   renderKeys();
-  card.at('ai-accounts').append(stackRow('API keys', 'Encrypted with your OS keychain. Anthropic’s key runs the agent (clicking and typing for you); the others add their models to the picker.', keys));
+  card.at('ai-accounts').append(stackRow('API keys', 'Any one is enough: every provider’s models can chat and use the browser tools (reading, clicking and typing, with your approval). Keys are encrypted with your OS keychain and sent only to their provider.', keys));
 
   // Anthropic CLI sign-in: status sits under the description, the button on the right.
   const cliNote = status('ai-cli-status');
@@ -426,11 +444,40 @@ async function buildAi(card) {
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
+    const note = status('import-status');
+    note.setAttribute('role', 'status');
     importRow.replaceChildren(...(found.length ? found.map((b) => h('button', {
       text: b.label,
-      onclick: async (e) => { e.target.disabled = true; await S.ai.importFrom(b.id); e.target.disabled = false; },
-    })) : [h('span', { class: 'note', text: 'No other browsers found.' })]));
+      onclick: async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        flash(note, `Importing from ${b.label}…`, '');
+        const r = S.ai.importQuiet ? await S.ai.importQuiet(b.id) : (await S.ai.importFrom(b.id), null);
+        btn.disabled = false;
+        if (r) flash(note, r.ok ? importSummary(r) : `Couldn’t import from ${b.label}: ${r.error}`, r.ok ? 'ok' : 'err');
+        else note.textContent = '';
+      },
+    })) : [h('span', { class: 'note', text: 'No other browsers found.' })]), found.length ? note : '');
   }).catch(() => {});
+
+  // Default browser (features/setup.js): what the system says now, and a button that asks it.
+  const defaultNote = status('default-browser-status');
+  const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: 'Make default' });
+  const renderDefault = async () => {
+    const yes = await S.ai.isDefaultBrowser?.().catch(() => null);
+    defaultButton.hidden = yes === true;
+    flash(defaultNote, yes ? 'Lumen is your default browser.' : 'Lumen isn’t your default browser. Links from other apps open elsewhere.', yes ? 'ok' : '');
+  };
+  defaultButton.onclick = async () => {
+    const r = await S.ai.makeDefaultBrowser?.().catch(() => null);
+    if (r?.opened === 'windows-settings') flash(defaultNote, 'In the Windows Settings window that opened, set Lumen as the default for web links (HTTP and HTTPS).', '');
+    else renderDefault();
+  };
+  window.addEventListener('focus', renderDefault); // (back from the system's settings)
+  const defaultRow = row('Default browser', 'Links you open in other apps (mail, chat, documents) open in your default browser.', defaultButton);
+  defaultRow.querySelector('.text').append(defaultNote);
+  card.at('default-browser').append(defaultRow);
+  renderDefault();
 }
 
 // A Relaunch button in the row of a setting that only takes effect at launch; shown while that
@@ -2122,12 +2169,13 @@ function show() {
 function route() {
   let id = location.hash.slice(1);
   let focus = null;
+  let focusEl = null;
   if (forceRoute && (!id || id === 'appearance' || id === 'home')) id = forceRoute;
   forceRoute = null;
   const sub = slots.get(id);
   if (sub?.isSub) view = { cat: sub.cat, sub: id };
   else if (categories.has(id)) view = { cat: id, sub: null };
-  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: null }; focus = ALIASES[id].focus; }
+  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
   else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null };
   remember(view.cat);
   if (query()) $('search').value = '';
@@ -2136,6 +2184,8 @@ function route() {
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const target = focus && $(`sec-${focus}`);
   if (target) target.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
+  // (Its row may still be loading: looked for over the next second.)
+  if (focusEl) for (let i = 0, tries = 10; i < tries; i++) setTimeout(() => { const el = document.querySelector(focusEl); if (el && document.activeElement !== el && !el.dataset.routed) { el.dataset.routed = '1'; el.focus(); el.scrollIntoView({ block: 'center' }); } }, i * 100);
 }
 
 async function init() {
