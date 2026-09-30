@@ -4,7 +4,7 @@
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const { execFile } = require('child_process');
-const { findClaude, buildArgs, stdinMessage, describeFailure, parseAuthStatus } = require('../claude-code');
+const { findClaude, buildArgs, stdinMessage, describeFailure, parseAuthStatus } = require('../src/ai/claude-code');
 
 (async () => {
   let failures = 0;

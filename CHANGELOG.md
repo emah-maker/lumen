@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The code moved under `src/` (`src/main.js`, with `ai/`, `automation/`, `browser/`, `settings/` and `preload/` beside `features/`, `renderer/` and `locales/`); the repository root now holds only configuration and docs. Nothing changes for users: MCP setups that run `<app>/mcp.js` keep working, and the website no longer ships inside the app.
+
 ## 0.4.0 (2026-09-30)
 
 - A first-run welcome in the sidebar: connect an AI, import your bookmarks and history right there, and make Lumen your default browser, each step skippable and each with a note on when it is the best choice. A question you ask before any AI is connected is kept and sent once one is. Add an API key lands on the keys with Add ready, every provider has a Get a key link, and import results are said on the page instead of in pop-ups. Settings has a Default browser section that reads Windows' real choice and registers Lumen so Default apps can offer it.

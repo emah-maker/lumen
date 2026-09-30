@@ -10,7 +10,7 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 // Loaded on first use; a startup that pulls one in has made every launch slower.
-const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modules/qrcode-generator/', 'features/qr.js', 'features/screenshot.js', 'features/tool-overlay.js'];
+const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modules/qrcode-generator/', 'src/features/qr.js', 'src/features/screenshot.js', 'src/features/tool-overlay.js'];
 const CEILING = { requireMs: 2500, modules: 200, preloadKB: 40, uiKB: 500, idleIntervals: 4 };
 
 (async () => {
@@ -18,7 +18,7 @@ const CEILING = { requireMs: 2500, modules: 200, preloadKB: 40, uiKB: 500, idleI
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
 
   // Performance mode's decisions (no Electron needed).
-  const perf = require('../features/performance');
+  const perf = require('../src/features/performance');
   check('4 GB and 4 cores count as slow', perf.hardwareReasons({ totalMem: 4 * 1024 ** 3, cpus: 4 }).map((r) => r.key).join() === 'memory,cpu', '');
   check('16 GB and 8 cores are fine', perf.hardwareReasons({ totalMem: 16 * 1024 ** 3, cpus: 8 }).length === 0, '');
   const mk = (settings, hw) => perf.create({ app: { commandLine: { appendSwitch() {} } }, readSettings: () => settings, ...hw });
@@ -48,7 +48,7 @@ const CEILING = { requireMs: 2500, modules: 200, preloadKB: 40, uiKB: 500, idleI
     check(`project and dependency modules loaded at startup <= ${CEILING.modules}`, modules.length <= CEILING.modules, modules.length);
     const requireMs = await app.evaluate(() => global.__perf.requireTotalMs());
     check(`main.js requires take <= ${CEILING.requireMs} ms`, requireMs <= CEILING.requireMs, `${requireMs} ms`);
-    const preloadKB = fs.statSync(path.join(root, 'preload.bundle.js')).size / 1024;
+    const preloadKB = fs.statSync(path.join(root, 'src', 'preload', 'preload.bundle.js')).size / 1024;
     check(`preload.bundle.js <= ${CEILING.preloadKB} KB`, preloadKB <= CEILING.preloadKB, `${Math.round(preloadKB)} KB`);
     const files = await ui.evaluate(() => [...document.scripts].map((s) => s.src).concat([...document.querySelectorAll('link[rel=stylesheet]')].map((l) => l.href)).filter(Boolean));
     const uiKB = files.reduce((sum, u) => sum + fs.statSync(decodeURIComponent(new URL(u).pathname.replace(/^\//, ''))).size / 1024, 0);

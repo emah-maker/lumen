@@ -19,9 +19,9 @@
 // the tool call waits for the answer) are the task's, exactly as for an API run.
 const crypto = require('crypto');
 const { WebContentsView, Notification, BrowserWindow } = require('electron');
-const { Agent, cliSystemPrompt } = require('../agent');
-const { engineModel } = require('../cli-utils');
-const { LIMIT_NOTICE } = require('../loop-guard');
+const { Agent, cliSystemPrompt } = require('../ai/agent');
+const { engineModel } = require('../ai/cli-utils');
+const { LIMIT_NOTICE } = require('../ai/loop-guard');
 const bg = require('./background-agents');
 
 const WORK_TAB = 1; // the id the agent sees for its one tab
@@ -359,7 +359,7 @@ function create(deps) {
     if (name === 'click') {
       label = input.text || '';
       if (!label && Number.isInteger(input.element_id) && wc) {
-        try { label = (await wc.executeJavaScriptInIsolatedWorld(CLAUDE_WORLD, [{ code: require('../page-scripts').labelOf(input.element_id) }]))?.label || ''; } catch {}
+        try { label = (await wc.executeJavaScriptInIsolatedWorld(CLAUDE_WORLD, [{ code: require('../ai/page-scripts').labelOf(input.element_id) }]))?.label || ''; } catch {}
       }
     }
     return label && RISKY_CLICK.test(label) ? { host, what: `click “${label.slice(0, 60)}” on ${host}`, detail: `A button or link on ${host} that looks like it buys, sends, posts or submits something.` } : null;

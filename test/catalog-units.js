@@ -7,7 +7,7 @@ const path = require('path');
 
 let failed = 0;
 const check = async (name, fn) => { try { await fn(); console.log(`PASS  ${name}`); } catch (e) { failed++; console.log(`FAIL  ${name}\n      ${e.message}`); } };
-const fresh = () => { delete require.cache[require.resolve('../providers')]; return require('../providers'); };
+const fresh = () => { delete require.cache[require.resolve('../src/ai/providers')]; return require('../src/ai/providers'); };
 const file = (data) => { const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cat-')), 'c.json'); fs.writeFileSync(f, JSON.stringify(data)); return f; };
 const old = { fetchedAt: Date.now() - 3 * 24 * 3600e3, models: [{ id: 'a/b', name: 'A: B', tools: true }] };
 

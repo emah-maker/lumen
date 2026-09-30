@@ -17,8 +17,8 @@ In scope:
 
 - **The Lumen app:** the main process, the browser UI and sidebar, internal pages (settings, history, new tab), IPC between them, the way tabs, hidden reader views and sessions are isolated, permissions and downloads, the built-in ad blocker, extension installation, and how keys and chats are stored.
 - **AI tool gating:** anything that lets a web page, search result or other untrusted content make the AI act on a site, open or fetch a site, or read tabs without the approval Lumen is meant to require; ways around `list_tabs` filtering; getting the AI to act outside http(s) pages.
-- **The MCP server** (`mcp.js`, `features/ai-agents.js`): connecting without the profile's token, one local user reaching another's Lumen, an MCP client skipping approval cards, and the Claude Code / Grok Build engines getting tools beyond Lumen's browser tools.
-- **The CDP automation proxy** (`automation.js`) when turned on: exposing Lumen's own UI or hidden views, or listening beyond localhost.
+- **The MCP server** (`mcp.js`, `src/features/ai-agents.js`): connecting without the profile's token, one local user reaching another's Lumen, an MCP client skipping approval cards, and the Claude Code / Grok Build engines getting tools beyond Lumen's browser tools.
+- **The CDP automation proxy** (`src/automation/automation.js`) when turned on: exposing Lumen's own UI or hidden views, or listening beyond localhost.
 
 Out of scope:
 

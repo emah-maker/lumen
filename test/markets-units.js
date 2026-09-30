@@ -2,9 +2,9 @@
 // oversell, not enough cash, hostile stored config), the two providers' answers, and both connectors
 // against a fake fetch (no network, no Electron, nothing opens): quotes, errors, buying and selling at the
 // last quote, stale/offline blocking, and that trades survive an edit and never refetch quotes.
-const MV = require('../features/markets-view');
-const { createWidgets, cleanWidget, CONNECTORS } = require('../features/widgets');
-const WL = require('../features/widget-layout');
+const MV = require('../src/features/markets-view');
+const { createWidgets, cleanWidget, CONNECTORS } = require('../src/features/widgets');
+const WL = require('../src/features/widget-layout');
 
 module.exports = async function marketsUnits(check) {
   const S = (trades, cash0 = 100000) => ({ cash0, trades });

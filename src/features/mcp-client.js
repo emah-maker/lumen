@@ -21,7 +21,7 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { lookup, killTree } = require('../cli-utils');
+const { lookup, killTree } = require('../ai/cli-utils');
 
 const PROTOCOL_VERSION = '2025-06-18';
 const CONFIG_FILE = 'mcp-servers.json';

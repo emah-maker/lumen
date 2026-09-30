@@ -1,9 +1,9 @@
 // Custom recipes, Notes, Countdown and Timer (run from test/units.js): recipe checks and shaping, the
 // timer's steps, countdown dates, and the connectors' act() and present() (no network, no Electron).
-const CW = require('../features/custom-widget');
-const LW = require('../features/local-widgets');
-const { cleanWidget, CONNECTORS } = require('../features/widgets');
-const WS = require('../renderer/widget-summary');
+const CW = require('../src/features/custom-widget');
+const LW = require('../src/features/local-widgets');
+const { cleanWidget, CONNECTORS } = require('../src/features/widgets');
+const WS = require('../src/renderer/widget-summary');
 
 module.exports = async function localCustomUnits(check) {
   const throws = (fn, re) => { try { fn(); return false; } catch (e) { return re.test(e.message); } };

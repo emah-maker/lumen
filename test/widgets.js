@@ -10,7 +10,7 @@ const fs = require('fs');
 const https = require('https');
 const os = require('os');
 const path = require('path');
-const ics = require('../features/ics');
+const ics = require('../src/features/ics');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };

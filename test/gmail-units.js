@@ -5,10 +5,10 @@
 // Google (no network). Nothing here opens a window or signs in to anything.
 const crypto = require('crypto');
 const http = require('http');
-const OA = require('../features/oauth');
-const GV = require('../features/gmail-view');
-const GC = require('../features/google-client');
-const { createWidgets } = require('../features/widgets');
+const OA = require('../src/features/oauth');
+const GV = require('../src/features/gmail-view');
+const GC = require('../src/features/google-client');
+const { createWidgets } = require('../src/features/widgets');
 
 const get = (url, headers = {}) => new Promise((resolve, reject) => {
   http.get(url, { headers }, (res) => { let body = ''; res.on('data', (d) => { body += d; }); res.on('end', () => resolve({ status: res.statusCode, body })); }).on('error', reject);

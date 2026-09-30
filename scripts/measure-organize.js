@@ -5,8 +5,8 @@
 // tokens, time to the first visible change and time to the final result.
 //   node scripts/measure-organize.js [--ttft 1.2] [--tps 60] [--sizes 10,40,80,200] [--prefill 40]
 const bench = require('../test/topics-bench');
-const tg = require('../tab-groups');
-const oai = require('../features/organize-ai');
+const tg = require('../src/browser/tab-groups');
+const oai = require('../src/features/organize-ai');
 
 const arg = (name, dflt) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : dflt; };
 const TTFT = Number(arg('ttft', 1.2)) * 1000; // ms until the first token

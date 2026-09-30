@@ -83,7 +83,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- nav and search ----
   const navCount = await inTab(sid, "document.querySelectorAll('#nav a').length");
-  const sectionCount = require('../settings-backend').SECTIONS.length;
+  const sectionCount = require('../src/settings/settings-backend').SECTIONS.length;
   check(`left nav lists all ${sectionCount} categories`, navCount === sectionCount, navCount);
   await inTab(sid, "document.querySelector('#nav a[data-section=appearance]').click()");
   await waitFor(() => inTab(sid, "!document.getElementById('cat-appearance').hidden"));

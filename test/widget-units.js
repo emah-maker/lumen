@@ -2,13 +2,13 @@
 // sideways, compaction, clamping, limits, the narrow-window fallback, migration from span/height,
 // garbage input), snapping, Todoist's filter/group/sort/limits and config, weather's places, units,
 // days and "My location" gating, and the colour palettes. No Electron, no network.
-const WL = require('../features/widget-layout');
-const TV = require('../features/todoist-view');
-const WX = require('../features/weather-view');
-const WC = require('../features/widget-colors');
-const WCK = require('../features/worldclock-view');
-const ics = require('../features/ics');
-const { cleanList, cleanWidget } = require('../features/widgets');
+const WL = require('../src/features/widget-layout');
+const TV = require('../src/features/todoist-view');
+const WX = require('../src/features/weather-view');
+const WC = require('../src/features/widget-colors');
+const WCK = require('../src/features/worldclock-view');
+const ics = require('../src/features/ics');
+const { cleanList, cleanWidget } = require('../src/features/widgets');
 
 module.exports = async function widgetUnits(check) {
   const it = (id, type, x, y, w, h, extra) => ({ id, type, x, y, w, h, ...extra });
@@ -298,7 +298,7 @@ module.exports = async function widgetUnits(check) {
   check('weather my location: the answer is a city and rounded coordinates, the IP is dropped', here.name === 'Boston, MA' && here.lat === 42.36 && here.lon === -71.06 && !JSON.stringify(here).includes('1.2.3.4') && WX.cleanLocation({ error: true }) === null && WX.cleanLocation({ city: '', latitude: 1, longitude: 1 }) === null && WX.cleanLocation({ city: 'X', latitude: 999, longitude: 1 }) === null, JSON.stringify(here));
 
   // ---- widgets: page actions ----
-  const { createWidgets } = require('../features/widgets');
+  const { createWidgets } = require('../src/features/widgets');
   const w = createWidgets({ readSettings: () => ({}), writeSettings: () => {}, fetch: async () => { throw new Error('offline'); }, getSecret: () => null, setSecret: () => {}, endpoints: () => ({}) });
   const url = (q) => `file:///x/newtab.html?${new URLSearchParams(q)}#{}`;
   const layoutText = 'wabcde:0,0,4,3;wabcdf:4,0,8,6,tr';
@@ -342,7 +342,7 @@ module.exports = async function widgetUnits(check) {
   check('widgets: the colors mode is stored per widget and defaults to Calendar colors', cleanWidget({ id: 'wcolor1', type: 'calendar', url: 'https://example.com/a.ics', colors: 'match' }).colors === 'match' && cleanWidget({ id: 'wcolor2', type: 'calendar', url: 'https://example.com/a.ics', colors: 'neon' }).colors === 'calendar' && cleanWidget({ id: 'wcolor3', type: 'todoist' }).colors === 'calendar' && cleanWidget({ id: 'wcolor4', type: 'weather', place: 'B', lat: 1, lon: 2, colors: 'accent' }).colors === 'accent', '');
 
   // ---- feed headlines: the RSS / Atom reader (features/feed.js) ----
-  const FD = require('../features/feed');
+  const FD = require('../src/features/feed');
   const FEED_NOW = Date.parse('2026-09-29T12:00:00Z');
   const feedRss = `<?xml version="1.0"?><rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><title>Bloomberg &amp; Co</title>
     <item><title><![CDATA[Banks <b>draw</b> $11.5B]]></title><link>https://www.bloomberg.com/news/a</link><pubDate>Tue, 29 Sep 2026 11:30:00 GMT</pubDate></item>
@@ -392,7 +392,7 @@ module.exports = async function widgetUnits(check) {
   check('feed: every preset is an https address with an id and a name', FD.PRESETS.length >= 5 && FD.PRESETS.every((p) => /^https:\/\//.test(p.url) && p.id && p.name) && FD.PRESETS.some((p) => /bloomberg/.test(p.id)) && FD.PRESETS.some((p) => /^hn/.test(p.id)), '');
   const fw = cleanWidget({ id: 'wfeed01', type: 'feed', url: 'https://www.bloomberg.com/feeds/markets/news.rss', preset: 'bloomberg-markets', name: 'Markets', count: 5 });
   check('feed: widget config is checked (https only, count clamped, preset must match its address, default size 4x4)', fw && fw.count === 5 && fw.preset === 'bloomberg-markets' && cleanWidget({ id: 'wfeed02', type: 'feed', url: 'http://a.com/rss' }) === null && cleanWidget({ id: 'wfeed03', type: 'feed', url: 'https://a.com/rss', preset: 'hn', count: 99 }).preset === '' && cleanWidget({ id: 'wfeed04', type: 'feed', url: 'https://a.com/rss', count: 99 }).count === 8 && WL.DEFAULT_SIZE.feed.w === 4 && WL.DEFAULT_SIZE.feed.h === 4 && cleanList([{ id: 'wfeed05', type: 'feed', url: 'https://a.com/rss' }])[0].h === 4, JSON.stringify(fw));
-  const { CONNECTORS } = require('../features/widgets');
+  const { CONNECTORS } = require('../src/features/widgets');
   const served = { text: async () => `<rss><channel><title>Site</title>${'<item><title>H</title><link>http://a.com/1</link></item>'.repeat(20)}</channel></rss>` };
   const fetched = await CONNECTORS.feed.fetch({ url: 'https://a.com/rss', name: '', count: 4 }, served);
   check('feed: the connector returns source and at most count items with https links', fetched.source === 'Site' && fetched.items.length === 4 && fetched.items[0].url === 'https://a.com/1', JSON.stringify(fetched));
@@ -446,8 +446,8 @@ module.exports = async function widgetUnits(check) {
 
 // ---- stacks: same-size widgets in one place, shown one at a time (features/widget-stacks.js) ----
 async function stackUnits(check, { it, noOverlap }) {
-  const ST = require('../features/widget-stacks');
-  const { createWidgets } = require('../features/widgets');
+  const ST = require('../src/features/widget-stacks');
+  const { createWidgets } = require('../src/features/widgets');
   const wx = (id, extra) => ({ id, type: 'weather', place: 'B', lat: 1, lon: 2, ...extra });
   const todo = (id, extra) => ({ id, type: 'todoist', ...extra });
   const row = (w) => [w.id, w.x, w.y, w.w, w.h, w.stack || '-', w.top ? 'T' : ''].join(' ');

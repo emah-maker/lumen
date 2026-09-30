@@ -3,7 +3,7 @@
   "productName": "Lumen",
   "version": "0.4.0",
   "description": "Lumen: an AI browser that works with Claude, ChatGPT, Grok and Gemini, and with any AI agent through MCP",
-  "main": "main.js",
+  "main": "src/main.js",
   "scripts": {
     "postinstall": "node node_modules/electron/install.js",
     "start": "electron .",
@@ -56,6 +56,8 @@
       "!.github/**",
       "!shot-*.png",
       "!docs/**",
+      "!site/**",
+      "!_site/**",
       "!eslint.config.js",
       "!.editorconfig",
       "!**/node_modules/**/*.map",
@@ -83,7 +85,7 @@
       "zh-TW"
     ],
     "win": {
-      "icon": "assets/icon.png",
+      "icon": "src/assets/icon.png",
       "target": [
         {
           "target": "dir",
@@ -161,7 +163,7 @@
       }
     ],
     "mac": {
-      "icon": "assets/icon.png",
+      "icon": "src/assets/icon.png",
       "category": "public.app-category.productivity",
       "extraResources": [
         "LICENSE",

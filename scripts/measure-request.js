@@ -1,6 +1,6 @@
 // Prints the size of the request the sidebar sends for a fixed fake conversation (no network, no
 // Electron window): node scripts/measure-request.js
-const { requestFor, DEFAULT_MODEL } = require('../agent');
+const { requestFor, DEFAULT_MODEL } = require('../src/ai/agent');
 
 const page = 'Example page text. '.repeat(200);
 const messages = [

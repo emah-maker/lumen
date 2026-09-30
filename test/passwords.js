@@ -135,7 +135,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   check('run_script works on a page where nothing was filled', script2.includes('2') && !script2.startsWith('ERROR'), script2);
 
   // ---- research tabs and private windows are never offered ----
-  const research = require('../features/research-tabs').RESEARCH_PARTITION;
+  const research = require('../src/features/research-tabs').RESEARCH_PARTITION;
   const tr = await open(`${base}/login`, { partition: research, background: true });
   await sleep(400);
   check('a research tab gets no watcher and no key button', (await pwWorld(tr, 'typeof window.__lumenPasswords')) === 'undefined' && (await stateOf(tr)) === null, JSON.stringify(await stateOf(tr)));

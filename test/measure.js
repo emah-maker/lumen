@@ -26,7 +26,7 @@ const which = process.argv[2] || 'both';
     if (process.env.MEASURE_VERBOSE) console.log(`--- ${name} ${JSON.stringify(input)}\n${r.slice(0, 1500)}`);
     return r;
   };
-  const toolDefs = await app.evaluate(() => JSON.stringify(process.mainModule.require('./agent').EXTERNAL_TOOLS || []).length).catch(() => 0);
+  const toolDefs = await app.evaluate(() => JSON.stringify(process.mainModule.require('./ai/agent').EXTERNAL_TOOLS || []).length).catch(() => 0);
   const idOf = (page, pred) => JSON.parse(page.split('\n')[1]).elements.find(pred)?.id;
   const ref = (text, re) => Number((re.exec(text) || [])[1]);
 

@@ -8,8 +8,8 @@ const os = require('os');
 const path = require('path');
 
 module.exports = async function whatsNewUnits(check) {
-  const W = require('../features/whats-new');
-  const SB = require('../settings-backend');
+  const W = require('../src/features/whats-new');
+  const SB = require('../src/settings/settings-backend');
   const root = path.join(__dirname, '..');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
@@ -153,8 +153,8 @@ module.exports = async function whatsNewUnits(check) {
     };
   } catch { /* minimatch is electron-builder's; skip the check without it */ }
   if (shipped) {
-    check('whats-new: CHANGELOG.md and the feature ship, other Markdown and docs/ do not', shipped('CHANGELOG.md') && shipped('features/whats-new.js') && !shipped('README.md') && !shipped('docs/settings.md'),
-      JSON.stringify({ changelog: shipped('CHANGELOG.md'), feature: shipped('features/whats-new.js'), readme: shipped('README.md'), docs: shipped('docs/settings.md') }));
+    check('whats-new: CHANGELOG.md and the feature ship, other Markdown and docs/ do not', shipped('CHANGELOG.md') && shipped('src/features/whats-new.js') && !shipped('README.md') && !shipped('docs/settings.md'),
+      JSON.stringify({ changelog: shipped('CHANGELOG.md'), feature: shipped('src/features/whats-new.js'), readme: shipped('README.md'), docs: shipped('docs/settings.md') }));
   }
 };
 

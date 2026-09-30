@@ -1,7 +1,7 @@
 // Code colours in chat replies (renderer/highlight.js): the tokenizer colours, escapes, and leaves unknown languages alone.
 const assert = require('assert');
 global.window = {};
-require('../renderer/highlight.js');
+require('../src/renderer/highlight.js');
 const h = window.highlightCode.test;
 
 const js = h('const x = foo("a\\"b", 42); // hi', 'javascript');

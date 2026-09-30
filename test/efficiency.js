@@ -33,7 +33,7 @@ const FIXTURE = `<!doctype html><title>Shop</title>
   const ref = (text, re) => Number((re.exec(text) || [])[1]);
 
   // Tool lists: the new tools reach every provider and MCP.
-  const names = await app.evaluate(() => process.mainModule.require('./agent').EXTERNAL_TOOLS.map((t) => t.name));
+  const names = await app.evaluate(() => process.mainModule.require('./ai/agent').EXTERNAL_TOOLS.map((t) => t.name));
   check('find and batch are exposed to MCP / other providers', names.includes('find') && names.includes('batch'), names.join(','));
 
   await run('navigate', { url: site });
@@ -77,7 +77,7 @@ const FIXTURE = `<!doctype html><title>Shop</title>
   const crop = JSON.parse(await run('screenshot', { region: { x: 0, y: 0, width: 200, height: 100 } }));
   check('screenshot region crop is small', crop[0].image < shot[0].image / 2 && crop[1].text.includes('Region'), `${crop[0].image} vs ${shot[0].image}`);
   const bad = await run('screenshot', { region: { x: 0 } });
-  check('invalid region is rejected by validation', await app.evaluate((_e, input) => process.mainModule.require('./agent').validateInput('screenshot', input), { region: { x: 0 } }) !== null, bad);
+  check('invalid region is rejected by validation', await app.evaluate((_e, input) => process.mainModule.require('./ai/agent').validateInput('screenshot', input), { region: { x: 0 } }) !== null, bad);
 
   // Token budgets on real pages.
   const BUDGET = 6500; // chars (~1.6k tokens) for the whole Alan Turing outline, vs ~50k for full

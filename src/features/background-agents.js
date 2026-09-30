@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const tlds = require('../tlds');
+const tlds = require('../browser/tlds');
 const { describeUsage, addUsage } = require('./chat-usage');
 
 const LIMITS = { tasks: 50, steps: 200, runs: 10, result: 24000, title: 80, prompt: 8000, condition: 300, sites: 20, pages: 20, resumeSteps: 15 };

@@ -29,7 +29,7 @@ const http = require('http');
   const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(150); } return v; };
 
   // ---- every channel preload.js sends is gated
-  const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8');
   const channels = [...preloadSrc.matchAll(/ipcRenderer\.(?:send|invoke|sendSync)\('([^']+)'/g)].map((m) => m[1])
     .filter((c) => c !== 'ui-preload:loaded'); // open to every sender on purpose: it only restricts the view that sends it
   const ungated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), channels);
@@ -42,8 +42,8 @@ const http = require('http');
   });
   check('UI: the window is sandboxed with context isolation', prefs.sandbox === true && prefs.contextIsolation === true && !prefs.nodeIntegration, JSON.stringify(prefs));
   // webPreferences don't report the preload path, so check the source names the bundle.
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  check('UI: it loads the bundled preload', /preload: path\.join\(__dirname, 'preload\.bundle\.js'\)/.test(mainSrc) && !/'preload\.js'\)/.test(mainSrc), 'main.js');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  check('UI: it loads the bundled preload', /preload: path\.join\(__dirname, 'preload', 'preload\.bundle\.js'\)/.test(mainSrc) && !/'preload\.js'\)/.test(mainSrc), 'src/main.js');
   const bridge = await ui.evaluate(() => ({ browser: typeof window.browser?.newTab, toolbar: Boolean(customElements.get('browser-action-list')), node: typeof require }));
   check('UI: the bridge and the extensions toolbar element work under the sandbox', bridge.browser === 'function' && bridge.toolbar && bridge.node === 'undefined', JSON.stringify(bridge));
 
@@ -104,7 +104,7 @@ const http = require('http');
     const url = w.webContents.getURL();
     w.destroy();
     return { url };
-  }, { preload: path.join(__dirname, '..', 'preload.bundle.js'), web });
+  }, { preload: path.join(__dirname, '..', 'src', 'preload', 'preload.bundle.js'), web });
   check('backstop: a view with the UI preload can\'t navigate to the web', !backstop.url.startsWith(web), backstop.url);
 
   // ---- privileged / UI-only IPC from a tab (or a subframe) is refused
@@ -141,7 +141,7 @@ const http = require('http');
   check('real UI call still works (browser.newTab)', (await waitFor(async () => ((await tabCount()) > tabsBeforeNew ? 1 : 0))) === 1, await tabCount());
 
   // ---- the error page runs with no inline script allowed (its script is renderer/error.js)
-  const errorHtml = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'error.html'), 'utf8');
+  const errorHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'error.html'), 'utf8');
   check('error.html: CSP allows no inline script', /script-src 'self'(;|")/.test(errorHtml) && !/<script>/.test(errorHtml), errorHtml.match(/Content-Security-Policy" content="([^"]+)/)?.[1]);
   const errorPage = await app.evaluate(async ({ WebContentsView }, url) => {
     const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } });
@@ -149,7 +149,7 @@ const http = require('http');
     const text = await view.webContents.executeJavaScript("document.getElementById('message').textContent + ' | ' + document.getElementById('code').textContent");
     view.webContents.close();
     return text;
-  }, `file:///${path.join(__dirname, '..', 'renderer', 'error.html').replace(/\\/g, '/')}?url=${encodeURIComponent('https://unreachable.test/')}&desc=ERR_NAME_NOT_RESOLVED&code=-105`);
+  }, `file:///${path.join(__dirname, '..', 'src', 'renderer', 'error.html').replace(/\\/g, '/')}?url=${encodeURIComponent('https://unreachable.test/')}&desc=ERR_NAME_NOT_RESOLVED&code=-105`);
   check('error.html: its script still fills in the message', errorPage.includes('unreachable.test') && errorPage.includes('ERR_NAME_NOT_RESOLVED (-105)'), errorPage);
 
   // ---- the AI's reader partition: no permissions, no downloads
@@ -196,10 +196,10 @@ const http = require('http');
     const { app } = require('electron');
     Object.defineProperty(app, 'isPackaged', { get: () => true, configurable: true });
     app.setPath('userData', ${JSON.stringify(packedProfile)});
-    const agentModule = require(${JSON.stringify(path.join(root, 'agent.js'))});
+    const agentModule = require(${JSON.stringify(path.join(root, 'src', 'ai', 'agent.js'))});
     const { Agent } = agentModule;
     agentModule.Agent = class extends Agent { constructor(host, ...rest) { super(host, ...rest); globalThis.lumenProbe = { autoApprove: host.autoApprove }; } };
-    require(${JSON.stringify(path.join(root, 'main.js'))});
+    require(${JSON.stringify(path.join(root, 'src', 'main.js'))});
   `);
   const packed = await electron.launch({ args: [path.join(packedDir, 'entry.js')], env: { ...env, CLAUDE_BROWSER_PROFILE: plantedProfile } });
   const packedUi = await packed.firstWindow();

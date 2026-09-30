@@ -134,7 +134,7 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
   const version = await fetch(`${root}/json/version`).then((r) => r.json());
   check('/json/version points at the proxy, token included', version.webSocketDebuggerUrl === `ws://127.0.0.1:${PORT}/${token}/devtools/browser`, JSON.stringify(version));
   const list = await fetch(`${root}/json/list`).then((r) => r.json());
-  check('/json/list: only user tabs', list.length === await lumenTabs() && list.every((t) => !t.url.includes('renderer/index.html') && t.webSocketDebuggerUrl.startsWith(`ws://127.0.0.1:${PORT}/${token}/devtools/page/`)), JSON.stringify(list.map((t) => t.url)));
+  check('/json/list: only user tabs', list.length === await lumenTabs() && list.every((t) => !t.url.includes('src/renderer/index.html') && t.webSocketDebuggerUrl.startsWith(`ws://127.0.0.1:${PORT}/${token}/devtools/page/`)), JSON.stringify(list.map((t) => t.url)));
   const blocked = await fetch(`${root}/json/list`, { headers: { Origin: 'https://evil.example' } }).then((r) => r.status);
   check('web pages (Origin header) are refused', blocked === 403, blocked);
 
@@ -227,7 +227,7 @@ const wsStatus = (url, headers = {}) => new Promise((resolve) => {
     const pipeBrowser = await chromium.connectOverCDP(pipeRoot);
     const pipeContext = pipeBrowser.contexts()[0];
     const tabsBefore = pipeContext.pages();
-    check('pipe: connectOverCDP lists the user tabs only', tabsBefore.length >= 1 && tabsBefore.length === (await pipeList()).length && !tabsBefore.some((p) => p.url().includes('renderer/index.html')), tabsBefore.map((p) => p.url()).join(', '));
+    check('pipe: connectOverCDP lists the user tabs only', tabsBefore.length >= 1 && tabsBefore.length === (await pipeList()).length && !tabsBefore.some((p) => p.url().includes('src/renderer/index.html')), tabsBefore.map((p) => p.url()).join(', '));
     const piped = await pipeContext.newPage();
     await piped.goto(`${site}/piped`);
     check('pipe: newPage opens a tab and navigates', (await piped.title()) === 'Fixture /piped' && (await pipeList()).length === tabsBefore.length + 1, await piped.title());

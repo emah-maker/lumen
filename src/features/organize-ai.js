@@ -7,7 +7,7 @@
 // Pure logic: the tab list, the model and the clock are passed in, so test/units.js and
 // scripts/measure-organize.js run it against a fake model.
 const crypto = require('crypto');
-const tg = require('../tab-groups');
+const tg = require('../browser/tab-groups');
 const { AI_HINTS } = require('./topic-knowledge');
 
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; } };
