@@ -29,15 +29,15 @@ const path = require('path');
   const inSettings = await openSettingsTab(app);
   const clickAdhd = () => inSettings("document.getElementById('ai-adhd').click()");
   check('ADHD mode toggle is on by default', (await inSettings("document.getElementById('ai-adhd').checked")) === true, 'unchecked');
-  check('ADHD rules sent when on', (await ask()).includes('the user has ADHD'), 'missing');
+  check('ADHD rules sent when on', (await ask()).includes('short, focused answers; follow this'), 'missing');
   await clickAdhd();
   await ui.waitForTimeout(300);
   await app.evaluate(() => global.__agent.reset()); // settings apply to new chats
-  check('ADHD rules removed when turned off', !(await ask()).includes('the user has ADHD'), 'still present');
+  check('ADHD rules removed when turned off', !(await ask()).includes('short, focused answers; follow this'), 'still present');
   await clickAdhd();
   await ui.waitForTimeout(300);
   await app.evaluate(() => global.__agent.reset()); // settings apply to new chats
-  check('ADHD rules back when turned on again', (await ask()).includes('the user has ADHD'), 'missing');
+  check('ADHD rules back when turned on again', (await ask()).includes('short, focused answers; follow this'), 'missing');
 
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
