@@ -48,6 +48,13 @@ const DEFAULTS = {
   newTabImage: 0, // [look] when the wallpaper file (newtab-wallpaper.jpg in the profile) was last set; 0: none
   newTabClock: true, // [look] the big clock above the greeting
   newTabClockSize: 'm', // [look] the clock's size: s | m | l | xl (Edit layout on the page resizes it too)
+  newTabClockStyle: 'classic', // [look] the clock's look (features/clock-styles.js): classic | rounded | thin | serif | mono | bold
+  newTabClockHours: 'auto', // [look] auto (as the system language writes it) | 12 | 24
+  newTabClockSeconds: false, // [look] show seconds, small, after the minutes
+  newTabClockDate: true, // [look] the date under (or, in Thin, over) the clock
+  newTabClockCard: 'none', // [look] behind the clock and date: none | soft | glass
+  newTabClockShadow: false, // [look] a stronger shadow under the clock and greeting over a background or picture
+  newTabGreetingFont: 'classic', // [look] the greeting's face: classic | match (the clock's) | rounded | serif | thin | mono | hand
   newTabSearchWidth: 640, // [look] the centred column / search bar width in px, 480-960
   newTabName: '', // [look] "Good evening, <name>"
   newTabHeader: true, // [look] the date and greeting (a system card, features/widget-system.js)
@@ -92,6 +99,7 @@ const DEFAULTS = {
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
+  aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
@@ -119,6 +127,7 @@ const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 8640
 
 const translate = require('./features/translate');
 const WS = require('./features/widget-system'); // the clock's steps and the search bar's width range
+const CS = require('./features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const bool = (v) => v === true;
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
@@ -135,6 +144,10 @@ function validate(key, value) {
     case 'newTabEffectColor': return ['auto', 'accent', 'rainbow'].includes(value) || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabEffectAmount': case 'newTabEffectSpeed': case 'newTabEffectSize': return pick(value, EFFECT_LEVELS[key], null);
     case 'newTabClockSize': return WS.cleanClockSize(value);
+    case 'newTabClockStyle': return CS.cleanStyle(value);
+    case 'newTabClockHours': return CS.cleanHours(value);
+    case 'newTabClockCard': return CS.cleanCard(value);
+    case 'newTabGreetingFont': return CS.cleanGreetingFont(value);
     case 'newTabSearchWidth': return WS.cleanSearchWidth(value);
     case 'newTabName': return String(value ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40);
     case 'newTabImage': return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
@@ -147,6 +160,7 @@ function validate(key, value) {
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
+    case 'aiSignedInSites': return require('./features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
     case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
@@ -267,6 +281,7 @@ function create(deps) {
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor),
       clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
+      clockStyle: { style: p.newTabClockStyle, hours: p.newTabClockHours, seconds: p.newTabClockSeconds, date: p.newTabClockDate, card: p.newTabClockCard, shadow: p.newTabClockShadow, greeting: p.newTabGreetingFont },
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked === true,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
@@ -529,6 +544,7 @@ function create(deps) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
+    if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
     writeSettings({ ...readSettings(), [key]: valid });
@@ -546,6 +562,7 @@ function create(deps) {
       platform: process.platform,
       zooms: ZOOMS,
       fontSizes: FONT_SIZES,
+      clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, // [look] Settings → Home's pickers
       permissions: PERMISSIONS,
       defaultDownloadDir: app.getPath('downloads'),
       spellcheckAvailable: process.platform === 'darwin' ? [] : ses().availableSpellCheckerLanguages,
@@ -818,4 +835,4 @@ function create(deps) {
   };
 }
 
-module.exports = { create, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { create, validate, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

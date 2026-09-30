@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
@@ -35,10 +35,11 @@ const cliAuth = lazy(() => require('./cli-auth'));
 // touches this; a session that only ever uses Claude Code, Grok, or another provider never loads it.
 let anthropicSdk_ = null;
 const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
-const { createTabGroups, siteName, pathWords } = require('./tab-groups');
+const { createTabGroups, siteName, pathWords, siteHint } = require('./tab-groups');
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
+const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
 const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
@@ -52,6 +53,7 @@ const { createSafeBrowsing } = require('./features/safe-browsing');
 const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
+const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
 const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
@@ -153,10 +155,11 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
+  'chat:sidebar-state',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -200,14 +203,20 @@ for (const method of ['handle', 'on']) {
   const register = ipcMain[method].bind(ipcMain);
   // With several browser windows, a message from one window's UI, tab, or overlay makes that window
   // the one the shared handlers below act on (see "browser windows" near createWindow).
-  const enterSenderWindow = (event) => { if (winRecs.size > 1) enterWindow(recOfSender(event?.sender)); };
-  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? (event, ...args) => { enterSenderWindow(event); return listener(event, ...args); } : (event, ...args) => {
-    enterSenderWindow(event);
+  // A window kept ready for a tear-off (prepareDragWindow) is entered for its own message only: it never
+  // becomes the window everything else acts on.
+  const inSenderWindow = (event, run) => {
+    const rec = winRecs.size > 1 ? recOfSender(event?.sender) : null;
+    if (isSpare(rec)) return withWindow(rec, run);
+    enterWindow(rec);
+    return run();
+  };
+  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? (event, ...args) => inSenderWindow(event, () => listener(event, ...args)) : (event, ...args) => inSenderWindow(event, () => {
     if (trustedSender(event, channel)) return listener(event, ...args);
     console.error(`[lumen] refused ${channel} from ${event.sender.getURL?.().slice(0, 80)}`);
     if (method === 'handle') throw new Error('Not allowed');
     return undefined;
-  });
+  }));
 }
 let tabs = []; // { id, view, favicon }
 let activeId = null;
@@ -799,7 +808,11 @@ async function setupExtensions() {
       const b = view.getBounds();
       const w = win.getBounds();
       const x = Math.max(w.x + 8, Math.min(b.x, w.x + w.width - b.width - 8));
-      if (x !== b.x) view.setBounds({ ...b, x });
+      // A tall popup (up to 600px) on a short screen ran below the taskbar: stop it at the work
+      // area's bottom and let the popup's page scroll, as Chrome does.
+      const area = screen.getDisplayMatching(b).workArea;
+      const height = Math.min(b.height, Math.max(120, area.y + area.height - 8 - b.y));
+      if (x !== b.x || height !== b.height) view.setBounds({ ...b, x, height });
     };
     popup.whenReady().then(() => setTimeout(async () => {
       if (popup.isDestroyed() || !popup.hidden || !popup.browserWindow) return;
@@ -866,45 +879,79 @@ function extensionsMenu() {
   return items;
 }
 
-function showAppMenu({ x, y }) {
+// The ⋯ menu. Its sections are listed flat, as they show on a tall window; on a short window or
+// screen features/app-menu-layout.js folds the marked ones into submenus (More Tools first, then the
+// page commands, zoom, the tab extras and the AI entries) until it fits below the button, so it
+// doesn't open with scroll arrows or run past the window. { x, y, right } is the button's left,
+// bottom and right edge in the UI's window coordinates (`right` is missing from older callers).
+function showAppMenu({ x, y, right }) {
   const wc = activeTab()?.webContents;
-  Menu.buildFromTemplate([
-    { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
-    { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
-    { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
-    { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
-    { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
-    { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
-    { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
-    ...bgTasks.menuItems(wc?.getURL()), // Watch this page, Background tasks
-    { type: 'separator' },
-    { label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
-    { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
-    { label: t('menu.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
-    { label: t('menu.actualSize'), accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
-    { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
-    { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
-    { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
-    { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: isWebUrl(wc?.getURL()), click: () => takeScreenshot(wc) },
-    { label: t('menu.qrCode'), enabled: isWebUrl(wc?.getURL()), click: () => showQrCode(wc) },
-    { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
-    ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
-    ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
-    { type: 'separator' },
-    { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
-    { label: t('menu.history'), submenu: historyMenu() },
-    { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), accelerator: process.platform === 'darwin' ? 'Alt+Cmd+L' : 'Ctrl+Shift+J', click: () => managers.open('downloads') }, { type: 'separator' }, ...downloads.menu()] },
-    { type: 'separator' },
-    { label: t('menu.tabGroups'), submenu: tabGroupsMenu() },
-    { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
-    { label: t('menu.import'), submenu: importMenu() },
-    { label: t('menu.adBlocker'), submenu: adblock.menu() },
-    { label: t('menu.extensions'), submenu: extensionsMenu() },
-    { label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }, // [settings]
-    ...(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
-    { type: 'separator' },
-    { label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() },
-  ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
+  const web = isWebUrl(wc?.getURL());
+  const chunk = (items, id, label, order) => ({ items, fold: id ? { id, label, order } : null });
+  const more = (items) => chunk(items, 'more', t('menu.moreTools'), 1);
+  const groups = [
+    [
+      chunk([
+        { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
+        { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
+      ]),
+      chunk([
+        { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
+        { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
+        { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
+      ], 'tabs', t('menu.tabsAndFiles'), 4),
+      chunk([
+        { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
+        { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
+        ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
+      ], 'ai', t('menu.aiAndTasks'), 5),
+    ],
+    [
+      chunk([{ label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } }]),
+      chunk([
+        { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
+        { label: t('menu.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
+        { label: t('menu.actualSize'), accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
+        ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
+      ], 'zoom', t('menu.zoom'), 3),
+      chunk([
+        { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
+        { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: web, click: () => pageTools.savePage(wc).catch(() => {}) },
+        { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: web, click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
+        { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: web, click: () => takeScreenshot(wc) },
+        { label: t('menu.qrCode'), enabled: web, click: () => showQrCode(wc) },
+        { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
+        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
+      ], 'page', t('menu.thisPage'), 2),
+    ],
+    [
+      chunk([
+        { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
+        { label: t('menu.history'), submenu: historyMenu() },
+        { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), accelerator: process.platform === 'darwin' ? 'Alt+Cmd+L' : 'Ctrl+Shift+J', click: () => managers.open('downloads') }, { type: 'separator' }, ...downloads.menu()] },
+      ]),
+    ],
+    [
+      more([
+        { label: t('menu.tabGroups'), submenu: tabGroupsMenu() },
+        { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
+        { label: t('menu.import'), submenu: importMenu() },
+        { label: t('menu.adBlocker'), submenu: adblock.menu() },
+        { label: t('menu.extensions'), submenu: extensionsMenu() },
+      ]),
+      chunk([{ label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }]), // [settings]
+      more(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
+    ],
+    [more([{ label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() }])],
+  ];
+  // Screen DIPs: the button's bottom edge, and the lower of the window's bottom and the work area's.
+  const content = win.getContentBounds();
+  const anchor = { x: content.x + Math.round(x), y: content.y + Math.round(y) };
+  const { workArea } = screen.getDisplayNearestPoint(anchor);
+  const available = appMenuLayout.availableBelow({ anchorY: anchor.y, windowBottom: content.y + content.height, workAreaBottom: workArea.y + workArea.height });
+  const { template } = appMenuLayout.fold(groups, available);
+  const left = Number.isFinite(right) ? appMenuLayout.anchorX({ left: x, right, contentWidth: content.width, menuWidth: appMenuLayout.estimateWidth(template) }) : x;
+  Menu.buildFromTemplate(template).popup({ window: win, x: Math.round(left), y: Math.round(y) });
 }
 
 // ---------- history & address bar suggestions ----------
@@ -1003,7 +1050,10 @@ function createSuggestView() {
 function showSuggestions(rect, payload) {
   if (!suggestView) createSuggestView();
   win.contentView.addChildView(suggestView); // re-adding moves it to the top
-  suggestView.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) });
+  // Never taller than the window below the address bar: on a short window the list scrolls inside
+  // the view (suggest.html) instead of running off the bottom.
+  const height = Math.max(0, Math.min(rect.height, win.getContentSize()[1] - rect.y));
+  suggestView.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(height) });
   suggestView.setVisible(true);
   const send = () => suggestView.webContents.send('suggest:items', payload);
   if (suggestView.webContents.isLoading()) suggestView.webContents.once('did-finish-load', send);
@@ -1281,6 +1331,7 @@ function wireView(tab, url, history = null) {
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
+    if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
     // An extension's pages open only from that same extension: a web page could otherwise open any
     // extension page it liked (and whatever that page does with its privileges).
@@ -1778,7 +1829,7 @@ const ORGANIZE_SCHEMA = {
   required: ['groups'],
   additionalProperties: false,
 };
-const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has an id, title, host and path words; "group" is the name of the group it is in now. Where tabs already belong together in a group, reuse that exact group name for them. The tab marked "active" is what the user is doing right now: keep it with its related tabs. Make 2 to 8 groups of at least 2 tabs each. Name each group specifically in 1-3 words (Title Case), like "Flights to Tokyo" or "React docs", never just a website. A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON only: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
+const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has an id, title, host and path words; "group" is the name of the group it is in now; "hint" is what its site is nearly always used for (School for Canvas or Gradescope, Job search for Indeed). Tabs of one host, and tabs with the same hint, usually belong in one group: keep them together unless their titles are clearly different topics (two courses, two projects), and when such a group has no better name, the hint is a good one. Where tabs already belong together in a group, reuse that exact group name for them. The tab marked "active" is what the user is doing right now: keep it with its related tabs. Make 2 to 8 groups of at least 2 tabs each. Name each group specifically in 1-3 words (Title Case), like "Flights to Tokyo" or "React docs", never just a website. A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON only: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
 
 // Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' picks) answer
 // it as a one-shot, tool-less run (cli-json.js), so no API key is needed. An API model without a
@@ -1930,6 +1981,9 @@ async function organizeTabs() {
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
       ask: (wire, { signal } = {}) => refineGroups(cheapTopicModel(), wire, signal),
+      // Sites no hint is known for go along as host names; what the model says they are for is kept in
+      // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
+      hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
       onPhase: (name) => {
         if (name === 'local') { sendTabs(); ui()?.send('tabs:organizing', 'refine'); } // the groups are there; the model may still refine them
         else if (name === 'refined') sendTabs();
@@ -1963,14 +2017,16 @@ function cheapTopicModel() {
   return `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
 }
 // What a model is told about a tab: id, title, host and the words of the address path. Never the page,
-// the full address or its query string. The active tab is marked, and a tab already in a group
-// carries the group's name so the model can keep it there.
+// the full address or its query string. The active tab is marked, a tab already in a group carries
+// the group's name so the model can keep it there, and a tab of a hinted site (tab-groups siteHint,
+// worked out from the host and path alone) carries that hint ("School" for Canvas).
 const MAX_ORGANIZE_TABS = 80;
 const topicList = (entries) => entries.slice(0, MAX_ORGANIZE_TABS).map((e) => {
   const tab = tabs.find((x) => x.id === e.id);
   const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
   const path = pathWords(e.url);
-  return { id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(path ? { path } : {}), ...(group ? { group: group.name } : {}), ...(e.id === activeId ? { active: true } : {}) };
+  const hint = siteHint(e.url) || e.aiHint; // the fixed table first, then what a model said about the site
+  return { id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(path ? { path } : {}), ...(hint ? { hint } : {}), ...(group ? { group: group.name } : {}), ...(e.id === activeId ? { active: true } : {}) };
 });
 
 let aiTopicsTimer = null;
@@ -2160,7 +2216,7 @@ function moveWindowItems(id) {
   if (src && tabs.filter((x) => !x.closing).length > 1) {
     items.push({ label: t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, { x: b.x + 60, y: b.y + 40 }) });
   }
-  const others = [...winRecs].filter((r) => r !== src && rcAlive(r));
+  const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
   if (others.length) items.push({ label: t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabBetween(src, r, id) })) });
   return items;
 }
@@ -2801,9 +2857,9 @@ let chatId = null; // the open chat
 const approvedByChat = new Map();
 let chatGeneration = 0;
 
-// The open chat as it goes on disk.
-function chatSnapshot() {
-  const snapshot = agent.snapshot();
+// The open chat as it goes on disk (or `messages`: a chat left running, see chatRuns).
+function chatSnapshot(messages) {
+  const snapshot = agent.snapshot(messages);
   const keep = (msg, b) => {
     if (b.type === 'tool_result') return { type: 'tool_result', tool_use_id: b.tool_use_id, is_error: b.is_error, content: '(result not saved between sessions)' };
     if (b.type === 'text' && msg.role === 'user') return { ...b, text: b.text.replace(PAGE_BLOCK, '') };
@@ -2833,7 +2889,10 @@ function saveChatSoon(generation) {
   clearTimeout(saveChatTimer);
   saveChatTimer = setTimeout(() => saveChat(generation), 1000);
 }
-app.on('before-quit', () => saveChat());
+app.on('before-quit', () => {
+  saveChat();
+  for (const run of chatRuns.values()) if (!run.deleted && run.messages !== agent.messages) saveChatOf(run.chatId, run.messages); // chats left running
+});
 
 function loadChat() {
   try {
@@ -2851,25 +2910,131 @@ function loadChat() {
 }
 
 // Leaves the open chat (it stays in the list) for another one, or for a fresh one (id null).
-// A running reply is stopped first. Returns what the sidebar needs to show the chat.
+// A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
+// that chat again shows it live. Returns what the sidebar needs to show the chat.
 function switchChat(id) {
   if (id && id === chatId) return chatView();
-  const snapshot = id ? chats().load(id) : null;
-  if (id && !snapshot) return null;
+  const live = id ? chatRuns.get(id) : null; // still running: its live messages, not the file
+  const snapshot = id && !live ? chats().load(id) : null;
+  if (id && !snapshot && !live) return null;
   saveChat();
   chatGeneration++;
   clearTimeout(saveChatTimer);
   if (chatId) approvedByChat.set(chatId, agent.approvedHosts);
-  agent.reset();
-  if (snapshot) agent.restore(snapshot);
+  if (agent.running) agent.detach(); // its run goes on with its own messages and approved sites
+  else agent.reset();
+  if (live) agent.attach(live.messages, approvedByChat.get(id));
+  else if (snapshot) agent.restore(snapshot);
   chatId = id || chats().newId();
-  agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
+  if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
+  unreadChats.delete(chatId);
   chats().setCurrent(id || null);
+  pushAttention();
+  lastAgentTarget = ''; // the "Working in" line follows the chat now open
+  setImmediate(pushAgentTarget);
   return chatView();
 }
 
+// `live`: the chat is still running (it was left mid-reply): the sidebar picks the run up, with any
+// approval card it waits on.
 function chatView() {
-  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage) };
+  const run = chatRuns.get(chatId);
+  const live = run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo() } : null;
+  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), ...(live ? { live } : {}) };
+}
+
+// ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
+// Every sidebar run by chat id, while it runs: the open chat's and chats the user left mid-reply.
+// { chatId, messages, runId, rec, pending: approvalId -> card event, reply, error, stopped, deleted }
+const chatRuns = new Map();
+const unreadChats = new Set(); // a reply finished while its chat was not in view
+const sidebarShown = new WeakMap(); // a window's UI -> is its sidebar open (chat:sidebar-state)
+ipcMain.on('chat:sidebar-state', (event, open) => {
+  sidebarShown.set(event.sender, Boolean(open));
+  if (open) { unreadChats.delete(chatId); pushAttention(); }
+});
+// Saves a chat left running into its own file (the open chat goes through saveChat).
+function saveChatOf(id, messages) {
+  if (id === chatId && messages === agent.messages) { saveChat(); return; }
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return;
+    const snapshot = chatSnapshot(messages);
+    if (snapshot.messages.length) chats().save(id, snapshot);
+  } catch (err) {
+    console.error('Could not save chat:', err.message);
+  }
+}
+const detachedSaves = new Map();
+function saveChatOfSoon(id, messages) {
+  clearTimeout(detachedSaves.get(id));
+  detachedSaves.set(id, setTimeout(() => { detachedSaves.delete(id); if (!chatRuns.get(id)?.deleted) saveChatOf(id, messages); }, 1000));
+}
+// What the user can see of a run right now (features/chat-runs.js plan).
+function runView(run) {
+  const rec = run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec;
+  const w = rec === curRec ? win : rec?.win;
+  const uiWc = w && !w.isDestroyed() ? w.webContents : null;
+  const runTab = run.tabId ?? null;
+  return {
+    focused: Boolean(w && !w.isDestroyed() && w.isFocused()),
+    sidebarOpen: Boolean((uiWc && sidebarShown.get(uiWc)) || chatPageRt?.chatTabs().some((t) => t.id === activeIdOf(rec || curRec))),
+    chatOpen: run.chatId === chatId,
+    onRunTab: runTab == null || runTab === activeIdOf(rec || curRec),
+  };
+}
+// The mark on each window's sidebar button, and the chat list's badges.
+function pushAttention() {
+  const approvals = [...chatRuns.values()].reduce((n, r) => n + r.pending.size, 0);
+  const state = chatRunsLib.attention({ approvals, unread: unreadChats.size });
+  for (const rec of winRecs) {
+    const w = rec === curRec ? win : rec.win;
+    if (!w || w.isDestroyed()) continue;
+    w.webContents.send('agent:attention', { state, approvals, unread: unreadChats.size });
+    w.webContents.send('chats:changed', null); // the list's running / needs-OK / unread marks
+  }
+  chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
+}
+const chatBadges = () => new Map(chats().list().map((c) => {
+  const run = chatRuns.get(c.id);
+  return [c.id, chatRunsLib.chatBadge({ running: Boolean(run && agent.runningFor(run.messages)), approvals: run?.pending.size || 0, unread: unreadChats.has(c.id) })];
+}));
+// Tells the user about a run: a system notification (clicking it brings the window and that chat
+// back), and the unread mark when the reply isn't in view.
+function tellUser(run, kind) {
+  const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...runView(run) });
+  if (decided.unread && kind !== 'approval') unreadChats.add(run.chatId);
+  pushAttention();
+  if (!decided.os || TEST || !Notification.isSupported()) return;
+  const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
+  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, chat: title }, t);
+  try {
+    const n = new Notification({ title: text.title, body: text.body, silent: false });
+    n.on('click', () => {
+      const rec = run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec;
+      const w = rec === curRec ? win : rec?.win;
+      if (!w || w.isDestroyed()) return;
+      if (w.isMinimized()) w.restore();
+      w.focus();
+      w.webContents.send('agent:open-chat', { id: run.chatId });
+    });
+    n.show();
+  } catch {}
+}
+// Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
+// on in a tab behind another one (a screenshot, wait_for); back on once no run works there.
+const unthrottled = new Map(); // tab id -> webContents
+function syncRunTabs() {
+  const want = new Set(agent.runTabIds());
+  for (const [id, wc] of unthrottled) {
+    if (want.has(id)) continue;
+    unthrottled.delete(id);
+    try { if (!wc.isDestroyed()) wc.setBackgroundThrottling(true); } catch {}
+  }
+  for (const id of want) {
+    const t = tabs.find((x) => x.id === id) || [...winRecs].flatMap((r) => tabsOf(r)).find((x) => x.id === id);
+    if (!alive(t) || unthrottled.get(id) === t.view.webContents) continue; // a woken tab has a new page
+    try { t.view.webContents.setBackgroundThrottling(false); unthrottled.set(id, t.view.webContents); } catch {}
+  }
 }
 
 // ---------- window & session ----------
@@ -2901,7 +3066,7 @@ function sessionEntry() {
 // Every normal window is saved: the first one in the session's own fields (as before, so older
 // versions still read it), the others under `more`. Private windows are never here.
 function saveSession({ excluding = null } = {}) {
-  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding);
+  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r));
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   writeSettings({ ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } });
@@ -3130,28 +3295,31 @@ function moveTabBetween(src, dst, tabId, index, { focus = true } = {}) {
 }
 // A tab can only move into a normal window: a private window's id is not in winRecs.
 function moveTabToWindowId(src, tabId, windowId, index) {
-  const dst = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId);
+  const dst = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win.id === windowId);
   return dst ? moveTabBetween(src, dst, tabId, index) : false;
 }
-// ---- dragging a tab out of the strip (Chrome-style): main.js drives the drag
-// Past the renderer's tear-off threshold the tab moves into a new window (or, for a window's only tab,
-// the window itself is the dragged thing) that follows the cursor until the button is released. Main
-// polls the cursor, because the source page may stop seeing the mouse once its tab is gone. Released
-// over another normal window's strip, the tab joins it and the emptied window closes; anywhere else
-// the window stays. Escape puts everything back. The renderer reports the release ('tab:dragend',
-// from whichever window sees the mouse come up); a hard timeout ends a drag whose release was lost.
+// ---- dragging a tab out of the strip (Chrome's behaviour, Safari's look): main.js drives the drag
+// Past the renderer's tear-off threshold a card follows the cursor: the page's snapshot under the tab's
+// icon and title, in a small click-through window. The tab itself stays where it is until the button is
+// released, so nothing heavy moves with the mouse (moving a whole browser window with a live page every
+// frame is what made the old drag stutter and stall). Over a tab strip, this window's included, the card
+// becomes a tab and the strip marks where it would land. Released there, the tab joins that strip at that
+// place (or moves along its own); released anywhere else it becomes a window of its own, which fades in
+// where the card was. Escape puts the card away and changes nothing. A window's only tab drags the window
+// itself, like its title bar. Main polls the cursor; the renderer that holds the pointer reports the
+// release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
 const tabDragMath = require('./features/tab-drag-math');
 let tabDragTimeoutMs = 60000;
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
-let tabDrag = null; // { rec, tabId, single, origin, grab, size, ready, hover, strips, timer, ... }
-const DRAG_OPACITY = 0.9;
-const DRAG_OVER_STRIP_OPACITY = 0.35; // see through the dragged window to the strip it is over
+let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
+const DRAG_OVER_STRIP_OPACITY = 0.35; // an only-tab window being dragged: see through it to the strip it is over
 
-// Where each other window's tabs sit (client coordinates); refreshed while dragging, off the hot path.
+// Where each window's tabs sit (client coordinates); refreshed while dragging, off the hot path. The
+// window being dragged (only-tab drags) is not a target; the window a card came from is.
 async function stripGeometry(rec) {
   const info = await rec.win.webContents.executeJavaScript(`(() => {
     const strip = document.getElementById('tabs').getBoundingClientRect();
-    return { bottom: strip.bottom, tabs: [...document.querySelectorAll('#tabs .tab')].map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; }) };
+    return { bottom: strip.bottom, tabs: [...document.querySelectorAll('#tabs .tab')].filter((el) => !el.classList.contains('handed')).map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; }) };
   })()`).catch(() => null);
   return info && { rec, bottom: info.bottom, tabs: info.tabs };
 }
@@ -3160,69 +3328,205 @@ async function refreshDragStrips(d) {
   d.refreshing = true;
   try {
     const next = new Map();
-    for (const rec of [...winRecs]) {
-      if (rec === d.rec || !rcAlive(rec) || rec.win.isMinimized()) continue;
+    // The window the card came from first: it is the one under the cursor most of the time.
+    const recs = [...winRecs].sort((a, b) => (b === d.rec) - (a === d.rec));
+    for (const rec of recs) {
+      if ((d.single && rec === d.rec) || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized()) continue;
       const g = await stripGeometry(rec);
       if (g) next.set(rec, g);
     }
     if (tabDrag === d) d.strips = next;
   } finally { d.refreshing = false; }
 }
-function setDragOpacity(d, value) {
-  if (!TEST_BACKGROUND && rcAlive(d.rec)) { try { d.rec.win.setOpacity(value); } catch {} }
+// A window is only shown once it has painted what it now holds: its strip with the tab, and the tab's
+// page at its place. It goes on screen fully transparent (so both actually paint), then fades in, instead
+// of flashing an empty or half-laid-out window before the tab turns up. Capped, so a busy page never
+// holds it back for long.
+function whenPainted(rec, tab, then) {
+  const frames = 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))';
+  const waits = [rec.win.webContents.executeJavaScript(frames, true).catch(() => {})];
+  if (tab && alive(tab)) {
+    try { tab.view.webContents.invalidate(); } catch {}
+    waits.push(tab.view.webContents.executeJavaScript(frames, true).catch(() => {}));
+  }
+  let done = false;
+  const go = () => { if (!done) { done = true; if (rcAlive(rec)) then(); } };
+  Promise.all(waits).then(go);
+  setTimeout(go, 160);
 }
+const tabById = (rec, id) => tabsOf(rec).find((t) => t.id === id);
+// Shows a window that has just been given a tab, faded in once it has painted, and focuses it.
+function revealNewWindow(rec, tabId, then = () => {}) {
+  if (TEST_BACKGROUND) { then(); return; }
+  rec.win.setOpacity(0);
+  rec.win.showInactive();
+  whenPainted(rec, tabById(rec, tabId), () => {
+    const w = rec.win;
+    const start = Date.now();
+    const FADE_MS = 150;
+    const step = setInterval(() => {
+      if (w.isDestroyed()) { clearInterval(step); return; }
+      const k = Math.min(1, (Date.now() - start) / FADE_MS);
+      w.setOpacity(1 - (1 - k) ** 3);
+      if (k === 1) clearInterval(step);
+    }, 16);
+    w.focus();
+    then();
+  });
+}
+
+// ---- the drag card: one small transparent window, made once and reused
+const CARD_PAD = 36; // room around the card for its shadow (drag-card.html --pad)
+const CARD_WIDTH = 300;
+const CARD_HEAD = 36;
+const CARD_HOLD = { x: CARD_PAD + 26, y: CARD_PAD + 18 }; // the card is held by its icon, as the tab was
+let dragCard = null; // { win, loaded, hideTimer }
+function dragCardWindow() {
+  if (dragCard && !dragCard.win.isDestroyed()) return dragCard;
+  const w = new BrowserWindow({
+    width: CARD_WIDTH + CARD_PAD * 2, height: 260, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
+    resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+    focusable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, title: 'Lumen',
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  w.setIgnoreMouseEvents(true); // the release goes to the window underneath, never to the card
+  w.setAlwaysOnTop(true, 'pop-up-menu');
+  const file = path.join(__dirname, 'renderer', 'drag-card.html');
+  hardenOwnView(w.webContents, pathToFileURL(file).href);
+  const loaded = new Promise((resolve) => w.webContents.once('did-finish-load', resolve));
+  w.loadFile(file);
+  dragCard = { win: w, loaded, hideTimer: null };
+  return dragCard;
+}
+function closeDragCard() {
+  if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.destroy();
+  dragCard = null;
+}
+const cardCall = (fn, ...args) => {
+  if (!dragCard || dragCard.win.isDestroyed()) return;
+  dragCard.win.webContents.executeJavaScript(`window.lumenCard && window.lumenCard.${fn}(...${JSON.stringify(args)})`).catch(() => {});
+};
+function showDragCard(d, tab, cursor) {
+  d.cardAt = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
+  if (TEST_BACKGROUND) return;
+  const card = dragCardWindow();
+  clearTimeout(card.hideTimer);
+  const page = withWindow(d.rec, () => ({ ...contentBounds }));
+  const shotHeight = Math.round(CARD_WIDTH * Math.min(0.75, Math.max(0.45, (page.height || 600) / (page.width || 800))));
+  card.win.setBounds({ ...d.cardAt, width: CARD_WIDTH + CARD_PAD * 2, height: CARD_HEAD + shotHeight + CARD_PAD * 2 });
+  card.loaded.then(() => {
+    if (tabDrag !== d) return;
+    cardCall('show', { title: tabTitle(tab) || 'New Tab', favicon: tab.favicon || null, dark: nativeTheme.shouldUseDarkColors, shotHeight });
+    card.win.showInactive();
+  });
+  // The page as it looks now, scaled for the card (at the screen's pixel density).
+  if (alive(tab)) {
+    const scale = screen.getDisplayNearestPoint(cursor).scaleFactor || 1;
+    tab.view.webContents.capturePage().then((image) => {
+      if (tabDrag !== d || image.isEmpty()) return null;
+      const small = image.resize({ width: Math.round(CARD_WIDTH * scale), quality: 'good' });
+      return card.loaded.then(() => { if (tabDrag === d) cardCall('shot', `data:image/jpeg;base64,${small.toJPEG(82).toString('base64')}`); });
+    }).catch(() => {});
+  }
+}
+function hideDragCard(kind) {
+  if (!dragCard || dragCard.win.isDestroyed()) return;
+  cardCall('hide', kind);
+  const card = dragCard;
+  clearTimeout(card.hideTimer);
+  card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && !tabDrag?.card) card.win.hide(); }, 220);
+}
+
+// ---- a window made ready for a tear-off before it happens
+// Pulling a tab towards the edge of the strip prepares a hidden window (its UI loaded), so a tab dropped
+// outside lands in a window straight away instead of waiting for a new window's UI to load. One at a
+// time; it is left out of the saved session, the drop targets, the tab menu and the window list, and
+// closes after a while unused or with the last window.
+let spareRec = null;
+let spareIdle = null;
+const SPARE_IDLE_MS = 30000;
+function closeSpare() {
+  clearTimeout(spareIdle);
+  const rec = spareRec;
+  spareRec = null;
+  if (rcAlive(rec) && rec.prepared) rec.win.close();
+}
+function prepareDragWindow(src) {
+  if (!rcAlive(src) || !winRecs.has(src) || closableTabCount(src) < 2) return;
+  if (!TEST_BACKGROUND) dragCardWindow(); // the card, too, is ready before it is needed
+  clearTimeout(spareIdle);
+  spareIdle = setTimeout(closeSpare, SPARE_IDLE_MS);
+  if (rcAlive(spareRec)) return;
+  const size = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+  const previous = curRec;
+  spareRec = createWindow({ size: { width: size.width, height: size.height }, hidden: true, prepared: true, boundsFrom: src });
+  enterWindow(previous && winRecs.has(previous) ? previous : src); // the user is still where they were
+}
+// The prepared window, if it has loaded: it stops being a spare and becomes a normal window.
+function takeSpare(size) {
+  const rec = spareRec;
+  if (!rcAlive(rec) || !rec.prepared || !rec.preparedReady) return null;
+  spareRec = null;
+  clearTimeout(spareIdle);
+  rec.prepared = false;
+  rec.win.setSize(size.width, size.height);
+  const items = agent.transcript(); // what a new window's UI is sent once its tab is in (createWindow)
+  if (items.length) rec.win.webContents.send('agent:history', { items });
+  return rec;
+}
+const isSpare = (rec) => Boolean(rec?.prepared);
+
 function setDragHover(d, hit) {
   const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId;
   if (same) return;
   if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', null);
+  const wasOver = Boolean(d.hover);
   d.hover = hit;
   if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId });
-  setDragOpacity(d, hit ? DRAG_OVER_STRIP_OPACITY : DRAG_OPACITY);
+  if (d.card) { if (wasOver !== Boolean(hit)) cardCall('compact', Boolean(hit)); return; }
+  if (!TEST_BACKGROUND && rcAlive(d.rec)) { try { d.rec.win.setOpacity(hit ? DRAG_OVER_STRIP_OPACITY : 1); } catch {} }
 }
 function tickTabDrag() {
   const d = tabDrag;
   if (!d) return;
-  if (!rcAlive(d.rec)) { clearInterval(d.timer); tabDrag = null; return; } // the window was closed under the drag
-  if (Date.now() - d.started > tabDragTimeoutMs) {
-    if (d.ready) finishTabDrag('commit'); else { clearInterval(d.timer); tabDrag = null; }
-    return;
-  }
+  if (!rcAlive(d.rec)) { endDragQuietly(d); return; } // the window was closed under the drag
+  if (Date.now() - d.started > tabDragTimeoutMs) { finishTabDrag('commit'); return; }
   const cursor = cursorPoint();
-  const area = screen.getDisplayNearestPoint(cursor).workArea;
-  const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
-  if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setBounds(b); d.last = b; }
-  if (!d.ready) return;
+  if (d.card) {
+    const at = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
+    if (at.x !== d.cardAt.x || at.y !== d.cardAt.y) {
+      d.cardAt = at;
+      if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(at.x, at.y);
+    }
+  } else {
+    const area = screen.getDisplayNearestPoint(cursor).workArea;
+    const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
+    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setBounds(b); d.last = b; }
+  }
   if (Date.now() - d.stripsAt > 250) { d.stripsAt = Date.now(); refreshDragStrips(d); }
   const strips = [...d.strips.values()].filter((g) => rcAlive(g.rec) && !g.rec.win.isMinimized())
     .map((g) => ({ key: g.rec, bounds: g.rec.win.getContentBounds(), bottom: g.bottom, tabs: g.tabs }));
   const hit = tabDragMath.stripHit(cursor, strips);
   setDragHover(d, hit && { rec: hit.key, beforeId: hit.beforeId });
 }
-function dragReady(d) {
-  if (tabDrag !== d) return;
-  d.ready = true;
-  d.stripsAt = Date.now();
-  refreshDragStrips(d);
-  if (!d.single) {
-    if (!TEST_BACKGROUND && rcAlive(d.rec)) { d.rec.win.setOpacity(DRAG_OPACITY); d.rec.win.showInactive(); }
-    d.rec.win.webContents.send('tab:dragwatch'); // its page ends the drag too if it is the one that sees the release
-  }
-  d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
-  d.rec.win.webContents.on('before-input-event', d.escape);
-  if (d.endWhenReady) finishTabDrag(d.endWhenReady);
+function endDragQuietly(d) {
+  clearInterval(d.timer);
+  if (tabDrag === d) tabDrag = null;
+  if (d.card) hideDragCard('cancel');
 }
 function finishTabDrag(reason) {
   const d = tabDrag;
   if (!d) return;
-  if (!d.ready) { d.endWhenReady = reason; return; } // the tab has not arrived in its window yet
   tabDrag = null;
   clearInterval(d.timer);
   const rec = d.rec;
   const target = d.hover;
-  if (rcAlive(rec)) d.rec.win.webContents.removeListener('before-input-event', d.escape);
+  if (rcAlive(rec)) rec.win.webContents.removeListener('before-input-event', d.escape);
   setDragHover(d, null);
-  setDragOpacity(d, 1);
-  if (!rcAlive(rec)) return;
+  if (!rcAlive(rec)) { if (d.card) hideDragCard('cancel'); return; }
+  if (d.card) { finishCardDrag(d, reason, target); return; }
+  // An only-tab window: it stays where it was dropped, joins the strip it is over, or goes back (Escape).
+  if (!TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
   if (reason === 'commit') {
     if (target && rcAlive(target.rec)) {
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
@@ -3232,20 +3536,65 @@ function finishTabDrag(reason) {
     }
     return;
   }
-  if (d.single) {
-    rec.win.setBounds(d.origin.bounds);
-    if (d.origin.maximized) rec.win.maximize();
-  } else if (rcAlive(d.origin.rec) && moveTabBetween(rec, d.origin.rec, d.tabId, d.origin.index)) {
-    // Back where it started, pinned again if it was (a tear-off unpins).
-    withWindow(d.origin.rec, () => {
-      const tab = tabs.find((x) => x.id === d.tabId);
-      if (!tab) return;
-      tabs.splice(tabs.indexOf(tab), 1);
-      tabs.splice(Math.min(d.origin.index, tabs.length), 0, tab);
-      if (d.origin.pinned) tab.pinned = true;
-      sendTabs();
-    });
+  rec.win.setBounds(d.origin.bounds);
+  if (d.origin.maximized) rec.win.maximize();
+}
+// The end of a card drag. The source's strip keeps the dragged tab hidden until 'tab:dragdone', so it
+// never flashes back in place before it moves.
+function finishCardDrag(d, reason, target) {
+  const src = d.rec;
+  const settled = () => { if (rcAlive(src)) src.win.webContents.send('tab:dragdone'); };
+  if (reason !== 'commit' || !tabById(src, d.tabId)) { hideDragCard('cancel'); settled(); return; }
+  if (target && rcAlive(target.rec)) {
+    if (target.rec === src) {
+      // Along its own strip: the index among the other tabs, as the marker showed it.
+      withWindow(src, () => {
+        const others = tabs.filter((t) => t.id !== d.tabId);
+        const at = target.beforeId == null ? others.length : others.findIndex((t) => t.id === target.beforeId);
+        moveTab(d.tabId, at === -1 ? others.length : at);
+      });
+    } else {
+      const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
+      moveTabBetween(src, target.rec, d.tabId, at === -1 ? undefined : at);
+    }
+    hideDragCard('join');
+    settled();
+    return;
   }
+  if (closableTabCount(src) < 2) { hideDragCard('cancel'); settled(); return; } // its other tabs closed meanwhile
+  // A window of its own, placed so the tab sits under the cursor as it will in the new strip.
+  const cursor = cursorPoint();
+  const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), screen.getDisplayNearestPoint(cursor).workArea);
+  const newWindowFor = () => {
+    if (!rcAlive(src) || !tabById(src, d.tabId)) { hideDragCard('cancel'); settled(); return; }
+    const rec = createWindow({
+      size: d.size, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src,
+      adopt: { src, tabId: d.tabId, focus: false, done: (ok) => { settled(); if (ok) revealNewWindow(rec, d.tabId, () => hideDragCard('drop')); else hideDragCard('cancel'); } },
+    });
+  };
+  const landIn = (rec) => {
+    rec.win.setPosition(at.x, at.y);
+    if (!moveTabBetween(src, rec, d.tabId, 0, { focus: false })) { rec.win.close(); hideDragCard('cancel'); settled(); return; }
+    settled();
+    revealNewWindow(rec, d.tabId, () => hideDragCard('drop'));
+  };
+  const spare = takeSpare(d.size);
+  if (spare) { landIn(spare); return; }
+  if (rcAlive(spareRec) && spareRec.prepared) {
+    // Still loading: the card waits where it was dropped, then the window takes its place.
+    const waiting = spareRec;
+    let done = false;
+    const fallback = setTimeout(() => { if (!done) { done = true; waiting.whenPrepared = null; newWindowFor(); } }, 4000);
+    waiting.whenPrepared = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(fallback);
+      const r = takeSpare(d.size);
+      if (r) landIn(r); else newWindowFor();
+    };
+    return;
+  }
+  newWindowFor();
 }
 function beginTabDrag(src, tabId, grab) {
   if (tabDrag) finishTabDrag('cancel');
@@ -3253,7 +3602,7 @@ function beginTabDrag(src, tabId, grab) {
   if (!tab || !rcAlive(src)) return false;
   const cursor = cursorPoint();
   const single = closableTabCount(src) < 2;
-  const d = tabDrag = { started: Date.now(), tabId, single, ready: false, endWhenReady: null, strips: new Map(), stripsAt: 0, hover: null, last: null };
+  const d = tabDrag = { started: Date.now(), tabId, single, card: !single, rec: src, strips: new Map(), stripsAt: Date.now(), hover: null, last: null };
   const w = src.win;
   if (single) {
     // The whole window follows the cursor, like its title bar; a maximized one is restored first.
@@ -3263,30 +3612,37 @@ function beginTabDrag(src, tabId, grab) {
     if (d.origin.maximized) w.unmaximize();
     d.size = { width: size.width, height: size.height };
     d.grab = { x: (grab.x * size.width) / before.width, y: grab.y };
-    d.rec = src;
-    dragReady(d);
   } else {
-    // The tab is dropped under the cursor as it will sit in the new window's strip.
+    // The tab stays in its window; the card follows. A new window would open at this size, with the
+    // tab under the cursor as it sits in the strip.
     const size = w.isMaximized() ? w.getNormalBounds() : w.getBounds();
-    d.origin = { rec: src, index: tabsOf(src).indexOf(tab), pinned: Boolean(tab.pinned) };
     d.size = { width: size.width, height: size.height };
     d.grab = { x: grab.stripX, y: grab.y };
-    const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), screen.getDisplayNearestPoint(cursor).workArea);
-    d.rec = createWindow({ size: d.size, position: { x: at.x, y: at.y }, hidden: true, adopt: { src, tabId, focus: false, done: (ok) => { if (ok) dragReady(d); else if (tabDrag === d) { clearInterval(d.timer); tabDrag = null; } } } });
+    showDragCard(d, tab, cursor);
+    prepareDragWindow(src); // if the renderer's early hint didn't come
   }
+  d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
+  w.webContents.on('before-input-event', d.escape);
+  refreshDragStrips(d);
   d.timer = setInterval(tickTabDrag, 12);
   return true;
 }
 const num = (v) => (Number.isFinite(v) ? v : 0);
 ipcMain.on('tab:dragstart', (event, id, grab) => {
   const src = recOfSender(event.sender); // a private window's UI is not in winRecs: refused
-  if (!src || !Number.isInteger(id)) return;
+  if (!src || isSpare(src) || !Number.isInteger(id)) return;
   beginTabDrag(src, id, { x: num(grab?.x), y: num(grab?.y), stripX: num(grab?.stripX) });
 });
-// The release (or Escape) as seen by a page of the dragged window or of the window it came from.
+// A tab is being pulled towards the edge of the strip: it may come out next, so have a window ready.
+ipcMain.on('tab:dragprep', (event) => {
+  const src = recOfSender(event.sender);
+  if (src && !isSpare(src) && !tabDrag) prepareDragWindow(src);
+});
+// The release (or Escape) as seen by the window the tab is dragged from (or, for an only-tab drag, the
+// window being dragged).
 const dragEnder = (reason) => (event) => {
   const from = recOfSender(event.sender);
-  if (tabDrag && from && (from === tabDrag.rec || from === tabDrag.origin?.rec)) finishTabDrag(reason);
+  if (tabDrag && from && from === tabDrag.rec) finishTabDrag(reason);
 };
 ipcMain.on('tab:dragend', dragEnder('commit'));
 ipcMain.on('tab:dragcancel', dragEnder('cancel'));
@@ -3295,10 +3651,18 @@ function tearOffTab(src, tabId, point) {
   if (!tab || closableTabCount(src) < 2) return false; // the only tab of a window stays where it is
   const size = src.win.getSize();
   const area = screen.getDisplayNearestPoint(point).workArea;
-  createWindow({
-    size: { width: size[0], height: size[1] },
-    position: { x: Math.max(area.x, Math.round(point.x - 120)), y: Math.max(area.y, Math.round(point.y - 16)) },
-    adopt: { src, tabId },
+  const position = { x: Math.max(area.x, Math.round(point.x - 120)), y: Math.max(area.y, Math.round(point.y - 16)) };
+  // Hidden until the tab has arrived and painted, then faded in and focused (revealNewWindow).
+  const spare = takeSpare({ width: size[0], height: size[1] });
+  if (spare) {
+    spare.win.setPosition(position.x, position.y);
+    if (moveTabBetween(src, spare, tabId, 0, { focus: false })) revealNewWindow(spare, tabId);
+    else spare.win.close();
+    return true;
+  }
+  const rec = createWindow({
+    size: { width: size[0], height: size[1] }, position, hidden: true, boundsFrom: src,
+    adopt: { src, tabId, focus: false, done: () => { if (rcAlive(rec)) revealNewWindow(rec, tabId); } },
   });
   return true;
 }
@@ -3309,7 +3673,7 @@ const windowLabel = (rec) => withWindow(rec, () => {
 });
 if (TEST) {
   global.__windows = {
-    list: () => [...winRecs].filter(rcAlive).map((rec) => ({
+    list: () => [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).map((rec) => ({
       windowId: rec.win.id,
       uiContentsId: rec.win.webContents.id,
       tabs: tabsOf(rec).filter((t) => alive(t) || t.sleeping).map((t) => ({ id: t.id, contentsId: alive(t) ? t.view.webContents.id : null, url: alive(t) ? t.view.webContents.getURL() : t.sleepUrl, pinned: Boolean(t.pinned), groupId: t.groupId || null })),
@@ -3319,11 +3683,14 @@ if (TEST) {
     moveTo: (srcWindowId, tabId, windowId, index) => moveTabToWindowId([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, windowId, index),
     setCursor: (point) => { global.__testCursor = point; }, // null: the real cursor
     setDragTimeout: (ms) => { tabDragTimeoutMs = ms; },
+    spare: () => (rcAlive(spareRec) && spareRec.preparedReady ? spareRec.win.id : null), // prepareDragWindow's window, once loaded
     dragState: () => tabDrag && {
-      windowId: tabDrag.rec.win.id, ready: tabDrag.ready, single: tabDrag.single,
+      windowId: tabDrag.rec.win.id, ready: true, single: tabDrag.single, card: tabDrag.card,
+      cardAt: tabDrag.cardAt || null, // where the card's window is (a card drag), shown or not
       hover: tabDrag.hover && { windowId: tabDrag.hover.rec.win.id, beforeId: tabDrag.hover.beforeId },
       bounds: rcAlive(tabDrag.rec) ? tabDrag.rec.win.getBounds() : null,
     },
+    cardHold: () => ({ ...CARD_HOLD }),
     tearOff: (srcWindowId, tabId, point) => tearOffTab([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, point),
     tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => (tabMenuTemplate(tabId) || []).map((i) => ({ label: i.label, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
   };
@@ -3334,7 +3701,10 @@ if (TEST) {
 const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // `adopt` ({ src, tabId }): a tab torn off `src` becomes this window's only tab. `restore`: a saved
 // window from the last session (the session's `more`). Neither: the first window, restoring the session.
-function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false } = {}) {
+// `prepared`: a hidden window for a tear-off that may come (prepareDragWindow): it loads its UI and waits.
+// `boundsFrom`: a window of the same size whose page area this one starts with, so the tab's page is at
+// its place from the first frame instead of jumping there once this window's UI reports its own.
+function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
   const w = new BrowserWindow({
@@ -3358,7 +3728,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
     },
   });
-  const rec = { win: w, tabs: [], activeId: null, contentBounds: { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore) };
+  const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
+  const rec = { win: w, prepared, preparedReady: false, tabs: [], activeId: null, contentBounds: seedBounds || { x: 0, y: 0, width: 800, height: 600 }, viewFrozen: false, chatFullTab: null, uiReady: false, suggestView: null, downloadsView: null, downloadsAnchor: null, groups: new Map(), pendingRestore: Boolean(restore) };
   winRecs.add(rec);
   enterWindow(rec); // from here on `win`, `tabs` ... are this window's
   bindContext(w, () => rec);
@@ -3391,14 +3762,16 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   });
   // Closing one of several windows leaves it out of the saved session (you closed it on purpose);
   // quitting saves them all at once (before-quit) and the windows closing one by one after that don't.
-  w.on('close', () => { if (!quitting) saveSession({ excluding: winRecs.size > 1 ? rec : null }); });
+  w.on('close', () => { if (!quitting) saveSession({ excluding: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).length > 1 ? rec : null }); });
   // The window is gone (on macOS the app can keep running): the session was just saved, so end
   // the tab pages too, or a video or call kept playing with no window to stop it.
   w.on('closed', () => {
     uiReady = false;
     dropDeadWindowViews();
     winRecs.delete(rec);
-    const next = [...winRecs].find(rcAlive);
+    if (rec === spareRec) spareRec = null;
+    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
+    const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
     if (next) enterWindow(next);
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
@@ -3432,6 +3805,15 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.loadFile(UI_HTML);
   w.webContents.once('did-finish-load', () => {
     createSuggestView();
+    if (rec.prepared) {
+      // Ready for a tear-off (takeSpare); no tabs until then.
+      uiReady = true;
+      rec.preparedReady = true;
+      const waiting = rec.whenPrepared; // a drop that came while this window was loading (finishCardDrag)
+      rec.whenPrepared = null;
+      if (waiting) setImmediate(waiting);
+      return;
+    }
     if (adopt) {
       // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
       const adopted = moveTabBetween(adopt.src, rec, adopt.tabId, 0, { focus: adopt.focus !== false });
@@ -3614,8 +3996,12 @@ require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
 // With several windows, a run's tab tools keep acting on the window the run started in (its
 // tabs, its active tab), whichever window has focus meanwhile. Outside a run they follow the focused window.
-let runRec = null;
-const inRun = (fn) => (...args) => (runRec && winRecs.has(runRec) ? withWindow(runRec, () => fn(...args)) : fn(...args));
+// Each sidebar run carries its window on its task scope (agent:ask); outside a tool call, the open chat's run.
+const runRecNow = () => {
+  const rec = agent.currentScope()?.rec || chatRuns.get(chatId)?.rec || null;
+  return rec && winRecs.has(rec) ? rec : null;
+};
+const inRun = (fn) => (...args) => { const rec = runRecNow(); return rec ? withWindow(rec, () => fn(...args)) : fn(...args); };
 // [research tabs] web_search / read_urls show what they look at in background tabs (features/research-tabs.js).
 // The tabs open in the run's window, behind the user's current tab, never through agentOpenTab (that
 // would move the task onto them). Private windows have no agent, so none of this reaches them.
@@ -3630,8 +4016,54 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
   groupExists: inRun((groupId) => tabGroups.groups.has(groupId)),
   setReading: inRun((id, on) => { const t = tabs.find((x) => x.id === id); if (t && Boolean(t.aiReading) !== on) { t.aiReading = on; sendTabs(); } }),
 });
+// [signed-in sites] read_urls as_user (features/signed-in-sites.js): with the user's OK per host, the
+// sidebar's AI reads a page with the user's own session, in a background tab of the run's window grouped
+// "AI: <host> (signed in)". Locked (no popups) while it is read; closed when the run ends unless the user
+// switched to it. Only this Agent gets it: background tasks and outside agents (MCP) read signed out.
+const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
+signedInSites.register(ipcMain);
+const tabAnywhere = (id) => {
+  for (const rec of winRecs) {
+    const t = rcAlive(rec) ? tabsOf(rec).find((x) => x.id === id) : null;
+    if (t) return { rec, t };
+  }
+  return null;
+};
+const signedInReader = {
+  hosts: () => signedInSites.hosts(),
+  add: (host) => signedInSites.add(host),
+  hasLogin: async (url) => require('./features/signed-in-sites').hasLoginCookies(await session.defaultSession.cookies.get({ url })),
+  privateWindow: () => { const run = runRecNow(); const rec = run && winRecs.has(run) ? run : curRec; return !rec || !winRecs.has(rec); }, // private windows have no record, so never
+  open: inRun((url) => {
+    const tab = openTab(url, { background: true }); // the user's default session: no partition
+    const t = tabs.find((x) => x.id === tab.id);
+    if (t) {
+      t.aiSignedIn = { openedAt: Date.now() };
+      t.aiLock = true;
+      t.aiReading = true;
+      try { tabGroups.create(`AI: ${require('./features/signed-in-sites').hostOfUrl(url)} (signed in)`, [t.id], { color: require('./features/research-tabs').GROUP_COLOR }); } catch {}
+      sendTabs();
+    }
+    return tab;
+  }),
+  unlock: (id) => {
+    const found = tabAnywhere(id);
+    if (!found) return;
+    found.t.aiLock = false;
+    found.t.aiReading = false;
+    withWindow(found.rec, () => sendTabs());
+  },
+  close: (id, { force = false } = {}) => {
+    const found = tabAnywhere(id);
+    if (!found?.t.aiSignedIn) return;
+    if (!force && (found.t.viewedAt || 0) >= found.t.aiSignedIn.openedAt) { found.t.aiLock = false; return; } // the user looked at it: it's theirs now
+    withWindow(found.rec, () => closeTab(id));
+  },
+};
+if (TEST) global.__signedInSites = signedInSites;
 const agent = new Agent({
   research: researchTabs,
+  signedIn: signedInReader, // [signed-in sites]
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
@@ -3643,18 +4075,21 @@ const agent = new Agent({
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
-function pushAgentTarget() {
-  const rec = runRec && winRecs.has(runRec) ? runRec : curRec;
+// The open chat's running task's tab ({ id, title, host, front }), or null. Also in chatView's `live`,
+// so a chat opened again mid-run shows its "Working in" line at once.
+function agentTargetInfo(rec = runRecNow() || curRec) {
   const id = agent.running ? agent.runTabId() : null;
-  let info = null;
-  if (id != null) {
-    const list = rec ? tabsOf(rec) : tabs;
-    const t = list.find((x) => x.id === id) || [...winRecs].flatMap((r) => tabsOf(r)).find((x) => x.id === id);
-    if (t) {
-      const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || '';
-      info = { id, title: tabTitle(t) || hostOf(url) || '', host: hostOf(url) || '', front: id === activeIdOf(rec || curRec) };
-    }
-  }
+  if (id == null) return null;
+  const list = rec ? tabsOf(rec) : tabs;
+  const t = list.find((x) => x.id === id) || [...winRecs].flatMap((r) => tabsOf(r)).find((x) => x.id === id);
+  if (!t) return null;
+  const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || '';
+  return { id, title: tabTitle(t) || hostOf(url) || '', host: hostOf(url) || '', front: id === activeIdOf(rec || curRec) };
+}
+function pushAgentTarget() {
+  syncRunTabs();
+  const rec = runRecNow() || curRec;
+  const info = agentTargetInfo(rec);
   const key = info ? `${info.id}|${info.title}|${info.front}` : '';
   if (key === lastAgentTarget) return;
   lastAgentTarget = key;
@@ -3929,14 +4364,29 @@ ipcMain.on('content-bounds', (_e, bounds) => {
   layout();
 });
 
+// Each freeze and thaw bumps the window's freeze number. A capture that finishes after a thaw (the
+// sidebar settled before the snapshot was ready) must not hide the page: it used to, and nothing thawed
+// it again, which left the page area blank (the purple of a running task) until the sidebar moved. The
+// flag is also set on the window that asked, not whichever window is current when the capture ends.
+// A freeze that is never thawed (a lost message) ends by itself.
+const freezeSeq = new WeakMap(); // window rec -> number
+let freezeCounter = 0;
+const FREEZE_MAX_MS = 2500;
 ipcMain.handle('view:freeze', async () => {
+  const rec = curRec;
   const wc = activeTab()?.webContents;
-  if (!wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
+  if (!rec || !wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
+  const seq = ++freezeCounter;
+  freezeSeq.set(rec, seq);
   try {
     const image = await wc.capturePage();
-    if (image.isEmpty()) return null;
-    viewFrozen = true;
-    layout();
+    if (image.isEmpty() || freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // thawed meanwhile
+    withWindow(rec, () => { viewFrozen = true; layout(); });
+    setTimeout(() => {
+      if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return;
+      freezeSeq.set(rec, ++freezeCounter);
+      withWindow(rec, () => { viewFrozen = false; layout(); });
+    }, FREEZE_MAX_MS);
     return `data:image/jpeg;base64,${image.toJPEG(88).toString('base64')}`;
   } catch {
     return null;
@@ -3950,6 +4400,7 @@ ipcMain.handle('view:warm', async () => {
   return true;
 });
 ipcMain.on('view:thaw', () => {
+  if (curRec) freezeSeq.set(curRec, ++freezeCounter); // a capture still in flight won't freeze after this
   viewFrozen = false;
   layout();
 });
@@ -4083,20 +4534,45 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   const valid = (Array.isArray(images) ? images : [])
     .filter((img) => IMAGE_TYPES.has(img?.media_type) && typeof img.data === 'string' && img.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(img.data))
     .slice(0, 5);
-  const generation = chatGeneration;
-  runRec = curRec; // the window this run's tab tools act on (agent:ask came from its UI)
+  // [background chats] The run belongs to the chat it started in, wherever the user goes meanwhile:
+  // another tab, another window, a closed sidebar or another chat (switchChat leaves it running).
+  const runChat = chatId;
+  const same = chatRuns.get(runChat);
+  if (!chatRunsLib.canStart({ busy: agent.busyCount, sameChatRunning: Boolean(same && agent.runningFor(same.messages)) })) {
+    const send = (msg) => chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId });
+    send({ type: 'error', text: t('agent.tooManyRuns', { n: chatRunsLib.MAX_RUNS }) });
+    send({ type: 'done' });
+    return;
+  }
+  const run = { chatId: runChat, messages: agent.messages, runId, rec: curRec, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null };
+  chatRuns.set(runChat, run);
+  unreadChats.delete(runChat);
+  const isOpen = () => runChat === chatId && run.messages === agent.messages;
   chatPageRt.beginRun(event, { text: String(text || ''), runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
   agent.run(String(text || ''), (msg) => {
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
-    if (msg.type === 'done' || msg.type === 'error') runRec = null;
-    if (msg.type === 'done') chatPageRt.endRun();
-    chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open
-    if (msg.type === 'done') saveChat(generation);
-    else if (msg.type === 'tool_done') saveChatSoon(generation);
-    else if (msg.type === 'usage' && generation === chatGeneration) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
+    if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
+    if (msg.type === 'text') run.reply += msg.text;
+    else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
+    else if (msg.type === 'error') run.error = msg.text || 'error';
+    else if (msg.type === 'notice' && msg.text === 'Stopped.') run.stopped = true;
+    if (msg.type === 'approval') { run.pending.set(msg.approvalId, msg); tellUser(run, 'approval'); }
+    else if (msg.type === 'approval_done' && run.pending.delete(msg.approvalId)) pushAttention();
+    if (msg.type === 'done') {
+      if (chatRuns.get(runChat) === run) chatRuns.delete(runChat);
+      if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
+    }
+    chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
+    if (msg.type === 'done') {
+      if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
+      tellUser(run, chatRunsLib.outcome(run));
+      setImmediate(pushAgentTarget);
+    } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
+    else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
   // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-  }, valid, { tabs: tabsAsk.cleanIds(tabIds) }, skillsFeature.takeRun(String(text || '')));
+  }, valid, { tabs: tabsAsk.cleanIds(tabIds), meta: { rec: curRec } }, skillsFeature.takeRun(String(text || '')));
+  pushAttention(); // the chat list shows it running
 });
 // The tabs the "@" picker offers: this window's readable tabs, never a private window's.
 ipcMain.handle('tabs:ask-list', (event) => {
@@ -4107,7 +4583,7 @@ ipcMain.handle('tabs:ask-list', (event) => {
 });
 ipcMain.on('agent:stop', () => agent.stop());
 // "Working in: …" in the sidebar: jump to the tab the task works in.
-ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); if (id != null && agent.running) (runRec && winRecs.has(runRec) ? withWindow(runRec, () => switchTab(id)) : switchTab(id)); });
+ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.
 ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });
 
@@ -4115,7 +4591,7 @@ ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('c
 ipcMain.handle('chats:list', () => ({
   current: chatId,
   currentUsage: describeUsage(agent.messages.settings?.usage),
-  chats: chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage) })),
+  chats: (() => { const badges = chatBadges(); return chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null })); })(),
 }));
 ipcMain.handle('chats:open', (event, id) => {
   const view = switchChat(String(id));
@@ -4127,6 +4603,9 @@ ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), Str
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
   approvedByChat.delete(id);
+  unreadChats.delete(id);
+  const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again
+  if (running) { running.deleted = true; agent.stopFor(running.messages); clearTimeout(detachedSaves.get(id)); }
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
@@ -4494,6 +4973,7 @@ app.whenReady().then(async () => {
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
   instance.fixShortcutIcons(app, shell);
+  instance.fixAppName(app); // Explorer says Lumen, not Electron
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();

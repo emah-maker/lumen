@@ -126,8 +126,8 @@ function widgetSummary(w, ctx = {}) {
       default: break;
     }
   } catch { /* fall through to the backend's own line */ }
-  const line = parts.filter(Boolean).join(' · ');
-  return line || (typeof w.summary === 'string' ? w.summary : '');
+  const line = parts.filter(Boolean).join(' · ') || (typeof w.summary === 'string' ? w.summary : '');
+  return w.stack ? [line, 'In a stack'].filter(Boolean).join(' · ') : line; // shown in turn with others of its size (features/widget-stacks.js)
 }
 
 const api = { KINDS, ORDER, kindName, kindHint, accountStatus, widgetSummary };

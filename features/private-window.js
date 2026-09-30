@@ -127,7 +127,7 @@ function createPrivateWindows(deps) {
   }
 
   function switchTab(rec, id) {
-    if (!rec.tabs.some((t) => t.id === id)) return;
+    if (!rec.tabs.some((t) => t.id === id) || rec.activeId === id) return; // already in front: nothing to redraw
     rec.activeId = id;
     layout(rec);
     sendState(rec);

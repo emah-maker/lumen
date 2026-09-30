@@ -146,6 +146,8 @@ function startTabDrag(e, el, id) {
   drag = { el, id, startX: e.clientX, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
+  // Losing the pointer (another app took it) ends the drag as a release would, never leaving it hanging.
+  el.addEventListener('lostpointercapture', () => { if (drag?.el === el) endTabDrag({ type: 'pointerup' }); }, { once: true });
   // Once the tab has left for a window of its own this page may lose the pointer, so the release and
   // Escape are also watched on the window (main.js has its own fallbacks: see "dragging a tab out").
   window.addEventListener('pointerup', endTabDrag, true);
@@ -155,6 +157,19 @@ function startTabDrag(e, el, id) {
 function dragKey(e) {
   if (e.key === 'Escape' && drag) { e.preventDefault(); e.stopPropagation(); endTabDrag(e); }
 }
+let heldTab = null; // { id, timer }: a dropped tab kept hidden in this strip until main has placed it
+function holdDroppedTab(id) {
+  releaseHeldTab();
+  heldTab = { id, timer: setTimeout(releaseHeldTab, 5000) };
+  $('tabs').querySelector(`.tab[data-id="${id}"]`)?.classList.add('held');
+}
+function releaseHeldTab() {
+  if (!heldTab) return;
+  clearTimeout(heldTab.timer);
+  heldTab = null;
+  $('tabs').querySelectorAll('.tab.held').forEach((t) => t.classList.remove('held'));
+}
+window.browser.onTabDragDone?.(releaseHeldTab);
 // This window is the one being dragged (its tab arrived from elsewhere): report the release from here.
 window.browser.onTabDragWatch?.(() => {
   const up = () => { window.removeEventListener('pointerup', up, true); window.removeEventListener('mouseup', up, true); window.browser.dragTabEnd?.(); };
@@ -174,6 +189,7 @@ window.browser.onTabDropAt?.((at) => {
 // Dragged this far outside the strip (or out of the window), releasing the tab hands it to main.js:
 // into another window's strip if the cursor is over one, else into a new window of its own.
 const TEAR_OFF_PX = 36;
+const nearEdge = (e) => { const bar = $('tabs').getBoundingClientRect(); return e.clientY > bar.bottom + 10 || e.clientY < bar.top - 10; };
 function draggedOut(e) {
   const bar = $('tabs').getBoundingClientRect();
   return e.clientY > bar.bottom + TEAR_OFF_PX || e.clientY < bar.top - TEAR_OFF_PX
@@ -206,6 +222,8 @@ function moveTabDrag(e) {
   const first = rects[0].left, last = rects[rects.length - 1].right;
   const dx = Math.max(first - rects[from].left, Math.min(last - rects[from].right, drag.dx));
   drag.el.style.transform = `translateX(${dx}px)`;
+  // Heading out of the strip: main readies a window (and the drag card) so a drop outside shows at once.
+  if (!drag.prepped && window.browser.dragTabPrep && nearEdge(e)) { drag.prepped = true; window.browser.dragTabPrep(); }
   if (window.browser.dragTabStart && draggedOut(e)) { handOffTabDrag(e); return; }
   const center = rects[from].left + rects[from].width / 2 + dx;
   let to = rects.findIndex((r) => center < r.left + r.width / 2);
@@ -231,6 +249,9 @@ function endTabDrag(e) {
   window.removeEventListener('keydown', dragKey, true);
   $('tabs').classList.remove('reordering');
   [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging', 'tearing', 'handed'); });
+  // Released outside the strip: the tab stays hidden until main has put it where it was dropped
+  // ('tab:dragdone'), so it doesn't flash back here first. Escape shows it again at once.
+  if (handed && !escaped) holdDroppedTab(id);
   if (moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
@@ -394,7 +415,7 @@ function faviconImg(el, key, urls, retried = false) {
 
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
-  el.className = 'tab' + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
+  el.className = 'tab' + (heldTab?.id === tab.id ? ' held' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
     + (selectedTabs.has(tab.id) && !active ? ' selected' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
@@ -1056,9 +1077,18 @@ $('reader').onclick = () => window.browser.toggleReader?.();
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
-  window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom) });
+  // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
+  window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom), right: Math.round(r.right) });
 };
 $('agent-stop').onclick = () => window.assistant.stop();
+// The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
+// it, so the field's padding has to clear however many are showing: styles.css reads their width
+// from --omnibox-end-w. A fixed 62px only cleared two, and the URL ran under the rest.
+{
+  const omnibox = $('omnibox');
+  const end = omnibox.querySelector('.omnibox-end');
+  new ResizeObserver(() => omnibox.style.setProperty('--omnibox-end-w', `${Math.ceil(end.offsetWidth)}px`)).observe(end);
+}
 
 // ---------- find in page ----------
 
@@ -1215,6 +1245,7 @@ async function showSidebar(visible) {
   const body = document.body;
   $('sidebar').classList.remove('prewarm'); // never animate from the warm-up layout
   $('toggle-sidebar').setAttribute('aria-pressed', String(visible));
+  window.assistant.sidebarState?.(visible); // main: when to notify about a reply, and the unread mark
   if (earlyFreeze) {
     const pending = earlyFreeze;
     earlyFreeze = null;
@@ -1319,7 +1350,7 @@ resizer.addEventListener('keydown', (e) => {
   localStorage.setItem('sidebarWidth', String(width));
 });
 window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
-// Ctrl+Shift+K: the New chat button (it resets the chat, which stops a run in progress), opening the sidebar first.
+// Ctrl+Shift+K: the New chat button, opening the sidebar first (a run in progress keeps going in its own chat).
 window.browser.onNewSidebarChat(async () => {
   if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
   // A hidden sidebar can't take focus: wait (briefly) until it is really shown.
@@ -1356,6 +1387,7 @@ function enterFull() {
   $('sidebar').style.removeProperty('--reveal');
   reveal = 1;
   $('toggle-sidebar').setAttribute('aria-pressed', 'true');
+  window.assistant.sidebarState?.(true);
   $('prompt').focus({ preventScroll: true });
 }
 
@@ -1484,6 +1516,24 @@ window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('wind
 // ---------- the chat's hooks into the sidebar (chat-core.js) ----------
 
 chatHost.running = () => reportBounds(); // the AI frame around the page appears and goes with a reply
+
+// The AI working on its own (features/chat-runs.js): a dot on the toolbar button when a reply finished
+// while the sidebar was closed, or a run (in any chat) waits for an OK; the Chats button shows the same
+// for chats other than the open one. A notification clicked opens the sidebar on its chat.
+window.assistant.sidebarState?.(!document.body.classList.contains('sidebar-hidden'));
+window.assistant.onAttention?.(({ state } = {}) => {
+  for (const id of ['toggle-sidebar', 'chat-history']) {
+    const el = $(id);
+    if (!el) continue;
+    if (state) el.dataset.attention = state;
+    else delete el.dataset.attention;
+  }
+});
+window.assistant.onOpenChat?.(async ({ id } = {}) => {
+  if (chatFull) exitFull();
+  if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
+  await window.chatList?.openChat?.(id);
+});
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');

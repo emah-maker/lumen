@@ -229,6 +229,23 @@ async function buildAi(card) {
     }))));
   renderOff();
 
+  // [signed-in sites] Hosts the AI may always read with your signed-in session (features/signed-in-sites.js).
+  // Added only from the AI's approval card ("Always for <site>"); removed here.
+  const signedList = h('div', { class: 'list', id: 'ai-signed-in-sites' });
+  const clearSigned = h('button', { id: 'ai-signed-in-clear', text: 'Remove all', onclick: async () => renderSigned(await S.ai.clearSignedInSites()) });
+  const renderSigned = async (sites) => {
+    sites ||= await S.ai.signedInSites();
+    clearSigned.hidden = !sites.length;
+    signedList.replaceChildren(...(sites.length ? sites.map(({ host, added }) => h('div', { class: 'item', 'data-host': host },
+      h('span', { class: 'grow', text: host }),
+      added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
+      h('button', { text: 'Remove', 'aria-label': `Remove ${host}`, onclick: async () => renderSigned(await S.ai.removeSignedInSite(host)) })))
+      : [h('span', { class: 'note', text: 'None. The AI reads pages signed out unless you allow a site when it asks.' })]));
+  };
+  card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you (your grades, your orders), you can allow it just once or always for that site. It then sees the page as you do; nothing is clicked, typed or submitted there without the usual approvals. Banks, payments, password managers and account-security pages are only ever allowed once. Outside agents never get this.', signedList,
+    h('div', { class: 'controls' }, clearSigned)));
+  renderSigned();
+
   // API keys: one line per provider; Edit opens the field in place.
   const keys = h('div', { class: 'list', id: 'ai-keys' });
   const renderKeys = () => {
@@ -494,6 +511,56 @@ function buildLook(card) {
   renderSwatches();
 }
 
+// [look] A row of choices for one setting (radio buttons, arrow keys move between them), saved at once.
+// `content(value, label)` draws a choice; `after` runs once one is saved.
+function choices(key, label, cls, options, content, after) {
+  const group = h('div', { class: cls, role: 'radiogroup', 'aria-label': label, id: `pref-${key}` });
+  const buttons = options.map(([value, text]) => h('button', { type: 'button', role: 'radio', 'data-value': String(value), 'aria-label': text, title: text,
+    onclick: async () => { paint(String(value)); await save(key, value); after?.(value); } }, content(value, text)));
+  const paint = (v) => { for (const b of buttons) { const on = b.dataset.value === v; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; } };
+  group.addEventListener('keydown', (e) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const i = buttons.findIndex((b) => b.getAttribute('aria-checked') === 'true');
+    const next = buttons[(i + step + buttons.length) % buttons.length];
+    next.click();
+    next.focus();
+  });
+  group.append(...buttons);
+  paint(String(st.prefs[key]));
+  group.repaint = () => paint(String(st.prefs[key]));
+  return group;
+}
+// [look] The clock's styles and the greeting's fonts (features/clock-styles.js lists them; newtab.html draws them),
+// each previewed in its own face; settings.css has the same font stacks.
+function buildClockStyle() {
+  const styles = (st.clockStyles || []).map((s) => [s.id, s.label]);
+  const fonts = (st.greetingFonts || []).map((f) => [f.id, f.label]);
+  const greetingFace = (v) => (v === 'match' ? (st.prefs.newTabClockStyle === 'bold' ? 'classic' : st.prefs.newTabClockStyle) : v);
+  let greetingTiles = null;
+  const clockTiles = choices('newTabClockStyle', 'Clock style', 'clock-tiles', styles, (v, text) => [
+    h('span', { class: `ct-face cs-${v}`, 'aria-hidden': 'true' }, v === 'bold' ? [h('span', { text: '09' }), h('span', { text: '41' })] : '9:41'),
+    h('span', { class: 'ct-label', text }),
+  ], () => { // "Match clock" follows the new face
+    const match = greetingTiles?.querySelector('[data-value="match"] .ct-face');
+    if (match) match.className = `ct-face gf-${greetingFace('match')}`;
+  });
+  greetingTiles = fonts.length ? choices('newTabGreetingFont', 'Greeting font', 'clock-tiles greeting-tiles', fonts, (v, text) => [
+    h('span', { class: `ct-face gf-${greetingFace(v)}`, 'aria-hidden': 'true', text: 'Hello' }),
+    h('span', { class: 'ct-label', text }),
+  ]) : null;
+  const seg = (key, label, options) => choices(key, label, 'segctl', options, (v, text) => text);
+  return { clock: [
+    stackRow('Clock style', 'The clock’s typeface and layout. Classic is the original look.', clockTiles),
+    row('Hours', 'Automatic follows your system language.', seg('newTabClockHours', 'Hours', [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']])),
+    toggle('newTabClockSeconds', 'Show seconds', null),
+    toggle('newTabClockDate', 'Show the date', 'The date with the clock. In Thin it sits above the time.'),
+    row('Behind the clock', 'A card behind the clock and date. Glass blurs the background behind it.', seg('newTabClockCard', 'Behind the clock', [['none', 'None'], ['soft', 'Soft'], ['glass', 'Glass']])),
+    toggle('newTabClockShadow', 'Stronger text shadow', 'Makes the clock and greeting easier to read over a background or picture.'),
+  ], greeting: greetingTiles ? [stackRow('Greeting font', 'The typeface of “Good evening”. Match clock uses the clock’s.', greetingTiles)] : [] };
+}
+
 // Home: the new-tab page's background, clock, greeting and sections, and its widgets (a sub-page).
 async function buildHome(card) {
 
@@ -522,12 +589,15 @@ async function buildHome(card) {
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
   name.addEventListener('change', () => save('newTabName', name.value));
+  const clockStyle = buildClockStyle();
   card.append(
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
     select('newTabClockSize', 'Clock size', 'How big the clock is. In Edit layout on the new-tab page you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
+    ...clockStyle.clock, // [look]
     select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => x - y).map((w) => [w, `${w} px`]), { number: true }),
     toggle('newTabHeader', 'Show the date and greeting', 'Turn off to hide the date and “Good evening” line. In Edit layout on the new-tab page, the ✕ on a section does the same.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
+    ...clockStyle.greeting, // [look]
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
@@ -887,23 +957,31 @@ async function buildWidgets(card) {
       inputs.count = sel('widget-gmail-count', tr('settings.gmail.count', 'Messages shown'), [3, 4, 5, 6, 8, 10].map((n) => [n, String(n)]), g.count || 5);
       inputs.snippets = tog('widget-gmail-snippets', tr('settings.gmail.snippets', 'Show a short preview under each subject'), g.snippets !== false);
       const status = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-status' });
-      const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: tr('settings.gmail.connect', 'Connect Gmail') });
+      // builtin: Lumen was built with its own Google client, so "Sign in with Google" needs no setup and
+      // the user's own Google Cloud client moves under Advanced (it still wins when its Client ID is filled in).
+      const builtin = Boolean(ws.gmailClient?.builtin);
+      const own = () => Boolean(inputs.clientId.value.trim());
+      const connectLabel = () => (builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
+      const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: connectLabel() });
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
       const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
         h('span', { class: 'note', text: 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.' }));
       const adv = advanced([
-        helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
+        builtin ? h('div', { class: 'row stack' }, h('span', { class: 'note', text: tr('settings.gmail.ownHint', 'Optional. Sign in with Google works without this. To use a Google Cloud project of your own instead, paste its Desktop app client here; it is then used instead of Lumen’s.') })) : null,
+        helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
         setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, 'From the same client. Stored encrypted by your system.'),
-      ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !g.clientId);
+      ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !builtin && !g.clientId);
+      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : 'Advanced';
+      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); });
       const draw = () => {
         disconnect.hidden = !connected();
         connect.hidden = connected();
-        connect.textContent = tr('settings.gmail.connect', 'Connect Gmail');
+        connect.textContent = connectLabel();
         if (!status.textContent) { status.textContent = connected() ? tr('settings.gmail.connected', 'A Google account is connected.') : tr('settings.gmail.notConnected', 'Not connected yet.'); status.className = `sp-status${connected() ? ' on' : ''}`; }
       };
       connect.addEventListener('click', async () => {
-        if (!inputs.clientId.value.trim()) { adv.open = true; flash(status, 'First add your Google Cloud Client ID and secret under Advanced.', 'warn'); inputs.clientId.focus(); return; }
+        if (!builtin && !own()) { adv.open = true; flash(status, 'First add your Google Cloud Client ID and secret under Advanced.', 'warn'); inputs.clientId.focus(); return; }
         connect.disabled = true;
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');

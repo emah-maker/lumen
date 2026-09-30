@@ -95,6 +95,60 @@
     .date { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
     h1 { margin: 2px 0 0; font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; }
 
+    /* [look] Clock styles and greeting fonts (Settings → Home; features/clock-styles.js has the choices). Each style is
+       a whole look: face, weight, size, tracking and where the date sits. System fonts only (the page loads none);
+       Classic, no card and no extra shadow are exactly the page as it always was, so none of them has a rule here.
+       The preview tiles in settings.css use the same stacks. */
+    header {
+      --f-display: -apple-system, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+      --f-rounded: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display", system-ui, sans-serif;
+      --f-serif: ui-serif, "New York", "Iowan Old Style", Cambria, Georgia, serif; /* Cambria before Georgia: lining digits on Windows */
+      --f-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+      --f-hand: "Segoe Print", "Bradley Hand", "Noteworthy", "Chalkboard SE", cursive;
+    }
+    .clock-card[hidden], .date[hidden] { display: none !important; }
+    .clock-s { margin-left: 0.06em; font-size: 0.36em; font-weight: 400; letter-spacing: 0; color: var(--muted); }
+    body[data-clock-style="rounded"] .clock { font-family: var(--f-rounded); font-size: calc(var(--clock-size) * 0.92); font-weight: 500; letter-spacing: -0.03em; }
+    body[data-clock-style="rounded"] .date { font-family: var(--f-rounded); font-size: 13px; font-weight: 600; }
+    /* Thin: big ultralight numerals with the date on top, as on a lock screen. */
+    body[data-clock-style="thin"] .clock-card { display: flex; flex-direction: column-reverse; align-items: flex-start; }
+    body[data-clock-style="thin"] .clock { margin: 0; font-family: var(--f-display); font-size: calc(var(--clock-size) * 1.3); line-height: 0.92; font-weight: 100; letter-spacing: -0.05em; }
+    body[data-clock-style="thin"] .date { margin: 0 0 2px 0.06em; font-family: var(--f-display); font-size: 15px; font-weight: 550; letter-spacing: -0.01em; color: var(--text); opacity: 0.86; }
+    body[data-clock-style="thin"] .clock-card:has(.clock[hidden]) .date { margin-bottom: 0; }
+    body[data-clock-style="serif"] .clock { font-family: var(--f-serif); font-size: calc(var(--clock-size) * 0.95); font-weight: 400; letter-spacing: -0.025em; font-variant-numeric: tabular-nums lining-nums; font-optical-sizing: auto; }
+    body[data-clock-style="serif"] .date { font-family: var(--f-serif); font-size: 15px; font-weight: 400; font-style: italic; letter-spacing: 0; }
+    body[data-clock-style="mono"] .clock { font-family: var(--f-mono); font-size: calc(var(--clock-size) * 0.78); font-weight: 300; letter-spacing: -0.03em; }
+    body[data-clock-style="mono"] .date { margin-top: 4px; font-family: var(--f-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; }
+    /* Stacked: heavy hours over minutes (the separator is still there for screen readers). */
+    body[data-clock-style="bold"] .clock { display: grid; grid-template-columns: auto auto; justify-content: start; align-items: end; margin-bottom: 8px; font-family: var(--f-display); font-size: calc(var(--clock-size) * 0.82); line-height: 0.86; font-weight: 800; letter-spacing: -0.045em; }
+    body[data-clock-style="bold"] .clock[hidden] { display: none; }
+    body[data-clock-style="bold"] .clock-h { grid-area: 1 / 1; }
+    body[data-clock-style="bold"] .clock-m { grid-area: 2 / 1; }
+    body[data-clock-style="bold"] .clock-s { grid-area: 2 / 2; margin: 0 0 0.3em 0.14em; font-weight: 600; }
+    body[data-clock-style="bold"] .clock-sep { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    body[data-clock-style="bold"] .date { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    /* Behind the clock and date: nothing (default), a soft card, or glass. The text keeps its place in the column. */
+    body[data-clock-card="soft"] .clock-card, body[data-clock-card="glass"] .clock-card { width: fit-content; max-width: calc(100% + 40px); margin: 0 -20px 12px; padding: 14px 20px 16px; border-radius: 24px; box-sizing: border-box; }
+    body[data-clock-card="soft"] .clock-card { background: var(--card); box-shadow: 0 0 0 0.5px var(--border); }
+    body[data-clock-card="glass"] .clock-card {
+      background: color-mix(in srgb, var(--bg) 62%, transparent);
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.5), 0 0 0 0.5px var(--border), 0 12px 32px -14px var(--shadow);
+      -webkit-backdrop-filter: blur(28px) saturate(1.8); backdrop-filter: blur(28px) saturate(1.8);
+    }
+    body.on-media[data-clock-card="soft"] .clock-card { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
+    body.on-media[data-clock-card="glass"] .clock-card { background: rgba(255, 255, 255, 0.14); box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.2), 0 16px 40px -18px rgba(0, 0, 0, 0.5); }
+    /* Over an animated effect: no blur (it would re-sample the moving canvas every frame), a denser card instead. */
+    body.on-media.has-effect[data-clock-card] .clock-card { -webkit-backdrop-filter: none; backdrop-filter: none; }
+    body.on-media.has-effect:is([data-clock-card="soft"], [data-clock-card="glass"]) .clock-card { background: rgba(28, 28, 32, 0.68); }
+    /* A stronger shadow under the clock, date and greeting, over a background or picture only. */
+    body.on-media[data-clock-shadow="1"] header { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 2px 24px rgba(0, 0, 0, 0.38); }
+    /* The greeting's face. */
+    body[data-greeting-font="rounded"] h1 { font-family: var(--f-rounded); letter-spacing: -0.02em; }
+    body[data-greeting-font="serif"] h1 { font-family: var(--f-serif); font-size: 30px; font-weight: 500; letter-spacing: -0.015em; font-optical-sizing: auto; }
+    body[data-greeting-font="thin"] h1 { font-family: var(--f-display); font-size: 32px; font-weight: 250; letter-spacing: -0.035em; }
+    body[data-greeting-font="mono"] h1 { font-family: var(--f-mono); font-size: 24px; font-weight: 500; letter-spacing: -0.03em; }
+    body[data-greeting-font="hand"] h1 { margin-top: 4px; font-family: var(--f-hand); font-size: 28px; line-height: 1.3; font-weight: 400; letter-spacing: 0; }
+
     form { position: relative; margin-bottom: var(--gutter); }
     form > svg { position: absolute; left: 15px; top: 23px; width: 16px; height: 16px; margin-top: -8px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; pointer-events: none; }
     input {
@@ -245,7 +299,7 @@
     .w-presets button:hover { background: var(--hover); }
     body.w-editing .w-card { touch-action: none; cursor: grab; user-select: none; }
     body.w-editing .w-card * { pointer-events: none; }
-    body.w-editing .w-card .w-h, body.w-editing .w-card .w-resize, body.w-editing .w-card .w-remove, body.w-editing .w-card .w-gear, body.w-editing .w-card .w-presets, body.w-editing .w-card .w-presets * { pointer-events: auto; }
+    body.w-editing .w-card .w-h, body.w-editing .w-card .w-resize, body.w-editing .w-card .w-remove, body.w-editing .w-card .w-gear, body.w-editing .w-card .w-presets, body.w-editing .w-card .w-presets *, body.w-editing .w-card .w-stack-edit { pointer-events: auto; }
     /* Wiggle like a home screen; a plain outline instead with Reduce motion or Performance mode. */
     @keyframes wiggle { from { rotate: -0.45deg; } to { rotate: 0.45deg; } }
     @media (prefers-reduced-motion: no-preference) {
@@ -261,6 +315,31 @@
     .w-card.resizing { z-index: 4; transition: none; box-shadow: 0 0 0 1px var(--accent); }
     .w-ghost { position: absolute; left: 0; top: 0; z-index: 2; box-sizing: border-box; border-radius: 16px; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; transition: transform 160ms var(--ease), width 160ms var(--ease), height 160ms var(--ease); }
     .w-ghost.snap { border-style: solid; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+    /* [widgets] Stacks (newtab-stacks.js): same-size widgets in one place. The shown one is the card; the others wait
+       under it, hidden. Page dots and a small arrow sit in the bottom corner beside the resize handle; the dots are
+       always faintly there (this card is a stack), the arrow comes with hover or focus. */
+    .w-card.w-under { visibility: hidden; pointer-events: none; z-index: 0; }
+    .w-card.w-under.w-leaving { visibility: visible; } /* fading out after a switch */
+    .w-stack { position: absolute; right: 22px; bottom: 5px; z-index: 2; display: flex; align-items: center; gap: 2px; height: 18px; }
+    .w-stack-dots { display: flex; gap: 3px; padding: 0 2px; opacity: 0.7; transition: opacity 150ms ease-out; }
+    .w-stack-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--faint); transition: background-color 200ms var(--ease), width 200ms var(--ease); }
+    .w-stack-dots i.on { width: 10px; border-radius: 999px; background: var(--muted); }
+    .w-stack-next { appearance: none; display: grid; place-items: center; width: 18px; height: 18px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; outline: none; cursor: default; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+    .w-stack-next svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .w-card:hover .w-stack-next, .w-stack-next:focus-visible { opacity: 1; }
+    .w-card:hover .w-stack-dots, .w-stack:focus-within .w-stack-dots { opacity: 1; }
+    .w-stack-next:hover { background: var(--hover); color: var(--text); }
+    .w-stack-next:active { scale: 0.9; }
+    .w-stack-next:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-card.in-stack > .w-foot { padding-right: 72px; }
+    body.w-editing .w-stack { display: none; }
+    .w-stack-edit { display: none; position: absolute; z-index: 3; left: 50%; top: -8px; translate: -50% 0; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--shadow); cursor: default; outline: none; }
+    .w-stack-edit svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+    .w-stack-edit:hover { background: var(--hover); }
+    .w-stack-edit:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    body.w-editing .w-stack-edit { display: grid; pointer-events: auto; }
+    .w-ghost.stack { border-style: solid; background: color-mix(in srgb, var(--accent) 16%, transparent); scale: 0.96; }
+    @media (prefers-reduced-motion: reduce) { .w-stack-dots i, .w-stack-next { transition: none; } }
     .w-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     header { position: relative; }
     .w-edit-btn { position: absolute; right: 0; top: 4px; appearance: none; margin: 0; padding: 4px 12px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; transition: background-color 150ms ease-out; }
@@ -623,8 +702,10 @@
   <div id="backdrop" aria-hidden="true"></div>
   <main>
     <header>
-      <p class="clock" id="clock" hidden></p>
-      <p class="date" id="date"></p>
+      <div class="clock-card" id="clock-card">
+        <p class="clock" id="clock" hidden></p>
+        <p class="date" id="date"></p>
+      </div>
       <h1 id="greeting">Hello</h1>
     </header>
     <form action="https://www.google.com/search" method="get" role="search">
@@ -641,13 +722,16 @@
   <div id="widgets" class="widgets" role="region" aria-label="Widgets"></div>
   <script src="favicons.js"></script>
   <script src="../features/widget-layout.js"></script>
+  <script src="../features/widget-stacks.js"></script>
   <script src="../features/widget-system.js"></script>
   <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>
+  <script src="../features/clock-styles.js"></script>
   <script src="newtab-system.js"></script>
   <script src="../features/worldclock-view.js"></script>
   <script src="newtab-widgets.js"></script>
   <script src="newtab-widgets-grid.js"></script>
+  <script src="newtab-stacks.js"></script>
   <script src="newtab-edit.js"></script>
   <script src="newtab.js"></script>
 </body>

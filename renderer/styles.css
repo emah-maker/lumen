@@ -150,7 +150,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab.dragging.tearing { opacity: 0.6; scale: 0.96; }
 /* The tab has left for a window of its own (main.js drives that drag): it keeps its DOM node, which holds
    the pointer, but takes no room. */
-.tab.dragging.handed { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
+.tab.dragging.handed, .tab.held { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
 /* Another window's tab is being dragged over this strip: where it would land. */
 .tab.drop-before::before, .tab.drop-end::after { content: ''; position: absolute; top: 2px; bottom: 2px; width: 3px; border-radius: 2px; background: var(--accent); z-index: 4; }
 .tab.drop-before::before { left: -3px; }
@@ -249,7 +249,8 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* Address field: a quiet tinted field at rest, centered like Safari; it lifts into a lit surface on focus. */
 .omnibox {
   position: relative; display: flex; align-items: center; justify-content: center; gap: 6px;
-  height: 32px; padding: 0 62px; border-radius: 10px; background: var(--field);
+  /* Both sides clear the buttons laid over the right end (--omnibox-end-w, app.js), so the text stays centred. */
+  height: 32px; padding: 0 max(62px, calc(var(--omnibox-end-w, 0px) + 8px)); border-radius: 10px; background: var(--field);
   box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent;
   transition: background-color var(--t-base) ease-out, box-shadow var(--t-smooth) var(--ease-out), transform var(--t-smooth) var(--spring-smooth);
 }
@@ -266,7 +267,13 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .omnibox:has(input:focus) input { flex: 1; field-sizing: fixed; animation: fade-in var(--t-base) ease-out; }
 .omnibox:has(input:focus) .security { display: none; }
 .omnibox:has(input:focus) .omnibox-end { opacity: 0; transform: scale(0.9); pointer-events: none; }
-body.zoomed .omnibox:not(:has(input:focus)) { padding-left: 100px; padding-right: 100px; }
+body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(--omnibox-end-w, 0px) + 8px)); padding-right: max(100px, calc(var(--omnibox-end-w, 0px) + 8px)); }
+/* Narrow window (the minimum is 800px): the field can be ~300px wide, and centring the text between
+   two ~100px paddings left it a sliver. The text starts at the left instead, like a focused field,
+   and only the right side keeps clear of the buttons. */
+@media (max-width: 1000px) {
+  .omnibox:not(:has(input:focus)), body.zoomed .omnibox:not(:has(input:focus)) { justify-content: flex-start; padding-left: 12px; }
+}
 .security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; }
 .security svg { width: 11px; height: 11px; }
 .security.insecure { color: var(--warning); }
@@ -308,7 +315,18 @@ body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy
 #agent-stop { height: 22px; padding: 0 10px; border: none; border-radius: 11px; background: var(--field); color: var(--text); font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
 #agent-stop:hover { background: var(--hover); }
 
-browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); }
+/* Narrow window: "Lumen is using this tab" is ~150px the address field can't spare, so the pill
+   keeps its live dot and Stop, and the words stay for screen readers (clipped, not display:none). */
+@media (max-width: 1000px) {
+  .agent-pill { gap: 6px; padding-left: 8px; }
+  #agent-pill-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+
+/* Extension icons can't push the ⋯ and AI buttons out of the window: the toolbar's end column is
+   max-content, so enough icons at the 800px minimum ran it past the right edge (body clips it). The
+   list gets what's left after the other buttons and a usable address field; icons past that are
+   clipped (there's no overflow menu yet). */
+browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); max-width: max(84px, calc(100vw - 600px)); overflow: hidden; }
 
 /* Find bar: the row opens by animating its grid track, so the page eases down with it. */
 .findbar {
@@ -375,7 +393,12 @@ body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 
 .sidebar-head { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 8px 0 20px; }
-.sidebar-actions { display: flex; gap: 2px; }
+.sidebar-actions { display: flex; gap: 2px; flex: none; }
+/* The model name gives way to the buttons, not the other way round: at the 300px minimum width six
+   buttons take ~190px, and a long name (up to 220px) used to push Settings and New chat out of the
+   sidebar, which clips. The picker button ellipsizes (styles below). */
+.sidebar-head .model-picker { min-width: 0; margin-right: 8px; }
+.sidebar-head .model-picker .picker-button { max-width: min(220px, 100%); }
 #dock-to-side { display: none; } /* only meaningful, and only shown, while chat-full (below) */
 
 /* ---------- full-page chat: homepage "Ask AI" fills the whole content area ---------- */
@@ -478,6 +501,10 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 @keyframes drop-in { from { opacity: 0; transform: translateY(-8px); } }
 
 .notice { color: var(--muted); font-size: 12px; margin: 8px 0; }
+/* A message on a new topic started a new chat: the way back to the last one. */
+.notice-action { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
+.notice-action:hover { text-decoration: underline; }
+.notice-action:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .error { color: var(--danger); font-size: 12px; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--danger-soft); }
 .error .btn { display: block; margin-top: 8px; height: 26px; font-size: 12px; color: var(--text); background: var(--surface-raised); }
 
@@ -747,7 +774,8 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .setup-option:disabled { opacity: 0.7; }
 .setup-name { font-weight: 500; }
 .setup-detail { color: var(--muted); font-size: 12px; }
-.model-search { width: 300px; left: -6px; top: calc(100% + 4px); }
+/* Fits the sidebar at its 300px minimum (the sidebar clips whatever runs past its edge). */
+.model-search { width: min(300px, calc(var(--sidebar-width, 360px) - 28px)); left: -6px; top: calc(100% + 4px); }
 .model-search-input { width: 100%; height: 28px; margin-bottom: 4px; padding: 0 8px; border: none; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; outline: none; }
 .model-search-list { max-height: 320px; overflow-y: auto; color: var(--muted); }
 .model-search-list .picker-item { color: var(--text); padding-left: 10px; }
@@ -764,3 +792,10 @@ body.mcp-active .agent-pill { display: flex; }
 
 /* macOS: traffic lights sit at the top-left of the tab strip; no Windows controls on the right. */
 .platform-darwin .tabstrip { padding-left: 80px; padding-right: 8px; }
+
+/* The sidebar's AI working on its own (features/chat-runs.js): a reply finished while the sidebar was
+   closed (accent dot), or a run waits for an OK (warning dot, shown even while the sidebar is open). */
+#toggle-sidebar[data-attention] { position: relative; }
+#toggle-sidebar[data-attention]::before { content: ""; position: absolute; top: 5px; left: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+#toggle-sidebar[data-attention="approval"]::before { background: var(--warning); }
+body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { display: none; }

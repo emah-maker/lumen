@@ -157,6 +157,23 @@ function domClick(id) {
   })()`;
 }
 
+// hover on a tab that is not on screen (no real mouse reaches it): the element gets the pointer and
+// mouse events a hover sends, so menus that open on mouseover still open.
+function domHover(id) {
+  return `(() => {
+    ${HELPERS}
+    const entry = entryFor(${id});
+    if (!entry) return false;
+    const r = entry.el.getBoundingClientRect();
+    const at = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) {
+      const init = { ...at, bubbles: !type.endsWith('enter') };
+      entry.el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, { ...init, pointerType: 'mouse' }) : new MouseEvent(type, init));
+    }
+    return true;
+  })()`;
+}
+
 // Prepares an element for text entry. Returns 'ok' (focused, contents selected so insertText
 // replaces them), 'setvalue' (needs a direct value set: select, date, color...), 'toggle'
 // (checkbox/radio: use click), 'missing', or 'unfocusable'.
@@ -318,4 +335,4 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { readPage, locate, domClick, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+module.exports = { readPage, locate, domClick, domHover, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };

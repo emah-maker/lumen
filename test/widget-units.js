@@ -440,5 +440,94 @@ module.exports = async function widgetUnits(check) {
   check('world clock: a stored widget is checked and keeps its colors and size; one without a place is dropped', clockWidget.wc.clock === '24' && clockWidget.colors === 'accent' && clockWidget.w === 4 && clockWidget.h === 3 && cleanWidget({ id: 'wclock02', type: 'worldclock', wc: { places: [] } }) === null && cleanWidget({ id: 'wclock03', type: 'worldclock' }) === null, JSON.stringify(clockWidget));
   const clockList = cleanList([{ id: 'wclock04', type: 'worldclock', wc: { places: [{ name: 'Tokyo', lat: 35.69, lon: 139.69 }] } }, { id: 'wweath04', type: 'weather', place: 'B', lat: 1, lon: 2 }]);
   check('world clock: an older list without positions still lays out, without overlap', clockList.length === 2 && noOverlap(clockList), enc(clockList));
+  await stackUnits(check, { it, noOverlap });
   return require('./widget-muse')(check); // Muse: pure logic, and the connector against a fake fetch
 };
+
+// ---- stacks: same-size widgets in one place, shown one at a time (features/widget-stacks.js) ----
+async function stackUnits(check, { it, noOverlap }) {
+  const ST = require('../features/widget-stacks');
+  const { createWidgets } = require('../features/widgets');
+  const wx = (id, extra) => ({ id, type: 'weather', place: 'B', lat: 1, lon: 2, ...extra });
+  const todo = (id, extra) => ({ id, type: 'todoist', ...extra });
+  const row = (w) => [w.id, w.x, w.y, w.w, w.h, w.stack || '-', w.top ? 'T' : ''].join(' ');
+  const rows = (list) => list.map(row).join(' | ');
+  const byId = (list, id) => list.find((w) => w.id === id);
+
+  // Migration: a list from before stacks loads exactly as it did (no fields appear, nothing moves).
+  const before = [wx('wwx0001', { x: 0, y: 0, w: 4, h: 3 }), todo('wtd0001', { x: 8, y: 0, w: 4, h: 3 }), { id: 'wold001', type: 'todoist', span: 6 }];
+  const plain = cleanList(before);
+  check('stacks migration: an older list gets no stack fields and loads unchanged', plain.every((w) => !('stack' in w) && !('top' in w)) && JSON.stringify(cleanList(plain)) === JSON.stringify(plain) && noOverlap(plain), rows(plain));
+  check('stacks: fields are checked (a bad stack id or a non-true top is dropped, system cards never stack)', ST.cleanFields({ stack: 'sabcd1', top: true }).top === true && ST.cleanFields({ stack: 'sabcd1', top: 'yes' }).top === undefined && !ST.cleanFields({ stack: '<x>' }).stack && !ST.cleanFields({ type: 'sys-favorites', stack: 'sabcd1' }).stack && !cleanWidget(wx('wwx0002', { stack: 'bad id!' })).stack, '');
+
+  // Normalizing: hidden members take the shown member's cells; a stack of one is no stack; exactly one top.
+  const stored = cleanList([wx('wwx0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001', top: true }), todo('wtd0001', { x: 8, y: 6, w: 4, h: 3, stack: 'sab0001' }), todo('wtd0002', { x: 4, y: 0, w: 4, h: 3 })]);
+  check('stacks: a hidden member sits on its shown member\'s cells (and nothing else overlaps them)', row(byId(stored, 'wtd0001')) === 'wtd0001 0 0 4 3 sab0001 ' && noOverlap(stored.filter((w) => !ST.isHidden(w))), rows(stored));
+  check('stacks: cleaning a stacked list twice changes nothing', JSON.stringify(cleanList(stored)) === JSON.stringify(stored), '');
+  const lone = cleanList([wx('wwx0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001', top: true }), todo('wtd0001', { x: 4, y: 0, w: 4, h: 3, stack: 'sab0002', top: true })]);
+  check('stacks: a stack of one is no stack', lone.every((w) => !w.stack && !w.top), rows(lone));
+  const twoTops = cleanList([wx('wwx0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001', top: true }), todo('wtd0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001', top: true }), todo('wtd0002', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001' })]);
+  check('stacks: exactly one member is shown (the first marked)', twoTops.filter((w) => w.top).map((w) => w.id).join() === 'wwx0001', rows(twoTops));
+  const noTop = cleanList([wx('wwx0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001' }), todo('wtd0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001' })]);
+  check('stacks: a stack with none marked shows its first member', noTop.filter((w) => w.top).map((w) => w.id).join() === 'wwx0001', rows(noTop));
+  const huge = cleanList(Array.from({ length: 9 }, (_, i) => todo(`wtd000${i}`, { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001', top: i === 0 })));
+  check(`stacks: at most ${ST.MAX_STACK} in one stack, the rest become their own places`, huge.filter((w) => w.stack).length === ST.MAX_STACK && noOverlap(huge.filter((w) => !ST.isHidden(w))), rows(huge));
+
+  // Cycling order: the list order, wrapping both ways.
+  const members = ['wa0001', 'wb0001', 'wc0001'];
+  check('stacks: the arrow goes through the members in order and wraps; Left goes back', ST.neighbour(members, 'wa0001', 1) === 'wb0001' && ST.neighbour(members, 'wc0001', 1) === 'wa0001' && ST.neighbour(members, 'wa0001', -1) === 'wc0001' && ST.neighbour(['wa0001'], 'wa0001', 1) === null && ST.neighbour(members, 'wnope1', 1) === null, '');
+  check('stacks: select() shows a member and hides the others; showing the shown one is no change', ST.select(stored, 'wtd0001').filter((w) => w.top).map((w) => w.id).join() === 'wtd0001' && ST.select(stored, 'wwx0001') === null && ST.select(stored, 'wtd0002') === null, '');
+
+  // The same-shape rule.
+  const flat = cleanList([wx('wwx0001', { x: 0, y: 0, w: 4, h: 3 }), todo('wtd0001', { x: 8, y: 0, w: 4, h: 3 }), todo('wtd0002', { x: 0, y: 4, w: 6, h: 5 }), it('wsysfavs', 'sys-favorites', 6, 10, 4, 3)]);
+  check('stacks: only same-size widgets stack (never a system card, never itself)', ST.canStack(flat, 'wwx0001', 'wtd0001') && !ST.canStack(flat, 'wwx0001', 'wtd0002') && !ST.canStack(flat, 'wwx0001', 'wsysfavs') && !ST.canStack(flat, 'wwx0001', 'wwx0001') && ST.join(flat, 'wwx0001', 'wtd0002') === null, '');
+  const joined = ST.join(flat, 'wwx0001', 'wtd0001');
+  check('stacks: join() puts the dropped one on the target\'s cells, shown, in a new stack', row(byId(joined, 'wwx0001')) === `wwx0001 8 0 4 3 ${byId(joined, 'wtd0001').stack} T` && ST.STACK_RE.test(byId(joined, 'wtd0001').stack) && !byId(joined, 'wtd0001').top, rows(joined));
+  check('stacks: a widget already in the stack can\'t be stacked onto it again', !ST.canStack(joined, 'wtd0001', 'wwx0001'), '');
+
+  // Persistence, through the browser's page actions.
+  let settings = { homeWidgets: cleanList([wx('wwx0001', { x: 0, y: 0, w: 4, h: 3 }), todo('wtd0001', { x: 8, y: 0, w: 4, h: 3 }), { id: 'wmuse01', type: 'muse', x: 0, y: 4, w: 3, h: 3 }, wx('wwx0003', { x: 4, y: 8, w: 3, h: 3 }), todo('wtd0002', { x: 0, y: 12, w: 6, h: 5 })]) };
+  const w = createWidgets({ readSettings: () => settings, writeSettings: (s) => { settings = JSON.parse(JSON.stringify(s)); }, fetch: async () => { throw new Error('offline'); }, getSecret: () => null, setSecret: () => {}, endpoints: () => ({}), onUpdate: () => {} });
+  const parse = (q) => w.actionFrom(`file:///newtab.html?${q}#x`);
+  const now = () => settings.homeWidgets;
+  check('stacks: the page actions parse (and a stack needs another widget to go onto)', parse('widget=wwx0001&do=cycle').do === 'cycle' && parse('widget=wwx0001&do=stack&onto=wtd0001').onto === 'wtd0001' && parse('widget=wwx0001&do=stack').invalid && parse('widget=wwx0001&do=stack&onto=wwx0001').invalid && parse('widget=wwx0001&do=stack&onto=../x').invalid && parse('widget=wwx0001&do=unstack').do === 'unstack', '');
+  check('stacks: stacking different sizes is refused and changes nothing', (await w.act(parse('widget=wwx0001&do=stack&onto=wtd0002'))) === false && now().every((x) => !x.stack), '');
+  await w.act(parse('widget=wwx0001&do=stack&onto=wtd0001'));
+  const sid = byId(now(), 'wtd0001').stack;
+  check('stacks: a drop is stored: both on the target\'s cells, the dropped one shown', sid && byId(now(), 'wwx0001').stack === sid && byId(now(), 'wwx0001').top === true && row(byId(now(), 'wwx0001')).startsWith('wwx0001 8 0 4 3'), rows(now()));
+  const quiet = console.error;
+  console.error = () => {}; // forPage() starts background fetches, which fail offline
+  try {
+    const page = w.forPage();
+    check('stacks: the page gets every member, with the stack\'s order and which is shown', JSON.stringify(byId(page, 'wtd0001').stack) === JSON.stringify(ST.membersOf(now(), sid)) && byId(page, 'wwx0001').top === true && byId(page, 'wtd0001').top === false && byId(page, 'wtd0002').stack === undefined, JSON.stringify(page.map((p) => [p.id, p.stack, p.top])));
+    await new Promise((r) => setTimeout(r, 20));
+  } finally {
+    console.error = quiet;
+  }
+  await w.act(parse('widget=wtd0001&do=cycle'));
+  check('stacks: the arrow\'s choice is stored (every new tab shows it)', byId(now(), 'wtd0001').top === true && !byId(now(), 'wwx0001').top, rows(now()));
+  check('stacks: cycling to the one already shown is no change', (await w.act(parse('widget=wtd0001&do=cycle'))) === false, '');
+  await w.act(parse('widget=wtd0001&do=layout&l=wtd0001:6,20,4,3'));
+  check('stacks: moving the shown card moves the whole stack', row(byId(now(), 'wwx0001')) === `wwx0001 6 20 4 3 ${sid} ` && noOverlap(now().filter((x) => !ST.isHidden(x))), rows(now()));
+  await w.act(parse('widget=wtd0001&do=layout&l=wtd0001:6,20,5,4'));
+  check('stacks: resizing the shown card resizes every member (they stay the same size)', byId(now(), 'wwx0001').w === 5 && byId(now(), 'wwx0001').h === 4 && byId(now(), 'wwx0001').stack === sid, rows(now()));
+  // A 3x3 stack with a Muse card (at least 3x3): made 2x2, the Muse card can't follow and leaves.
+  await w.act(parse('widget=wwx0003&do=stack&onto=wmuse01'));
+  const msid = byId(now(), 'wmuse01').stack;
+  check('stacks: a Muse card and a weather card of the same size stack', msid && byId(now(), 'wwx0003').stack === msid, rows(now()));
+  const at = byId(now(), 'wwx0003');
+  await w.act(parse(`widget=wwx0003&do=layout&l=wwx0003:${at.x},${at.y},2,2`));
+  check('stacks: a member whose kind can\'t take the new size leaves the stack, keeps its size, overlaps nothing', !byId(now(), 'wmuse01').stack && !byId(now(), 'wwx0003').stack && byId(now(), 'wmuse01').w === 3 && byId(now(), 'wwx0003').w === 2 && noOverlap(now().filter((x) => !ST.isHidden(x))), rows(now()));
+  await w.act(parse('widget=wwx0003&do=stack&onto=wtd0001'));
+  check('stacks: stacking is refused once the sizes differ', !byId(now(), 'wwx0003').stack, rows(now()));
+  // A third member, unstacking and removing.
+  settings.homeWidgets = cleanList([...now(), wx('wwx0004', { x: 0, y: 30, w: 5, h: 4 })]);
+  await w.act(parse('widget=wwx0004&do=stack&onto=wtd0001'));
+  check('stacks: a third member joins the same stack, shown', ST.membersOf(now(), sid).length === 3 && byId(now(), 'wwx0004').top === true, rows(now()));
+  await w.act(parse('widget=wwx0004&do=unstack'));
+  check('stacks: "Remove from stack" makes it its own place again (same size, a free spot); the next member is shown', !byId(now(), 'wwx0004').stack && byId(now(), 'wwx0004').w === 5 && ST.membersOf(now(), sid).length === 2 && now().filter((x) => x.stack === sid && x.top).length === 1 && noOverlap(now().filter((x) => !ST.isHidden(x))), rows(now()));
+  const shown = now().find((x) => x.stack === sid && x.top).id;
+  const other = now().find((x) => x.stack === sid && !x.top).id;
+  await w.act(parse(`widget=${shown}&do=remove`));
+  check('stacks: removing the shown member leaves the other, a plain widget again (a stack of one is no stack)', !byId(now(), shown) && byId(now(), other) && now().every((x) => !x.stack) && noOverlap(now()), rows(now()));
+}
