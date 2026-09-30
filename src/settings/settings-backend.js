@@ -10,6 +10,7 @@ const { pathToFileURL } = require('url');
 const { registrableDomain } = require('../browser/tab-groups');
 const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
+const { requestedHints, withHints } = require('../browser/chrome-identity');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -361,12 +362,23 @@ function create(deps) {
   const originOf = (url) => { try { return new URL(url).origin; } catch { return ''; } };
   const wantsColorHint = (url) => hintOrigins.has(originOf(url)) || /^https:\/\/([a-z0-9-]+\.)*google\.[a-z.]+$/i.test(originOf(url));
   // Called with every response's headers (from the ad blocker's onHeadersReceived wrapper in main.js).
+  const uaHintOrigins = new Map(); // origin -> the user-agent hints (Sec-CH-UA-Arch…) its responses asked for
   function noteResponseHeaders(details) {
     for (const [name, values] of Object.entries(details.responseHeaders || {})) {
       if (!/^(accept-ch|critical-ch)$/i.test(name)) continue;
-      if (![].concat(values).join(',').toLowerCase().includes('sec-ch-prefers-color-scheme')) continue;
-      hintOrigins.add(originOf(details.url));
-      if (hintOrigins.size > 1000) hintOrigins.delete(hintOrigins.values().next().value); // oldest first
+      const value = [].concat(values).join(',');
+      const origin = originOf(details.url);
+      if (value.toLowerCase().includes('sec-ch-prefers-color-scheme')) {
+        hintOrigins.add(origin);
+        if (hintOrigins.size > 1000) hintOrigins.delete(hintOrigins.values().next().value); // oldest first
+      }
+      // Electron keeps no client-hints store, so what Chrome would now send to this origin (Google asks for the
+      // full version list, platform version, architecture…) is remembered here and added by setupHeaders.
+      const asked = deps.chromeHighEntropy ? requestedHints(value) : [];
+      if (asked.length) {
+        uaHintOrigins.set(origin, [...new Set([...(uaHintOrigins.get(origin) || []), ...asked])]);
+        if (uaHintOrigins.size > 1000) uaHintOrigins.delete(uaHintOrigins.keys().next().value);
+      }
     }
   }
   // Chrome sends client hints only to secure origins: https, and http on localhost.
@@ -389,10 +401,11 @@ function create(deps) {
   function setupHeaders(target = ses()) {
     target.webRequest.onBeforeSendHeaders((details, callback) => {
       const p = hotPrefs();
-      const headers = details.requestHeaders;
+      let headers = details.requestHeaders;
       if (deps.chromeHintHeaders && sendsClientHints(details.url)) {
-        for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];
-        Object.assign(headers, deps.chromeHintHeaders);
+        // Every Sec-CH-UA* hint is ours (Chromium's own list names no "Google Chrome"), first in the list as in Chrome.
+        const asked = deps.chromeHighEntropy && uaHintOrigins.get(originOf(details.url));
+        headers = withHints(headers, asked ? { ...deps.chromeHintHeaders, ...deps.chromeHighEntropy(asked) } : deps.chromeHintHeaders);
       }
       if (p.sendDoNotTrack) headers.DNT = '1';
       if (p.sendGpc) headers['Sec-GPC'] = '1';
@@ -508,6 +521,7 @@ function create(deps) {
       ...(p.minimumFontSize ? { minimumFontSize: p.minimumFontSize } : {}),
       spellcheck: p.spellcheck,
       plugins: true, // Widevine CDM registers as a Pepper plugin; needed for DRM playback (castlabs ECS)
+      disableBlinkFeatures: 'AutomationControlled', // navigator.webdriver stays false in every renderer, whatever the process-wide switch did (ai-agents.js prepareAutomation)
       ...(privileged ? { preload: SETTINGS_PRELOAD } : {}),
     };
   }

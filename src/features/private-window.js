@@ -171,7 +171,7 @@ function createPrivateWindows(deps) {
   // webContents: a page that already exists (a window.open), adopted as this tab.
   function openTab(rec, url, { background = false, webContents = null } = {}) {
     if (!alive(rec)) return null;
-    const view = webContents ? new WebContentsView({ webContents }) : new WebContentsView({ webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    const view = webContents ? new WebContentsView({ webContents }) : new WebContentsView({ webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, disableBlinkFeatures: 'AutomationControlled' } });
     const tab = { id: nextId++, view };
     rec.tabs.push(tab);
     rec.win.contentView.addChildView(view);
