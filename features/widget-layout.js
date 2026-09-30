@@ -436,7 +436,7 @@ const spanPx = (m, span) => span * m.cw + (span - 1) * GAP;
 function centreSpan(m, boxWidth) {
   if (m.cols === 1) return 1;
   let s = 4;
-  while (s < 10 && (spanPx(m, s) < MIN_CENTRE || spanPx(m, s) < (Number.isFinite(boxWidth) ? boxWidth : 0) - 0.5)) s += 2;
+  while (s < 10 && (spanPx(m, s) < MIN_CENTRE || spanPx(m, s) < (Number.isFinite(boxWidth) ? boxWidth : 0) - 1)) s += 2; // a pixel of rounding (639.3 px for 640) never costs two columns
   return s;
 }
 // The centre column (page px: `bottom` of its lowest block) -> one clean rectangle of cells, centred, whole

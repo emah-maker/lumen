@@ -31,7 +31,15 @@
       -webkit-font-smoothing: antialiased; letter-spacing: -0.005em;
     }
     ::selection { background: var(--ring); }
-    main { --clock-size: 88px; --search-w: 640px; width: min(var(--search-w), 88vw); margin: 0 auto; padding: clamp(40px, 12vh, 132px) 0 48px; }
+    /* A fixed top padding (not a share of the window's height): the centre column starts at the same place in any
+       window, so the cards below it keep theirs when the window is resized. */
+    main { --clock-size: 88px; --search-w: 640px; width: min(var(--search-w), 88vw); margin: 0 auto; padding: 88px 0 48px; }
+    /* The header keeps room for its tallest look (the biggest clock, the tallest style, date and greeting shown:
+       newtab-system.js measures it as --header-reserve), with the clock sitting at its bottom, next to the search
+       box. So a bigger clock, another style, or the date and greeting turned off or on never moves the search box,
+       the sections, or any card on the page; a hidden header keeps its room, invisibly. */
+    main > header { display: flex; flex-direction: column; justify-content: flex-end; min-height: var(--header-reserve, 0px); }
+    main > header[hidden] { display: flex !important; visibility: hidden; }
 
     /* [look] Backgrounds (Settings → Appearance → New tab page). On anything but Plain, text turns
        light and the cards become frosted glass over the picture or gradient. */

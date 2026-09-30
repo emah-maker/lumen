@@ -92,7 +92,10 @@
        the limit (cleared by the next size that fits); the cards in the way are outlined for a moment. */
     .w-sz-grip.w-sz-blocked { animation: w-sz-nudge 280ms ease-out; background: color-mix(in srgb, var(--accent) 45%, #d70015); }
     @keyframes w-sz-nudge { 30% { translate: 3px 0; } 60% { translate: -2px 0; } }
-    .w-card.w-blocking { outline: 2px dashed color-mix(in srgb, #d70015 65%, transparent); outline-offset: 4px; transition: outline-color 400ms ease-out; }
+    body .w-card.w-blocking, body.w-editing .w-card.w-blocking { outline: 2px dashed color-mix(in srgb, #d70015 70%, transparent) !important; outline-offset: 4px !important; }
+    .w-sz-note { position: absolute; z-index: 3; transform: translateX(-50%); max-width: 260px; padding: 6px 10px; border-radius: 10px; background: var(--card); color: var(--text);
+      box-shadow: 0 0 0 0.5px var(--border), 0 8px 24px -8px rgba(0, 0, 0, 0.35); font: 500 12px/1.35 system-ui, sans-serif; text-align: center; opacity: 0; pointer-events: none; transition: opacity 160ms ease-out; }
+    .w-sz-note.show { opacity: 1; }
     @media (prefers-reduced-motion: reduce) { .w-sz-grip.w-sz-blocked { animation: none; } }
     body.calm .w-sz-grip.w-sz-blocked { animation: none; }
     .w-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -420,9 +423,25 @@
     return lo;
   }
   let blockedSaid = 0;
-  function blocked(grip) {
+  // A small note beside the grip, for everyone (the live region is for screen readers).
+  const note = el('div', 'w-sz-note');
+  note.setAttribute('aria-hidden', 'true');
+  sizers.append(note);
+  let noteTimer = 0;
+  function blocked(grip, key) {
     if (grip && !grip.classList.contains('w-sz-blocked')) { grip.classList.add('w-sz-blocked'); grid()?.flashBlockers?.(); }
-    if (Date.now() - blockedSaid > 1500) { blockedSaid = Date.now(); say(T('newtab.edit.noRoom')); }
+    const now = key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(SZ().get().clock) }) : T('newtab.edit.search.sized', { width: SZ().get().search });
+    const text = `${T('newtab.edit.noRoom')} ${now}.`;
+    if (Date.now() - blockedSaid > 1500) { blockedSaid = Date.now(); say(text); } // one message: why it stopped, and where
+    if (grip) {
+      const r = grip.getBoundingClientRect();
+      note.textContent = T('newtab.edit.noRoom');
+      note.style.left = `${Math.round(r.left + r.width / 2 + scrollX)}px`;
+      note.style.top = `${Math.round(r.bottom + 10 + scrollY)}px`;
+      note.classList.add('show');
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => note.classList.remove('show'), 2600);
+    }
   }
   const unblock = (grip) => grip?.classList.remove('w-sz-blocked');
   // A wanted size -> the size it gets: itself, or (growing into a card) the largest that fits. Previewed.
@@ -430,7 +449,7 @@
     previewLook(key, want);
     if (!bigger(key, want, from) || fits()) { unblock(grip); return want; }
     const got = largestFit(key, from, want);
-    blocked(grip);
+    blocked(grip, key);
     return got;
   }
   // Set a clock step or search width now, save it (do=look) and, when `record`, put it on the Undo stack.
@@ -502,19 +521,23 @@
     e.preventDefault();
     e.stopPropagation();
     const next = WS.CLOCK_STEPS[Math.max(0, Math.min(WS.CLOCK_STEPS.length - 1, to))];
-    if (next === cur || !setLook('clock', next, { grip: gripClock })) say(T('newtab.edit.clock.sized', { size: clockName(SZ().get().clock) }));
+    if (next === cur) say(T('newtab.edit.clock.sized', { size: clockName(cur) }));
+    else setLook('clock', next, { grip: gripClock });
   });
   for (const grip of [gripL, gripR]) {
     grip.addEventListener('keydown', (e) => {
       if (!plainKey(e)) return;
-      const cur = SZ().get().search;
+      // The default width is drawn to fill the column's columns: step from what is drawn, not the stored 640.
+      const stored = SZ().get().search;
+      const cur = stored === WS.SEARCH_DEFAULT ? WS.cleanSearchWidth(Math.round((searchNode()?.getBoundingClientRect().width || stored) / WS.SEARCH_STEP) * WS.SEARCH_STEP) : stored;
       const step = 2 * WS.SEARCH_STEP;
       const to = { ArrowRight: cur + step, ArrowUp: cur + step, ArrowLeft: cur - step, ArrowDown: cur - step, PageUp: cur + 4 * step, PageDown: cur - 4 * step, Home: WS.SEARCH_MIN, End: WS.SEARCH_MAX }[e.key];
       if (to === undefined) return;
       e.preventDefault();
       e.stopPropagation();
       const next = WS.cleanSearchWidth(to);
-      if (next === cur || !setLook('search', next, { grip })) say(T('newtab.edit.search.sized', { width: SZ().get().search }));
+      if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
+      else setLook('search', next, { grip, from: cur });
     });
   }
   // Undo / Reset: put a clock size or width back and save it.

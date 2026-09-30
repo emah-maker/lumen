@@ -261,6 +261,7 @@ function render() {
     privacy: part(look.sections.privacy && blocked !== null, 'Privacy', () => privacy(blocked)),
   }, { header: look.sections.header }, widgets);
   window.renderWidgets?.(widgets); // [widgets] newtab-widgets.js
+  window.newtabSize?.fit?.(); // with everything in place: the header's reserved room, and a search width that fits
 }
 
 // "/" jumps to the search field, like many sites; typing elsewhere is left alone.
