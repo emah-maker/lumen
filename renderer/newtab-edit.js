@@ -290,14 +290,13 @@
   }
   function undo() {
     let entry = history.pop();
-    while (entry && entry.kind === 'remove' && Date.now() - entry.at > REMOVE_UNDO_MS) entry = history.pop(); // the browser let go of it
+    // Passed over: a removal the browser let go of, and a size changed again since (in Settings, another tab).
+    const stale = (e) => (e.kind === 'remove' && Date.now() - e.at > REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
+    while (entry && stale(entry)) entry = history.pop();
     hideToast();
     if (!entry) { say(T('newtab.edit.nothing')); update(); return false; }
     let ok = true;
-    if (entry.kind === 'look' && SZ()?.get()[entry.key] !== entry.after) {
-      ok = false; // changed again since (Settings, another tab): the newer size stays
-      say(T('newtab.edit.nothing'));
-    } else if (entry.kind === 'look') {
+    if (entry.kind === 'look') {
       ok = restoreLook({ [entry.key]: entry.before });
       say(T('newtab.edit.undone', { what: T('newtab.edit.what.layout', { title: entry.title }) }));
     } else if (entry.kind === 'remove') {
@@ -482,6 +481,11 @@
       note.style.left = `${Math.round(r.left + r.width / 2 + scrollX)}px`;
       note.style.top = grip === gripClock ? `${Math.round(r.top - 10 + scrollY)}px` : `${Math.round(r.bottom + 10 + scrollY)}px`;
       note.classList.toggle('above', grip === gripClock);
+      if (grip === gripClock && r.top - 10 - note.offsetHeight < 8) { // no room above: beside the grip
+        note.classList.remove('above');
+        note.style.left = `${Math.round(r.right + 12 + note.offsetWidth / 2 + scrollX)}px`;
+        note.style.top = `${Math.round(r.top + scrollY)}px`;
+      }
       note.classList.add('show');
       clearTimeout(noteTimer);
       noteTimer = setTimeout(() => note.classList.remove('show'), 2600);
@@ -509,7 +513,7 @@
     if (value === stored || (record && !reset && same(value, base))) {
       SZ().restore(); // nothing changes: drawn as before, and said
       placeSoon();
-      if (record) { const now = drawnOf(key); say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(now) }) : T('newtab.edit.search.sized', { width: now })); }
+      if (record && !grip?.classList.contains('w-sz-blocked')) { const now = drawnOf(key); say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(now) }) : T('newtab.edit.search.sized', { width: now })); } // (a blocked one has said why)
       return false;
     }
     SZ().take(key, value); // saved here now, then in the browser
@@ -556,11 +560,14 @@
       placeSoon();
     };
     const move = (ev) => { pending = ev; if (!frame) frame = requestAnimationFrame(step); };
+    const onResize = () => { if (!latest) return; latest.value = fitted(latest.key, startDrawn[latest.key], latest.wanted, grip); latest.limit = null; placeSoon(); };
+    addEventListener('resize', onResize);
     let done = false;
     const finish = () => {
       done = true;
       if (frame) { cancelAnimationFrame(frame); frame = 0; step(); }
       grip.removeEventListener('lostpointercapture', lost);
+      removeEventListener('resize', onResize);
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', end);
       grip.removeEventListener('pointercancel', end);
@@ -638,6 +645,7 @@
       e.preventDefault();
       e.stopPropagation();
       let next = WS.cleanSearchWidth(Math.round(to / WS.SEARCH_STEP) * WS.SEARCH_STEP);
+      if (next > cap) next = Math.floor(cap / WS.SEARCH_STEP) * WS.SEARCH_STEP; // rounded down, never past what this window draws
       if (next === WS.SEARCH_DEFAULT) next += to > cur ? WS.SEARCH_STEP : -WS.SEARCH_STEP; // 640 is kept for "Automatic"
       if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
       else setLook('search', next, { grip, from: cur });

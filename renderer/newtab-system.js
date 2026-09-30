@@ -259,11 +259,19 @@
   }
   const savedPx = () => (size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search);
   let lastFit = null; // { key, clock, search }
+  // The clock's digits as drawn now (seconds, 12/24-hour and the time itself change it; it can be wider than the column).
+  const digitsRange = document.createRange();
+  function clockDigitsWidth() {
+    const c = document.getElementById('clock');
+    if (!c || c.hidden || !c.getClientRects().length) return 0;
+    digitsRange.selectNodeContents(c);
+    return Math.ceil(digitsRange.getBoundingClientRect().width);
+  }
   function fitToCards() {
     if (size.hold) return; // a resize is being dragged: what it draws stays as it is
     const grid = window.widgetGrid;
     const b = document.body.dataset;
-    const key = [document.documentElement.clientWidth, window.innerHeight, size.clock, size.search, grid?.signature?.() || '', headerEl?.hidden ? 1 : 0, window.newtabSystem?.dockedCount?.() ?? '', b.clockStyle, b.clockCard, b.greetingFont, document.getElementById('greeting')?.textContent || ''].join('|');
+    const key = [document.documentElement.clientWidth, window.innerHeight, size.clock, size.search, grid?.signature?.() || '', headerEl?.hidden ? 1 : 0, window.newtabSystem?.dockedCount?.() ?? '', document.getElementById('sections')?.offsetHeight ?? '', clockDigitsWidth(), b.clockStyle, b.clockCard, b.greetingFont, document.getElementById('greeting')?.textContent || ''].join('|');
     if (lastFit?.key === key) { size.viewClock = lastFit.clock; size.viewSearch = lastFit.search; paint(); return; }
     size.viewClock = null;
     size.viewSearch = null;
