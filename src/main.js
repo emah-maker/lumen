@@ -1717,8 +1717,16 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
     // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
-  if (history?.entries?.length) {
-    wc.navigationHistory.restore({ entries: history.entries, index: history.index }).catch(() => wc.loadURL(url).catch(() => {}));
+  // The saved back/forward list is used only when its current entry is the page `url` names (tabSleep.wakePlan);
+  // otherwise, or if the restore throws or leaves the view blank, the plain address loads.
+  const plan = history?.entries?.length ? tabSleep.wakePlan({ sleepUrl: url, history, isError: isErrorPage }) : null;
+  if (plan?.restore) {
+    wc.navigationHistory.restore(plan.restore).catch(() => { if (!wc.isDestroyed()) wc.loadURL(url).catch(() => {}); });
+    setTimeout(() => { // a restore that never committed anything (stuck at about:blank): load the address
+      if (wc.isDestroyed() || wc.isLoading()) return;
+      const now = wc.getURL();
+      if (!now || now === 'about:blank') wc.loadURL(url).catch(() => {});
+    }, 10e3).unref?.();
   } else if (!loaded) { // an adopted page is already on its way to its address
     wc.loadURL(url).catch(() => {});
   }
@@ -1731,6 +1739,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
 // its title/url/favicon/group from the snapshot sleepTab() takes below. switchTab() wakes it back
 // up through wireView(), the same path a freshly opened tab takes, reloading the same URL (restoring
 // scroll position isn't attempted). See canSleep() for every case this leaves alone.
+const tabSleep = require('./features/tab-sleep'); // the pure decisions: may it sleep, how it wakes
 const SLEEP_AFTER_MS = 20 * 60 * 1000;
 const SLEEP_CHECK_MS = 60 * 1000;
 // When the OS is short of memory, background tabs sleep after 2 minutes instead, oldest first. On
@@ -1782,8 +1791,13 @@ function wakeTab(tab) {
   });
   tab.view = view;
   tab.sleeping = false;
+  // Real bounds before the page starts loading: a 0x0 view (the default) makes a heavy single-page site
+  // measure a zero-size viewport; switchTab's layout() came only after, and a tab woken while not in
+  // front (Reload, the AI, a drag) would stay 0x0 until first shown.
+  try { view.setBounds(tabSleep.wakeBounds(contentBounds, { fullscreen: tab.fullscreen, full: tab.fullscreen ? (() => { const [width, height] = win.getContentSize(); return { width, height }; })() : null })); } catch { /* laid out by layout() */ }
   win.contentView.addChildView(view);
   view.setVisible(false);
+  raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
   wireView(tab, tab.sleepUrl || newTabUrl(), history);
@@ -1812,12 +1826,15 @@ function addRestoredTab(url, title, favicon = null) {
 // A page may have text typed into a form; sleeping can't ask "Leave site?" the way a real close does
 // (will-prevent-unload, above, is deliberately bypassed for a silent background sleep), so this
 // substitutes for it. Any doubt (a throw, a page that blocks the read) counts as "yes, has input".
+// Also: a reply still streaming in (an AI chat site: the page keeps changing with no load in progress, or
+// shows a Stop button), a playing media element, a chosen upload (tabSleep.pageBusyScript). Bounded to 5 s.
 async function hasUnsavedInput(wc) {
   try {
-    return await wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `(() => {
-      const dirty = (el) => (el.matches('input,textarea') ? el.value !== (el.defaultValue ?? '') : el.isContentEditable && el.textContent.trim() !== '');
-      return [...document.querySelectorAll('input,textarea,[contenteditable=""],[contenteditable=true]')].some(dirty);
-    })()` }]);
+    const answer = await Promise.race([
+      wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: tabSleep.pageBusyScript(1200) }]),
+      new Promise((resolve) => setTimeout(resolve, 5000)), // a page that won't answer: undefined, which counts as busy
+    ]);
+    return tabSleep.pageBusy(answer);
   } catch {
     return true;
   }
@@ -1827,9 +1844,12 @@ async function hasUnsavedInput(wc) {
 // away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with
 // typed form input. On any doubt this returns false and the tab is left alone.
 async function canSleep(tab) {
-  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing || tab.openPopups > 0 || agent.usingTab(tab.id)) return false;
-  const wc = tab.view.webContents;
-  if (!isWebUrl(realUrl(wc)) || wc.isLoading() || wc.isCurrentlyAudible()) return false;
+  const wc = alive(tab) ? tab.view.webContents : null;
+  if (tabSleep.keepReason({
+    alive: Boolean(wc), sleeping: tab?.sleeping, active: tab?.id === activeId, settings: tab?.settings, closing: tab?.closing, unloadAsked: tab?.unloadAsked,
+    openPopups: tab?.openPopups, agentUsing: wc ? agent.usingTab(tab.id) : false, aiLock: tab?.aiLock, webPage: wc ? isWebUrl(realUrl(wc)) : false,
+    loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab?.fullscreen, devTools: wc?.isDevToolsOpened(),
+  })) return false;
   return !(await hasUnsavedInput(wc));
 }
 
@@ -1840,9 +1860,9 @@ async function sweepSleep() {
   for (const tab of [...tabs].sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0))) {
     if (!tab.lastActiveAt || tab.lastActiveAt > cutoff) continue;
     if (!(await canSleep(tab))) continue;
-    // hasUnsavedInput (inside canSleep) is an async round trip to the page: re-check the fast,
-    // synchronous conditions in case the user switched to (or closed) this exact tab meanwhile.
-    if (!alive(tab) || tab.sleeping || tab.id === activeId) continue;
+    // hasUnsavedInput (inside canSleep) is an async round trip to the page (over a second): re-check the fast,
+    // synchronous conditions in case the user switched to (or closed) this exact tab, or it started playing, meanwhile.
+    if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.view.webContents.isCurrentlyAudible() || tab.view.webContents.isLoading()) continue;
     sleepTab(tab);
     sendTabs();
   }
