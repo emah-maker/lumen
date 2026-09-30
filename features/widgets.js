@@ -1098,6 +1098,7 @@ function createWidgets(deps) {
   // the encrypted secret (a JSON blob, see features/oauth.js).
   const sessions = new Map();
   // Lumen's built-in Google client or null (tests hand in their own; see features/google-client.js).
+  const tt = (key, english) => { const v = deps.t?.(key); return v && v !== key ? v : english; }; // UI strings (locales/)
   const googleClient = () => (deps.googleClient ? deps.googleClient() : GC.builtinClient());
   const tokenUrl = () => deps.endpoints?.().googleToken || ENDPOINTS.googleToken;
   function sessionFor(name) {
@@ -1452,11 +1453,12 @@ function createWidgets(deps) {
     if (deps.canKeepSecrets && !deps.canKeepSecrets()) throw new Error('This computer has no secure place for Lumen to keep the sign-in (the system keyring is off), so Gmail can’t be connected.');
     const builtin = googleClient()?.clientId === clientId;
     const authBase = deps.endpoints?.().googleAuth || ENDPOINTS.googleAuth;
+    if (signIn) signIn.userCancelled = true; // (replaced: no need to come back for it)
     signIn?.cancel(); // one sign-in at a time
     const flow = await OA.beginSignIn({
       authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: GV.SCOPE, extra: GV.AUTH_EXTRA, post: formPost, now, timeoutMs: deps.signInMs,
       openExternal: (url) => { if (!url.startsWith(`${authBase}?`)) throw new Error('Refusing to open that address.'); return deps.openExternal(url); },
-      messages: { title: 'Lumen', done: 'You can close this tab and go back to Lumen, which finishes connecting Gmail.', denied: 'Gmail was not connected. You can close this tab.' },
+      messages: { title: 'Lumen', done: tt('gmail.signin.done', 'You can close this tab and go back to Lumen, which finishes connecting Gmail.'), denied: tt('gmail.signin.denied', 'Gmail was not connected. You can close this tab.') },
     });
     signIn = flow;
     try {
@@ -1477,16 +1479,17 @@ function createWidgets(deps) {
         if (res.ok) email = String((await res.json())?.emailAddress || '').slice(0, 320);
       } catch { /* shown as "a Google account" */ }
       deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh, email }));
-      // Signed in again: the grant it replaces is given back to Google, not left behind.
-      if (old?.refresh && old.refresh !== t.refresh) revokeGoogle(old);
+      // Signed in again as someone else (or with another client): the grant it replaces is given back to Google. The
+      // same account and client share one grant, so revoking its old token would end the new sign-in too.
+      if (old?.refresh && old.refresh !== t.refresh && (old.clientId !== clientId || (old.email && email && old.email.toLowerCase() !== email.toLowerCase()))) revokeGoogle(old);
       staleGmail();
-      deps.focusApp?.(); // back from the browser's consent page to Lumen
       return { message: email ? `Gmail is connected as ${email}.` : 'Gmail is connected.' };
     } finally {
       if (signIn === flow) signIn = null;
+      if (!flow.userCancelled) deps.focusApp?.(); // back from the browser's consent page to Lumen, however it went
     }
   }
-  const gmailCancel = () => { signIn?.cancel(); return true; };
+  const gmailCancel = () => { if (signIn) signIn.userCancelled = true; signIn?.cancel(); return true; };
   let pageSignIns = 0;
   // The card's "Sign in with Google" (do=signin): the same sign-in as Settings', with the widget's own
   // Client ID if it has one, else the built-in client. Only for a Gmail card that is not connected and
@@ -1526,7 +1529,7 @@ function createWidgets(deps) {
   async function gmailDisconnect() {
     const creds = OA.decodeCreds(deps.getSecret('gmail'));
     signIn?.cancel();
-    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '' }));
+    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '', email: '' }));
     staleGmail();
     lastRevoke = await revokeGoogle(creds);
     return true;

@@ -136,7 +136,13 @@ function createPrivateWindows(deps) {
           deps.popupFailPage?.(wc);
           deps.googleRefusedGuard?.(wc);
           // The title bar says which site this is (a popup has no address bar), private and with a lock when secure.
-          const retitle = () => { if (child.isDestroyed()) return; try { const u = new URL(wc.getURL()); child.setTitle(`${u.protocol === 'https:' ? '🔒 ' : ''}${u.host} — Private${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`); } catch { child.setTitle('Lumen (Private)'); } };
+          const retitle = () => {
+            if (child.isDestroyed()) return;
+            try {
+              const u = new URL(wc.getURL());
+              child.setTitle(u.host ? `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host} — Private${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}` : `${wc.getTitle() || 'Lumen'} — Private`); // (an error page has no host)
+            } catch { child.setTitle('Lumen (Private)'); }
+          };
           wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });
           wc.on('did-navigate', retitle);
           wc.on('did-navigate-in-page', retitle);

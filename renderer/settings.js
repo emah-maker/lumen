@@ -164,6 +164,8 @@ class Slot {
 }
 const visibleNow = (el) => el.offsetParent !== null; // on screen now (not in a hidden category or filtered out)
 
+let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
+let gmailWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
@@ -1040,7 +1042,17 @@ async function buildWidgets(card) {
       });
       draw();
       // A connection that changed elsewhere (Google ended it, the card signed in) shows here at once.
-      S.widgets.onChanged?.(async () => { if (!accountRow.isConnected) return; ws = await S.widgets.state(); status.textContent = ''; draw(); });
+      gmailWatch = async () => {
+        if (!accountRow.isConnected || connect.disabled || armed) return; // a sign-in or a confirm is under way
+        const next = await S.widgets.state();
+        const was = `${Boolean(ws.connections?.gmail)}|${ws.gmailAccount || ''}`;
+        const now = `${Boolean(next.connections?.gmail)}|${next.gmailAccount || ''}`;
+        ws = next;
+        if (was === now) return; // nothing about this account changed: its message stays
+        status.textContent = '';
+        draw();
+      };
+      if (!gmailWatchOn) { gmailWatchOn = true; S.widgets.onChanged?.(() => gmailWatch?.()); } // one listener per page, whatever editor is open
       fields.replaceChildren(
         section(tr('settings.gmail.account', 'Account'), [accountRow]),
         section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]),

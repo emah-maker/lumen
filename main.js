@@ -1468,7 +1468,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
-  googleRefusedGuard(wc, () => withWindow(tab.rec, () => organizeNote(GOOGLE_REFUSED)));
+  googleRefusedGuard(wc, (text) => withWindow(tab.rec, () => organizeNote(`${t('google.refused.title')}. ${text}`)));
   // A crashed page (or one out of memory) was left blank with no way back. Show a "This page
   // crashed" page with Reload instead; the crashed page's own entry stays in history behind it.
   wc.on('render-process-gone', (_e, details) => {
@@ -2784,16 +2784,20 @@ const popupWindowOptions = () => ({
 });
 // Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
 // strip; for popups and private windows (no strip) a small dialog over the window.
-const GOOGLE_REFUSED = 'Google didn’t accept this sign-in. Try again in a moment; if a VPN or proxy is on, turn it off and try again. Keeping Lumen up to date helps too.';
+const googleRefusedText = (wc) => (identified.has(wc)
+  ? t('google.refused.tips')
+  : t('google.refused.debugger')); // Lumen couldn't present itself as Chrome here: another debugger holds the page
 function googleRefusedGuard(wc, notify) {
   let shown = 0;
-  wc.on('did-navigate', (_e, navUrl) => {
+  const check = (_e, navUrl) => {
     if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl)) || Date.now() - shown < 10000) return;
     shown = Date.now();
-    if (notify) { notify(); return; }
+    if (notify) { notify(googleRefusedText(wc)); return; }
     const win = BrowserWindow.fromWebContents(wc);
-    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: 'Google didn’t accept this sign-in', detail: GOOGLE_REFUSED, buttons: ['OK'] }).catch(() => {});
-  });
+    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc), buttons: ['OK'] }).catch(() => {});
+  };
+  wc.on('did-navigate', check);
+  wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads
 }
 // A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
 function popupFailPage(wc) {
@@ -4867,6 +4871,7 @@ const widgets = createWidgets({
       for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); // Settings shows it too (a sign-in Google ended)
     }, 60);
   },
+  t: (key) => t(key),
   focusApp: () => { const w = BrowserWindow.getFocusedWindow() || winRecs.values().next().value?.win; if (w && !w.isDestroyed()) { if (w.isMinimized()) w.restore(); w.show(); w.focus(); app.focus?.({ steal: true }); } },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {
