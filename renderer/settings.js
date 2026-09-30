@@ -595,7 +595,7 @@ async function buildHome(card) {
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
     select('newTabClockSize', 'Clock size', 'How big the clock is. It grows into the space above it, so the search box and your cards stay put; where cards leave no room, it is drawn a step smaller. In Edit layout you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
     ...clockStyle.clock, // [look]
-    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. Automatic fills the column. A wider bar is drawn only as wide as the cards beside it allow (the setting is kept for wider windows). In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => x - y).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
+    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. Automatic fills the column. A wider bar is drawn only as wide as the cards beside it allow (the setting is kept for wider windows). In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => (x === 640 ? -1 : y === 640 ? 1 : x - y)).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
     toggle('newTabHeader', 'Show the clock, date and greeting', 'Turn off to hide the whole top of the page: the clock, the date and the “Good evening” line.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
     ...clockStyle.greeting, // [look]

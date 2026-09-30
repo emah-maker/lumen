@@ -18,6 +18,25 @@ const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 module.exports = async function widgetEditUnits(check) {
   const it = (id, type, x, y, w, h, extra) => ({ id, type, x, y, w, h, ...extra });
   const enc = WL.encode;
+
+  // ---- fitting the centre column to the cards (WS.fitSizes): only what collides shrinks ----
+  {
+    const widths = WS.fitWidths(800, [760, 700]);
+    check('fit: nothing collides -> drawn as saved', JSON.stringify(WS.fitSizes({ clock: 'xl', search: 800, widths }, () => true)) === '{"clock":null,"search":null}');
+    // the clock is the culprit: a smaller clock fits at the saved width, which is kept
+    const clockOnly = WS.fitSizes({ clock: 'xl', search: 800, widths }, (c) => c === 'm' || c === 's');
+    check('fit: the clock collides -> only the clock shrinks', clockOnly.clock === 'm' && clockOnly.search === null, JSON.stringify(clockOnly));
+    // the width is the culprit: the widest that fits, found by binary search in few probes
+    let probes = 0;
+    const widthOnly = WS.fitSizes({ clock: 'l', search: 800, widths }, (_c, w) => { probes++; return w <= 744; });
+    check('fit: the width collides -> the widest width that fits, clock kept', widthOnly.clock === null && widthOnly.search === 744, JSON.stringify(widthOnly));
+    check('fit: binary search, not a scan', probes <= 12, `probes ${probes}`);
+    check('fit: a grid-line width is a candidate', WS.fitSizes({ clock: 'm', search: 800, widths }, (_c, w) => w <= 760).search === 760);
+    const both = WS.fitSizes({ clock: 'xl', search: 800, widths }, (c, w) => c === 's' && w <= 600);
+    check('fit: both collide -> both shrink', both.clock === 's' && both.search === 600, JSON.stringify(both));
+    check('fit: nothing helps -> drawn as saved (not our doing)', JSON.stringify(WS.fitSizes({ clock: 'l', search: 800, widths }, () => false)) === '{"clock":null,"search":null}');
+    check('fit: 640 (Automatic) is never a drawn width', !WS.fitWidths(700).includes(640) || WS.fitSizes({ clock: 's', search: 700, widths: WS.fitWidths(700) }, (_c, w) => w <= 640).search !== 640);
+  }
   const noOverlap = (items) => items.every((a, i) => items.every((b, j) => i === j || !WL.overlap(a, b)));
   const todo = (id, extra) => ({ id, type: 'todoist', ...extra });
 

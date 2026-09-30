@@ -229,8 +229,8 @@
   }
   // A new window size: the search box's place, and sizes that fit this window (a size drawn smaller comes back when
   // there is room again).
-  let resizeTimer = 0;
-  addEventListener('resize', () => { anchorSearch(); clearTimeout(resizeTimer); resizeTimer = setTimeout(() => fitToCards(), 120); });
+  // (The grid re-fits the sizes on each resize frame, before it lays the cards out: see newtab-widgets-grid relayout.)
+  addEventListener('resize', () => anchorSearch());
   // size.view: what is drawn right now, which may be smaller than the saved size when cards leave no room (fitToCards).
   function paint() {
     const clock = size.viewClock || size.clock;
@@ -242,37 +242,54 @@
   // A size set in Settings (or saved from a wider window) is drawn as big as the cards around the centre column allow
   // in this window, and no bigger, rather than pushing them: the clock steps down, the search bar narrows. Only what
   // is drawn changes: the saved size stays, and comes back where there is room for it.
+  // Cards whose saved places overlap the centre column even at its smallest (a narrow window): pushed whatever the
+  // clock and search bar do, so they never block a size.
+  function floorBlockers() {
+    const grid = window.widgetGrid;
+    if (!grid?.centreFits) return new Set();
+    const was = { c: size.viewClock, s: size.viewSearch };
+    size.viewClock = WS.CLOCK_STEPS[0];
+    size.viewSearch = WS.SEARCH_MIN;
+    paint();
+    grid.centreFits();
+    const ids = new Set(grid.blockers?.() || []);
+    size.viewClock = was.c;
+    size.viewSearch = was.s;
+    paint();
+    return ids;
+  }
+  const savedPx = () => (size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search);
   function fitToCards() {
-    const fits = () => window.widgetGrid?.centreFits?.() ?? true;
     size.viewClock = null;
     size.viewSearch = null;
     if (size.hold) return;
     paint();
-    if (fits()) return;
-    // The width first (the clock only takes the space above the search box, so it rarely collides): the largest of
-    // the saved width, the grid-line widths and 8 px steps below it that fits, Automatic included.
-    if (size.search !== WS.SEARCH_DEFAULT) {
-      const m = WL.metrics(document.documentElement.clientWidth);
-      const lines = m.cols === 1 ? [] : [4, 6, 8, 10].map((s) => Math.floor(WL.spanPx(m, s)));
-      const steps = [];
-      for (let w = size.search - WS.SEARCH_STEP; w >= WS.SEARCH_MIN; w -= WS.SEARCH_STEP) steps.push(w);
-      const candidates = [...new Set([...lines.filter((w) => w < size.search), ...steps])].filter((w) => w !== WS.SEARCH_DEFAULT).sort((a, b) => b - a);
-      for (const w of candidates) { size.viewSearch = w; paint(); if (fits()) break; }
-      if (!fits()) { size.viewSearch = WS.SEARCH_DEFAULT; paint(); } // Automatic: the column's own columns
-    }
-    // Then the clock, only if it (overflowing the space above the search box) is what still doesn't fit.
-    if (!fits()) {
-      const widthCap = size.viewSearch;
-      for (let i = WS.CLOCK_STEPS.indexOf(size.clock) - 1; i >= 0 && !fits(); i--) { size.viewClock = WS.CLOCK_STEPS[i]; paint(); }
-      if (!fits()) { size.viewClock = null; size.viewSearch = widthCap; paint(); } // not the clock's doing: leave it as chosen
-    }
+    const grid = window.widgetGrid;
+    if (!grid?.centreFits || grid.centreFits()) return;
+    const ignore = floorBlockers();
+    const from = savedPx();
+    const m = WL.metrics(document.documentElement.clientWidth);
+    const lines = m.cols === 1 ? [] : [4, 6, 8, 10].map((s) => Math.floor(WL.spanPx(m, s)));
+    const tryFits = (c, s) => {
+      size.viewClock = c === size.clock ? null : c;
+      size.viewSearch = s === from ? null : s;
+      paint();
+      return grid.centreFits(ignore);
+    };
+    const plan = WS.fitSizes({ clock: size.clock, search: from, widths: WS.fitWidths(from, lines) }, tryFits);
+    size.viewClock = plan.clock;
+    size.viewSearch = plan.search;
+    paint();
   }
   window.newtabSize = {
     apply(clock, search) {
       if (size.hold) return;
-      size.clock = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
-      size.search = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
-      paint();
+      const c = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
+      const s = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
+      if (c === size.clock && s === size.search) return; // the echo of a size just taken: already drawn
+      size.clock = c;
+      size.search = s;
+      fitToCards();
     },
     // After the page's sections and cards are in place (newtab.js render): the search box's height, then the sizes.
     fit() { anchorSearch(); fitToCards(); },
@@ -280,12 +297,19 @@
     drawnSearch: () => size.viewSearch || size.search,
     drawnClock: () => size.viewClock || size.clock,
     fitNow: () => fitToCards(), // the grid calls this once it has the cards, before drawing them
+    // A drag or key press shows a size: only what is drawn changes, never the saved size.
     preview(clock, search) {
-      // Only the size being changed is drawn as asked; the other keeps what it is drawn at now.
-      if (clock) { size.clock = WS.cleanClockSize(clock) || size.clock; size.viewClock = null; }
-      if (search) { size.search = WS.cleanSearchWidth(search) || size.search; size.viewSearch = null; }
+      if (clock) size.viewClock = WS.cleanClockSize(clock) || size.viewClock;
+      if (search) size.viewSearch = WS.cleanSearchWidth(search) || size.viewSearch;
       paint();
     },
+    restore: () => fitToCards(), // the saved sizes again, fitted (a cancelled drag, a size with no room)
+    take(key, value) { // a size chosen in Edit layout: saved here at once (the browser's echo then changes nothing)
+      if (key === 'clock') size.clock = WS.cleanClockSize(value) || size.clock;
+      else size.search = WS.cleanSearchWidth(value) || size.search;
+      fitToCards();
+    },
+    floor: () => floorBlockers(),
     hold(on) { size.hold = Boolean(on); },
     held: () => size.hold,
     get: () => ({ clock: size.clock, search: size.search }),

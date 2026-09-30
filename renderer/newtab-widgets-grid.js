@@ -34,6 +34,7 @@
   let resyncTimer = 0;
   const layoutHooks = [];
   let lastBlockers = []; // the cards that stopped the last centre-column resize (centreFits)
+  const blockTimers = new Map();
   const centreBottom = () => { const f = mainEl.querySelector('form'); return f.offsetTop + f.offsetHeight - mainMargin; };
   // Row 0 sits at a fixed place (the page margin), not wherever the centre column happens to end: the clock's size or
   // style, the greeting or the date being shown or hidden then change the centre column only, never the grid that
@@ -137,6 +138,8 @@
     scheduled = requestAnimationFrame(() => {
       scheduled = 0;
       if (drag || !items.length) return;
+      // A new window width: the column's sizes fitted to it first, so the cards are never drawn pushed meanwhile.
+      if (!window.newtabSize?.held?.()) window.newtabSize?.fitNow?.();
       measure();
       layoutNow();
     });
@@ -588,14 +591,14 @@
     // (Measured into copies: the grid's own state is left as it was, so a size that was tried and put back can't leave a
     // phantom, bigger centre column behind for the next card move.) A banner snapped to the top pushes the centre
     // column down, so the check uses the column where it is actually drawn.
-    centreFits: () => {
+    centreFits: (ignore = null) => {
       if (!items.length || stacked()) return true;
       const keep = { m, o };
       measure(true);
       // Against the cards' saved places, not where the last layout drew them (which may already have been pushed).
       const ob = o.obstacle && { ...o.obstacle, y: o.obstacle.y + WL.bannerRows(items, o) };
       ({ m, o } = keep);
-      lastBlockers = ob ? items.filter((it) => it.snap !== 'top').filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
+      lastBlockers = ob ? items.filter((it) => it.snap !== 'top' && !ignore?.has(it.id)).filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
       return lastBlockers.length === 0;
     },
     // Outline, for a moment, the cards that stopped the last clock or search-bar resize.
@@ -604,7 +607,9 @@
         const card = cardsById.get(id);
         if (!card) continue;
         card.classList.add('w-blocking');
-        setTimeout(() => card.classList.remove('w-blocking'), 1100);
+        clearTimeout(blockTimers.get(id)); // held at the limit: one steady outline, not a flicker
+        blockTimers.set(id, setTimeout(() => { card.classList.remove('w-blocking'); blockTimers.delete(id); }, 1100));
       }
-    }, items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
+    },
+    blockers: () => [...lastBlockers], items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();

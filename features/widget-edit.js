@@ -61,6 +61,8 @@ const STRINGS = {
   'newtab.edit.search.hint': 'Drag an edge, or focus it and use the arrow keys',
   'newtab.edit.search.sized': 'Search bar width: {width} pixels',
   'newtab.edit.noRoom': 'It stops here: a card is in the way.',
+  'newtab.edit.drawnSmaller': 'Saved at {width}: narrower here so the cards keep their places',
+  'newtab.edit.automatic': 'Automatic',
   'newtab.edit.sizeHint': 'Arrow keys change the size. Page Up and Page Down take bigger steps; Home and End go to the smallest and largest.',
   'newtab.edit.what.removed': 'removing {title}',
   'newtab.edit.type.weather': 'Weather',

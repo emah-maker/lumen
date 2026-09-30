@@ -247,6 +247,8 @@
   "slash.clear": "Clear chat",
   "slash.clear.description": "Start a fresh conversation. This one stays in your chat history.",
   "newtab.edit.noRoom": "It stops here: a card is in the way.",
+  "newtab.edit.drawnSmaller": "Saved at {width}: narrower here so the cards keep their places",
+  "newtab.edit.automatic": "Automatic",
   "newtab.edit.sizeHint": "Arrow keys change the size. Page Up and Page Down take bigger steps; Home and End go to the smallest and largest.",
   "picker.search": "Search models",
   "settings.gmail.stillWaitingOwn": "Still waiting. Finish signing in, in your browser, or Cancel and try again.",

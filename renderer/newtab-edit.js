@@ -85,6 +85,7 @@
     /* the clock's corner and the search bar's edges (resize handles while editing) */
     #w-sizers { position: absolute; top: 0; left: 0; width: 100%; height: 0; z-index: 2; pointer-events: none; }
     #w-sizers[hidden] { display: none; }
+    .w-sz-frame.w-sz-smaller::after { content: attr(data-tag); position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); white-space: nowrap; font-size: 11px; color: var(--muted, #888); pointer-events: none; }
     .w-sz-frame { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 12px; pointer-events: none; }
     .w-sz-grip { position: absolute; left: 0; top: 0; box-sizing: border-box; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); pointer-events: auto; touch-action: none; outline: none; }
     .w-sz-grip::after { content: ""; position: absolute; inset: -10px; }
@@ -391,6 +392,10 @@
       put(gripL, r.left - 4, r.top + r.height / 2);
       put(gripR, r.left + r.width + 4, r.top + r.height / 2);
       const drawn = Math.round(r.width); // Automatic is announced as the width it is drawn at
+      const saved = SZ().get().search;
+      const smaller = SZ().drawnSearch() !== saved; // a saved width the cards here leave no room for
+      frameSearch.classList.toggle('w-sz-smaller', smaller);
+      frameSearch.dataset.tag = smaller ? T('newtab.edit.drawnSmaller', { width: saved === WS.SEARCH_DEFAULT ? T('newtab.edit.automatic') : `${saved} px` }) : '';
       for (const g of [gripL, gripR]) { g.setAttribute('aria-valuenow', String(drawn)); g.setAttribute('aria-valuetext', T('newtab.edit.search.sized', { width: drawn })); }
     }
   }
@@ -403,12 +408,14 @@
   // largest size that fits (the grid-line width where the column meets the cards, when that is the edge), the grip
   // nudges once (and keeps a tint while held at the limit), the cards in the way are outlined, and it says why.
   // Shrinking always works. grid.centreFits measures the live preview against the cards' saved places.
-  const fits = () => grid()?.centreFits?.() ?? true;
+  let ignore = null; // cards pushed even at the smallest sizes (SZ().floor()): they don't block
+  const fits = () => grid()?.centreFits?.(ignore) ?? true;
   const clockAt = (k) => WS.CLOCK_STEPS.indexOf(k);
   const bigger = (key, a, b) => (key === 'clock' ? clockAt(a) > clockAt(b) : a > b);
   const previewLook = (key, value) => { if (key === 'clock') SZ().preview(value, null); else SZ().preview(null, value); };
   // The search width as drawn: Automatic (stored as 640) fills the column's columns, so compare and step from that.
-  const drawnSearch = () => { const s = SZ().get().search; return s === WS.SEARCH_DEFAULT ? Math.floor(searchNode()?.getBoundingClientRect().width || s) : s; };
+  const drawnSearch = () => { const s = SZ().drawnSearch(); return s === WS.SEARCH_DEFAULT ? Math.floor(searchNode()?.getBoundingClientRect().width || s) : s; };
+  const drawnOf = (key) => (key === 'clock' ? SZ().drawnClock() : drawnSearch());
   // The widths where the column's edges sit on grid lines (each even column span), in px.
   function gridLineWidths() {
     const m = grid()?.metrics?.();
@@ -472,13 +479,14 @@
   }
   // Set a clock step or search width now, save it (do=look) and, when `record`, put it on the Undo stack.
   // from: the size to compare with (the drawn width for Automatic); the stored value is what Undo puts back.
+  // from: the size drawn before (a saved size may be drawn smaller here); Undo/Reset (record false) restore a saved one.
   function setLook(key, value, { record = true, from, grip = null } = {}) {
     const stored = SZ().get()[key];
-    const base = from ?? stored;
-    if (record) value = fitted(key, base, value, grip);
-    else previewLook(key, value);
+    const base = from ?? drawnOf(key);
+    if (record) { ignore = SZ().floor(); value = fitted(key, base, value, grip); }
+    if (value === stored || (record && value === base)) { SZ().restore(); placeSoon(); return false; } // nothing changes: drawn as before
+    SZ().take(key, value); // saved here now, then in the browser
     placeSoon();
-    if (value === base || value === stored) { previewLook(key, stored); placeSoon(); return false; } // no room at all: it stays as it was
     window.widgetAct('wlook', 'look', { k: key, v: String(value) });
     if (record) {
       history.push({ kind: 'look', key, before: stored, after: value, title: T(`newtab.edit.${key}`) });
@@ -494,19 +502,28 @@
     e.preventDefault();
     const x0 = e.clientX;
     const y0 = e.clientY;
-    const start = { ...SZ().get() };
-    const startDrawn = { clock: start.clock, search: drawnSearch() };
+    const startDrawn = { clock: SZ().drawnClock(), search: drawnSearch() };
+    ignore = SZ().floor();
     SZ().hold(true); // the layout holds still meanwhile (no packing), so growing back within the drag always works
     document.body.classList.add('w-dragging');
     grip.setPointerCapture?.(e.pointerId);
     let latest = null;
-    const move = (ev) => {
-      const next = want(ev.clientX - x0, ev.clientY - y0);
+    let pending = null;
+    let frame = 0;
+    // One size a frame, however fast the pointer events come (a blocked size measures several).
+    const step = () => {
+      frame = 0;
+      if (!pending) return;
+      const next = want(pending.clientX - x0, pending.clientY - y0);
+      pending = null;
       const from = latest ? latest.value : startDrawn[next.key];
-      latest = { key: next.key, value: fitted(next.key, from, next.value, grip) };
+      if (latest && next.value === latest.wanted) return;
+      latest = { key: next.key, wanted: next.value, value: fitted(next.key, from, next.value, grip) };
       placeSoon();
     };
+    const move = (ev) => { pending = ev; if (!frame) frame = requestAnimationFrame(step); };
     const finish = () => {
+      if (frame) { cancelAnimationFrame(frame); frame = 0; step(); }
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', end);
       grip.removeEventListener('pointercancel', end);
@@ -515,14 +532,15 @@
       document.body.classList.remove('w-dragging');
       unblock(grip);
     };
-    const cancel = () => { finish(); SZ().preview(start.clock, start.search); placeSoon(); };
+    const cancel = () => { finish(); latest = null; SZ().restore(); placeSoon(); };
     // Escape during the drag puts the size back (and does not also leave Edit layout).
     const escape = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cancel(); } };
     const end = (ev) => {
       grip.releasePointerCapture?.(ev.pointerId);
-      if (ev.type === 'pointercancel' || !latest) { cancel(); return; }
+      if (ev.type === 'pointercancel') { cancel(); return; }
       finish();
-      setLook(latest.key, latest.value, { from: startDrawn[latest.key] });
+      if (!latest) { SZ().restore(); placeSoon(); return; }
+      setLook(latest.key, latest.value, { from: startDrawn[latest.key], grip });
     };
     grip.addEventListener('pointermove', move);
     grip.addEventListener('pointerup', end);
@@ -531,7 +549,7 @@
   }
   // The clock grows upward (the search box below it stays put), so its handle is at its top corner and follows the pointer up.
   gripClock.addEventListener('pointerdown', (e) => {
-    const base = WS.CLOCK_PX[SZ()?.get().clock];
+    const base = WS.CLOCK_PX[SZ()?.drawnClock()];
     dragSizer(gripClock, e, (dx, dy) => ({ key: 'clock', value: WS.clockStepFromPx(base - dy + dx * 0.4) }));
   });
   for (const [grip, dir] of [[gripL, -1], [gripR, 1]]) {
@@ -544,7 +562,7 @@
   const plainKey = (e) => !e.ctrlKey && !e.altKey && !e.metaKey;
   gripClock.addEventListener('keydown', (e) => {
     if (!plainKey(e)) return;
-    const cur = SZ().get().clock;
+    const cur = SZ().drawnClock(); // stepped from what is drawn
     const i = clockAt(cur);
     const to = { ArrowUp: i + 1, ArrowRight: i + 1, PageUp: i + 1, ArrowDown: i - 1, ArrowLeft: i - 1, PageDown: i - 1, Home: 0, End: WS.CLOCK_STEPS.length - 1 }[e.key];
     if (to === undefined) return;
@@ -552,7 +570,7 @@
     e.stopPropagation();
     const next = WS.CLOCK_STEPS[Math.max(0, Math.min(WS.CLOCK_STEPS.length - 1, to))];
     if (next === cur) say(T('newtab.edit.clock.sized', { size: clockName(cur) }));
-    else setLook('clock', next, { grip: gripClock });
+    else setLook('clock', next, { grip: gripClock, from: cur });
   });
   for (const grip of [gripL, gripR]) {
     grip.addEventListener('keydown', (e) => {
