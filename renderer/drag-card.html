@@ -41,7 +41,6 @@
     .icon.dot { width: 10px; height: 10px; margin: 3px; border-radius: 50%; }
     .g-blue { background: #007aff; } .g-purple { background: #af52de; } .g-pink { background: #ff2d55; } .g-red { background: #ff3b30; }
     .g-orange { background: #ff9500; } .g-yellow { background: #ffcc00; } .g-green { background: #34c759; } .g-gray { background: #8e8e93; }
-    /* Over a tab strip: the tab itself shows in the strip, so the card shrinks away towards it. */
     /* Over a tab strip the slot there shows where it lands; the card becomes the tab itself, a small chip under the
        cursor (held by its icon, as before), so what is being moved never leaves the pointer. */
     .card.compact { width: min(220px, calc(100% - var(--pad) * 2)); border-radius: 9px; opacity: 0.97; }
@@ -61,6 +60,7 @@
     body.leaving .stack { opacity: 0 !important; }
     /* The drag ends: into a window of its own (the window fades in where the card is), into a strip, or back. */
     .card.drop { opacity: 0; transform: scale(1.04); transition: opacity 160ms ease-out, transform 200ms var(--spring); }
+    .card.land { opacity: 0; transition: opacity 140ms ease-out; } /* in its slot: the real tab shows through as it goes */
     .card.join { opacity: 0; transform: scale(0.9); transition: opacity 120ms ease-out, transform 160ms ease-out; }
     .card.cancel { opacity: 0; transform: scale(0.9) translateY(-6px); transition: opacity 140ms ease-out, transform 180ms ease-out; }
     :root.still .card, :root.still .card *, :root.still .stack { transition-duration: 1ms !important; animation: none !important; }

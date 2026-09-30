@@ -51,7 +51,7 @@
     // 'drop' | 'join' | 'cancel'
     hide(kind) {
       card.classList.remove('wait');
-      card.classList.add(['drop', 'join', 'cancel'].includes(kind) ? kind : 'cancel');
+      card.classList.add(['drop', 'join', 'cancel', 'land'].includes(kind) ? kind : 'cancel');
       card.classList.remove('on');
       document.body.classList.add('leaving');
     },

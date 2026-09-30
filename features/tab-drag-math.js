@@ -62,11 +62,13 @@ function grabPoint(spec) {
 // `bottom` and `mid` in that window's own client coordinates, or { bounds, occluder: true } for a window
 // that takes no tabs (a private window). Only the front-most window under the point counts: over its page,
 // or over a window that takes no tabs, there is no hit, even if a strip lies hidden behind it.
-function stripHit(point, windows, slack = 6) {
+// sticky: the strip already hovered, which lets go only a little further below it (24 px more) than it takes to
+// reach it, so a pointer wobbling along its edge doesn't flip in and out.
+function stripHit(point, windows, slack = 6, sticky = null) {
   for (const s of windows) {
     const b = s.bounds;
     if (point.x < b.x || point.x >= b.x + b.width || point.y < b.y || point.y >= b.y + b.height) continue;
-    if (s.occluder || point.y - b.y > s.bottom + slack) return null;
+    if (s.occluder || point.y - b.y > s.bottom + slack + (sticky != null && s.key === sticky ? 24 : 0)) return null;
     const before = s.tabs.find((t) => point.x - b.x < t.mid);
     return { key: s.key, beforeId: before ? before.id : null, outside: Boolean(before?.outside) }; // outside: before a group's label
   }

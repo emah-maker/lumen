@@ -352,8 +352,8 @@ function releaseHeldTab(quiet = false) {
   shown.forEach((t) => t.classList.remove('held'));
   if (!landing) return;
   // Dropped back into this strip: the tabs take the slot that stayed open for them (renderTabs keeps it in
-  // place until now). The slot is one tab wide; a group or several tabs are wider, so the neighbours glide
-  // over to make room (FLIP) while the tabs grow in, rather than jumping.
+  // place until now). The slot is about as wide as what lands; any difference (a group's label, tabs of other
+  // widths) is taken up by the neighbours gliding (FLIP) while the tabs grow in, rather than jumping.
   clearTimeout(landingSlot.timer);
   landingSlot.el.remove();
   landingSlot = null;
@@ -444,7 +444,7 @@ function showDropSlot(at) {
     clearLandingSlot();
     const el = dropSlot.el;
     dropSlot = null;
-    landingSlot = { el, timer: setTimeout(() => { if (landingSlot?.el === el) { landingSlot = null; closeSlot(el); trackIndicator(460); } }, 320) };
+    landingSlot = { el, timer: setTimeout(() => { if (landingSlot?.el === el) { landingSlot = null; closeSlot(el); trackIndicator(460); } }, 1200) }; // filled as soon as the tab arrives
     return;
   }
   clearLandingSlot();
@@ -472,7 +472,9 @@ function showDropSlot(at) {
   el.className = `tab-drop-slot${pinned ? ' pinned' : ''}`;
   el.setAttribute('aria-hidden', 'true');
   const count = Math.max(1, Number(at.tab?.count) || 1);
-  const many = Math.min(strip.clientWidth / 2, count * dropSlotWidth() + 4 * (count - 1)); // several tabs: their room, at most half the strip
+  const labelW = at.tab?.group ? 28 + 7 * String(at.tab.group.name || '').length : 0; // a group brings its label too
+  const room = count * dropSlotWidth() + 4 * (count - 1) + labelW;
+  const many = count === 1 && !labelW ? room : Math.min(strip.clientWidth / 2, room); // several tabs: their room, at most half the strip
   el.style.setProperty('--slot-w', `${at.width ? Math.round(at.width) : pinned ? 40 * count : many}px`);
   // The tab as it will be here: its icon and title (and how many tabs come with it). An in-strip
   // reorder passes ghost: false — the real tab is already following the pointer, and a second
