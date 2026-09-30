@@ -3840,10 +3840,12 @@ function finishTabDrag(reason) {
   if (!rcAlive(rec)) { if (d.card) hideDragCard(d, 'cancel'); return; }
   if (d.card) { finishCardDrag(d, reason, target); return; }
   // An only-tab window: it stays where it was dropped, joins the strip it is over, or goes back (Escape).
-  if (!TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
+  const merging = reason === 'commit' && target && rcAlive(target.rec);
+  if (merging) { try { rec.win.hide(); } catch {} } // it goes as it merges (closing takes a moment): no flash back to full opacity
+  else if (!TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
   rec.win.webContents.send('tab:dragdone'); // its strip shows the tab again, however the drag ended
   if (reason === 'commit') {
-    if (target && rcAlive(target.rec)) {
+    if (merging) {
       // The whole window merges into that strip: every tab it holds, the dragged one shown, and its groups
       // still groups there.
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
@@ -3892,7 +3894,7 @@ function finishCardDrag(d, reason, target) {
       wakeDeferredAside(d); // the neighbour loads only if the dragged tab did not come back to the front
     } else {
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
-      moveTabsBetween(src, target.rec, ids, at === -1 ? undefined : at, { active: d.tabId, group: d.group });
+      if (moveTabsBetween(src, target.rec, ids, at === -1 ? undefined : at, { active: d.tabId, group: d.group })) keepSelection(target.rec, ids);
       wakeDeferredAside(d);
     }
     hideDragCard(d, 'join');

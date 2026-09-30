@@ -254,6 +254,8 @@
   "picker.showAll": "Show all {n}",
   "picker.none": "No models match “{q}”",
   "tabs.movedHere": "{title}: tab moved here",
+  "tabs.moved": "{title} moved",
+  "tabs.movedMany": "{n} tabs moved",
   "tabs.movedHereMany": "{n} tabs moved here",
   "tabs.movedToNewWindow": "Moved to a new window",
   "tabs.movedToNewWindowMany": "{n} tabs moved to a new window",
