@@ -76,6 +76,7 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   }
   // The user's choice either way: Windows opens its Default apps page on Lumen (it asks there), macOS asks by itself.
   async function makeDefault() {
+    if (process.defaultApp) return { ok: false, devBuild: true }; // (run from source: it would register electron.exe)
     if (process.platform === 'win32') {
       const ok = await registerOnWindows();
       await shell.openExternal(ok ? 'ms-settings:defaultapps?registeredAppUser=Lumen' : 'ms-settings:defaultapps').catch(() => {});

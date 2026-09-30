@@ -1068,7 +1068,7 @@
   "chats.deleteConfirm": "Delete?",
   "setup.pending": "Connect an AI below and your question is sent right away.",
   "welcome.title": "Welcome to Lumen",
-  "welcome.lead": "A browser with an AI that reads and works in your tabs, and asks before it acts. Three quick steps: do any of them now, or later in Settings.",
+  "welcome.lead": "A browser with an AI that reads and works in your tabs, and asks before it acts. Two quick steps: do them now, or later in Settings.",
   "welcome.ai": "Connect an AI",
   "welcome.ai.detail": "Pick one way in. You can add others later in Settings.",
   "welcome.ai.ready": "Ready: {name}.",
@@ -1080,7 +1080,7 @@
   "welcome.import.failed": "Couldn’t import: {error}",
   "welcome.default": "Make Lumen your default browser",
   "welcome.default.detail": "Links from other apps (mail, chat, documents) then open here.",
-  "welcome.default.button": "Make default",
+  "welcome.default.button": "Make Lumen your default browser",
   "welcome.default.done": "Lumen is your default browser.",
   "welcome.default.windows": "In the Windows Settings window that opened, set Lumen as the default for HTTP and HTTPS links.",
   "welcome.default.windowsManual": "In Windows Settings → Default apps, choose Lumen for HTTP and HTTPS links.",
@@ -1099,7 +1099,7 @@
   "settings.import.failed": "Couldn’t import from {browser}: {error}",
   "settings.default.title": "Default browser",
   "settings.default.desc": "Links you open in other apps (mail, chat, documents) open in your default browser.",
-  "settings.default.not": "Lumen isn’t your default browser. Links from other apps open elsewhere.",
+  "settings.default.not": "Another browser is the default.",
   "chat.editFailed": "That message couldn’t be changed: the chat moved on. Nothing was sent.",
   "setup.grok": "Use your own Grok Build",
   "setup.grok.detail": "Found on this computer: xAI’s agent, with your own Grok sign-in.",
@@ -1110,5 +1110,7 @@
   "setup.claudeCode.stillSignedOut": "Still not signed in to Claude Code. In a terminal, run claude and type /login, then click here again.",
   "welcome.default.confirm": "Confirm in the dialog your system opened.",
   "welcome.default.notYet": "Not set yet: Lumen isn’t your default browser. Try again any time, here or in Settings.",
-  "welcome.default.devBuild": "This copy runs from source: Make default would register the development build. Use an installed Lumen for this step."
+  "welcome.default.devBuild": "This copy runs from source: use an installed Lumen to make it the default.",
+  "welcome.default.ask": "Want links from other apps to open here?",
+  "settings.default.button": "Make default"
 }

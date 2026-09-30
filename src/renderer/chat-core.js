@@ -109,35 +109,26 @@ async function showWelcome() {
     return btn;
   }));
   showDefault(st.isDefault);
-  if (st.devBuild && !st.isDefault) $('welcome-default-note').textContent = t('welcome.default.devBuild');
   refreshSetup();
   announce(`${t('welcome.title')}. ${t('welcome.lead')}`);
   welcome.querySelector('.setup-option:not(:disabled)')?.focus({ preventScroll: true });
 }
 function showDefault(isDefault) {
   if (!welcome) return;
-  $('welcome-step-default').classList.toggle('done', Boolean(isDefault));
-  $('welcome-make-default').hidden = Boolean(isDefault);
-  if (isDefault) $('welcome-default-note').textContent = t('welcome.default.done');
+  $('welcome-step-default').hidden = Boolean(isDefault); // (already the default: nothing to offer)
 }
 if (welcome) {
   $('welcome-make-default').onclick = async () => {
     const r = await window.assistant.setup.makeDefault().catch(() => null);
     const note = $('welcome-default-note');
-    if (r?.opened === 'windows-settings') note.textContent = t(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual');
+    if (r?.devBuild) note.textContent = t('welcome.default.devBuild');
+    else if (r?.opened === 'windows-settings') note.textContent = t(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual');
     else if (r?.isDefault) showDefault(true);
     else if (r?.opened === 'system-prompt') note.textContent = t('welcome.default.confirm');
     else note.textContent = t(r ? 'welcome.default.notTaken' : 'welcome.default.failed'); // (never a click that seems to do nothing)
   };
   // Back from the system's Default apps page: did it take?
-  window.addEventListener('focus', () => {
-    if (!welcoming) return;
-    window.assistant.setup.isDefault().then((yes) => {
-      showDefault(yes);
-      const note = $('welcome-default-note');
-      if (!yes && note.textContent) note.textContent = t('welcome.default.notYet'); // (back without choosing Lumen)
-    }).catch(() => {});
-  });
+  window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then((yes) => { if (yes) showDefault(true); }).catch(() => {}); });
   $('welcome-done').onclick = () => finishWelcome();
   window.assistant.setup?.onWelcome?.(() => showWelcome());
 }

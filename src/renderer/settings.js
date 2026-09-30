@@ -466,14 +466,15 @@ async function buildAi(card) {
 
   // Default browser (features/setup.js): what the system says now, and a button that asks it.
   const defaultNote = status('default-browser-status');
-  const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: tr('welcome.default.button', 'Make default') });
+  const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: tr('settings.default.button', 'Make default') });
   const renderDefault = async () => {
     const yes = await S.ai.isDefaultBrowser?.().catch(() => null);
     defaultButton.hidden = yes === true;
-    flash(defaultNote, yes ? tr('welcome.default.done', 'Lumen is your default browser.') : tr('settings.default.not', 'Lumen isn’t your default browser. Links from other apps open elsewhere.'), yes ? 'ok' : '');
+    flash(defaultNote, yes ? tr('welcome.default.done', 'Lumen is your default browser.') : tr('settings.default.not', 'Another browser is the default.'), '');
   };
   defaultButton.onclick = async () => {
     const r = await S.ai.makeDefaultBrowser?.().catch(() => null);
+    if (r?.devBuild) { flash(defaultNote, tr('welcome.default.devBuild', 'This copy runs from source: use an installed Lumen to make it the default.'), ''); return; }
     if (r?.opened === 'windows-settings') flash(defaultNote, tr(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual', 'In the Windows Settings window that opened, set Lumen as the default for HTTP and HTTPS links.'), '');
     else if (r?.isDefault) renderDefault();
     else if (r?.opened === 'system-prompt') flash(defaultNote, tr('welcome.default.confirm', 'Confirm in the dialog your system opened.'), '');
