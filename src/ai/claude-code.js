@@ -212,6 +212,7 @@ class ClaudeCodeEngine {
     this.proc = null; // the CLI process, kept between messages (keepAlive) with stdin open
     this.starting = null; // the take() in flight, so warm() and run() share one spawn
     this.busy = false; // a run() is under way (warm() waits for the next message)
+    this.warming = 0; // warm() starts not yet landed
     this.early = []; // step rows shown while a tool call's input streams: { name, id, timer, shown }
     this.statusCache = null; // { at, value } from checkAuthStatus; a 30s TTL avoids a CLI spawn per render
   }
@@ -266,7 +267,7 @@ class ClaudeCodeEngine {
     // usage: perTurnResult's state (cumulative-or-per-turn totals); drain: set while an interrupted turn's
     // leftover output is being read off (take() waits for it).
     const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null };
-    try { this.onFresh?.({ sessionId, resume }); } catch {}
+    proc.fresh = { sessionId, resume }; // onFresh's args, run when a message takes this process (turn)
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
     proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns }); };
@@ -305,13 +306,13 @@ class ClaudeCodeEngine {
   // The process for a message: the kept one when it was started for the same session, model, turn
   // cap and prompt, else a new one (with --resume when the chat already has a session, so a kept
   // process that was stopped, timed out or crashed is picked up again transparently).
-  take(opts, { fresh = false } = {}) {
+  take(opts, { fresh = false, emit = null } = {}) {
     const next = (this.starting || Promise.resolve()).catch(() => {}).then(async () => {
       const bin = await this.ensureBin();
       if (!bin) return null;
       const key = procKey({ bin, ...opts });
       let p = this.proc;
-      if (p?.drain) { await p.drain; p = this.proc; } // a stopped turn's leftover lines are read off first
+      if (p?.drain) { emit?.({ type: 'status', text: 'Finishing the stopped step…' }); await p.drain; p = this.proc; } // a stopped turn's leftover lines are read off first (said on screen: up to interruptMs)
       if (!fresh && p && !p.exited && !p.spent && !p.turn && p.key === key) { clearTimeout(p.idle); return p; }
       if (p && !p.turn) this.dispose(p);
       const proc = await this.spawnProc({ bin, key, ...opts });
@@ -327,11 +328,17 @@ class ClaudeCodeEngine {
   warm(opts) {
     if (this.busy || this.active || !this.keepAlive) return;
     const gen = this.gen;
+    this.warming++;
     this.take(opts).then((p) => {
       if (!p || p.exited || p.turn) return;
       if (gen !== this.gen) this.dispose(p); // release() came while it was starting: nobody wants this one
       else this.idleLater(p);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => { this.warming--; });
+  }
+
+  // A process is kept or being started (agent.js prewarm starts none on top of it).
+  isWarm() {
+    return this.warming > 0 || Boolean(this.proc && !this.proc.exited);
   }
 
   idleLater(proc) {
@@ -362,16 +369,16 @@ class ClaudeCodeEngine {
   // A Lumen tool call from this CLI starts / ends (features/ai-agents.js mcpCallTool): counted for the
   // message (a message that ran a tool is never sent again silently), and the watchdog waits for it
   // (an approval card can wait on the user for as long as it likes).
-  callBegin() {
-    const a = this.active;
+  // `a`: the call's own active object (mcpCallTool holds it), so a call that outlives its message
+  // can't end on the next message's counters.
+  callBegin(a = this.active) {
     if (!a) return;
     a.tools++;
     a.inflight++;
     clearTimeout(a.dog);
   }
 
-  callEnd() {
-    const a = this.active;
+  callEnd(a = this.active) {
     if (!a) return;
     a.inflight = Math.max(0, a.inflight - 1);
     a.arm?.();
@@ -381,7 +388,9 @@ class ClaudeCodeEngine {
   // `result`), so the next message can use the same process. The turn itself has already been
   // resolved as stopped by the caller; this runs on in the background. A process that doesn't
   // answer the control_request with a result in interruptMs is killed, as Stop always did.
-  interrupt(proc) {
+  // lateUsage(result): the interrupted turn's own usage (per-turn delta), reported when its result
+  // arrives -- the stopped turn already returned without it (agent.js claudeCodeTurn records it).
+  interrupt(proc, lateUsage = null) {
     let finish;
     const drained = new Promise((resolve) => { finish = resolve; });
     let over = false;
@@ -400,7 +409,12 @@ class ClaudeCodeEngine {
     proc.drain = drained;
     proc.turn = {
       handle: (msg) => {
-        if (msg.type === 'result') { proc.usage.last = msg; end(true); } // the interrupted turn's own result: the line is clean again
+        if (msg.type === 'result') { // the interrupted turn's own result: the line is clean again
+          // perTurnResult also records it as the process's last result, so the next turn's delta isn't counted twice.
+          const counted = perTurnResult(msg, proc.usage);
+          try { if (lateUsage && counted) lateUsage({ usage: usageOf(counted), cost: Number(counted.total_cost_usd) || 0 }); } catch {}
+          end(true);
+        }
         else if (msg.type === 'control_response' && !acked) { acked = true; arm(); } // accepted: the result should follow shortly
       },
       exit: () => end(false),
@@ -460,14 +474,17 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, quietExpired = false }, { fresh = false } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     };
     if (!await this.ensureBin()) return notInstalled();
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns }, { fresh });
+    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns }, { fresh, emit });
     if (!proc) return notInstalled();
+    // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
+    // pre-started one that no message takes must not wipe the chat's reads.
+    if (proc.fresh) { const f = proc.fresh; proc.fresh = null; try { this.onFresh?.(f); } catch {} }
     const reused = proc.turns > 0;
     if (!reused) emit({ type: 'status', text: 'Starting Claude Code…' }); // (its first message: the working line says why it waits)
     proc.turns++;
@@ -528,7 +545,7 @@ class ClaudeCodeEngine {
     const onAbort = () => {
       settle({ code: null });
       if (proc.exited) return;
-      if (proc.single || !sent) this.dispose(proc); else this.interrupt(proc);
+      if (proc.single || !sent) this.dispose(proc); else this.interrupt(proc, lateUsage);
     };
     signal.addEventListener('abort', onAbort, { once: true });
     if (signal.aborted) onAbort();
@@ -550,8 +567,10 @@ class ClaudeCodeEngine {
     if (!proc.single) {
       if (ok && !signal.aborted && !proc.exited) { if (newSession) proc.rekey(newSession); this.idleLater(proc); } // kept for the chat's next message
       else if (!proc.drain) this.dispose(proc); // a failed, stalled or capped turn: the next message starts clean (--resume); a stopped one is draining
-    } else if (ok && this.keepAlive && !signal.aborted) {
+    } else if (ok && this.keepAlive && !signal.aborted && prestart) {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
+      // Only when the caller knows the next message will want the same process (prestart: a picked model, or
+      // an auto-routed top tier that can't go higher); otherwise it would start for a key that may not match.
       const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns };
       const go = () => setImmediate(() => this.warm(next));
       if (proc.exited) go(); else proc.child.once('close', go);

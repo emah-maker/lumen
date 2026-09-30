@@ -266,6 +266,65 @@ async function engineRuns() {
   await sleep(30);
   capped.dispose();
 
+  // A capped chat whose next message may want another process (an auto-routed tier that can still go up): none is pre-started.
+  const noPre = make();
+  const noPreBefore = cli.spawned.length;
+  await noPre.run(opts({ sessionId: 'sess-np', maxTurns: 30, prestart: false }));
+  await sleep(30);
+  check('turn cap: prestart false starts no process for the next message', cli.spawned.length === noPreBefore + 1, String(cli.spawned.length - noPreBefore));
+  noPre.dispose();
+  // The read cache is reset for a process only when a message takes it, never for one that is merely warm.
+  let freshCalls = 0;
+  const fr = make({ onFresh: () => { freshCalls++; } });
+  fr.warm({ sessionId: 'sess-fr', resume: false, systemPrompt: 'SYS', model: 'default', maxTurns: 0 });
+  await sleep(20);
+  check('onFresh: a warm process no message has taken has not reset the read cache', cli.spawned.length > 0 && freshCalls === 0, String(freshCalls));
+  await fr.run(opts({ sessionId: 'sess-fr' }));
+  await fr.run(opts({ sessionId: 'sess-fr', resume: true }));
+  check('onFresh: reset once, when the first message takes the process (not again for the kept one)', freshCalls === 1, String(freshCalls));
+  fr.dispose();
+
+  // A call reports into its own message's counters, even when another message is active by then.
+  const own = make();
+  const armed = [0, 0];
+  const counters = (i) => ({ tools: 0, inflight: 0, dog: null, arm: () => { armed[i]++; } });
+  const a1 = counters(0);
+  const a2 = counters(1);
+  own.active = a2;
+  own.callBegin(a1);
+  own.callEnd(a1);
+  check('callBegin/callEnd: the call\'s own active object is counted, not the current one', a1.tools === 1 && a1.inflight === 0 && armed[0] === 1 && a2.tools === 0 && a2.inflight === 0 && armed[1] === 0, JSON.stringify({ a1: [a1.tools, a1.inflight], a2: [a2.tools, a2.inflight], armed }));
+  own.callBegin(a1);
+  own.active = null;
+  own.callEnd(a1);
+  check('callEnd: a call that outlives its message still ends on its own counters', a1.inflight === 0, String(a1.inflight));
+
+  // Stop, then the next message at once: the wait for the stopped turn is said on screen, and the stopped
+  // turn's own usage is reported (once: the next message's share is not counted twice).
+  respond = (rec) => say(rec, 'first', { total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 1 } });
+  const late = make({ interruptMs: 400 });
+  await late.run(opts({ sessionId: 'sess-late' }));
+  respond = () => {};
+  control = (rec, msg) => setTimeout(() => {
+    rec.out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id } });
+    rec.out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'interrupted', session_id: rec.session, total_cost_usd: 0.03, usage: { input_tokens: 30, output_tokens: 3 } });
+  }, 80);
+  const lateSeen = [];
+  const ctlLate = new AbortController();
+  const stopRun = late.run(opts({ prompt: 'stop me', sessionId: 'sess-late', resume: true, signal: ctlLate.signal, lateUsage: (u) => lateSeen.push(u) }));
+  await sleep(20);
+  ctlLate.abort();
+  await stopRun;
+  respond = (rec) => say(rec, 'after', { total_cost_usd: 0.06, usage: { input_tokens: 60, output_tokens: 6 } });
+  events = [];
+  const afterLate = await late.run(opts({ prompt: 'go on', sessionId: 'sess-late', resume: true }));
+  check('stop then send: a status line says the stopped step is being finished', events.some((e) => e.type === 'status' && /Finishing the stopped step/.test(e.text)) && afterLate.text === 'after', JSON.stringify(events));
+  check('stop: the interrupted turn\'s usage (its share only) is reported once', lateSeen.length === 1 && near(lateSeen[0].cost, 0.02) && lateSeen[0].usage.inputTokens === 20 && lateSeen[0].usage.outputTokens === 2, JSON.stringify(lateSeen));
+  check('stop: the next message\'s usage is still its own delta (nothing double counted)', near(afterLate.cost, 0.03) && afterLate.usage.inputTokens === 30, JSON.stringify(afterLate));
+  control = () => {};
+  respond = echo;
+  late.dispose();
+
   // No HTTP server: the stdio bridge, named by its tag.
   const stdio = make({ gate: async () => { throw new Error('no port'); } });
   const ensuredBefore = ensured;
@@ -413,6 +472,53 @@ async function grokRuns() {
   await eng.prepare();
   check('grok: an edited config.toml is put back', fs.readFileSync(cfg, 'utf8') === gb.grokConfig({ gate: path.join(eng.home, gb.GATE_FILE) }), fs.readFileSync(cfg, 'utf8').slice(0, 40));
   check('grok: the sign-in is linked in (async)', fs.readFileSync(path.join(eng.home, 'auth.json'), 'utf8') === 'tok', '');
+  // A fake grok that says what `script` tells it to; kill() ends it the way a real tree kill does.
+  let script = () => {};
+  const live = [];
+  const spawnLive = () => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.out = (o) => child.stdout.write(`${JSON.stringify(o)}\n`);
+    child.finish = (text) => { child.out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: 's' }); setImmediate(() => child.emit('close', 0)); };
+    live.push(child);
+    setImmediate(() => script(child));
+    return child;
+  };
+  const killLive = (child) => { child.killed = true; setImmediate(() => child.emit('close', null)); };
+  const live1 = new gb.GrokBuildEngine({ userData: tmp, gate: async () => gate, spawn: spawnLive, kill: killLive, watchdogMs: 60 });
+  live1.bin = process.execPath;
+  const evs = [];
+  const runLive = (signal = new AbortController().signal) => live1.run({ prompt: 'p', sessionId: 'sess', resume: true, systemPrompt: 'SYS', signal, emit: (e) => evs.push(e) });
+
+  // Stop before the process exists (while setup runs): Grok is never started.
+  const preAborted = new AbortController();
+  preAborted.abort();
+  const s0 = await runLive(preAborted.signal);
+  const midStop = new AbortController();
+  const midRun = runLive(midStop.signal);
+  midStop.abort(); // lands while run() awaits its setup
+  const s1 = await midRun;
+  check('grok: Stop before the spawn (already stopped, or during setup) starts no process', s0.stopped === true && s1.stopped === true && live.length === 0, JSON.stringify({ s0, s1, n: live.length }));
+
+  // Watchdog: a silent grok is ended with an error; output keeps it alive; a Lumen tool call pauses it.
+  script = (child) => child.out({ type: 'system', subtype: 'init', session_id: 's', model: 'grok-x' });
+  const hung = await runLive();
+  check('grok: a process silent past the watchdog is ended with a clear error', hung.failed === true && live[0].killed === true && evs.some((e) => e.type === 'error' && /stopped responding/.test(e.text)), JSON.stringify({ hung, evs }));
+  script = (child) => { let n = 0; const tick = setInterval(() => { child.out({ type: 'system', subtype: 'init', session_id: 's' }); if (++n === 8) { clearInterval(tick); child.finish('chatty'); } }, 30); };
+  const chatty = await runLive();
+  check('grok: steady output (each line restarts the watchdog) is never cut off', chatty.text === 'chatty' && !chatty.failed && !live[1].killed, JSON.stringify(chatty));
+  script = (child) => child.out({ type: 'system', subtype: 'init', session_id: 's' });
+  const waiting = runLive();
+  await sleep(25);
+  live1.callBegin(); // a tool call (or its approval card) is in flight
+  await sleep(160);
+  const stillUp = !live[2].killed;
+  live[2].finish('waited');
+  live1.callEnd();
+  const waited = await waiting;
+  check('grok: the watchdog is paused while a Lumen tool call is running', stillUp && waited.text === 'waited' && !waited.failed, JSON.stringify({ stillUp, waited }));
+
   if (oldHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = oldHome;
   fs.rmSync(tmp, { recursive: true, force: true });
 }
@@ -469,6 +575,9 @@ function searchRuns() {
     { title: 'Second', url: 'https://second.test/page', snippet: 'Second snippet' },
   ]), JSON.stringify(rows));
   check('search html: a page that is not a results page is null (the hidden view is tried)', parseSearchHtml('<html><body>Please verify you are human</body></html>') === null, '');
+  const none = parseSearchHtml('<div id="links" class="results"><div class="no-results">No  results.<br>Try searching something else.</div></div>');
+  check('search html: DuckDuckGo\'s no-results page is [] (an answer: no second fetch in the hidden view)', Array.isArray(none) && none.length === 0, JSON.stringify(none));
+  check('search html: a results page whose rows could not be read is still null', parseSearchHtml('<div class="result"><span>odd markup</span></div>') === null, '');
 }
 
 async function settleRuns() {
@@ -500,6 +609,124 @@ async function settleRuns() {
   check('settle: a same-document navigation (pushState) is not waited on as a load', Date.now() - t < 400, `${Date.now() - t} ms`);
 }
 
+// Lumen's MCP tool entry (features/ai-agents.js mcpCallTool) driven through a sidebar Claude Code run, with fakes.
+async function toolCallRuns() {
+  const cc = require('../src/ai/claude-code');
+  const mcp = require('../src/automation/mcp');
+  const { setupAiAgents } = require('../src/features/ai-agents');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-toolcall-'));
+  let callTool = null;
+  const realStart = mcp.startServer;
+  mcp.startServer = (o) => { callTool = o.callTool; return { disconnectAll() {}, close() {} }; };
+  const calls = []; // what the fake agent was asked, in order
+  let describe = async () => null;
+  const fakeAgent = {
+    approvedHosts: new Set(),
+    browser: { activeTab: () => null },
+    engineScope: () => ({ hosts: new Set() }),
+    inScope: (_scope, fn) => fn(),
+    inTask: (_id, _signal, fn) => fn(),
+    describeStep: (name, args) => describe(name, args),
+    ensureAllowed: async () => {},
+    execute: async (name) => { calls.push(`execute:${name}`); return 'ok'; },
+  };
+  const handlers = {};
+  const settings = { mcpEnabled: true };
+  setupAiAgents({
+    app: { getPath: () => tmp, on() {} },
+    ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; }, on: (ch, fn) => { handlers[ch] = fn; } },
+    agent: fakeAgent,
+    tools: [],
+    validateToolInput: (name, args) => (args?.bad ? 'bad field' : null),
+    readSettings: () => settings,
+    writeSettings: () => {},
+    ui: () => null,
+  });
+  try { await handlers['mcp:set-enabled']({}, true); } finally { mcp.startServer = realStart; }
+  const eng = fakeAgent.engines.claudecode; // created here, never run: only its `active` run and early rows matter
+  const events = [];
+  const controller = new AbortController();
+  const tag = 'a'.repeat(36);
+  eng.active = { tag, emit: (e) => events.push(e), signal: controller.signal, agent: null, tools: 0, inflight: 0, dog: null, arm: () => {} };
+  const session = { engine: tag, clientName: 'claude', controller };
+  check('tool call: the sidebar engine\'s MCP entry was reached', typeof callTool === 'function', '');
+
+  // Invalid input: the row Claude Code showed early is closed, in call order (first in, first out).
+  const early = (id) => eng.earlyStep({ id, name: 'mcp__lumen__click' }, (e) => events.push(e));
+  early('toolu_a');
+  early('toolu_b');
+  await sleep(cc.EARLY_STEP_MS + 60);
+  const bad = await callTool('click', { bad: true }, session);
+  const good = await callTool('click', { element_id: 1 }, session);
+  const done = events.filter((e) => e.type === 'tool_done');
+  check('invalid input: the call is refused and its early row is closed with the error, not left spinning', bad.isError && /Invalid input: bad field/.test(bad.content[0].text) && done[0]?.id === 'cc-toolu_a' && done[0].ok === false && /Invalid input/.test(done[0].error), JSON.stringify(done));
+  check('invalid input: the next call still gets the next early row (FIFO order kept) and nothing is left unclaimed', good.isError === false && done[1]?.id === 'cc-toolu_b' && done[1].ok === true && eng.early.length === 0, JSON.stringify({ done, left: eng.early.length }));
+
+  // The row is shown at once; describeStep's label follows as a tool_update and does not delay the call.
+  events.length = 0;
+  calls.length = 0;
+  describe = async () => { await sleep(300); calls.push('described'); return 'Reading the page closely'; };
+  const t0 = Date.now();
+  const read = await callTool('read_page', {}, session);
+  const took = Date.now() - t0;
+  const rowAt = events.findIndex((e) => e.type === 'tool');
+  check('step label: a read-only tool\'s row shows at once (generic label) and the call runs without waiting for describeStep', read.isError === false && rowAt === 0 && events[0].label == null && calls[0] === 'execute:read_page' && took < 250, JSON.stringify({ took, events, calls }));
+  await sleep(350);
+  check('step label: a label that arrives after the call finished is dropped (no update on a done row)', !events.some((e) => e.type === 'tool_update') && calls.includes('described'), JSON.stringify(events));
+  // Same, with the call still running when the label lands: the specific label replaces the generic one.
+  events.length = 0;
+  describe = async () => { await sleep(40); return 'Reading the page closely'; };
+  fakeAgent.execute = async () => { await sleep(150); return 'ok'; };
+  await callTool('read_page', {}, session);
+  const upd = events.filter((e) => e.type === 'tool_update');
+  check('step label: the specific label is sent as a tool_update after the row', upd.length === 1 && upd[0].label === 'Reading the page closely' && events.findIndex((e) => e.type === 'tool') < events.indexOf(upd[0]), JSON.stringify(events));
+  // A click's label is read before it acts, but only for so long.
+  events.length = 0;
+  describe = async () => { await sleep(2000); return 'late label'; };
+  let acted = 0;
+  fakeAgent.execute = async () => { acted++; return 'ok'; };
+  const t1 = Date.now();
+  const click = await callTool('click', { element_id: 2 }, session);
+  const clickTook = Date.now() - t1;
+  check('step label: a click waits for its label only briefly (about 150 ms), then acts', click.isError === false && acted === 1 && clickTook >= 120 && clickTook < 1000 && events[0].type === 'tool' && events[0].label == null, JSON.stringify({ clickTook, acted, events }));
+  events.length = 0;
+  describe = async () => 'Clicking "Buy" button';
+  await callTool('click', { element_id: 3 }, session);
+  check('step label: a click whose label is ready in time shows it on the row itself', events[0].type === 'tool' && events[0].label === 'Clicking "Buy" button' && !events.some((e) => e.type === 'tool_update'), JSON.stringify(events));
+
+  // Pre-warm: a no-op unless this chat's engine is Claude Code; cheap when repeated.
+  const { Agent } = require('../src/ai/agent');
+  let warms = [];
+  const plans = [];
+  const chat = (model) => Object.assign(Object.create(Agent.prototype), {
+    messages: { settings: { model } },
+    engines: { claudecode: { warm: (o) => warms.push(o), isWarm: () => warms.length > 0 }, grokbuild: { warm: (o) => warms.push(o) } },
+    engineRunScope: null,
+    runs: new Set(),
+    browser: { autoModel: () => true, maxSteps: () => 0 },
+    claudeCodePlan(m, text) { const p = Agent.prototype.claudeCodePlan.call(this, m, text, 0, 0); plans.push(p); return p; },
+  });
+  check('prewarm: an API model or Grok warms nothing', chat('claude-sonnet-4').prewarm() === false && chat('grokbuild:default').prewarm() === false && warms.length === 0, JSON.stringify(warms));
+  const busy = chat('claudecode:default');
+  busy.engineRunScope = {};
+  check('prewarm: nothing while a Claude Code message is running', busy.prewarm() === false && warms.length === 0, '');
+  const c = chat('claudecode:default');
+  const started = c.prewarm();
+  const again = c.prewarm(); // (isWarm now says a process is being started)
+  check('prewarm: Claude Code starts one process; repeated calls start no other', started === true && again === false && warms.length === 1, JSON.stringify({ started, again, n: warms.length }));
+  const sent = Agent.prototype.claudeCodePlan.call(c, c.messages, 'hello there', 0, 0);
+  check('prewarm: the chat\'s first message keeps the pre-warmed session id (its process is the one used)', sent.spawn.sessionId === warms[0].sessionId && warms[0].resume === false, JSON.stringify({ sent: sent.spawn.sessionId, warm: warms[0].sessionId }));
+  const resumed = chat('claudecode:opus');
+  resumed.messages.settings.ccSession = 'sess-existing';
+  warms = [];
+  resumed.prewarm();
+  check('prewarm: a chat with a session resumes it (the pinned model, not a new id)', warms.length === 1 && warms[0].sessionId === 'sess-existing' && warms[0].resume === true && warms[0].model === 'opus', JSON.stringify(warms));
+  const sameChannel = handlers['agent:prewarm'];
+  check('prewarm: the IPC channel is registered and never throws', typeof sameChannel === 'function' && (() => { try { sameChannel({}); return true; } catch { return false; } })(), '');
+  eng.active = null;
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 (async () => {
   await engineRuns();
   await snapshotRuns();
@@ -509,6 +736,7 @@ async function settleRuns() {
   promptRuns();
   searchRuns();
   await settleRuns();
+  await toolCallRuns();
   if (failures) { console.log(`\n${failures} agentic check(s) failed`); process.exit(1); }
   console.log('\nAll agentic checks passed');
 })().catch((err) => { console.error(err); process.exit(1); });

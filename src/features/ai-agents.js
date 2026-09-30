@@ -128,6 +128,9 @@ function setupAiAgents(deps) {
   };
   // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends.
   agent.onEngineReset = () => { freshReads(); claudeCode?.release(); }; // (the read cache too: the chat's CLI session is gone)
+  // The composer was focused or typed in (renderer/chat-core.js): Claude Code's process starts ahead of the
+  // message (agent.prewarm: a no-op for any other engine, and cheap when repeated).
+  ipcMain.on('agent:prewarm', () => { try { agent.prewarm(); } catch {} });
   app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
@@ -165,8 +168,10 @@ function setupAiAgents(deps) {
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
     if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
+    owner.callBegin?.(engineRun); // the card can wait on the user: the inactivity watchdog waits too
+    let answer = false;
     try {
-      const answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
+      answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
         action: 'terminal',
         title: 'Grok wants to run a terminal command',
         args,
@@ -174,6 +179,9 @@ function setupAiAgents(deps) {
       return answer === 'always' ? 'always' : answer ? 'once' : 'deny';
     } catch {
       return 'deny'; // the user hit Stop while the card was up
+    } finally {
+      // An allowed command may run silently for a long time, so the watchdog stays off for the rest of this run.
+      if (!answer) owner.callEnd?.(engineRun);
     }
   }
 
@@ -200,9 +208,9 @@ function setupAiAgents(deps) {
 
   // Runs one browser tool for an external agent, with the same per-site approval as the sidebar,
   // and shows each call as a step in the sidebar.
+  const LABEL_FIRST = new Set(['click', 'type_text', 'fill_form', 'press_key']); // their labels are read from the page before the action runs
+  const LABEL_WAIT_MS = 150;
   async function mcpCallTool(name, args, session) {
-    const problem = deps.validateToolInput(name, args);
-    if (problem) return { content: [{ type: 'text', text: `Invalid input: ${problem}` }], isError: true };
     session.approvedHosts ||= new Set();
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
@@ -211,7 +219,15 @@ function setupAiAgents(deps) {
     // A kept Claude Code process between messages owns its session, but no message is running to act for.
     if (owner && !engineRun) return { content: [{ type: 'text', text: 'No message is in progress in Lumen for this call.' }], isError: true };
     // Claude Code may already show this call's row, from while its input was still streaming (claude-code.js claimStep).
+    // Claimed before anything can refuse the call: the rows are matched to calls first-in-first-out, and a
+    // refused call must not leave its early row spinning.
     const early = engineRun ? owner.claimStep?.(name) || null : null;
+    const refuse = (text) => {
+      if (early) engineRun.emit({ type: 'tool_done', id: early, ok: false, error: text });
+      return { content: [{ type: 'text', text }], isError: true };
+    };
+    const problem = deps.validateToolInput(name, args);
+    if (problem) return refuse(`Invalid input: ${problem}`);
     const stepId = early || `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // A background task's CLI run brings its own Agent (work tab, approved sites, taint, approval cards
     // for the Tasks panel): each of its calls runs there, never in the sidebar's Agent or the user's tab.
@@ -219,7 +235,7 @@ function setupAiAgents(deps) {
     const toUi = engineRun ? engineRun.emit : mcpEvent;
     const signal = engineRun ? engineRun.signal : session.controller.signal;
     const scope = engineRun && runAgent.engineScope();
-    if (engineRun?.agent && !scope) return { content: [{ type: 'text', text: 'This background task is not running any more.' }], isError: true };
+    if (engineRun?.agent && !scope) return refuse('This background task is not running any more.');
     // `run` carries the "has read page content" taint (agent.ensureAllowed): the engine's message
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
@@ -230,14 +246,22 @@ function setupAiAgents(deps) {
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     const front = scope ? null : agent.browser.activeTab()?.id;
     const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn));
-    if (!early) {
-      const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
-      toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
-    } else {
-      // The early row still has its generic label and no input: the call is here, so name it (renderer: tool_update).
-      const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
-      owner.updateStep(stepId, name, args, label);
+    // The row shows at once with its generic label; describeStep's specific one follows as a tool_update
+    // (renderer) and never holds the call up. Only a label that reads the page as it is before the call
+    // acts (a click or type names its element) is waited for, for at most LABEL_WAIT_MS, then the call goes on.
+    let finished = false;
+    const labelled = inPin(() => runAgent.describeStep(name, args)).catch(() => null);
+    const named = (label) => { if (label && !finished) toUi({ type: 'tool_update', id: stepId, name, input: args, label, clientName: session.clientName }); };
+    let first = null;
+    if (LABEL_FIRST.has(name)) {
+      let timer;
+      first = await Promise.race([labelled, new Promise((resolve) => { timer = setTimeout(resolve, LABEL_WAIT_MS, null); })]);
+      clearTimeout(timer);
     }
+    // A new row carries the label when it is known by now (else the generic one); an early row is named in place.
+    if (!early) toUi({ type: 'tool', id: stepId, name, input: args, label: first, clientName: session.clientName });
+    else named(first);
+    labelled.then((label) => { if (label !== first) named(label); });
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
     // an outside agent's call is pinned to the tab in front when it arrives, so the approval card and
@@ -248,7 +272,7 @@ function setupAiAgents(deps) {
     };
     // The engine counts this call (a message that ran a tool is never re-sent silently) and pauses its
     // inactivity watchdog while it runs, approval card included (claude-code.js callBegin).
-    if (engineRun) owner.callBegin?.();
+    if (engineRun) owner.callBegin?.(engineRun);
     try {
       const result = await inPin(work);
       toUi({ type: 'tool_done', id: stepId, ok: true });
@@ -258,7 +282,8 @@ function setupAiAgents(deps) {
       toUi({ type: 'tool_done', id: stepId, ok: false, error: message.split('\n')[0] });
       return { content: [{ type: 'text', text: message }], isError: true };
     } finally {
-      if (engineRun) owner.callEnd?.();
+      finished = true; // a label still being worked out is dropped: the row is done
+      if (engineRun) owner.callEnd?.(engineRun);
     }
   }
 

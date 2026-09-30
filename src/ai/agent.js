@@ -807,6 +807,9 @@ function parseSearchHtml(html) {
     const snippet = decode(/class="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/(?:a|div|td|span)>/i.exec(block)?.[1] || '').slice(0, 240);
     if (url && /^https?:/.test(url)) rows.push({ title: decode(m[1]), url, snippet });
   });
+  // DuckDuckGo's own "no results" page is an answer ([]), not a failure: the hidden view would only load the same page again.
+  // A results page that yielded no rows is unreadable (null: the view is tried).
+  if (!rows.length && !/class="[^"]*\bno-results\b/.test(s)) return null;
   return rows;
 }
 
@@ -819,7 +822,7 @@ async function searchWeb(query) {
     const ses = require('electron').session.fromPartition('claude-reader');
     const res = await ses.fetch(url, { signal: AbortSignal.timeout(8000), headers: { accept: 'text/html' } });
     const rows = res.ok ? parseSearchHtml(await res.text()) : null;
-    if (rows?.length) return rows;
+    if (rows) return rows; // [] is DuckDuckGo saying it found nothing
   } catch {}
   return searchWebInView(query);
 }
@@ -1297,8 +1300,27 @@ class Agent {
       engine: 'claudecode', picked: engineModel(settings.model), prompt: userText, imageCount, tabCount,
       previous: { tier: settings.ccAutoTier, turns: settings.ccAutoTurns || 0 }, pinned: resume, enabled: this.browser.autoModel?.() !== false,
     });
-    const sessionId = settings.ccSession || crypto.randomUUID();
+    // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
+    const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
     return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), systemPrompt: systemFor(settings) + claudeCodeNote(routed.model) } };
+  }
+
+  // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
+  // chat's next Claude Code message will want a process, so it is started now instead of at send (runTask
+  // warms again, which keeps it when the plan's key matches). Does nothing for any other engine, during a
+  // run, or when a process is already kept or starting; repeated calls cost a model check. The message
+  // isn't known, so the routed model is the one an empty prompt gets ('standard' with auto-routing, or the
+  // pinned tier of a resumed session); a different one at send just replaces it. Idles out as any warm one.
+  prewarm() {
+    const messages = this.messages;
+    const settings = messages?.settings;
+    if (!settings || !String(settings.model).startsWith('claudecode:') || this.engineRunScope || this.running) return false;
+    const cc = this.engines?.claudecode;
+    if (!cc?.warm || cc.isWarm?.()) return false;
+    const plan = this.claudeCodePlan(messages, '', 0, 0);
+    if (!plan.resume) this.prewarmed = { messages, id: plan.spawn.sessionId };
+    cc.warm(plan.spawn);
+    return true;
   }
 
   async claudeCodeTurn(messages, prompt, images, signal, emit, hint = {}) {
@@ -1320,6 +1342,8 @@ class Agent {
       return { text: earlier ? `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}` : prompt, images: [...capHistoryImages(priorImages, images, emit), ...images] };
     };
     const first = spawn.resume ? { text: prompt, images } : handoff();
+    this.prewarmed = null; // (its session id is this message's now)
+    const onLateUsage = ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); };
     emit({ type: 'turn_start' });
     let out = await this.engines.claudecode.run({
       ...spawn, // sessionId, resume, model ('default', a `claude --model` alias, or the alias auto-routing chose), maxTurns (Settings: Max steps per task, 0: no cap), systemPrompt
@@ -1328,6 +1352,10 @@ class Agent {
       quietExpired: true,
       signal,
       emit,
+      // A capped chat's next process starts only when the next message can't want another model: a picked one, or the top tier.
+      prestart: !routed.auto || routed.tier === 'heavy',
+      // Stop: the interrupted turn's usage arrives after this message returned (claude-code.js interrupt).
+      lateUsage: onLateUsage,
     });
     if (out.expired && !signal.aborted) {
       // The CLI no longer has this chat's session (cleared, or from another machine): start a new one
@@ -1335,7 +1363,7 @@ class Agent {
       delete settings.ccSession;
       snapshot.reads.clear(); // the model of the new session has seen none of the earlier reads
       const again = handoff();
-      out = await this.engines.claudecode.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit });
+      out = await this.engines.claudecode.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage });
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });

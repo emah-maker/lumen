@@ -1460,7 +1460,11 @@ function autosize() {
   prompt.style.height = 'auto';
   prompt.style.height = `${Math.min(prompt.scrollHeight, 160)}px`;
 }
-prompt.addEventListener('input', () => { autosize(); updateSend(); });
+// Claude Code's process starts while the user types (main: agent.prewarm, a no-op for any other engine); at most every 20 s.
+let prewarmAt = 0;
+const prewarm = () => { if (running || Date.now() - prewarmAt < 20000) return; prewarmAt = Date.now(); try { window.assistant?.prewarm?.(); } catch {} };
+prompt.addEventListener('focus', prewarm);
+prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
   if (e.key === 'Enter' && !e.shiftKey) {

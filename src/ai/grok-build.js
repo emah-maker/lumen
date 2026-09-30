@@ -328,6 +328,8 @@ const BUILTIN_TOOLS = [
 const DENIED = ['spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output'];
 // Grok always gets a cap (a headless run must end); this is it when Max steps per task is Unlimited.
 const DEFAULT_MAX_TURNS = 100;
+// A Grok process silent on stdout this long, with no Lumen tool call running, is hung (claude-code.js WATCHDOG_MS).
+const WATCHDOG_MS = 90 * 1000;
 // A background task's grok (features/background-runner.js) has nobody to ask in the moment and gets no
 // shell at all: run_terminal_command is denied like the other three, and not allowed.
 const argsBase = (background = false) => [
@@ -596,8 +598,10 @@ class GrokBuildEngine {
   // GROK_HOME (home) and working folder (dir), no terminal command at all, and its own `active` run.
   // onFresh({ sessionId, resume }): a new grok process starts (one per message), so the page reads the
   // model saw before no longer count (snapshot.js's repeat-read cache, features/ai-agents.js).
-  constructor({ userData, gate, lumenReady = null, onFresh = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
+  // watchdogMs: a run whose stdout is silent this long (no Lumen tool call in flight) is hung and is ended (0: off).
+  constructor({ userData, gate, lumenReady = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
     this.kind = 'grokbuild';
+    this.watchdogMs = watchdogMs;
     this.onFresh = onFresh;
     this.prep = null; // { at, promise } from prepare(): the setup a message's run() takes over
     this.settling = null; // the last run's settleAuthAsync, awaited before the next link
@@ -660,6 +664,22 @@ class GrokBuildEngine {
     return Boolean(tag && this.active && tag.length === this.active.tag.length && crypto.timingSafeEqual(Buffer.from(tag), Buffer.from(this.active.tag)));
   }
 
+  // A Lumen tool call (or a terminal-command approval) of the run starts / ends (features/ai-agents.js):
+  // the watchdog waits for it (an approval card can wait on the user as long as it likes). `a`: the
+  // call's own active object (see claude-code.js callBegin).
+  callBegin(a = this.active) {
+    if (!a) return;
+    a.tools++;
+    a.inflight++;
+    clearTimeout(a.dog);
+  }
+
+  callEnd(a = this.active) {
+    if (!a) return;
+    a.inflight = Math.max(0, a.inflight - 1);
+    a.arm?.();
+  }
+
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
   // runAgent: the Agent whose gate, approvals and tab this run's MCP calls use (a background task's own).
   // shownModel: the model this chat last showed (see modelNotice); the result's `model` is the one
@@ -702,6 +722,8 @@ class GrokBuildEngine {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
+    // Stop during the setup: nothing is started (attempt checks again, for a Stop during the prompt write).
+    if (signal.aborted) return { text: '', sessionId, stopped: true };
     const { home, dir } = this;
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     await fs.promises.writeFile(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
@@ -722,6 +744,7 @@ class GrokBuildEngine {
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
   async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, shownModel = null, authBefore = null }) {
+    if (signal.aborted) return { text: '', sessionId, stopped: true }; // Stop came before the spawn: Grok never runs
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
@@ -736,11 +759,22 @@ class GrokBuildEngine {
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
     emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (the renderer clears it on the first output)
     const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun, home, dir }), cwd: dir });
-    this.active = { tag, emit, signal, child, agent: runAgent };
+    // tools / inflight / dog / arm: the inactivity watchdog, as in claude-code.js (callBegin / callEnd pause it).
+    const active = { tag, emit, signal, child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
+    this.active = active;
+    let over = false; // the process has ended (the watchdog stays off)
+    let stalled = false;
+    active.arm = () => {
+      clearTimeout(active.dog);
+      if (!this.watchdogMs || over || active.inflight > 0) return;
+      active.dog = setTimeout(() => { stalled = true; this.kill(child); }, this.watchdogMs);
+    };
     // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background
     // "leader" process, `grok leader list/kill`, did not show up in Lumen's GROK_HOME in testing.)
     const onAbort = () => this.kill(child);
     signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort(); // Stop landed while the process was being set up
+    active.arm();
 
     let text = '';
     let finalText = '';
@@ -813,6 +847,7 @@ class GrokBuildEngine {
     };
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
+      active.arm(); // any output restarts the watchdog
       buffer += chunk;
       let i;
       while ((i = buffer.indexOf('\n')) >= 0) {
@@ -845,6 +880,8 @@ class GrokBuildEngine {
       child.on('error', (err) => { stderr += `\n${err.message}`; resolve(err.code === 'ENOENT' ? 'ENOENT' : -1); });
       child.on('close', (c) => resolve(c));
     });
+    over = true;
+    clearTimeout(active.dog);
     signal.removeEventListener('abort', onAbort);
     if (this.active?.tag === tag) this.active = null;
     // A turn Grok ended without Lumen's gate ever seeing it (its prompt hook blocked, say) is no reply.
@@ -867,6 +904,10 @@ class GrokBuildEngine {
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true, model: served };
     if (early) return { retry: true };
     if (held) for (const event of held) emit(event); // ended (a failure, say) before Lumen's tools came up
+    if (stalled) {
+      emit({ type: 'error', text: `Grok Build stopped responding for ${Math.round(this.watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
+      return { text, sessionId: newSession, failed: true };
+    }
     if (code === 'ENOENT') {
       this.bin = null;
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
