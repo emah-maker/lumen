@@ -20,7 +20,7 @@ check('placement: a read-only disk image is misplaced', place('/Volumes/Lumen/Lu
 check('placement: a writable external-drive copy is left alone', !place('/Volumes/Work/Lumen.app/Contents/MacOS/Lumen', true).misplaced, '');
 check('placement: an unwritable copy outside Applications is misplaced', place('/opt/Lumen.app/Contents/MacOS/Lumen', false).why === 'unwritable', '');
 check('placement: ~/Downloads that is writable updates in place', !place(`${home}/Downloads/Lumen.app/Contents/MacOS/Lumen`, true).misplaced, '');
-check('placement: an unwritable /Applications (standard user) is not helped by moving', !place('/Applications/Lumen.app/Contents/MacOS/Lumen', false).misplaced, '');
+check('placement: an unwritable /Applications (standard user) is not misplaced but installs into ~/Applications', !place('/Applications/Lumen.app/Contents/MacOS/Lumen', false).misplaced && place('/Applications/Lumen.app/Contents/MacOS/Lumen', false).userApps === true && !place(`${home}/Applications/Lumen.app/Contents/MacOS/Lumen`, false).userApps, '');
 
 // ---- which file
 const files = [{ url: 'Lumen-1.2.3-mac-arm64.zip', sha512: 'a' }, { url: 'https://github.com/x/y/releases/download/v1.2.3/Lumen-1.2.3-mac-x64.zip', sha512: 'b' }];
@@ -29,7 +29,7 @@ check('asset: arm64 Mac stages the arm64 zip from the release', s1.name === 'Lum
 check('asset: a listed https URL wins', U.stageAsset({ kind: 'mac', version: '1.2.3', arch: 'x64', files }).url.startsWith('https://github.com/x/y/'), '');
 check('asset: Windows installs and zips stage the win zip', ['nsis', 'zip'].every((k) => U.stageAsset({ kind: k, version: '1.2.3', arch: 'x64' }).name === 'Lumen-1.2.3-win-x64.zip'), '');
 check('asset: portable and other have nothing to stage', !U.stageAsset({ kind: 'portable', version: '1.2.3' }) && !U.stageAsset({ kind: 'other', version: '1.2.3' }), '');
-check('asset: only a copy that cannot swap falls back to the dmg', U.manualAsset({ kind: 'mac', version: '1.2.3', arch: 'arm64' }).name === 'Lumen-1.2.3-mac-arm64.dmg' && U.manualAsset({ kind: 'nsis', version: '1.2.3' }) === null, '');
+check('asset: only a copy that cannot swap falls back to the dmg / Setup exe', U.manualAsset({ kind: 'mac', version: '1.2.3', arch: 'arm64' }).name === 'Lumen-1.2.3-mac-arm64.dmg' && U.manualAsset({ kind: 'nsis', version: '1.2.3' }).name === 'Lumen-Setup-1.2.3.exe' && U.manualAsset({ kind: 'nsis', version: '1.2.3' }).url === 'https://github.com/emah-maker/lumen/releases/download/v1.2.3/Lumen-Setup-1.2.3.exe' && U.manualAsset({ kind: 'other', version: '1.2.3' }) === null, '');
 check('mode: a replaceable mac copy self-updates, an unwritable one does not', U.updateMode({ kind: 'mac', replaceable: () => true }) === 'stage' && U.updateMode({ kind: 'mac', replaceable: () => false }) === 'manual', '');
 
 // ---- versions
@@ -55,5 +55,169 @@ check('nsis: one click, per user (no admin), opens Lumen when done, both shortcu
 check('nsis: the exe stays unedited (Smart App Control) and the profile survives uninstall', pkg.win.signAndEditExecutable === false && pkg.nsis.deleteAppDataOnUninstall === false, '');
 check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some((c) => c.type === 'link' && c.path === '/Applications') && pkg.mac.target.some((t) => t.target === 'zip'), JSON.stringify(pkg.dmg));
 
-console.log(failures ? `\n${failures} failed` : '\nall updates-units passed');
-process.exit(failures ? 1 : 0);
+(async () => {
+  // ---- pure helpers for a Lumen already in Applications, relocating and the click
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const plist = (v) => `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleName</key><string>Lumen</string><key>CFBundleShortVersionString</key>\n\t<string>${v}</string></dict></plist>`;
+  check('plist: the version comes out of an XML Info.plist', U.plistVersion(plist('1.4.2')) === '1.4.2' && U.plistVersion(Buffer.from(plist('0.10.0-beta.1'))) === '0.10.0-beta.1', '');
+  check('plist: binary, empty or junk gives null, never a wrong version', U.plistVersion(Buffer.from('bplist00\u0001CFBundleShortVersionString')) === null && U.plistVersion('') === null && U.plistVersion(undefined) === null && U.plistVersion(plist('<script>')) === null && U.plistVersion('<key>CFBundleShortVersionString</key>') === null, '');
+
+  // ---- reading it: XML directly; a binary plist through plutil, then defaults; else skipped with a warning
+  const warned = [];
+  const rv = (readFile, exec) => U.readBundleVersion('/Applications/Lumen.app', { readFile, exec, warn: (m) => warned.push(m) });
+  check('bundle version: XML plist is parsed without running anything', await rv(async () => plist('2.0.0'), async () => { throw new Error('should not run'); }) === '2.0.0', '');
+  check('bundle version: a missing app gives null quietly', await rv(async () => { throw new Error('ENOENT'); }, async () => '') === null && warned.length === 0, '');
+  const calls = [];
+  check('bundle version: a binary plist goes through plutil (json)', await rv(async () => Buffer.from('bplist00xx'), async (bin, args) => { calls.push(bin); return JSON.stringify({ CFBundleShortVersionString: '3.1.0' }); }) === '3.1.0' && calls[0] === '/usr/bin/plutil', calls.join());
+  check('bundle version: plutil failing falls back to `defaults read`', await rv(async () => Buffer.from('bplist00xx'), async (bin) => { if (bin.endsWith('plutil')) throw new Error('nope'); return '3.2.0\n'; }) === '3.2.0', '');
+  check('bundle version: nothing can read it -> null with a warning (the check is skipped)', await rv(async () => Buffer.from('bplist00xx'), async () => { throw new Error('nope'); }) === null && warned.length === 1, String(warned));
+
+  check('keep: an equal or newer copy in Applications is kept, an older or unreadable one is replaced', U.keepExisting('2.0.0', '1.5.0') && U.keepExisting('1.5.0', '1.5.0') && !U.keepExisting('1.0.0', '1.5.0') && !U.keepExisting(null, '1.5.0') && U.keepExisting('1.0.0', '1.0.0-beta.1') && !U.keepExisting('1.0.0-beta.1', '1.0.0'), '');
+  check('keep: the dialog text says newer or same', /newer Lumen \(2\.0\.0\)/.test(U.keepMessage('2.0.0', '1.5.0').message) && /Lumen 1\.5\.0 is already/.test(U.keepMessage('1.5.0', '1.5.0').message), '');
+  const writable = (...ok) => (d) => ok.includes(d);
+  check('apps dir: /Applications when writable, else ~/Applications (created), else nothing', U.pickAppsDir({ home: '/Users/me', canWrite: writable('/Applications'), mkdir() {} }) === '/Applications'
+    && U.pickAppsDir({ home: '/Users/me/', canWrite: writable('/Users/me/Applications'), mkdir() {} }) === '/Users/me/Applications'
+    && U.pickAppsDir({ home: '/Users/me', canWrite: writable(), mkdir() {} }) === null
+    && U.pickAppsDir({ home: '', canWrite: writable(), mkdir() {} }) === null
+    && U.pickAppsDir({ home: '/Users/me', canWrite: writable('/Users/me/Applications'), mkdir() { throw new Error('EACCES'); } }) === null, '');
+  const pg = (out) => U.runningFrom('/Applications/Lumen.app', { pid: 100, exec: async (bin, args) => { if (out === null) throw new Error('exit 1'); pg.args = args; return out; } });
+  check('running: another pid under the bundle counts, our own pid and "nothing found" do not', await pg('5555\n') === true && await pg('100\n') === false && await pg(null) === false && pg.args[0] === '-f' && /Applications\/Lumen\\\.app\/Contents\/MacOS\/$/.test(pg.args[1]), String(pg.args));
+
+  // ---- the click state machine (pure): idle, downloading + queued, ready, apply, misplaced
+  const st = (o) => U.clickAction({ disabled: null, canSelfUpdate: true, relocate: null, hasVersion: true, status: 'idle', queued: false, staged: false, autoDownload: true, ...o });
+  check('click: nothing found yet does nothing (idle, checking, up to date)', ['idle', 'checking', 'up-to-date'].every((status) => st({ hasVersion: false, status }) === 'none'), '');
+  check('click: disabled does nothing', st({ disabled: 'dev', status: 'downloaded', staged: true }) === 'none', '');
+  check('click: downloading queues the update once, then waits', st({ status: 'downloading' }) === 'queue' && st({ status: 'downloading', queued: true }) === 'none', '');
+  check('click: ready (staged) applies, in one click', st({ status: 'downloaded', staged: true }) === 'apply' && st({ status: 'downloaded', staged: false }) === 'none', '');
+  check('click: found but not started (or failed) downloads and queues; with automatic downloads off it only downloads', st({ status: 'available' }) === 'download-queue' && st({ status: 'error' }) === 'download-queue' && st({ status: 'available', autoDownload: false }) === 'download', '');
+  check('click: a copy that cannot install itself downloads the file', st({ canSelfUpdate: false, status: 'available' }) === 'manual', '');
+  check('click: a misplaced Mac copy moves AND updates in one go (download-queue, then apply), or just moves with no update known', st({ canSelfUpdate: false, relocate: 'misplaced', status: 'available', autoDownload: false }) === 'download-queue' && st({ canSelfUpdate: false, relocate: 'misplaced', status: 'downloaded', staged: true }) === 'apply' && st({ canSelfUpdate: false, relocate: 'misplaced', hasVersion: false }) === 'move' && st({ canSelfUpdate: false, relocate: 'user', hasVersion: false }) === 'none', '');
+  check('offer: a declined move is re-offered once per new version, never twice within an hour', !U.shouldOfferMove({ relocate: null, version: null }) && U.shouldOfferMove({ relocate: 'misplaced', version: null }) && !U.shouldOfferMove({ relocate: 'misplaced', version: null, promptedAt: 1 })
+    && U.shouldOfferMove({ relocate: 'misplaced', version: '2.0.0', promptedAt: 1000, promptedVersion: '', now: 1000 + 3600e3 }) && !U.shouldOfferMove({ relocate: 'misplaced', version: '2.0.0', promptedAt: 1000, promptedVersion: '2.0.0', now: 1e12 })
+    && !U.shouldOfferMove({ relocate: 'misplaced', version: '2.0.0', promptedAt: 1000, promptedVersion: '', now: 2000 }) && !U.shouldOfferMove({ relocate: 'user', version: '2.0.0' }), '');
+
+  // ---- the controller, with a stand-in updater, stager and the outside world
+  process.env.LUMEN_UPDATES_TEST = '1';
+  const { EventEmitter } = require('events');
+  const os = require('os');
+  const flush = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+  function make({ veto = false, settings = {} } = {}) {
+    const log = { quits: 0, swaps: [], stages: [], dialogs: [], saves: 0, settings, answer: 1, moves: 0, opened: [] };
+    const fake = new EventEmitter();
+    const app = { isPackaged: false, getVersion: () => '1.0.0', getPath: () => os.tmpdir(), quit() {}, moveToApplicationsFolder() {} };
+    const u = U.createUpdates({ app, ipcMain: { handle() {} }, session: {}, ui: () => null, readSettings: () => log.settings, writeSettings: (s) => { log.settings = s; }, prefs: () => ({}), beforeInstall: () => { log.saves++; }, test: true });
+    const h = u.testHooks;
+    h.useUpdater(fake);
+    const pending = [];
+    h.useStager({ canReplace: () => true, canWriteDir: () => true, swapPaths: () => ({ staging: '/x' }),
+      stage: (a) => { log.stages.push(a); return new Promise((res) => pending.push(() => res({ fake: a.execPath }))); },
+      launchSwap: (a) => log.swaps.push(a) });
+    if (veto) h.stubIo({ quit: () => { log.quits++; } }); else h.stubQuit(() => { log.quits++; });
+    h.stubIo({ dialog: async (o) => { log.dialogs.push(o); return { response: log.answer }; }, openApp: (b) => log.opened.push(b), exists: () => false, running: async () => false, version: async () => null, home: () => '/Users/me', canWrite: (d) => d === '/Applications', mkdir() {} });
+    return { u, h, log, emit: (v) => fake.emit('update-available', { version: v, files: [] }), finish: () => pending.shift()() };
+  }
+
+  // idle: a click with nothing to do changes nothing
+  let t = make();
+  await t.u.apply();
+  check('flow idle: a click does nothing', t.u.state().status === 'idle' && t.log.quits === 0 && t.log.stages.length === 0 && t.log.swaps.length === 0, JSON.stringify(t.u.state()));
+
+  // downloading + queued: found, downloads by itself; a click queues; it applies and relaunches when ready
+  t = make(); t.h.setKind('nsis'); t.emit('2.0.0'); await flush();
+  check('flow: an update found is downloaded in the background', t.u.state().status === 'downloading' && t.log.stages.length === 1 && !t.u.state().queued, JSON.stringify(t.u.state()));
+  await t.u.apply();
+  check('flow queued: a click while downloading queues, nothing quits yet, no dialog', t.u.state().queued === true && t.log.quits === 0 && t.log.swaps.length === 0 && t.log.dialogs.length === 0, JSON.stringify(t.u.state()));
+  await t.u.apply();
+  check('flow queued: a second click changes nothing', t.log.stages.length === 1 && t.log.quits === 0 && t.u.state().queued === true, '');
+  t.finish(); await flush();
+  check('flow queued: when ready it applies and relaunches by itself (one swap, one quit, session saved)', t.log.quits === 1 && t.log.swaps.length === 1 && t.log.swaps[0].relaunch === true && t.log.saves === 1 && t.u.state().queued === false, JSON.stringify(t.log.swaps));
+
+  // ready + apply: one click restarts, no second dialog
+  t = make(); t.h.setKind('nsis'); t.emit('2.0.0'); await flush(); t.finish(); await flush();
+  check('flow ready: the update is staged and waiting (no restart on its own)', t.u.state().status === 'downloaded' && t.log.quits === 0 && t.log.swaps.length === 0, '');
+  await t.u.apply();
+  check('flow apply: one click relaunches into it, with no dialog', t.log.quits === 1 && t.log.swaps.length === 1 && t.log.swaps[0].relaunch === true && t.log.dialogs.length === 0, JSON.stringify(t.log.swaps));
+
+  // the quit is cancelled (before-quit vetoed): the swap helper is not started, so no false "couldn't replace" error
+  t = make({ veto: true }); t.h.setKind('nsis'); t.emit('2.0.0'); await flush(); t.finish(); await flush();
+  await t.u.apply();
+  check('flow veto: the helper only starts at will-quit, so a cancelled quit starts none', t.log.quits === 1 && t.log.swaps.length === 0, JSON.stringify(t.log.swaps));
+  t.h.willQuit();
+  check('flow veto: when the quit does happen the helper starts and relaunches', t.log.swaps.length === 1 && t.log.swaps[0].relaunch === true, '');
+  t = make({ veto: true }); t.h.setKind('nsis'); t.emit('2.0.0'); await flush(); t.finish(); await flush();
+  t.h.willQuit();
+  check('flow quit: a plain quit with an update ready installs it without reopening Lumen', t.log.swaps.length === 1 && t.log.swaps[0].relaunch === false, '');
+
+  // misplaced Mac copy: one click = install the update into Applications, then apply and relaunch
+  const dmg = () => { const m = make(); m.h.setKind('mac', false); m.h.setPlacement({ misplaced: true, why: 'dmg' }); return m; };
+  t = dmg(); t.emit('2.0.0'); await flush();
+  check('flow misplaced: a new version asks once (Move and update / Not now), downloads nothing yet', t.log.dialogs.length === 1 && t.log.dialogs[0].buttons[0] === 'Move and update' && t.log.stages.length === 0 && t.log.settings.movePromptedVersion === '2.0.0' && t.u.state().relocate === 'misplaced' && t.u.state().asset === null, JSON.stringify(t.log.settings));
+  t.emit('2.0.0'); await flush();
+  check('flow misplaced: the same version is not asked again', t.log.dialogs.length === 1, '');
+  await t.u.apply();
+  check('flow misplaced: the click stages the update INSIDE /Applications, queued', t.log.stages.length === 1 && t.log.stages[0].execPath.startsWith('/Applications/Lumen.app/Contents/MacOS/') && t.u.state().queued === true && t.u.state().moveError === '', JSON.stringify(t.log.stages.map((s) => s.execPath)));
+  t.finish(); await flush();
+  check('flow misplaced: then it applies and relaunches (no separate move step, no extra dialog)', t.log.quits === 1 && t.log.swaps.length === 1 && t.log.swaps[0].relaunch === true && t.log.dialogs.length === 1 && t.log.settings.movePromptedVersion === '2.0.0', JSON.stringify(t.log.swaps));
+  t = dmg(); t.log.answer = 0; t.emit('2.0.0'); await flush();
+  check('flow misplaced: answering "Move and update" to the dialog does the whole thing', t.log.stages.length === 1 && t.u.state().queued === true, '');
+  t = dmg(); t.log.settings = { movePromptedAt: Date.now(), movePromptedVersion: '' }; t.emit('2.0.0'); await flush();
+  check('flow misplaced: no second dialog right after the launch prompt; the pill still shows', t.log.dialogs.length === 0 && t.u.state().status === 'available' && t.u.state().relocate === 'misplaced', '');
+  t = dmg(); t.log.settings = { movePromptedAt: Date.now() - 2 * 3600e3, movePromptedVersion: '1.9.0' }; t.emit('2.0.0'); await flush();
+  check('flow misplaced: a new version later asks again', t.log.dialogs.length === 1 && t.log.settings.movePromptedVersion === '2.0.0', '');
+
+  // a newer Lumen is already in Applications: not overwritten, offered instead
+  t = dmg(); t.h.stubIo({ exists: () => true, version: async () => '3.0.0' }); t.log.settings = { movePromptedAt: 1, movePromptedVersion: '2.0.0' }; t.emit('2.0.0'); await flush();
+  await t.u.apply();
+  check('flow newer copy: nothing is downloaded or overwritten, and it offers to open the newer one', t.log.stages.length === 0 && t.log.dialogs.length === 1 && /newer Lumen \(3\.0\.0\)/.test(t.log.dialogs[0].message) && t.u.state().queued === false, JSON.stringify(t.log.dialogs));
+  t = dmg(); t.h.stubIo({ exists: () => true, version: async () => '3.0.0' }); t.log.answer = 0; t.log.settings = { movePromptedAt: 1, movePromptedVersion: '2.0.0' }; t.emit('2.0.0'); await flush();
+  await t.u.apply();
+  check('flow newer copy: "Open it" opens that copy and quits this one', eq(t.log.opened, ['/Applications/Lumen.app']) && t.log.quits === 1, JSON.stringify(t.log.opened));
+  // an older copy there is replaced; one that is running is not
+  t = dmg(); t.h.stubIo({ exists: () => true, version: async () => '1.5.0' }); t.log.settings = { movePromptedAt: 1, movePromptedVersion: '2.0.0' }; t.emit('2.0.0'); await flush();
+  await t.u.apply();
+  check('flow older copy: it is replaced by the update', t.log.stages.length === 1 && t.log.dialogs.length === 0, '');
+  t = dmg(); t.h.stubIo({ exists: () => true, running: async () => true }); t.log.settings = { movePromptedAt: 1, movePromptedVersion: '2.0.0' }; t.emit('2.0.0'); await flush();
+  await t.u.apply();
+  check('flow running copy: the message says to quit the other Lumen, nothing is downloaded', t.log.stages.length === 0 && /Quit the other Lumen/.test(t.u.state().moveError) && t.u.state().queued === false, t.u.state().moveError);
+  t.h.stubIo({ running: async () => false }); await t.u.apply();
+  check('flow running copy: quitting the other one and clicking again goes through', t.u.state().moveError === '' && t.log.stages.length === 1, '');
+
+  // a standard user's /Applications: the update goes to ~/Applications
+  t = make(); t.h.setKind('mac', false); t.h.setPlacement({ misplaced: false, why: null, userApps: true }); t.h.stubIo({ canWrite: (d) => d === '/Users/me/Applications' });
+  t.emit('2.0.0'); await flush();
+  check('flow non-admin /Applications: no dialog, the pill offers it', t.log.dialogs.length === 0 && t.u.state().relocate === 'user' && t.u.state().status === 'available', '');
+  await t.u.apply();
+  check('flow non-admin /Applications: one click stages into ~/Applications, then relaunches from there', t.log.stages.length === 1 && t.log.stages[0].execPath.startsWith('/Users/me/Applications/Lumen.app/'), JSON.stringify(t.log.stages.map((s) => s.execPath)));
+  t.finish(); await flush();
+  check('flow non-admin /Applications: applied and relaunched', t.log.quits === 1 && t.log.swaps.length === 1, '');
+
+  // a failed download while queued: not applied, shows the error, a retry works
+  t = make(); t.h.setKind('nsis'); t.emit('2.0.0'); await flush(); await t.u.apply();
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), stage: async () => { throw new Error('the download failed its checksum'); }, launchSwap: (a) => t.log.swaps.push(a) });
+  t.h.setState({ status: 'available' }); await t.u.apply(); await flush();
+  check('flow failure: a failed download is shown and nothing is applied', t.u.state().status === 'error' && /checksum/.test(t.u.state().error) && t.log.quits === 0 && t.u.state().queued === false, JSON.stringify(t.u.state()));
+
+  // the plain move (no update known): the native flow, with the downgrade check and errors shown
+  const mv = (over = {}) => { const m = dmg(); m.h.stubIo({ exists: () => true, version: async () => null, ...over }); return m; };
+  t = mv({ version: async () => '1.0.0' }); t.h.stubMove(() => { t.log.moves++; return true; });
+  await t.u.apply();
+  check('plain move: an equal copy in Applications is kept and offered, the native move is not run', t.log.moves === 0 && t.log.dialogs.length === 1, JSON.stringify(t.log.dialogs));
+  t = mv(); t.h.stubMove(() => { t.log.moves++; return true; });
+  await t.u.apply();
+  check('plain move: an unreadable version skips the check and moves', t.log.moves === 1 && t.log.dialogs.length === 0 && t.u.state().moveError === '', '');
+  t = mv(); t.h.stubMove((o) => { t.log.conflict = [o.conflictHandler('exists'), o.conflictHandler('existsAndRunning')]; return false; });
+  await t.u.apply();
+  check('plain move: replaces an older copy, and a running one is refused with a clear message', eq(t.log.conflict, [true, false]) && /Quit the other Lumen/.test(t.u.state().moveError), JSON.stringify(t.log.conflict));
+  t = mv(); t.h.stubMove(() => { throw new Error('Permission denied'); });
+  await t.u.apply();
+  check('plain move: a failed move is shown, not swallowed', /Permission denied/.test(t.u.state().moveError) && t.u.state().status === 'idle', t.u.state().moveError);
+
+  // ---- the mac swap script can install where there was nothing before
+  const fresh = Z.macSwapScript({ pid: 1, dir: '/Applications/Lumen.app', root: '/Applications/.Lumen.update/files/Lumen.app', old: '/Applications/Lumen.app.old', errFile: '/e', staging: '/Applications/.Lumen.update', self: '/Applications/.Lumen.update.sh' });
+  check('swap script: a first install (no old app) still moves the new one in, and rollback only with an old one', fresh.includes('[ ! -d "$APP" ] || mv "$APP" "$OLD"') && fresh.includes('[ -d "$OLD" ] && mv "$OLD" "$APP"'), fresh);
+  check('write probe: canWriteDir follows the probe', Z.canWriteDir('/x', () => {}) === true && Z.canWriteDir('/x', () => { throw new Error('EACCES'); }) === false, '');
+
+
+  console.log(failures ? String.fromCharCode(10) + failures + ' failed' : String.fromCharCode(10) + 'all updates-units passed');
+  process.exit(failures ? 1 : 0);
+})().catch((err) => { console.error(err); process.exit(1); });

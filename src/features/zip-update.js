@@ -63,6 +63,12 @@ function canReplace(execPath, platform = process.platform, probe = probeWrite, a
   }
 }
 
+// Can this user create things in `dir` (Applications, ~/Applications)? Creating and removing a real
+// file is the only test that follows ACLs; `probe` is injectable for tests.
+function canWriteDir(dir, probe = probeWrite) {
+  try { probe(dir); return true; } catch { return false; }
+}
+
 // The sha512 (base64) latest.yml lists for `name`, or ''.
 function expectedHash(files = [], name) {
   const f = files.find((x) => { const u = String(x?.url || ''); return u === name || u.endsWith(`/${name}`); });
@@ -120,7 +126,8 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     ...(relaunch ? [] : ['[ -d "$NEW" ] || { rm -f "$SELF"; exit 0; }']),
     'rm -rf "$OLD"',
     'xattr -cr "$NEW" 2>/dev/null',
-    'if mv "$APP" "$OLD"; then',
+    // a fresh install into Applications (a misplaced copy's update) has no $APP to move aside
+    'if [ ! -d "$APP" ] || mv "$APP" "$OLD"; then',
     '  if mv "$NEW" "$APP"; then',
     '    xattr -cr "$APP" 2>/dev/null',
     '    rm -rf "$OLD" "$STAGING"',
@@ -128,7 +135,7 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     '    rm -f "$SELF"',
     '    exit 0',
     '  fi',
-    '  mv "$OLD" "$APP"',
+    '  [ -d "$OLD" ] && mv "$OLD" "$APP"',
     'fi',
     'fail',
     '',
@@ -277,4 +284,4 @@ function launchSwap({ staged, execPath, errFile, relaunch = true, platform = pro
   spawnFn(c.command, c.args, c.options).unref();
 }
 
-module.exports = { swapPaths, macBundle, canReplace, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
+module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
