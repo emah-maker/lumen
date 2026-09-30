@@ -145,6 +145,12 @@ check('streaming: a stray \\( in a path holds only a short tail, and never the s
   assert.ok(md.stableLength('Path C:\\Users\\[x\n\nNext\n\nMore') > 10);
 });
 
+check('streaming: emphasised prices, suffixes and shell/template variables never hold the line', () => {
+  for (const s of ['The **$20** plan vs', '*$20* per seat', '***$200*** total', '**$20/month** for', '__$20__ or', 'a $5bn deal', '$20MM raised', '$20+/mo plan', 'Use ${var} in', 'Set $env:PATH to', 'pipe $_ into']) {
+    assert.strictEqual(md.openMath(s), -1, s);
+  }
+});
+
 // With Temml: MathML, with the source kept as an annotation (copying a selection keeps the LaTeX).
 const ctx = { globalThis: {} };
 vm.createContext(ctx);

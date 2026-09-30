@@ -107,7 +107,7 @@
   function writingFormula(rest) {
     if (!rest || /^\s/.test(rest)) return false;
     if (/^\d/.test(rest)) {
-      if (/^\d[\d.,]*[kKmMbB]?(\/[a-z]*|\+|-)?([\s,.;:)!?*\]~'"]|$)/.test(rest)) return false; // (and "**$20**", "[$5]")
+      if (/^\d[\d.,]*([kKmMbBtT](n|N)?|MM|mn|bn|tn)?(s|ish|pp|USD)?(\/[a-z]*|\+\/?[a-z]*|-)?([\s,.;:)!?*\]~'"_]|$)/.test(rest)) return false; // (and "**$20**", "[$5]")
       if (/^\d[\d.,]*[kKmMbB]?\s*[-–—]\s*\$?(\d|$)/.test(rest)) return false; // a price range: "$5-$10", "$10-15", "$3k–$5k" // money: "$5 ", "$1.2M in", "$20/month", "$5k-"
       return /^\d[\d.,]*[A-Za-z\\^_+\-*=(]/.test(rest); // "$2x+…" holds
     }
