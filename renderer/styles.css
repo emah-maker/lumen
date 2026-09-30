@@ -634,7 +634,6 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .model-picker:hover { background: var(--hover); }
 .model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; margin-left: -6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-picker .picker-button:focus-visible { outline: 2px solid var(--accent); }
-.model-picker .picker-menu { left: -6px; top: calc(100% + 4px); }
 .model-picker svg { position: absolute; right: 4px; width: 12px; height: 12px; color: var(--muted); pointer-events: none; }
 
 /* ---------- downloads indicator ---------- */
@@ -807,13 +806,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 /* Only Claude's spark turns when the sidebar opens; other marks (an X would become "+") stay upright. */
 #toggle-sidebar[aria-pressed="true"]:not([data-assistant="Claude"]) svg { transform: none; }
 
-/* Themed menus for the model pickers (renderer/picker.js): drawn in the page, so they follow Lumen's theme. */
-.picker-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.picker-menu {
-  position: absolute; z-index: 20; min-width: 220px; max-width: min(320px, calc(var(--sidebar-width, 360px) - 24px)); max-height: min(520px, calc(100vh - 140px)); overflow-y: auto; padding: 4px;
-  border-radius: 10px; background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 12px 32px -8px rgb(0 0 0 / calc(0.6 * var(--shadow-k)));
-  scrollbar-width: thin; scrollbar-color: var(--border) transparent; animation: fade-in 120ms ease-out;
-}
 .setup { margin: 14px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .setup-title { margin: 0 0 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
 .setup-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 12px; border: none; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: default; transition: background-color var(--t-fast) ease-out; }
@@ -822,15 +814,12 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .setup-name { font-weight: 500; }
 .setup-detail { color: var(--muted); font-size: 12px; }
 /* Fits the sidebar at its 300px minimum (the sidebar clips whatever runs past its edge). */
-.model-search { width: min(300px, calc(var(--sidebar-width, 360px) - 28px)); left: -6px; top: calc(100% + 4px); }
+.picker-menu.model-search { position: absolute; display: block; width: min(300px, calc(var(--sidebar-width, 360px) - 28px)); left: -6px; top: calc(100% + 4px); padding: 4px; }
+.picker-menu.model-search .picker-item { display: block; padding-left: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-search .picker-item:hover { background: var(--hover); }
 .model-search-input { width: 100%; height: 28px; margin-bottom: 4px; padding: 0 8px; border: none; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; outline: none; }
 .model-search-list { max-height: 320px; overflow-y: auto; color: var(--muted); }
 .model-search-list .picker-item { color: var(--text); padding-left: 10px; }
-.picker-group { padding: 8px 10px 3px; color: var(--muted); font-size: 11px; font-weight: 600; }
-.picker-item { position: relative; padding: 5px 10px 5px 26px; border-radius: 6px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; outline: none; }
-.picker-item:hover, .picker-item:focus { background: var(--hover); }
-.picker-item[aria-selected="true"] { font-weight: 500; }
-.picker-item[aria-selected="true"]::before { content: ""; position: absolute; left: 10px; top: 50%; width: 8px; height: 4px; margin-top: -4px; border-left: 1.5px solid var(--text); border-bottom: 1.5px solid var(--text); transform: rotate(-45deg); }
 
 
 /* ---------- AI agents over MCP (session B) ---------- */

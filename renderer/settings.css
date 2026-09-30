@@ -108,25 +108,14 @@ select { padding-right: 24px; }
 option, optgroup { background: var(--surface); color: var(--text); }
 optgroup { color: var(--muted); }
 
-/* Themed menu for the Model picker (picker.js): drawn in the page, so it follows Lumen's theme. */
+/* The Model picker's button (its menu: picker.css). */
 .picker-host { position: relative; }
-.picker-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .picker-button {
   display: inline-flex; align-items: center; gap: 8px; min-width: 200px; max-width: 320px; justify-content: space-between;
   background: var(--field); text-align: left;
 }
 .picker-button::after { content: ""; flex: none; width: 6px; height: 6px; margin: -3px 2px 0 0; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); }
-.picker-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.picker-menu {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 240px; max-width: 340px; max-height: 360px; overflow-y: auto; padding: 4px;
-  border-radius: 10px; background: var(--surface); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 12px 32px -8px rgba(0, 0, 0, 0.35);
-  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-}
-.picker-group { padding: 8px 10px 3px; color: var(--muted); font-size: 11px; font-weight: 600; }
-.picker-item { position: relative; padding: 5px 10px 5px 26px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; outline: none; }
-.picker-item:hover, .picker-item:focus { background: var(--hover); }
-.picker-item[aria-selected="true"] { font-weight: 500; }
-.picker-item[aria-selected="true"]::before { content: ""; position: absolute; left: 10px; top: 50%; width: 8px; height: 4px; margin-top: -4px; border-left: 1.5px solid var(--text); border-bottom: 1.5px solid var(--text); transform: rotate(-45deg); }
+.picker-button .picker-text { flex: 1; }
 input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
   box-shadow: 0 0 0 3px var(--ring); outline: none;
 }

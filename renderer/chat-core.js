@@ -118,7 +118,7 @@ function setAssistantIdentity(group) {
   if (pill) pill.textContent = t('agent.usingTab', { name: who.name });
 }
 
-window.lumenPicker($('model'));
+window.lumenPicker($('model'), { recentKey: 'model' });
 
 // Whether there is any model to talk to right now (main's settings:get is the single source of
 // truth); ask() below checks this before sending, instead of letting a request fail with an error.
@@ -139,6 +139,11 @@ async function loadModels() {
     option.value = m.id;
     option.textContent = m.label;
     option.title = m.detail;
+    // The picker's row (picker.js): readable name, the id or a note under it, and badges.
+    if (m.name) option.dataset.name = m.name;
+    if (m.detail) option.dataset.detail = m.detail;
+    if (m.badges?.length) option.dataset.badges = m.badges.join(',');
+    if (m.more) option.dataset.more = '1';
     groups.get(m.group).append(option);
   }
   // A single group needs no heading.

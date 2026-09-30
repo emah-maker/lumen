@@ -168,7 +168,7 @@ async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g && !m.id.endsWith(':__more')).map((m) => h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }))));
+    ai.models.filter((m) => m.group === g && !m.id.endsWith(':__more')).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.name) o.dataset.name = m.name; if (m.detail) o.dataset.detail = m.detail; if (m.badges?.length) o.dataset.badges = m.badges.join(','); return o; })));
   card.append(
     row('Model', 'The model the assistant in the sidebar uses.', h('select', {
       id: 'ai-model',
@@ -178,7 +178,7 @@ async function buildAi(card) {
   );
   const modelPicker = card.querySelector('#ai-model');
   modelPicker.parentElement.classList.add('picker-host');
-  window.lumenPicker(modelPicker, { label: (o) => (o.parentElement.label ? `${o.parentElement.label} · ${o.textContent}` : o.textContent) });
+  window.lumenPicker(modelPicker, { recentKey: 'model' });
   const refreshModels = async () => {
     ai = await S.ai.get();
     modelPicker.replaceChildren(...modelOptions());

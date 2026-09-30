@@ -2468,6 +2468,15 @@ async function swapHelperRuns() {
   const { DEFAULTS } = require('../settings-backend');
   check('translate: settings defaults: offer on, no consent, no sites, Lumen\'s language', DEFAULTS.translateOffer === true && DEFAULTS.translateConsent.length === 0 && DEFAULTS.translateNever.length === 0 && DEFAULTS.translateTarget === '', '');
 })();
+// ---- model names for the picker (features/model-names.js)
+{
+  const MN = require('../features/model-names');
+  const names = ['gpt-5.6', 'gpt-5.6-mini', 'o3-pro-2025-06-10', 'gemini-2.5-flash-lite-preview-06-17', 'grok-4.7', 'anthropic/claude-opus-5.5'].map(MN.prettyModel);
+  check('model names: readable names, OpenAI style kept, dates and vendors dropped', names.join('|') === 'GPT-5.6|GPT-5.6 mini|o3 pro|Gemini 2.5 Flash-Lite|Grok 4.7|Claude Opus 5.5', names.join('|'));
+  check('model names: preview and chat-only become badges', MN.badgesFor('gemini-2.5-pro-preview-05-06', { chatOnly: true }).join() === 'chat only,preview', MN.badgesFor('gemini-2.5-pro-preview-05-06', { chatOnly: true }).join());
+  const ranked = MN.rankModels(['o1', 'o3', 'o3-pro', 'o3-pro-2025-06-10', 'o4-mini', 'o1-mini', 'o3-mini', 'o1-pro', 'o3-deep', 'o4-deep', 'o1-preview', 'o3-2025-04-16', 'gpt-5.6', 'gpt-5.6-mini', 'gpt-4o', 'gpt-4o-2024-08-06'], 12);
+  check('model names: the newest GPT models survive a long o-series list, and dated duplicates go', ranked[0] === 'gpt-5.6' && ranked.includes('gpt-5.6-mini') && !ranked.includes('o3-pro-2025-06-10') && !ranked.includes('gpt-4o-2024-08-06') && ranked.length === 12, ranked.join());
+}
 // ---- tab drag geometry (features/tab-drag-math.js)
 {
   const { clampToDisplay, windowBoundsFor, stripHit, grabPoint, placeOnWorkArea } = require('../features/tab-drag-math');

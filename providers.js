@@ -118,8 +118,9 @@ async function listModels(provider, apiKey, { cacheFile } = {}) {
     const page = await clientFor(provider, apiKey).models.list();
     const ids = [];
     for await (const m of page) ids.push(String(m.id).replace(/^models\//, ''));
-    const chat = ids.filter(PROVIDERS[provider].include).sort().reverse();
-    return chat.length ? chat.slice(0, 12) : PROVIDERS[provider].defaults;
+    // Newest families first and no dated duplicates (an alphabetical cut used to drop every gpt-* model behind o-series ids).
+    const chat = require('./features/model-names').rankModels(ids.filter(PROVIDERS[provider].include), 16);
+    return chat.length ? chat : PROVIDERS[provider].defaults;
   } catch {
     return PROVIDERS[provider].defaults;
   }

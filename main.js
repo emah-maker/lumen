@@ -360,9 +360,10 @@ let cliLoginValid = null;
 // The picker: a model appears only if its provider is actually connected. No provider is
 // privileged — connected API providers sort alphabetically by label, then local agent engines
 // (Claude Code) last, so the list reads the same regardless of which one the user set up.
+const modelNames = require('./features/model-names');
 function modelOptions() {
   const groups = [];
-  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, detail })) });
+  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, name: label, detail })) });
   for (const [provider, info] of Object.entries(providers.PROVIDERS)) {
     if (!providerKey(provider)) continue;
     const list = [...(providerModels[provider] || info.defaults)];
@@ -371,9 +372,12 @@ function modelOptions() {
     if (provider === 'openrouter' && saved.provider === 'openrouter' && !list.includes(saved.model)) list.push(saved.model);
     const entries = list.map((model) => {
       const chatOnly = !providers.canUseTools(provider, model);
-      return { id: `${provider}:${model}`, label: chatOnly ? `${model} (chat only)` : model, detail: `${info.label} · ${model}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}` };
+      // name: the readable model name the picker shows; badges: what it can't do or how settled it is. The raw id is the detail.
+      const name = modelNames.prettyModel(model) || model;
+      const snap = modelNames.snapshotOf(model);
+      return { id: `${provider}:${model}`, label: name, name, badges: modelNames.badgesFor(model, { chatOnly }), detail: `${model}${snap ? ' · snapshot' : ''}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}` };
     });
-    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), detail: t('models.more.detail') });
+    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });
   }
   groups.sort((a, b) => a.label.localeCompare(b.label));
