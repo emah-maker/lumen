@@ -4033,7 +4033,7 @@ const signedInReader = {
   hosts: () => signedInSites.hosts(),
   add: (host) => signedInSites.add(host),
   hasLogin: async (url) => require('./features/signed-in-sites').hasLoginCookies(await session.defaultSession.cookies.get({ url })),
-  privateWindow: () => { const rec = runRec && winRecs.has(runRec) ? runRec : curRec; return !rec || !winRecs.has(rec); }, // private windows have no record, so never
+  privateWindow: () => { const run = runRecNow(); const rec = run && winRecs.has(run) ? run : curRec; return !rec || !winRecs.has(rec); }, // private windows have no record, so never
   open: inRun((url) => {
     const tab = openTab(url, { background: true }); // the user's default session: no partition
     const t = tabs.find((x) => x.id === tab.id);
