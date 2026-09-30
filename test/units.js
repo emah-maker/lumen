@@ -1672,6 +1672,18 @@ async function chatPageRuns() {
   };
   const gid = (t) => t.groupId || null;
 
+  // A restored session marks every loose tab userRemoved (main.js restoreTabsFrom). An explicit Organize must still
+  // count and group them (was: "Open a few pages first" on a full tab bar), and Undo must put the flag back.
+  {
+    const r = setup();
+    r.tabs.forEach((t) => { t.userRemoved = true; });
+    check('organize: restored (userRemoved) loose tabs still count as candidates', r.h.tg.candidates().length === 3, String(r.h.tg.candidates().length));
+    r.h.tg.organizeByTopic();
+    check('organize: restored loose tabs are grouped by an explicit Organize', r.tabs.every((t) => gid(t) && gid(t) === gid(r.tabs[0])), JSON.stringify(r.tabs.map(gid)));
+    r.h.tg.undoOrganize();
+    check('organize: undo restores the restored-session flag', r.tabs.every((t) => t.userRemoved === true && !gid(t)), JSON.stringify(r.tabs.map((t) => [t.userRemoved, gid(t)])));
+  }
+
   // A tab that loads later joins the group it fits, and stays loose when nothing fits.
   let { h, tabs } = setup();
   h.tg.organizeByTopic();

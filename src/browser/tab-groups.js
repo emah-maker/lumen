@@ -1238,6 +1238,9 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // its colour (and, for local clusters, its name) so the tab strip doesn't reshuffle. One step of undo.
   function organizeByTopic(proposal = null) {
     saveUndo();
+    // An explicit Organize is a request to regroup: userRemoved (set on every loose tab of a restored session, or by a
+    // hand-ungroup) must not hide tabs from it. saveUndo() just kept the flags, so Undo brings them back.
+    for (const t of getTabs()) t.userRemoved = false;
     const prior = [...groups.values()].filter((g) => g.auto).map((g) => ({ ...g, ids: new Set(members(g.id).map((t) => t.id)) }));
     for (const g of prior) ungroupAll(g.id);
     for (const t of getTabs()) { t.autoMoves = 0; t.autoKey = null; }
@@ -1452,7 +1455,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   return {
     groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, organizeLoose, mergeGroups, entryFor: (id) => { const t = tabById(id); return t ? entry(t) : null; }, groupEntries: (id) => members(id).map(entry), organizeView, applyRefinement, organizeSeq: () => (undoState ? undoState.seq : null), undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
-    candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
+    candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !pinned(t) && !t.userMoved && !t.userPlaced && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,
   };
 }
