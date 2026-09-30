@@ -60,9 +60,16 @@ async function buildUpdates(card) {
   const U = S.updates;
   let u = await U.state();
   const note = status('updates-status');
-  // Disabled from the click until the next status render, so a double click can't start two.
-  const action = h('button', { class: 'primary', id: 'updates-apply', hidden: true, onclick: async () => { action.disabled = true; try { u = await U.apply(); } finally { render(); } } });
-  const checkBtn = h('button', { id: 'updates-check', text: ut('action.check'), onclick: async () => { checkBtn.disabled = true; try { u = await U.check(); } finally { render(); } } });
+  // `busy` covers the click itself: the 1-second render below must not re-enable a button whose call is still running.
+  let busy = false;
+  const click = async (fn) => {
+    if (busy) return;
+    busy = true;
+    render();
+    try { u = await fn(); } finally { busy = false; u = await U.state(); render(); }
+  };
+  const action = h('button', { class: 'primary', id: 'updates-apply', hidden: true, onclick: () => click(() => U.apply()) });
+  const checkBtn = h('button', { id: 'updates-check', text: ut('action.check'), onclick: () => click(() => U.check()) });
   const r = row(ut('row.title'), '', action, checkBtn);
   const desc = h('span', { class: 'desc', id: 'updates-desc' });
   r.querySelector('.text').append(desc, note);
@@ -78,9 +85,9 @@ async function buildUpdates(card) {
     action.hidden = !v.action;
     action.textContent = v.action || '';
     // A check with an update already known keeps the old status underneath; the buttons just say so.
-    action.disabled = Boolean(u.checking);
+    action.disabled = busy || Boolean(u.checking);
     checkBtn.textContent = u.checking || u.status === 'checking' ? window.t('updates.checking') : ut('action.check');
-    checkBtn.disabled = Boolean(u.disabled) || Boolean(u.checking) || ['checking', 'downloading'].includes(u.status);
+    checkBtn.disabled = busy || Boolean(u.disabled) || Boolean(u.checking) || ['checking', 'downloading'].includes(u.status);
   }
   // Follows a check or a download (also one started from the toolbar) while About is showing.
   const timer = setInterval(async () => {

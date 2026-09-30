@@ -25,6 +25,7 @@
   pill.append(text, action, close);
   end.insertBefore(pill, document.getElementById('downloads') || end.firstChild);
 
+  let applying = false; // a click's apply() is still running: a double click must not start a second
   function render(u) {
     // Copies that install the update themselves: swapping in place, or installing into Applications (relocate).
     const own = u.canSelfUpdate || Boolean(u.relocate);
@@ -46,11 +47,19 @@
     pill.title = why;
     if (why) pill.setAttribute('aria-description', why); else pill.removeAttribute('aria-description');
     action.hidden = busy && u.queued; // queued: nothing left to click
-    action.disabled = Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
+    action.disabled = applying || Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
     action.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
     action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
-  action.addEventListener('click', async () => render(await api.apply()));
+  action.addEventListener('click', async () => {
+    if (applying) return;
+    applying = true;
+    action.disabled = true;
+    let next = null;
+    try { next = await api.apply(); } catch {} finally { applying = false; }
+    if (!next) next = await api.state().catch(() => null);
+    if (next) render(next); else action.disabled = false;
+  });
   close.addEventListener('click', async () => render(await api.dismiss()));
   api.onState(render);
   api.state().then(render).catch(() => {});

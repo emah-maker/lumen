@@ -59,7 +59,9 @@ check('sha: a matching download passes, a flipped byte or a missing hash fails',
 const sh = Z.macSwapScript({ pid: 1, dir: '/Applications/Lumen.app', root: '/Applications/.Lumen.update/files/Lumen.app', old: '/Applications/Lumen.app.old', errFile: '/e', staging: '/Applications/.Lumen.update', self: '/Applications/.Lumen.update.sh' });
 check('swap script: clears quarantine, renames in place, reopens', /xattr -cr "\$NEW"/.test(sh) && /mv "\$NEW" "\$APP"/.test(sh) && /open "\$APP"/.test(sh), '');
 const shText = Z.macSwapScript({ pid: 1, dir: '/A/Lumen.app', root: '/A/n', old: '/A/o', errFile: '/e', staging: '/A/s', self: '/A/x' });
-check('swap script: the error file gets only a short cause, not a whole sentence that the UI would repeat', /echo "\$\{1:-the Applications folder isn’t writable\}" > "\$ERR"/.test(shText) && !/old version was kept|couldn.t replace/.test(shText) && shText.includes('fail "Lumen didn’t quit in time"'), shText);
+check('swap script: the error file gets only a short cause, not a whole sentence that the UI would repeat', /echo "\$\{1:-the update couldn’t be installed\}" > "\$ERR"/.test(shText) && !/old version was kept|couldn.t replace/.test(shText) && shText.includes('fail "Lumen didn’t quit in time"'), shText);
+check('swap script: each failure names its own cause (missing files, move into place, unwritable folder); none defaults to "not writable"', shText.includes('if [ ! -d "$NEW" ]; then fail "the update files were missing"; fi') && shText.includes('fail "the update couldn’t be moved into place"') && shText.includes('fail "the Applications folder isn’t writable"') && !/^\s*fail\s*$/m.test(shText)
+  && shText.indexOf('the update couldn’t be moved into place') < shText.indexOf('fail "the Applications folder isn’t writable"') && /if \[ ! -d "\$APP" \] \|\| mv "\$APP" "\$OLD"; then/.test(shText), shText);
 check('swap script: apply-on-quit does not reopen', !/open "\$APP"/.test(Z.macSwapScript({ pid: 1, dir: '/A/Lumen.app', root: '/A/n', old: '/A/o', errFile: '/e', staging: '/A/s', self: '/A/x', relaunch: false })), '');
 
 // ---- installer settings
@@ -303,6 +305,22 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   t = make(); t.h.setKind('nsis'); t.h.setState({ status: 'error', error: 'x' }); t.h.restore(false);
   check('no marker: an ordinary check error is not an install failure', t.u.state().installFailed === false, '');
 
+  // Try again over a failed install: when the re-check itself fails, the pill and Settings get the new cause
+  t = make(); t.h.setKind('nsis');
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => ({ version: '2.0.0' }), stage: (a) => { t.log.stages.push(a); return new Promise(() => {}); }, launchSwap: (a) => t.log.swaps.push(a) });
+  t.h.setState({ status: 'error', error: 'the Applications folder isn’t writable' }); t.h.restore(true);
+  t.fake.checkForUpdates = async () => { throw new Error('net::ERR_INTERNET_DISCONNECTED'); };
+  await t.u.apply();
+  check('try again: a failed re-check records the new cause and keeps the install failure and its version', t.u.state().error === 'net::ERR_INTERNET_DISCONNECTED' && t.u.state().installFailed === true && t.u.state().version === '2.0.0' && t.u.state().status === 'error' && t.u.state().checking === false, JSON.stringify(t.u.state()));
+
+  // the pill's x for an install failure that names no version
+  t = make(); t.h.setKind('nsis');
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => null, stage: () => new Promise(() => {}), launchSwap() {} });
+  t.h.setState({ status: 'error', error: 'Lumen couldn’t replace its files' }); t.h.restore(true);
+  const beforeX = t.u.state();
+  const afterX = t.h.dismiss();
+  check('dismiss: a version-less install failure can be closed (the pill x), and stays closed on the next snapshot', beforeX.installFailed === true && beforeX.version === null && beforeX.dismissed === false && afterX.dismissed === true && t.u.state().dismissed === true, JSON.stringify(afterX));
+
   // a standard user's old /Applications copy hands over to the newer ~/Applications one
   const user = (existing) => { const m = make(); m.h.setKind('mac', false); m.h.setPlacement({ misplaced: false, why: null, userApps: true }); m.h.stubIo({ exists: () => true, version: async () => existing }); return m; };
   t = user('3.0.0');
@@ -347,6 +365,19 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   check('swap script: a failed relocation reopens the original bundle when the target is missing', /ORIG='\/Volumes\/Lumen\/Lumen\.app'/.test(reopened) && reopened.includes('elif [ -n "$ORIG" ] && [ -d "$ORIG" ]; then open "$ORIG"'), reopened);
   check('write probe: canWriteDir follows the probe', Z.canWriteDir('/x', () => {}) === true && Z.canWriteDir('/x', () => { throw new Error('EACCES'); }) === false, '');
 
+
+  // ---- every string key the update screens ask for exists in en.json (ut() is updates.settings.*)
+  const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+  for (const file of ['settings-updates.js', 'updates.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '../src/renderer', file), 'utf8');
+    const keys = new Set();
+    for (const m of src.matchAll(/(?<![\w.])ut\(\s*'([^']+)'/g)) keys.add(`updates.settings.${m[1]}`);
+    for (const m of src.matchAll(/(?<![\w.])ut\(\s*[^'()]*\?\s*'([^']+)'\s*:\s*'([^']+)'/g)) { keys.add(`updates.settings.${m[1]}`); keys.add(`updates.settings.${m[2]}`); }
+    for (const m of src.matchAll(/(?:window\.t|(?<![\w.])t)\(\s*'([^']+)'/g)) keys.add(m[1]);
+    for (const m of src.matchAll(/'(updates\.[\w.]+)'/g)) keys.add(m[1]); // keys picked by a ternary, then passed to window.t(key)
+    const missing = [...keys].filter((k) => !(k in en));
+    check(`locale keys: ${file} uses ${keys.size} keys and all exist in en.json`, keys.size > 0 && missing.length === 0, missing.join(', '));
+  }
 
   console.log(failures ? String.fromCharCode(10) + failures + ' failed' : String.fromCharCode(10) + 'all updates-units passed');
   process.exit(failures ? 1 : 0);

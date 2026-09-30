@@ -115,7 +115,7 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     `ORIG=${sq(orig)}`,
     // errFile holds only a short cause; Settings and the pill put it in their own sentence
     'fail() {',
-    '  echo "${1:-the Applications folder isn’t writable}" > "$ERR"',
+    '  echo "${1:-the update couldn’t be installed}" > "$ERR"',
     `  ${reopen}`,
     '  rm -f "$SELF"',
     '  exit 1',
@@ -127,7 +127,7 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     '  sleep 1',
     'done',
     // quit-apply: the staged bundle is gone (already swapped or cleaned up), so there is nothing to do
-    ...(relaunch ? [] : ['[ -d "$NEW" ] || { rm -f "$SELF"; exit 0; }']),
+    ...(relaunch ? ['if [ ! -d "$NEW" ]; then fail "the update files were missing"; fi'] : ['[ -d "$NEW" ] || { rm -f "$SELF"; exit 0; }']),
     'rm -rf "$OLD"',
     'xattr -cr "$NEW" 2>/dev/null',
     // a fresh install into Applications (a misplaced copy's update) has no $APP to move aside
@@ -140,8 +140,9 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     '    exit 0',
     '  fi',
     '  [ -d "$OLD" ] && mv "$OLD" "$APP"',
+    '  fail "the update couldn’t be moved into place"',
     'fi',
-    'fail',
+    'fail "the Applications folder isn’t writable"',
     '',
   ].join('\n');
 }
