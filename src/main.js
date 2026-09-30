@@ -2455,7 +2455,7 @@ function tabMenuTemplate(id) {
     });
     if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
     if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
-    items.push({ label: t('menu.organizeByTopic'), click: organizeByTopic });
+    items.push({ label: t('menu.organizeByTopic'), click: organizeFromMenu });
     const dupCount = duplicateTabs().reduce((n, d) => n + d.close.length, 0);
     if (dupCount) items.push({ label: t('menu.closeDuplicates', { n: dupCount }), click: closeDuplicateTabs });
     if (tabGroups.state().length > 1) items.push({ label: t('menu.mergeGroups'), click: mergeGroups });
@@ -2616,13 +2616,15 @@ function moveGroupItems(groupId) {
   return items;
 }
 
+// The one "Organize Tabs" item: with AI on it is the refining run (choosing it again while it refines cancels it), else the local one.
+const organizeFromMenu = () => (readSettings().topicAi === true ? organizeTabs() : organizeByTopic());
+
 function tabGroupsMenu() {
   const mode = groupingMode();
   return [
-    { label: t('menu.organizeByTopic'), click: organizeByTopic },
+    { label: t('menu.organizeByTopic'), click: organizeFromMenu },
     { label: t('menu.mergeGroups'), enabled: tabGroups.state().length > 1, click: mergeGroups },
     { label: t('menu.undoOrganize'), enabled: tabGroups.canUndo(), click: undoOrganize },
-    ...(readSettings().topicAi === true ? [{ label: t('menu.organizeWithAi'), click: organizeTabs }] : []), // one "Organize Tabs" unless AI is on; while it refines, choosing the AI item again cancels it
     { type: 'separator' },
     { label: t('menu.groupAutomatically'), enabled: false },
     ...[['off', t('menu.off')], ['site', t('menu.bySite')], ['topic', t('menu.byTopic')]].map(([value, label]) => ({ label, type: 'radio', checked: mode === value, click: () => setTabGrouping(value) })),

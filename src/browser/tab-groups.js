@@ -12,6 +12,10 @@ const KNOWN_SITES = {
   medium: 'Medium', notion: 'Notion', figma: 'Figma', netflix: 'Netflix', spotify: 'Spotify',
   duckduckgo: 'DuckDuckGo', bing: 'Bing', apple: 'Apple', microsoft: 'Microsoft', mozilla: 'Mozilla',
   ycombinator: 'Hacker News', npmjs: 'npm', anthropic: 'Anthropic', openai: 'OpenAI', claude: 'Claude',
+  theverge: 'The Verge', techcrunch: 'TechCrunch', arstechnica: 'Ars Technica', wired: 'Wired', engadget: 'Engadget', theguardian: 'The Guardian',
+  washingtonpost: 'Washington Post', wsj: 'WSJ', cnn: 'CNN', npr: 'NPR', espn: 'ESPN', imdb: 'IMDb', ebay: 'eBay', paypal: 'PayPal',
+  tiktok: 'TikTok', whatsapp: 'WhatsApp', gitlab: 'GitLab', dropbox: 'Dropbox', zoom: 'Zoom', slack: 'Slack', discord: 'Discord', twitch: 'Twitch',
+  'gov.uk': 'GOV.UK', 'usa.gov': 'USA.gov', irs: 'IRS', ssa: 'SSA', nasa: 'NASA', nih: 'NIH', cdc: 'CDC', fda: 'FDA', mit: 'MIT', arxiv: 'arXiv',
 };
 
 function hostname(url) {
@@ -52,6 +56,8 @@ function siteName(url, title = '') {
   if (product) return product;
   const domain = registrableDomain(url);
   const label = domain.split('.')[0] || domain;
+  const bare = hostname(url).replace(/^www\./, '');
+  if (KNOWN_SITES[bare]) return KNOWN_SITES[bare]; // "gov.uk" is a public suffix, so it has no registrable domain: the whole host names it
   if (KNOWN_SITES[label]) return KNOWN_SITES[label];
   const suffix = String(title).split(/\s+[-|–—·:]\s+/).pop()?.trim();
   if (suffix && suffix !== title && suffix.length <= 24 && suffix.split(/\s+/).length <= 3) {
@@ -59,6 +65,7 @@ function siteName(url, title = '') {
     if (compact && (compact.includes(label) || label.includes(compact))) return suffix;
   }
   if (/^[\d.]+$/.test(label)) return domain;
+  if (label.length <= 3 && !/[aeiouy]/.test(label)) return label.toUpperCase(); // initials: "gov", "nhs"
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
@@ -77,7 +84,7 @@ const isAppOrSearch = (url) => Boolean(PRODUCT_SITES[hostname(url)]) || SEARCH_D
 const STOPWORDS = new Set(`a an and are as at be by for from has have how i in is it its of on or our that the this to was what when where which who why will with you your
 about after all also any best can com could do does get go guide home into just like login more most new news no not now official one only other out over page
 said see sign site so some than them then there these they top up us use using via vs was way we web welcome were what www html htm php aspx index amp http https
-official free online app video videos watch search results result edit view log docs doc wiki org net io co uk en de fr es de
+gov gouv edu official free online app video videos watch search results result edit view log docs doc wiki org net io co uk en de fr es de
 help helps works time times visit deal deals thing things day days week weeks year years review reviews reviewed rated tips ideas
 library libraries open source powerful comprehensive community resources ecosystem platform
 // Function words of the languages most tab titles come in besides English (French, Spanish, German, Portuguese):
@@ -221,20 +228,61 @@ function charTrigrams(text) {
 // is read as character bigrams ("東京のホテル" -> 東京, ホテ, テル), the usual stand-in for word segmentation.
 const CJK = /\p{scx=Han}|\p{scx=Hiragana}|\p{scx=Katakana}|\p{scx=Hangul}/u;
 const CJK_RUNS = /\p{scx=Han}+|\p{scx=Hiragana}+|\p{scx=Katakana}+|\p{scx=Hangul}+|[^\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}]+/gu;
+// Function words that are not topics: "如何", "これは", "おすすめ" would link tabs about nothing in common ("如何学习Python" /
+// "如何做红烧肉"). A filler cuts a run in two instead of being read as bigrams, so its letters never pair with a neighbour's ("のお").
+const CJK_FILLER_WORDS = [
+  // Japanese
+  'おすすめ', 'オススメ', 'お勧め', 'について', 'に関して', 'として', 'から', 'まで', 'より', 'ので', 'のに', 'です', 'ます', 'でした', 'ました', 'ません', 'でしょう', 'ください', 'これは', 'それは', 'あれは', 'これ', 'それ', 'あれ', 'ここ', 'そこ', 'この', 'その', 'あの', 'とは', 'では', 'には', 'など', 'まとめ', 'ランキング', 'する', 'した', 'して', 'ある', 'いる', 'なる', 'できる', 'ない',
+  // Chinese
+  '如何', '怎么样', '怎么', '怎样', '为什么', '是什么', '什么', '哪些', '哪个', '可以', '一个', '我们', '你们', '他们', '这个', '那个', '这些', '那些', '以及', '关于', '对于', '因为', '所以', '如果', '但是', '或者', '还是', '已经', '没有', '不是', '就是', '最新', '推荐', '大全', '官网', '首页',
+  // Korean
+  '추천', '방법', '하는', '하기', '무엇', '어떻게', '대한', '위한', '에서', '입니다', '합니다', '있는', '없는', '그리고', '하지만', '에게', '으로', '까지', '부터', '보다',
+].sort((x, y) => y.length - x.length);
+const CJK_FILLER_RE = new RegExp(CJK_FILLER_WORDS.join('|'), 'g');
+const HAN_FUNCTION_CHARS = /[的了是吗呢吧也就很把被让给]/u; // Chinese grammar characters: they cut a Han run too
+const KANA_PARTICLES = new Set([...'のはがをにでともやか']);
+// Two letters or more left once filler and particles are taken out: something that can name a group.
+const isFillerRun = (run) => [...run.replace(CJK_FILLER_RE, '')].filter((c) => !KANA_PARTICLES.has(c) && !HAN_FUNCTION_CHARS.test(c)).length < 2;
+const CJK_STOP_BIGRAMS = new Set(['のお', 'おす', 'すめ', 'めの', 'れは', 'これ', 'それ', 'です', 'ます', 'ので', 'から', 'まで', 'こと', 'もの', 'ため', 'よう', '入る', '하는', '입니', '니다']);
 function cjkTokens(chunk) {
   const out = [];
   for (const [run] of chunk.matchAll(CJK_RUNS)) {
     if (!CJK.test(run)) { out.push(...tokens(run)); continue; }
-    const chars = [...run];
-    if (chars.length < 2 || (/^\p{scx=Hiragana}+$/u.test(run) && chars.length < 3)) continue; // a lone character or a particle ("の", "です")
-    for (let i = 0; i < chars.length - 1; i++) { const g = chars[i] + chars[i + 1]; out.push({ key: g, surface: g }); }
+    const kana = /^\p{scx=Hiragana}+$/u.test(run);
+    for (const piece of run.split(CJK_FILLER_RE)) {
+      for (const part of /\p{scx=Han}/u.test(piece) ? piece.split(new RegExp(HAN_FUNCTION_CHARS.source, 'u')) : [piece]) {
+        const chars = [...part];
+        if (chars.length < 2 || (kana && chars.length < 3)) continue; // a lone character or a particle ("の", "です")
+        for (let i = 0; i < chars.length - 1; i++) {
+          const g = chars[i] + chars[i + 1];
+          if (!CJK_STOP_BIGRAMS.has(g)) out.push({ key: g, surface: g });
+        }
+      }
+    }
   }
   return out;
+}
+// The longest run of letters that `need` of a group's titles share ("파이썬 기초 강의" + "파이썬 기초 배우기" -> 파이썬), to name a
+// CJK group whole instead of pasting two bigrams together ("파이 이썬"). '' when that run is only filler.
+function sharedRun(titles, need) {
+  const texts = titles.map((t) => String(t).slice(0, 80));
+  const first = [...texts[0]];
+  const letter = (c) => /[\p{L}\p{N}]/u.test(c);
+  let best = '';
+  for (let i = 0; i < first.length; i++) {
+    if (!letter(first[i])) continue;
+    for (let j = i + 2; j <= first.length && letter(first[j - 1]); j++) {
+      const cand = first.slice(i, j).join('');
+      if (cand.length > best.length && !isFillerRun(cand) && texts.filter((t) => t.includes(cand)).length >= need) best = cand;
+    }
+  }
+  const script = '\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}\\p{scx=Hangul}';
+  return best.replace(new RegExp(`([A-Za-z0-9])(?=[${script}])|([${script}])(?=[A-Za-z0-9])`, 'gu'), (m) => `${m} `); // "Python編程" -> "Python 編程"
 }
 // Endings of Russian (and Ukrainian) nouns and adjectives: "Берлин", "Берлина", "в Берлине" are one word.
 const CYRILLIC_ENDING = /(?:ами|ями|ого|его|ому|ему|ыми|ими|ах|ях|ов|ев|ей|ой|ом|ем|ую|юю|ая|яя|ое|ее|ые|ие|ых|их|ам|ям|а|я|у|ю|ы|и|е|о)$/;
 function stemWord(w) {
-  if (/[Ѐ-ӿ]/.test(w)) return w.length > 5 ? w.replace(CYRILLIC_ENDING, '') : w;
+  if (/[Ѐ-ӿ]/.test(w)) { const base = w.length > 3 ? w.replace(CYRILLIC_ENDING, '') : w; return base.length >= 3 ? base : w; } // "борща" and "борщ" meet; never under 3 letters
   return stem(w);
 }
 function tokens(text) {
@@ -328,6 +376,17 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   if (repo) shownTitle = String(shownTitle).split(/\s+/).map((w) => (w.toLowerCase().startsWith(`${repo.owner}/`) ? w.slice(repo.owner.length + 1) : w)).join(' ');
   const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(shownTitle, url);
   const titleTokens = tokens(cleanTitle);
+  // Words written with a capital ("Москве", "iPhone in Boston"): names of places and things. `proper` ones are capitalised in
+  // the middle of a sentence-case title, where only a name is. A Title Case title capitalises everything, so says nothing.
+  words.proper = new Set();
+  words.capital = new Set();
+  words.mixed = /\p{scx=Cyrillic}/u.test(cleanTitle) && /[A-Za-z]{3}/.test(cleanTitle); // a Russian title naming a product or brand in Latin letters
+  const written = cleanTitle.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3);
+  const capitalised = written.slice(1).filter((w) => /^\p{Lu}/u.test(w) && !CJK.test(w));
+  if (capitalised.length <= Math.max(1, (written.length - 1) / 2)) {
+    for (const w of capitalised) for (const t of tokens(w)) { words.proper.add(t.key); words.capital.add(t.key); }
+    if (written[0] && /^\p{Lu}/u.test(written[0])) for (const t of tokens(written[0])) words.capital.add(t.key);
+  }
   add(titleTokens, 1, { naming: true, vector: true });
   // Course and part numbers: "ME 2380", "ENGW-1111", "CS3500" are one word, and the best name a course's tabs have.
   for (const code of courseCodes(`${cleanTitle} ${text}`)) words.set(code, { weight: 1, surface: code.toUpperCase() });
@@ -460,6 +519,10 @@ function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
   for (const [k, a] of ca) {
     const b = cb.get(k);
     if (!b || (n >= 8 && df.get(k) / n > ANCHOR_MAX_DF)) continue;
+    // A lone tab that names a product or brand and only shares a place with the group ("Купить iPhone в Москве" among
+    // Moscow weather and news) is not of that topic: same rule as cosine()'s.
+    const lone = A.length === 1 ? A[0] : B.length === 1 ? B[0] : null;
+    if (lone?.words.mixed && lone.words.capital.has(k) && lone.words.proper.has(k) && ownWords(lone) >= 2) continue;
     const fa = a / A.length;
     const fb = b / B.length;
     const strict = a >= Math.min(2, A.length) && b >= Math.min(2, B.length) && fa >= ANCHOR_COVER && fb >= ANCHOR_COVER;
@@ -496,7 +559,17 @@ function cosine(a, b) {
   // template-discounted word doesn't count towards "real" overlap, so it can't pad the count and
   // sneak a second, coincidental word (two different senses of "machine", say) past this gate.
   if (sharedReal <= 1 && !((a.words?.get(soleKey)?.weight ?? 1) >= 1 && (b.words?.get(soleKey)?.weight ?? 1) >= 1)) return 0;
+  // A place both titles mention and nothing else, where one title also names a product or brand ("Погода в Москве" /
+  // "Купить iPhone в Москве"): a shared city doesn't make them one topic. Words only one tab has can't link, but they
+  // still show what else the tab is about.
+  if (sharedReal === 1 && (a.words?.mixed || b.words?.mixed) && a.words?.capital?.has(soleKey) && b.words?.capital?.has(soleKey) && (a.words.proper.has(soleKey) || b.words.proper.has(soleKey))) return (dot / (a.norm * b.norm)) / (1 + NAME_ONLY_PENALTY * (ownWords(a) + ownWords(b)));
   return dot / (a.norm * b.norm);
+}
+const NAME_ONLY_PENALTY = 1;
+// Title/search words of a tab that no other tab shares (dropped from its vector as uninformative).
+function ownWords(d) {
+  if (d.own === undefined) { d.own = 0; for (const [k, { weight }] of d.words || []) if (weight >= 0.8 && isRealKey(k) && !d.vec.has(k)) d.own++; }
+  return d.own;
 }
 
 // A group's centroid: the average of its members' vectors, comparable to a loose tab's vector.
@@ -513,7 +586,11 @@ function centroidOf(docs) {
   // The strongest weight any member gave each word, so the one-shared-word rule in cosine() applies to a group too.
   const words = new Map();
   for (const d of docs) for (const [k, { weight }] of d.words || []) if (vec.has(k) && weight > (words.get(k)?.weight ?? 0)) words.set(k, { weight });
-  return { vec, norm: Math.hypot(...vec.values()), words };
+  // A name all over the group (every member that has the word writes it capitalised), and what else its members say, for cosine()'s name-only rule.
+  words.mixed = docs.some((d) => d.words?.mixed);
+  words.capital = new Set([...vec.keys()].filter((k) => docs.every((d) => !d.vec.has(k) || d.words?.capital?.has(k))));
+  words.proper = new Set([...words.capital].filter((k) => docs.some((d) => d.words?.proper?.has(k))));
+  return { vec, norm: Math.hypot(...vec.values()), words, own: docs.reduce((n, d) => n + ownWords(d), 0) / docs.length };
 }
 
 // A library or product whose own site is in the cluster and whose name most of the cluster's tabs carry
@@ -813,6 +890,16 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
     for (const d of members) for (const [k, v] of d.vec) if (isReal(k)) score.set(k, (score.get(k) || 0) + v);
     const ranked = [...score].filter(([k]) => members.filter((d) => d.vec.has(k)).length >= majority).sort((a, b) => b[1] - a[1]);
     const surface = (k) => members.find((d) => d.words.has(k)).words.get(k).surface;
+    // A Russian word is written in whatever case the title needs ("в Москве", "Москвы"): the group is named for the
+    // dictionary form among those its tabs use (no ending, then -а/-я), else the form most of them use.
+    const formRank = (w) => (CYRILLIC_ENDING.test(w.toLowerCase()) ? (/[ая]$/i.test(w) ? 1 : 2) : 0);
+    const bestSurface = (k) => {
+      if (!/[Ѐ-ӿ]/.test(k)) return surface(k);
+      const count = new Map();
+      for (const d of members) if (d.words.has(k)) { const w = d.words.get(k).surface; count.set(w, (count.get(w) || 0) + 1); }
+      return [...count].sort((x, y) => formRank(x[0]) - formRank(y[0]) || y[1] - x[1] || x[0].length - y[0].length)[0][0];
+    };
+    const words2 = (e) => (/[Ѐ-ӿ]/.test(e.key) ? e.key.split('|').map(bestSurface).join(' ') : e.surface);
     // Bigram candidates: an adjacent pair (from the title or a search query) both members' words
     // consider informative, seen in most members - "Machine Learning" beats picking two
     // unrelated top words.
@@ -825,7 +912,7 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
         const [k1, k2] = key.split('|');
         const v1 = d.vec.get(k1), v2 = d.vec.get(k2);
         if (!v1 || !v2) continue;
-        const e = bigramScore.get(key) || { score: 0, count: 0, surface: bsurface };
+        const e = bigramScore.get(key) || { score: 0, count: 0, surface: bsurface, key };
         e.score += v1 + v2;
         e.count++;
         bigramScore.set(key, e);
@@ -858,9 +945,17 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
       name = `${titleCasePhrase(topRepo.replace(/[-_]+/g, ' '))}${kind ? ` ${kind}` : ''}`;
     } else if (siteOnly) name = sharedHint || siteName(members[0].url, members[0].title);
     else if (libraryName(members, majority)) name = libraryName(members, majority);
-    else if (bigramRanked.length) name = titleCasePhrase(bigramRanked[0].surface);
-    else if (top) name = titleCase(surface(top[0]));
+    else if (bigramRanked.length) name = titleCasePhrase(words2(bigramRanked[0]));
+    else if (top) name = titleCase(bestSurface(top[0]));
     else name = sharedHint || siteName(members[0].url, members[0].title);
+    // CJK words are bigrams, so two of them pasted together name a group badly ("파이 이썬"): use the longest run the
+    // titles share, or the site's (category's) name when that run is only filler.
+    if (CJK.test(name)) name = sharedRun(members.map((d) => d.title), members.length) || sharedRun(members.map((d) => d.title), majority) || sharedHint || siteName(members[0].url, members[0].title);
+    // One site's tabs named by a piece of the site's own name ("Hacker" from "Hacker News"): the whole name.
+    if (members.every((d) => d.siteKey === members[0].siteKey) && !oneSite) {
+      const site = siteName(members[0].url, members[0].title);
+      if (site.length > name.length && site.toLowerCase().split(/\s+/).includes(name.toLowerCase())) name = site;
+    }
     // "Next" from "Next.js" titles: keep the suffix a library name is written with.
     const dotted = /^[A-Za-z]+$/.test(name) && members.find((d) => new RegExp(`\\b${name}\\.(js|ts|py|io)\\b`, 'i').test(d.title));
     if (dotted) name = `${name}${String(dotted.title).match(new RegExp(`\\b${name}(\\.(?:js|ts|py|io))\\b`, 'i'))[1]}`;

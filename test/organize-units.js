@@ -191,4 +191,41 @@ function organized(specs) {
   check('12 GitHub repos: named GitHub, not Dev docs', r.same(0, 11) && r.name(0) === 'GitHub', r.name(0));
 }
 
+// 15. CJK filler words are not topics, and names are whole words
+{
+  const keys = (t) => tg.tokens(t).map((x) => x.key);
+  check('tokens: おすすめ, これは and です make no bigrams', !keys('東京のおすすめ').some((k) => /^(のお|おす|すめ)$/.test(k)) && keys('これは です').length === 0, keys('これは です').join());
+  check('tokens: 如何 is dropped, the topic after it stays', !keys('如何学习Python').includes('如何') && keys('如何学习Python').includes('学习'), keys('如何学习Python').join());
+  const jp = organized([['東京のおすすめラーメン店10選', 'https://a.example/1'], ['福岡のおすすめグルメ', 'https://b.example/2'], ['Pythonの基本文法を学ぶ', 'https://c.example/3'], ['Reactのフック入門', 'https://d.example/4']]);
+  check('unrelated "おすすめ" titles do not form one group', !jp.same(0, 1) && !jp.same(0, 2) && !/おす|のお/.test(jp.name(0) + jp.name(1)), `${jp.name(0)}|${jp.name(1)}`);
+  const pen = organized([['これは ペン です', 'https://a.example/1'], ['これは 本 です', 'https://b.example/2']]);
+  check('"これは ペン です" / "これは 本 です" stay apart', !pen.same(0, 1), pen.name(0));
+  const zh = organized([['如何学习Python编程', 'https://a.cn/1'], ['如何做红烧肉', 'https://b.cn/2'], ['如何选择笔记本电脑', 'https://c.cn/3']]);
+  check('"如何..." titles about different things do not group', !zh.same(0, 1) && !zh.same(1, 2) && !zh.same(0, 2), zh.name(0));
+  const ko = organized([['파이썬 기초 강의', 'https://a.kr/1'], ['파이썬 기초 배우기', 'https://b.kr/2'], ['파이썬 기초 튜토리얼', 'https://c.kr/3']]);
+  check('Korean 파이썬 group is named 파이썬, not "파이 이썬"', ko.same(0, 1) && ko.same(1, 2) && ko.name(0) === '파이썬', ko.name(0));
+  const cn = organized([['如何学习Python编程', 'https://a.cn/1'], ['学习Python编程入门', 'https://b.cn/2'], ['Python编程学习路线', 'https://c.cn/3']]);
+  check('Chinese group is named for the longest shared run', cn.same(0, 2) && cn.name(0) === 'Python 编程', cn.name(0));
+}
+
+// 16. Russian: one word in every case, and a city shared with an unrelated page is not a topic
+{
+  const ru = organized([['Погода в Москве', 'https://yandex.ru/1'], ['Новости Москвы сегодня', 'https://lenta.ru/2'], ['Москва отели', 'https://ostrovok.ru/3'], ['Купить iPhone 15 в Москве', 'https://dns.ru/4'], ['Рецепт пирога с яблоками', 'https://povar.ru/5'], ['Рецепты пирогов', 'https://eda.ru/6']]);
+  check('Moscow tabs group and the group is named Москва', ru.same(0, 1) && ru.same(1, 2) && ru.name(0) === 'Москва', ru.name(0));
+  check('"Купить iPhone в Москве" is not pulled into the Moscow group', !ru.same(0, 3) && !ru.same(2, 3), ru.name(3));
+  const borsch = organized([['Как приготовить борщ', 'https://a.ru/1'], ['Рецепт борща классический', 'https://b.ru/2'], ['Борщ со свеклой', 'https://c.ru/3'], ['Как настроить роутер', 'https://d.ru/4']]);
+  check('борщ / борща / Борщ are one word', borsch.same(0, 1) && borsch.same(1, 2) && !borsch.same(0, 3), borsch.name(0));
+  check('stemWord keys: борща = борщ, Москве = Москвы', tg.tokens('борща')[0].key === tg.tokens('борщ')[0].key && tg.tokens('Москве')[0].key === tg.tokens('Москвы')[0].key);
+}
+
+// 17. site names: known names, .gov hosts are Government
+{
+  check('siteName: The Verge, Hacker News, GOV.UK, IRS', tg.siteName('https://www.theverge.com/x') === 'The Verge' && tg.siteName('https://news.ycombinator.com/') === 'Hacker News' && tg.siteName('https://www.gov.uk/universal-credit') === 'GOV.UK' && tg.siteName('https://www.irs.gov/refunds') === 'IRS',
+    [tg.siteName('https://www.theverge.com/x'), tg.siteName('https://www.gov.uk/'), tg.siteName('https://www.irs.gov/')].join());
+  const hn = organized([['Hacker News 7', 'https://news.ycombinator.com/'], ['Hacker News 38', 'https://news.ycombinator.com/newest'], ...RECIPES]);
+  check('two Hacker News tabs are named Hacker News', hn.same(0, 1) && hn.name(0) === 'Hacker News', hn.name(0));
+  const gov = organized([['GOV.UK', 'https://www.gov.uk/'], ['Weather.gov', 'https://weather.gov/'], ['Where is my refund? | IRS', 'https://www.irs.gov/refunds'], ['Easy Banana Bread Recipe', 'https://a.example/banana-bread']]);
+  check('GOV.UK and .gov pages join the Government group, not one named "GOV"', gov.same(0, 1) && gov.same(0, 2) && gov.name(0) === 'Government' && !gov.same(0, 3), gov.name(0));
+}
+
 process.exit(failed ? 1 : 0);
