@@ -1519,13 +1519,20 @@ document.addEventListener('pointermove', (e) => { if (widthsHeld && !$('tabs').c
 window.addEventListener('resize', () => releaseTabWidths(false));
 
 const organizeBtn = $('organize-tabs');
-organizeBtn.onclick = () => window.browser.organizeTabs();
-window.browser.onOrganizing?.((busy) => {
-  // busy: true (grouping on this computer), 'refine' (the groups are shown, the AI is refining them: a click cancels), false.
+// busy: true (grouping on this computer), 'refine' (the groups are shown, the AI is refining them: a click cancels), false.
+const showOrganizing = (busy) => {
   organizeBtn.classList.toggle('busy', Boolean(busy));
   organizeBtn.disabled = busy === true;
   organizeBtn.querySelector('span').textContent = busy === 'refine' ? t('tabs.refining') : busy ? t('tabs.organizing') : t('tabs.organize');
-});
+};
+// The click shows "Organizing…" (and disables the button) at once, not after main's round trip: no dead click, no double trigger.
+// While the AI refines, a click cancels (main decides); main's own 'organizing' messages then take over.
+organizeBtn.onclick = () => {
+  if (organizeBtn.disabled) return;
+  if (!organizeBtn.classList.contains('busy')) showOrganizing(true);
+  window.browser.organizeTabs();
+};
+window.browser.onOrganizing?.(showOrganizing);
 // "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
 window.browser.onOrganizeNote?.(({ text, undo }) => {
   document.querySelector('.organize-note')?.remove();
@@ -1567,8 +1574,9 @@ function renderTabs(state) {
   const groupsById = new Map((state.groups || []).map((g) => [g.id, g]));
   const crowded = state.tabs.length > 12;
   let currentGroup = null;
-  const ungroupedWeb = state.tabs.filter((t) => !t.groupId && t.url).length;
-  organizeBtn.hidden = ungroupedWeb < 8 && !organizeBtn.classList.contains('busy');
+  // Shown when Organize would do something: 4+ tabs it may regroup (main counts them: not pinned, not in the user's own
+  // groups; automatic groups' tabs count). 4 is the bar automatic by-topic grouping uses: fewer is easy to do by hand.
+  organizeBtn.hidden = !(state.organizable >= 4) && !organizeBtn.classList.contains('busy');
   if (!tabIndicator) {
     tabIndicator = Object.assign(document.createElement('div'), { className: 'tab-indicator instant' });
     tabIndicator.setAttribute('aria-hidden', 'true');

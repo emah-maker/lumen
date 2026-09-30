@@ -1141,6 +1141,7 @@ function createSuggestView() {
 function showSuggestions(rect, payload) {
   if (!suggestView) createSuggestView();
   win.contentView.addChildView(suggestView); // re-adding moves it to the top
+  raiseOverlays(); // (the tool overlay and a dialog stay above it)
   // Never taller than the window below the address bar: on a short window the list scrolls inside
   // the view (suggest.html) instead of running off the bottom.
   const height = Math.max(0, Math.min(rect.height, win.getContentSize()[1] - rect.y));
@@ -1185,6 +1186,7 @@ function showDownloadsPanel(anchor) {
   downloadsAnchor = anchor;
   hideSuggestions();
   win.contentView.addChildView(downloadsView); // re-adding moves it to the top
+  raiseOverlays(); // (the tool overlay and a dialog stay above it)
   placeDownloadsPanel(160);
   const open = () => {
     downloadsView.webContents.send('downloads:list', downloads.panelList());
@@ -2191,7 +2193,8 @@ function organizeNote(text, { undo = false } = {}) {
 // result is already clear or the same tabs were organized before. A second click while it refines cancels
 // it and keeps the local groups. Any failure, timeout or unusable answer keeps the local groups too.
 async function organizeTabs() {
-  if (organizing) { organizeAbort?.abort(); return; }
+  if (organizing) { organizeAbort?.abort(); return 0; }
+  let made = 0; // the groups made (what the tab menu's caller reports)
   organizing = true;
   organizeAbort = new AbortController();
   const rec = curRec;
@@ -2211,12 +2214,13 @@ async function organizeTabs() {
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
-      onPhase: (name) => {
-        if (name === 'local') back(() => { sendTabs(); ui()?.send('tabs:organizing', 'refine'); }); // the groups are there; the model may still refine them
+      onPhase: (name, info) => {
+        if (name === 'local') { if (info?.count) back(() => { sendTabs(); ui()?.send('tabs:organizing', 'refine'); }); } // the groups are there; the model may still refine them
         else if (name === 'refined') back(sendTabs);
       },
     });
     back(sendTabs);
+    made = stats.groups;
     if (!stats.groups && !stats.created) {
       back(() => organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer. Nothing was changed (organizeByTopic rolls back), so no Undo
     } else if (stats.reason !== 'cancelled') {
@@ -2231,6 +2235,7 @@ async function organizeTabs() {
     organizeAbort = null;
     back(() => ui()?.send('tabs:organizing', false));
   }
+  return made;
 }
 // Why Organize has nothing to work on: no pages at all, or only pinned tabs / tabs in groups the user made.
 function tooFewMessage() {
@@ -2286,10 +2291,32 @@ function scheduleAiTopics() {
 }
 
 // "Organize Tabs by Topic" (tab menu, ⋯ → Tab Groups): regroups loose tabs and automatic groups.
-// The same flow as the strip's Organize button (Organizing... state, summary with Undo, the same messages).
+// The same flow as the strip's Organize button (Organizing... state, summary with Undo, the same messages). With
+// "Use AI to name and group topics" on, the model's proposal groups the tabs instead (same feedback around it).
 async function organizeByTopic() {
-  await organizeTabs();
-  return tabGroups.canUndo() ? tabGroups.organizeCounts().web : 0;
+  if (readSettings().topicAi !== true) return organizeTabs();
+  if (organizing) return 0;
+  organizing = true;
+  const rec = curRec;
+  const back = (fn) => withWindow(rec, fn);
+  ui()?.send('tabs:organizing', true);
+  try {
+    if (tabGroups.candidates().length < 2) throw tooFewMessage();
+    const proposal = await proposeGroups(cheapTopicModel(), topicList(tabGroups.candidates())).catch(() => null); // falls back to local
+    return back(() => {
+      const count = tabGroups.organizeByTopic(proposal);
+      sendTabs();
+      if (!count) organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // rolled back: nothing changed, no Undo
+      else organizeNote(t('organize.summary', { groups: count }), { undo: true });
+      return count;
+    });
+  } catch (err) {
+    back(() => organizeNote(err.tooFew ? err.message : `${t('organize.failed')}: ${err.message}`));
+    return 0;
+  } finally {
+    organizing = false;
+    back(() => ui()?.send('tabs:organizing', false));
+  }
 }
 // "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
 function mergeGroups() {

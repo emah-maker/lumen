@@ -662,8 +662,22 @@ function siteJoin(clusters, docs) {
   return { clusters: kept.concat(fresh), hinted };
 }
 
+// The broad category of a tab (knowledge.FALLBACK_CATEGORIES) from its host, then its title: a category object or null.
+// Strong host first, then the title words, then a weak host (a news site that also carries a review).
+const hostMatches = (host, sites) => sites.split(/\s+/).some((s) => (s.endsWith('.*') ? host.startsWith(`${s.slice(0, -2)}.`) && host.split('.').length >= 3 : host === s || host.endsWith(`.${s}`)));
+function categoryOf({ url, title }) {
+  const host = hostname(url).replace(/^www\./, '');
+  const cats = knowledge.FALLBACK_CATEGORIES;
+  const strong = cats.find((c) => !c.weak && host && (hostMatches(host, c.hosts) || (c.edu && INSTITUTION.test(host))));
+  if (strong) return strong;
+  const byTitle = cats.find((c) => c.title.test(String(title || '')));
+  if (byTitle) return byTitle;
+  return cats.find((c) => c.weak && host && hostMatches(host, c.hosts)) || null;
+}
+
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
-function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
+// categories: the local organizer's last resort for what the words left loose (see the stage after the split below).
+function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = false } = {}) {
   const docs = vectorize(entries);
   const n = docs.length;
   if (n < 2) return [];
@@ -721,6 +735,42 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   // that no longer belong with anyone stay loose rather than being forced into a group.
   const split = (c, at, depth) => (c.length <= MAX_GROUP || depth >= 4 ? [c] : agglomerate(c, at).flatMap((part) => (part.length < 2 ? [] : split(part, at + 0.1, depth + 1))));
   clusters = merged.flatMap((c) => split(c, threshold + 0.1, 0));
+  // Last resort (no model, or it said nothing): a tab no cluster took is filed by a broad category read from its host
+  // and title (mail, dev docs, news ...): a lone tab of a one-topic category (a trip, a course, recipes) joins a
+  // cluster of that category, the rest of a category form a group of their own named for it; small clusters of a
+  // one-topic category fold into the biggest of it. Deterministic, never one "Other", and no group past MAX_GROUP.
+  if (categories) {
+    const cat = docs.map(categoryOf);
+    const majorCat = (c) => { const n = new Map(); for (const i of c) if (cat[i]) n.set(cat[i], (n.get(cat[i]) || 0) + 1); const top = [...n].sort((a, b) => b[1] - a[1])[0]; return top && top[1] * 2 > c.length ? top[0] : null; };
+    const grow = (c, list) => { // a cluster keeps the name its hint (or its sites' shared hint: "School") gave it
+      const was = idsKey(c);
+      const name = hintOf.get(was) || (docs[c[0]].siteHint && c.every((i) => docs[i].siteHint === docs[c[0]].siteHint) ? docs[c[0]].siteHint : '');
+      c.push(...list);
+      hintOf.delete(was);
+      if (name) hintOf.set(idsKey(c), name);
+    };
+    let groupsNow = clusters.filter((c) => c.length >= 2);
+    const lone = clusters.filter((c) => c.length < 2).map((c) => c[0]);
+    const rest = [];
+    const byCat = new Map();
+    for (const i of lone) {
+      if (!cat[i]) { rest.push(i); continue; }
+      const home = cat[i].join ? groupsNow.filter((c) => majorCat(c) === cat[i] && c.length < MAX_GROUP).sort((a, b) => b.length - a.length)[0] : null;
+      if (home) grow(home, [i]);
+      else byCat.set(cat[i], [...(byCat.get(cat[i]) || []), i]);
+    }
+    for (const [c, list] of byCat) {
+      if (list.length < 2) { rest.push(...list); continue; }
+      hintOf.set(idsKey(list), c.name);
+      groupsNow.push(list);
+    }
+    for (const small of groupsNow.filter((c) => c.length <= 2)) {
+      const c = majorCat(small);
+      const into = c && c.join ? groupsNow.filter((o) => o !== small && o.length > 2 && majorCat(o) === c && o.length + small.length <= MAX_GROUP).sort((a, b) => b.length - a.length)[0] : null;
+      if (into) { grow(into, small); groupsNow = groupsNow.filter((o) => o !== small); }
+    }
+    clusters = groupsNow.concat(rest.map((i) => [i]));
+  }
   // Deterministic order: tabs in the order given, groups by their first tab.
   clusters = clusters.map((c) => [...c].sort((x, y) => x - y)).sort((x, y) => x[0] - y[0]);
   const titleCase = (w) => (w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1) : w);
@@ -1149,10 +1199,11 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   const movable = (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
   const loose = () => getTabs().filter((t) => !t.groupId && movable(t));
   // What an explicit Organize regroups: every loose web tab (a hand-drag, a restored session or a pin toggle only
-  // stop AUTOMATIC grouping, not a request to organize) and tabs in automatic groups the user didn't put them in.
-  // Never pinned tabs, closing tabs, or tabs in a group the user made or named.
+  // stop AUTOMATIC grouping, not a request to organize) and every tab in an automatic group, hand-added ones too
+  // (the user asked to organize: they are regrouped by topic, and Undo puts them back). Never pinned tabs, closing
+  // tabs, or tabs in a group the user made or named.
   const organizable = (t) => !pinned(t) && !t.closing && isWeb(urlOf(t))
-    && (!t.groupId || (Boolean(groups.get(t.groupId)?.auto) && !groups.get(t.groupId).userNamed && !t.userMoved && !t.userPlaced));
+    && (!t.groupId || (Boolean(groups.get(t.groupId)?.auto) && !groups.get(t.groupId).userNamed));
   // Why there may be nothing to organize: { web, pinned, kept } (web tabs overall, pinned ones, ones in the user's own groups).
   const organizeCounts = () => {
     const all = getTabs().filter((t) => !t.closing && isWeb(urlOf(t)));
@@ -1247,15 +1298,20 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // dragged, or pinned, stay as they are. A new group that mostly matches an old automatic one keeps
   // its colour (and, for local clusters, its name) so the tab strip doesn't reshuffle. One step of undo.
   function organizeByTopic(proposal = null) {
+    const prev = { undoState, autoUndo, undoSeq };
     saveUndo();
     // An explicit Organize is a request to regroup: userRemoved (set on every loose tab of a restored session, or by a
     // hand-ungroup) must not hide tabs from it. saveUndo() just kept the flags, so Undo brings them back.
-    for (const t of getTabs()) { if (!t.groupId && organizable(t)) { t.userMoved = false; t.userPlaced = false; } t.userRemoved = false; } // loose tabs dragged by hand count too (Undo restores the marks)
+    // Only the tabs Organize takes are cleared (loose ones dragged by hand, and hand-added members of automatic groups
+    // count too; Undo restores the marks): pinned tabs and tabs in the user's own groups keep theirs.
+    for (const t of getTabs()) if (organizable(t)) { t.userMoved = false; t.userPlaced = false; t.userRemoved = false; }
     const prior = [...groups.values()].filter((g) => g.auto).map((g) => ({ ...g, ids: new Set(members(g.id).map((t) => t.id)) }));
     for (const g of prior) ungroupAll(g.id);
     for (const t of getTabs()) { t.autoMoves = 0; t.autoKey = null; }
     const before = new Set(groups.keys());
-    const count = groupLoose(proposal, { prior });
+    const count = groupLoose(proposal, { prior, categories: true });
+    // Nothing grouped: the automatic groups just dissolved are put back (and the marks), so "left as they are" is true.
+    if (!count) { undoOrganize(); ({ undoState, autoUndo, undoSeq } = prev); return 0; }
     orderGroupsByRecency();
     spreadColors(new Set([...groups.keys()].filter((id) => !before.has(id))));
     return count;
@@ -1300,11 +1356,11 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   const applyProposal = organizeByTopic; // the older name: "Organize with AI"
 
   // Groups loose tabs only: from a proposal ([{ name, tab_ids }]) or the local clusters.
-  function groupLoose(proposal = null, { prior = [] } = {}) {
+  function groupLoose(proposal = null, { prior = [], categories = false } = {}) {
     const pool = loose();
     const poolIds = new Set(pool.map((t) => t.id));
     const proposed = proposal ? sanitizeProposal(proposal, poolIds) : null;
-    const clusters = proposed ? proposed.map((g) => ({ name: g.name, ids: g.ids, key: null, ai: true })) : topicClusters(pool.map(entry));
+    const clusters = proposed ? proposed.map((g) => ({ name: g.name, ids: g.ids, key: null, ai: true })) : topicClusters(pool.map(entry), { categories });
     const used = new Set();
     const claimed = new Set();
     let count = 0;
@@ -1465,7 +1521,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   return {
     groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, organizeLoose, mergeGroups, entryFor: (id) => { const t = tabById(id); return t ? entry(t) : null; }, groupEntries: (id) => members(id).map(entry), organizeView, applyRefinement, organizeSeq: () => (undoState ? undoState.seq : null), undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
-    candidates: () => getTabs().filter(organizable).map(entry), organizeCounts, arrange, cleanup, state, snapshot, restore, members,
+    candidates: () => getTabs().filter(organizable).map(entry), organizableCount: () => getTabs().filter(organizable).length, organizeCounts, arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,
   };
 }

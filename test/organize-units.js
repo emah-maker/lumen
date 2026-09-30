@@ -87,4 +87,71 @@ const gid = (t) => t.groupId || null;
   check('no pages: no candidates, zero web tabs', w.g.candidates().length === 0 && w.g.organizeCounts().web === 0);
 }
 
+const at = (w, id) => w.tabs().find((t) => t.id === id); // grouping reorders the strip: tabs by id
+// 8. a hand-added member of an automatic group is regrouped with the rest (not stranded, not called "kept"); Undo restores it
+{
+  const w = window_([...RECIPES, ...TRIP, ['Apple Pie Recipe', 'https://d.example/apple-pie']]);
+  const auto = w.g.create('Baking', [1, 2], { auto: true });
+  w.g.add(6, auto.id); // dragged in by hand: userPlaced
+  check('the hand-added tab is marked', at(w, 6).userPlaced === true);
+  check('it counts as organizable, not kept', w.g.candidates().length === 6 && w.g.organizeCounts().kept === 0, JSON.stringify(w.g.organizeCounts()));
+  check('organizableCount matches candidates', w.g.organizableCount?.() === w.g.candidates().length);
+  w.g.organizeByTopic();
+  const recipeGroup = gid(at(w, 1));
+  check('recipes (the hand-added one too) end in one group', recipeGroup && [1, 2, 3, 6].every((id) => gid(at(w, id)) === recipeGroup), w.tabs().slice().sort((x, y) => x.id - y.id).map(gid).join());
+  check('the mark is cleared on the tab Organize took', at(w, 6).userPlaced === false);
+  w.g.undoOrganize();
+  check('undo puts the hand-added tab and its mark back', gid(at(w, 6)) === auto.id && at(w, 6).userPlaced === true && !gid(at(w, 3)));
+}
+
+// 9. nothing to group: the automatic groups stay exactly as they were, there is nothing to undo, and the marks are kept
+{
+  const w = window_([['Quarterly zebra', 'https://a.example/1', { userRemoved: true }], ['Ostrich marathon', 'https://b.example/2', { userRemoved: true }], ['Plumbing 101', 'https://c.example/3'], ['Sonnet review', 'https://d.example/4']]);
+  const site = w.g.create('Sites', [3, 4], { auto: true, domain: 'c.example' });
+  const before = w.tabs().slice().sort((x, y) => x.id - y.id).map(gid).join();
+  const count = w.g.organizeByTopic();
+  check('nothing grouped: 0', count === 0, String(count));
+  check('the automatic group is still there with its tabs', w.g.groups.has(site.id) && w.tabs().slice().sort((x, y) => x.id - y.id).map(gid).join() === before, w.tabs().slice().sort((x, y) => x.id - y.id).map(gid).join());
+  check('nothing to undo after a no-op organize', w.g.canUndo() === false);
+  check('the loose tabs keep userRemoved', at(w, 1).userRemoved === true && at(w, 2).userRemoved === true);
+}
+
+// 10. userRemoved is cleared only on tabs Organize takes (not pinned tabs, not the user's own groups)
+{
+  const w = window_([...RECIPES.map(([a, b]) => [a, b, { userRemoved: true }]), ['Pinned', 'https://p.example/', { pinned: true, userRemoved: true }], ['Mine', 'https://m.example/', { userRemoved: true }]]);
+  w.g.create('My group', [5]);
+  at(w, 5).userRemoved = true; // a leftover mark on a member of the user's own group
+  w.g.organizeByTopic();
+  check('pinned and user-grouped tabs keep userRemoved; taken tabs lose it', at(w, 4).userRemoved === true && at(w, 5).userRemoved === true && [1, 2, 3].every((id) => at(w, id).userRemoved === false));
+}
+
+// 11. no AI: a realistic 31-tab bar ends mostly grouped, with good names and no giant "Other"
+{
+  const BAR = [
+    ['Flights to Tokyo - Google Flights', 'https://www.google.com/travel/flights?q=tokyo'], ['Tokyo hotels - Booking.com', 'https://www.booking.com/city/jp/tokyo.html'],
+    ['Things to do in Tokyo - Tripadvisor', 'https://www.tripadvisor.com/Tokyo'], ['Shibuya food guide', 'https://www.eater.com/tokyo-food'],
+    ['Easy Banana Bread Recipe', 'https://www.allrecipes.com/banana-bread'], ['Best Chocolate Chip Cookies', 'https://www.seriouseats.com/cookies'], ['Sourdough starter guide', 'https://www.kingarthurbaking.com/sourdough'],
+    ['React useEffect docs', 'https://react.dev/reference/react/useEffect'], ['Electron BrowserWindow API', 'https://www.electronjs.org/docs/api/browser-window'], ['node:fs documentation', 'https://nodejs.org/api/fs.html'],
+    ['TypeScript handbook', 'https://www.typescriptlang.org/docs/handbook'], ['Stack Overflow - how to debounce', 'https://stackoverflow.com/questions/1'],
+    ['CS 3500 - Canvas', 'https://canvas.northeastern.edu/courses/1'], ['Gradescope HW3', 'https://www.gradescope.com/courses/2'], ['Piazza CS3500', 'https://piazza.com/class/x'],
+    ['Gmail - Inbox', 'https://mail.google.com/mail/u/0'], ['YouTube - lofi beats', 'https://www.youtube.com/watch?v=1'], ['Reddit - r/programming', 'https://www.reddit.com/r/programming'], ['Hacker News', 'https://news.ycombinator.com'],
+    ['Amazon.com: mechanical keyboard', 'https://www.amazon.com/s?k=keyboard'], ['Best mechanical keyboards 2026 - RTINGS', 'https://www.rtings.com/keyboard'], ['Keychron Q1 review', 'https://www.theverge.com/keychron'],
+    ['Weather Boston', 'https://weather.com/boston'], ['Linear algebra notes', 'https://example.edu/la'], ['Wikipedia - Eigenvalue', 'https://en.wikipedia.org/wiki/Eigenvalue'], ['Khan Academy - matrices', 'https://www.khanacademy.org/matrices'],
+    ['Repo - lumen', 'https://github.com/me/lumen'], ['Pull request #12', 'https://github.com/me/lumen/pull/12'], ['Issues', 'https://github.com/me/lumen/issues'],
+    ['Notion', 'https://www.notion.so/x'], ['Spotify', 'https://open.spotify.com/'],
+  ];
+  const run = () => { const w = window_(BAR.map(([a, b]) => [a, b, { userRemoved: true }])); w.g.organizeByTopic(); return w; };
+  const w = run();
+  const named = w.g.state();
+  const grouped = w.tabs().filter((t) => gid(t)).length;
+  const sizes = named.map((g) => w.tabs().filter((t) => t.groupId === g.id).length);
+  check('31-tab bar: at least 90% grouped', grouped / 31 >= 0.9, `${grouped}/31`);
+  check('31-tab bar: no giant group, no "Other"', Math.max(...sizes) <= 8 && !named.some((g) => /^other$/i.test(g.name)), named.map((g, i) => `${g.name}:${sizes[i]}`).join());
+  const nameOf = (i) => named.find((g) => g.id === at(w, i + 1).groupId)?.name || '';
+  check('31-tab bar: good names', /recipes/i.test(nameOf(4)) && /dev/i.test(nameOf(7)) && nameOf(7) === nameOf(11) && /school/i.test(nameOf(12)) && nameOf(12) === nameOf(23) && /mail/i.test(nameOf(15)) && nameOf(15) === nameOf(29) && /video/i.test(nameOf(16)), named.map((g) => g.name).join());
+  check('31-tab bar: the keyboard review joins the keyboard group', nameOf(19) === nameOf(21) && nameOf(19) !== '', nameOf(21));
+  check('31-tab bar: topics stay apart (Tokyo trip is not dev docs)', nameOf(0) !== nameOf(7) && nameOf(26) !== nameOf(7), `${nameOf(0)} / ${nameOf(26)} / ${nameOf(7)}`);
+  check('31-tab bar: deterministic', run().g.state().map((g) => g.name).join() === named.map((g) => g.name).join());
+}
+
 process.exit(failed ? 1 : 0);

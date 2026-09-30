@@ -406,6 +406,9 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
     } catch (err) { stats.failed = err.code || err.message || 'failed'; }
   };
 
+  // Nothing grouped: organizeByTopic rolled back, so nothing changed and there is no undo step to refine. Only the unknown sites are asked about.
+  if (!count) { await askHostsOnly(); return finish(signal?.aborted ? 'cancelled' : 'none'); }
+
   const { plan: cachedPlan, pending } = cache.lookup(view);
   const need = alwaysAsk ? { needsAi: true, askableLeftovers: pending.leftovers } : assess({ groups: pending.groups, leftovers: pending.leftovers });
   const cachedEmpty = !cachedPlan.names.size && !cachedPlan.place.size && !cachedPlan.groups.length && !cachedPlan.merges.length;
