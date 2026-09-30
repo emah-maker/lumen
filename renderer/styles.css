@@ -486,6 +486,8 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 /* Regenerate, beside Copy on the latest reply. */
 .msg.assistant .reply-regen { position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
 .msg.assistant:hover .reply-regen, .msg.assistant .reply-regen:focus-visible { opacity: 1; }
+.msg.assistant:has(> .reply-regen) .reply-regen, .msg.assistant:has(> .reply-regen) .reply-copy { opacity: 0.75; transform: none; } /* the latest reply: its actions always there */
+.msg.assistant:has(> .reply-regen):hover .reply-regen, .msg.assistant:has(> .reply-regen):hover .reply-copy { opacity: 1; }
 .msg.assistant .reply-regen:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 #auto-allow.armed { color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
 /* The header toggle, armed: says what a second click does, visibly. */
@@ -503,7 +505,7 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .more-menu .menu-item { display: flex !important; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 10px; border-radius: 7px; justify-content: flex-start; }
 .more-menu .menu-item::after { content: attr(aria-label); font-size: 12.5px; color: var(--text); white-space: nowrap; }
 .more-menu .menu-item svg { flex: none; }
-.more-menu .menu-item[aria-keyshortcuts]::before { content: 'Ctrl+Shift+L'; order: 3; margin-left: auto; font-size: 11px; color: var(--muted); }
+.more-menu .menu-item[data-shortcut]::before { content: attr(data-shortcut); order: 3; margin-left: auto; font-size: 11px; color: var(--muted); }
 .more-menu .menu-item:hover, .more-menu .menu-item:focus-visible { background: var(--hover, rgba(127,127,127,.12)); outline: none; }
 body:not(.chat-full) .more-menu #dock-to-side { display: none !important; }
 .queue-btn { margin-left: 4px; height: 20px; padding: 0 6px; border: none; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }

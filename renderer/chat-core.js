@@ -238,6 +238,8 @@ $('model').addEventListener('change', async (e) => {
   document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) close(false); }, true);
   menu.addEventListener('focusout', (e) => { if (!menu.contains(e.relatedTarget) && e.relatedTarget !== btn) close(false); });
   for (const item of menu.querySelectorAll('.menu-item')) item.removeAttribute('title'); // the row already says it
+  const full = optional('open-chat-page');
+  if (full) full.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘L' : t('shortcut.ctrlShiftL');
 })();
 // ---------- chat ----------
 
@@ -497,7 +499,11 @@ async function askAgain() {
     const us = messages.querySelectorAll('.msg.user');
     let failed = false;
     for (let n = us[us.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.querySelector?.('.error') || n.classList.contains('error')) { failed = true; break; }
-    if (!failed) return;
+    if (!failed) {
+      for (const b of messages.querySelectorAll('.reply-regen')) b.remove();
+      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.nothingToRegenerate') }));
+      return;
+    }
   }
   const users = messages.querySelectorAll('.msg.user');
   const from = users[users.length - 1];
@@ -1117,7 +1123,7 @@ function showHistory(items) {
     bubble.classList.add('restored');
     append(bubble);
   }
-  // Its last exchange can be asked again: the last message (text only; images aren't kept in the history view).
+  // Its last exchange can be asked again: the last message, with its images.
   const lastIndex = items.length - 1;
   let u = lastIndex - 1;
   while (u >= 0 && items[u].role !== 'user') u--;
@@ -1182,6 +1188,7 @@ prompt.addEventListener('keydown', (e) => {
     $('composer').requestSubmit();
   } else if (e.key === 'Escape' && running && !prompt.value) {
     e.preventDefault();
+    e.stopPropagation(); // (and doesn't also leave the full-page chat)
     window.assistant.stop(); // Esc in an empty composer stops the reply
   }
 });

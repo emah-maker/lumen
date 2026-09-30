@@ -1010,5 +1010,7 @@
   "context.aiOn.title": "Let the AI read and act on {site} again",
   "context.aiOff.title": "Turn off AI on {site}: the AI can’t see or act on this site’s tabs, and they aren’t sent with messages",
   "context.offOn": "AI is off on:",
-  "context.offOn.title": "You turned off AI on {site}. The AI can’t see or act on its tabs."
+  "context.offOn.title": "You turned off AI on {site}. The AI can’t see or act on its tabs.",
+  "chat.nothingToRegenerate": "Nothing to regenerate: this reply changed since.",
+  "shortcut.ctrlShiftL": "Ctrl+Shift+L"
 }
