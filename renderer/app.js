@@ -694,6 +694,9 @@ function moveTabDrag(e) {
     if (selectedTabs.size > 1 && selectedTabs.has(drag.id)) {
       const was = drag.el.getBoundingClientRect().left;
       drag.gathered = stripOrder().filter((x) => selectedTabs.has(x));
+      // The room they will take where they land: their widths and the gaps between them (at most half the strip).
+      const widths = drag.gathered.map((x) => $('tabs').querySelector(`.tab[data-id="${x}"]`)?.getBoundingClientRect().width || 0);
+      drag.slotW = Math.min($('tabs').clientWidth / 2, widths.reduce((a, b) => a + b, 0) + 4 * (widths.length - 1));
       gatherTabs(drag.gathered, drag.el);
       const tabs = [...$('tabs').querySelectorAll('.tab:not(.gathered)')];
       drag.ids = tabs.map((t) => Number(t.dataset.id));
@@ -719,7 +722,8 @@ function moveTabDrag(e) {
     const tick = () => { if (drag !== d || !d.edge) { d.edgeTimer = 0; return; } bar.scrollLeft += 9 * d.edge; if (d.floated) retarget(d.lastX); d.edgeTimer = requestAnimationFrame(tick); };
     d.edgeTimer = requestAnimationFrame(tick);
   }
-  const dx = Math.max(br.left - rects[from].left, Math.min(br.right - rects[from].right, drag.dx));
+  // (A tab of a group may run a little past the strip's right end: that is how it leaves a group that ends the strip.)
+  const dx = Math.max(br.left - rects[from].left, Math.min(br.right - rects[from].right + (drag.homeGroup ? 20 : 0), drag.dx));
   // Pulled up or down, the tab follows with resistance, and lifts off as it nears the point where it comes out.
   const lift = Math.sign(dy) * Math.min(12, Math.abs(dy) * 0.3);
   drag.el.style.transform = `translate(${dx}px, ${lift}px)`;
@@ -748,7 +752,7 @@ function moveTabDrag(e) {
     // The group(s) the dragged tabs are in now: a drop at home that the slot shows outside it is a move out.
     const inGroups = new Set((drag.gathered || [drag.id]).map((x) => (lastTabState?.tabs || []).find((t) => t.id === x)?.groupId || null));
     drag.homeGroup = inGroups.size === 1 ? [...inGroups][0] : undefined;
-    showDropSlot({ beforeId: home.id, outside: home.outside, ghost: false, width: r.width, instant: true, tab: { pinned, ownGroup: drag.homeGroup || null } });
+    showDropSlot({ beforeId: home.id, outside: home.outside, ghost: false, width: drag.slotW || r.width, instant: true, tab: { pinned, ownGroup: drag.homeGroup || null } });
     drag.el.style.left = `${r.left}px`;
     drag.el.style.top = `${r.top}px`;
     drag.el.style.width = `${r.width}px`;
@@ -770,12 +774,13 @@ function retarget(x) {
     drag.slotBefore = hit?.id ?? null;
     drag.slotKey = targetKey(hit);
     const tab = (lastTabState?.tabs || []).find((t) => t.id === drag.id);
-    showDropSlot({ beforeId: drag.slotBefore, outside: Boolean(hit?.outside), ghost: false, width: drag.rects[drag.from].width, tab: tab ? { pinned: Boolean(tab.pinned), ownGroup: ownFor() } : { pinned } });
+    showDropSlot({ beforeId: drag.slotBefore, outside: Boolean(hit?.outside), ghost: false, width: drag.slotW || drag.rects[drag.from].width, tab: tab ? { pinned: Boolean(tab.pinned), ownGroup: ownFor() } : { pinned } });
   }
   // Right after its own group, the tab stays in it until it is pulled clearly past the group's last tab (as in
   // Chrome): then it leaves the group in place, the slot's tint and the tab's group colour going with it.
   const prev = dropSlot?.el ? edgeBefore(dropSlot.el) : null;
-  const leaving = Boolean(drag.homeGroup && prev && drag.el.getBoundingClientRect().left > prev.getBoundingClientRect().right + 12);
+  const freeLeft = drag.rects[drag.from].left + (x - drag.startX); // where the pointer puts the tab, unclamped
+  const leaving = Boolean(drag.homeGroup && prev && freeLeft > prev.getBoundingClientRect().right + 12);
   if (leaving !== Boolean(drag.leaving)) { drag.leaving = leaving; tintSlot(); }
   const staying = dropSlot?.el ? slotGroup(dropSlot.el, ownFor()) : null;
   if (drag.homeGroup && staying !== drag.homeGroup) drag.el.style.setProperty('--group-color', 'transparent');

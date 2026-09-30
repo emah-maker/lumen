@@ -31,7 +31,8 @@
       $('shot').removeAttribute('src');
       if (imageOk(data.shot, false)) { $('shot').classList.add('loaded', 'instant'); $('shot').src = data.shot; } // taken before the drag: shown at once
       card.style.setProperty('--shot-h', `${Math.max(60, Math.round(Number(data.shotHeight) || 180))}px`);
-      card.className = count > 1 ? 'card many' : 'card';
+      card.className = `${count > 1 ? 'card many' : 'card'}${data.compact ? ' compact' : ''}${data.bare ? ' bare' : ''}`;
+      document.body.classList.toggle('compact', Boolean(data.compact));
       void card.offsetWidth; // start the grow-in from the small state
       card.classList.add('on');
       document.body.classList.add('on');
@@ -44,6 +45,7 @@
       img.onload = () => img.classList.add('loaded');
       img.src = src;
     },
+    bare() { if (!$('shot').classList.contains('loaded')) card.classList.add('bare'); },
     wait() { card.classList.remove('compact'); card.classList.add('wait'); },
     compact(on) { card.classList.toggle('compact', Boolean(on)); document.body.classList.toggle('compact', Boolean(on)); },
     // 'drop' | 'join' | 'cancel'

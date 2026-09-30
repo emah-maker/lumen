@@ -3593,7 +3593,7 @@ function moveTabToWindowId(src, tabId, windowId, index) {
 // itself, like its title bar. Main polls the cursor; the renderer that holds the pointer reports the
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
 const tabDragMath = require('./features/tab-drag-math');
-let tabDragTimeoutMs = 30000; // with the mouse still and no release seen (see tickTabDrag)
+let tabDragTimeoutMs = 120000; // with the mouse still and no release seen (see tickTabDrag)
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
 // Windows front first, as far as Lumen can tell: the order they were last focused in (Electron has no
@@ -3605,7 +3605,7 @@ app.on('browser-window-focus', (_e, w) => {
   focusOrder.unshift(w.id);
 });
 const frontRank = (w) => { const i = focusOrder.indexOf(w.id); return i === -1 ? focusOrder.length + w.id : i; };
-const DRAG_OVER_STRIP_OPACITY = 0.12; // all but gone over a strip: the slot and ghost there are what you see (Chrome hides it) // an only-tab window being dragged: see through it to the strip it is over
+const DRAG_OVER_STRIP_OPACITY = 0; // all but gone over a strip: the slot and ghost there are what you see (Chrome hides it) // an only-tab window being dragged: see through it to the strip it is over
 
 // Where each window's tabs sit (client coordinates); refreshed while dragging, off the hot path. The
 // window being dragged (only-tab drags) is not a target; the window a card came from is.
@@ -3723,7 +3723,7 @@ function snapshotFor(tab) {
     return `data:image/jpeg;base64,${image.resize({ width: Math.round(CARD_WIDTH * scale), quality: 'good' }).toJPEG(82).toString('base64')}`;
   }).catch(() => null);
 }
-function showDragCard(d, tab, cursor) {
+function showDragCard(d, tab, cursor, { compact = false } = {}) {
   d.cardAt = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
   if (TEST_BACKGROUND) return Promise.resolve();
   const card = dragCardWindow();
@@ -3739,13 +3739,14 @@ function showDragCard(d, tab, cursor) {
     // A group dragged by its label is the group on the card too: its name and colour, as the slot shows it.
     const group = d.group ? { name: d.group.name, color: d.group.color } : null;
     const accent = settingsBackend.state().accent;
-    cardCall('show', { accent: nativeTheme.shouldUseDarkColors ? accent?.dark : accent?.light, title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain(), shot: early });
+    cardCall('show', { accent: nativeTheme.shouldUseDarkColors ? accent?.dark : accent?.light, title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain(), shot: early, compact, bare: !alive(tab) && !early });
     card.win.showInactive();
   });
   const early = prepShot && prepShot.tabId === tab.id && Date.now() - prepShot.at < 4000 ? prepShot.src : null;
   prepShot = null;
   // A fresh snapshot anyway (the page may have changed since the hint); the card swaps it in quietly.
-  const shot = snapshotFor(tab).then((src) => { if (src && tabDrag === d) card.loaded.then(() => { if (tabDrag === d) cardCall('shot', src); }); });
+  // (No picture at all, a sleeping tab say: the card folds to its title bar instead of an empty panel.)
+  const shot = snapshotFor(tab).then((src) => { if (tabDrag === d) card.loaded.then(() => { if (tabDrag === d) cardCall(src ? 'shot' : 'bare', src); }); });
   return Promise.race([shot, new Promise((r) => setTimeout(r, early ? 0 : 250))]);
 }
 // While its tab is out on the card, a window shows the tab beside it (as Chrome does), not a page whose tab
@@ -3833,7 +3834,13 @@ function setDragHover(d, hit, { cancel = false } = {}) {
   d.hover = hit;
   if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId, outside: Boolean(hit.outside), edge: hit.edge || 0, tab: d.ghost });
   if (d.card) { if (wasOver !== Boolean(hit)) cardCall('compact', Boolean(hit)); return; }
-  if (!TEST_BACKGROUND && rcAlive(d.rec)) { try { d.rec.win.setOpacity(hit ? DRAG_OVER_STRIP_OPACITY : 1); } catch {} }
+  if (!TEST_BACKGROUND && rcAlive(d.rec)) {
+    try { d.rec.win.setOpacity(hit ? DRAG_OVER_STRIP_OPACITY : 1); } catch {}
+    // The window is out of sight over a strip, so the tab itself, as a small chip, stays under the cursor (as in Chrome).
+    const tab = tabsOf(d.rec).find((t) => t.id === (d.tabId ?? d.ids?.[0]));
+    if (hit && !d.chip && tab) { d.chip = true; showDragCard(d, tab, cursorPoint(), { compact: true }); }
+    else if (!hit && d.chip) { d.chip = false; hideDragCard(d, 'cancel'); }
+  }
 }
 function tickTabDrag() {
   const d = tabDrag;
@@ -3860,6 +3867,7 @@ function tickTabDrag() {
     const area = screen.getDisplayNearestPoint(cursor).workArea;
     const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
     if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setPosition(b.x, b.y); d.last = b; } // position only: no size drift across displays
+    if (d.chip && dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(cursor.x - CARD_HOLD.x, cursor.y - CARD_HOLD.y);
   }
   if (Date.now() - d.stripsAt > 120) { d.stripsAt = Date.now(); refreshDragStrips(d); }
   const hit = tabDragMath.stripHit(cursor, dropTargets(d));
