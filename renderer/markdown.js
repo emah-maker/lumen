@@ -43,9 +43,13 @@
     if (!ready) loadTemml(chem);
     if (ready) {
       try {
-        const src = display === 'inline' ? `\\displaystyle ${tex}` : tex;
-        const html = temml.renderToString(src, { displayMode: display === true, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500 });
-        return display === true ? `<div class="math-block">${html}</div>` : html;
+        const env = /^\s*\\begin\{/.test(tex);
+        const src = display === 'inline' && !env ? `\\displaystyle ${tex}` : tex;
+        const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500 });
+        if (display === true) return `<div class="math-block">${html}</div>`;
+        // A long formula in a line (or a display one written inside a sentence) gets its own sideways scroll: MathML
+        // doesn't wrap, and a narrow sidebar bubble must not.
+        return display === 'inline' || env || tex.length > 40 ? `<span class="math-inline">${html}</span>` : html;
       } catch { /* not LaTeX it can read: its source, below */ }
     }
     const block = display === true;
@@ -58,12 +62,14 @@
   // "costs $5-$10" and "$ 5" are money. Its content is on one line.
   function dollarEnd(s, i) {
     // It opens on something a formula starts with (a letter, digit, \, {, (, [, |, a sign): "($)" is a price tier.
-    if (!/[A-Za-z0-9\\{([|+-]/.test(s[i + 1] || '')) return -1;
+    if (!/[A-Za-z0-9\\{([|+\-_^]/.test(s[i + 1] || '')) return -1;
     for (let j = i + 1; j < s.length; j++) {
       const c = s[j];
       if (c === '\n') return -1;
       if (c === '\\') { j++; continue; }
-      if (c === '$') return !/\s/.test(s[j - 1]) && !/[\d$]/.test(s[j + 1] || '') ? j : -1;
+      // Not right before a digit ("$5-$10") or another $; before a letter only for a sub- or superscript ("H$_2$O"),
+      // since "PATH=$PATH:$HOME" is shell text.
+      if (c === '$') return !/\s/.test(s[j - 1]) && !/[\d$]/.test(s[j + 1] || '') && (!/[A-Za-z]/.test(s[j + 1] || '') || /[_^]/.test(s[i + 1])) ? j : -1;
     }
     return -1;
   }
@@ -89,6 +95,7 @@
   // are left alone. A display formula on a line of its own stays on that line (with its indent: inside a list item,
   // it belongs to that item).
   function liftMath(source) {
+    source = source.replace(/[\uE000\uE001]/g, '');
     const maths = [];
     let out = '';
     let i = 0;
@@ -98,6 +105,16 @@
     const lineStart = (k) => k === 0 || source[k - 1] === '\n';
     const onlySpaceBefore = (k) => { const b = source.lastIndexOf('\n', k - 1) + 1; return !source.slice(b, k).trim(); };
     while (i < source.length) {
+      // A ```math (or latex, tex) fence is a display formula, as GitHub and several models write one.
+      if (!fenced && lineStart(i) && /^```(math|latex|tex)[ \t]*(\n|$)/.test(source.slice(i, i + 12))) {
+        const bodyAt = source.indexOf('\n', i) + 1;
+        const close = bodyAt > 0 ? source.indexOf('\n```', bodyAt - 1) : -1;
+        if (close !== -1) {
+          const tex = source.slice(bodyAt, close);
+          const after = source.indexOf('\n', close + 4);
+          if (texLike(tex)) { out += put(tex, true); i = after === -1 ? source.length : after; continue; }
+        } else if (open === -1) open = i;
+      }
       if (lineStart(i) && source.startsWith('```', i)) fenced = !fenced;
       if (fenced || (lineStart(i) && source.startsWith('```', i))) {
         const nl = source.indexOf('\n', i);
@@ -161,6 +178,10 @@
       out += put(m.tex, false);
       i = m.end;
     }
+    if (open === -1) {
+      const tail = source.match(/\\(?:b(?:e(?:g(?:in?)?)?)?)?(?:\{[A-Za-z*]*)?$/);
+      if (tail && !fenced) open = tail.index;
+    }
     return { text: out, maths, open };
   }
   const dropMath = (html, maths) => html.replace(TOKEN, (_t, n) => (maths[n] ? typeset(maths[n].tex, maths[n].display) : ''));
@@ -173,8 +194,9 @@
     const copy = node.cloneNode(true);
     for (const el of copy.querySelectorAll?.('.reply-copy, .reply-model') || []) el.remove();
     for (const math of copy.querySelectorAll?.('math') || []) {
-      const tex = math.querySelector('annotation')?.textContent;
-      if (tex == null) continue;
+      const raw = math.querySelector('annotation')?.textContent;
+      if (raw == null) continue;
+      const tex = raw.replace(/^\s*\\displaystyle\s*/, '').trim();
       const block = math.getAttribute('display') === 'block';
       math.replaceWith(document.createTextNode(block ? `\n$$${tex}$$\n` : `$${tex}$`));
     }
@@ -351,6 +373,13 @@
         // Indented under a list item: part of that item (the list goes on after it).
         const last = out.length - 1;
         if (list && block[1] && /<\/li>$/.test(out[last] || '')) { flushParagraph(); out[last] = out[last].replace(/<\/li>$/, `${token}</li>`); continue; }
+        // The same after a blank line (which closed the list): the list opens again around it.
+        if (!list && block[1] && !paragraph.length && /^<\/(ol|ul)>$/.test(out[last] || '') && /<\/li>$/.test(out[last - 1] || '')) {
+          list = out[last].slice(2, 4);
+          out.pop();
+          out[last - 1] = out[last - 1].replace(/<\/li>$/, `${token}</li>`);
+          continue;
+        }
         flushParagraph(); closeList();
         out.push(token);
         continue;
@@ -363,6 +392,8 @@
       } else if (bullet || numbered) {
         flushParagraph();
         const type = bullet ? 'ul' : 'ol';
+        // The same kind of list again after only blank lines (or a formula it held): one list, not two.
+        if (!list && out[out.length - 1] === `</${type}>`) { out.pop(); list = type; }
         if (list !== type) {
           closeList();
           // A numbered list split by a paragraph or code block keeps counting (3., 4., …) instead of restarting at 1.
@@ -403,7 +434,7 @@
       if (/^```/.test(line)) fenced = !fenced;
       else if (!fenced) {
         const plain = line.replace(/`[^`]*`/g, '').replace(/\\\$/g, '');
-        dollars += (plain.match(/\$\$/g) || []).length;
+        if (/^\s*\$\$|\$\$\s*$/.test(plain)) dollars += (plain.match(/\$\$/g) || []).length; // "($$)" mid-line is a price tier
         brackets += (plain.match(/\\\[/g) || []).length - (plain.match(/\\\]/g) || []).length;
         envs += (plain.match(/\\begin\{/g) || []).length - (plain.match(/\\end\{/g) || []).length;
         if (line.trim() === '' && pos > 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;

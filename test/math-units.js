@@ -93,6 +93,31 @@ check('streaming: stableLength is linear (long math reply)', () => {
   assert.ok(Date.now() - t0 < 200, `${Date.now() - t0} ms`);
 });
 
+check('subscripts open a formula (H$_2$O), shell variables do not', () => {
+  assert.strictEqual(md.liftMath('H$_2$O and CO$_2$ emissions').maths.length, 2);
+  assert.strictEqual(md.liftMath('export PATH=$PATH:$HOME/bin').maths.length, 0);
+});
+check('```math fences are display math', () => {
+  const { maths } = md.liftMath('See:\n```math\n\\int_0^1 x\\,dx\n```\nend');
+  assert.strictEqual(maths.length, 1);
+  assert.strictEqual(maths[0].display, true);
+});
+check('streaming: price tiers do not stop the stable prefix', () => {
+  const s = '- **Nopa** ($$) - Californian\n\nNext paragraph\n\nMore';
+  assert.ok(md.stableLength(s) > 30, String(md.stableLength(s)));
+});
+check('streaming: a command being typed waits', () => {
+  assert.strictEqual(md.openMath('So\n\\begin{alig'), 3);
+  assert.strictEqual(md.openMath('Then \\'), 5);
+});
+check('a formula after a blank line under a list item stays in it', () => {
+  const html = md.render('1. Step\n\n   $$x=1$$\n\n2. Next');
+  assert.match(html, /^<ol><li>Step<pre class="math-src"[^>]*>x=1<\/pre><\/li><li>Next<\/li><\/ol>$/);
+});
+check('private-use characters in the text are dropped, not swapped for formulas', () => {
+  assert.ok(!md.render('a 0 b $x$').includes(''));
+});
+
 // With Temml: MathML, with the source kept as an annotation (copying a selection keeps the LaTeX).
 const ctx = { globalThis: {} };
 vm.createContext(ctx);
@@ -114,6 +139,11 @@ check('Temml: bad LaTeX falls back to its source, not a red error', () => {
 });
 check('Temml: a display formula inside a sentence is drawn at display size', () => {
   assert.match(md.render('so $$\\sum_{i=1}^n i$$ holds'), /\\displaystyle/);
+});
+check('Temml: a long inline formula gets its own scroller; an environment in a sentence renders', () => {
+  assert.match(md.render('Long: $a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9$ ok'), /<span class="math-inline"><math/);
+  const html = md.render('We have \\begin{aligned}x&=1\\end{aligned} and more');
+  assert.ok(!html.includes('math-src'), html);
 });
 check('Temml: HTML in a formula stays text', () => {
   const html = md.render('$\\text{<img src=x onerror=alert(1)>}$');

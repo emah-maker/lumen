@@ -524,6 +524,7 @@ body.chat-full .setup { text-align: left; }
 .msg.assistant { counter-reset: tmlEqnNo; } /* equation numbers start at (1) in each reply */
 .msg.assistant .math-block { overflow-x: auto; overflow-y: hidden; margin: 6px 0 10px; padding: 2px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .msg.assistant .math-block:last-child { margin-bottom: 0; }
+.msg.assistant .math-inline { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: middle; scrollbar-width: none; }
 .msg.assistant .math-block math { font-size: 1.18em; }
 .msg.assistant code.math-src { background: none; padding: 0; font-style: italic; color: var(--text); }
 .msg.assistant pre.math-src { background: none; box-shadow: none; text-align: center; font: italic 13px ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
