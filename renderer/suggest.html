@@ -11,6 +11,8 @@
     /* Margins match SUGGEST_PAD in app.js: room for the shadow inside this view. */
     ul {
       list-style: none; margin: 6px 16px 24px; padding: 4px; border-radius: 12px; transform-origin: top center;
+      /* main.js cuts the view off at the window's bottom on a short window; the list scrolls then. */
+      box-sizing: border-box; max-height: calc(100vh - 30px); overflow-y: auto; scrollbar-width: thin;
       background: var(--surface);
       box-shadow: 0 0 0 0.5px var(--border), 0 12px 28px -8px var(--shadow);
     }

@@ -37,7 +37,13 @@
       background: var(--surface); color: var(--text);
       box-shadow: 0 0 0 0.5px var(--border), 0 24px 60px -12px var(--shadow), 0 4px 16px -6px var(--shadow);
       transform-origin: top center; opacity: 0; transform: scale(0.97);
+      /* A page's alert() can be pages long. On a short window the card stops above the bottom edge
+         and the message scrolls, so the buttons stay on screen (body clips; the view is the window). */
+      display: flex; flex-direction: column; max-height: calc(86vh - 24px);
     }
+    #card > * { flex: none; }
+    /* (The 4px padding, taken back by the margin, keeps the fields' focus rings inside the scroller.) */
+    #card > #head { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: -4px; padding: 4px; }
     #card.entering { animation: card-in 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
     @keyframes card-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
     @media (prefers-reduced-motion: reduce) {
@@ -69,7 +75,7 @@
     #checkbox-row { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; color: var(--muted); font-size: 13px; cursor: default; }
     #checkbox-row[hidden] { display: none; }
     #checkbox-row input { accent-color: var(--accent); width: 14px; height: 14px; }
-    #buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    #buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     .btn {
       height: 30px; padding: 0 14px; border: none; border-radius: 8px; background: var(--field); color: var(--text);
       font: inherit; font-weight: 500; letter-spacing: -0.003em; cursor: default;

@@ -34,6 +34,8 @@ window.suggest.onItems(({ items, selected, listId }) => {
     li.style.animationDelay = `${Math.min(index, 5) * 22}ms`;
     list.append(li);
   });
+  // A short window scrolls the list (suggest.html): keep the row the arrow keys picked in view.
+  list.querySelector('li.selected')?.scrollIntoView({ block: 'nearest' });
 });
 
 document.addEventListener('visibilitychange', () => { if (document.hidden) lastShown = 0; });

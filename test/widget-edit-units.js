@@ -190,9 +190,9 @@ module.exports = async function widgetEditUnits(check) {
   check('locales: every page string is in en.json with the same English', missing.length === 0, missing.join(', '));
   const html = read('renderer/newtab.html');
   check('page: the CSP is untouched', html.includes(`content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data: file:; frame-src https:; form-action https:"`), '');
-  const order = ['widget-layout.js', 'widget-system.js', 'widget-edit.js', 'newtab-system.js', 'newtab-widgets.js', 'newtab-widgets-grid.js', 'newtab-edit.js', 'newtab.js'].map((f) => html.indexOf(`/${f}"`) >= 0 ? html.indexOf(`/${f}"`) : html.indexOf(`"${f}"`));
+  const order = ['widget-layout.js', 'widget-stacks.js', 'widget-system.js', 'widget-edit.js', 'newtab-system.js', 'newtab-widgets.js', 'newtab-widgets-grid.js', 'newtab-stacks.js', 'newtab-edit.js', 'newtab.js'].map((f) => html.indexOf(`/${f}"`) >= 0 ? html.indexOf(`/${f}"`) : html.indexOf(`"${f}"`));
   check('page: the scripts load in dependency order, all from the app (no other origin)', order.every((n, i) => n > 0 && (i === 0 || n > order[i - 1])) && !/<script[^>]+src="https?:/.test(html), order.join());
-  for (const f of ['renderer/newtab-edit.js', 'renderer/newtab-system.js']) {
+  for (const f of ['renderer/newtab-edit.js', 'renderer/newtab-system.js', 'renderer/newtab-stacks.js']) {
     const src = read(f);
     check(`page: ${f} builds everything with DOM calls and textContent (no markup strings, no eval, no network)`, !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|fetch\(|XMLHttpRequest|WebSocket/.test(src), '');
   }

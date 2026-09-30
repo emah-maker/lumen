@@ -119,8 +119,14 @@
     requestAnimationFrame(reportHeight);
   }
 
-  // The view is sized to the card (main.js caps it to the window).
-  function reportHeight() { api.setHeight(Math.ceil(card.getBoundingClientRect().height) + 6 + 24); }
+  // The view is sized to the card (main.js caps it to the window). On a short window the card is cut
+  // to the view and the list scrolls (downloads-panel.html), so this reports the card's natural height
+  // (the list at its full, uncapped-by-the-window size): the clipped height would shrink the view,
+  // which would shrink the card again, and so on.
+  function reportHeight() {
+    const natural = card.getBoundingClientRect().height - list.clientHeight + Math.min(list.scrollHeight, 452);
+    api.setHeight(Math.ceil(natural) + 6 + 24);
+  }
   new ResizeObserver(reportHeight).observe(card);
 
   api.onList((next) => { items = Array.isArray(next) ? next : []; if (selected >= items.length) selected = items.length - 1; render(); });

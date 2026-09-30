@@ -5,28 +5,42 @@ const tabsEl = document.getElementById('tabs');
 const address = document.getElementById('address');
 let editing = false;
 
+// Tabs are kept and updated in place, never rebuilt: a click needs its button to survive from press to
+// release, and pressing a tab (which switches to it) or a page loading re-renders the strip. Rebuilding
+// it took the × away between the two, so tabs could not be closed.
+const tabEls = new Map(); // id -> { el, title, close }
+function tabElement(id) {
+  let entry = tabEls.get(id);
+  if (entry) return entry;
+  const el = document.createElement('div');
+  el.setAttribute('role', 'tab');
+  el.dataset.id = id;
+  const title = document.createElement('span');
+  title.className = 'title';
+  const close = document.createElement('button');
+  close.className = 'close';
+  close.textContent = '×';
+  close.addEventListener('click', (e) => { e.stopPropagation(); api.send('private:close-tab', id); });
+  el.addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest('.close')) api.send('private:switch', id); });
+  el.addEventListener('auxclick', (e) => { if (e.button === 1) api.send('private:close-tab', id); });
+  el.append(title, close);
+  entry = { el, title, close };
+  tabEls.set(id, entry);
+  return entry;
+}
+
 function render(state) {
-  tabsEl.textContent = '';
-  for (const t of state.tabs) {
-    const el = document.createElement('div');
+  const ids = new Set(state.tabs.map((t) => t.id));
+  for (const [id, entry] of tabEls) if (!ids.has(id)) { entry.el.remove(); tabEls.delete(id); }
+  state.tabs.forEach((t, i) => {
+    const { el, title, close } = tabElement(t.id);
     el.className = `tab${t.active ? ' active' : ''}${t.loading ? ' loading' : ''}`;
-    el.setAttribute('role', 'tab');
     el.setAttribute('aria-selected', String(t.active));
-    el.dataset.id = t.id;
-    const title = document.createElement('span');
-    title.className = 'title';
-    title.textContent = t.title;
     el.title = t.url || t.title;
-    const close = document.createElement('button');
-    close.className = 'close';
-    close.textContent = '×';
+    title.textContent = t.title;
     close.setAttribute('aria-label', `Close ${t.title}`);
-    close.addEventListener('click', (e) => { e.stopPropagation(); api.send('private:close-tab', t.id); });
-    el.addEventListener('mousedown', (e) => { if (e.button === 0) api.send('private:switch', t.id); });
-    el.addEventListener('auxclick', (e) => { if (e.button === 1) api.send('private:close-tab', t.id); });
-    el.append(title, close);
-    tabsEl.append(el);
-  }
+    if (tabsEl.children[i] !== el) tabsEl.insertBefore(el, tabsEl.children[i] || null);
+  });
   document.getElementById('back').disabled = !state.canBack;
   document.getElementById('forward').disabled = !state.canForward;
   if (!editing) address.value = state.url;

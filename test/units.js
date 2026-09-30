@@ -440,6 +440,63 @@ async function grokRuns() {
     const said = crashed.events.find((e) => e.type === 'error')?.text || '';
     check('Grok Build: the MCP wait log line never shows up as error text', /panicked at the disco/.test(said) && !/wait_for_mcp/.test(said), said);
   }
+  // ---- Grok Build's model: the picked one on the argv, the one Grok reports as the run's model and
+  // at the top of the reply (like Claude Code's "Auto · Sonnet"), and the picker's fallback list.
+  {
+    const initM = { ...gbInit, model: 'grok-4.7' };
+    const reply = [gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), { type: 'assistant', message: { model: 'grok-4.7', content: [{ type: 'text', text: 'Hi.' }] } }, gbDone('Hi.')];
+    const picked = await fakeGrokRun([initM, ...reply], { run: { model: 'grok-4.6' } });
+    check('Grok Build run: the chosen model goes on the argv as --model <id>', flag(picked.spawned.argv, '--model') === 'grok-4.6' && picked.spawned.argv.filter((a) => a === '--model').length === 1, picked.spawned.argv.join(' '));
+    check('Grok Build run: the model Grok reports (init event) is the run\'s model, and announced when it differs from the pick', picked.out.model === 'grok-4.7' && picked.events.find((e) => e.type === 'notice')?.text === 'grok-4.6 · grok-4.7', JSON.stringify({ model: picked.out.model, events: picked.events.filter((e) => e.type === 'notice') }));
+    const dflt = await fakeGrokRun([initM, ...reply]);
+    const notices = dflt.events.filter((e) => e.type === 'notice').map((e) => e.text);
+    check('Grok Build run on its default: no --model, and the reply starts with "Default · <model>" before the text', !dflt.spawned.argv.includes('--model') && JSON.stringify(notices) === '["Default · grok-4.7"]' && dflt.events.findIndex((e) => e.type === 'notice') < dflt.events.findIndex((e) => e.type === 'text'), JSON.stringify(dflt.events.map((e) => e.type)));
+    const again = await fakeGrokRun([initM, ...reply], { run: { shownModel: 'grok-4.7' } });
+    check('Grok Build run: a model already shown in this chat is not announced again', !again.events.some((e) => e.type === 'notice') && again.out.model === 'grok-4.7', JSON.stringify(again.events.filter((e) => e.type === 'notice')));
+    const same = await fakeGrokRun([initM, ...reply], { run: { model: 'grok-4.7' } });
+    check('Grok Build run: a picked model served as itself needs no notice', !same.events.some((e) => e.type === 'notice'), JSON.stringify(same.events.filter((e) => e.type === 'notice')));
+    const noInit = await fakeGrokRun([gbInit, ...reply]);
+    check('Grok Build run: without a model in init, the assistant message\'s model is the run\'s', noInit.out.model === 'grok-4.7', String(noInit.out.model));
+    check('servedModel: init, then the reply, then a single modelUsage key; nothing flag-like', gb.servedModel({ init: 'a-1', assistant: 'b' }) === 'a-1' && gb.servedModel({ assistant: 'b' }) === 'b' && gb.servedModel({ result: { modelUsage: { 'grok-4.7-build': {} } } }) === 'grok-4.7-build' && gb.servedModel({ result: { modelUsage: { a: {}, b: {} } } }) === null && gb.servedModel({ init: '--x' }) === null && gb.servedModel() === null, 'servedModel');
+    check('modelNotice: label text', gb.modelNotice({ picked: 'default', served: 'grok-4.7' }) === 'Default · grok-4.7' && gb.modelNotice({ picked: 'grok-4.7-build-fast', served: 'grok-4.7-build-fast-0915' }) === 'grok-4.7-build-fast · grok-4.7-build-fast-0915' && gb.modelNotice({ picked: 'grok-4.6', served: 'grok-4.6' }) === null && gb.modelNotice({ picked: 'default', served: 'grok-4.7', shown: 'grok-4.7' }) === null && gb.modelNotice({ picked: 'default', served: null }) === null, 'modelNotice');
+  }
+  {
+    // `grok models` failing: the picker still gets models (last list, else Grok's catalog, else the known ids); signed out gets none.
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gbfallback-'));
+    const savedHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = path.join(data, 'user-grok');
+    let reply = { err: new Error('timed out'), out: '' };
+    const exec = (bin, argv, opts, cb) => setImmediate(() => cb(reply.err, reply.out, ''));
+    try {
+      const engine = new gb.GrokBuildEngine({ userData: data, gate: async () => null, exec });
+      engine.detect = async () => 'grok.exe';
+      const none = await engine.status(true);
+      check('grok models failing, nothing known: the fallback list', JSON.stringify(none.models) === JSON.stringify(gb.FALLBACK_MODELS) && none.signedIn === 'unknown', JSON.stringify(none));
+      fs.writeFileSync(path.join(gb.grokHomeFor(data), 'models_cache.json'), JSON.stringify({ models: { 'grok-5': { info: {} }, 'grok-4.7': { info: {} } } }));
+      const catalog = await engine.status(true);
+      check('grok models failing: Grok\'s own catalog ids before the built-in list', JSON.stringify(catalog.models) === '["grok-5","grok-4.7"]', JSON.stringify(catalog.models));
+      reply = { err: null, out: 'You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.6\n' };
+      await engine.status(true);
+      reply = { err: new Error('timed out'), out: '' };
+      const last = await engine.status(true);
+      check('grok models failing after a good list: the last list is kept', JSON.stringify(last.models) === '["grok-4.7","grok-4.6"]', JSON.stringify(last.models));
+      reply = { err: null, out: 'You are not authenticated.\n\nDefault model: grok-4.6\n' };
+      check('grok models signed out: no fallback models', (await engine.status(true)).models.length === 0, 'signed out');
+      const opts = require('../features/ai-agents').grokBuildOptions({ signedIn: 'unknown', models: none.models });
+      check('fallback list: picker entries grouped under the Grok account', JSON.stringify(opts.map((o) => o.id)) === JSON.stringify(['grokbuild:default', ...gb.FALLBACK_MODELS.map((m) => `grokbuild:${m}`)]) && opts.every((o) => o.group === 'Your Grok account'), JSON.stringify(opts.map((o) => o.id)));
+    } finally {
+      if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
+      fs.rmSync(data, { recursive: true, force: true });
+    }
+  }
+  {
+    // What Grok Build is told about itself, so "what model are you?" is right (Claude Code's own CLI names its model).
+    const { systemFor, grokBuildNote, cliSystemPrompt } = require('../agent');
+    const g = systemFor({ model: 'grokbuild:grok-4.7' });
+    check('Grok Build system prompt: it is Grok, never told it is Claude', /^You are Grok, made by xAI/.test(g) && !/You are Claude/.test(g) && /^You are Claude/.test(systemFor({ model: 'claudecode:opus' })), g.slice(0, 80));
+    check('Grok Build note names the model answering', /The model answering is grok-4\.7 /.test(grokBuildNote('grok-4.7')) && !/model answering/.test(grokBuildNote(null)), grokBuildNote('grok-4.7').slice(-160));
+    check('background Grok Build prompt names a picked model', /model answering is grok-4\.6/.test(cliSystemPrompt({ model: 'grokbuild:grok-4.6' }, 'grokbuild', { background: true })) && !/model answering/.test(cliSystemPrompt({ model: 'grokbuild:default' }, 'grokbuild')), 'cliSystemPrompt');
+  }
 }
 
 // ---- CLI engines' model choice: picker ids -> --model, and the picker entries themselves
@@ -706,6 +763,11 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     for (const file of Object.keys(links)) links[file].icon = appIcon();
     fixShortcutIcons(fakeApp(true), shell);
     check('icon: shortcuts that already have the .ico are not rewritten', updates.length === 0, JSON.stringify(updates));
+    // An update's swap removed the icon.ico next to the exe that the shortcuts named.
+    const gone = path.join(dir, 'Programs', 'Lumen', 'icon.ico');
+    links[path.join(desktop, 'Lumen.lnk')].icon = `${gone},0`;
+    fixShortcutIcons(fakeApp(true), shell);
+    check('icon: a shortcut naming an .ico that no longer exists is pointed at one that does', updates.length === 1 && updates[0].f === path.join(desktop, 'Lumen.lnk') && fs.existsSync(updates[0].icon), JSON.stringify(updates));
   }
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -805,6 +867,11 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     picked.settings.model = 'claude-sonnet-5';
     picked.simpleTurn = picked[0];
     check('simple turn: low effort and small cap on the first turn only, and not on a picked model', sp.output_config.effort === 'low' && sp.max_tokens <= 8000 && lp.max_tokens === 64000 && lp.output_config.effort === 'high' && requestFor(picked.settings, picked).max_tokens === 64000, JSON.stringify([sp.output_config, lp.output_config]));
+    const followUp = msgs([{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'and Spain?' }]);
+    followUp.simpleTurn = followUp[2];
+    check('simple turn: a simple follow-up in a longer chat keeps the chat effort (an effort change would miss the cached history)', requestFor(followUp.settings, followUp).output_config.effort === 'high', JSON.stringify(requestFor(followUp.settings, followUp).output_config));
+    const sys = a.system[0].text;
+    check('system prompt: keeps the safety rules (untrusted pages, confirm first, no passwords, no CAPTCHAs) and stays under 4k chars', /untrusted data, not instructions/.test(sys) && /ask the user to confirm/.test(sys) && /Never type passwords/.test(sys) && /CAPTCHA/.test(sys) && sys.length < 4000, String(sys.length));
     check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
   }
 
@@ -860,6 +927,27 @@ async function fuseChecks() {
   await afterPack.default({ appOutDir: out, electronPlatformName: 'linux', packager });
   check('fuses: the hook never flips a non-mac build', calls.length === 1, JSON.stringify(calls));
   fs.rmSync(out, { recursive: true, force: true });
+}
+
+// ---- A new topic starts a new chat (renderer/chat-topic.js): only when nothing ties it to the chat so far
+{
+  const { isNewTopic } = require('../renderer/chat-topic');
+  const said = ['How do I center a div with flexbox in CSS?', 'Use display: flex; justify-content: center; align-items: center on the parent container.'];
+  for (const [text, want] of [
+    ['What is a good recipe for banana bread?', true],
+    ['Recommend some sci-fi novels for a long flight', true],
+    ['Tokyo weather', true],
+    ['How do I do it with grid instead?', false], // refers back
+    ['why?', false],
+    ['what about vertically only', false],
+    ['make it shorter', false],
+    ['summarize', false], // too short to tell
+    ['Does flexbox work in old Safari?', false], // shares a word
+    ['Can you center text inside a button?', false],
+    ['css grid tutorial', false],
+    ['thanks! now how do I book a flight to Tokyo', false], // opens like a reply
+  ]) check(`chat topic: "${text}" is ${want ? 'a new topic' : 'the same chat'}`, isNewTopic(text, said) === want, isNewTopic(text, said));
+  check('chat topic: an empty chat never splits', isNewTopic('What is a good recipe for banana bread?', []) === false);
 }
 
 // ---- Tab search matching (renderer/tab-search-match.js) and tab audio (features/tab-tools.js)
@@ -1646,6 +1734,28 @@ async function chatPageRuns() {
   const res = tg.placeTabs([{ entry: e(9, 'Zod refine and transform', 'https://newsite.example/zod-refine'), current: null }, { entry: e(10, 'Best hiking boots', 'https://boots.example/best'), current: null }], [{ id: 1, domain: null, members: zod }, { id: 2, domain: null, members: bread }]);
   check('placeTabs: a never-seen domain is placed by its words; an unrelated tab is not', res[0] === 1 && res[1] === null, JSON.stringify(res));
 
+  // Site hints (features/topic-knowledge.js SITE_HINTS): a few sites nearly always mean one task.
+  const hintOf = (u) => tg.siteHint(u);
+  check('siteHint: Canvas (hosted or a school\'s own canvas.*), Gradescope and Moodle are School', hintOf('https://school.instructure.com/courses/1') === 'School' && hintOf('https://canvas.northeastern.edu/') === 'School' && hintOf('https://www.gradescope.com/courses/9') === 'School' && hintOf('https://moodle.uni.ac.uk/course') === 'School');
+  check('siteHint: a path rule only matches that path (LinkedIn jobs, not profiles), a two-label canvas.com is not Canvas', hintOf('https://www.linkedin.com/jobs/view/1') === 'Job search' && hintOf('https://www.linkedin.com/in/someone') === '' && hintOf('https://www.linkedin.com/jobsearch') === '' && hintOf('https://canvas.com/') === '');
+  check('siteHint: ambiguous sites have none (Google Docs, YouTube, Notion)', hintOf('https://docs.google.com/document/d/1') === '' && hintOf('https://www.youtube.com/watch?v=1') === '' && hintOf('https://www.notion.so/x') === '' && hintOf('not a url') === '');
+  const course = [e(1, 'ME 2380 Thermodynamics: Home', 'https://canvas.northeastern.edu/courses/1'), e(2, 'ME 2380: Assignments', 'https://canvas.northeastern.edu/courses/1/assignments'), e(3, 'Gradescope: ME 2380', 'https://www.gradescope.com/courses/9'), e(4, 'Piazza | ME 2380 Fall 2026', 'https://piazza.com/class/abc')];
+  const course2 = [e(11, 'ENGW 1111: Home', 'https://canvas.northeastern.edu/courses/2'), e(12, 'ENGW 1111: Essay 2 prompt', 'https://canvas.northeastern.edu/courses/2/assignments/5'), e(13, 'ENGW 1111 Syllabus', 'https://canvas.northeastern.edu/courses/2/syllabus')];
+  const other = [e(20, 'Chocolate chip cookie recipe', 'https://recipes.example/cookies'), e(21, 'Best hiking boots 2026', 'https://boots.example/best'), e(22, 'Weather Boston', 'https://weather.example/boston')];
+  const clustersOf = (list) => tg.topicClusters(list).map((c) => `${c.name}:${c.ids.join(',')}`).join(' | ');
+  const joined = clustersOf([...course, e(5, 'Dashboard', 'https://canvas.northeastern.edu/'), ...other]);
+  check('site hints: a Canvas tab with no words in common joins the one group of School tabs', joined === 'ME2380:1,2,3,4,5', joined);
+  const formed = clustersOf([e(5, 'Dashboard', 'https://school.instructure.com/'), e(6, 'Your Courses', 'https://www.gradescope.com/account'), ...other]);
+  check('site hints: two loose tabs of one hint form a group named for it, unrelated tabs stay loose', formed === 'School:5,6', formed);
+  const broad = clustersOf([e(30, 'facebook/react: The library for web UIs', 'https://github.com/facebook/react'), e(31, 'yourname/dotfiles', 'https://github.com/yourname/dotfiles'), ...other]);
+  check('site hints: "Code" is too broad to link tabs (two unrelated GitHub repos stay loose)', broad === '', broad);
+  const videos = clustersOf([e(40, 'How to Change a Car Tire - YouTube', 'https://www.youtube.com/watch?v=1'), e(41, 'Stock Market This Week - YouTube', 'https://www.youtube.com/watch?v=2'), e(42, 'Lofi beats to study to - YouTube', 'https://www.youtube.com/watch?v=3'), ...other]);
+  check('same site: tabs of one site with nothing in common stay loose (that is the "By site" mode)', videos === '', videos);
+  const hinted = tg.placeTabs([{ entry: e(5, 'Dashboard', 'https://canvas.northeastern.edu/'), current: null }, { entry: e(6, 'Your Courses', 'https://www.gradescope.com/account'), current: null }], [{ id: 1, domain: null, members: course }, { id: 2, domain: null, members: other.slice(0, 2) }]);
+  check('placeTabs: a new tab of a hinted site joins the one group of that hint on the hint alone', hinted[0] === 1 && hinted[1] === 1, JSON.stringify(hinted));
+  const twoCourses = tg.placeTabs([{ entry: e(5, 'Dashboard', 'https://canvas.northeastern.edu/'), current: null }, { entry: e(14, 'ENGW 1111: Peer review', 'https://canvas.northeastern.edu/courses/2/discussion') , current: null }], [{ id: 1, domain: null, members: course }, { id: 2, domain: null, members: course2 }]);
+  check('placeTabs: with two School groups the hint alone decides nothing, the words do', twoCourses[0] === null && twoCourses[1] === 2, JSON.stringify(twoCourses));
+
   // Proposals from a model are validated.
   const okIds = new Set([1, 2, 3, 4, 5, 6]);
   check('proposal: unknown and duplicate ids and singleton groups are dropped', JSON.stringify(tg.sanitizeProposal([{ name: 'A', tab_ids: [1, 2, 99, 2] }, { name: 'B', tab_ids: [2, 3] }, { name: 'Solo', tab_ids: [4] }, { name: 'C', tab_ids: [3, 4] }], okIds)) === JSON.stringify([{ name: 'A', ids: [1, 2] }, { name: 'C', ids: [3, 4] }]));
@@ -1988,12 +2098,17 @@ async function organizeAiRuns() {
   check('organize-ai: no address path, query string or token reaches the model', !/utm_source|secret123|\/marathon|https?:/.test(wireText), wireText);
   const withDesc = oai.buildWire({ groups: [], leftovers: [{ id: 9, title: 'Some page', url: 'https://x.example/p', text: 'd'.repeat(300) }] });
   check('organize-ai: a leftover carries at most ~80 characters of description', withDesc.u['x.example'][0][2].length === 80, JSON.stringify(withDesc));
+  const hintWire = oai.buildWire({
+    groups: [{ id: 1, name: 'ME2380', entries: [{ id: 1, title: 'ME 2380: Home', url: 'https://canvas.northeastern.edu/courses/1' }, { id: 2, title: 'Gradescope: ME 2380', url: 'https://www.gradescope.com/courses/9' }, { id: 3, title: 'Steam tables', url: 'https://web.mit.edu/steam.pdf' }] }],
+    leftovers: [{ id: 7, title: 'Dashboard', url: 'https://school.instructure.com/?secret=1' }, { id: 8, title: 'Software Engineer jobs', url: 'https://www.linkedin.com/jobs/search?keywords=x' }, { id: 9, title: 'Some profile', url: 'https://www.linkedin.com/in/someone' }],
+  });
+  check('organize-ai: site hints go with the request (a group\'s majority hint as k, leftovers as {hint: [ids]}), still no address', hintWire.g[0].k === 'School' && JSON.stringify(hintWire.k) === JSON.stringify({ School: [7], 'Job search': [8] }) && !/secret|keywords|\/jobs|\/in\//.test(JSON.stringify(hintWire)) && /site hint/.test(oai.REFINE_PROMPT), JSON.stringify(hintWire));
   const many = make(Array.from({ length: 34 }, (_v, i) => [`${['Kayak rental prices', 'Tokyo hotel guide', 'Espresso machine review', 'Piano chords lesson'][i % 4]} tips ${i}`, `https://site${i % 9}.example/${i}-${['kayak', 'tokyo', 'espresso', 'piano'][i % 4]}`]));
   many.tg.organizeByTopic(null);
   const vm = many.tg.organizeView();
   const legacy = JSON.stringify(oai.legacyWire(many.tg.candidates()));
   check('organize-ai: the summary of a 40-tab session is well under the old every-tab list', JSON.stringify(oai.buildWire(vm)).length < legacy.length * 0.6, `${JSON.stringify(oai.buildWire(vm)).length} vs ${legacy.length}`);
-  check('organize-ai: the answer schema is strict (no extra keys, all four lists required)', oai.REFINE_SCHEMA.additionalProperties === false && oai.REFINE_SCHEMA.required.join() === 'n,p,g,m' && oai.REFINE_MAX_TOKENS <= 800);
+  check('organize-ai: the answer schema is strict (no extra keys, all five lists required)', oai.REFINE_SCHEMA.additionalProperties === false && oai.REFINE_SCHEMA.required.join() === 'n,p,g,m,h' && oai.REFINE_MAX_TOKENS <= 800);
 
   // reading an answer
   const ctx = { groupIds: [1, 2, 3], leftoverIds: [7, 8, 9, 10] };
@@ -2158,6 +2273,49 @@ async function organizeAiRuns() {
     L.learnRename(auto, 'Summer Trip', lg.candidates());
     lg.organizeByTopic(null);
     check('learner: Organize names the same kind of group the way the user renamed it', lg.state().length === 1 && lg.state()[0].name === 'Summer Trip', JSON.stringify([auto, lg.state()]));
+  }
+  {
+    // AI site hints: Organize with AI asks the model what unknown sites are for (host names only), keeps
+    // the answers in the learner, and local grouping uses them after the fixed table.
+    const store = { saved: null };
+    const mk = () => learn.createLearner({ load: () => store.saved, save: (s) => { store.saved = JSON.parse(JSON.stringify(s)); } });
+    const L = mk();
+    let tabsArr = [];
+    const lg = tg.createTabGroups({ getTabs: () => tabsArr, setTabs: (l) => { tabsArr = l; }, urlOf: (t) => t.url, titleOf: (t) => t.title, textOf: () => '', isWeb: () => true, mode: () => 'topic', aiTopics: () => false, learned: L });
+    const add = (title, url) => tabsArr.push({ id: tabsArr.length + 1, title, url, groupId: null });
+    add('Dashboard', 'https://learn.myuni.example/'); add('My grades', 'https://learn.myuni.example/grades?term=fall'); add('Course registration', 'https://portal.otheruni.example/reg/2026');
+    add('Canvas home', 'https://canvas.northeastern.edu/'); add('Chocolate chip cookie recipe', 'https://recipes.example/cookies'); add('Weather Boston', 'https://weather.example/boston');
+    const sent = [];
+    const hints = (Lx) => ({ lookup: (u) => Lx.aiHint(u), learn: (m) => Lx.learnAiHints(m) });
+    const answer = { n: [], p: [], g: [], m: [], h: [{ s: 'learn.myuni.example', k: 'School' }, { s: 'portal.otheruni.example', k: 'School' }, { s: 'recipes.example', k: 'none' }, { s: 'canvas.northeastern.edu', k: 'Shopping' }, { s: 'weather.example', k: 'Galaxy' }] };
+    const r1 = await oai.organizeProgressive({ tabGroups: lg, ask: async (w) => { sent.push(w); return answer; }, hints: hints(L) });
+    const q = sent.flatMap((w) => w.q || []);
+    check('ai hints: unknown sites are asked about once, as host names only, never a table site, an app or a path', sent.length === 1 && q.sort().join() === 'learn.myuni.example,portal.otheruni.example,recipes.example,weather.example' && q.every((h) => /^[a-z0-9.-]+$/.test(h)) && !/grades|term=|\/reg/.test(JSON.stringify(sent)), JSON.stringify(sent));
+    check('ai hints: the answers are kept; an unknown hint is "none", a host not asked about is ignored', r1.hinted === 4 && L.aiHint('https://learn.myuni.example/x') === 'School' && L.aiHint('https://recipes.example/') === '' && L.aiHint('https://weather.example/') === '' && L.aiHint('https://canvas.northeastern.edu/') === undefined, JSON.stringify([r1, store.saved?.aiHints]));
+    lg.undoOrganize();
+    lg.organizeByTopic(null);
+    const inSchool = (id) => { const g = lg.groups.get(tabsArr.find((t) => t.id === id).groupId); return g?.name === 'School'; };
+    check('ai hints: local grouping uses a learned hint: two School portals and Canvas form one "School" group', [1, 2, 3, 4].every(inSchool) && !tabsArr.find((t) => t.id === 5).groupId, JSON.stringify([lg.state(), tabsArr.map((t) => t.groupId)]));
+    const again = await oai.organizeProgressive({ tabGroups: lg, ask: async (w) => { sent.push(w); return { n: [], p: [], g: [], m: [], h: [] }; }, hints: hints(mk()) });
+    check('ai hints: the kept answers (also after a restart) mean no host is asked again', sent.slice(1).every((w) => !w.q) && again.hinted === 0, JSON.stringify(sent.slice(1)));
+    L.learnAiHints({ 'canvas.northeastern.edu': 'Shopping' });
+    check('ai hints: the fixed table wins over a model\'s hint', tg._vectorize([lg.entryFor(4)])[0].siteHint === 'School', JSON.stringify(lg.entryFor(4)));
+    L.learnPlacement({ id: 9, title: 'Dashboard', url: 'https://learn.myuni.example/' }, 'My Uni');
+    check('ai hints: a site the user filed under a group of their own has no AI hint (what the user taught wins)', L.aiHint('https://learn.myuni.example/') === '' && L.aiHint('https://portal.otheruni.example/') === 'School');
+    check('ai hints: a hint is asked about again after 30 days', L.aiHint('https://portal.otheruni.example/', Date.now() + 31 * 864e5) === undefined);
+    const cap = learn.createLearner();
+    cap.learnAiHints(Object.fromEntries(Array.from({ length: 400 }, (_v, i) => [`h${i}.example`, 'News'])));
+    check('ai hints: capped, and junk hosts are dropped', Object.keys(cap.snapshot().aiHints).length === 300 && cap.learnAiHints({ 'bad host/x': 'School' }) === 0);
+    const news = tg.topicClusters([{ id: 1, title: 'Tariffs on steel imports', url: 'https://news1.example/a', aiHint: 'News' }, { id: 2, title: 'Local team wins final', url: 'https://news2.example/b', aiHint: 'News' }, { id: 3, title: 'Cookie recipe', url: 'https://r.example/c' }]);
+    check('ai hints: a broad hint (News) never links tabs locally', news.length === 0, JSON.stringify(news));
+    for (const [label, ask] of [['a failing model', async () => { throw new Error('offline'); }], ['a model that never answers', () => new Promise(() => {})]]) {
+      const L2 = learn.createLearner();
+      let t2 = [];
+      const g2 = tg.createTabGroups({ getTabs: () => t2, setTabs: (l) => { t2 = l; }, urlOf: (t) => t.url, titleOf: (t) => t.title, textOf: () => '', isWeb: () => true, mode: () => 'topic', aiTopics: () => false, learned: L2 });
+      for (const [i, [title, url]] of [['Sourdough starter tips', 'https://a.example/sourdough-starter'], ['Sourdough bread recipe', 'https://b.example/sourdough-bread'], ['Dashboard', 'https://learn.myuni.example/']].entries()) t2.push({ id: i + 1, title, url, groupId: null });
+      const r = await oai.organizeProgressive({ tabGroups: g2, ask, hints: hints(L2), timeoutMs: 60 });
+      check(`ai hints: ${label} teaches nothing and the local grouping stays`, r.hinted === 0 && L2.aiHint('https://learn.myuni.example/') === undefined && g2.state().length === 1, JSON.stringify(r));
+    }
   }
 
   {
@@ -3138,7 +3296,78 @@ async function bgCliRuns() {
   check('research tabs: the setting exists, on by default, and is a plain boolean', SB.DEFAULTS?.researchTabs === true || /researchTabs: true/.test(fs.readFileSync(path.join(__dirname, '..', 'settings-backend.js'), 'utf8')), '');
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./widget-summary-units')(check)).catch((err) => check('widget settings summaries', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(() => require('./tradingview-units')(check)).catch((err) => check('TradingView widget', false, err.stack)).then(() => require('./local-custom-units')(check)).catch((err) => check('custom, notes, countdown and timer widgets', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => {
+// ---- [background chats] the sidebar AI working on its own (features/chat-runs.js, agent.js detach)
+async function backgroundChatRuns() {
+  const CR = require('../features/chat-runs');
+  const on = { notifications: true, notifyDone: true };
+  const away = { focused: true, sidebarOpen: false, chatOpen: true, onRunTab: true };
+  const watching = { focused: true, sidebarOpen: true, chatOpen: true, onRunTab: true };
+  check('chat runs: a reply the user is watching sends no notification and no unread mark', !CR.plan('done', { settings: on, ...watching }).os && !CR.plan('done', { settings: on, ...watching }).unread, '');
+  check('chat runs: finished with the sidebar closed: notification and the unread mark', CR.plan('done', { settings: on, ...away }).os && CR.plan('done', { settings: on, ...away }).unread, '');
+  check('chat runs: finished while the user is on another tab, or Lumen is not in front: notification', CR.plan('done', { settings: on, ...watching, onRunTab: false }).os && CR.plan('done', { settings: on, ...watching, focused: false }).os && !CR.plan('done', { settings: on, ...watching, onRunTab: false }).unread, '');
+  check('chat runs: finished in a chat that is not open: notification, and the chat is marked unread', CR.plan('done', { settings: on, ...watching, chatOpen: false }).os && CR.plan('done', { settings: on, ...watching, chatOpen: false }).unread, '');
+  check('chat runs: Stop never notifies', !CR.plan('stopped', { settings: on, ...away }).os && !CR.plan('stopped', { settings: on, ...away }).unread, '');
+  check('chat runs: uses the Background tasks setting: off means no notification; "finished" alone can be off', !CR.plan('done', { settings: { notifications: false }, ...away }).os && !CR.plan('done', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('approval', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('failed', { settings: { ...on, notifyDone: false }, ...away }).os, '');
+  check('chat runs: no setting saved yet means notify', CR.plan('done', { settings: undefined, ...away }).os, '');
+  check('chat runs: outcome of a run', CR.outcome({ error: 'x' }) === 'failed' && CR.outcome({ stopped: true }) === 'stopped' && CR.outcome({}) === 'done' && CR.outcome({ error: 'x', stopped: true }) === 'failed', '');
+  check('chat runs: notification text', CR.notification('done', { reply: '## Found **3** flights\nmore' }).title === 'Lumen finished: Found 3 flights' && CR.notification('failed', { error: 'Rate limited.\nlater' }).title === 'Lumen stopped: Rate limited.' && CR.notification('approval', {}).title === 'Lumen needs your OK' && CR.notification('done', { reply: '' }).title === 'Lumen finished', JSON.stringify(CR.notification('done', { reply: '## Found **3** flights\nmore' })));
+  check('chat runs: notification text uses the UI language when it has the string', CR.notification('done', { reply: 'ok' }, (k, v) => (k === 'agent.notify.done' ? `Fertig: ${v.reply}` : k)).title === 'Fertig: ok', '');
+  check('chat runs: first line is cut on a long reply and skips rules and links', CR.firstLine('x'.repeat(200)).length === 90 && CR.firstLine('---\n[Docs](https://a.b) here') === 'Docs here', CR.firstLine('---\n[Docs](https://a.b) here'));
+  check('chat runs: at most two at once; a message in a running chat replaces its run', CR.canStart({ busy: 1 }) && !CR.canStart({ busy: 2 }) && CR.canStart({ busy: 2, sameChatRunning: true }) && CR.MAX_RUNS === 2, '');
+  check('chat runs: the button mark: an OK outranks an unread reply', CR.attention({ approvals: 1, unread: 3 }) === 'approval' && CR.attention({ unread: 1 }) === 'unread' && CR.attention({}) === null, '');
+  check('chat runs: a chat row: needs OK, running, unread', CR.chatBadge({ running: true, approvals: 1 }) === 'approval' && CR.chatBadge({ running: true, unread: true }) === 'running' && CR.chatBadge({ unread: true }) === 'unread' && CR.chatBadge({}) === null, '');
+  const TC = require('../features/tab-capture');
+  const clip = TC.cssClip({ x: 30, y: 60, width: 300, height: 150 }, 1.5);
+  check('tab capture: a crop in view pixels maps to CSS pixels for DevTools', clip.x === 20 && clip.y === 40 && clip.width === 200 && clip.height === 100 && clip.scale === 1, JSON.stringify(clip));
+  const fakeImage = (empty) => ({ isEmpty: () => empty });
+  const got = await TC.captureTab({ capturePage: async () => fakeImage(false) }).then((img) => !img.isEmpty(), () => false);
+  const hidden = await TC.captureTab({ capturePage: async () => fakeImage(true), getZoomFactor: () => 1, debugger: { isAttached: () => false, attach() { throw new Error('no devtools here'); } } }).then(() => 'image', (err) => err.message);
+  check('tab capture: an empty capture of a hidden tab is not handed back as a screenshot', got && /Could not take a screenshot/.test(hidden), hidden);
+
+  // agent.js: a chat left mid-reply keeps running; two chats never drive one tab.
+  const { Agent } = require('../agent');
+  const wcOf = (id) => ({ id, getURL: () => `https://site${id}.example/`, isDestroyed: () => false });
+  const agent = new Agent({ activeTab: () => ({ id: 1, webContents: wcOf(1) }), tabById: (id) => ({ id, webContents: wcOf(id) }), listTabs: () => [] }, () => null);
+  const started = [];
+  agent.runOnce = (text, emit, images, extra, skill, messages, rec) => new Promise((resolve) => {
+    started.push({ text, messages, rec });
+    rec.controller.signal.addEventListener('abort', () => resolve());
+  });
+  const chatA = agent.messages;
+  const runA = agent.run('long task', () => {});
+  check('agent: the open chat is running', agent.running && agent.busyCount === 1, '');
+  agent.approvedHosts.add('site1.example');
+  agent.detach(); // New chat while it runs
+  const chatB = agent.messages;
+  check('agent: New chat leaves the run going in its own chat, and the new chat starts empty', !agent.running && agent.runningFor(chatA) && agent.busyCount === 1 && chatB !== chatA && chatB.length === 0 && !agent.approvedHosts.has('site1.example') && started[0].rec.hosts.has('site1.example'), '');
+  const runB = agent.run('second task', () => {});
+  check('agent: the new chat runs at the same time', agent.running && agent.busyCount === 2 && !started[0].rec.controller.signal.aborted, '');
+  agent.stop();
+  await runB;
+  check('agent: Stop in the new chat stops only its own run', started[1].rec.controller.signal.aborted && !started[0].rec.controller.signal.aborted && agent.runningFor(chatA) && !agent.runningFor(chatB), '');
+  agent.attach(chatA, started[0].rec.hosts);
+  check('agent: opening the running chat again picks its run up with its approved sites', agent.running && agent.approvedHosts.has('site1.example'), '');
+  agent.stop();
+  await runA;
+  check('agent: ...and Stop there ends it', !agent.running && agent.busyCount === 0, '');
+  // The tab lock between two chats' runs.
+  const signal = new AbortController().signal;
+  let release;
+  const holding = new Promise((r) => { release = r; });
+  const inA = agent.inTask(1, signal, () => holding, chatA);
+  check('agent: the tabs running chats work in are known (main.js turns background throttling off there)', JSON.stringify(agent.runTabIds()) === '[1]' && agent.runTabIdFor(chatA) === 1, JSON.stringify(agent.runTabIds()));
+  let busyError = null;
+  let ownOk = false;
+  await agent.inTask(1, signal, async () => { try { agent.taskTab(); } catch (err) { busyError = err.message; } }, chatB);
+  await agent.inTask(2, signal, async () => { ownOk = agent.taskTab().id === 2; }, chatB);
+  const aStillOk = await agent.inTask(1, signal, async () => agent.taskTab().id === 1, chatA);
+  release();
+  await inA;
+  check('agent: a run in another chat cannot act on the tab a running chat works in', /in use by a task running in another chat/.test(String(busyError)) && ownOk && aStillOk, String(busyError));
+  check('agent: once that run ends the tab is free again', agent.runTabIds().length === 0, JSON.stringify(agent.runTabIds()));
+}
+
+backgroundChatRuns().catch((err) => check('background chats', false, err.stack)).then(() => schedulerRuns()).catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./clock-style-units')(check)).catch((err) => check('new-tab clock styles and greeting fonts', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./widget-summary-units')(check)).catch((err) => check('widget settings summaries', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(() => require('./tradingview-units')(check)).catch((err) => check('TradingView widget', false, err.stack)).then(() => require('./local-custom-units')(check)).catch((err) => check('custom, notes, countdown and timer widgets', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => require('./small-screen-units')(check)).catch((err) => check('app menu on small screens', false, err.stack)).then(() => require('./signed-in-units')(check)).catch((err) => check('signed-in sites (read_urls as_user)', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

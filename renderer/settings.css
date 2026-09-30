@@ -189,10 +189,27 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 .reduce-motion *, .reduce-motion *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { .pane { animation: none; } }
 
+/* Settings is a tab, so with the AI sidebar open in an 800px window it gets ~440px. A mid width
+   gives the page more of it; a narrow one turns the categories into one row that scrolls sideways
+   (it was a full-height list stacked above the page, 11 rows to scroll past before any setting). */
+@media (max-width: 960px) {
+  body { grid-template-columns: 200px minmax(0, 1fr); }
+  main { padding: 24px 24px 96px; }
+}
 @media (max-width: 720px) {
   body { grid-template-columns: 1fr; }
-  .nav { position: static; height: auto; padding-bottom: 8px; }
-  main { padding: 16px; }
+  .nav { position: static; height: auto; padding: 12px 12px 8px; overflow: visible; box-shadow: inset 0 -1px 0 var(--hairline); }
+  .nav .search { padding: 0 0 8px; }
+  #nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
+  #nav::-webkit-scrollbar { display: none; }
+  .nav a { flex: none; gap: 6px; min-height: 30px; margin: 0; padding: 3px 10px 3px 4px; }
+  .nav a .ic { width: 22px; height: 22px; }
+  main { padding: 16px 16px 96px; }
+  /* A row's controls (a 220px field, a picker) go under the label when both don't fit, instead of
+     squeezing the label to a few characters a line. */
+  .row { flex-wrap: wrap; row-gap: 8px; }
+  .row .text { flex: 1 1 180px; }
+  .row .controls { flex: 0 1 auto; max-width: 100%; margin-left: auto; }
 }
 
 /* https-only.html */
@@ -234,6 +251,29 @@ body.interstitial { display: block; }
 .swatch-custom::-webkit-color-swatch { border: 0; border-radius: 50%; opacity: 0; }
 .swatch-custom.on::-webkit-color-swatch { opacity: 1; }
 .swatch-custom.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+/* [look] new-tab clock styles and greeting fonts: each choice previewed in its own face (the same stacks as newtab.html). */
+.clock-tiles { --f-display: -apple-system, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; --f-rounded: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display", system-ui, sans-serif; --f-serif: ui-serif, "New York", "Iowan Old Style", Cambria, Georgia, serif; --f-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; --f-hand: "Segoe Print", "Bradley Hand", "Noteworthy", "Chalkboard SE", cursive;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.clock-tiles button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 84px; padding: 8px 6px; border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: inset 0 0 0 0.5px var(--border); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 160ms ease-out; }
+.clock-tiles button:hover:not(:disabled) { background: var(--bg); transform: translateY(-1px); box-shadow: inset 0 0 0 0.5px var(--border); }
+.clock-tiles button[aria-checked="true"], .clock-tiles button[aria-checked="true"]:hover:not(:disabled) { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.clock-tiles button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.ct-face { display: block; font-size: 32px; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ct-label { font-size: 11px; font-weight: 500; color: var(--muted); }
+.clock-tiles button[aria-checked="true"] .ct-label { color: var(--text); }
+.cs-rounded { font-family: var(--f-rounded); font-size: 30px; font-weight: 500; letter-spacing: -0.03em; }
+.cs-thin { font-family: var(--f-display); font-size: 40px; font-weight: 100; letter-spacing: -0.05em; }
+.cs-serif { font-family: var(--f-serif); font-size: 31px; font-weight: 400; letter-spacing: -0.025em; font-variant-numeric: tabular-nums lining-nums; }
+.cs-mono { font-family: var(--f-mono); font-size: 25px; font-weight: 300; letter-spacing: -0.03em; }
+.cs-bold { display: flex; flex-direction: column; font-family: var(--f-display); font-size: 20px; line-height: 0.86; font-weight: 800; letter-spacing: -0.045em; }
+.greeting-tiles button { height: 64px; }
+.greeting-tiles .ct-face { font-size: 19px; font-weight: 700; letter-spacing: -0.025em; }
+.greeting-tiles .gf-rounded { font-family: var(--f-rounded); letter-spacing: -0.02em; }
+.greeting-tiles .gf-serif { font-family: var(--f-serif); font-size: 20px; font-weight: 500; letter-spacing: -0.015em; }
+.greeting-tiles .gf-thin { font-family: var(--f-display); font-size: 21px; font-weight: 250; letter-spacing: -0.035em; }
+.greeting-tiles .gf-mono { font-family: var(--f-mono); font-size: 16px; font-weight: 500; letter-spacing: -0.03em; }
+.greeting-tiles .gf-hand { font-family: var(--f-hand); font-size: 19px; font-weight: 400; letter-spacing: 0; }
+@media (prefers-reduced-motion: reduce) { .clock-tiles button { transition: none; } .clock-tiles button:hover:not(:disabled) { transform: none; } }
 /* [look] new-tab background tiles (the same gradients as newtab.html) */
 .bg-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
 .bg-tile { position: relative; height: 60px; padding: 0; border: 0; border-radius: 10px; cursor: pointer; overflow: hidden; box-shadow: inset 0 0 0 0.5px var(--border); transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 160ms ease-out; }

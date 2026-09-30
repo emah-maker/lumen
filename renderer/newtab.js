@@ -1,6 +1,6 @@
 // New-tab page. The browser passes everything in the URL hash as JSON:
 //   { favorites: [{ title, url, icon? }], frequent: [{ title, url, icon? }], blocked: number,
-//     look: { background, image (a file: URL in the profile), effect, still, lite, accent: { light, dark }, clock, name, sections },
+//     look: { background, image (a file: URL in the profile), effect, still, lite, accent: { light, dark }, clock, clockStyle, name, sections },
 //     widgets: [{ id, type, title, data, error, loading }] (features/widgets.js; newtab-widgets.js draws them) }
 // (an older plain array means favorites only). Icons are favicons the browser cached locally as
 // data: URLs; the page itself never touches the network.
@@ -48,6 +48,7 @@ function lookOf(l) {
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
     clockSize: window.WidgetSystem.cleanClockSize(look.clockSize) || 'm',
+    clockStyle: window.ClockStyles.clean(look.clockStyle), // [look] style, hours, seconds, date, card, shadow, greeting font
     searchWidth: window.WidgetSystem.cleanSearchWidth(look.searchWidth) || 640,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
     sections: { header: sections.header !== false, favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
@@ -80,6 +81,7 @@ function applyLook(look) {
     root.setProperty('--ring', `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, 0.3)`);
   } else { root.removeProperty('--accent'); root.removeProperty('--ring'); }
   document.getElementById('clock').hidden = !look.clock;
+  applyClockStyle(look);
   window.newtabSize?.apply(look.clockSize, look.searchWidth); // [look] --clock-size / --search-w on <main>
   document.body.dataset.wpack = look.packed ? '1' : '0';
   document.body.dataset.wglass = look.glass;
@@ -104,11 +106,41 @@ window.widgetLook = () => ({
   accent: (dark.matches || currentLook.background !== 'plain' ? currentLook.accent.dark : currentLook.accent.light) || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
   background: currentLook.background, dark: dark.matches, imageColors: currentLook.imageColors,
 });
+// [look] The clock's style (features/clock-styles.js; the looks are CSS in newtab.html): data attributes on <body>.
+// The defaults (classic, no card, no extra shadow, classic greeting) set nothing the page didn't always have.
+function applyClockStyle(look) {
+  const cs = look.clockStyle;
+  const b = document.body.dataset;
+  b.clockStyle = cs.style;
+  b.clockCard = cs.card;
+  b.clockShadow = cs.shadow ? '1' : '0';
+  b.greetingFont = window.ClockStyles.greetingFontFor(cs.greeting, cs.style);
+  document.getElementById('date').hidden = !cs.date;
+  document.getElementById('clock-card').hidden = !look.clock && !cs.date;
+  lastClock = '';
+  scheduleClock();
+}
+// The time as hours, separator and minutes (and small seconds), so a style can stack them; the text reads the same.
+let lastClock = '';
 function tickClock() {
   const el = document.getElementById('clock');
-  if (!el.hidden) el.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '');
+  if (el.hidden) return;
+  const cs = currentLook.clockStyle || window.ClockStyles.DEFAULTS;
+  const t = window.ClockStyles.clockParts(new Date(), { hours: cs.hours, seconds: cs.seconds });
+  const h = cs.style === 'bold' && /^\d$/.test(t.h) ? `0${t.h}` : t.h; // stacked hours are two digits
+  const key = `${cs.style}|${h}|${t.sep}|${t.m}|${t.s}`;
+  if (key === lastClock) return;
+  lastClock = key;
+  const span = (cls, text) => Object.assign(document.createElement('span'), { className: cls, textContent: text });
+  el.replaceChildren(span('clock-h', h), span('clock-sep', t.sep), span('clock-m', t.m), ...(t.s ? [span('clock-s', `${t.ssep}${t.s}`)] : []));
 }
-setInterval(() => { if (!document.hidden) tickClock(); }, 10000); // shows minutes only: no need to wake every second, or while hidden
+// Minutes only: wake every 10 s. With seconds: just after each second turns. Never draws while the tab is hidden.
+let clockTimer = 0;
+function scheduleClock() {
+  clearTimeout(clockTimer);
+  const every = currentLook.clockStyle?.seconds ? 1000 : 10000;
+  clockTimer = setTimeout(() => { if (!document.hidden) tickClock(); scheduleClock(); }, every - (Date.now() % every) + 15);
+}
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tickClock(); });
 
 // A stable hue per site for monogram tiles.

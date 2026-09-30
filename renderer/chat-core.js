@@ -415,7 +415,9 @@ function ask(text, images = [], tabs = null) {
   }
   if (tabs?.gone?.length) append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('tabs.gone', { names: tabs.gone.join(', ') }) }));
   startTurn(text, images, tabs);
-  window.assistant.ask(text, ++runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
+  // Run ids stay unique across chats: a chat left running still sends events under its own id.
+  runId = Math.max(runId + 1, Date.now());
+  window.assistant.ask(text, runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
 }
 
 // The user's bubble and the working line for a turn that is now running.
@@ -447,6 +449,18 @@ function beginTurn() {
   working.setAttribute('aria-label', t('chat.thinking'));
   turn = { text: null, textSource: '', thinking: null, working: append(working), steps: new Map() };
   setRunning(true);
+}
+
+// A chat opened while its reply is still running (it was left mid-run, features/chat-runs.js): the
+// events that follow belong to it, and any approval card it waits on shows again.
+function resumeLive(live) {
+  if (!live || turn) return;
+  beginTurn();
+  runId = live.runId;
+  if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted });
+  moveWorkingToEnd();
+  syncWorking();
 }
 
 // Keeps the working line last in the turn. Only moves it when something landed after it: re-appending
@@ -628,7 +642,7 @@ window.assistant.onEvent((event) => {
       break;
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -749,8 +763,9 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways } = {}) {
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
+  if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
   // an MCP tool's, but "always" only lasts this chat (not a persisted Settings toggle), so its own copy.
   if (action === 'terminal') return showToolApproval(approvalId, host, { title: openTitle, args, terminal: true });
@@ -854,16 +869,55 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   scrollToBottom();
 }
 
+// [signed-in sites] read_urls as_user (features/signed-in-sites.js): may the AI read `host` with the
+// user's own signed-in session? No is the default (Enter and Escape both mean No); "Always" is left off
+// for banks, payments, password managers and account-security pages.
+function showSignInApproval(approvalId, host, { noAlways = false } = {}) {
+  const card = document.createElement('div');
+  card.className = 'approval approval-signin';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'group');
+  const agentName = assistantIdentity?.name || t('approval.theAi');
+  const heading = t('approval.signin', { name: agentName, host });
+  card.setAttribute('aria-label', heading);
+  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading });
+  const detail = Object.assign(document.createElement('p'), { className: 'approval-detail', textContent: t(noAlways ? 'approval.detail.signinSensitive' : 'approval.detail.signin') });
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const button = (text, cls) => Object.assign(document.createElement('button'), { type: 'button', className: cls, textContent: text });
+  const deny = button(t('approval.signin.no'), 'btn primary');
+  const once = button(t('approval.signin.once'), 'btn');
+  const always = noAlways ? null : button(t('approval.signin.always', { host }), 'btn approval-always');
+  const answer = (ok) => {
+    if (card.classList.contains('answered')) return;
+    card.classList.add('answered');
+    for (const b of [deny, once, always]) if (b) b.disabled = true;
+    window.assistant.approve?.(approvalId, ok);
+  };
+  deny.onclick = () => answer(false);
+  once.onclick = () => answer(true);
+  if (always) always.onclick = () => answer('always');
+  card.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' && e.target === card) || e.key === 'Escape') { e.preventDefault(); answer(false); }
+  });
+  actions.append(...[always, once, deny].filter(Boolean));
+  card.append(title, detail, actions);
+  append(card);
+  approvals.set(approvalId, { card, host, signin: true });
+  scrollToBottom();
+}
+
 function resolveApproval(approvalId, ok) {
   const entry = approvals.get(approvalId);
   if (!entry) return;
   approvals.delete(approvalId);
-  const { card, host, tool } = entry;
+  const { card, host, tool, signin } = entry;
   card.className = ok ? 'approval resolved' : 'approval resolved denied';
   card.removeAttribute('tabindex');
   card.removeAttribute('role');
   card.removeAttribute('aria-label');
-  card.textContent = tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
+  card.textContent = signin ? t(ok === 'always' ? 'approval.signin.allowedAlways' : ok ? 'approval.signin.allowedOnce' : 'approval.signin.denied', { host }) // [signed-in sites]
+    : tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
   syncWorking();
   if (document.activeElement === document.body) prompt.focus();
 }
@@ -917,6 +971,7 @@ window.assistant.onRunStart?.(({ text, runId: id, images } = {}) => {
 window.assistant.onSync?.(({ view } = {}) => {
   clearChatView();
   showHistory(view?.items);
+  resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.chatChanged?.();
 });
@@ -956,9 +1011,37 @@ $('composer').addEventListener('submit', async (e) => {
   prompt.value = '';
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
-  ask(text, images, tabs);
+  if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs);
   updateSend();
 });
+
+// A typed message with nothing in common with the open chat (renderer/chat-topic.js) starts a new
+// chat, as the New chat button would; the last one stays in the chat list. The notice it leaves has
+// a way back: the message moves to the last chat and is asked there. The sidebar only (it has the
+// chat list), and never for images or "@" tabs, which are hard to judge by their words.
+async function askOnNewTopic(text, images, tabs) {
+  if (running || images.length || tabs?.ids?.length || !text || !window.chatTopic || !window.chatList?.openChat) return false;
+  if (!messages.querySelector('.msg.assistant:not(.streaming)')) return false;
+  const said = [...messages.querySelectorAll('.msg.user, .msg.assistant')].map((el) => el.textContent);
+  if (!window.chatTopic.isNewTopic(text, said)) return false;
+  const previous = await window.assistant.chats?.list().then((r) => r.current).catch(() => null);
+  if (!previous || running) return false;
+  $('new-chat').click();
+  const notice = append(Object.assign(document.createElement('div'), { className: 'notice topic-split' }));
+  const back = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('chat.newTopic.back') });
+  notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
+  back.onclick = async () => {
+    back.disabled = true;
+    if (running) window.assistant.stop();
+    // The chat just started for it goes (it holds only this message), then the last one opens.
+    const current = await window.assistant.chats.list().then((r) => r.current).catch(() => null);
+    if (current && current !== previous) await window.assistant.chats.remove(current).catch(() => {});
+    if (await window.chatList.openChat(previous)) ask(text);
+    else back.disabled = false;
+  };
+  ask(text);
+  return true;
+}
 
 document.querySelectorAll('.chip').forEach((chip) => {
   // A starter that works on all open tabs sends them along (after the once-per-chat confirm when there are many).

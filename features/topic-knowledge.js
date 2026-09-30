@@ -6,6 +6,9 @@
 //  - site categories: what kind of page a well-known domain serves (Booking is travel, Zillow is
 //    housing), for the sites whose titles say little.
 // A concept or category is only ever a weak extra signal; it never groups tabs on its own.
+//  - site hints: the few sites that nearly always mean one task whatever the page says (Canvas is
+//    school work, Indeed is a job search). Unlike a category, a hint IS enough to put a tab with
+//    others of that hint, so the list is short and conservative on purpose.
 
 // city / region -> country. Lower case, single words (titles are tokenised into words).
 const PLACES = {
@@ -74,4 +77,31 @@ const SITE_CATEGORIES = {
   finance: 'reuters.com bloomberg.com cnbc.com wsj.com marketwatch.com federalreserve.gov',
 };
 
-module.exports = { PLACES, CONCEPTS, SITE_CATEGORIES };
+// hint (a group name, as shown) -> sites that nearly always mean it. Loose tabs of one hint form a
+// group named for it, and a loose tab of a hint joins the group most of whose tabs have that hint
+// (tab-groups.js); a model organizing tabs is told the hint beside each tab (main.js, organize-ai.js).
+// Only sites where the hint is right almost every time: Google Docs, Notion, YouTube or Reddit could
+// be anything, so they have none. Three ways to write a site:
+//   instructure.com     that domain and every subdomain (school.instructure.com)
+//   canvas.*            a host whose first label is that ("canvas.northeastern.edu", self-hosted LMSs)
+//   linkedin.com/jobs   only that path (and below it) on that domain: the rest of LinkedIn is not a job search
+const SITE_HINTS = {
+  School: 'instructure.com canvas.* blackboard.com blackboard.* moodle.* brightspace.com d2l.* gradescope.com piazza.com edstem.org zybooks.com quizlet.com chegg.com coursehero.com khanacademy.org coursera.org edx.org classroom.google.com',
+  'Job search': 'linkedin.com/jobs indeed.com greenhouse.io lever.co joinhandshake.com glassdoor.com ziprecruiter.com wellfound.com',
+  Code: 'github.com gitlab.com stackoverflow.com npmjs.com pypi.org developer.mozilla.org',
+  Travel: 'airbnb.com booking.com expedia.com kayak.com skyscanner.com hotels.com vrbo.com google.com/travel flights.google.com',
+  Shopping: 'amazon.com ebay.com etsy.com',
+};
+
+// The hints a model may give a site the table above doesn't know ("Organize with AI" asks it about
+// those hosts, features/organize-ai.js; the answers are kept in the profile, features/organize-learn.js).
+// "none": the site is used for many things, or the model doesn't know it.
+const AI_HINTS = ['School', 'Job search', 'Code', 'Travel', 'Shopping', 'News', 'Finance', 'Health', 'Social', 'Entertainment', 'Work', 'Reference'];
+
+// Hints that name a KIND of site rather than one task: every project of every person lives on GitHub,
+// and two news articles or two videos are rarely one topic for being on such a site. A model is still
+// told them, and a group whose tabs all have one is still named for it when nothing better is left, but
+// they never link tabs locally.
+const BROAD_HINTS = new Set(['Code', 'News', 'Social', 'Entertainment', 'Work', 'Reference']);
+
+module.exports = { PLACES, CONCEPTS, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

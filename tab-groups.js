@@ -131,6 +131,37 @@ for (const [concept, words] of Object.entries(knowledge.CONCEPTS)) for (const w 
 const CATEGORY_OF_SITE = new Map();
 for (const [category, sites] of Object.entries(knowledge.SITE_CATEGORIES)) for (const site of sites.split(/\s+/)) CATEGORY_OF_SITE.set(site, category);
 const categoryOfSite = (url) => CATEGORY_OF_SITE.get(hostname(url)) || CATEGORY_OF_SITE.get(registrableDomain(url)) || '';
+// Site hints (knowledge.SITE_HINTS): "Canvas is school work". Each written site becomes a rule: a
+// domain (and its subdomains), a first label ("canvas.*"), or a domain plus a path prefix.
+const HINT_RULES = Object.entries(knowledge.SITE_HINTS).flatMap(([hint, sites]) => sites.split(/\s+/).filter(Boolean).map((site) => {
+  const [host, ...rest] = site.split('/');
+  return { hint, label: host.endsWith('.*') ? host.slice(0, -2) : null, domain: host.endsWith('.*') ? null : host, path: rest.length ? `/${rest.join('/')}` : null };
+}));
+// The hint of a tab's site ("School", "Job search" ...), or ''. From the host and path only, never the page.
+function siteHint(url) {
+  const host = hostname(url).replace(/^www\./, '');
+  if (!host) return '';
+  let pathname = '/';
+  try { ({ pathname } = new URL(url)); } catch {}
+  for (const r of HINT_RULES) {
+    if (r.label ? !(host.startsWith(`${r.label}.`) && host.split('.').length >= 3) : !(host === r.domain || host.endsWith(`.${r.domain}`))) continue;
+    if (r.path && !(pathname === r.path || pathname.startsWith(`${r.path}/`))) continue;
+    return r.hint;
+  }
+  return '';
+}
+// The host a model is asked to hint about, and a learned hint is kept under: the registrable domain,
+// with the first subdomain label when it says something ("canvas.northeastern.edu", but "wikipedia.org"
+// for "en.m.wikipedia.org"). '' for an address, IP or single-label host that is nobody's site.
+const PLAIN_LABEL = /^(www\d*|m|mobile|web|app|apps|home|secure|login|auth|account|accounts|[a-z]{2})$/;
+function hintHost(url) {
+  const host = hostname(url).replace(/^www\./, '');
+  if (!host.includes('.') || /^[\d.]+$/.test(host) || host.includes(':') || /\.(local|localhost|test|internal)$/.test(host)) return '';
+  const domain = registrableDomain(url);
+  if (!domain || host === domain) return domain || '';
+  const first = host.slice(0, -(domain.length + 1)).split('.')[0];
+  return PLAIN_LABEL.test(first) ? domain : `${first}.${domain}`;
+}
 const COUNTRY_KEYS = new Set(Object.keys(knowledge.PLACES).map(stem));
 const INSTITUTION = /\.(edu|gov|mil)$|\.(ac|gov|edu)\.[a-z]{2}$/;
 const PLACE_WEIGHT = 0.8; // a city names its country: nearly as good as the country written out
@@ -308,7 +339,7 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
 
 // TF-IDF vectors for a set of entries, idf computed over just this set ("current tabs").
 function vectorize(entries) {
-  const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url) }));
+  const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url), siteKey: siteKey(e.url), siteHint: siteHint(e.url) || e.aiHint || '' }));
   const n = docs.length;
   // A site's own name ("nextjs.org", "zod.dev") is brand noise between two of its own pages, but
   // it IS the topic when a page of ANOTHER site names it (Stack Overflow "Next.js ...", a GitHub
@@ -558,6 +589,79 @@ function conceptAbsorb(clusters, docs) {
   return out;
 }
 
+// Fifth stage: the tabs still loose after every word-based stage, placed by their site alone.
+//  - A tab of a hinted site (Canvas: "School") joins the group most of whose tabs have that hint, even
+//    with no word in common ("Dashboard" on Canvas goes with the course's other Canvas tabs); with two
+//    such groups (two courses), the one its words fit best.
+//  - A tab of any other site joins the group most of whose tabs are that same site, when it shares at
+//    least a little with them (SAME_SITE_MIN_COS): the site is strong evidence, not enough on its own,
+//    since two YouTube videos are rarely one topic.
+//  - What is still loose then forms groups: 2+ tabs of one hint (named for it), and tabs of one site
+//    that share a few words (SAME_SITE_LINK, well under the 0.34 / 0.5 two tabs of different sites
+//    need). Same-site tabs with nothing in common (a tyre video and a stock-market video) stay loose:
+//    grouping by site alone is what the "By site" mode is for. Groups already formed on words are
+//    never merged here, so two courses on Canvas stay two groups.
+// Search engines and the well-known apps (Gmail, Drive ...) are never a site group. Returns the new
+// clusters and, for the ones a hint formed, that hint (by cluster, for naming).
+const SAME_SITE_MIN_COS = 0.05;
+const SAME_SITE_LINK = 0.15;
+const siteGroupable = (d) => Boolean(d.siteKey) && !isAppOrSearch(d.url);
+function siteJoin(clusters, docs) {
+  const out = clusters.map((c) => [...c]);
+  const hinted = new Map(); // cluster (array) -> hint it was formed on
+  const majority = (c, pred) => c.filter((i) => pred(docs[i])).length * 2 > c.length;
+  // minCos: what the tab must share with the group's words. With one such group it may be 0 (the
+  // hint alone decides); with several (two repos on GitHub, two courses) the site can't tell which,
+  // so only a tab that shares words with one of them (SAME_SITE_MIN_COS) joins it.
+  const joinBest = (i, pred, minCos) => {
+    const d = docs[i];
+    const fits = out.filter((c) => c.length >= 2 && majority(c, pred)).map((c) => ({ c, cos: cosine(d, centroidOf(c.map((k) => docs[k]))) }));
+    const need = fits.length > 1 ? Math.max(minCos, SAME_SITE_MIN_COS) : minCos;
+    const best = fits.filter((f) => f.cos >= need).sort((a, b) => b.cos - a.cos || b.c.length - a.c.length)[0];
+    if (best) best.c.push(i);
+    return Boolean(best);
+  };
+  const loose = [];
+  for (const c of out) if (c.length === 1) loose.push(c[0]);
+  const linking = (d) => (d.siteHint && !knowledge.BROAD_HINTS.has(d.siteHint) ? d.siteHint : ''); // "Code" never links
+  const still = loose.filter((i) => {
+    const d = docs[i];
+    if (linking(d) && joinBest(i, (o) => o.siteHint === d.siteHint, 0)) return false;
+    if (siteGroupable(d) && joinBest(i, (o) => o.siteKey === d.siteKey, SAME_SITE_MIN_COS)) return false;
+    return true;
+  });
+  const fresh = [];
+  const byHint = new Map();
+  for (const i of still) if (linking(docs[i])) { if (!byHint.has(docs[i].siteHint)) byHint.set(docs[i].siteHint, []); byHint.get(docs[i].siteHint).push(i); }
+  const taken = new Set();
+  for (const [hint, list] of byHint) if (list.length >= 2) { fresh.push(list); hinted.set(list, hint); list.forEach((i) => taken.add(i)); }
+  const bySite = new Map();
+  for (const i of still) if (!taken.has(i) && siteGroupable(docs[i])) { if (!bySite.has(docs[i].siteKey)) bySite.set(docs[i].siteKey, []); bySite.get(docs[i].siteKey).push(i); }
+  // Average linkage again, among one site's loose tabs only, at the lower same-site bar. The site's
+  // template words stay discounted (cosine() does that): "Web APIs | MDN" on two MDN pages, or two
+  // repos' shared description words, are the site's style, not a topic the two tabs share.
+  for (const list of bySite.values()) {
+    if (list.length < 2) continue;
+    const parts = list.map((i) => [i]);
+    for (;;) {
+      let best = null;
+      for (let a = 0; a < parts.length; a++) for (let b = a + 1; b < parts.length; b++) {
+        let s = 0;
+        for (const x of parts[a]) for (const y of parts[b]) s += cosine(docs[x], docs[y]);
+        s /= parts[a].length * parts[b].length;
+        if (s >= SAME_SITE_LINK && (!best || s > best.s)) best = { a, b, s };
+      }
+      if (!best) break;
+      parts[best.a] = parts[best.a].concat(parts[best.b]);
+      parts.splice(best.b, 1);
+    }
+    for (const p of parts) if (p.length >= 2) { fresh.push(p); p.forEach((i) => taken.add(i)); }
+  }
+  const joined = new Set(loose.filter((i) => !still.includes(i)));
+  const kept = out.filter((c) => !(c.length === 1 && (joined.has(c[0]) || taken.has(c[0]))));
+  return { clusters: kept.concat(fresh), hinted };
+}
+
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
 function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   const docs = vectorize(entries);
@@ -605,6 +709,14 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
   // Third stage: groups (and lone tabs) that share an anchor word are one topic.
   if (!process.env.NOANCHOR) merged = anchorMerge(pruneWeak(anchorMerge(merged, docs), docs), docs);
   if (!process.env.NOABSORB) merged = conceptAbsorb(merged, docs);
+  // Fifth stage: loose tabs by their site and its hint.
+  const hintOf = new Map(); // sorted member indices -> the hint a cluster was formed on
+  const idsKey = (c) => [...c].sort((x, y) => x - y).join(',');
+  if (!process.env.NOSITEJOIN) {
+    const joined = siteJoin(merged, docs);
+    merged = joined.clusters;
+    for (const [c, hint] of joined.hinted) hintOf.set(idsKey(c), hint);
+  }
   // No mega-groups: a cluster past MAX_GROUP is re-split at a stricter threshold (a few times); tabs
   // that no longer belong with anyone stay loose rather than being forced into a group.
   const split = (c, at, depth) => (c.length <= MAX_GROUP || depth >= 4 ? [c] : agglomerate(c, at).flatMap((part) => (part.length < 2 ? [] : split(part, at + 0.1, depth + 1))));
@@ -653,16 +765,20 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
     const repoCount = new Map();
     for (const d of members) { const r = repoOf(d.url); if (r) repoCount.set(r.name, (repoCount.get(r.name) || 0) + 1); }
     const [topRepo, topRepoCount] = [...repoCount].sort((a, b) => b[1] - a[1])[0] || [];
+    // Every tab on a site of one hint: the hint names the group when nothing better does (the site's
+    // own name - "Northeastern" for its Canvas - says less), and always when the hint formed it.
+    const sharedHint = members[0].siteHint && members.every((d) => d.siteHint === members[0].siteHint) ? members[0].siteHint : '';
     let name;
-    if (topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) {
+    if (hintOf.has(idsKey(c))) name = hintOf.get(idsKey(c));
+    else if (topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) {
       const kinds = new Set(members.filter((d) => repoOf(d.url)?.name === topRepo).map((d) => repoPageKind(d.url)));
       const kind = kinds.size === 1 ? [...kinds][0] : '';
       name = `${titleCasePhrase(topRepo.replace(/[-_]+/g, ' '))}${kind ? ` ${kind}` : ''}`;
-    } else if (siteOnly) name = siteName(members[0].url, members[0].title);
+    } else if (siteOnly) name = sharedHint || siteName(members[0].url, members[0].title);
     else if (libraryName(members, majority)) name = libraryName(members, majority);
     else if (bigramRanked.length) name = titleCasePhrase(bigramRanked[0].surface);
     else if (top) name = titleCase(surface(top[0]));
-    else name = siteName(members[0].url, members[0].title);
+    else name = sharedHint || siteName(members[0].url, members[0].title);
     // "Next" from "Next.js" titles: keep the suffix a library name is written with.
     const dotted = /^[A-Za-z]+$/.test(name) && members.find((d) => new RegExp(`\\b${name}\\.(js|ts|py|io)\\b`, 'i').test(d.title));
     if (dotted) name = `${name}${String(dotted.title).match(new RegExp(`\\b${name}(\\.(?:js|ts|py|io))\\b`, 'i'))[1]}`;
@@ -679,6 +795,7 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD } = {}) {
 const MAX_AUTO_MOVES = 3; // automatic placements/moves per tab, so a tab whose title keeps changing settles
 const MOVE_MARGIN = 0.15;
 const SAME_SITE_BONUS = 0.12; // a group already holding pages of this site: the site itself is weak evidence
+const SITE_HINT_BONUS = 0.2; // a group of this tab's site hint ("School"): strong evidence, see scoreOf
 
 // items: [{ entry, current }] (current: the group id the tab is in now, or null).
 // groupList: [{ id, domain, members: [entry] }]. background: other loose entries, only for idf.
@@ -699,6 +816,11 @@ function placeTabs(items, groupList, { background = [], threshold = TOPIC_THRESH
     }
     return pooled.get(key);
   };
+  // A group most of whose tabs have a site hint ("School"): a tab with that hint belongs there as in
+  // topicClusters' fifth stage - on the hint alone when it is the only such group, and with a few
+  // words in common when there are several (two courses).
+  const hintMajor = (g) => { const n = new Map(); for (const m of g.members) { const h = doc.get(m.id).siteHint; if (h) n.set(h, (n.get(h) || 0) + 1); } return [...n].find(([, c]) => c * 2 > g.members.length)?.[0] || ''; };
+  const hintOfGroup = new Map(groupList.map((g) => [g.id, g.domain ? '' : hintMajor(g)]));
   const scoreOf = (entry, g) => {
     const d = doc.get(entry.id);
     const pool = centroidFor(g, entry.id);
@@ -708,7 +830,13 @@ function placeTabs(items, groupList, { background = [], threshold = TOPIC_THRESH
     const sameSite = Boolean(d.site) && pool.members.some((m) => doc.get(m.id).site === d.site);
     // What the user taught (bonus): only tips a tab that already has SOME words in common with the group.
     const taught = bonus && s >= 0.05 ? bonus(entry, g) : 0;
-    return s + (sameSite && s >= threshold * 0.6 ? SAME_SITE_BONUS : 0) + taught;
+    const score = s + (sameSite && s >= threshold * 0.6 ? SAME_SITE_BONUS : 0) + taught;
+    const hint = d.siteHint && !knowledge.BROAD_HINTS.has(d.siteHint) ? d.siteHint : '';
+    if (hint && hintOfGroup.get(g.id) === hint) {
+      const rivals = groupList.filter((o) => o.id !== g.id && hintOfGroup.get(o.id) === hint).length;
+      if (!rivals || s >= SAME_SITE_MIN_COS) return Math.max(score + SITE_HINT_BONUS, threshold);
+    }
+    return score;
   };
   return items.map(({ entry, current }) => {
     let best = null;
@@ -935,7 +1063,9 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   }
 
   const pinned = (t) => Boolean(t.pinned);
-  const entry = (t) => ({ id: t.id, title: titleOf(t), url: urlOf(t), text: textOf ? textOf(t) : '', hint: t.openerQuery || '' });
+  // aiHint: what a model once said this tab's site is for (features/organize-learn.js aiHint); the fixed
+  // table (siteHint) always wins over it, and a site the user filed under a group of their own has none.
+  const entry = (t) => { const url = urlOf(t); return { id: t.id, title: titleOf(t), url, text: textOf ? textOf(t) : '', hint: t.openerQuery || '', aiHint: learned?.aiHint?.(url) || '' }; };
   const keyOf = (t) => { const e = entry(t); return `${e.title}|${e.url}|${e.text.length}`; };
 
   function create(name, tabIds, { domain = null, color, topic = null, auto = false, cohesion } = {}) {
@@ -1327,4 +1457,4 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   };
 }
 
-module.exports = { _vectorize: vectorize, _cosine: cosine, createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, GROUP_COLORS, MAX_AUTO_MOVES };
+module.exports = { _vectorize: vectorize, _cosine: cosine, createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, siteHint, hintHost, GROUP_COLORS, MAX_AUTO_MOVES };

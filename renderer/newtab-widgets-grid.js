@@ -298,7 +298,11 @@
       const top = d.from.top + dy;
       d.card.style.transform = `translate3d(${left}px, ${top}px, 0)`;
       const zone = WL.detectSnap({ x: ev.clientX, y: ev.clientY }, { width: window.innerWidth, height: window.innerHeight });
-      if (zone && window.scrollY < m.pitchY && WL.snapRectFor(zone, it, o)) {
+      const onto = stackTarget(d, ev);
+      d.onto = onto ? onto.id : null;
+      if (onto) {
+        preview = d.base; // held over the middle of a card of the same size: dropping stacks them, nothing moves
+      } else if (zone && window.scrollY < m.pitchY && WL.snapRectFor(zone, it, o)) {
         snap = zone;
         preview = WL.snapMove(d.base, id, { snap: zone, frac: ev.clientY / window.innerHeight }, o);
       } else {
@@ -329,13 +333,14 @@
       const y2 = Math.round((bottom - m.top + WL.GAP) / m.pitchY);
       preview = WL.resize(d.base, id, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }, o);
     }
-    const key = WL.encode(preview);
+    const key = `${WL.encode(preview)}|${d.onto || ''}`;
     if (key !== d.key) {
       d.key = key;
       d.preview = preview;
       d.snap = snap;
       place(preview, id);
-      ghostTo(d.ghost, preview.find((i) => i.id === id), snap);
+      ghostTo(d.ghost, d.onto ? d.base.find((i) => i.id === d.onto) : preview.find((i) => i.id === id), snap);
+      d.ghost.classList.toggle('stack', Boolean(d.onto));
       window.widgetEditUI?.guides(preview.find((i) => i.id === id), preview, o.obstacle, m);
     }
     // Near the top or bottom edge of the window while dragging: scroll.
@@ -343,6 +348,23 @@
       const step = ev.clientY > window.innerHeight - 48 ? 14 : ev.clientY < 48 && window.scrollY > 0 ? -14 : 0;
       if (step) { window.scrollBy(0, step); d.raf = requestAnimationFrame(tick); }
     }
+  }
+  // A move held over the middle half of another card of the same size (and not already in one stack with
+  // it): that card, which a drop stacks it onto (newtab-stacks.js, features/widget-stacks.js).
+  function stackTarget(d, ev) {
+    const stacks = window.newtabStacks;
+    if (!stacks || WS.isSystemId(d.id)) return null;
+    const me = d.base.find((i) => i.id === d.id);
+    const r = boxEl().getBoundingClientRect();
+    const px = ev.clientX - r.left;
+    const py = ev.clientY - r.top;
+    for (const it of d.base) {
+      if (it.id === d.id || it.w !== me.w || it.h !== me.h || WS.isSystemId(it.id)) continue;
+      const b = WL.cellToPx(it, m);
+      if (px < b.left + b.width / 4 || px > b.left + (b.width * 3) / 4 || py < b.top + b.height / 4 || py > b.top + (b.height * 3) / 4) continue;
+      return stacks.canStack(d.id, it.id) ? it : null;
+    }
+    return null;
   }
   function cleanup() {
     while (upFns.length) upFns.pop()();
@@ -364,6 +386,18 @@
     setTimeout(() => { suppress = false; }, 60);
     const next = d.preview || d.base;
     cleanup();
+    if (d.onto && !cancelled) {
+      // Stacked: the card settles onto the other one's cells until the browser's list (with the stack) arrives.
+      const target = d.base.find((i) => i.id === d.onto);
+      place(d.base, d.id);
+      d.card._pos = null;
+      setBox(d.card, WL.cellToPx(target, m));
+      say(txt('newtab.edit.stacked', { title: titleOf(d.card), onto: titleOfId(d.onto) }));
+      window.widgetAct(d.id, 'stack', { onto: d.onto });
+      deferred = null;
+      setTimeout(() => { d.card._pos = null; relayout(); }, 1200); // if the browser said no, the card goes back to its place
+      return;
+    }
     if (cancelled || WL.encode(next) === WL.encode(d.base)) {
       d.card._pos = null;
       place(d.base);
@@ -481,7 +515,7 @@
       if (e.button !== 0) return;
       const t = e.target;
       if (t.closest('.w-h, .w-resize')) { e.preventDefault(); begin('resize', card, e, t.closest('[data-dir]').dataset.dir); return; }
-      if (t.closest('.w-remove, .w-gear, .w-presets')) return;
+      if (t.closest('.w-remove, .w-gear, .w-presets, .w-stack-edit')) return;
       if (editing) { e.preventDefault(); begin('move', card, e); return; }
       if (t.closest('.w-head') && !(t.closest('a, button') && !t.closest('.w-grip'))) { begin('move', card, e); return; }
       if (t.closest('a, button, input, iframe, select, textarea')) return;

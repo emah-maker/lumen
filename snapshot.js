@@ -260,7 +260,7 @@ const SCREENSHOT_EXTRA = {
 const NEW_TOOLS = [
   {
     name: 'find',
-    description: 'Search the active tab for text: returns matching controls as [id] refs and short text snippets with nearby refs. Much cheaper than reading the whole page; use it to locate a field, button, or fact.',
+    description: 'Search the active tab for text: returns matching controls as [id] refs and short text snippets with nearby refs. Far cheaper than read_page for one field, button or fact.',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string' }, max: { type: 'integer', description: 'Max results (default 8).' } },
@@ -297,13 +297,14 @@ const NEW_TOOLS = [
 
 // Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
 const pdfText = require('./features/pdf-text');
+const { captureTab } = require('./features/tab-capture');
 const TRIMMED = {
   read_page: 'Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.',
   navigate: 'Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.',
   click: 'Click by [id] from read_page/find, or by visible text. observe:true (also on click_at, type_text, press_key) returns what changed: no follow-up read.',
   type_text: 'Replace an input/textarea/contenteditable value, pick a <select> option by label, or set date/time (e.g. 2026-03-14, 13:30). Use click for checkboxes/radios. press_enter submits.',
   fill_form: 'Fill fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved.',
-  read_urls: 'Read up to 6 pages in parallel in hidden tabs without cookies/logins (use navigate for signed-in pages). Returns title + text.',
+  read_urls: 'Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user\'s own account pages signed in. Returns title + text.',
   run_script: 'LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. Only when nothing else can do it, in one call. Never to click, type or navigate, or to bypass confirmation rules.',
   group_tabs: 'Put tabs (ids from list_tabs) into a new named group; use 1-3 word names. Tabs in another group move.',
   click_at: 'Click a point in the last screenshot\'s pixel coordinates (canvas, maps, custom widgets).',
@@ -393,9 +394,9 @@ async function screenshot(agent, wc, input, h) {
   if (input.region) {
     const z = wc.getZoomFactor();
     const r = input.region;
-    image = await wc.capturePage({ x: Math.round(r.x * z), y: Math.round(r.y * z), width: Math.max(1, Math.round(r.width * z)), height: Math.max(1, Math.round(r.height * z)) });
+    image = await captureTab(wc, { x: Math.round(r.x * z), y: Math.round(r.y * z), width: Math.max(1, Math.round(r.width * z)), height: Math.max(1, Math.round(r.height * z)) });
   } else {
-    image = await wc.capturePage();
+    image = await captureTab(wc); // a tab behind another one too (features/tab-capture.js)
   }
   if (image.getSize().width > maxWidth) image = image.resize({ width: maxWidth });
   const size = image.getSize();

@@ -73,6 +73,17 @@
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') });
       openBtn.append(name, meta);
+      // Still running (it was left mid-reply), waiting for an OK, or finished and not seen yet.
+      if (chat.badge) {
+        const label = { running: tr('chats.badge.running', 'Working'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
+        if (label) {
+          const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge}`, title: label });
+          badge.setAttribute('role', 'img');
+          badge.setAttribute('aria-label', label);
+          name.prepend(badge);
+          li.classList.add(`has-${chat.badge}`);
+        }
+      }
       openBtn.onclick = () => onOpen(chat.id);
 
       const actions = document.createElement('div');

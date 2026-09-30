@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('browser', {
   switchTab: (id) => ipcRenderer.send('tab:switch', id),
   moveTab: (id, toIndex) => ipcRenderer.send('tab:move', id, toIndex),
   // A tab dragged out of the strip: main.js moves it into a window that follows the cursor.
+  dragTabPrep: () => ipcRenderer.send('tab:dragprep'), // a tab is heading out of the strip: a tear-off may follow
+  onTabDragDone: on('tab:dragdone'), // a dropped tab has been placed: show it again if it stayed here
   dragTabStart: (id, grab) => ipcRenderer.send('tab:dragstart', id, grab),
   dragTabEnd: () => ipcRenderer.send('tab:dragend'), // the button came up
   dragTabCancel: () => ipcRenderer.send('tab:dragcancel'), // Escape
@@ -121,7 +123,12 @@ contextBridge.exposeInMainWorld('assistant', {
     remove: (id) => ipcRenderer.invoke('chats:delete', id),
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     onUsage: on('chats:usage'),
+    onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
   },
+  // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
+  sidebarState: (open) => ipcRenderer.send('chat:sidebar-state', open),
+  onAttention: on('agent:attention'), // { state: 'approval' | 'unread' | null, approvals, unread }
+  onOpenChat: on('agent:open-chat'), // { id }: show the sidebar on that chat
   // Background tasks (renderer/tasks.js, features/background-runner.js)
   tasks: {
     state: () => ipcRenderer.invoke('tasks:state'),

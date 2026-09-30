@@ -1,7 +1,8 @@
 // What "Organize" learns from the user, and the small rules around it. Pure logic (no Electron):
 //  - a learner: when the user drags a tab into or out of a group, or renames a group, it remembers
 //    host -> group name and topic words -> group name (capped, kept in the profile, resettable), and
-//    later placement and naming prefer them;
+//    later placement and naming prefer them. It also keeps what a model said a site is for (host ->
+//    hint, "Organize with AI"), which local grouping then uses like the built-in site hints;
 //  - exact-duplicate detection for "Close Duplicate Tabs" (never automatic);
 //  - the rule for "Organize tabs automatically when idle" (the local organizer only, never the AI).
 // Nothing here is sent anywhere.
@@ -11,11 +12,14 @@ const MAX_HOSTS = 200;
 const MAX_WORDS = 300;
 const MAX_NAMES = 3; // names remembered per host or word
 const MAX_RENAMES = 100;
+const MAX_AI_HINTS = 300; // hosts a model gave a hint for (or "none"), the oldest dropped first
+const AI_HINT_DAYS = 30; // then the host is asked about again
+const AI_HINTS = new Set(require('./topic-knowledge').AI_HINTS);
 const key = (name) => String(name || '').trim().toLowerCase();
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; } };
 const wordsOf = (e, k = 3) => tg.tokens(tg.stripSiteSegment(e.title || '', e.url || '')).slice(0, k).map((w) => w.key);
 
-function emptyState() { return { hosts: {}, words: {}, renames: {} }; }
+function emptyState() { return { hosts: {}, words: {}, renames: {}, aiHints: {} }; }
 
 // load(): the saved state (or anything); save(state): persists it. Both are optional.
 function createLearner({ load = () => null, save = () => {} } = {}) {
@@ -23,7 +27,7 @@ function createLearner({ load = () => null, save = () => {} } = {}) {
   const get = () => {
     if (!state) {
       const saved = load();
-      state = saved && typeof saved === 'object' ? { hosts: { ...saved.hosts }, words: { ...saved.words }, renames: { ...saved.renames } } : emptyState();
+      state = saved && typeof saved === 'object' ? { hosts: { ...saved.hosts }, words: { ...saved.words }, renames: { ...saved.renames }, aiHints: { ...saved.aiHints } } : emptyState();
     }
     return state;
   };
@@ -99,6 +103,32 @@ function createLearner({ load = () => null, save = () => {} } = {}) {
       if (!best || best[1] < 3) return autoName;
       const support = entries.filter((e) => votesFor(e, best[0]).host + votesFor(e, best[0]).word > 0).length;
       return support * 2 >= entries.length ? best[0] : autoName;
+    },
+    // What a model said this tab's site is for: the hint, '' (it said "none", or the user filed this
+    // site under a group of their own: what the user taught wins), or undefined (never asked, or asked
+    // more than AI_HINT_DAYS ago: worth asking). The fixed table (tab-groups siteHint) is checked first
+    // by every caller, so a model's hint never overrides it either.
+    aiHint(url, now = Date.now()) {
+      const s = get();
+      if (Object.keys(s.hosts[hostOf(url)] || {}).length) return '';
+      const row = s.aiHints[tg.hintHost(url)];
+      if (!row || !(now - row.t < AI_HINT_DAYS * 864e5)) return undefined;
+      return AI_HINTS.has(row.k) ? row.k : '';
+    },
+    // answers: Map or object of host (tab-groups hintHost) -> hint or "none". Anything else is dropped.
+    learnAiHints(answers, now = Date.now()) {
+      const s = get();
+      let n = 0;
+      for (const [host, hint] of answers instanceof Map ? answers : Object.entries(answers || {})) {
+        if (typeof host !== 'string' || !/^[a-z0-9.-]{3,80}$/.test(host)) continue;
+        s.aiHints[host] = { k: AI_HINTS.has(hint) ? hint : 'none', t: now };
+        n++;
+      }
+      if (!n) return 0;
+      const hosts = Object.entries(s.aiHints).sort((a, b) => a[1].t - b[1].t);
+      for (const [h] of hosts.slice(0, Math.max(0, hosts.length - MAX_AI_HINTS))) delete s.aiHints[h];
+      commit();
+      return n;
     },
     reset() { state = emptyState(); commit(); },
     snapshot: () => JSON.parse(JSON.stringify(get())),

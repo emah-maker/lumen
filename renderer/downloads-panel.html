@@ -20,13 +20,17 @@
     /* Room for the shadow inside this view, as in suggest.html. */
     #card {
       margin: 6px 16px 24px; border-radius: 14px; background: var(--surface); transform-origin: top right; overflow: hidden;
+      /* main.js caps the view at the window's bottom: the card fits it and the list is what gives
+         way (it scrolls), so the header and "Show all downloads" stay reachable on a short window. */
+      display: flex; flex-direction: column; max-height: calc(100vh - 30px);
       box-shadow: 0 0 0 0.5px var(--border), 0 16px 36px -10px var(--shadow);
     }
     #card.entering { animation: drop 320ms cubic-bezier(0.16, 1, 0.3, 1); }
     @keyframes drop { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
     header { display: flex; align-items: center; justify-content: space-between; padding: 12px 12px 6px 16px; }
     h1 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
-    #list { list-style: none; margin: 0; padding: 0 6px; max-height: 452px; overflow-y: auto; }
+    #list { list-style: none; margin: 0; padding: 0 6px; max-height: 452px; overflow-y: auto; flex: 0 1 auto; min-height: 0; }
+    header, footer, #empty, .hint { flex: none; }
     li { position: relative; display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; cursor: default; transition: background-color 120ms ease-out; }
     li:hover { background: var(--hover); }
     li.selected { background: var(--selected); }

@@ -638,10 +638,13 @@ const WIDGET_RENDERERS = {
     if (d.state === 'reconnect') {
       const note = el('p', 'w-note');
       note.append(el('strong', null, 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
-      const fix = el('button', 'w-btn primary', 'Open Settings');
+      // oneClick: Lumen can start Google's sign-in (in the user's browser) straight from the card;
+      // otherwise the button opens Settings, where the user's own Google Cloud client is set up.
+      const oneClick = d.oneClick === true;
+      const fix = el('button', 'w-btn primary', oneClick ? 'Sign in with Google' : 'Open Settings');
       fix.type = 'button';
-      fix.setAttribute('aria-label', `Open settings to reconnect ${text(w.title, 60)}`);
-      fix.addEventListener('click', () => widgetAct(w.id, 'configure'));
+      fix.setAttribute('aria-label', oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
+      fix.addEventListener('click', () => widgetAct(w.id, oneClick ? 'signin' : 'configure'));
       const wrap = el('div');
       wrap.append(fix);
       card.body.append(note, wrap);
@@ -1225,10 +1228,13 @@ const lastList = { current: [] };
 function renderWidgets(list) {
   if (window.widgetGrid?.busy()) { window.widgetGrid.defer(list); return; } // redrawing mid-gesture would move the card under the pointer
   const box = document.getElementById('widgets');
-  const valid = (Array.isArray(list) ? list : []).filter((w) => w && widgetId(w.id) && WIDGET_RENDERERS[w.type]).slice(0, 12);
+  const known = (Array.isArray(list) ? list : []).filter((w) => w && widgetId(w.id) && WIDGET_RENDERERS[w.type]);
+  // Stacks (newtab-stacks.js): every member gets a card, only the shown one is on the grid; up to 12 places.
+  const stacks = window.newtabStacks;
+  const valid = stacks ? stacks.prepare(known, 12) : known.slice(0, 12);
   lastList.current = valid;
   const cards = valid.map((w) => {
-    const { span, height, layout, updated, warning, colors, setup, ...rest } = w; // a new size, place, age or edit-form value is applied to the card as it is (the pencil reads setup when clicked)
+    const { span, height, layout, updated, warning, colors, setup, stack, top, ...rest } = w; // a new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked)
     const key = JSON.stringify(rest);
     const kept = shownWidgets.get(w.id);
     const card = kept && kept.key === key ? kept.el : buildCard(w);
@@ -1249,7 +1255,9 @@ function renderWidgets(list) {
   if (system) for (const [id, card] of system.cards()) all.set(id, card);
   box.classList.toggle('empty', !all.size);
   applyWidgetColors();
-  window.widgetGrid?.sync([...valid, ...(system ? system.entries() : [])], all);
+  const shown = stacks ? valid.filter((w, i) => stacks.decorate(cards[i], w)) : valid; // a stack's hidden members stay off the grid
+  if (stacks) for (const w of valid) if (!shown.includes(w)) all.delete(w.id);
+  window.widgetGrid?.sync([...shown, ...(system ? system.entries() : [])], all); // its layout hook puts the hidden members under their card
 }
 // A card's Colors setting: 'calendar' leaves it alone; the others tint its surface, title, event bars and
 // today highlight from the page's accent and background (features/widget-colors.js keeps the text readable).
