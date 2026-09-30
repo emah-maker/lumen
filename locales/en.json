@@ -249,6 +249,8 @@
   "newtab.edit.noRoom": "It stops here: a card is in the way.",
   "newtab.edit.sizeHint": "Arrow keys change the size. Page Up and Page Down take bigger steps; Home and End go to the smallest and largest.",
   "picker.search": "Search models",
+  "settings.gmail.unverified": "Google is still reviewing Lumen’s sign-in. If Google shows “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced.",
+  "settings.gmail.stillWaiting": "Still waiting. If Google showed “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced, or Cancel and try again.",
   "models.searchAll": "Search every OpenRouter model",
   "picker.recent": "Recent",
   "picker.showAll": "Show all {n}",

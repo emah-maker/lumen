@@ -39,7 +39,8 @@ function installOverrides(bridgeKey) {
 }
 
 try {
-  contextBridge.executeInMainWorld({ func: installOverrides, args: [BRIDGE_KEY] });
+  // Not on Google's account pages: they check the browser closely, and never use prompt().
+  if (!/(^|\.)accounts\.google\.com$/.test(location.hostname)) contextBridge.executeInMainWorld({ func: installOverrides, args: [BRIDGE_KEY] });
 } catch (err) {
   console.error('page dialogs: could not install alert/confirm/prompt overrides:', err.message);
 }

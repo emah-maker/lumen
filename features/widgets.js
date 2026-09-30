@@ -1458,7 +1458,7 @@ function createWidgets(deps) {
       } catch (err) {
         // Lumen's own client: the user typed no Client ID, so "check them in Settings" would point nowhere.
         if (builtin && err?.kind === 'client') throw new Error('Lumen’s Google sign-in isn’t available right now. Update Lumen, or use your own Google Cloud client (Settings › Gmail › Advanced).');
-        if (builtin && err?.kind === 'timeout') throw new Error(GMAIL_BLOCKED_HINT);
+        if (err?.kind === 'timeout') throw new Error(builtin ? 'Sign-in timed out. If Google showed “Access blocked” or an “unverified app” page, this account can’t use Lumen’s built-in sign-in yet: use your own Google Cloud client (Settings › Gmail › Advanced). Otherwise, try again.' : 'Sign-in timed out. Try again.');
         throw err;
       }
       deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh }));
@@ -1475,7 +1475,9 @@ function createWidgets(deps) {
   // can sign in without typing anything; otherwise it opens Settings at the widget. The page learns
   // only what the card shows (a waiting or error line), never a token.
   function gmailSignInFromPage(w) {
-    if (w.type !== 'gmail' || sessionFor('gmail').connected()) return false;
+    // Also when a sign-in is stored but Google stopped accepting it (the card asks to reconnect): a new sign-in replaces it.
+    if (w.type !== 'gmail') return false;
+    if (sessionFor('gmail').connected() && cache.get(w.id)?.data?.state !== 'reconnect') return false;
     if (!GC.uiState({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).oneClick) { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     const show = (message) => {
       const old = cache.get(w.id);

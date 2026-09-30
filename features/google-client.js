@@ -27,8 +27,13 @@ function pairOf(id, secret) {
   const clientSecret = GV.cleanClientSecret(secret);
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
+// verified: Google has approved the client's Gmail access (LUMEN_GOOGLE_VERIFIED at build time). Until then only
+// accounts Google allows can use it, so Settings says so before the user tries.
 function builtinClient({ env = process.env, file = FILE } = {}) {
-  return pairOf(env?.LUMEN_GOOGLE_CLIENT_ID, env?.LUMEN_GOOGLE_CLIENT_SECRET) || pairOf(file?.clientId, file?.clientSecret);
+  const fromEnv = pairOf(env?.LUMEN_GOOGLE_CLIENT_ID, env?.LUMEN_GOOGLE_CLIENT_SECRET);
+  if (fromEnv) return { ...fromEnv, verified: env?.LUMEN_GOOGLE_VERIFIED === '1' };
+  const fromFile = pairOf(file?.clientId, file?.clientSecret);
+  return fromFile && { ...fromFile, verified: file?.verified === true };
 }
 
 // Which client signs in. clientId / clientSecret: what the user gave (Settings' Advanced fields, or a
@@ -55,7 +60,7 @@ function resolveClient({ clientId, clientSecret, stored, builtin } = {}) {
 // its own client, so Settings leads with "Sign in with Google" and keeps the paste flow under Advanced.
 function uiState({ clientId, stored, builtin } = {}) {
   const r = resolveClient({ clientId, stored, builtin });
-  return { oneClick: !r.error, builtin: Boolean(builtin?.clientId && builtin.clientSecret), source: r.error ? 'none' : r.source };
+  return { oneClick: !r.error, builtin: Boolean(builtin?.clientId && builtin.clientSecret), verified: Boolean(builtin?.verified), source: r.error ? 'none' : r.source };
 }
 
 const MESSAGES = {

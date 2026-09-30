@@ -102,6 +102,9 @@ const isWebUrl = (url) => /^https?:\/\//i.test(url);
 // Look like stock Chrome; sites (notably Google) treat unknown browser tokens as bots.
 const UA_PLATFORM = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; Intel Mac OS X 10_15_7' }[process.platform] || 'X11; Linux x86_64';
 app.userAgentFallback = `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
+// Google's sign-in on other sites (One Tap, "Sign in with Google") uses FedCM when the browser says it is Chrome.
+// Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
+app.commandLine.appendSwitch('disable-features', 'FedCm');
 
 // Test runs get a throwaway profile so they never touch the real session or key.
 const APP_ID = 'com.lumen.browser';
@@ -1309,10 +1312,11 @@ function researchSession() {
 }
 const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null } = {}) {
+// `view`: a page that already exists (a window a page opened with window.open), adopted as this tab as it is.
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
-  const view = new WebContentsView({
+  const view = adopted || new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
     webPreferences: {
@@ -1327,7 +1331,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
-  const wc = wireView(tab, url, history); // `history`: Duplicate's copy of back/forward
+  const wc = wireView(tab, url, history, { loaded: Boolean(adopted) }); // `history`: Duplicate's copy of back/forward
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
@@ -1348,7 +1352,7 @@ const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url ||
 // Wires a tab's WebContentsView (navigation, zoom, favicon/title tracking, close-on-destroy,
 // extensions, HTTPS-only/zoom defaults) and loads `url`. Split out of openTab() so wakeTab() (tab
 // sleeping, below) can rebuild a woken tab's view identically instead of duplicating all of this.
-function wireView(tab, url, history = null) {
+function wireView(tab, url, history = null, { loaded = false } = {}) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
@@ -1366,7 +1370,20 @@ function wireView(tab, url, history = null) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: popupWindowOptions(),
-        createWindow: (options) => popupWindow(options, settings),
+        createWindow: (options) => popupWindow(options, settings, tab.isolated),
+      };
+    }
+    // A tab. When a page's script asked for it (window.open), the page gets that new window back and it keeps
+    // window.opener, as in Chrome: sign-in code that opens a window and watches or redirects it keeps working.
+    // Lumen adopts the new window's page into a tab instead of making a window for it.
+    if (!tab.isolated && WebContentsView && isWebUrl(target)) {
+      return {
+        action: 'allow',
+        createWindow: (options) => {
+          const view = new WebContentsView({ webContents: options.webContents });
+          withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id, view }));
+          return options.webContents;
+        },
       };
     }
     withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id, partition: tab.isolated })); // a link from a research tab stays in its session
@@ -1536,7 +1553,7 @@ function wireView(tab, url, history = null) {
   }
   if (history?.entries?.length) {
     wc.navigationHistory.restore({ entries: history.entries, index: history.index }).catch(() => wc.loadURL(url).catch(() => {}));
-  } else {
+  } else if (!loaded) { // an adopted page is already on its way to its address
     wc.loadURL(url).catch(() => {});
   }
   return wc;
@@ -2727,14 +2744,25 @@ const popupWindowOptions = () => ({
   icon: path.join(__dirname, 'assets', 'icon.png'),
   webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
 });
-function popupWindow(options, noIdentity = false) {
+function popupWindow(options, noIdentity = false, partition = null) {
   const child = new BrowserWindow({ ...options, ...popupWindowOptions(), webContents: options.webContents, webPreferences: { ...options.webPreferences, ...popupWindowOptions().webPreferences } });
   const wc = child.webContents;
   if (!noIdentity) applyChromeIdentity(wc);
+  // The title bar says which site this is (a popup has no address bar), with a lock when the connection is secure.
+  const titleFor = () => { try { const u = new URL(wc.getURL()); return `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host}${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`; } catch { return wc.getTitle() || 'Lumen'; } };
+  const retitle = () => { if (!child.isDestroyed()) child.setTitle(titleFor()); };
+  wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });
+  wc.on('did-navigate', retitle);
+  wc.on('did-navigate-in-page', retitle);
+  wc.on('context-menu', (_e, p) => showContextMenu(wc, p)); // paste into a password field, spelling, copy
+  wc.on('before-input-event', (e, input) => { // Ctrl+W (Cmd+W) closes it, as it would a tab
+    if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); }
+  });
+  if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
   wc.setWindowOpenHandler(({ url, disposition }) => {
     if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
-    if (disposition === 'new-window') return { action: 'allow', overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity) };
-    openTab(url, { background: disposition === 'background-tab' });
+    if (disposition === 'new-window') return { action: 'allow', overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition) };
+    openTab(url, { background: disposition === 'background-tab', partition }); // a research tab's popup keeps to its session
     return { action: 'deny' };
   });
   return wc;
