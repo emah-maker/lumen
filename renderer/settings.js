@@ -514,6 +514,8 @@ async function buildHome(card) {
       onclick: async () => { await save('newTabBackground', value); renderTiles(); } }, h('span', { text: label })));
   }
   card.group('Background').append(stackRow('New tab background', 'Behind the new-tab page. A picture is resized and kept in your Lumen profile; it never leaves this computer.', tiles, picture));
+  card.append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
+    [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
   const effectOptions = buildEffectOptions();
   card.append(select('newTabEffect', 'Animated effect', 'Moving particles over the background. Light on purpose: few particles, at most 30 frames a second, paused while the tab is hidden, and still with Reduce motion. It never covers the search box or the cards.',
     [['none', 'None'], ['particles', 'Particles'], ['stars', 'Stars'], ['bubbles', 'Bubbles'], ['snow', 'Snow']], { after: (v) => { effectOptions.hidden = v === 'none'; } }), effectOptions);
@@ -535,7 +537,7 @@ async function buildHome(card) {
   );
   renderTiles();
   const widgets = card.at('widgets');
-  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto embed');
+  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro custom recipe embed');
   try { await buildWidgets(sub); } catch (err) { sub.append(row('Widgets', String(err?.message || err))); }
 }
 
@@ -556,6 +558,11 @@ const WIDGET_ICONS = {
   muse: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.4 3.7 3.8 1.5-3.8 1.5L8 12.2 6.6 8.5 2.8 7l3.8-1.5z"/><path d="M12.5 11.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/></svg>',
   stocks: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 12.5 6 8l2.6 2.6L14 4.5M10.5 4.5H14V8"/></svg>',
   crypto: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.4 5v6M6.4 5h2.3a1.5 1.5 0 0 1 0 3H6.4m0 0h2.6a1.5 1.5 0 0 1 0 3H6.4M7.6 4v1M7.6 11v1"/></svg>',
+  notes: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h7.5L13 5v8.5H3z"/><path d="M5.5 7h5M5.5 9.5h5M5.5 12h3"/></svg>',
+  countdown: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1.8h6M5 14.2h6M5.5 1.8c0 3.4 5 3.8 5 6.2s-5 2.8-5 6.2M10.5 1.8c0 3.4-5 3.8-5 6.2s5 2.8 5 6.2"/></svg>',
+  timer: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5.2"/><path d="M8 9V6.2M6.5 1.8h3M12.2 4.4l1-1"/></svg>',
+  custom: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 2 8l3.5 4.5M10.5 3.5 14 8l-3.5 4.5"/></svg>',
+  tradingview: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M4 5.5h-1.2M4 10h1.2M8 2v12M8 4.5H6.8M8 11h1.2M12 4v8M12 6h-1.2M12 9.5h1.2"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
 };
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
@@ -598,7 +605,10 @@ async function buildWidgets(card) {
       return item;
     }));
   };
-  const closeForm = () => { formHost.replaceChildren(); renderList(); window.scrollTo?.({ top: 0 }); };
+  const closeForm = () => { formGuard = null; formHost.replaceChildren(); renderList(); window.scrollTo?.({ top: 0 }); };
+  // The open form's "are there unsaved changes?" (null when no form is open): closing the Settings tab asks first.
+  let formGuard = null;
+  window.addEventListener('beforeunload', (e) => { if (formGuard?.()) { e.preventDefault(); e.returnValue = ''; } });
   const sel = (id, label, options, value) => {
     const s = h('select', { id, 'aria-label': label }, options.map(([v, t]) => h('option', { value: String(v), text: t })));
     s.value = String(value);
@@ -1102,6 +1112,46 @@ async function buildWidgets(card) {
         museFields(same);
       } else if (type === 'stocks' || type === 'crypto') {
         marketFields(same);
+      } else if (type === 'notes') {
+        fields.replaceChildren(section('Note', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Type straight on the card. It saves as you go, stays on this computer and never goes online.' }))]));
+      } else if (type === 'countdown') {
+        const cd = same?.cd || {};
+        inputs.label = h('input', { type: 'text', id: 'widget-cd-label', maxlength: '60', placeholder: 'Vacation', 'aria-label': 'What it counts to', value: cd.label || '' });
+        inputs.date = h('input', { type: 'date', id: 'widget-cd-date', 'aria-label': 'Date', value: cd.date || '' });
+        inputs.time = h('input', { type: 'time', id: 'widget-cd-time', 'aria-label': 'Time (optional)', value: cd.time || '' });
+        fields.replaceChildren(section('Countdown', [setting('Name', inputs.label, 'Shown under the number, like “days until Vacation”.'), setting('Date', inputs.date), setting('Time', inputs.time, 'Optional. With a time, the last day counts down in hours, minutes and seconds.')], 'Counted on this computer; nothing goes online.'));
+      } else if (type === 'timer') {
+        const tm = same?.tm || {};
+        inputs.mode = sel('widget-tm-mode', 'Kind', [['pomodoro', 'Pomodoro (focus, then a break)'], ['timer', 'Plain timer']], tm.pomodoro === false ? 'timer' : 'pomodoro');
+        inputs.work = h('input', { type: 'number', id: 'widget-tm-work', min: '1', max: '180', step: '1', value: String(tm.work || 25), 'aria-label': 'Minutes' });
+        inputs.rest = h('input', { type: 'number', id: 'widget-tm-rest', min: '1', max: '60', step: '1', value: String(tm.rest || 5), 'aria-label': 'Break minutes' });
+        const restRow = setting('Break minutes', inputs.rest);
+        const sync = () => { restRow.hidden = inputs.mode.value !== 'pomodoro'; };
+        inputs.mode.addEventListener('change', sync);
+        sync();
+        fields.replaceChildren(section('Timer', [setting('Kind', inputs.mode), setting('Minutes', inputs.work, 'How long a focus session (or the timer) lasts.'), restRow], 'It keeps running while the new-tab page is closed: it counts to a moment, not in the page.'));
+      } else if (type === 'custom') {
+        const examples = ws.recipeExamples || [];
+        inputs.recipe = h('textarea', { id: 'widget-recipe', rows: '12', spellcheck: 'false', class: 'code', 'aria-label': 'Recipe (JSON)', placeholder: '{ "name": "…", "url": "https://…", "view": "stats", "stats": [ { "label": "…", "path": "…" } ] }' });
+        inputs.recipe.value = same?.recipe ? JSON.stringify(same.recipe, null, 2) : examples[0] ? JSON.stringify(examples[0], null, 2) : '';
+        const pickers = h('div', { class: 'seg' }, examples.map((ex) => h('button', { type: 'button', text: ex.name, onclick: () => { inputs.recipe.value = JSON.stringify(ex, null, 2); inputs.recipe.dispatchEvent(new Event('input', { bubbles: true })); } })));
+        fields.replaceChildren(section('Recipe', [
+          block('Start from an example', null, pickers),
+          block('Recipe (JSON)', 'One https address that answers JSON, and what to show from it: "stats" (up to 6 numbers or words, each a path like rates.EUR) or a "list" (a path to an array, and each item’s title, detail and link). Test checks it against the real answer. The format is in docs/custom-widgets.md, so recipes can be shared as plain text.', inputs.recipe),
+        ], 'Lumen fetches the address itself, without your cookies, and shows only text from it: a recipe can’t run code.'));
+      } else if (type === 'tradingview') {
+        const tv = same?.tv || {};
+        inputs.symbol = h('input', { type: 'text', id: 'widget-tv-symbol', maxlength: '52', spellcheck: 'false', autocomplete: 'off', placeholder: 'NASDAQ:AAPL', 'aria-label': 'Symbol', value: tv.symbol || '' });
+        inputs.view = sel('widget-tv-view', 'Style', [['chart', 'Full chart'], ['mini', 'Mini chart']], tv.view || 'chart');
+        inputs.interval = sel('widget-tv-interval', 'Interval', [['1', '1 minute'], ['5', '5 minutes'], ['15', '15 minutes'], ['30', '30 minutes'], ['60', '1 hour'], ['240', '4 hours'], ['D', '1 day'], ['W', '1 week'], ['M', '1 month']], tv.interval || 'D');
+        inputs.theme = sel('widget-tv-theme', 'Theme', [['auto', 'Follow light and dark mode'], ['light', 'Light'], ['dark', 'Dark']], tv.theme || 'auto');
+        fields.replaceChildren(
+          section('Chart', [
+            block('Symbol', 'As TradingView writes it: NASDAQ:AAPL, NYSE:SPY, BINANCE:BTCUSDT, FX:EURUSD, or just AAPL. You can also change it on the chart itself.', inputs.symbol),
+            setting('Style', inputs.view, 'The full chart has TradingView’s tools and date ranges; the mini chart is a small price line.'),
+            setting('Interval', inputs.interval, 'The bar size the full chart opens with (the mini chart picks a date range near it).'),
+            setting('Theme', inputs.theme),
+          ], 'No account or key. The chart is TradingView’s own page in a frame: TradingView sees that you opened it, and its quotes come under TradingView’s terms. Not investment advice.'));
       } else {
         inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'https://…', 'aria-label': 'Web page address' });
         inputs.url.value = same?.url || '';
@@ -1112,6 +1162,7 @@ async function buildWidgets(card) {
     const width = h('select', { id: 'widget-span', 'aria-label': 'Card width' }, WIDGET_SPANS.map(([v, t]) => h('option', { value: v, text: t })));
     const syncWidth = () => { width.value = String(existing?.type === type ? existing.span : type === 'embed' ? 6 : 3); };
     const val = (c) => c?.querySelector?.('input')?.checked;
+    const same0 = () => (existing?.type === type ? existing : null); // Notes: editing the card's title keeps the text
     const input = () => {
       const base = { type, title: title.value, span: width.value, colors: colors.value };
       if (type === 'weather') {
@@ -1144,6 +1195,11 @@ async function buildWidgets(card) {
       if (type === 'stocks' || type === 'crypto') {
         return { ...base, token: inputs.token.value, mk: { [type === 'crypto' ? 'coins' : 'symbols']: inputs.list.value, startCash: Number(inputs.startCash.value) } };
       }
+      if (type === 'notes') return { ...base, note: same0()?.note };
+      if (type === 'countdown') return { ...base, cd: { label: inputs.label.value, date: inputs.date.value, time: inputs.time.value } };
+      if (type === 'timer') return { ...base, tm: { pomodoro: inputs.mode.value === 'pomodoro', work: Number(inputs.work.value), rest: Number(inputs.rest.value) } };
+      if (type === 'custom') return { ...base, recipe: inputs.recipe.value };
+      if (type === 'tradingview') return { ...base, tv: { symbol: inputs.symbol.value, view: inputs.view.value, interval: inputs.interval.value, theme: inputs.theme.value } };
       return { ...base, url: inputs.url?.value, height: inputs.height?.value };
     };
     // Disable every button while a check or save runs, and put back exactly the ones that were already off.
@@ -1186,7 +1242,12 @@ async function buildWidgets(card) {
       closeForm();
       flash(listNote, `${existing.title} removed.`, 'ok');
     } }) : null;
-    const back = h('button', { class: 'back', type: 'button', 'aria-label': 'Back to Widgets', onclick: closeForm }, h('span', { class: 'chev', 'aria-hidden': 'true' }), 'Widgets');
+    const back = h('button', { class: 'back', type: 'button', 'aria-label': 'Back to Widgets', onclick: () => requestClose() }, h('span', { class: 'chev', 'aria-hidden': 'true' }), 'Widgets');
+    const leave = h('div', { class: 'leave-bar', role: 'alertdialog', 'aria-label': 'Unsaved changes', hidden: '' },
+      h('span', { class: 'grow', text: existing ? 'These changes couldn’t be saved yet.' : 'This widget isn’t on your page yet.' }),
+      h('button', { class: 'primary', text: existing ? 'Try saving again' : 'Add to page', onclick: () => { leave.hidden = true; save.click(); } }),
+      h('button', { class: 'danger', text: 'Discard', onclick: () => closeForm() }),
+      h('button', { text: 'Keep editing', onclick: () => { leave.hidden = true; } }));
     const form = h('div', { class: 'widget-form', id: 'widget-form' },
       h('div', { class: 'subhead' }, back),
       h('div', { class: 'widget-head' }, existing ? widgetIcon(existing.type) : null, h('div', { class: 'grow' },
@@ -1200,12 +1261,51 @@ async function buildWidgets(card) {
         setting('Card colors', colors, 'Default, or tinted from your accent color and background. Colors inside the card, like priorities, stay.'),
       ]),
       removeBtn ? section(null, [h('div', { class: 'row' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'Remove this widget' }), h('span', { class: 'desc', text: 'Takes it off the new-tab page. Any saved token stays until you sign out of the service.' })), removeBtn)]) : null,
-      h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: closeForm }), check, save));
+      h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: () => requestClose() }), check, save), leave);
     formHost.replaceChildren(form);
     renderFields();
     syncWidth();
+    // ---- autosave (a widget already on the page) and the unsaved-changes prompt ----
+    // What the form would save, as text: changed means different from what was last saved (or opened).
+    const snapshot = () => { try { return JSON.stringify({ type, ...input() }); } catch { return ''; } };
+    let baseline = snapshot();
+    const dirty = () => snapshot() !== baseline;
+    let autoTimer = null;
+    let autoRun = null; // the save in flight
+    const autoSave = () => {
+      clearTimeout(autoTimer);
+      autoTimer = null;
+      if (!existing || !dirty()) return Promise.resolve(true);
+      if (autoRun) return autoRun.then(() => autoSave());
+      const sent = snapshot();
+      note.textContent = 'Saving…';
+      note.className = 'note';
+      autoRun = S.widgets.save(input(), existing.id).then((r) => {
+        ws = r.state;
+        baseline = sent;
+        existing = ws.widgets.find((x) => x.id === existing.id) || existing;
+        renderList();
+        flash(note, 'Saved automatically.', 'ok');
+        return true;
+      }, (err) => { flash(note, `Not saved yet: ${clean(err)}`, 'err'); return false; }).finally(() => { autoRun = null; });
+      return autoRun;
+    };
+    const later = (ms) => { if (!existing) return; clearTimeout(autoTimer); autoTimer = setTimeout(autoSave, ms); };
+    // Typing waits a moment; a picked option or a switch saves at once. Keys and secrets save when you leave the field,
+    // so a half-pasted key is never sent to the service.
+    form.addEventListener('input', (e) => { if (e.target.type !== 'password') later(1000); });
+    form.addEventListener('change', () => later(250));
+    form.addEventListener('click', (e) => { if (e.target.closest('button') && !e.target.closest('.widget-buttons, .leave-bar, .subhead')) later(600); }); // added or removed places, example recipes
+    formGuard = () => dirty();
+    // Leaving with changes that aren't saved: save them, throw them away, or stay.
+    async function requestClose() {
+      if (existing && dirty()) { if (await autoSave()) { closeForm(); flash(listNote, 'Saved.', 'ok'); return; } }
+      if (!dirty()) { closeForm(); return; }
+      leave.hidden = false;
+      leave.querySelector('button')?.focus();
+    }
     renderList();
-    if (!existing) (inputs.city || inputs.url || inputs.list || inputs.token || inputs.clientId)?.focus();
+    if (!existing) (inputs.city || inputs.url || inputs.list || inputs.symbol || inputs.label || inputs.recipe || inputs.token || inputs.clientId)?.focus();
     window.scrollTo?.({ top: 0 });
   }
 

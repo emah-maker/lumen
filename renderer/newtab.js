@@ -51,6 +51,7 @@ function lookOf(l) {
     searchWidth: window.WidgetSystem.cleanSearchWidth(look.searchWidth) || 640,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
     sections: { header: sections.header !== false, favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
+    glass: ['frosted', 'clear'].includes(look.widgetGlass) ? look.widgetGlass : 'solid', // [look] Widget cards
     packed: look.widgetsPacked === true, // off unless switched on: cards stay where they are put. [widgets] Keep widgets packed
     imageColors: Array.isArray(look.imageColors) ? look.imageColors.filter((c) => hex(c)).slice(0, 3) : [], // [widgets] Match screen colours
   };
@@ -81,6 +82,7 @@ function applyLook(look) {
   document.getElementById('clock').hidden = !look.clock;
   window.newtabSize?.apply(look.clockSize, look.searchWidth); // [look] --clock-size / --search-w on <main>
   document.body.dataset.wpack = look.packed ? '1' : '0';
+  document.body.dataset.wglass = look.glass;
   document.body.classList.toggle('calm', look.still || look.lite); // [widgets] no wiggle or sliding with Reduce motion or Performance mode
   applyEffect(look);
   window.applyWidgetColors?.(); // [widgets] cards set to Match screen follow the accent, background and theme
