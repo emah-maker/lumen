@@ -46,6 +46,7 @@
     clearChatView();
     showHistory(view.items);
     refreshUsage(view.usage);
+    window.chatUsageMeter?.refresh(); // the context bar follows the chat that is open now
     closePanel(false);
     prompt.focus();
     return true;
