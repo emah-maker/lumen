@@ -538,7 +538,7 @@ function setupAiAgents(deps) {
 
   return {
     automationClients: () => automationProxy?.clients() || 0, // [passwords] CDP clients connected now (no filling while one is)
-    start() {
+    start({ after = null } = {}) {
       // Always listening (token-authenticated, profile-local), so an agent run while the setting is off
       // gets "turned off in Lumen settings" instead of its bridge deciding Lumen isn't running and
       // trying to launch it. Sessions are refused while it's off (enabled() below).
@@ -546,11 +546,12 @@ function setupAiAgents(deps) {
       startAutomation();
       // Looking for the CLIs (several processes, and loading claude-code.js/grok-build.js) waits until the first tab
       // has loaded, not while it does.
-      setTimeout(() => {
+      const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
         Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false)])
           .then(() => { detecting = false; ui()?.send('models-updated'); });
-      }, 2500);
+      };
+      if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
     },
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild):/.test(String(id)),
