@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Grok Build says which model is answering, the way Claude Code shows its auto-picked model: a reply starts with "Default · grok-4.7" (or the name a picked model resolved to) whenever the model changes, and Grok now knows it is Grok and which model it is, instead of being told it is Claude. The picker keeps listing Grok's models when `grok models` fails (the last list, else Grok's own catalog, else the known ones).
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

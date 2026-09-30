@@ -440,6 +440,63 @@ async function grokRuns() {
     const said = crashed.events.find((e) => e.type === 'error')?.text || '';
     check('Grok Build: the MCP wait log line never shows up as error text', /panicked at the disco/.test(said) && !/wait_for_mcp/.test(said), said);
   }
+  // ---- Grok Build's model: the picked one on the argv, the one Grok reports as the run's model and
+  // at the top of the reply (like Claude Code's "Auto · Sonnet"), and the picker's fallback list.
+  {
+    const initM = { ...gbInit, model: 'grok-4.7' };
+    const reply = [gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), { type: 'assistant', message: { model: 'grok-4.7', content: [{ type: 'text', text: 'Hi.' }] } }, gbDone('Hi.')];
+    const picked = await fakeGrokRun([initM, ...reply], { run: { model: 'grok-4.6' } });
+    check('Grok Build run: the chosen model goes on the argv as --model <id>', flag(picked.spawned.argv, '--model') === 'grok-4.6' && picked.spawned.argv.filter((a) => a === '--model').length === 1, picked.spawned.argv.join(' '));
+    check('Grok Build run: the model Grok reports (init event) is the run\'s model, and announced when it differs from the pick', picked.out.model === 'grok-4.7' && picked.events.find((e) => e.type === 'notice')?.text === 'grok-4.6 · grok-4.7', JSON.stringify({ model: picked.out.model, events: picked.events.filter((e) => e.type === 'notice') }));
+    const dflt = await fakeGrokRun([initM, ...reply]);
+    const notices = dflt.events.filter((e) => e.type === 'notice').map((e) => e.text);
+    check('Grok Build run on its default: no --model, and the reply starts with "Default · <model>" before the text', !dflt.spawned.argv.includes('--model') && JSON.stringify(notices) === '["Default · grok-4.7"]' && dflt.events.findIndex((e) => e.type === 'notice') < dflt.events.findIndex((e) => e.type === 'text'), JSON.stringify(dflt.events.map((e) => e.type)));
+    const again = await fakeGrokRun([initM, ...reply], { run: { shownModel: 'grok-4.7' } });
+    check('Grok Build run: a model already shown in this chat is not announced again', !again.events.some((e) => e.type === 'notice') && again.out.model === 'grok-4.7', JSON.stringify(again.events.filter((e) => e.type === 'notice')));
+    const same = await fakeGrokRun([initM, ...reply], { run: { model: 'grok-4.7' } });
+    check('Grok Build run: a picked model served as itself needs no notice', !same.events.some((e) => e.type === 'notice'), JSON.stringify(same.events.filter((e) => e.type === 'notice')));
+    const noInit = await fakeGrokRun([gbInit, ...reply]);
+    check('Grok Build run: without a model in init, the assistant message\'s model is the run\'s', noInit.out.model === 'grok-4.7', String(noInit.out.model));
+    check('servedModel: init, then the reply, then a single modelUsage key; nothing flag-like', gb.servedModel({ init: 'a-1', assistant: 'b' }) === 'a-1' && gb.servedModel({ assistant: 'b' }) === 'b' && gb.servedModel({ result: { modelUsage: { 'grok-4.7-build': {} } } }) === 'grok-4.7-build' && gb.servedModel({ result: { modelUsage: { a: {}, b: {} } } }) === null && gb.servedModel({ init: '--x' }) === null && gb.servedModel() === null, 'servedModel');
+    check('modelNotice: label text', gb.modelNotice({ picked: 'default', served: 'grok-4.7' }) === 'Default · grok-4.7' && gb.modelNotice({ picked: 'grok-4.7-build-fast', served: 'grok-4.7-build-fast-0915' }) === 'grok-4.7-build-fast · grok-4.7-build-fast-0915' && gb.modelNotice({ picked: 'grok-4.6', served: 'grok-4.6' }) === null && gb.modelNotice({ picked: 'default', served: 'grok-4.7', shown: 'grok-4.7' }) === null && gb.modelNotice({ picked: 'default', served: null }) === null, 'modelNotice');
+  }
+  {
+    // `grok models` failing: the picker still gets models (last list, else Grok's catalog, else the known ids); signed out gets none.
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-gbfallback-'));
+    const savedHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = path.join(data, 'user-grok');
+    let reply = { err: new Error('timed out'), out: '' };
+    const exec = (bin, argv, opts, cb) => setImmediate(() => cb(reply.err, reply.out, ''));
+    try {
+      const engine = new gb.GrokBuildEngine({ userData: data, gate: async () => null, exec });
+      engine.detect = async () => 'grok.exe';
+      const none = await engine.status(true);
+      check('grok models failing, nothing known: the fallback list', JSON.stringify(none.models) === JSON.stringify(gb.FALLBACK_MODELS) && none.signedIn === 'unknown', JSON.stringify(none));
+      fs.writeFileSync(path.join(gb.grokHomeFor(data), 'models_cache.json'), JSON.stringify({ models: { 'grok-5': { info: {} }, 'grok-4.7': { info: {} } } }));
+      const catalog = await engine.status(true);
+      check('grok models failing: Grok\'s own catalog ids before the built-in list', JSON.stringify(catalog.models) === '["grok-5","grok-4.7"]', JSON.stringify(catalog.models));
+      reply = { err: null, out: 'You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.6\n' };
+      await engine.status(true);
+      reply = { err: new Error('timed out'), out: '' };
+      const last = await engine.status(true);
+      check('grok models failing after a good list: the last list is kept', JSON.stringify(last.models) === '["grok-4.7","grok-4.6"]', JSON.stringify(last.models));
+      reply = { err: null, out: 'You are not authenticated.\n\nDefault model: grok-4.6\n' };
+      check('grok models signed out: no fallback models', (await engine.status(true)).models.length === 0, 'signed out');
+      const opts = require('../features/ai-agents').grokBuildOptions({ signedIn: 'unknown', models: none.models });
+      check('fallback list: picker entries grouped under the Grok account', JSON.stringify(opts.map((o) => o.id)) === JSON.stringify(['grokbuild:default', ...gb.FALLBACK_MODELS.map((m) => `grokbuild:${m}`)]) && opts.every((o) => o.group === 'Your Grok account'), JSON.stringify(opts.map((o) => o.id)));
+    } finally {
+      if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
+      fs.rmSync(data, { recursive: true, force: true });
+    }
+  }
+  {
+    // What Grok Build is told about itself, so "what model are you?" is right (Claude Code's own CLI names its model).
+    const { systemFor, grokBuildNote, cliSystemPrompt } = require('../agent');
+    const g = systemFor({ model: 'grokbuild:grok-4.7' });
+    check('Grok Build system prompt: it is Grok, never told it is Claude', /^You are Grok, made by xAI/.test(g) && !/You are Claude/.test(g) && /^You are Claude/.test(systemFor({ model: 'claudecode:opus' })), g.slice(0, 80));
+    check('Grok Build note names the model answering', /The model answering is grok-4\.7 /.test(grokBuildNote('grok-4.7')) && !/model answering/.test(grokBuildNote(null)), grokBuildNote('grok-4.7').slice(-160));
+    check('background Grok Build prompt names a picked model', /model answering is grok-4\.6/.test(cliSystemPrompt({ model: 'grokbuild:grok-4.6' }, 'grokbuild', { background: true })) && !/model answering/.test(cliSystemPrompt({ model: 'grokbuild:default' }, 'grokbuild')), 'cliSystemPrompt');
+  }
 }
 
 // ---- CLI engines' model choice: picker ids -> --model, and the picker entries themselves

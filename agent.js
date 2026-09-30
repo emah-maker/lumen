@@ -349,10 +349,13 @@ function historyFor(messages, model) {
 }
 
 function systemFor(settings) {
-  const onClaude = providers.splitModel(settings.model).provider === 'anthropic';
+  // A Grok Build pick ('grokbuild:…') has no provider of its own, so splitModel reads it as Claude's:
+  // it is told it is Grok instead (its model is named in GROK_BUILD_NOTE, see grokBuildNote).
+  const onGrokBuild = String(settings.model || '').startsWith('grokbuild:');
+  const onClaude = !onGrokBuild && providers.splitModel(settings.model).provider === 'anthropic';
   const base = onClaude
     ? SYSTEM
-    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', 'You are the AI assistant built into Lumen, a web browser.')
+    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : 'You are the AI assistant built into Lumen, a web browser.')
       + '\n\nweb_search returns top results from DuckDuckGo; open results with read_urls or navigate.';
   return settings.adhdMode ? base + ADHD_STYLE : base;
 }
@@ -370,10 +373,18 @@ const GROK_BUILD_NOTE = `
 
 You are running inside Grok Build, connected to the user's Lumen browser over MCP. Lumen's browser tools are deferred: find them with search_tool (for example "lumen read page" or "lumen navigate"), then call them with use_tool using the exact names it returns, such as lumen__read_page, lumen__navigate, lumen__click and lumen__web_search. You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error. If search_tool finds no Lumen tools yet, the connection is still starting: search once more, and if they are still missing, say so plainly. Your reply appears in Lumen's sidebar chat.`;
 
+// GROK_BUILD_NOTE plus the model answering, so "what model are you?" gets the real one. Claude
+// Code's own system prompt names its model; Grok Build is told here. `model`: the model Grok reported
+// for this chat's pick, else the picked id, else the default `grok models` reports; null: unknown.
+function grokBuildNote(model) {
+  return model ? `${GROK_BUILD_NOTE} The model answering is ${model} (xAI's Grok); if the user asks which model you are, say ${model}.` : GROK_BUILD_NOTE;
+}
+
 // The system prompt of a CLI engine run. `background`: the run is a background task, whose final reply
 // is saved as the task's result instead of showing in the sidebar chat (features/background-runner.js).
 function cliSystemPrompt(settings, engine, { background = false } = {}) {
-  const note = engine === 'grokbuild' ? GROK_BUILD_NOTE : CLAUDE_CODE_NOTE;
+  const picked = engineModel(settings.model);
+  const note = engine === 'grokbuild' ? grokBuildNote(picked === 'default' ? null : picked) : CLAUDE_CODE_NOTE;
   return systemFor(settings) + (background ? note.replace("Your reply appears in Lumen's sidebar chat.", "You are running as a background task: your final reply is saved as the task's result.") : note);
 }
 
@@ -1089,6 +1100,10 @@ class Agent {
   async grokBuildTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
     const resume = Boolean(settings.gbSession);
+    // Which model this run is, as far as Lumen knows before it starts (see grokBuildNote).
+    const picked = engineModel(settings.model);
+    const known = (settings.gbShownFor === settings.model && settings.gbShown)
+      || (picked !== 'default' ? picked : this.engines.grokbuild.statusCache?.value?.detail || null);
     let text = prompt;
     let historyImages = [];
     if (!resume && messages.length > 1) {
@@ -1104,12 +1119,15 @@ class Agent {
       images: [...historyImages, ...images],
       sessionId: settings.gbSession || crypto.randomUUID(),
       resume,
-      model: engineModel(settings.model), // 'default' or one of `grok models`' ids
+      model: picked, // 'default' or one of `grok models`' ids
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
-      systemPrompt: systemFor(settings) + GROK_BUILD_NOTE,
+      systemPrompt: systemFor(settings) + grokBuildNote(known),
+      shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
       signal,
       emit,
     });
+    // The model Grok says it used, for this pick: the next reply's notice and system prompt use it.
+    if (out.model) { settings.gbShown = out.model; settings.gbShownFor = settings.model; }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     // A plan-limit failure carries the reset time when Grok's message named one (out.planLimit); a
     // finished turn clears it. The log may answer with a budget notice (features/usage.js).
@@ -2298,4 +2316,4 @@ function describeError(err, auth = null) {
 // Tools offered to external agents over MCP: every browser tool plus the client-side web search.
 const EXTERNAL_TOOLS = OTHER_TOOLS;
 
-module.exports = { requestFor, systemFor, Agent, cliSystemPrompt, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };
+module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };
