@@ -203,7 +203,13 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   // "GPT-5"); a name that starts with the query ranks first, then a word that does, then anything else.
   // Search: every word must start a word somewhere (renderer/picker-match.js), best matches first.
   const PM = window.pickerMatch;
-  const score = (o, words) => PM.score({ name: nameOf(o), id: o.value.replace(/^[a-z]+:/, ''), group: `${groupOf(o)} ${o.dataset.provider || ''}`.trim(), badges: (o.dataset.badges || '').replace(/,/g, ' '), detail: (String(o.dataset.detail || '').match(/\$?[\d.]+[KkMm]?/g) || []).join(' ') }, words.join(' '));
+  const unitWord = (w) => /^\$|^\d+(\.\d+)?[km]$/i.test(w); // "$3", "128k", "1m": a size or a price, not a version
+  const score = (o, words) => PM.score({
+    name: nameOf(o), id: o.value.replace(/^[a-z]+:/, ''),
+    group: `${o.parentElement?.dataset?.search ?? groupOf(o)} ${o.dataset.provider || ''}`.trim(),
+    badges: (o.dataset.badges || '').replace(/,/g, ' '),
+    detail: words.some(unitWord) ? (String(o.dataset.detail || '').match(/\$?\d+(\.\d+)?[KkMm]?/g) || []).join(' ') : '',
+  }, words.join(' '));
   function render() {
     const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
     const all = options();
@@ -406,7 +412,10 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   menu.addEventListener('keydown', onKey);
   // The list keeps its own scroll (overscroll-behavior in picker.css); a wheel over the heading, search or chips
   // doesn't scroll the page behind, which would close the menu.
-  menu.addEventListener('wheel', (e) => { if (!list.contains(e.target)) e.preventDefault(); }, { passive: false });
+  menu.addEventListener('wheel', (e) => {
+    const atEnd = e.deltaY < 0 ? list.scrollTop <= 0 : list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
+    if (!list.contains(e.target) || list.scrollHeight <= list.clientHeight || atEnd) e.preventDefault();
+  }, { passive: false });
   sync();
   // setLoading(true): the list says it is loading (the OpenRouter catalog's first fetch); refresh(): redraw if open.
   return { button, menu, sync, open, close, setLoading: (v) => { loading = Boolean(v); slow = false; clearTimeout(slowTimer); if (loading) slowTimer = setTimeout(() => { slow = true; if (!menu.hidden) render(); }, 3000); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) render(); } };

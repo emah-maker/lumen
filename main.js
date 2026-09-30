@@ -388,7 +388,7 @@ function modelOptions() {
       const isFree = provider === 'openrouter' && (/:free$/.test(model) || providers.openRouterInfo(model)?.free || providers.openRouterInfo(model)?.pricePerM === 0);
       const badges = [...new Set([...(isFree ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
       const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
-      const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: orInfo.context >= 1e6 ? `${Math.round(orInfo.context / 1e5) / 10}M` : `${Math.round(orInfo.context / 1000)}K` }) : '', orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: orInfo.pricePerM < 1 ? orInfo.pricePerM.toFixed(2) : String(Math.round(orInfo.pricePerM * 10) / 10) })) : ''].filter(Boolean).join(' · ') : '';
+      const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: orInfo.context >= 1e6 ? `${Math.round(orInfo.context / 1e5) / 10}M` : `${Math.round(orInfo.context / 1000)}K` }) : '', orInfo.pricePerM < 0 ? t('models.priceVaries') : orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: orInfo.pricePerM < 1 ? orInfo.pricePerM.toFixed(2) : String(Math.round(orInfo.pricePerM * 10) / 10) })) : ''].filter(Boolean).join(' · ') : '';
       return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
     });
     if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
@@ -5301,7 +5301,7 @@ ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
 // openrouter.ai asks the user, then redirects to a one-time loopback address with a code that is
 // exchanged for a key; the key is stored encrypted like a pasted one).
 ipcMain.handle('openrouter:models', async () => {
-  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE(), onRefresh: () => modelsChanged() });
+  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE(), onRefresh: () => refreshModels('openrouter') });
   return models.map(({ id, name, tools, context, pricePerM, free }) => ({ id, name, tools, context, pricePerM, free }));
 });
 function saveProviderKey(provider, key) {

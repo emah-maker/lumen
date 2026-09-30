@@ -78,16 +78,18 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
     // Vendors with one or two models share an "Other vendors" section at the end (each row keeps its vendor's name
     // as its tag, so a search for it still finds them), instead of dozens of tiny headings.
     const other = Object.assign(document.createElement('optgroup'), { label: tr('models.otherVendors', 'Other vendors') });
+    other.dataset.search = ''; // found by each row's vendor, not by the words "other vendors"
     const kept = [];
     for (const [v, g] of vendors) {
       if (FIRST.includes(v) || g.children.length > 2) { kept.push([v, g]); continue; }
-      for (const o of [...g.children]) { o.dataset.provider = g.label; other.append(o); }
+      for (const o of [...g.children]) { o.dataset.provider = g.label; o.dataset.detail = [g.label, o.dataset.detail].filter(Boolean).join(' · '); other.append(o); }
     }
     const out = kept.sort((a, b) => rank(a[0]) - rank(b[0]) || a[1].label.localeCompare(b[1].label)).map(([, g]) => g);
     if (other.children.length) out.push(other);
     return out;
   }
   let shownKey = '';
+  const catalogKey = (models) => (models?.length ? models.map((m) => `${m.id}:${m.pricePerM ?? ''}:${m.context || ''}`).join('|') : '');
   async function open(query = '') {
     ensure();
     select.value = mainSelect.value;
@@ -95,7 +97,7 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
       picker.open(query);
       // A fresher list than the one drawn (main refreshes a day-old copy behind the scenes): swapped in quietly.
       const models = await Promise.resolve().then(fetchModels).catch(() => null);
-      const key = models?.length ? `${models.length}|${models[0].id}|${models[models.length - 1].id}` : '';
+      const key = catalogKey(models);
       if (key && key !== shownKey && !picker.menu.hidden) { shownKey = key; select.replaceChildren(...build(models)); select.value = mainSelect.value; picker.refresh(); }
       return;
     }
@@ -109,7 +111,7 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
     loading = false;
     picker.setLoading(false);
     if (!models?.length) { const open = !picker.menu.hidden; picker.close(open); if (open) onFail?.(tr('models.loadFailed', 'Couldn’t load the model list.')); return; }
-    shownKey = `${models.length}|${models[0].id}|${models[models.length - 1].id}`;
+    shownKey = catalogKey(models);
     select.replaceChildren(...build(models));
     select.value = mainSelect.value;
     picker.refresh();
