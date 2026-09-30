@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lumen docs</title>
+  <meta name="description" content="Lumen's documentation: the user guide, architecture, MCP tool reference, settings reference, custom widgets and changelog.">
+  <link rel="icon" href="assets/icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/icon.png" alt="">Lumen</a>
+      <nav aria-label="Main">
+        <a class="hide-sm" href="./#features">Features</a>
+        <a class="hide-sm" href="./#install">Install</a>
+        <a href="docs.html" aria-current="page">Docs</a>
+        <a href="https://github.com/emah-maker/lumen">GitHub</a>
+        <button class="theme-btn" type="button" aria-label="Switch light or dark theme" title="Theme">◐</button>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap docs">
+    <aside aria-label="Documentation">
+      <h5>Docs</h5>
+      <ul class="pages" id="pages"></ul>
+      <div class="toc-wrap"><h5>On this page</h5><ul class="toc" id="toc"></ul></div>
+    </aside>
+    <main class="md" id="doc"><p class="loading">Loading…</p></main>
+  </div>
+
+  <footer>
+    <div class="wrap">
+      <span>Lumen · GPL-3.0</span>
+      <div class="links">
+        <a href="https://github.com/emah-maker/lumen">GitHub</a>
+        <a href="https://github.com/emah-maker/lumen/releases">Releases</a>
+        <a href="https://github.com/emah-maker/lumen/issues">Issues</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="site.js"></script>
+  <script src="docs.js"></script>
+</body>
+</html>

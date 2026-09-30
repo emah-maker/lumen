@@ -4,7 +4,7 @@ const globals = require('globals');
 
 module.exports = [
   // preload.bundle.js is generated from preload.js (scripts/bundle-preload.js); lint the source.
-  { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**', 'preload.bundle.js', 'vendor/**'] },
+  { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**', 'preload.bundle.js', 'vendor/**', '_site/**'] },
   js.configs.recommended,
   {
     languageOptions: { ecmaVersion: 'latest', sourceType: 'commonjs', globals: { ...globals.node } },
@@ -18,6 +18,8 @@ module.exports = [
   },
   // Preloads run with Node's require but inside a page.
   { files: ['**/*preload.js'], languageOptions: { globals: { ...globals.browser } } },
+  // The GitHub Pages site (site/, built by scripts/build-site.js): plain browser scripts; marked and DOMPurify come from cdnjs.
+  { files: ['site/**/*.js'], languageOptions: { sourceType: 'script', globals: { ...globals.browser, marked: 'readonly', DOMPurify: 'readonly' } } },
   // Renderer pages load plain <script> files that share one global scope.
   {
     files: ['renderer/**/*.js'],

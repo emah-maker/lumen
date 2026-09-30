@@ -1,0 +1,47 @@
+# Publishes Lumen's website (site/ plus README.md, CHANGELOG.md and docs/, assembled by
+# scripts/build-site.js) to GitHub Pages whenever those change on main.
+# One-time setup by a repository admin: Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', 'docs/**', 'README.md', 'CHANGELOG.md', 'assets/icon.png', 'scripts/build-site.js', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+# Read-only except what the deploy job needs to publish to Pages.
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push replaces a queued one, a running one finishes.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Node's standard library only: no npm install.
+      - run: node scripts/build-site.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

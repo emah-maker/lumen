@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lumen: every AI, one browser</title>
+  <meta name="description" content="Lumen is a fast, calm Chromium browser with an AI in the sidebar: Claude (with your own Claude account through Claude Code), ChatGPT, Gemini, Grok or OpenRouter, and any AI agent can drive it over MCP.">
+  <meta property="og:title" content="Lumen: every AI, one browser">
+  <meta property="og:description" content="A Chromium browser with the AI you like built into the sidebar. It reads the page and acts on it, and asks before it does.">
+  <meta property="og:image" content="docs/media/sidebar-agent.png">
+  <link rel="icon" href="assets/icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/icon.png" alt="">Lumen</a>
+      <nav aria-label="Main">
+        <a class="hide-sm" href="#features">Features</a>
+        <a class="hide-sm" href="#agents">For agents</a>
+        <a class="hide-sm" href="#install">Install</a>
+        <a href="docs.html">Docs</a>
+        <a href="https://github.com/emah-maker/lumen">GitHub</a>
+        <button class="theme-btn" type="button" aria-label="Switch light or dark theme" title="Theme">◐</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero wrap">
+      <span class="eyebrow">Free and open source · Windows and macOS</span>
+      <h1>Every AI, <span class="grad">one browser.</span></h1>
+      <p class="lede">Lumen is a fast, calm Chromium browser with an AI built into the sidebar. Bring the one you like, switch mid-conversation, or let any AI agent drive it over MCP. It reads the page you're on and acts on it, and it asks before it does.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/emah-maker/lumen/releases/latest">Download Lumen<span class="ver" data-latest></span></a>
+        <a class="btn ghost" href="docs.html">Read the docs</a>
+      </div>
+      <p class="meta">GPL-3.0 · no telemetry · <a href="https://github.com/emah-maker/lumen">source on GitHub</a></p>
+
+      <figure class="frame" style="margin-bottom:0">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Claude · your account (Claude Code) — “open Hacker News and list the top five stories”</span></div>
+        <img src="docs/media/agent-task.gif" width="980" height="560" alt="Lumen's sidebar, running Claude Code, opens Hacker News and lists the top five stories with their points">
+      </figure>
+      <p class="caption">A real, unedited run of about 18 seconds. The capture profile auto-allows actions, so the approval card you'd normally see before the AI first acts on a site isn't shown. <a href="docs/media/agent-task.mp4">MP4</a></p>
+
+      <ul class="models" aria-label="Supported AI">
+        <li><b>Claude</b> · your own account via Claude Code</li>
+        <li><b>Claude</b> · Opus, Sonnet, Haiku, Fable by key</li>
+        <li><b>ChatGPT</b> · OpenAI</li>
+        <li><b>Gemini</b></li>
+        <li><b>Grok</b> · xAI and Grok Build</li>
+        <li><b>OpenRouter</b></li>
+      </ul>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>An AI that does things, not just chats</h2>
+          <p>Every model gets the same browser tools, and every action goes through the same approvals.</p>
+        </div>
+
+        <div class="feature">
+          <div class="text">
+            <h3>It reads the page and operates the browser</h3>
+            <p><kbd>Ctrl</kbd>+<kbd>J</kbd> opens the sidebar. The page you're on goes with your message, whichever AI answers.</p>
+            <ul>
+              <li><b>Low-level actions:</b> click, type, keys, scroll, hover, tabs, back and forward.</li>
+              <li><b>High-level actions:</b> click by visible text, <code>fill_form</code> by field labels, and <code>read_urls</code> to read up to 6 pages in parallel.</li>
+              <li><b>Across tabs:</b> type <code>@</code> to attach open tabs to a message, or read several without switching.</li>
+              <li><b>PDFs, scripts and search:</b> <code>read_pdf</code> after you allow that file, <code>run_script</code> for bulk edits, and web search.</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="docs/media/sidebar-agent.png" loading="lazy" alt="The sidebar agent after a task, showing each step it took"></div>
+        </div>
+
+        <div class="feature flip">
+          <div class="text">
+            <h3>It asks before it acts</h3>
+            <ul>
+              <li><b>New sites:</b> the first click, keypress or script on a site in a chat shows a card for you to allow it.</li>
+              <li><b>Your accounts:</b> pages are read signed out. Reading as you (“check my grades”) asks first: No, Just this once, or Always for that site.</li>
+              <li><b>Sensitive steps:</b> it stops before purchases, payments, messages or deleting data, and never types passwords or card numbers.</li>
+              <li><b>Untrusted content:</b> page text and search results reach the model marked as data, not instructions.</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="docs/media/mcp-approval.png" loading="lazy" alt="An approval card in the sidebar: an external agent asks to interact with a site"></div>
+        </div>
+
+        <div class="feature">
+          <div class="text">
+            <h3>Tabs that organize themselves</h3>
+            <p>Group automatically by site or by topic. Topics are found on your computer from titles and addresses, like recipes, one trip, or a library's docs. You can let an AI name the groups if you like.</p>
+          </div>
+          <div class="shot"><img src="docs/media/tab-groups.gif" loading="lazy" alt="Tabs about several topics, grouped automatically into named, coloured groups"></div>
+        </div>
+
+        <div class="feature flip">
+          <div class="text">
+            <h3>A start page that's yours</h3>
+            <p>Widgets sit around the search box: weather, world clock, calendar, Todoist, Gmail, Slack, GitHub, headlines, markets, a TradingView chart or watchlist synced from your account, notes, a countdown, a Pomodoro timer, and your own custom cards.</p>
+            <p>You can move, resize and edit them right on the page, and make them solid, frosted or clear. Search or ask the AI from the same box.</p>
+          </div>
+          <div class="pair">
+            <div class="shot"><img src="docs/media/newtab-light.png" loading="lazy" alt="Lumen's new-tab page in the light theme"></div>
+            <div class="shot"><img src="docs/media/newtab-dark.png" loading="lazy" alt="Lumen's new-tab page in the dark theme"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>A real browser underneath</h2>
+          <p>Chromium, with the parts you'd expect and a few you wouldn't.</p>
+        </div>
+        <div class="grid">
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6l8-3z"/></svg></div><h4>Built-in ad blocker</h4><p>uBlock Origin–compatible lists, built into the browser rather than an extension. Toggle it per site.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h4>Saved passwords, opt-in</h4><p>Off by default. Encrypted with your OS keychain, filled only when you click, and never readable by the AI.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 3h6v4H9zM5 7h14v14H5z"/></svg></div><h4>Chrome extensions</h4><p>Install from the Chrome Web Store with <i>Add to Lumen</i>. Their buttons appear in the toolbar.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></div><h4>Private by default</h4><p>No telemetry. Background reading runs without your cookies, and the current chat is encrypted at rest.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3h9l3 3v15H6z"/><path d="M9 12h6M9 16h6"/></svg></div><h4>PDFs and local files</h4><p>Chromium's own PDF viewer, from the web or from disk. Open files with <kbd>Ctrl</kbd>+<kbd>O</kbd> or by dropping them on the window.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></div><h4>Downloads panel</h4><p>Speed and time left, pause and resume, and drag finished files straight into Finder or Explorer.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></div><h4>Claude usage meter</h4><p>Your Claude plan's 5-hour and weekly limits, with reset times and how much of them Lumen used.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg></div><h4>Updates that explain themselves</h4><p>New releases install themselves, and a “What's new” card shows once afterwards. You can switch the card off.</p></div>
+          <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h18M3 12h18M3 17h12"/></svg></div><h4>Import in one step</h4><p>Bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox. Passwords and cookies are never read.</p></div>
+        </div>
+        <figure class="frame" style="max-width:900px">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>lumen://settings</span></div>
+          <img src="docs/media/settings.png" loading="lazy" alt="Lumen's settings page">
+        </figure>
+      </div>
+    </section>
+
+    <section id="agents">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>Drive it from any agent</h2>
+          <p>Lumen is an MCP server. Claude Code, Codex, Gemini CLI, Cursor or Claude Desktop get the same 28 tools the sidebar uses, with the same approvals.</p>
+        </div>
+        <div class="two">
+          <div>
+            <div class="tabs" role="tablist" aria-label="MCP client">
+              <button type="button" role="tab" aria-selected="true" aria-controls="c-mac" id="t-mac">Claude Code · macOS</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="c-win" id="t-win">Claude Code · Windows</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="c-pw" id="t-pw">Playwright (CDP)</button>
+            </div>
+            <pre id="c-mac" role="tabpanel" aria-labelledby="t-mac"><code>claude mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- \
+  /Applications/Lumen.app/Contents/MacOS/Lumen \
+  /Applications/Lumen.app/Contents/Resources/app/mcp.js</code></pre>
+            <pre id="c-win" role="tabpanel" aria-labelledby="t-win" hidden><code>claude.cmd mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ^
+  "C:\Users\&lt;you&gt;\AppData\Local\Programs\Lumen\Lumen.exe" ^
+  "C:\Users\&lt;you&gt;\AppData\Local\Programs\Lumen\resources\app\mcp.js"</code></pre>
+            <pre id="c-pw" role="tabpanel" aria-labelledby="t-pw" hidden><code>// Settings → You and AI → Allow automation tools, then Copy address
+const browser = await chromium.connectOverCDP('http://127.0.0.1:9222/&lt;token&gt;');
+const page = browser.contexts()[0].pages()[0]; // your open tabs</code></pre>
+            <p class="note">Codex, Gemini CLI and the other clients: see <a href="docs.html?p=readme#use-lumen-from-claude-code-codex-gemini-cli">the guide</a>. Every tool and its parameters: <a href="docs.html?p=mcp-tools">MCP tool reference</a>.</p>
+          </div>
+          <ul class="checks">
+            <li><b>Authenticated local channel.</b> A per-user named pipe or Unix socket, with an HMAC challenge-response on a token in your profile.</li>
+            <li><b>Every new site still needs your OK.</b> Auto-allow never applies to outside agents.</li>
+            <li><b>You can see it working.</b> The toolbar says “Lumen is being driven by …”, each call shows as a step, and <b>Stop</b> disconnects it.</li>
+            <li><b>Token-efficient tools.</b> Compact page outlines, diffs, find and batched steps keep agent runs cheap.</li>
+            <li><b>Your Claude account.</b> The sidebar can run your own <code>claude</code> CLI headless, so Lumen never sees your claude.ai login.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" class="alt">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>Install</h2>
+          <p>Download the latest build from <a href="https://github.com/emah-maker/lumen/releases/latest">GitHub Releases</a>.</p>
+        </div>
+        <table class="dl">
+          <thead><tr><th>Computer</th><th>File</th></tr></thead>
+          <tbody>
+            <tr><td>Windows 10/11 (x64)</td><td><code>Lumen-Setup-&lt;version&gt;.exe</code> (installer) or <code>Lumen-&lt;version&gt;-win-x64.zip</code></td></tr>
+            <tr><td>Mac with Apple silicon</td><td><code>Lumen-&lt;version&gt;-mac-arm64.dmg</code></td></tr>
+            <tr><td>Mac with Intel</td><td><code>Lumen-&lt;version&gt;-mac-x64.dmg</code></td></tr>
+          </tbody>
+        </table>
+        <p class="note"><b>Windows:</b> the builds aren't code-signed, so SmartScreen may warn you. Choose <i>More info → Run anyway</i>. With Smart App Control on, use the zip. <b>Mac:</b> the app is ad-hoc signed, so right-click it in Applications and choose <i>Open</i> the first time. More in the <a href="docs.html?p=readme#install">install guide</a>.</p>
+      </div>
+    </section>
+
+    <section id="docs">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>Documentation</h2>
+          <p>The same pages as the repository, rendered here.</p>
+        </div>
+        <div class="grid">
+          <a class="card" href="docs.html?p=readme"><h4>User guide</h4><p>Install, the AI sidebar, approvals, widgets, shortcuts, MCP and Playwright, privacy, and building from source.</p></a>
+          <a class="card" href="docs.html?p=architecture"><h4>Architecture</h4><p>Processes, the UI and tabs, the AI and its approvals, outside agents, and updates.</p></a>
+          <a class="card" href="docs.html?p=mcp-tools"><h4>MCP tool reference</h4><p>Every tool an agent can call, with its parameters.</p></a>
+          <a class="card" href="docs.html?p=settings"><h4>Settings reference</h4><p>Every setting, its key in <code>settings.json</code>, and its default.</p></a>
+          <a class="card" href="docs.html?p=custom-widgets"><h4>Custom widgets</h4><p>The recipe format for your own new-tab cards, with examples.</p></a>
+          <a class="card" href="docs.html?p=changelog"><h4>Changelog</h4><p>What changed in each release.</p></a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>Lumen · GPL-3.0</span>
+      <div class="links">
+        <a href="https://github.com/emah-maker/lumen">GitHub</a>
+        <a href="https://github.com/emah-maker/lumen/releases">Releases</a>
+        <a href="https://github.com/emah-maker/lumen/blob/main/PRIVACY.md">Privacy</a>
+        <a href="https://github.com/emah-maker/lumen/blob/main/SECURITY.md">Security</a>
+        <a href="https://github.com/emah-maker/lumen/issues">Issues</a>
+      </div>
+    </div>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>
