@@ -356,7 +356,7 @@ jump.title = t('chat.jumpLatest');
 let jumping = 0; // (a jump's own scroll events don't count as the user scrolling away)
 const catchUp = () => { if (stuck && jumping) messages.scrollTop = messages.scrollHeight; };
 // The user scrolling (wheel, touch, keys) during a jump takes over: the jump no longer holds the view.
-for (const type of ['wheel', 'touchstart', 'keydown']) messages.addEventListener(type, () => { if (jumping) { jumping = 0; messages.removeEventListener('scrollend', catchUp); } }, { passive: true });
+for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) messages.addEventListener(type, (e) => { if (type === 'keydown' && e.target !== messages) return; if (jumping) { jumping = 0; messages.removeEventListener('scrollend', catchUp); } }, { passive: true });
 jump.addEventListener('click', () => {
   stuck = true;
   jumping = Date.now();
