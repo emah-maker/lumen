@@ -1467,6 +1467,9 @@ async function buildPrivacy(card) {
     toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'),
   );
 
+  // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
+  await buildPasswords(card);
+
   // Safe Browsing (features/safe-browsing.js)
   const sbNote = status('safe-browsing-status');
   const sbKey = h('div', { class: 'controls' });
@@ -1534,6 +1537,115 @@ async function buildPrivacy(card) {
   permissions.append(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults));
   permissions.append(stackRow('Site permissions', 'What you allowed or blocked. Revoke to be asked again.', granted));
   renderGranted();
+}
+
+// [passwords] Privacy and security → Passwords: the Save passwords switch, and a sub-page listing saved
+// logins (site and username; Show and Copy ask for Touch ID or a confirmation first), with Edit, Delete,
+// Import from a CSV export and Delete all. Passwords stay in the main process except the one being shown.
+async function buildPasswords(card) {
+  const P = S.passwords;
+  let pw = await P.state();
+  const WHY = {
+    unavailable: 'Your system’s secure storage (the Keychain on macOS, data protection on Windows) isn’t available, so Lumen can’t keep passwords safely. Saving passwords stays off.',
+    'basic-text': 'No system keyring (GNOME Keyring or KWallet) was found, so Lumen can’t keep passwords safely. Saving passwords stays off.',
+  };
+  const note = status('passwords-status');
+  const renderNote = () => {
+    const why = pw.refused || pw.unavailable;
+    if (why) flash(note, WHY[why] || WHY.unavailable, 'err');
+    else if (pw.error) flash(note, pw.error, 'err');
+    else flash(note, pw.count ? `${pw.count} saved password${pw.count === 1 ? '' : 's'}.` : 'No saved passwords.', '');
+  };
+  const input = h('input', { type: 'checkbox', class: 'switch', id: 'pref-savePasswords', role: 'switch', 'aria-label': 'Save passwords' });
+  input.checked = pw.enabled;
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    try { pw = await P.setEnabled(input.checked); } finally { input.disabled = false; }
+    input.checked = pw.enabled;
+    renderNote();
+    renderLogins();
+  });
+  const toggleRow = row('Save passwords', 'Offers to save a password when you sign in to a site, and fills it in when you click the key in the address bar. Never in private windows, and never on sites without a secure connection. Passwords are encrypted with your system’s keychain, and the AI in the sidebar, outside agents and page tools can’t read them.', input);
+  toggleRow.querySelector('.label').addEventListener('click', () => input.click());
+  toggleRow.querySelector('.text').append(note); // how many are saved, or why it can't turn on
+  card.group('Passwords').append(toggleRow);
+  renderNote();
+
+  const page = card.subpage('passwords', 'Saved passwords', 'See, edit and delete saved passwords, or import them.', 'passwords logins keychain import csv username');
+  const search = h('input', { type: 'search', class: 'grow', id: 'passwords-search', placeholder: 'Search sites and usernames', 'aria-label': 'Search saved passwords' });
+  const list = h('div', { class: 'list', id: 'passwords-list' });
+  const result = status('passwords-result');
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const MASK = '••••••••';
+  let logins = [];
+  const item = (l) => {
+    const secret = h('span', { class: 'mono', text: MASK, 'aria-label': 'Password hidden' });
+    let hideTimer = null;
+    const hide = () => { clearTimeout(hideTimer); secret.textContent = MASK; secret.setAttribute('aria-label', 'Password hidden'); showBtn.textContent = 'Show'; };
+    const showBtn = h('button', {
+      text: 'Show', 'aria-label': `Show the password for ${l.site}`,
+      onclick: async () => {
+        if (secret.textContent !== MASK) { hide(); return; }
+        const value = await P.reveal(l.id).catch(() => null);
+        if (value == null) return;
+        secret.textContent = value;
+        secret.removeAttribute('aria-label');
+        showBtn.textContent = 'Hide';
+        hideTimer = setTimeout(hide, 30000); // shown for 30 seconds at most
+      },
+    });
+    const el = h('div', { class: 'item', 'data-site': l.site },
+      h('span', { class: 'grow' }, l.site, h('span', { class: 'note', text: ` · ${l.username || 'no username'}` })),
+      secret, showBtn,
+      h('button', { text: 'Copy', 'aria-label': `Copy the password for ${l.site}`, onclick: async () => { if (await P.copy(l.id).catch(() => false)) flash(result, 'Copied. The clipboard is cleared in 30 seconds.'); } }),
+      h('button', { text: 'Edit', 'aria-label': `Edit the login for ${l.site}`, onclick: () => el.replaceWith(editor(l)) }),
+      h('button', { class: 'danger', text: 'Delete', 'aria-label': `Delete the login for ${l.site}`, onclick: async () => { logins = await P.remove(l.id); renderLogins(false); } }));
+    return el;
+  };
+  const editor = (l) => {
+    const user = h('input', { type: 'text', class: 'grow', value: l.username, autocomplete: 'off', 'aria-label': 'Username' });
+    const pass = h('input', { type: 'password', class: 'grow', autocomplete: 'new-password', placeholder: 'New password (empty: keep it)', 'aria-label': 'New password' });
+    const err = status();
+    return h('div', { class: 'item', 'data-site': l.site },
+      h('span', { text: l.site }), user, pass,
+      h('button', { class: 'primary', text: 'Save', onclick: async () => {
+        try { logins = await P.update(l.id, { username: user.value, ...(pass.value ? { password: pass.value } : {}) }); renderLogins(false); } catch (e) { flash(err, errText(e), 'err'); }
+      } }),
+      h('button', { text: 'Cancel', onclick: () => renderLogins(false) }), err);
+  };
+  async function renderLogins(reload = true) {
+    if (reload) logins = await P.list().catch(() => []);
+    const q = search.value.trim().toLowerCase();
+    const shown = logins.filter((l) => !q || l.site.includes(q) || l.username.toLowerCase().includes(q));
+    list.replaceChildren(...(shown.length ? shown.map(item) : [h('span', { class: 'note', text: logins.length ? 'No saved passwords match.' : 'No saved passwords.' })]));
+    pw = await P.state();
+    renderNote();
+    renderNever();
+  }
+  search.addEventListener('input', () => renderLogins(false));
+  const never = h('div', { class: 'list', id: 'passwords-never' });
+  const renderNever = () => never.replaceChildren(...(pw.never.length ? pw.never.map((site) => h('div', { class: 'item' },
+    h('span', { class: 'grow', text: site }),
+    h('button', { text: 'Remove', 'aria-label': `Remove ${site}`, onclick: async () => { pw = await P.removeNever(site); renderNever(); } })))
+    : [h('span', { class: 'note', text: 'None.' })]));
+  const IMPORT_ERRORS = {
+    columns: 'That file has no url, username and password columns. Export a CSV from Chrome (Password Manager → Settings → Export) or Apple Passwords (File → Export).',
+    empty: 'That file is empty.', 'too-big': 'That file is too big for a passwords export.', unreadable: 'Lumen couldn’t read that file.',
+    unavailable: 'Your system’s secure storage isn’t available, so nothing was imported.',
+  };
+  page.append(stackRow('Saved passwords', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask for Touch ID where the Mac has it, and for a confirmation otherwise.',
+    h('div', { class: 'controls' }, search), list,
+    h('div', { class: 'controls' }, result,
+      h('button', { id: 'passwords-import', text: 'Import from CSV…', onclick: async () => {
+        const r = await P.importCsv().catch((e) => ({ error: 'save', message: errText(e) }));
+        if (r.cancelled) return;
+        if (r.error) flash(result, IMPORT_ERRORS[r.error] || r.message || 'Import failed.', 'err');
+        else flash(result, `Imported ${r.added} new, ${r.updated} updated${r.unchanged ? `, ${r.unchanged} already saved` : ''}${r.skipped ? `, ${r.skipped} skipped (not a secure web site)` : ''}. Delete the CSV file now: it isn’t encrypted.`);
+        renderLogins();
+      } }),
+      h('button', { class: 'danger', id: 'passwords-delete-all', text: 'Delete all saved passwords', onclick: async () => { pw = await P.removeAll(); renderLogins(); } }))));
+  page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
+  renderLogins();
 }
 
 async function buildDownloads(card) {

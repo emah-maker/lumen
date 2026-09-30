@@ -77,6 +77,7 @@ Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A
 - **What it can see of your tabs.** `list_tabs` shows the AI only web pages and blank new tabs, with query strings and `#fragments` removed; internal pages (settings, history) and `file://` tabs are left out, and `switch_tab` can only go to the tabs it lists.
 - **Only web pages.** The AI can only open http and https addresses.
 - **Sensitive steps.** The AI is instructed to stop and ask before purchases, payments, sending messages, posting, deleting data, changing account settings, or submitting personal information, and never to type passwords, card numbers or one-time codes. These are instructions to the model, not hard blocks. What Lumen enforces itself: the values of password fields are never included when the AI reads a page, and `fill_form` does not submit a form when any field failed to fill.
+- **Saved passwords (off by default).** Settings → Privacy and security → **Save passwords** offers to save a sign-in on https sites and fills it when you click the key in the address field; Lumen never fills or submits by itself. They're encrypted with your OS keychain. The AI and outside agents have no way to read them: after you fill one, `run_script` is refused on that site in that tab, and fills are refused while a CDP client is connected.
 - **Page content is untrusted.** Page text, search results and screenshots reach the model marked as data, not instructions.
 
 ## Your own Claude account, through Claude Code
