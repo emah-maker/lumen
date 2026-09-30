@@ -3,8 +3,8 @@
 // its hash: widgets: [{ id, type, title, data, error, loading }]. Tokens stay in main.js (encrypted
 // with safeStorage) and never reach the page, the hash or settings.json in plain text.
 //
-// The list is the `homeWidgets` setting: [{ id, type, title, x, y, w, h, snap?, span, ...config }],
-// in reading order. x, y, w, h are the card's cells in the page's 12-column grid (features/
+// The list is the `homeWidgets` setting: [{ id, type, title, x, y, w, h, snap?, stack?, top?, span, ...config }],
+// in reading order. stack and top put same-size widgets in one place (features/widget-stacks.js). x, y, w, h are the card's cells in the page's 12-column grid (features/
 // widget-layout.js does all the arithmetic); span (and an embed's height) mirror w and h in the
 // units older Lumens used, and are what a list without x, y, w, h (an older one) is migrated from.
 // The page moves and resizes cards by asking for a whole new layout (do=layout, through actionFrom()).
@@ -51,6 +51,7 @@ const GH = require('./github-view');
 const WX = require('./weather-view');
 const WC = require('./widget-colors');
 const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
+const ST = require('./widget-stacks'); // several same-size widgets in one place, shown one at a time
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
 const SV = require('./spotify-view');
 const SW = require('./spotify-web');
@@ -942,7 +943,7 @@ function cleanWidget(w) {
     const snap = WL.cleanSnap(w.snap);
     if (snap) out.snap = snap;
   }
-  return out;
+  return Object.assign(out, ST.cleanFields(w));
 }
 const hasRect = (w) => Number.isInteger(w.x);
 // Every widget gets a place: an older list is migrated from span and height (same order and sizes),
@@ -973,11 +974,16 @@ function layoutAll(items) {
   return WL.flowOrder(out);
 }
 // The homeWidgets setting, checked (settings-backend.js validate()).
+// A stack's hidden members are not laid out: they take their shown member's place (ST.settle).
 function cleanList(list) {
   if (!Array.isArray(list)) return null;
   const seen = new Set();
-  return layoutAll(SYS.capReal(list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)), MAX_WIDGETS));
+  const norm = ST.normalize(SYS.capReal(list.map(cleanWidget).filter((w) => w && !seen.has(w.id) && seen.add(w.id)), MAX_WIDGETS));
+  if (!norm.some((w) => w.stack)) return layoutAll(norm); // no stacks: exactly as before
+  const { list: out, ejected } = ST.settle(norm, layoutAll(norm.filter((w) => !ST.isHidden(w))), WL);
+  return ejected.length ? cleanList(out) : out; // a member that couldn't take the stack's size is its own place now
 }
+const slots = (widgets) => widgets.filter((w) => !ST.isHidden(w)); // what is on the grid
 // The last size used per kind of widget (the default for a new one): { weather: { w, h }, ... }.
 function cleanSizes(v) {
   const out = {};
@@ -1025,7 +1031,7 @@ function createWidgets(deps) {
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.defaultSize(type); // a size the person used stays; a first card fits beside the centre column
   // A changed config invalidates its cached data; its size, place and paper trades don't.
-  const keyOf = ({ span, height, x, y, w, h, snap, colors, pf, ...rest }) => JSON.stringify(rest);
+  const keyOf = ({ span, height, x, y, w, h, snap, stack, top, colors, pf, ...rest }) => JSON.stringify(rest);
 
   let epoch = 0; // flush() bumps it: an answer that was in flight is not kept
   async function memo(key, ttl, fn) {
@@ -1259,7 +1265,8 @@ function createWidgets(deps) {
   const connector = (w) => CONNECTORS[w.type];
   // What the new-tab page shows now; stale widgets refresh in the background.
   function forPage() {
-    const cards = list().map((w) => {
+    const all = list();
+    const cards = all.map((w) => {
       const entry = cache.get(w.id);
       const current = entry && entry.key === keyOf(w) ? entry : null;
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
@@ -1270,7 +1277,8 @@ function createWidgets(deps) {
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
+      const stack = w.stack ? { stack: ST.membersOf(all, w.stack), top: Boolean(w.top) } : {}; // the page draws the hidden members too (a switch is instant)
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
@@ -1312,6 +1320,7 @@ function createWidgets(deps) {
       // An edit keeps its place and size; the width and height pickers only count when they changed.
       Object.assign(widget, WL.rectOf(prev));
       if (prev.snap) widget.snap = prev.snap;
+      Object.assign(widget, ST.cleanFields(prev)); // an edit stays in its stack (a new width takes the whole stack along only if it is the shown one)
       if (ci.span && ci.span !== prev.span) widget.w = WL.sizeFromLegacy(widget.type, ci.span).w;
       if (widget.type === 'embed' && widget.height !== prev.height) widget.h = WL.sizeFromLegacy('embed', null, widget.height).h;
     } else {
@@ -1334,7 +1343,7 @@ function createWidgets(deps) {
   function remove(id) {
     const widgets = list();
     const gone = widgets.find((w) => w.id === id);
-    const next = widgets.filter((w) => w.id !== id);
+    const next = ST.drop(widgets, id); // a stack shows its next member
     save(next);
     cache.delete(id);
     // The last widget that used a token takes the token with it.
@@ -1351,11 +1360,12 @@ function createWidgets(deps) {
   // Settings' up and down: swap places with the neighbour in reading order.
   function move(id, delta) {
     const widgets = list();
-    const i = widgets.findIndex((w) => w.id === id);
+    const places = slots(widgets); // a stack moves as one (its hidden members follow its shown one)
+    const i = places.findIndex((w) => w.id === id);
     const j = i + (delta < 0 ? -1 : 1);
-    if (i < 0 || j < 0 || j >= widgets.length) return false;
-    const a = widgets[i];
-    const b = widgets[j];
+    if (i < 0 || j < 0 || j >= places.length) return false;
+    const a = places[i];
+    const b = places[j];
     [a.x, b.x] = [b.x, a.x];
     [a.y, b.y] = [b.y, a.y];
     delete a.snap;
@@ -1367,10 +1377,11 @@ function createWidgets(deps) {
   // do=place: take the place of the widget at an index in reading order (the others make room).
   function place(id, to) {
     const widgets = list();
-    const it = widgets.find((w) => w.id === id);
-    const target = widgets[Math.max(0, Math.min(widgets.length - 1, Math.trunc(to)))];
+    const places = slots(widgets);
+    const it = places.find((w) => w.id === id);
+    const target = places[Math.max(0, Math.min(places.length - 1, Math.trunc(to)))];
     if (!it || !target || target === it || !Number.isFinite(to)) return false;
-    save(applyRects(widgets, WL.move(widgets.map(toItem), id, { x: target.x, y: target.y }, { packed: false })));
+    save(applyRects(widgets, WL.move(places.map(toItem), id, { x: target.x, y: target.y }, { packed: false })));
     deps.onUpdate?.();
     return true;
   }
@@ -1381,7 +1392,7 @@ function createWidgets(deps) {
     if (!w) return false;
     const want = { x: w.x, y: w.y, w: span ? WL.sizeFromLegacy(w.type, pick(span, SPANS, w.span)).w : w.w, h: w.type === 'embed' && height ? WL.sizeFromLegacy('embed', null, pick(height, HEIGHTS, w.height)).h : w.h };
     if (want.w === w.w && want.h === w.h) return false;
-    save(applyRects(widgets, WL.resize(widgets.map(toItem), id, want, { packed: false })));
+    save(applyRects(widgets, WL.resize(slots(widgets).map(toItem), id, want, { packed: false })));
     deps.onUpdate?.();
     return true;
   }
@@ -1410,8 +1421,9 @@ function createWidgets(deps) {
   // Settings' "Reset layout": every card its default size, packed in reading order.
   function resetLayout() {
     const widgets = list();
-    const rects = WL.flowPack(widgets.map((w) => WL.defaultSize(w.type)));
-    widgets.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
+    const places = slots(widgets); // a stack stays a stack, at its shown member's default size
+    const rects = WL.flowPack(places.map((w) => WL.defaultSize(w.type)));
+    places.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
     save(widgets, { homeWidgetSizes: {}, newTabClockSize: SYS.CLOCK_DEFAULT, newTabSearchWidth: SYS.SEARCH_DEFAULT }, []); // and every section back in the centre column, at its default clock and search size
     deps.onUpdate?.();
     return true;
@@ -1668,7 +1680,7 @@ function createWidgets(deps) {
   // ---- page actions ----
   // The new-tab page asks by loading itself with ?widget=<id>&do=<action>[&task=<id>] (like its Ask
   // AI box): refresh, complete, undo (&task), add (&text), play, pause, next, previous (Spotify), signin (Gmail), place (&to=<index>), size (&span, &height),
-  // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure. main.js cancels that navigation and passes
+  // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure, and a stack's cycle (show this member), stack (&onto=<id>) and unstack. main.js cancels that navigation and passes
   // the URL here. Null when it isn't one; { invalid: true } when it is one that is refused.
   function actionFrom(url) {
     let params;
@@ -1676,7 +1688,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -1714,6 +1726,10 @@ function createWidgets(deps) {
       action.key = params.get('k') === 'clock' ? 'newTabClockSize' : params.get('k') === 'search' ? 'newTabSearchWidth' : null;
       action.value = action.key === 'newTabClockSize' ? SYS.cleanClockSize(params.get('v')) : action.key ? SYS.cleanSearchWidth(/^\d{3,4}$/.test(params.get('v') || '') ? params.get('v') : null) : null;
       if (!action.value) return { invalid: true };
+    }
+    if (action.do === 'stack') { // Edit layout: this widget (and its stack) dropped onto another of the same size
+      action.onto = params.get('onto');
+      if (!/^w[0-9a-z]{4,20}$/.test(action.onto || '') || action.onto === id) return { invalid: true };
     }
     if (action.do === 'create') { // the page's Add widget: open Settings' new-widget form for a kind
       action.type = Object.prototype.hasOwnProperty.call(CONNECTORS, params.get('type')) ? params.get('type') : null;
@@ -1753,6 +1769,16 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // A stack's arrow (cycle: show this member), Edit layout's drop onto a same-size card (stack) and its
+  // "Remove from stack" (unstack). The choice of what is shown is stored, so every new tab shows it.
+  function stackAct(action) {
+    const widgets = list();
+    const next = action.do === 'cycle' ? ST.select(widgets, action.id) : action.do === 'stack' ? ST.join(widgets, action.id, action.onto) : ST.leave(widgets, action.id, WL);
+    if (!next) return false;
+    save(next);
+    deps.onUpdate?.();
+    return true;
+  }
   async function act(action) {
     if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
     if (action.do === 'restore') return restore(action.id);
@@ -1766,6 +1792,7 @@ function createWidgets(deps) {
     if (action.do === 'size') return resize(w.id, { span: action.span, height: action.height });
     if (action.do === 'layout') return layout(action.items, action.dock);
     if (action.do === 'remove') return removeFromPage(w);
+    if (action.do === 'cycle' || action.do === 'stack' || action.do === 'unstack') return stackAct(action);
     if (action.do === 'consent') return setLocationConsent(action.arg);
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }

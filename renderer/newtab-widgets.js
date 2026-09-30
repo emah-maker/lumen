@@ -1074,10 +1074,13 @@ const lastList = { current: [] };
 function renderWidgets(list) {
   if (window.widgetGrid?.busy()) { window.widgetGrid.defer(list); return; } // redrawing mid-gesture would move the card under the pointer
   const box = document.getElementById('widgets');
-  const valid = (Array.isArray(list) ? list : []).filter((w) => w && widgetId(w.id) && WIDGET_RENDERERS[w.type]).slice(0, 12);
+  const known = (Array.isArray(list) ? list : []).filter((w) => w && widgetId(w.id) && WIDGET_RENDERERS[w.type]);
+  // Stacks (newtab-stacks.js): every member gets a card, only the shown one is on the grid; up to 12 places.
+  const stacks = window.newtabStacks;
+  const valid = stacks ? stacks.prepare(known, 12) : known.slice(0, 12);
   lastList.current = valid;
   const cards = valid.map((w) => {
-    const { span, height, layout, updated, warning, colors, ...rest } = w; // a new size, place or age is applied to the card as it is
+    const { span, height, layout, updated, warning, colors, stack, top, ...rest } = w; // a new size, place, age or turn in a stack is applied to the card as it is
     const key = JSON.stringify(rest);
     const kept = shownWidgets.get(w.id);
     const card = kept && kept.key === key ? kept.el : buildCard(w);
@@ -1098,7 +1101,9 @@ function renderWidgets(list) {
   if (system) for (const [id, card] of system.cards()) all.set(id, card);
   box.classList.toggle('empty', !all.size);
   applyWidgetColors();
-  window.widgetGrid?.sync([...valid, ...(system ? system.entries() : [])], all);
+  const shown = stacks ? valid.filter((w, i) => stacks.decorate(cards[i], w)) : valid; // a stack's hidden members stay off the grid
+  if (stacks) for (const w of valid) if (!shown.includes(w)) all.delete(w.id);
+  window.widgetGrid?.sync([...shown, ...(system ? system.entries() : [])], all); // its layout hook puts the hidden members under their card
 }
 // A card's Colors setting: 'calendar' leaves it alone; the others tint its surface, title, event bars and
 // today highlight from the page's accent and background (features/widget-colors.js keeps the text readable).
