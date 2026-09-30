@@ -21,6 +21,17 @@ module.exports = async function widgetEditUnits(check) {
 
   // ---- fitting the centre column to the cards (WS.fitSizes): only what collides shrinks ----
   {
+    // which cards a column moves: compared with the smallest column, packed or not
+    const cards = [it('a', 'notes', 0, 0, 4, 3), it('b', 'notes', 4, 0, 4, 3), it('c', 'notes', 4, 3, 4, 3)];
+    for (const packed of [true, false]) {
+      const o = { cols: 24, packed, rows: 30 };
+      const small = { x: 8, y: 0, w: 8, h: 4 };
+      check(`movedBy (${packed ? 'packed' : 'unpacked'}): the smallest column moves nothing`, WL.movedBy(cards, o, small, small).length === 0);
+      const moved = WL.movedBy(cards, o, { x: 6, y: 0, w: 12, h: 4 }, small);
+      check(`movedBy (${packed ? 'packed' : 'unpacked'}): a wider column that reaches a card moves it (and what it knocks)`, moved.includes('b'), JSON.stringify(moved));
+      check(`movedBy (${packed ? 'packed' : 'unpacked'}): a card out of reach is not counted`, !moved.includes('a'));
+    }
+    check('movedBy: docked cards never count', WL.movedBy([it('d', 'notes', 0, 0, 4, 6, { snap: 'left' })], { cols: 24, packed: true, rows: 30 }, { x: 2, y: 0, w: 20, h: 4 }, { x: 8, y: 0, w: 8, h: 4 }).length === 0);
     const widths = WS.fitWidths(800, [760, 700]);
     check('fit: nothing collides -> drawn as saved', JSON.stringify(WS.fitSizes({ clock: 'xl', search: 800, widths }, () => true)) === '{"clock":null,"search":null}');
     // the clock is the culprit: a smaller clock fits at the saved width, which is kept

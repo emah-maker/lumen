@@ -35,6 +35,7 @@
   const layoutHooks = [];
   let lastBlockers = []; // the cards that stopped the last centre-column resize (centreFits)
   const blockTimers = new Map();
+  let floorOb; // the smallest centre column's obstacle (see floor below)
   const centreBottom = () => { const f = mainEl.querySelector('form'); return f.offsetTop + f.offsetHeight - mainMargin; };
   // Row 0 sits at a fixed place (the page margin), not wherever the centre column happens to end: the clock's size or
   // style, the greeting or the date being shown or hidden then change the centre column only, never the grid that
@@ -600,19 +601,21 @@
     // (Measured into copies: the grid's own state is left as it was, so a size that was tried and put back can't leave a
     // phantom, bigger centre column behind for the next card move.) A banner snapped to the top pushes the centre
     // column down, so the check uses the column where it is actually drawn.
-    centreFits: (ignore = null) => {
+    // The cards that block: those the column, at this size, lays out anywhere other than the smallest column does
+    // (WL.movedBy, packed or not as the page is). Docked cards fill the room beside the column by design and never
+    // block; a card the smallest column already pushes doesn't either, but one it knocks further does.
+    centreFits: () => {
       if (!items.length || stacked()) return true;
       const keep = { m, o };
       measure(true);
-      // Against the cards' saved places, not where the last layout drew them (which may already have been pushed).
-      const ob = o.obstacle && { ...o.obstacle, y: o.obstacle.y + WL.bannerRows(items, o) };
+      const now = o;
       ({ m, o } = keep);
-      // Where the cards are drawn when nothing pushes them (packed, when packing is on); docked cards (snapped to a
-      // side or corner) take the room beside the column, whatever it is, so they never block a size.
-      const free = o.packed ? WL.resolve(items, { ...o, obstacle: null }) : items;
-      lastBlockers = ob ? free.filter((it) => !it.snap && !ignore?.has(it.id)).filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
+      const floor = floorOb === undefined ? null : floorOb;
+      lastBlockers = now.obstacle ? WL.movedBy(items, now, now.obstacle, floor) : [];
       return lastBlockers.length === 0;
     },
+    // The column at its smallest (newtab-system paints it, then calls this): what "moved" is measured against.
+    floor: () => { if (!items.length || stacked()) { floorOb = null; return; } const keep = { m, o }; measure(true); floorOb = o.obstacle || null; ({ m, o } = keep); },
     // Outline, for a moment, the cards that stopped the last clock or search-bar resize.
     flashBlockers: () => {
       for (const id of lastBlockers) {

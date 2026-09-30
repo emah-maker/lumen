@@ -278,6 +278,15 @@ function resolve(items, o = {}) {
   if (packed) out = compact(out, { cols, obstacle: ob });
   return inOrder(items, out);
 }
+// The cards a centre column (obstacle `ob`) moves, compared with where they are with the smallest column (`floor`):
+// laid out both ways (packed or not, as `o` says), any card not snapped to a side that lands elsewhere. A card pushed
+// even by the smallest column is where it is either way (it doesn't count); a card it knocks further does.
+function movedBy(items, o, ob, floor) {
+  const at = resolve(items, { ...o, obstacle: ob });
+  const base = resolve(items, { ...o, obstacle: floor });
+  const byId = new Map(base.map((it) => [it.id, it]));
+  return at.filter((it) => !it.snap && !same(it, byId.get(it.id) || it)).map((it) => it.id);
+}
 // One column, in reading order, below the obstacle. Saved positions are untouched (this is a view).
 function stack(items, { obstacle = null } = {}) {
   let y = obstacle ? obstacle.y + obstacle.h : 0;
@@ -468,7 +477,7 @@ function decode(text) {
 const api = {
   COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, SIDE_DEFAULT, defaultSize, PRESETS, SPANS, SNAPS, FRAME_PX,
   limitsOf, cleanRect, cleanSnap, sizeFromLegacy, mirror, fromLegacy, flowPack, overlap, rectOf, same,
-  resolve, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
+  resolve, movedBy, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
   MARGIN, MARGIN_WIDE, WIDE_AT, MIN_CENTRE, metrics, centreSpan, spanPx, obstacleFor, cellToPx, encode, decode,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

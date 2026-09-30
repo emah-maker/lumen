@@ -247,17 +247,15 @@
   // clock and search bar do, so they never block a size.
   function floorBlockers() {
     const grid = window.widgetGrid;
-    if (!grid?.centreFits) return new Set();
+    if (!grid?.floor) return;
     const was = { c: size.viewClock, s: size.viewSearch };
     size.viewClock = WS.CLOCK_STEPS[0];
     size.viewSearch = WS.SEARCH_MIN;
     paint();
-    grid.centreFits();
-    const ids = new Set(grid.blockers?.() || []);
+    grid.floor();
     size.viewClock = was.c;
     size.viewSearch = was.s;
     paint();
-    return ids;
   }
   const savedPx = () => (size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search);
   function fitToCards() {
@@ -266,8 +264,10 @@
     size.viewSearch = null;
     paint();
     const grid = window.widgetGrid;
-    if (!grid?.centreFits || grid.centreFits()) return;
-    const ignore = floorBlockers();
+    if (!grid?.centreFits) return;
+    floorBlockers();
+    paint();
+    if (grid.centreFits()) return;
     const from = savedPx();
     const m = WL.metrics(document.documentElement.clientWidth);
     const lines = m.cols === 1 ? [] : [4, 6, 8, 10].map((s) => Math.floor(WL.spanPx(m, s)));
@@ -275,7 +275,7 @@
       size.viewClock = c === size.clock ? null : c;
       size.viewSearch = s === from ? null : s;
       paint();
-      return grid.centreFits(ignore);
+      return grid.centreFits();
     };
     const plan = WS.fitSizes({ clock: size.clock, search: from, widths: WS.fitWidths(from, lines) }, tryFits);
     size.viewClock = plan.clock;
@@ -284,7 +284,7 @@
   }
   window.newtabSize = {
     apply(clock, search) {
-      if (size.hold) return;
+      if (size.hold) { size.pending = [clock, search]; return; } // a drag holds: applied when it ends
       const c = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
       const s = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
       if (c === size.clock && s === size.search) return; // the echo of a size just taken: already drawn
@@ -311,7 +311,10 @@
       fitToCards();
     },
     floor: () => floorBlockers(),
-    hold(on) { size.hold = Boolean(on); },
+    hold(on) {
+      size.hold = Boolean(on);
+      if (!on && size.pending) { const [c, s] = size.pending; size.pending = null; window.newtabSize.apply(c, s); }
+    },
     held: () => size.hold,
     get: () => ({ clock: size.clock, search: size.search }),
   };
