@@ -544,12 +544,13 @@ function setupAiAgents(deps) {
       // trying to launch it. Sessions are refused while it's off (enabled() below).
       startMcp(true);
       startAutomation();
-      // Looking for the CLIs (and loading claude-code.js/grok-build.js) waits until the window is up.
+      // Looking for the CLIs (several processes, and loading claude-code.js/grok-build.js) waits until the first tab
+      // has loaded, not while it does.
       setTimeout(() => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
         Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false)])
           .then(() => { detecting = false; ui()?.send('models-updated'); });
-      }, 300);
+      }, 2500);
     },
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild):/.test(String(id)),

@@ -12,11 +12,21 @@ if (process.argv.includes('--mcp')) {
   return;
 }
 const fs = require('fs');
+// Automation on, where Chromium needs a private pipe (launcher.js): this first process only starts Lumen again
+// and leaves. Decided here, before ~100 ms of modules a process that exits at once would never use.
+if (!TEST && !process.argv.includes('--install-shortcuts')) {
+  let early = null;
+  try { early = require('./settings/settings-file').loadJson(require('path').join(app.getPath('userData'), 'settings.json')); } catch {}
+  if (early?.automationEnabled && require('./features/ai-agents').prepareAutomation(app, early)?.relaunch) {
+    require('./automation/launcher').handOver(app, () => require('./features/instance').acquireInstanceLock(app));
+    return;
+  }
+}
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
-const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
+const { installChromeWebStore, installExtension, uninstallExtension, loadAllExtensions } = require('electron-chrome-web-store');
 const { extensionPermissionLines } = require('./browser/extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
@@ -894,6 +904,7 @@ async function setupExtensions() {
   };
   await installChromeWebStore({
     session: ses,
+    loadExtensions: false, // (loaded below: registered before the first tabs, their workers started after)
     beforeInstall: async ({ localizedName, manifest }) => {
       if (isContentBlocker(manifest, localizedName)) {
         await dialog.showMessageBox(win, {
@@ -914,6 +925,12 @@ async function setupExtensions() {
       return { action: response === 1 ? 'allow' : 'deny' };
     },
   });
+  // Installed extensions: registered now (tabs are created with them in chrome.tabs); their background service
+  // workers, which took ~100-500 ms each one after another before the first tab, start once the tabs are going.
+  const workerScopes = [];
+  await loadAllExtensions({ extensions: ses.extensions, serviceWorkers: { startWorkerForScope: (scope) => { workerScopes.push(scope); return Promise.resolve(); } } },
+    path.join(app.getPath('userData'), 'Extensions'));
+  tabsGate.then(() => setTimeout(() => { for (const scope of workerScopes) ses.serviceWorkers.startWorkerForScope(scope).catch(() => console.error(`Failed to start worker for ${scope}`)); }, 300));
 }
 
 function extensionsMenu() {
@@ -1422,7 +1439,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     },
   });
   // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
-  if (plainNewTab && !spare && !adopted) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
+  if ((plainNewTab || settings || historyPage || managerPage) && !spare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
+    try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
   tabs.push(tab);
@@ -4548,7 +4566,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('blur', hideSuggestions);
   w.loadFile(UI_HTML);
   w.webContents.once('did-finish-load', () => {
-    createSuggestView();
+    setTimeout(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); }, 2500).unref?.();
     if (rec.prepared) {
       // Ready for a tear-off (takeSpare); no tabs until then.
       uiReady = true;
@@ -5169,6 +5187,7 @@ const settingsBackend = settingsPage.create({
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
   showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
+  peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
@@ -5884,17 +5903,17 @@ app.whenReady().then(async () => {
   // doesn't hold up the window. They load while the extensions start (the two don't depend on each other).
   // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs; the window itself
   // (its UI, ~0.5 MB of scripts) loads meanwhile, and its tabs come once both are ready (tabsGate).
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
+  createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
   const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
-  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
-  createWindow();
   // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
   const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
   await atMost(Promise.all([extending, fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin')) ? blocking : null]));
   perf.mark('adblockReady');
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
-  setTimeout(makeSpareNewTab, 1500).unref?.(); // a new-tab page ready for the first Ctrl+T
+  setTimeout(makeSpareNewTab, 700).unref?.(); // a new-tab page ready for the first Ctrl+T
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours
