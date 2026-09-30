@@ -34,6 +34,16 @@
   let resyncTimer = 0;
   const layoutHooks = [];
   const centreBottom = () => { const f = mainEl.querySelector('form'); return f.offsetTop + f.offsetHeight - mainMargin; };
+  // Where the rows line up (metrics' `top`) is taken from the search block's bottom as it would be with the clock at its
+  // default size: resizing the clock then changes the centre column's height, never the grid under every other card.
+  function gridBottom(formBottom) {
+    const clock = document.getElementById('clock');
+    const WS = globalThis.WidgetSystem;
+    const now = window.newtabSize?.get().clock;
+    if (!clock || !WS || !now || clock.hidden || !mainEl.contains(clock) || !clock.offsetHeight) return formBottom;
+    const h = clock.offsetHeight;
+    return formBottom - (h - h * (WS.CLOCK_PX[WS.CLOCK_DEFAULT] / WS.CLOCK_PX[now]));
+  }
 
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -57,7 +67,7 @@
     const formBottom = bottomOf(formEl);
     const sectionsEl = document.getElementById('sections');
     const contentBottom = sectionsEl && sectionsEl.offsetHeight > 0 ? bottomOf(sectionsEl) : formBottom;
-    m = WL.metrics(width, formBottom);
+    m = WL.metrics(width, gridBottom(formBottom));
     // The centre column is only an obstacle while something is docked in it (every section may have become a card).
     const docked = window.newtabSystem ? window.newtabSystem.dockedCount() > 0 : true;
     const obstacle = docked ? WL.obstacleFor(contentBottom, m, WL.centreSpan(m, mainEl.offsetWidth)) : null;
@@ -574,5 +584,8 @@
     }
   }
 
-  window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, centreBottom()), items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
+  window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, gridBottom(centreBottom())),
+    // Does the centre column, at the size it has right now (a clock or search-bar resize being previewed), leave every
+    // card where it is? False when it would run into one: the resize stops short instead of pushing cards around.
+    centreFits: () => { if (!items.length || stacked()) return true; measure(); return !o.obstacle || !view.some((it) => WL.overlap(it, o.obstacle)); }, items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();

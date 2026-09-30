@@ -88,6 +88,10 @@
     .w-sz-frame { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 12px; pointer-events: none; }
     .w-sz-grip { position: absolute; left: 0; top: 0; box-sizing: border-box; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); pointer-events: auto; touch-action: none; outline: none; }
     .w-sz-grip::after { content: ""; position: absolute; inset: -10px; }
+    /* A clock or search-bar size that would run into a card: the grip nudges, and the size stays where it fits. */
+    .w-sz-grip.w-sz-blocked { animation: w-sz-nudge 280ms ease-out; background: color-mix(in srgb, var(--accent) 45%, #d70015); }
+    @keyframes w-sz-nudge { 30% { translate: 3px 0; } 60% { translate: -2px 0; } }
+    @media (prefers-reduced-motion: reduce) { .w-sz-grip.w-sz-blocked { animation: none; } }
     .w-sz-grip:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .w-sz-corner { width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 999px; cursor: nwse-resize; }
     .w-sz-edge { width: 8px; height: 36px; margin: -18px 0 0 -4px; border-radius: 999px; cursor: ew-resize; }
@@ -381,10 +385,22 @@
   addEventListener('resize', placeSoon);
   if (typeof ResizeObserver === 'function') new ResizeObserver(placeSoon).observe(document.querySelector('main'));
 
+  // Growing the clock or the search bar never moves a card: a size that would run into one isn't taken. The grip
+  // nudges and says why, and the size stays at the largest that fits (grid.centreFits measures the live preview).
+  const fits = () => grid()?.centreFits?.() ?? true;
+  let blockedSaid = 0;
+  function blocked(grip) {
+    grip.classList.remove('w-sz-blocked');
+    void grip.offsetWidth;
+    grip.classList.add('w-sz-blocked');
+    if (Date.now() - blockedSaid > 1500) { blockedSaid = Date.now(); say(T('newtab.edit.noRoom')); }
+  }
+  const previewLook = (key, value) => { if (key === 'clock') SZ().preview(value, null); else SZ().preview(null, value); };
   // Set a clock step or search width now, save it (do=look) and, when `record`, put it on the Undo stack.
-  function setLook(key, value, { record = true, from } = {}) {
+  function setLook(key, value, { record = true, from, grip = null } = {}) {
     const before = from ?? SZ().get()[key];
-    if (key === 'clock') SZ().preview(value, null); else SZ().preview(null, value);
+    previewLook(key, value);
+    if (record && before !== value && !fits()) { previewLook(key, before); placeSoon(); if (grip) blocked(grip); return false; }
     placeSoon();
     if (before === value) return false;
     window.widgetAct('wlook', 'look', { k: key, v: String(value) });
@@ -407,7 +423,17 @@
     document.body.classList.add('w-dragging');
     grip.setPointerCapture?.(e.pointerId);
     let latest = null;
-    const move = (ev) => { latest = onMove(ev.clientX - x0, ev.clientY - y0); placeSoon(); };
+    let ok = null; // the last size that left every card where it was
+    const move = (ev) => {
+      const next = onMove(ev.clientX - x0, ev.clientY - y0);
+      if (next && !fits()) {
+        const back = ok ? ok.value : start[next.key];
+        previewLook(next.key, back);
+        latest = ok;
+        blocked(grip);
+      } else { latest = next; ok = next; }
+      placeSoon();
+    };
     const end = (ev) => {
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', end);
@@ -448,7 +474,7 @@
     e.stopPropagation();
     const next = WS.stepClock(SZ().get().clock, dir);
     if (next === SZ().get().clock) say(T('newtab.edit.clock.sized', { size: clockName(next) }));
-    else setLook('clock', next);
+    else setLook('clock', next, { grip: gripClock });
   });
   for (const grip of [gripL, gripR]) {
     grip.addEventListener('keydown', (e) => {
@@ -458,7 +484,7 @@
       const cur = SZ().get().search;
       const next = WS.cleanSearchWidth(cur + (e.key === 'ArrowRight' ? 1 : -1) * 2 * WS.SEARCH_STEP);
       if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
-      else setLook('search', next);
+      else setLook('search', next, { grip });
     });
   }
   // Undo / Reset: put a clock size or width back and save it.

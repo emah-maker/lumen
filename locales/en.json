@@ -246,6 +246,7 @@
   "menu.moveGroupToWindow": "Move Group to Window",
   "slash.clear": "Clear chat",
   "slash.clear.description": "Start a fresh conversation. This one stays in your chat history.",
+  "newtab.edit.noRoom": "No room to grow there: move the card in the way first",
   "tabs.movedHere": "{title}: tab moved here",
   "tabs.movedHereMany": "{n} tabs moved here",
   "tabs.movedToNewWindow": "Moved to a new window",
