@@ -683,7 +683,24 @@ function domQuiet({ quietMs, capMs }) {
     let timer = null;
     let cap = null;
     let observer = null;
-    const done = (why) => { clearTimeout(timer); clearTimeout(cap); observer?.disconnect(); resolve(why); };
+    let extended = false;
+    const finish = (why) => { clearTimeout(timer); clearTimeout(cap); observer?.disconnect(); resolve(why); };
+    const loading = () => {
+      try { return Boolean(document.querySelector('[aria-busy="true"], [role="progressbar"]:not([aria-valuenow="100"]), progress:not([value])')); } catch { return false; }
+    };
+    // Quiet, but the page says an update is still coming (a fetch after a click): one more wait, up to ~700 ms.
+    const done = (why) => {
+      if (why === 'quiet' && !extended && loading()) {
+        extended = true;
+        clearTimeout(cap);
+        cap = setTimeout(() => finish('busy'), 700);
+        timer = setTimeout(() => { if (!loading()) finish('quiet'); }, 250);
+        const poll = setInterval(() => { if (!loading()) { clearInterval(poll); finish('quiet'); } }, 50);
+        setTimeout(() => clearInterval(poll), 750);
+        return;
+      }
+      finish(why);
+    };
     try {
       observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(() => done('quiet'), quietMs); });
       observer.observe(document.documentElement || document, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -712,7 +729,7 @@ async function settleAfterAction(wc, timeoutMs = 8000) {
     const first = wc.isLoading() ? 'navigation' : await Promise.race([
       started,
       runScript(wc, DOM_QUIET, 2500).catch(() => (wc.isDestroyed() || wc.isLoading() ? 'navigation' : 'quiet')),
-      sleep(1600).then(() => 'busy'),
+      sleep(2000).then(() => 'busy'),
     ]);
     if (first === 'navigation' || (!wc.isDestroyed() && wc.isLoading())) return await waitForLoad(wc, timeoutMs);
   } finally {
@@ -1320,9 +1337,11 @@ class Agent {
     const settings = messages?.settings;
     if (!settings || !String(settings.model).startsWith('claudecode:') || this.engineRunScope || this.running) return false;
     const cc = this.engines?.claudecode;
-    if (!cc?.warm || cc.isWarm?.() || cc.canPrewarm?.() === false) return false;
+    if (!cc?.warm || cc.canPrewarm?.() === false) return false;
     const typed = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     const plan = this.claudeCodePlan(messages, typed || PREWARM_GUESS, 0, 0);
+    // Already warm: kept, unless the words typed since route to another model (the guess is then replaced once).
+    if (cc.isWarm?.() && !(typed && cc.warmModel && cc.warmModel() !== null && cc.warmModel() !== (plan.spawn.model || 'default'))) return false;
     if (!plan.resume) this.prewarmed = { messages, id: plan.spawn.sessionId };
     cc.warm(plan.spawn, { speculative: true });
     return true;

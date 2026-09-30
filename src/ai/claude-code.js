@@ -358,7 +358,16 @@ class ClaudeCodeEngine {
 
   // Whether a speculative start is worth it now: not in backoff, and the CLI's last sign-in check wasn't "signed out".
   canPrewarm() {
-    return Date.now() >= this.warmBlock.until && this.statusCache?.value?.signedIn !== false;
+    // (A "signed out" older than the status TTL counts as unknown: the user may have signed in since.)
+    const fresh = this.statusCache && Date.now() - this.statusCache.at < 30000;
+    return Date.now() >= this.warmBlock.until && !(fresh && this.statusCache.value?.signedIn === false);
+  }
+
+  // The kept process runs this model (agent.js prewarm: typed words that route elsewhere replace a guess).
+  warmModel() {
+    const p = this.proc;
+    if (!p || p.exited || p.turn || this.warming > 0) return null;
+    try { return JSON.parse(p.key)[2]; } catch { return null; }
   }
 
   // A process is kept or being started (agent.js prewarm starts none on top of it).
