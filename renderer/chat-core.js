@@ -28,8 +28,11 @@ function setupError(text) {
   if (!el) { el = Object.assign(document.createElement('div'), { className: 'error setup-error' }); el.setAttribute('role', 'alert'); card.append(el); }
   el.textContent = text;
 }
+function clearSetupError() { optional('setup').querySelector?.('.setup-error')?.remove(); }
+for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok']) optional(id).addEventListener('click', clearSetupError, true);
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
+  if (s.model) clearSetupError();
   // A local engine (Claude Code, Grok Build) found but signed out can't answer yet: while it's the
   // pick, the card stays up.
   const signedOut = s.models.find((m) => m.id === 'claudecode:default')?.signedIn === false;
@@ -106,6 +109,7 @@ async function showWelcome() {
     return btn;
   }));
   showDefault(st.isDefault);
+  if (st.devBuild && !st.isDefault) $('welcome-default-note').textContent = t('welcome.default.devBuild');
   refreshSetup();
   announce(`${t('welcome.title')}. ${t('welcome.lead')}`);
   welcome.querySelector('.setup-option:not(:disabled)')?.focus({ preventScroll: true });
@@ -122,10 +126,18 @@ if (welcome) {
     const note = $('welcome-default-note');
     if (r?.opened === 'windows-settings') note.textContent = t(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual');
     else if (r?.isDefault) showDefault(true);
+    else if (r?.opened === 'system-prompt') note.textContent = t('welcome.default.confirm');
     else note.textContent = t(r ? 'welcome.default.notTaken' : 'welcome.default.failed'); // (never a click that seems to do nothing)
   };
   // Back from the system's Default apps page: did it take?
-  window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then(showDefault).catch(() => {}); });
+  window.addEventListener('focus', () => {
+    if (!welcoming) return;
+    window.assistant.setup.isDefault().then((yes) => {
+      showDefault(yes);
+      const note = $('welcome-default-note');
+      if (!yes && note.textContent) note.textContent = t('welcome.default.notYet'); // (back without choosing Lumen)
+    }).catch(() => {});
+  });
   $('welcome-done').onclick = () => finishWelcome();
   window.assistant.setup?.onWelcome?.(() => showWelcome());
 }
@@ -143,7 +155,7 @@ optional('setup-claude-code').onclick = async () => {
   // Signed out a moment ago, or just installed? Ask again first (no restart needed).
   const status = await window.lumenExtras?.claudeCodeStatus?.(true).catch(() => null);
   if (status && !status.installed) { setupError(t('setup.claudeCode.notFound')); return; }
-  if (status?.signedIn === false) { setupError(t('setup.claudeCode.signedOut')); return; }
+  if (status?.signedIn === false) { setupError(t('setup.claudeCode.stillSignedOut')); return; }
   if (await window.assistant.setModel('claudecode:default')) await loadModels();
   refreshSetup();
 };

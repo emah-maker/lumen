@@ -1106,5 +1106,9 @@
   "setup.grok.signedOut": "Not signed in yet: open a terminal, run grok, and sign in with your xAI account when it asks. Then click here.",
   "setup.grok.notFound": "Grok Build isn’t found any more. Install it again, then click here.",
   "welcome.default.notTaken": "Your system didn’t make Lumen the default. Choose it in your system’s default-apps settings.",
-  "welcome.default.failed": "Lumen couldn’t ask your system to make it the default. Try again, or choose it in your system’s default-apps settings."
+  "welcome.default.failed": "Lumen couldn’t ask your system to make it the default. Try again, or choose it in your system’s default-apps settings.",
+  "setup.claudeCode.stillSignedOut": "Still not signed in to Claude Code. In a terminal, run claude and type /login, then click here again.",
+  "welcome.default.confirm": "Confirm in the dialog your system opened.",
+  "welcome.default.notYet": "Not set yet: Lumen isn’t your default browser. Try again any time, here or in Settings.",
+  "welcome.default.devBuild": "This copy runs from source: Make default would register the development build. Use an installed Lumen for this step."
 }

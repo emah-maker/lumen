@@ -476,6 +476,7 @@ async function buildAi(card) {
     const r = await S.ai.makeDefaultBrowser?.().catch(() => null);
     if (r?.opened === 'windows-settings') flash(defaultNote, tr(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual', 'In the Windows Settings window that opened, set Lumen as the default for HTTP and HTTPS links.'), '');
     else if (r?.isDefault) renderDefault();
+    else if (r?.opened === 'system-prompt') flash(defaultNote, tr('welcome.default.confirm', 'Confirm in the dialog your system opened.'), '');
     else flash(defaultNote, r ? tr('welcome.default.notTaken', 'Your system didn’t make Lumen the default. Choose it in your system’s default-apps settings.') : tr('welcome.default.failed', 'Lumen couldn’t ask your system to make it the default. Try again, or choose it in your system’s default-apps settings.'), 'err');
   };
   window.addEventListener('focus', renderDefault); // (back from the system's settings)

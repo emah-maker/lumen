@@ -83,7 +83,12 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
     }
     const args = process.defaultApp ? [process.execPath, [path.resolve(process.argv[1] || '.')]] : [];
     for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme, ...args);
-    return { ok: true, isDefault: await isDefault() };
+    // (macOS confirms in its own dialog: the answer comes a moment later, so it's waited for before judging.)
+    for (let i = 0; i < 10; i++) {
+      if (await isDefault()) return { ok: true, isDefault: true };
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { ok: true, isDefault: false, opened: process.platform === 'darwin' ? 'system-prompt' : undefined };
   }
 
   // Import for the welcome and Settings: the result comes back to the page (no native dialog).
@@ -93,12 +98,13 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
       const result = importBrowser(id);
       return { ok: true, label: result.label, bookmarks: result.bookmarks, history: result.history };
     } catch (err) {
-      return { ok: false, error: err.message };
+      const locked = /locked|busy|EBUSY|EPERM|SQLITE_BUSY/i.test(String(err?.message || ''));
+      return { ok: false, error: locked ? 'that browser is still open. Close it, then try again.' : err.message };
     }
   }
 
   async function state() {
-    return { welcome: welcomePending(), browsers: importer.detectBrowsers(), isDefault: await isDefault(), platform: process.platform };
+    return { welcome: welcomePending(), browsers: importer.detectBrowsers(), isDefault: await isDefault(), platform: process.platform, devBuild: Boolean(process.defaultApp) };
   }
 
   return { welcomePending, welcomeDone, isDefault, lastDefault: () => lastDefault, makeDefault, importFrom, state };
