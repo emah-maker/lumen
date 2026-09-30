@@ -229,6 +229,23 @@ async function buildAi(card) {
     }))));
   renderOff();
 
+  // [signed-in sites] Hosts the AI may always read with your signed-in session (features/signed-in-sites.js).
+  // Added only from the AI's approval card ("Always for <site>"); removed here.
+  const signedList = h('div', { class: 'list', id: 'ai-signed-in-sites' });
+  const clearSigned = h('button', { id: 'ai-signed-in-clear', text: 'Remove all', onclick: async () => renderSigned(await S.ai.clearSignedInSites()) });
+  const renderSigned = async (sites) => {
+    sites ||= await S.ai.signedInSites();
+    clearSigned.hidden = !sites.length;
+    signedList.replaceChildren(...(sites.length ? sites.map(({ host, added }) => h('div', { class: 'item', 'data-host': host },
+      h('span', { class: 'grow', text: host }),
+      added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
+      h('button', { text: 'Remove', 'aria-label': `Remove ${host}`, onclick: async () => renderSigned(await S.ai.removeSignedInSite(host)) })))
+      : [h('span', { class: 'note', text: 'None. The AI reads pages signed out unless you allow a site when it asks.' })]));
+  };
+  card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you (your grades, your orders), you can allow it just once or always for that site. It then sees the page as you do; nothing is clicked, typed or submitted there without the usual approvals. Banks, payments, password managers and account-security pages are only ever allowed once. Outside agents never get this.', signedList,
+    h('div', { class: 'controls' }, clearSigned)));
+  renderSigned();
+
   // API keys: one line per provider; Edit opens the field in place.
   const keys = h('div', { class: 'list', id: 'ai-keys' });
   const renderKeys = () => {

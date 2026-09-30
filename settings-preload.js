@@ -95,6 +95,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       forgetOrganizeLearning: call('settings:forget-organize-learning'),
       aiSites: call('settings:ai-sites'), // [ai controls]
       setAiSite: call('settings:set-ai-site'),
+      signedInSites: call('settings:signed-in-sites'), // [signed-in sites]
+      removeSignedInSite: call('settings:remove-signed-in-site'),
+      clearSignedInSites: call('settings:clear-signed-in-sites'),
       setSearchEngine: call('settings:set-search-engine'),
       cliStatus: call('cli:status'),
       cliLogin: call('cli:login'),

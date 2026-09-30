@@ -120,10 +120,14 @@ const TOOLS = [
   },
   {
     name: 'read_urls',
-    description: 'Read up to 6 web pages in parallel in hidden background tabs, without touching the user\'s tabs. Pages load without the user\'s cookies or logins, so use navigate for pages that need the user signed in. Returns each page\'s title and text. Use for research and comparing sources.',
+    description: 'Read up to 6 web pages in parallel in hidden background tabs, without touching the user\'s tabs. Pages load without the user\'s cookies or logins. For the user\'s own account pages (their grades, orders, inbox), pass as_user: true: the user is asked whether you may read that site with their signed-in session (they may say no; then the page is read signed out). Returns each page\'s title and text. Use for research and comparing sources.',
     input_schema: {
       type: 'object',
-      properties: { urls: { type: 'array', items: { type: 'string' } } },
+      properties: {
+        urls: { type: 'array', items: { type: 'string' } },
+        // [signed-in sites] features/signed-in-sites.js
+        as_user: { type: 'boolean', description: 'Read signed in as the user (asks them first). Only for their own account pages.' },
+      },
       required: ['urls'],
     },
   },
@@ -517,6 +521,7 @@ const ID_TOOLS = new Set(['click', 'type_text', 'hover']); // tools that take an
 const TAB_FREE_TOOLS = new Set(['list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps' };
 const { siteOf } = require('./features/ai-sites');
+const signedIn = require('./features/signed-in-sites'); // [signed-in sites] read_urls as_user
 const tabsAsk = require('./features/tabs-ask');
 // ---- [/ai controls]
 
@@ -796,6 +801,7 @@ class Agent {
       this.scopes.delete(scope);
       if (this.runScope === scope) this.runScope = null;
       try { this.browser.research?.finish(scope); } catch {} // research tabs stay open; only the "reading" marker goes
+      this.closeSignedInTabs(scope); // [signed-in sites]
     });
   }
 
@@ -1363,7 +1369,7 @@ class Agent {
       if (name === 'open_tab') return `Opening ${hostOf(input.url)} in a new tab`;
       if (name === 'click' && input.text) return `Clicking ${quote(input.text)}`;
       if (name === 'fill_form') return `Filling in ${input.fields.length} field${input.fields.length === 1 ? '' : 's'}${input.submit ? ' and submitting' : ''}`;
-      if (name === 'read_urls') return `Reading ${input.urls.map(hostOf).join(', ')} in the background`;
+      if (name === 'read_urls') return `Reading ${input.urls.map(hostOf).join(', ')} in the background${input.as_user === true ? ' (signed in, if you allow it)' : ''}`;
       if (name === 'run_script') return 'Running a script on the page';
       if (name === 'wait_for') return `Waiting for ${quote(input.text)}`;
       if (name === 'web_search') return `Searching the web for ${quote(input.query || '')}`;
@@ -1854,10 +1860,12 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false } = {}) {
     const approvalId = ++this.approvalSeq;
     emit(action === 'tool' // [mcp client] a tool from an MCP server the user added
       ? { type: 'approval', approvalId, host, action, title, args, tainted }
+      : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
+      ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
       : action === 'open'
       ? { type: 'approval', approvalId, host, action, title: title || `${who || 'Claude'} wants to open ${host}`, ...(query === null ? {} : { query }) }
       : action === 'pdf' // read_pdf: `host` is the file name
@@ -1924,6 +1932,98 @@ ${out.text}${note}
   showResearch(what) {
     try { return this.browser.research?.begin(taskScope.getStore() || 'external', what) || (() => {}); } catch { return () => {}; }
   }
+
+  // ---- [signed-in sites] read_urls as_user (features/signed-in-sites.js). browser.signedIn (main.js;
+  // only the sidebar's Agent has it): { hosts(), add(host), hasLogin(url), privateWindow(), open(url),
+  // close(id, { force }), unlock(id) }. Returns url -> { grant, host, sensitive } for a signed-in read,
+  // or { note } saying why an as_user read stays signed out. Outside agents (MCP, gate.external) and a
+  // call with no gate are never signed in: decide() treats them as external. One card per host per call.
+  async planSignedIn(urls, asUser, gate = taskScope.getStore()?.gate) {
+    const plan = new Map();
+    const deps = this.browser.signedIn;
+    const external = !gate || gate.external === true;
+    let always = new Set();
+    try { if (deps && !external) always = deps.hosts(); } catch {}
+    let privateWindow;
+    try { privateWindow = Boolean(deps?.privateWindow?.()); } catch { privateWindow = true; } // can't tell: treat it as private
+    const asked = new Map();
+    for (const url of urls) {
+      let hasLogin = false;
+      if (asUser && deps && !external && !privateWindow) hasLogin = await Promise.resolve().then(() => deps.hasLogin(url)).catch(() => false);
+      const d = signedIn.decide({ url, asUser, external, privateWindow, supported: Boolean(deps), always, hasLogin });
+      if (d.mode === 'signed-in') plan.set(url, { grant: 'always', host: d.host, sensitive: d.sensitive });
+      else if (d.mode === 'ask') {
+        if (!asked.has(d.host)) asked.set(d.host, this.askSignedIn(d, gate));
+        const grant = await asked.get(d.host);
+        plan.set(url, grant ? { grant, host: d.host, sensitive: d.sensitive } : { note: signedIn.reasonText('denied', d.host, gate.who) });
+      } else if (d.reason && d.reason !== 'not-web' && d.reason !== 'always') plan.set(url, { note: signedIn.reasonText(d.reason, d.host, gate?.who) });
+    }
+    return plan;
+  }
+
+  // "Let <AI> use your signed-in <host> account?" No / Just this once / Always for <host> (never offered
+  // for a sensitive host). Auto-allow (the sidebar's bolt) does not cover it. Returns 'always' | 'once' | null.
+  async askSignedIn(d, gate) {
+    const answer = await this.askApproval(d.host, gate.emit, gate.signal, { action: 'signin', who: gate.who, noAlways: !d.offerAlways });
+    const grant = signedIn.grantFrom(answer, { sensitive: d.sensitive });
+    if (grant === 'always') { try { this.browser.signedIn.add(d.host); } catch {} }
+    return grant;
+  }
+
+  // Reads one page in a background tab in the user's own session (main.js opens it marked as the AI's
+  // and locks it: no popups while it is read). Only the approved host may load there: a redirect or
+  // page jump anywhere else is stopped, the tab is closed, and { redirected: true } tells read_urls to
+  // read the address signed out instead. The tab closes when the run ends unless the user switched to it.
+  async readSignedIn(url, how) {
+    const deps = this.browser.signedIn;
+    const grant = { host: how.host, sensitive: how.sensitive };
+    let tab;
+    try { tab = deps.open(url); } catch { tab = null; }
+    if (!tab?.webContents) return { redirected: true };
+    const scope = taskScope.getStore();
+    if (scope) (scope.signedInTabs ||= new Set()).add(tab.id);
+    const wc = tab.webContents;
+    let left = null;
+    const check = (event, target, isMainFrame) => {
+      if (isMainFrame === false) return;
+      if (signedIn.hopAllowed(grant, target) && !this.browser.aiOff?.(target)) return;
+      event.preventDefault();
+      left ||= target;
+    };
+    const onRedirect = (event, target, _inPlace, isMainFrame) => check(event, event.url || target, event.isMainFrame ?? isMainFrame);
+    const onNavigate = (event, target) => check(event, event.url || target, event.isMainFrame ?? true);
+    wc.on('will-redirect', onRedirect);
+    wc.on('will-navigate', onNavigate);
+    const away = () => left || !signedIn.hopAllowed(grant, wc.getURL() || url);
+    const fallBack = () => { try { deps.close(tab.id, { force: true }); } catch {} scope?.signedInTabs?.delete(tab.id); return { redirected: true }; };
+    try {
+      await Promise.race([waitForLoad(wc, 15000), sleep(15000)]);
+      if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
+      await sleep(500);
+      if (away()) return fallBack();
+      const page = await runScript(wc, scripts.readPage(0, 0), 8000);
+      if (away()) return fallBack(); // it moved while being read
+      const more = page.totalTextChars > 8000 ? `\n[first 8000 of ${page.totalTextChars} chars; open it with navigate to read more]` : '';
+      return { url: wc.getURL() || url, title: page.title, text: page.text.slice(0, 8000) + more, signedIn: true };
+    } catch (err) {
+      return { url, title: '', text: `Could not read this page: ${err.message}`, signedIn: true };
+    } finally {
+      if (!wc.isDestroyed()) {
+        wc.removeListener('will-redirect', onRedirect);
+        wc.removeListener('will-navigate', onNavigate);
+      }
+      try { deps.unlock?.(tab.id); } catch {}
+    }
+  }
+
+  // The run is over: its signed-in tabs close, except one the user switched to (main.js decides).
+  closeSignedInTabs(scope) {
+    const ids = scope?.signedInTabs;
+    if (!ids?.size) return;
+    for (const id of ids) { try { this.browser.signedIn?.close(id); } catch {} }
+    ids.clear();
+  }
+  // ---- [/signed-in sites]
 
   async executeGuarded(name, input) {
     const scope = taskScope.getStore();
@@ -2070,14 +2170,26 @@ ${same}
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }))));
+        const signedOut = (url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }));
+        // [signed-in sites] which addresses the user let the AI read with their own session (asks first)
+        const plan = await this.planSignedIn(urls, input.as_user === true);
+        const pages = await Promise.all(urls.map(async (url) => {
+          const how = plan.get(url);
+          if (how?.grant) {
+            const page = await this.readSignedIn(url, how);
+            if (!page.redirected) return page;
+            return { ...(await signedOut(url)), note: signedIn.reasonText('redirect', how.host) };
+          }
+          return { ...(await signedOut(url)), ...(how?.note ? { note: how.note } : {}) };
+        }));
         // [research tabs] Shown only after the read, and only the final address of each page that was read:
-        // a redirect to a host the user did not allow never loads in a tab (test/exfil.js).
-        const readOk = pages.filter((p) => p.title !== '' && !/^Could not read this page/.test(p.text) && !this.browser.aiOff?.(p.url)).map((p) => p.url);
+        // a redirect to a host the user did not allow never loads in a tab (test/exfil.js). A signed-in read
+        // already has its own tab (in the user's session), so it isn't opened again logged out.
+        const readOk = pages.filter((p) => !p.signedIn && p.title !== '' && !/^Could not read this page/.test(p.text) && !this.browser.aiOff?.(p.url)).map((p) => p.url);
         if (readOk.length) this.showResearch({ urls: readOk })();
         return pages.map((p) => (this.browser.aiOff?.(p.url) // [ai controls] it redirected to such a site
           ? `(${siteOf(p.url)}: the user turned off AI on this site, so its content is not shown.)`
-          : `<untrusted_page_content url="${p.url}">\nTitle: ${p.title}\n${p.text}\n</untrusted_page_content>`)).join('\n\n');
+          : `${p.signedIn ? `(${p.url}: read signed in as the user, with their OK)\n` : p.note ? `(${p.url}: ${p.note})\n` : ''}<untrusted_page_content url="${p.url}">\nTitle: ${p.title}\n${p.text}\n</untrusted_page_content>`)).join('\n\n');
       }
       case 'run_script': {
         const wc = this.requireTab();

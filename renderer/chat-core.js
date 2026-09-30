@@ -628,7 +628,7 @@ window.assistant.onEvent((event) => {
       break;
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -749,8 +749,9 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted } = {}) {
+function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways } = {}) {
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted });
+  if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
   // an MCP tool's, but "always" only lasts this chat (not a persisted Settings toggle), so its own copy.
   if (action === 'terminal') return showToolApproval(approvalId, host, { title: openTitle, args, terminal: true });
@@ -854,16 +855,55 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   scrollToBottom();
 }
 
+// [signed-in sites] read_urls as_user (features/signed-in-sites.js): may the AI read `host` with the
+// user's own signed-in session? No is the default (Enter and Escape both mean No); "Always" is left off
+// for banks, payments, password managers and account-security pages.
+function showSignInApproval(approvalId, host, { noAlways = false } = {}) {
+  const card = document.createElement('div');
+  card.className = 'approval approval-signin';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'group');
+  const agentName = assistantIdentity?.name || t('approval.theAi');
+  const heading = t('approval.signin', { name: agentName, host });
+  card.setAttribute('aria-label', heading);
+  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading });
+  const detail = Object.assign(document.createElement('p'), { className: 'approval-detail', textContent: t(noAlways ? 'approval.detail.signinSensitive' : 'approval.detail.signin') });
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const button = (text, cls) => Object.assign(document.createElement('button'), { type: 'button', className: cls, textContent: text });
+  const deny = button(t('approval.signin.no'), 'btn primary');
+  const once = button(t('approval.signin.once'), 'btn');
+  const always = noAlways ? null : button(t('approval.signin.always', { host }), 'btn approval-always');
+  const answer = (ok) => {
+    if (card.classList.contains('answered')) return;
+    card.classList.add('answered');
+    for (const b of [deny, once, always]) if (b) b.disabled = true;
+    window.assistant.approve?.(approvalId, ok);
+  };
+  deny.onclick = () => answer(false);
+  once.onclick = () => answer(true);
+  if (always) always.onclick = () => answer('always');
+  card.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' && e.target === card) || e.key === 'Escape') { e.preventDefault(); answer(false); }
+  });
+  actions.append(...[always, once, deny].filter(Boolean));
+  card.append(title, detail, actions);
+  append(card);
+  approvals.set(approvalId, { card, host, signin: true });
+  scrollToBottom();
+}
+
 function resolveApproval(approvalId, ok) {
   const entry = approvals.get(approvalId);
   if (!entry) return;
   approvals.delete(approvalId);
-  const { card, host, tool } = entry;
+  const { card, host, tool, signin } = entry;
   card.className = ok ? 'approval resolved' : 'approval resolved denied';
   card.removeAttribute('tabindex');
   card.removeAttribute('role');
   card.removeAttribute('aria-label');
-  card.textContent = tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
+  card.textContent = signin ? t(ok === 'always' ? 'approval.signin.allowedAlways' : ok ? 'approval.signin.allowedOnce' : 'approval.signin.denied', { host }) // [signed-in sites]
+    : tool ? (ok ? t('approval.allowedTool', { host }) : t('approval.deniedTool', { host })) : ok ? t('approval.allowed', { host }) : t('approval.denied', { host });
   syncWorking();
   if (document.activeElement === document.body) prompt.focus();
 }
