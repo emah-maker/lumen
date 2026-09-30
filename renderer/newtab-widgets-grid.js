@@ -171,6 +171,8 @@
     }
     if (!incoming.length && editing) setEditing(false);
     measure();
+    // The column's sizes fitted to these cards before they are drawn, so a card is never drawn pushed and then put back.
+    if (items.length && !drag) { window.newtabSize?.fitNow?.(); measure(); }
     layoutNow();
   }
 

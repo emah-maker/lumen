@@ -222,11 +222,15 @@
   const TOP = 88;
   const MIN_TOP = 16;
   function anchorSearch() {
-    if (!headerEl || headerEl.hidden || headerEl.parentElement !== mainEl) { mainEl.style.removeProperty('--main-pad'); return; }
-    const pad = Math.max(MIN_TOP, TOP + plainHeaderHeight() - headerEl.offsetHeight);
+    if (!headerEl || headerEl.parentElement !== mainEl) { mainEl.style.removeProperty('--main-pad'); return; }
+    // A hidden header leaves its room: the search box stays where it was, so nothing below it moves either.
+    const pad = Math.max(MIN_TOP, TOP + plainHeaderHeight() - (headerEl.hidden ? 0 : headerEl.offsetHeight));
     mainEl.style.setProperty('--main-pad', `${Math.round(pad)}px`);
   }
-  addEventListener('resize', () => anchorSearch());
+  // A new window size: the search box's place, and sizes that fit this window (a size drawn smaller comes back when
+  // there is room again).
+  let resizeTimer = 0;
+  addEventListener('resize', () => { anchorSearch(); clearTimeout(resizeTimer); resizeTimer = setTimeout(() => fitToCards(), 120); });
   // size.view: what is drawn right now, which may be smaller than the saved size when cards leave no room (fitToCards).
   function paint() {
     const clock = size.viewClock || size.clock;
@@ -245,18 +249,23 @@
     if (size.hold) return;
     paint();
     if (fits()) return;
-    for (let i = WS.CLOCK_STEPS.indexOf(size.clock) - 1; i >= 0 && !fits(); i--) { size.viewClock = WS.CLOCK_STEPS[i]; paint(); }
-    if (fits() || size.search === WS.SEARCH_DEFAULT) return;
-    let lo = WS.SEARCH_MIN, hi = size.search;
-    while (hi - lo > WS.SEARCH_STEP) {
-      const mid = Math.round((lo + hi) / 2 / WS.SEARCH_STEP) * WS.SEARCH_STEP;
-      if (mid <= lo || mid >= hi) break;
-      size.viewSearch = mid === WS.SEARCH_DEFAULT ? mid - WS.SEARCH_STEP : mid;
-      paint();
-      if (fits()) lo = size.viewSearch; else hi = mid;
+    // The width first (the clock only takes the space above the search box, so it rarely collides): the largest of
+    // the saved width, the grid-line widths and 8 px steps below it that fits, Automatic included.
+    if (size.search !== WS.SEARCH_DEFAULT) {
+      const m = WL.metrics(document.documentElement.clientWidth);
+      const lines = m.cols === 1 ? [] : [4, 6, 8, 10].map((s) => Math.floor(WL.spanPx(m, s)));
+      const steps = [];
+      for (let w = size.search - WS.SEARCH_STEP; w >= WS.SEARCH_MIN; w -= WS.SEARCH_STEP) steps.push(w);
+      const candidates = [...new Set([...lines.filter((w) => w < size.search), ...steps])].filter((w) => w !== WS.SEARCH_DEFAULT).sort((a, b) => b - a);
+      for (const w of candidates) { size.viewSearch = w; paint(); if (fits()) break; }
+      if (!fits()) { size.viewSearch = WS.SEARCH_DEFAULT; paint(); } // Automatic: the column's own columns
     }
-    size.viewSearch = lo === WS.SEARCH_DEFAULT ? lo - WS.SEARCH_STEP : lo;
-    paint();
+    // Then the clock, only if it (overflowing the space above the search box) is what still doesn't fit.
+    if (!fits()) {
+      const widthCap = size.viewSearch;
+      for (let i = WS.CLOCK_STEPS.indexOf(size.clock) - 1; i >= 0 && !fits(); i--) { size.viewClock = WS.CLOCK_STEPS[i]; paint(); }
+      if (!fits()) { size.viewClock = null; size.viewSearch = widthCap; paint(); } // not the clock's doing: leave it as chosen
+    }
   }
   window.newtabSize = {
     apply(clock, search) {
@@ -269,11 +278,12 @@
     fit() { anchorSearch(); fitToCards(); },
     anchor: () => anchorSearch(),
     drawnSearch: () => size.viewSearch || size.search,
+    drawnClock: () => size.viewClock || size.clock,
+    fitNow: () => fitToCards(), // the grid calls this once it has the cards, before drawing them
     preview(clock, search) {
-      if (clock) size.clock = WS.cleanClockSize(clock) || size.clock;
-      if (search) size.search = WS.cleanSearchWidth(search) || size.search;
-      size.viewClock = null;
-      size.viewSearch = null;
+      // Only the size being changed is drawn as asked; the other keeps what it is drawn at now.
+      if (clock) { size.clock = WS.cleanClockSize(clock) || size.clock; size.viewClock = null; }
+      if (search) { size.search = WS.cleanSearchWidth(search) || size.search; size.viewSearch = null; }
       paint();
     },
     hold(on) { size.hold = Boolean(on); },

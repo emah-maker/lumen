@@ -93,7 +93,7 @@
     .w-sz-grip.w-sz-blocked { animation: w-sz-nudge 280ms ease-out; background: color-mix(in srgb, var(--accent) 45%, #d70015); }
     @keyframes w-sz-nudge { 30% { translate: 3px 0; } 60% { translate: -2px 0; } }
     body .w-card.w-blocking, body.w-editing .w-card.w-blocking { outline: 2px dashed color-mix(in srgb, #d70015 70%, transparent) !important; outline-offset: 4px !important; }
-    .w-sz-note { position: absolute; z-index: 3; transform: translateX(-50%); max-width: 260px; padding: 6px 10px; border-radius: 10px; background: var(--card); color: var(--text);
+    .w-sz-note { position: absolute; z-index: 3; transform: translateX(-50%); max-width: 260px; padding: 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--bg, #fff) 90%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); color: var(--text);
       box-shadow: 0 0 0 0.5px var(--border), 0 8px 24px -8px rgba(0, 0, 0, 0.35); font: 500 12px/1.35 system-ui, sans-serif; text-align: center; opacity: 0; pointer-events: none; transition: opacity 160ms ease-out; }
     .w-sz-note.show { opacity: 1; }
     @media (prefers-reduced-motion: reduce) { .w-sz-grip.w-sz-blocked { animation: none; } }
@@ -377,8 +377,8 @@
       frameClock.style.width = `${w + 8}px`;
       frameClock.style.height = `${r.height + 4}px`;
       put(frameClock, left - 4, r.top - 2);
-      put(gripClock, left + w + 4, r.top + r.height + 2);
-      const now = SZ().get().clock;
+      put(gripClock, left + w + 4, r.top - 2); // its top corner: the clock grows upward, towards the pointer
+      const now = SZ().drawnClock?.() || SZ().get().clock; // what is drawn (a size that doesn't fit here is drawn smaller)
       gripClock.setAttribute('aria-valuenow', String(WS.CLOCK_STEPS.indexOf(now)));
       gripClock.setAttribute('aria-valuetext', clockName(now));
     }
@@ -400,12 +400,23 @@
   if (typeof ResizeObserver === 'function') new ResizeObserver(placeSoon).observe(document.querySelector('main'));
 
   // Growing the clock or the search bar never moves a card: a size that would run into one isn't taken. It stops at the
-  // largest size that fits, the grip nudges once (and keeps a tint while it is held against the limit), the cards in
-  // the way are outlined for a moment, and it says why. Shrinking always works. grid.centreFits measures the live preview.
+  // largest size that fits (the grid-line width where the column meets the cards, when that is the edge), the grip
+  // nudges once (and keeps a tint while held at the limit), the cards in the way are outlined, and it says why.
+  // Shrinking always works. grid.centreFits measures the live preview against the cards' saved places.
   const fits = () => grid()?.centreFits?.() ?? true;
   const clockAt = (k) => WS.CLOCK_STEPS.indexOf(k);
   const bigger = (key, a, b) => (key === 'clock' ? clockAt(a) > clockAt(b) : a > b);
   const previewLook = (key, value) => { if (key === 'clock') SZ().preview(value, null); else SZ().preview(null, value); };
+  // The search width as drawn: Automatic (stored as 640) fills the column's columns, so compare and step from that.
+  const drawnSearch = () => { const s = SZ().get().search; return s === WS.SEARCH_DEFAULT ? Math.floor(searchNode()?.getBoundingClientRect().width || s) : s; };
+  // The widths where the column's edges sit on grid lines (each even column span), in px.
+  function gridLineWidths() {
+    const m = grid()?.metrics?.();
+    if (!m || !Number.isFinite(m.cw)) return [];
+    const out = [];
+    for (let s = 4; s <= 10; s += 2) out.push(Math.floor(s * m.cw + (s - 1) * (window.WidgetLayout?.GAP || 24)));
+    return out;
+  }
   // The largest size from `from` (which fits) towards `want` (which doesn't) that still fits, left previewed.
   function largestFit(key, from, want) {
     if (key === 'clock') {
@@ -420,6 +431,11 @@
       previewLook(key, mid);
       if (fits()) lo = mid; else hi = mid;
     }
+    // A grid-line width between the last fit and the first miss: the column then ends exactly where the cards begin.
+    for (const w of gridLineWidths().filter((x) => x > lo && x < hi && x !== WS.SEARCH_DEFAULT).sort((a, b) => b - a)) {
+      previewLook(key, w);
+      if (fits()) { lo = w; break; }
+    }
     previewLook(key, lo);
     return lo;
   }
@@ -429,9 +445,9 @@
   note.setAttribute('aria-hidden', 'true');
   sizers.append(note);
   let noteTimer = 0;
-  function blocked(grip, key) {
-    if (grip && !grip.classList.contains('w-sz-blocked')) { grip.classList.add('w-sz-blocked'); grid()?.flashBlockers?.(); }
-    const now = key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(SZ().get().clock) }) : T('newtab.edit.search.sized', { width: SZ().get().search });
+  function blocked(grip, key, value) {
+    grip?.classList.add('w-sz-blocked');
+    const now = key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(value) }) : T('newtab.edit.search.sized', { width: value });
     const text = `${T('newtab.edit.noRoom')} ${now}.`;
     if (Date.now() - blockedSaid > 1500) { blockedSaid = Date.now(); say(text); } // one message: why it stopped, and where
     if (grip) {
@@ -449,23 +465,26 @@
   function fitted(key, from, want, grip) {
     previewLook(key, want);
     if (!bigger(key, want, from) || fits()) { unblock(grip); return want; }
+    grid()?.flashBlockers?.(); // the cards this size ran into (measured by the probe that just failed)
     const got = largestFit(key, from, want);
-    blocked(grip, key);
+    blocked(grip, key, got);
     return got;
   }
   // Set a clock step or search width now, save it (do=look) and, when `record`, put it on the Undo stack.
+  // from: the size to compare with (the drawn width for Automatic); the stored value is what Undo puts back.
   function setLook(key, value, { record = true, from, grip = null } = {}) {
-    const before = from ?? SZ().get()[key];
-    if (record) value = fitted(key, before, value, grip);
+    const stored = SZ().get()[key];
+    const base = from ?? stored;
+    if (record) value = fitted(key, base, value, grip);
     else previewLook(key, value);
     placeSoon();
-    if (before === value) return false;
+    if (value === base || value === stored) { previewLook(key, stored); placeSoon(); return false; } // no room at all: it stays as it was
     window.widgetAct('wlook', 'look', { k: key, v: String(value) });
     if (record) {
-      history.push({ kind: 'look', key, before, after: value, title: T(`newtab.edit.${key}`) });
+      history.push({ kind: 'look', key, before: stored, after: value, title: T(`newtab.edit.${key}`) });
       update();
     }
-    say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(value) }) : T('newtab.edit.search.sized', { width: value }));
+    if (!grip?.classList.contains('w-sz-blocked')) say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(value) }) : T('newtab.edit.search.sized', { width: value }));
     return true;
   }
   const gridInfo = () => { const m = grid()?.metrics?.() || grid()?.geometry().m; return m && Number.isFinite(m.pitchX) ? { pitch: m.pitchX, pad: m.pad, width: m.width } : null; };
@@ -475,39 +494,49 @@
     e.preventDefault();
     const x0 = e.clientX;
     const y0 = e.clientY;
-    const start = SZ().get();
+    const start = { ...SZ().get() };
+    const startDrawn = { clock: start.clock, search: drawnSearch() };
     SZ().hold(true); // the layout holds still meanwhile (no packing), so growing back within the drag always works
     document.body.classList.add('w-dragging');
     grip.setPointerCapture?.(e.pointerId);
     let latest = null;
     const move = (ev) => {
       const next = want(ev.clientX - x0, ev.clientY - y0);
-      const from = latest ? latest.value : start[next.key];
+      const from = latest ? latest.value : startDrawn[next.key];
       latest = { key: next.key, value: fitted(next.key, from, next.value, grip) };
       placeSoon();
     };
-    const end = (ev) => {
+    const finish = () => {
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', end);
       grip.removeEventListener('pointercancel', end);
-      grip.releasePointerCapture?.(ev.pointerId);
+      removeEventListener('keydown', escape, true);
       SZ().hold(false);
       document.body.classList.remove('w-dragging');
       unblock(grip);
-      if (ev.type === 'pointercancel' || !latest) { SZ().preview(start.clock, start.search); placeSoon(); return; }
-      setLook(latest.key, latest.value, { from: start[latest.key] });
+    };
+    const cancel = () => { finish(); SZ().preview(start.clock, start.search); placeSoon(); };
+    // Escape during the drag puts the size back (and does not also leave Edit layout).
+    const escape = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cancel(); } };
+    const end = (ev) => {
+      grip.releasePointerCapture?.(ev.pointerId);
+      if (ev.type === 'pointercancel' || !latest) { cancel(); return; }
+      finish();
+      setLook(latest.key, latest.value, { from: startDrawn[latest.key] });
     };
     grip.addEventListener('pointermove', move);
     grip.addEventListener('pointerup', end);
     grip.addEventListener('pointercancel', end);
+    addEventListener('keydown', escape, true);
   }
+  // The clock grows upward (the search box below it stays put), so its handle is at its top corner and follows the pointer up.
   gripClock.addEventListener('pointerdown', (e) => {
     const base = WS.CLOCK_PX[SZ()?.get().clock];
-    dragSizer(gripClock, e, (dx, dy) => ({ key: 'clock', value: WS.clockStepFromPx(base + dy + dx * 0.4) }));
+    dragSizer(gripClock, e, (dx, dy) => ({ key: 'clock', value: WS.clockStepFromPx(base - dy + dx * 0.4) }));
   });
   for (const [grip, dir] of [[gripL, -1], [gripR, 1]]) {
     grip.addEventListener('pointerdown', (e) => {
-      const base = searchNode()?.getBoundingClientRect().width || SZ()?.get().search;
+      const base = drawnSearch();
       dragSizer(grip, e, (dx) => ({ key: 'search', value: WS.snapSearchWidth(base + 2 * dir * dx, gridInfo()) }));
     });
   }
@@ -528,15 +557,13 @@
   for (const grip of [gripL, gripR]) {
     grip.addEventListener('keydown', (e) => {
       if (!plainKey(e)) return;
-      // The default width is drawn to fill the column's columns: step from what is drawn, not the stored 640.
-      const stored = SZ().get().search;
-      const cur = stored === WS.SEARCH_DEFAULT ? WS.cleanSearchWidth(Math.floor((searchNode()?.getBoundingClientRect().width || stored) / WS.SEARCH_STEP) * WS.SEARCH_STEP) : stored;
+      const cur = drawnSearch(); // Automatic is stepped from the width it is drawn at
       const step = 2 * WS.SEARCH_STEP;
       const to = { ArrowRight: cur + step, ArrowUp: cur + step, ArrowLeft: cur - step, ArrowDown: cur - step, PageUp: cur + 4 * step, PageDown: cur - 4 * step, Home: WS.SEARCH_MIN, End: WS.SEARCH_MAX }[e.key];
       if (to === undefined) return;
       e.preventDefault();
       e.stopPropagation();
-      let next = WS.cleanSearchWidth(to);
+      let next = WS.cleanSearchWidth(Math.round(to / WS.SEARCH_STEP) * WS.SEARCH_STEP);
       if (next === WS.SEARCH_DEFAULT) next += to > cur ? WS.SEARCH_STEP : -WS.SEARCH_STEP; // 640 is kept for "Automatic"
       if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
       else setLook('search', next, { grip, from: cur });
