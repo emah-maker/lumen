@@ -258,6 +258,35 @@ function parseGrokModels(stdout) {
   if (/not logged in|not authenticated|please (sign|log) in|run `grok login`/i.test(t)) return { signedIn: false, detail: null, models: [] };
   return { signedIn: 'unknown', detail: null, models: [] };
 }
+// When `grok models` gives no list (it timed out, an older CLI printed another layout, ...) while the
+// account isn't known to be signed out, the picker still offers models: the last list this engine
+// got, else the ids of Grok's own catalog in Lumen's GROK_HOME (models_cache.json, see
+// modelInfoFrom), else these, the ones a real `grok models` listed (1.0.41). A pick the account
+// can't use fails with Grok's own error, as any other unavailable model would.
+const FALLBACK_MODELS = ['grok-4.7', 'grok-4.7-build-fast', 'grok-4.6'];
+function modelsFallback({ last = [], home = null } = {}) {
+  if (last.length) return last;
+  let catalog = [];
+  try { catalog = Object.keys(JSON.parse(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8'))?.models || {}).filter(validModel); } catch {}
+  return catalog.length ? catalog : FALLBACK_MODELS;
+}
+// The model a run actually used, as Grok reports it: the init event's `model` (the resolved name,
+// even when the pick was the default or an alias), else the reply's own assistant message's, else
+// the one model the result's modelUsage names. Null when the stream named none.
+function servedModel({ init = null, assistant = null, result = null } = {}) {
+  const usage = Object.keys(result?.modelUsage || {});
+  const m = init || assistant || (usage.length === 1 ? usage[0] : null);
+  return m && validModel(m) ? m : null;
+}
+// The notice a reply starts with when the model answering is not the one the chat last showed, the
+// way Claude Code's auto-picked model is shown ("Auto · Sonnet", features/model-route.js):
+// "Default · grok-4.7" on Grok's default, "<pick> · <served>" when a picked alias resolved to another
+// name. Nothing when the served model is the picked one or was already shown in this chat.
+function modelNotice({ picked = 'default', served = null, shown = null } = {}) {
+  if (!served || served === shown) return null;
+  if (picked !== 'default' && picked === served) return null;
+  return `${picked === 'default' ? 'Default' : picked} · ${served}`;
+}
 // Runs `grok models` the way a sidebar run starts grok (GrokBuildEngine.status): Lumen's GROK_HOME
 // with the user's auth.json linked in, buildEnv's environment and the sidebar folder as cwd, so the
 // default model it reports is the one runs get. The user's own ~/.grok (config.toml, GROK_DEFAULT_MODEL
@@ -580,6 +609,8 @@ class GrokBuildEngine {
     if (link) try { authBefore = linkAuth(userHome, home); } catch {}
     const value = await checkAuthStatus(bin, { env: buildEnv({ userData: this.userData, home, dir }), cwd: dir, exec: this.exec });
     if (link && !this.active) try { settleAuth(userHome, home, authBefore); } catch {}
+    if (value.models.length) this.lastModels = value.models;
+    else if (value.signedIn !== false) value.models = modelsFallback({ last: this.lastModels || [], home });
     this.statusCache = { at: Date.now(), value };
     return { installed: true, ...value };
   }
@@ -591,7 +622,9 @@ class GrokBuildEngine {
 
   // One message. Resolves { text, sessionId }; errors are emitted, not thrown.
   // runAgent: the Agent whose gate, approvals and tab this run's MCP calls use (a background task's own).
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null }) {
+  // shownModel: the model this chat last showed (see modelNotice); the result's `model` is the one
+  // Grok reports it used (servedModel), null when it named none.
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, shownModel = null }) {
     const bin = await this.ensureBin();
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
@@ -607,7 +640,7 @@ class GrokBuildEngine {
     fs.mkdirSync(dir, { recursive: true });
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, shownModel };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -623,7 +656,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, shownModel = null }) {
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
@@ -652,6 +685,7 @@ class GrokBuildEngine {
     let result = null;
     let newSession = sessionId;
     let initModel = null;
+    let replyModel = null; // the assistant message's own model field
     let lastCall = null; // usage of the last model call this turn (the assistant message's)
     let stderr = '';
     let buffer = '';
@@ -691,6 +725,9 @@ class GrokBuildEngine {
       if (msg.type === 'system' && msg.subtype === 'init') {
         newSession = msg.session_id || newSession;
         initModel = msg.model || initModel;
+        // Which model is answering, at the top of the reply (held with the rest while Lumen's tools come up).
+        const note = modelNotice({ picked: model, served: servedModel({ init: initModel }), shown: shownModel });
+        if (note) show({ type: 'notice', text: note });
         // No connection-status notice here: see file header -- mcp_servers[].status is "pending"
         // at init even when the lumen server then works, so treating that as a failure signal (the
         // way claude-code.js does) would misfire on every run.
@@ -705,6 +742,7 @@ class GrokBuildEngine {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
         if (msg.message?.usage) lastCall = msg.message.usage;
+        replyModel = msg.message?.model || replyModel;
       } else if (msg.type === 'result') {
         result = msg;
         newSession = msg.session_id || newSession;
@@ -762,7 +800,8 @@ class GrokBuildEngine {
       emit({ type: 'error', text: 'Lumen stopped Grok Build before it could act: Lumen couldn\'t confirm its check on Grok\'s tool calls was running. Make sure curl is installed and Grok Build is up to date, or pick another AI in the model picker.' });
       return { text: '', sessionId: null, failed: true };
     }
-    if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
+    const served = servedModel({ init: initModel, assistant: replyModel, result });
+    if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true, model: served };
     if (early) return { retry: true };
     if (held) for (const event of held) emit(event); // ended (a failure, say) before Lumen's tools came up
     if (code === 'ENOENT') {
@@ -771,17 +810,17 @@ class GrokBuildEngine {
       return { text: '', sessionId: null, failed: true };
     }
     const usage = result ? grokUsage(result, { lastCall, info: readModelInfo(home, [initModel, ...Object.keys(result.modelUsage || {})].filter(Boolean)) }) : null;
-    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: result.total_cost_usd, usage }; // see claude-code.js
+    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: result.total_cost_usd, usage, model: served }; // see claude-code.js
     if (!result || result.is_error || result.subtype !== 'success') {
       // A tool call outside the allow rules ends the whole run in error here (unlike Claude Code,
       // where it's one failed step and the turn continues) -- see file header.
       const failText = (result?.errors || []).join('\n') || result?.result || stderr;
       emit({ type: 'error', ...describeFailure(failText, code) });
       // planLimit: the plan's usage limit was hit, with the reset time when the message names one.
-      return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true, usage, planLimit: limitOf(failText) };
+      return { text, sessionId: /no conversation found|session.*not found|unknown session/i.test(`${failText}\n${stderr}`) ? null : newSession, failed: true, usage, planLimit: limitOf(failText), model: served };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage, model: served };
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
