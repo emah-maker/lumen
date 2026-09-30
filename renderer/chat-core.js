@@ -217,6 +217,26 @@ $('model').addEventListener('change', async (e) => {
   }
   prompt.focus();
 });
+// The header's More menu (full page, dock, AI settings): opens under its button, closes on a pick, Escape or a click outside.
+(() => {
+  const btn = optional('more-actions');
+  const menu = optional('more-menu');
+  if (!btn || !menu) return;
+  const items = () => [...menu.querySelectorAll('.menu-item')].filter((b) => getComputedStyle(b).display !== 'none');
+  const close = (refocus) => { if (menu.hidden) return; menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (refocus) btn.focus(); };
+  const open = () => { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); items()[0]?.focus(); };
+  btn.addEventListener('click', () => (menu.hidden ? open() : close(true)));
+  menu.addEventListener('click', (e) => { if (e.target.closest('.menu-item')) close(false); });
+  menu.addEventListener('keydown', (e) => {
+    const list = items();
+    const at = list.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); close(true); } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      list[(at + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]?.focus();
+    }
+  });
+  document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) close(false); }, true);
+})();
 // ---------- chat ----------
 
 const messages = $('messages');
@@ -385,6 +405,16 @@ sidebarEl.addEventListener('drop', async (e) => {
 // Asks that arrive while a reply is running (Alt+Enter in the address bar, "Ask about selection",
 // the new-tab page's Ask AI, a starter chip) wait their turn instead of disappearing.
 const queued = [];
+// Edit (back into the composer) and × (dropped) on a message waiting for the current reply to finish.
+function queueControls(entry) {
+  const drop = () => { const i = queued.indexOf(entry); if (i !== -1) queued.splice(i, 1); entry.notice.remove(); };
+  const edit = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.edit') });
+  edit.onclick = () => { drop(); prompt.value = entry.text; autosize?.(); updateSend?.(); prompt.focus(); };
+  const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: '×', title: t('chat.queued.cancel') });
+  cancel.setAttribute('aria-label', t('chat.queued.cancel'));
+  cancel.onclick = drop;
+  entry.notice.append(' ', edit, cancel);
+}
 function sendQueued() {
   const next = queued.shift();
   if (!next) return;
@@ -416,7 +446,9 @@ function askInNewChat(text) {
 function ask(text, images = [], tabs = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t('chat.image') }) }));
-    queued.push({ text, images, tabs, notice });
+    const entry = { text, images, tabs, notice };
+    queued.push(entry);
+    queueControls(entry);
     return;
   }
   // Nothing connected: show the setup card instead of sending a message that can only error.
@@ -433,6 +465,8 @@ function ask(text, images = [], tabs = null) {
   window.assistant.ask(text, runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
 }
 
+// Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
+const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
 // The thinking block's summary once the answer starts: "Thought for 4s".
 function settleThinking() {
   const box = turn?.thinking?.parentElement;
@@ -667,6 +701,7 @@ window.assistant.onEvent((event) => {
       const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
       const step = document.createElement('div');
       step.className = event.id ? 'step running' : 'step done';
+      if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) turn.steps.set(event.id, step);
       step.innerHTML = '<span class="step-detail"></span>';
       step.firstChild.textContent = label;
@@ -784,11 +819,12 @@ function finishReply(bubble, source, { latest = false } = {}) {
     regen.onclick = () => {
       const users = messages.querySelectorAll('.msg.user');
       let acted = false;
-      for (let n = users[users.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.classList.contains('step')) { acted = true; break; }
+      for (let n = users[users.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.dataset?.acts) { acted = true; break; }
       if (acted && !regen.dataset.armed) {
         regen.dataset.armed = '1';
         regen.classList.add('armed');
         regen.title = t('chat.regenerateActs');
+        regen.dataset.confirm = t('chat.regenerateActs'); // shown beside it (not only on hover)
         regen.setAttribute('aria-label', t('chat.regenerateActs'));
         setTimeout(() => { delete regen.dataset.armed; regen.classList.remove('armed'); regen.title = t('chat.regenerate'); regen.setAttribute('aria-label', t('chat.regenerate')); }, 4000);
         return;
@@ -953,8 +989,8 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
-  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: "Don't allow" });
-  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Allow once' });
+  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
+  const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: t('approval.once') });
   const always = tainted && !terminal ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
@@ -1063,6 +1099,14 @@ function showHistory(items) {
     }
     bubble.classList.add('restored');
     append(bubble);
+  }
+  // Its last exchange can be asked again: the last message (text only; images aren't kept in the history view).
+  const lastUser = [...items].reverse().find((i) => i.role === 'user' && i.text);
+  const lastReply = [...messages.querySelectorAll('.msg.assistant.restored')].pop();
+  if (lastUser && lastReply && items[items.length - 1]?.role === 'assistant') {
+    lastAsk = { text: lastUser.text, images: [], tabs: null };
+    lastReply.querySelector('.reply-copy')?.remove();
+    finishReply(lastReply, items[items.length - 1].text, { latest: true });
   }
   messages.scrollTop = messages.scrollHeight;
 }

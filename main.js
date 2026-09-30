@@ -5274,7 +5274,7 @@ ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); const rec =
 ipcMain.handle('agent:rewind', (_e, expected) => {
   if (agent.runningFor(agent.messages)) return false; // never mid-run
   const result = agent.rewindLast(typeof expected === 'string' ? expected : '');
-  if (result === 'rewound') saveChatSoon(chatGeneration);
+  if (result === 'rewound') { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); } // the other view drops it too
   return result;
 });
 ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });

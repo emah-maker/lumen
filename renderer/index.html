@@ -111,12 +111,6 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
         </div>
         <div class="sidebar-actions">
-          <button class="icon-btn" id="dock-to-side" title="Dock to side" aria-label="Dock to side" data-i18n-title="sidebar.dock" data-i18n-aria-label="sidebar.dock">
-            <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
-          </button>
-          <button class="icon-btn" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
-            <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
-          </button>
           <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
           </button>
@@ -130,9 +124,22 @@
           <button class="icon-btn" id="new-chat" title="New chat (Ctrl+Shift+K)" aria-keyshortcuts="Control+Shift+K Meta+Shift+K" aria-label="New chat" data-i18n-title="sidebar.newChat.title" data-i18n-aria-label="sidebar.newChat">
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
           </button>
-          <button class="icon-btn" id="open-settings" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
+          <div class="more-wrap">
+            <button class="icon-btn" id="more-actions" type="button" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" data-i18n-title="sidebar.more" data-i18n-aria-label="sidebar.more">
+              <svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1" class="knob"/><circle cx="8" cy="8" r="1" class="knob"/><circle cx="12.5" cy="8" r="1" class="knob"/></svg>
+            </button>
+            <div class="more-menu" id="more-menu" role="menu" hidden>
+            <button class="icon-btn menu-item" role="menuitem" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
+            <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
+          </button>
+            <button class="icon-btn menu-item" role="menuitem" id="dock-to-side" title="Dock to side" aria-label="Dock to side" data-i18n-title="sidebar.dock" data-i18n-aria-label="sidebar.dock">
+            <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
+          </button>
+            <button class="icon-btn menu-item" role="menuitem" id="open-settings" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
             <svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.75" class="knob"/><circle cx="5.5" cy="11.5" r="1.75" class="knob"/></svg>
           </button>
+            </div>
+          </div>
         </div>
       </div>
 
