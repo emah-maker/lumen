@@ -6,6 +6,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## 0.3.2 (2026-09-29)
 
+- Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.
 - Tab grouping by topic is much more accurate and is now the default: related tabs across different sites land in one group (a whole trip, course, job search or recipe plan), and unrelated tabs are rarely pulled in. On a set of realistic sessions, accuracy went from 0.59 to 0.88 and wrongly grouped tabs from 23% to 4%. A choice you made before is kept.
 - Tabs organize themselves: a few seconds after your tabs change (Settings > Tabs > Organize after, 2 seconds to 1 minute, default 5), loose tabs are grouped on this computer with Undo. By default only when they are a mix of topics, so two related tabs next to an unrelated one become a group while a few tabs about one thing are left alone ("Only when topics are mixed").
 - Organize with AI asks the model when groups look like pieces of one topic, gives it 8 seconds before keeping the quick grouping, keeps names you chose, and says what it did ("3 groups, 2 tabs left loose").
