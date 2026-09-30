@@ -706,6 +706,11 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     for (const file of Object.keys(links)) links[file].icon = appIcon();
     fixShortcutIcons(fakeApp(true), shell);
     check('icon: shortcuts that already have the .ico are not rewritten', updates.length === 0, JSON.stringify(updates));
+    // An update's swap removed the icon.ico next to the exe that the shortcuts named.
+    const gone = path.join(dir, 'Programs', 'Lumen', 'icon.ico');
+    links[path.join(desktop, 'Lumen.lnk')].icon = `${gone},0`;
+    fixShortcutIcons(fakeApp(true), shell);
+    check('icon: a shortcut naming an .ico that no longer exists is pointed at one that does', updates.length === 1 && updates[0].f === path.join(desktop, 'Lumen.lnk') && fs.existsSync(updates[0].icon), JSON.stringify(updates));
   }
   fs.rmSync(dir, { recursive: true, force: true });
 }

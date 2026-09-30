@@ -4601,6 +4601,7 @@ app.whenReady().then(async () => {
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
   instance.fixShortcutIcons(app, shell);
+  instance.fixAppName(app); // Explorer says Lumen, not Electron
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();
