@@ -1715,13 +1715,21 @@ function guardFirstLoadFocus(tab, url) {
   });
 }
 
-function switchTab(id) {
+function switchTab(id, { wake = true } = {}) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return false;
   if (id !== activeId) {
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
     activeTab()?.webContents.stopFindInPage('clearSelection');
+  }
+  // Shown in the strip only. Waking a sleeping tab reloads it, and a drag that is then cancelled
+  // (Escape) has no way to put that page back to sleep. It loads later, if it is still in front.
+  if (tab.sleeping && !wake) {
+    activeId = id;
+    layout();
+    sendTabs();
+    return true;
   }
   if (tab.sleeping) wakeTab(tab);
   activeId = id;
@@ -2222,17 +2230,22 @@ function tabMenuTemplate(id) {
   return items;
 }
 
+// A step down-right of the window the menu was opened on. A maximized window's current bounds fill
+// the screen, so the step is taken from the size it will return to, which still fits.
+function cascadedWindowPoint(win) {
+  const b = win.isMaximized() ? win.getNormalBounds() : win.getBounds();
+  return { x: Math.round(b.x + 32), y: Math.round(b.y + 32) };
+}
 // "Move Tab to New Window" (not for a window's only tab) and "Move Tab to Window", one entry per
 // other normal window. Private windows never appear: a tab can't move in or out of one.
 function moveWindowItems(id) {
   const src = curRec;
   const items = [];
   if (!src) return items;
-  const b = src.win.getBounds();
   const ids = tabsActedOn(src, id); // the whole multi-selection, when the menu is opened on one of its tabs
   const n = ids.length;
   if (tabs.filter((x) => !x.closing).length - n >= 1) {
-    items.push({ label: n > 1 ? t('menu.moveTabsToNewWindow', { n }) : t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, { x: b.x + 60, y: b.y + 40 }, ids) });
+    items.push({ label: n > 1 ? t('menu.moveTabsToNewWindow', { n }) : t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, cascadedWindowPoint(src.win), ids) });
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
   if (others.length) items.push({ label: n > 1 ? t('menu.moveTabsToWindow', { n }) : t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabsBetween(src, r, ids, undefined, { active: id }) })) });
@@ -2343,8 +2356,7 @@ function moveGroupItems(groupId) {
   const lead = moving.ids.includes(activeId) ? activeId : moving.ids[0];
   const items = [];
   if (tabs.filter((x) => !x.closing).length - moving.ids.length >= 1) {
-    const b = src.win.getBounds();
-    items.push({ label: t('menu.moveGroupToNewWindow'), click: () => tearOffTab(src, lead, { x: b.x + 60, y: b.y + 40 }, moving.ids, moving.group) });
+    items.push({ label: t('menu.moveGroupToNewWindow'), click: () => tearOffTab(src, lead, cascadedWindowPoint(src.win), moving.ids, moving.group) });
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
   if (others.length) items.push({ label: t('menu.moveGroupToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabsBetween(src, r, moving.ids, undefined, { active: lead, group: moving.group }) })) });
@@ -3382,19 +3394,33 @@ function outsideGroups(at) {
 // update, and nothing is learned for automatic grouping (tabs were moved, not regrouped).
 function moveBlock(ids, beforeId, groupId = null) {
   const keep = groupId != null && tabGroups.groups.has(groupId) ? groupId : null;
-  const moving = ids.map((id) => tabs.find((t) => t.id === id && !t.closing && !t.pinned)).filter(Boolean);
+  // Pinned tabs move as well, but only inside the pinned run (they stay first). The others move
+  // as one block to the drop. Each run keeps the order the selection had in the strip, which is
+  // the order the count on the dragged tab was showing.
+  const moving = ids.map((id) => tabs.find((t) => t.id === id && !t.closing)).filter(Boolean);
   if (!moving.length) return false;
-  const own = moving.length === 1 ? moving[0].groupId : null; // a single tab dropped at the edge of its own group stays in it
+  const pinnedMoving = moving.filter((t) => t.pinned);
+  const looseMoving = moving.filter((t) => !t.pinned);
+  const own = looseMoving.length === 1 && pinnedMoving.length === 0 ? looseMoving[0].groupId : null; // a single tab dropped at the edge of its own group stays in it
   for (const t of moving) tabs.splice(tabs.indexOf(t), 1);
-  const pinned = tabs.filter((t) => t.pinned).length;
+  const pinnedCount = tabs.filter((t) => t.pinned).length;
   let at = beforeId == null ? tabs.length : tabs.findIndex((t) => t.id === beforeId);
   if (at === -1) at = tabs.length;
-  at = Math.max(pinned, at);
-  if (keep) at = outsideGroups(at); // not into the middle of another group
-  tabs.splice(at, 0, ...moving);
-  const prev = tabs[at - 1], next = tabs[at + moving.length];
-  const join = keep || (prev?.groupId && prev.groupId === next?.groupId ? prev.groupId : null) || (own && (prev?.groupId === own || next?.groupId === own) ? own : null);
-  for (const t of moving) { t.groupId = join; t.userRemoved = !join; t.userMoved = true; }
+  // A drop among loose tabs puts the pinned block at the end of the pinned run, the nearest
+  // place they can land. A drop on a pinned tab puts them there.
+  if (pinnedMoving.length) tabs.splice(Math.min(at, pinnedCount), 0, ...pinnedMoving);
+  if (looseMoving.length) {
+    const pinnedNow = tabs.filter((t) => t.pinned).length;
+    let looseAt = beforeId == null ? tabs.length : tabs.findIndex((t) => t.id === beforeId);
+    if (looseAt === -1) looseAt = tabs.length;
+    looseAt = Math.max(pinnedNow, looseAt); // loose tabs never go in among the pinned ones
+    if (keep) looseAt = outsideGroups(looseAt); // a group never lands inside another
+    tabs.splice(looseAt, 0, ...looseMoving);
+    const prev = tabs[looseAt - 1], next = tabs[looseAt + looseMoving.length];
+    const join = keep || (prev?.groupId && prev.groupId === next?.groupId ? prev.groupId : null) || (own && (prev?.groupId === own || next?.groupId === own) ? own : null);
+    for (const t of looseMoving) { t.groupId = join; t.userRemoved = !join; t.userMoved = true; }
+  }
+  for (const t of pinnedMoving) t.userMoved = true;
   tabGroups.cleanup();
   sendTabs();
   return true;
@@ -3607,7 +3633,18 @@ function stepAside(d) {
     const stay = tabs.slice(i).find((t) => !d.ids.includes(t.id) && !t.closing) || tabs.slice(0, i).reverse().find((t) => !d.ids.includes(t.id) && !t.closing);
     if (!stay) return;
     d.origActive = activeId;
-    switchTab(stay.id);
+    // A sleeping neighbour is only brought to the front of the strip. Waking it would reload the
+    // page, and cancelling the drag would leave it loaded. It wakes after the drop if it is still
+    // the tab in front (wakeDeferredAside).
+    if (stay.sleeping) { d.asideAsleep = stay.id; switchTab(stay.id, { wake: false }); }
+    else switchTab(stay.id);
+  });
+}
+function wakeDeferredAside(d) {
+  if (!d?.asideAsleep || !rcAlive(d.rec)) return;
+  withWindow(d.rec, () => {
+    const front = tabs.find((t) => t.id === activeId);
+    if (front?.sleeping && front.id === d.asideAsleep) switchTab(front.id);
   });
 }
 // Puts away the card of drag `d`: never the card of a newer drag that has taken it over meanwhile (a
@@ -3779,9 +3816,11 @@ function finishCardDrag(d, reason, target) {
         }
         if (activeId !== d.tabId && tabs.some((t) => t.id === d.tabId)) switchTab(d.tabId);
       });
+      wakeDeferredAside(d); // the neighbour loads only if the dragged tab did not come back to the front
     } else {
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
       moveTabsBetween(src, target.rec, ids, at === -1 ? undefined : at, { active: d.tabId, group: d.group });
+      wakeDeferredAside(d);
     }
     hideDragCard(d, 'join');
     settled();
@@ -3799,12 +3838,13 @@ function finishCardDrag(d, reason, target) {
     if (dragCard?.owner === d) cardCall('wait'); // a window's UI is loading: the card shows it is opening
     const rec = createWindow({
       size: d.size, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src,
-      adopt: { src, tabId: d.tabId, ids, group: d.group, focus: false, done: (ok) => { settled(); if (ok) revealNewWindow(rec, d.tabId, () => hideDragCard(d, 'drop')); else hideDragCard(d, 'cancel'); } },
+      adopt: { src, tabId: d.tabId, ids, group: d.group, focus: false, done: (ok) => { settled(); if (ok) { wakeDeferredAside(d); revealNewWindow(rec, d.tabId, () => hideDragCard(d, 'drop')); } else hideDragCard(d, 'cancel'); } },
     });
   };
   const landIn = (rec) => {
     rec.win.setBounds({ x: at.x, y: at.y, width: d.size.width, height: d.size.height }); // one call: no size drift on mixed-DPI setups
     if (!moveTabsBetween(src, rec, ids, 0, { focus: false, active: d.tabId, group: d.group })) { rec.win.close(); hideDragCard(d, 'cancel'); settled(); return; }
+    wakeDeferredAside(d);
     settled();
     revealNewWindow(rec, d.tabId, () => hideDragCard(d, 'drop'));
   };
@@ -3857,7 +3897,11 @@ function beginTabDrag(src, tabId, grab) {
     // tab under the cursor as it sits in the strip.
     const size = w.isMaximized() ? w.getNormalBounds() : w.getBounds();
     d.size = { width: size.width, height: size.height };
-    d.grab = { x: grab.stripX, y: grab.pressY || grab.y };
+    // layout: where the grabbed point will sit in the new strip (unscrolled, with the tabs that
+    // will be to its left). stripX is the same number when the renderer already worked it out,
+    // and what tests pass when they don't send a layout.
+    const laid = grab.layout ? tabDragMath.grabPoint(grab.layout) : null;
+    d.grab = { x: Number.isFinite(laid) ? laid : grab.stripX, y: grab.pressY || grab.y };
     showDragCard(d, tab, cursor).then(() => stepAside(d));
     prepareDragWindow(src); // if the renderer's early hint didn't come
   }
@@ -3872,7 +3916,7 @@ ipcMain.on('tab:dragstart', (event, id, grab) => {
   const src = recOfSender(event.sender); // a private window's UI is not in winRecs: refused
   if (!src || isSpare(src) || !Number.isInteger(id)) return;
   const ids = Array.isArray(grab?.ids) ? grab.ids.filter(Number.isInteger).slice(0, 1000) : null;
-  beginTabDrag(src, id, { x: num(grab?.x), y: num(grab?.y), stripX: num(grab?.stripX), pressY: num(grab?.pressY), ids, group: Number.isInteger(grab?.group) ? grab.group : null });
+  beginTabDrag(src, id, { x: num(grab?.x), y: num(grab?.y), stripX: num(grab?.stripX), pressY: num(grab?.pressY), ids, group: Number.isInteger(grab?.group) ? grab.group : null, layout: grab?.layout && typeof grab.layout === 'object' ? grab.layout : null });
 });
 // The pointer moved (the page holding it reports every move): the card or window follows at once, on the
 // mouse's own rhythm, instead of waiting for the next poll.
@@ -3897,20 +3941,24 @@ function tearOffTab(src, tabId, point, ids = [tabId], group = null) {
   ids = ids.filter((id) => tabsOf(src).some((t) => t.id === id && !t.closing));
   if (!ids.includes(tabId)) ids = [tabId];
   if (!tab || closableTabCount(src) - ids.length < 1) return false; // a window's last tabs stay where they are
-  const area = screen.getDisplayNearestPoint(point).workArea;
-  const fit = tabDragMath.fitToDisplay({ width: src.win.getSize()[0], height: src.win.getSize()[1] }, area);
-  const size = [fit.width, fit.height];
-  const position = { x: Math.max(area.x, Math.round(point.x - 120)), y: Math.max(area.y, Math.round(point.y - 16)) };
+  const anchor = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : { x: 0, y: 0 };
+  const area = screen.getDisplayNearestPoint(anchor).workArea;
+  // getSize() on a maximized window is the maximized size, so the new window covered the old one
+  // and hung off the work area. The restored size is what the drag path uses, and the window is
+  // kept fully on the work area (it is not being dragged, so it should not slide off).
+  const normal = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+  const fit = tabDragMath.fitToDisplay({ width: normal.width, height: normal.height }, area);
+  const at = tabDragMath.placeOnWorkArea({ x: anchor.x, y: anchor.y, width: fit.width, height: fit.height }, area);
   // Hidden until the tab has arrived and painted, then faded in and focused (revealNewWindow).
-  const spare = takeSpare({ width: size[0], height: size[1] });
+  const spare = takeSpare({ width: at.width, height: at.height });
   if (spare) {
-    spare.win.setPosition(position.x, position.y);
+    spare.win.setBounds({ x: at.x, y: at.y, width: at.width, height: at.height }); // one call: no size drift on mixed-DPI setups
     if (moveTabsBetween(src, spare, ids, 0, { focus: false, active: tabId, group })) revealNewWindow(spare, tabId);
     else spare.win.close();
     return true;
   }
   const rec = createWindow({
-    size: { width: size[0], height: size[1] }, position, hidden: true, boundsFrom: src,
+    size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src,
     adopt: { src, tabId, ids, group, focus: false, done: (ok) => { if (ok && rcAlive(rec)) revealNewWindow(rec, tabId); } },
   });
   return true;
@@ -4686,7 +4734,11 @@ ipcMain.handle('settings:strings', () => ({ locale: i18n().locale, strings: i18n
 if (TEST) global.__i18n = () => i18n(); // test/a11y.js
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));
-ipcMain.on('tab:move', (_e, id, toIndex) => moveTab(id, toIndex));
+ipcMain.on('tab:move', (event, id, toIndex, done) => {
+  moveTab(id, toIndex);
+  // An in-strip drag holds its tab hidden until this: the strip shows it in the slot it landed in.
+  if (done) event.sender.send('tab:dragdone');
+});
 function moveTab(id, toIndex) {
   const from = tabs.findIndex((t) => t.id === id);
   if (from === -1) return;

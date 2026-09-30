@@ -2470,7 +2470,7 @@ async function swapHelperRuns() {
 })();
 // ---- tab drag geometry (features/tab-drag-math.js)
 {
-  const { clampToDisplay, windowBoundsFor, stripHit } = require('../features/tab-drag-math');
+  const { clampToDisplay, windowBoundsFor, stripHit, grabPoint, placeOnWorkArea } = require('../features/tab-drag-math');
   const area = { x: 0, y: 0, width: 1920, height: 1040 };
   const strip = { key: 'w', bounds: { x: 100, y: 100, width: 800, height: 600 }, bottom: 40, tabs: [{ id: 1, mid: 100 }, { id: 2, mid: 300 }, { id: 3, mid: 500 }] };
   check('drag: the grabbed spot lands under the cursor', JSON.stringify(windowBoundsFor({ x: 500, y: 300 }, { x: 60, y: 14 }, { width: 900, height: 700 })) === JSON.stringify({ x: 440, y: 286, width: 900, height: 700 }));
@@ -2493,6 +2493,17 @@ async function swapHelperRuns() {
   check('drag: a window that takes no tabs (private) blocks the strip behind it', stripHit({ x: 300, y: 120 }, [{ bounds: { x: 0, y: 0, width: 500, height: 500 }, occluder: true }, strip]) === null);
   const { fitToDisplay } = require('../features/tab-drag-math');
   check('drag: a torn-off window shrinks to fit a smaller display', JSON.stringify(fitToDisplay({ width: 2400, height: 900 }, area)) === JSON.stringify({ width: 1920, height: 900 }));
+  // A new window's grab point: unscrolled origin, plus every tab that will sit left of the one grabbed.
+  const origin = 80;
+  check('drag: one tab opens with the grabbed point at the strip origin plus the press offset', grabPoint({ origin, into: 36, room: 900, gap: 4, items: [{ pinned: false }], index: 0 }) === origin + 36);
+  check('drag: tabs that will sit left of the grabbed one count, at the width they will have there', grabPoint({ origin, into: 10, room: 900, gap: 4, items: [{}, {}], index: 1 }) === origin + 200 + 4 + 10);
+  check('drag: pinned tabs land first, at their own width, ahead of a loose tab grabbed with them', grabPoint({ origin, into: 20, room: 900, gap: 4, items: [{ pinned: true }, { pinned: true }, {}], index: 2 }) === origin + 40 + 4 + 40 + 4 + 20);
+  check('drag: a crowded new strip shares the room instead of using the 200px tab width', grabPoint({ origin, into: 0, room: 100, gap: 4, items: [{}, {}], index: 1 }) === origin + 48 + 4);
+  check('drag: a group label is the first thing in the new strip, inset by its margin', grabPoint({ origin, into: 12, labelInset: 5, items: [] }) === origin + 5 + 12);
+  check('drag: the press offset is kept inside the tab it will have in the new window', grabPoint({ origin, into: 180, room: 100, gap: 4, items: [{}, {}], index: 0 }) === origin + 48);
+  const hung = placeOnWorkArea({ x: area.x + area.width - 100, y: area.y + area.height - 40, width: 1200, height: 800 }, area);
+  check('drag: a menu tear-off stays fully on the work area', hung.x === area.x + area.width - 1200 && hung.y === area.y + area.height - 800 && hung.width === 1200 && hung.height === 800, JSON.stringify(hung));
+  check('drag: a menu tear-off that already fits is not moved', JSON.stringify(placeOnWorkArea({ x: 40, y: 50, width: 800, height: 600 }, area)) === JSON.stringify({ x: 40, y: 50, width: 800, height: 600 }));
 }
 
 // ---- ask across open tabs (features/tabs-ask.js, renderer/tabs-ask-core.js, read_tabs in agent.js)
