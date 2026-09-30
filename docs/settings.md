@@ -49,6 +49,7 @@ These are set from the sidebar rather than the settings page:
 | Font size | `fontSize` | `16` | `9`, `12`, `16`, `20` or `24` px. Applies to new tabs. |
 | Show bookmark button | `showBookmarkButton` | on | The star in the address bar. Ctrl+D bookmarks either way. |
 | Compact tabs | `compactTabs` | off | Shorter tabs in the tab strip. |
+| Widget cards | `newTabWidgetGlass` | `solid` | The new-tab widget cards' background: `solid`, `frosted` (see-through, blurred) or `clear` (as transparent as stays readable). |
 
 ## Search engine
 
@@ -72,6 +73,9 @@ These are set from the sidebar rather than the settings page:
 | Send a "Do Not Track" request | `sendDoNotTrack` | off | Adds `DNT: 1` to every request. |
 | Send Global Privacy Control | `sendGpc` | off | Adds `Sec-GPC: 1` to every request. |
 | Always use secure connections | `httpsOnly` | off | Upgrades `http://` to `https://` and warns before loading a site with no secure version. Local addresses are left alone. |
+| Save passwords | `savePasswords` | off | Offers to save a password when you sign in on an https site (or `http://localhost`), and fills a saved one when you click the key in the address field (never by itself, never submitting). Not in private windows or the AI's research tabs. The logins are in `passwords.bin` in the profile, encrypted with the OS keychain (safeStorage), never in `settings.json`; without OS encryption it won't turn on. Turning it off asks whether to delete them (Keep is the default). Changed only from its switch, not with `prefs:set`. |
+| Saved passwords | — | — | Privacy and security → Saved passwords: site and username per login, Show and Copy (Touch ID where the Mac has it, a confirmation otherwise), Edit, Delete, Import from CSV (Chrome, Apple Passwords, Firefox, Bitwarden exports) and Delete all. |
+| Never saved for | `passwordsNever` | none | Sites where you chose "Never for this site". |
 | Warn about dangerous sites (Google Safe Browsing) | `safeBrowsing` | off | Checks each page against Google's lists of suspected phishing and malware, kept on your computer; a listed page shows a warning instead. Needs your own Google API key (stored encrypted in `keys.safebrowsing`, or `GOOGLE_SAFE_BROWSING_API_KEY`). Only 4-byte partial hashes of a matching address go to Google. |
 | Block ads and trackers | `adblock` | on | Built-in blocker using uBlock Origin-compatible filter lists. |
 | Sites where ads are allowed | `adblockAllow` | none | Host names the blocker leaves alone. |
@@ -112,6 +116,7 @@ Programs and scripts are held until you agree to keep them, whatever these setti
 | Keep Lumen running when its window is closed | `keepRunningInBackground` | on | macOS only. |
 | Proxy | `proxy` | `system` | `mode` is `system`, `direct`, `fixed_servers` (with `rules` and `bypass`), `pac_script` (with `pacUrl`) or `auto_detect`. Applies straight away. |
 | Download updates automatically | `autoDownloadUpdates` | on | New versions download in the background and "Restart to update" appears when one is ready. Off: Lumen asks before downloading. Copies that can't replace themselves (portable exe, per-machine install, unwritable Mac app) say when a version is out and download it when you ask. |
+| Show what’s new after updates | `showWhatsNew` | on | The first time Lumen starts on a newer version, the release notes for every version since the one you last ran come up once (from `CHANGELOG.md`, which ships inside Lumen, so no network is needed). A first run ever shows nothing. The same switch is on the card itself; **Show what’s new** here, or **What’s New in Lumen…** in the ⋯ menu (More Tools) and the Mac Help menu, opens the notes any time. The last version you ran is kept as `lastSeenVersion` (internal; Lumen records it, Reset settings keeps it). |
 
 ## Background tasks
 

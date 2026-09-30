@@ -2315,6 +2315,9 @@ ${same}
       }
       case 'run_script': {
         const wc = this.requireTab();
+        // [passwords] A script could read a password the user filled from Lumen's saved passwords
+        // (features/passwords.js): not on that site in that tab. read_page and find never show password values.
+        if (this.browser.passwordFilled?.(wc)) throw new Error('run_script is not available on this page: the user filled in a saved password on this site in this tab. Use read_page, find, click or type_text instead.');
         const wrapped = `(async () => {\n${input.code}\n})().then((value) => { try { return JSON.stringify(value) ?? 'undefined'; } catch { return String(value); } }, (err) => 'ERROR: ' + (err && err.message || err))`;
         const result = await runScript(wc, wrapped, 20000, { mainWorld: true });
         const text = String(result);

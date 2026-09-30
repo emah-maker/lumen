@@ -55,6 +55,7 @@ const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
+const { ACCOUNT_URL: TVW_ACCOUNT_URL } = require('./features/tradingview-view'); // [widgets] TradingView watchlist import
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
 const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
@@ -163,6 +164,7 @@ const UI_ONLY_IPC = new Set([
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -445,6 +447,13 @@ if (TEST) {
   global.__closeTabInteractive = (id) => requestCloseTab(id);
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
+
+// ---------- what's new after an update (features/whats-new.js): once, over the first window ----------
+const whatsNew = require('./features/whats-new').createWhatsNew({
+  app, readSettings, writeSettings, t, test: TEST,
+  showNotes: (opts) => dialogs.showNotes(opts),
+});
+if (TEST) global.__whatsNew = whatsNew;
 
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
 // overlay per window (features/tool-overlay.js). Loaded on first use.
@@ -980,6 +989,7 @@ function showAppMenu({ x, y, right }) {
       ]),
       chunk([{ label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }]), // [settings]
       more(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
+      more([{ label: t('menu.whatsNew'), click: () => whatsNew.open() }]),
     ],
     [more([{ label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() }])],
   ];
@@ -1216,6 +1226,7 @@ function tabState() {
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url) || managerPageOf(url), // Lumen's own pages get their own icon
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
         translate: translate.stateOf(t), // the translate button and infobar (features/translate.js)
+        passwords: passwordsRt ? passwordsRt.stateOf(t) : null, // [passwords] the key button and the save bar: sites, usernames and counts only
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
@@ -1511,7 +1522,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
     tab.favicon = tab.favicons[0] || null;
   });
-  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url); });
+  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc); });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
@@ -1581,6 +1592,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
   translate.attach(tab);
+  passwordsRt?.attach(tab); // [passwords] offers to save a sign-in; features/passwords.js decides which tabs
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
@@ -2706,12 +2718,18 @@ function askFromHome(event, url, tabId) {
 
 // [widgets] The new-tab page's widget buttons (a Todoist checkbox, Refresh) load the page itself
 // with ?widget=<id>&do=…, the same way Ask AI does: cancel that and do it here.
-function widgetAction(event, url) {
+function widgetAction(event, url, wc = null) {
   if (!isNewTab(url)) return false;
   const action = widgets.actionFrom(url);
   if (!action) return false;
   event.preventDefault();
-  if (!action.invalid) widgets.act(action).catch((err) => console.error('[lumen] widget action:', err.message));
+  if (action.invalid) return true;
+  const done = widgets.act(action);
+  // The page's own add/edit form (do=setup) hears how it went: saved, or what to fix.
+  if (action.do === 'setup') {
+    done.then((r) => { if (wc && !wc.isDestroyed() && isNewTab(wc.getURL())) wc.executeJavaScript(`window.widgetSetupResult?.(${JSON.stringify(r)})`).catch(() => {}); });
+  }
+  done.catch((err) => console.error('[lumen] widget action:', err.message));
   return true;
 }
 
@@ -2982,6 +3000,7 @@ function showContextMenu(wc, p) {
   }
   items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
+    if (passwordsRt) items.push(...passwordsRt.contextMenuItems(tabByContents(wc), p)); // [passwords] Fill <username>, on a site with saved logins
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
   } else if (selection) {
     const short = selection.length > 30 ? `${selection.slice(0, 29)}…` : selection;
@@ -3450,7 +3469,7 @@ function macMenu() {
     },
     { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
     { role: 'windowMenu' },
-    { role: 'help', submenu: [{ label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
+    { role: 'help', submenu: [{ label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
 }
 
@@ -4521,6 +4540,9 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     perf.mark('uiReady');
     downloads.send(); // last session's downloads: the toolbar button shows when there are any
     openLinksFromOtherApps(pendingLinks.splice(0));
+    // After an update, the release notes come up once, a moment after the restored tabs (only the
+    // first normal window asks; whatsNew.check runs once per launch).
+    if (firstWindow) setTimeout(() => { if (!w.isDestroyed()) whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message)); }, 1200);
   }
   return rec;
 }
@@ -4753,9 +4775,76 @@ const signedInReader = {
   },
 };
 if (TEST) global.__signedInSites = signedInSites;
+
+// [passwords] Saved passwords (features/passwords.js), off until the user turns on Settings → Privacy and
+// security → Save passwords. Encrypted with safeStorage (the OS keychain) in <profile>/passwords.bin.
+// Nothing here goes to the Agent below except filledIn(), a yes/no that makes run_script refuse a
+// site in a tab where the user filled a password. The module loads when the feature is on, or when
+// Settings first asks about it; until then no tab is watched and nothing is read from disk.
+const allTabsEverywhere = () => (winRecs.size ? [...winRecs].flatMap((rec) => (rcAlive(rec) ? tabsOf(rec) : [])) : tabs);
+async function passwordReauth(reason) {
+  if (TEST) return Boolean(await global.__passwordsReauth?.(reason));
+  if (process.platform === 'darwin' && systemPreferences.canPromptTouchID()) {
+    try { await systemPreferences.promptTouchID(reason); return true; } catch { return false; }
+  }
+  // No Touch ID (Windows, Linux, a Mac without it): a confirmation, not real authentication.
+  const { response, cancelled } = await dialogs.showMessageBox(win, { type: 'warning', message: t('passwords.reauth.confirm', { action: reason }), detail: t('passwords.reauth.detail'), buttons: [t('dialog.cancel'), t('passwords.reauth.continue')], defaultId: 0, cancelId: 0 });
+  return !cancelled && response === 1;
+}
+let passwordsRt = null;
+const passwords = () => {
+  if (passwordsRt) return passwordsRt;
+  passwordsRt = require('./features/passwords').createPasswords(passwordDeps());
+  for (const tab of allTabsEverywhere()) if (alive(tab)) passwordsRt.attach(tab); // tabs opened before it loaded
+  return passwordsRt;
+};
+const passwordDeps = () => ({
+  file: path.join(app.getPath('userData'), require('./features/passwords').FILE_NAME),
+  cipher: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    backend: () => (process.platform === 'linux' ? safeStorage.getSelectedStorageBackend?.() : null),
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (buf) => safeStorage.decryptString(buf),
+  },
+  readSettings, writeSettings, t: (...a) => t(...a), sendTabs: () => sendTabs(),
+  tabOf: (wc) => allTabsEverywhere().find((x) => alive(x) && x.view.webContents === wc) || null,
+  facts: (tab) => {
+    const url = tab.view.webContents.getURL();
+    return { isolated: Boolean(tab.isolated), settings: Boolean(tab.settings), internal: Boolean(tab.managerPage) || isInternal(url) || isErrorPage(url) || chatPage.isChatUrl(url), aiTab: Boolean(tab.aiSignedIn) };
+  },
+  allTabs: allTabsEverywhere,
+  popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
+  openSettings: (section) => openSettingsPage(section),
+  reauth: passwordReauth,
+  confirm: async ({ message, detail, buttons, defaultId }) => {
+    if (TEST && global.__passwordsConfirm) return global.__passwordsConfirm({ message, buttons });
+    const { response, cancelled } = await dialogs.showMessageBox(win, { type: 'warning', message, detail, buttons, defaultId, cancelId: defaultId });
+    return cancelled ? defaultId : response;
+  },
+  notify: (message, detail) => { dialogs.showMessageBox(win, { type: 'info', message, detail, buttons: [t('dialog.ok')], defaultId: 0, cancelId: 0 }).catch(() => {}); },
+  clipboard,
+  pickCsv: async () => {
+    if (TEST) return global.__passwordsPickCsv?.() || null;
+    const { canceled, filePaths } = await electronDialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    return canceled ? null : filePaths[0] || null;
+  },
+  outsideDriver: () => Boolean(aiAgents?.automationClients?.()), // a CDP client could read the page: no filling then
+  isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event),
+});
+// The settings page's calls (features/passwords.js checks each one again and knows the same list).
+const PASSWORD_CHANNELS = ['state', 'set-enabled', 'list', 'reveal', 'copy', 'update', 'delete', 'delete-all', 'import', 'never-remove'].map((c) => `settings:passwords-${c}`);
+for (const channel of PASSWORD_CHANNELS) ipcMain.handle(channel, (event, ...args) => passwords().invoke(channel, event, ...args));
+ipcMain.on('passwords:act', (_e, action) => {
+  if (!passwordsRt || !['menu', 'save', 'never', 'not-now'].includes(action)) return;
+  passwordsRt.act(tabs.find((x) => x.id === activeId && alive(x)), action);
+});
+if (readSettings().savePasswords === true) passwords();
+if (TEST) Object.defineProperty(global, '__passwords', { get: passwords, configurable: true });
+if (TEST) global.__passwordChannels = PASSWORD_CHANNELS;
 const agent = new Agent({
   research: researchTabs,
   signedIn: signedInReader, // [signed-in sites]
+  passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
@@ -4969,6 +5058,7 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
     clearTimeout(widgetRefreshTimer);
     widgetRefreshTimer = setTimeout(() => {
@@ -4988,6 +5078,31 @@ const widgets = createWidgets({
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 if (TEST) global.__widgets = widgets;
+
+// [widgets] The user's TradingView watchlists, for the TradingView widget's import and sync: one fixed
+// address (features/tradingview-view.js ACCOUNT_URL), GET only, read with the normal session's cookies so
+// it answers for the account signed in on tradingview.com in Lumen. No redirects, answer capped at 1 MB.
+function tradingviewAccountLists() {
+  return new Promise((resolve, reject) => {
+    const req = net.request({ url: TVW_ACCOUNT_URL, method: 'GET', session: session.defaultSession, useSessionCookies: true, redirect: 'error', cache: 'no-store' });
+    req.setHeader('Accept', 'application/json');
+    const timer = setTimeout(() => { req.abort(); reject(new Error('TradingView took too long')); }, 15e3);
+    const done = (fn, v) => { clearTimeout(timer); fn(v); };
+    req.on('response', (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (c) => { size += c.length; if (size > 1 << 20) { req.abort(); done(reject, new Error('TradingView sent too much')); } else chunks.push(c); });
+      res.on('end', () => {
+        if (res.statusCode === 401 || res.statusCode === 403) return done(resolve, []); // signed out: no lists
+        if (res.statusCode !== 200) return done(reject, new Error(`TradingView answered ${res.statusCode}`));
+        try { done(resolve, JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { done(reject, new Error('TradingView sent something unexpected')); }
+      });
+      res.on('error', (err) => done(reject, err));
+    });
+    req.on('error', (err) => done(reject, err));
+    req.end();
+  });
+}
 // [widgets] The Spotify widget's Web player (features/spotify-web.js): one persistent view in the normal session.
 const spotifyWeb = SW.createSpotifyWeb({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
@@ -5004,6 +5119,7 @@ const settingsBackend = settingsPage.create({
   usage, // [usage] You and AI → Usage
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
+  showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
@@ -5653,7 +5769,8 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab,
   tools: EXTERNAL_TOOLS,
   validateToolInput,
-  userTabs: () => tabs.filter(alive).map((t) => ({ id: t.id, webContents: t.view.webContents })),
+  // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
+  userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
 });
 
 // ---------- updates from GitHub Releases (features/updates.js) ----------

@@ -62,6 +62,9 @@ const GC = require('./google-client'); // Lumen's built-in Google client (one-cl
 const WCK = require('./worldclock-view');
 const MV = require('./muse-view');
 const MK = require('./markets-view');
+const TVW = require('./tradingview-view');
+const CW = require('./custom-widget');
+const LW = require('./local-widgets');
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -81,6 +84,17 @@ const ENDPOINTS = {
   muse: 'https://api.meta.ai/v1', // Meta Model API (OpenAI-style), bearer key
   twelvedata: 'https://api.twelvedata.com', // Stocks: the user's own free key
   coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
+};
+// Kinds the new-tab page can add and edit itself (renderer/newtab-setup.js), through do=setup: none of
+// them has a key, a sign-in or a private address, so their settings may be shown to the page. The
+// value picks what the page's form starts from. Everything else opens Settings (do=configure).
+const INLINE = {
+  notes: () => ({}),
+  countdown: (w) => ({ cd: w.cd }),
+  timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
+  tradingview: (w) => ({ tv: w.tv }),
+  custom: (w) => ({ recipe: w.recipe }),
+  embed: (w) => ({ url: w.url, height: w.height }),
 };
 const MAX_WIDGETS = 24; // every kind of card can be added more than once (several feeds, places, pages), so the cap is well above the number of kinds
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -617,6 +631,126 @@ const CONNECTORS = {
     act: (c, action, x, cached, ctx) => marketAct(c, action, cached, ctx, true),
   },
 
+  // TradingView: TradingView's own embeddable chart in a sandboxed frame (features/tradingview-view.js).
+  // No key, nothing fetched by Lumen: the frame loads the chart and its quotes from TradingView itself.
+  // The one exception is a watchlist imported from the user's TradingView account with sync on: its
+  // symbols are read again (x.tvLists, the user's own TradingView cookies) so edits there show up here.
+  tradingview: {
+    label: 'TradingView',
+    ttl: (data) => (data?.synced ? TVW.SYNC_MS : 24 * 3600e3),
+    clean: (c) => {
+      const tv = TVW.cleanConfig(c.tv);
+      return tv ? { tv, colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input) {
+      const tv = TVW.cleanConfig(input.tv);
+      if (!tv && input.tv?.view === 'watchlist') throw new Error('Add at least one symbol, like NASDAQ:AAPL, or import a watchlist from your TradingView account.');
+      if (!tv) throw new Error(input.tv?.symbol ? 'That doesn’t look like a TradingView symbol. Try NASDAQ:AAPL, BINANCE:BTCUSDT or SPX.' : 'Add a symbol, like NASDAQ:AAPL.');
+      if (tv.view === 'watchlist') {
+        const n = TVW.symbolsOf(tv.symbols).length;
+        return { config: { tv, colors: WC.cleanMode(input.colors) }, message: `${n} symbol${n === 1 ? '' : 's'} will show as a TradingView watchlist${tv.list && tv.sync ? `, kept in sync with “${tv.list.name}” in your TradingView account` : ''}. A symbol TradingView doesn’t know shows as a blank row.` };
+      }
+      return { config: { tv, colors: WC.cleanMode(input.colors) }, message: `${tv.symbol} will show as a TradingView ${tv.view === 'mini' ? 'mini chart' : 'chart'}. If TradingView doesn’t know the symbol, the chart says so.` };
+    },
+    title: (c) => (c.tv.view === 'watchlist' ? c.tv.list?.name || 'Watchlist' : c.tv.symbol),
+    summary: (c) => TVW.summary(c.tv),
+    async fetch(c, x) {
+      let tv = c.tv;
+      let synced = false;
+      let note = '';
+      if (tv.view === 'watchlist' && tv.list && tv.sync) {
+        synced = true;
+        try {
+          const got = await x.tvLists();
+          const mine = got.lists.find((l) => l.id === tv.list.id);
+          if (mine) tv = { ...tv, symbol: TVW.symbolsOf(mine.symbols)[0], symbols: mine.symbols, list: { id: mine.id, name: mine.name } };
+          else note = got.signedIn ? `“${tv.list.name}” is no longer in your TradingView account; showing the symbols it had.` : 'Sign in to TradingView in a Lumen tab to keep this list in sync.';
+        } catch (err) {
+          note = `Couldn’t reach your TradingView account (${err.message}); showing the last symbols.`;
+        }
+      }
+      // Both themes' addresses, so the page can follow light and dark mode without asking again.
+      return { symbol: tv.symbol, view: tv.view, theme: tv.theme, name: tv.list?.name || '', synced, note, light: TVW.embedUrl(tv, false), dark: TVW.embedUrl(tv, true) };
+    },
+  },
+
+  // Custom: a shared "recipe" (features/custom-widget.js, docs/custom-widgets.md): one https JSON
+  // address and which values to show. Fetched here like any feed, drawn as plain text on the page.
+  custom: {
+    label: 'Custom',
+    ttl: (data) => (Number.isFinite(data?.every) ? data.every * 60e3 : 30 * 60e3),
+    clean: (c) => {
+      const recipe = CW.recipeOrNull(c.recipe);
+      return recipe ? { recipe, colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input, x) {
+      let raw = input.recipe;
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw); } catch (err) { throw new Error(`The recipe isn’t valid JSON (${String(err.message).replace(/^JSON\.parse: /, '').slice(0, 80)}).`); }
+      }
+      const recipe = CW.cleanRecipe(raw);
+      const shaped = CW.shape(await x.json(recipe.url), recipe);
+      const n = recipe.view === 'stats' ? `${shaped.stats.filter((st) => st.value !== '–').length} of ${recipe.stats.length} values found` : `${shaped.items.length} items found`;
+      return { config: { recipe, colors: WC.cleanMode(input.colors) }, message: `Works: ${n}. Refreshed every ${recipe.every} minutes.` };
+    },
+    title: (c) => c.recipe.name || hostOf(c.recipe.url),
+    summary: (c) => `${hostOf(c.recipe.url)} · ${c.recipe.view === 'stats' ? `${c.recipe.stats.length} values` : 'list'} · every ${c.recipe.every} min`,
+    async fetch(c, x) {
+      return { ...CW.shape(await x.json(c.recipe.url), c.recipe), view: c.recipe.view, every: c.recipe.every, host: hostOf(c.recipe.url) };
+    },
+  },
+
+  // Notes, Countdown and Timer (features/local-widgets.js): no account, never online. Their state is
+  // their config; present() hands the page the current state on every read.
+  notes: {
+    label: 'Notes',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ note: LW.cleanNote(c.note), colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { note: LW.cleanNote(input.note), colors: WC.cleanMode(input.colors) }, message: 'Saved. Type on the card; it saves as you go.' }; },
+    title: () => 'Notes',
+    summary: (c) => (c.note.text ? `${c.note.text.split('\n')[0].slice(0, 40)}${c.note.text.length > 40 ? '…' : ''}` : 'Empty'),
+    async fetch() { return {}; },
+    present: (c) => ({ text: c.note.text, max: LW.MAX_NOTE }),
+    act(c, action) {
+      if (action.do !== 'note') return false;
+      return { config: { note: LW.cleanNote({ text: action.text }) }, local: true };
+    },
+  },
+  countdown: {
+    label: 'Countdown',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => {
+      const cd = LW.cleanCountdown(c.cd);
+      return cd ? { cd, colors: WC.cleanMode(c.colors) } : null;
+    },
+    async resolve(input) {
+      const cd = LW.cleanCountdown(input.cd);
+      if (!cd) throw new Error('Pick a date to count to.');
+      return { config: { cd, colors: WC.cleanMode(input.colors) }, message: `Counting to ${cd.label || cd.date}.` };
+    },
+    title: (c) => c.cd.label || 'Countdown',
+    summary: (c) => `${c.cd.date}${c.cd.time ? ` ${c.cd.time}` : ''}`,
+    async fetch() { return {}; },
+    present: (c) => ({ label: c.cd.label, date: c.cd.date, time: c.cd.time, target: LW.countdownTarget(c.cd) }),
+  },
+  timer: {
+    label: 'Timer',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ tm: LW.cleanTimer(c.tm), colors: WC.cleanMode(c.colors) }),
+    async resolve(input) {
+      const tm = LW.cleanTimer({ ...input.tm, endsAt: null, left: null });
+      return { config: { tm, colors: WC.cleanMode(input.colors) }, message: tm.pomodoro ? `Pomodoro: ${tm.work} minutes of focus, ${tm.rest} of break.` : `A ${tm.work}-minute timer.` };
+    },
+    title: (c) => (c.tm.pomodoro ? 'Pomodoro' : 'Timer'),
+    summary: (c) => (c.tm.pomodoro ? `${c.tm.work} min focus · ${c.tm.rest} min break` : `${c.tm.work} minutes`),
+    async fetch() { return {}; },
+    present: (c, d, ctx) => LW.timerView(c.tm, ctx.now),
+    act(c, action, x) {
+      if (action.do !== 'timer') return false;
+      return { config: { tm: LW.timerStep(c.tm, action.arg, x.now()) }, local: true };
+    },
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -926,7 +1060,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -1008,6 +1142,7 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
 //         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
+//         tradingviewLists()? (TradingView's account answer, read with the user's TradingView cookies; see TVW.ACCOUNT_URL),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
@@ -1173,6 +1308,11 @@ function createWidgets(deps) {
       forget,
       get slack() { return (this._slack ||= slackHelpers(x)); },
       projects: () => todoistProjects(x, x.secret() || ''),
+      // The user's TradingView watchlists, { signedIn, lists }: one read a minute at most, shared by every card.
+      tvLists: () => memo('tv:lists', 60e3, async () => {
+        if (!deps.tradingviewLists) throw new Error('not available here');
+        return TVW.shapeLists(await deps.tradingviewLists());
+      }),
       // "My location": { status: 'consent' | 'off' | 'ok' | 'error', place?, message? }. Nothing is sent
       // before the user agreed; the answer is kept for an hour (in settings, so a restart doesn't ask again).
       async here() {
@@ -1260,7 +1400,7 @@ function createWidgets(deps) {
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
-    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); }
+    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
       .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
@@ -1283,7 +1423,7 @@ function createWidgets(deps) {
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       const stack = w.stack ? { stack: ST.membersOf(all, w.stack), top: Boolean(w.top) } : {}; // the page draws the hidden members too (a switch is instant)
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
@@ -1537,6 +1677,11 @@ function createWidgets(deps) {
   }
   let lastRevoke = null; // whether Google confirmed the last disconnect's revoke (Settings says so only then)
   // Settings' project picker for a Todoist widget (a token typed but not saved yet may be given).
+  // Settings' "Import from my TradingView account": the lists, fresh (not the minute-old answer).
+  async function tradingviewLists() {
+    forget('tv:lists');
+    return helpers(null).tvLists();
+  }
   async function projects(token) {
     const t = typeof token === 'string' ? token.trim() : '';
     if (t && !/^[A-Za-z0-9_-]{20,100}$/.test(t)) throw new Error('That doesn’t look like a Todoist API token.');
@@ -1714,6 +1859,7 @@ function createWidgets(deps) {
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       feedPresets: FEED.PRESETS.map(({ id, name }) => ({ id, name })),
+      recipeExamples: CW.EXAMPLES,
       max: MAX_WIDGETS,
       spans: SPANS,
       edit: typeof edit === 'string' ? edit : null,
@@ -1733,7 +1879,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|note|timer|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -1748,6 +1894,18 @@ function createWidgets(deps) {
       const qty = params.get('qty') || '';
       if (!MK.SYM_RE.test(action.sym || '') || !/^\d{1,8}(\.\d{1,8})?$/.test(qty) || !(Number(qty) > 0) || Number(qty) > MK.MAX_QTY) return { invalid: true };
       action.qty = Number(qty);
+    }
+    if (action.do === 'setup') { // the page's own add/edit form: its input as JSON, checked like Settings' (cleanInput, resolve)
+      let cfg;
+      try { cfg = JSON.parse(params.get('cfg') || ''); } catch { return { invalid: true }; }
+      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg) || !Object.prototype.hasOwnProperty.call(INLINE, cfg.type) || (params.get('cfg') || '').length > 12000) return { invalid: true };
+      action.cfg = cfg;
+      action.create = id === 'wcreate';
+    }
+    if (action.do === 'note') action.text = (params.get('text') || '').slice(0, LW.MAX_NOTE); // may be empty: the note was cleared
+    if (action.do === 'timer') {
+      action.arg = params.get('arg');
+      if (!['start', 'pause', 'reset', 'skip'].includes(action.arg)) return { invalid: true };
     }
     if (action.do === 'consent') {
       action.arg = params.get('arg');
@@ -1829,6 +1987,7 @@ function createWidgets(deps) {
     if (action.do === 'restore') return restore(action.id);
     if (action.do === 'look') { deps.writeSettings({ ...deps.readSettings(), [action.key]: action.value }); deps.onUpdate?.(); return true; }
     if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
+    if (action.do === 'setup') return setupFromPage(action);
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
@@ -1874,9 +2033,25 @@ function createWidgets(deps) {
     }
   }
 
+  // do=setup: the new-tab page's own form adds (id wcreate) or edits one of the INLINE kinds. The same
+  // checks as Settings (saveWidget -> cleanInput -> the connector's resolve); the answer goes back to the
+  // page that asked: { ok, message, id }.
+  async function setupFromPage(action) {
+    const input = { ...action.cfg };
+    const prev = action.create ? null : list().find((x) => x.id === action.id);
+    if (!action.create && (!prev || prev.type !== input.type)) return { ok: false, message: 'That widget is gone.' };
+    if (prev?.type === 'notes') input.note = prev.note; // editing a note's card keeps what is written on it
+    try {
+      const { widget, message } = await saveWidget(input, prev ? prev.id : null);
+      return { ok: true, message: message || 'Saved.', id: widget.id };
+    } catch (err) {
+      return { ok: false, message: String(err?.message || err).slice(0, 300) };
+    }
+  }
+
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
 }
 
-module.exports = { createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
+module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

@@ -20,11 +20,16 @@ const KINDS = {
   github: ['GitHub', 'Review requests, assigned items, notifications'],
   stocks: ['Stocks', 'A watchlist and a paper portfolio'],
   crypto: ['Crypto', 'Coin prices and a paper portfolio'],
+  tradingview: ['TradingView', 'A live TradingView chart for a symbol'],
+  notes: ['Notes', 'A note that saves as you type'],
+  countdown: ['Countdown', 'Days until a date'],
+  timer: ['Timer', 'A timer or Pomodoro focus and break'],
+  custom: ['Custom', 'Your own card from a JSON recipe'],
   muse: ['Muse', 'Ask Meta’s Muse model with a saved prompt'],
   embed: ['Web page', 'Any page that allows being shown in a frame'],
 };
 // The order the Add widget picker lists them in: everyday first, accounts and keys after.
-const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'gmail', 'slack', 'github', 'stocks', 'crypto', 'muse', 'embed'];
+const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'gmail', 'slack', 'github', 'notes', 'countdown', 'timer', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
 
 const kindName = (type) => (KINDS[type] ? KINDS[type][0] : String(type || 'Widget'));
 const kindHint = (type) => (KINDS[type] ? KINDS[type][1] : 'Set up in Settings');
@@ -115,6 +120,22 @@ function widgetSummary(w, ctx = {}) {
         parts.push(c.length ? list(c, 4) : 'No coins yet');
         break;
       }
+      case 'tradingview': {
+        const t = w.tv || {};
+        if (t.view === 'watchlist') {
+          const n = (Array.isArray(t.symbols) ? t.symbols : []).filter((x) => typeof x === 'string' && !x.startsWith('###')).length;
+          parts.push(t.list && t.list.name ? t.list.name : 'Watchlist', `${n} symbol${n === 1 ? '' : 's'}`);
+          if (t.list && t.sync !== false) parts.push('synced');
+          break;
+        }
+        parts.push(t.symbol || 'No symbol yet');
+        parts.push(t.view === 'mini' ? 'mini chart' : ({ 1: '1 minute', 5: '5 minutes', 15: '15 minutes', 30: '30 minutes', 60: '1 hour', 240: '4 hours', D: '1 day', W: '1 week', M: '1 month' }[t.interval] || ''));
+        break;
+      }
+      case 'notes': { const t = (w.note && w.note.text) || ''; parts.push(t ? t.split('\n')[0].slice(0, 40) : 'Empty'); break; }
+      case 'countdown': { const c = w.cd || {}; parts.push([c.date, c.time].filter(Boolean).join(' ') || 'No date yet'); break; }
+      case 'timer': { const t = w.tm || {}; parts.push(t.pomodoro === false ? `${t.work || 25} minutes` : `${t.work || 25} min focus · ${t.rest || 5} min break`); break; }
+      case 'custom': { const r = w.recipe || {}; parts.push(host(r.url) || 'No recipe yet'); if (r.every) parts.push(`every ${r.every} min`); break; }
       case 'muse': {
         if (!acct.connected) { parts.push(acct.text); break; }
         const m = w.muse || {};

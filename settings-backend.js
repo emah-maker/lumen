@@ -18,7 +18,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, 'settings-preload.js');
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
 const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
-  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers'];
+  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers', 'passwords'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -39,6 +39,7 @@ const DEFAULTS = {
   theme: 'system', // nativeTheme.themeSource: also what websites see as prefers-color-scheme
   accentColor: 'blue', // [look] a preset from ACCENTS, or '#rrggbb'
   newTabBackground: 'plain', // [look] plain | aurora | dusk | ocean | forest | sunset | graphite | image
+  newTabWidgetGlass: 'solid', // [look] the widget cards' background: solid | frosted (see-through, blurred) | clear (as transparent as it stays readable)
   newTabEffect: 'none', // [look] an animated layer over the background: none | particles | stars | bubbles | snow
   newTabEffectColor: 'auto', // [look] auto (white, or the text color on Plain) | accent | rainbow | #rrggbb
   newTabEffectAmount: 'normal', // [look] few | normal | many
@@ -106,6 +107,8 @@ const DEFAULTS = {
   translateNever: [], // sites where the offer stays away
   translateConsent: [], // providers the user allowed to receive page text
   autoDownloadUpdates: true, // Windows setup installs: fetch new versions in the background (features/updates.js)
+  showWhatsNew: true, // the release notes come up once after Lumen updates (features/whats-new.js)
+  lastSeenVersion: '', // the newest Lumen version run in this profile ('' until the first run records it); internal
 };
 const RESTART_KEYS = ['hardwareAcceleration', 'forceDarkWebsites'];
 const PERMISSIONS = { geolocation: 'Location', media: 'Camera and microphone', notifications: 'Notifications', 'clipboard-read': 'Clipboard' };
@@ -141,6 +144,7 @@ function validate(key, value) {
     case 'accentColor': return ACCENTS[value] || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabBackground': return pick(value, NEW_TAB_BACKGROUNDS, null);
     case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
+    case 'newTabWidgetGlass': return pick(value, ['solid', 'frosted', 'clear'], null);
     case 'newTabEffectColor': return ['auto', 'accent', 'rainbow'].includes(value) || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabEffectAmount': case 'newTabEffectSpeed': case 'newTabEffectSize': return pick(value, EFFECT_LEVELS[key], null);
     case 'newTabClockSize': return WS.cleanClockSize(value);
@@ -179,6 +183,7 @@ function validate(key, value) {
     case 'homeWidgets': return cleanWidgets(value);
     case 'homeWidgetSizes': return cleanSizes(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
+    case 'lastSeenVersion': return value === '' ? '' : require('./features/whats-new').cleanVersion(value);
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -284,6 +289,7 @@ function create(deps) {
       clockStyle: { style: p.newTabClockStyle, hours: p.newTabClockHours, seconds: p.newTabClockSeconds, date: p.newTabClockDate, card: p.newTabClockCard, shadow: p.newTabClockShadow, greeting: p.newTabGreetingFont },
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked === true,
+      widgetGlass: p.newTabWidgetGlass,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };
   }
@@ -544,6 +550,7 @@ function create(deps) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
+    if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
@@ -720,7 +727,7 @@ function create(deps) {
   // ---- reset ----
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions']) delete s[key];
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
     userZoomed.clear();
@@ -756,6 +763,7 @@ function create(deps) {
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
+    handle('prefs:widget-tv-lists', () => deps.widgets.tradingviewLists());
     // A "Where do I get this?" link on a widget's page: only these fixed addresses, chosen by name, open in the browser.
     const WIDGET_HELP = {
       todoist: 'https://app.todoist.com/app/settings/integrations/developer', github: 'https://github.com/settings/personal-access-tokens', twelvedata: 'https://twelvedata.com/account/api-keys',
@@ -810,6 +818,7 @@ function create(deps) {
       return true;
     });
     handle('prefs:about', about);
+    handle('prefs:whats-new', () => { deps.showWhatsNew?.(); return true; }); // the notes open over the window; the page doesn't wait for them
     handle('prefs:task-manager', taskManager);
     handle('prefs:restart-tab', restartTabProcess);
     handle('prefs:internals', internals);

@@ -514,7 +514,10 @@
     gear.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="1.8"/><path d="M6 1v1.4M6 9.6V11M1 6h1.4M9.6 6H11M2.5 2.5l1 1M8.5 8.5l1 1M9.5 2.5l-1 1M3.5 8.5l-1 1"/></svg>';
     gear.setAttribute('aria-label', `Settings for ${title}`);
     gear.title = 'Settings';
-    gear.addEventListener('click', () => window.widgetAct(card.dataset.id, 'configure'));
+    gear.addEventListener('click', () => {
+      const w = window.widgetSetupTarget?.(card.dataset.id); // kinds the page edits itself (renderer/newtab-setup.js)
+      if (w) window.widgetSetup.open(w); else window.widgetAct(card.dataset.id, 'configure');
+    });
     const presets = el('div', 'w-presets');
     presets.setAttribute('role', 'group');
     presets.setAttribute('aria-label', `Size of ${title}`);

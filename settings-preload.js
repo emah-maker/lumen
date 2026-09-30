@@ -22,6 +22,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       remove: call('prefs:widget-remove'),
       move: call('prefs:widget-move'),
       projects: call('prefs:widget-projects'),
+      tvLists: call('prefs:widget-tv-lists'),
       gmailConnect: call('prefs:widget-gmail-connect'),
       gmailCancel: call('prefs:widget-gmail-cancel'),
       gmailDisconnect: call('prefs:widget-gmail-disconnect'),
@@ -40,6 +41,20 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       spotifyCancel: call('spotify:cancel'),
       spotifyDisconnect: call('spotify:disconnect'),
     },
+    // [passwords] Privacy and security → Passwords (features/passwords.js). No password comes out
+    // except through reveal, which asks for Touch ID (or a confirmation) first.
+    passwords: {
+      state: call('settings:passwords-state'),
+      setEnabled: call('settings:passwords-set-enabled'),
+      list: call('settings:passwords-list'),
+      reveal: call('settings:passwords-reveal'),
+      copy: call('settings:passwords-copy'),
+      update: call('settings:passwords-update'),
+      remove: call('settings:passwords-delete'),
+      removeAll: call('settings:passwords-delete-all'),
+      importCsv: call('settings:passwords-import'),
+      removeNever: call('settings:passwords-never-remove'),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     extensions: call('prefs:extensions'),
@@ -49,6 +64,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     reset: call('prefs:reset'),
     relaunch: call('prefs:relaunch'),
     about: call('prefs:about'),
+    whatsNew: call('prefs:whats-new'), // features/whats-new.js: the release notes over the window
     taskManager: call('prefs:task-manager'),
     restartTab: call('prefs:restart-tab'),
     internals: call('prefs:internals'),
