@@ -968,7 +968,7 @@ async function buildWidgets(card) {
       const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
         h('span', { class: 'note', text: 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.' }),
         // Said before the user tries, not after five silent minutes: until Google approves it, not every account can use it.
-        builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', id: 'widget-gmail-unverified', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google shows “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced.') }) : null);
+        builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', id: 'widget-gmail-unverified', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client under Advanced.') }) : null);
       const adv = advanced([
         builtin ? h('div', { class: 'row stack' }, h('span', { class: 'note', text: tr('settings.gmail.ownHint', 'Optional. Sign in with Google works without this. To use a Google Cloud project of your own instead, paste its Desktop app client here; it is then used instead of Lumen’s.') })) : null,
         helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
@@ -988,7 +988,7 @@ async function buildWidgets(card) {
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
         // After a minute, what may have happened (Google never comes back when it blocks the sign-in).
-        const hint = setTimeout(() => flash(status, builtin && !own() ? tr('settings.gmail.stillWaiting', 'Still waiting. If Google showed “Access blocked” or an “unverified app” page, use your own Google Cloud client under Advanced, or Cancel and try again.') : tr('settings.gmail.stillWaitingOwn', 'Still waiting. Finish signing in, in your browser, or Cancel and try again.'), 'warn'), 60000);
+        const hint = setTimeout(() => flash(status, builtin && !own() && !ws.gmailClient?.verified ? tr('settings.gmail.stillWaiting', 'Still waiting. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client under Advanced.') : tr('settings.gmail.stillWaitingOwn', 'Still waiting. Finish signing in, in your browser, or Cancel and try again.'), 'warn'), 60000);
         try {
           const r = await S.widgets.gmailConnect({ clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value });
           ws = r.state;

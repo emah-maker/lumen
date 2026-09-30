@@ -770,6 +770,9 @@ const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
   resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
+  // Private sessions get the profile's proxy, Do Not Track / Global Privacy Control, languages and Chrome hints.
+  mirrorSession: (ses) => settingsBackend.mirrorSession(ses),
+  Menu,
   // Private tabs present themselves as Chrome too (the same identity and request headers as normal tabs), or
   // Google sign-in in a private window is refused as an unknown browser.
   chromeIdentity: (wc) => applyChromeIdentity(wc),
@@ -1383,13 +1386,14 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // A tab opened this way outlives the page that opened it (outlivesOpener): closing or sleeping that page never
     // closes it. When there is no page yet (Ctrl+click, a middle-click: Electron hands over only the address), the
     // tab is opened the usual way, loading the address, and its page is what Electron gets back.
-    if (!tab.isolated && WebContentsView && isWebUrl(target)) {
+    // (about:blank too: a page may open a blank window and set its address after an async step, as payments do.)
+    if (!tab.isolated && WebContentsView && (isWebUrl(target) || target === 'about:blank')) {
       return {
         action: 'allow',
         outlivesOpener: true,
         createWindow: (options) => {
           const background = disposition === 'background-tab';
-          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id })).view.webContents;
+          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id })).webContents;
           const view = new WebContentsView({ webContents: options.webContents });
           withWindow(tab.rec, () => openTab(target, { background, openerId: id, view }));
           return options.webContents;
@@ -2723,12 +2727,18 @@ function chromeBrands(full) {
   list.forEach((b, i) => { shuffled[order[i]] = b; });
   return shuffled;
 }
+// What Chrome reports as Windows' platformVersion (the UniversalApiContract version, not "10.0"): 10.0.0 or lower on
+// Windows 10, 13-14 on Windows 11 21H2, 15 on 22H2/23H2, 19 on 24H2 and later. Read from the build number.
+function windowsPlatformVersion() {
+  const build = Number(String(require('os').release()).split('.')[2]) || 0;
+  return build >= 26100 ? '19.0.0' : build >= 22621 ? '15.0.0' : build >= 22000 ? '14.0.0' : '10.0.0';
+}
 const UA_METADATA = {
   brands: chromeBrands(false),
   fullVersionList: chromeBrands(true),
   platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux',
   // Chrome on a Mac reports the real macOS version (26.0.0), not an empty string.
-  platformVersion: process.platform === 'win32' ? '15.0.0' : process.platform === 'darwin' ? process.getSystemVersion() : '',
+  platformVersion: process.platform === 'win32' ? windowsPlatformVersion() : process.platform === 'darwin' ? process.getSystemVersion() : '',
   architecture: process.arch === 'arm64' ? 'arm' : 'x86', // Chrome on Apple Silicon says "arm"
   bitness: '64',
   model: '',

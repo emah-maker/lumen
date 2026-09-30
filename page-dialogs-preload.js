@@ -11,7 +11,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 // An obscure key: real pages should never see or collide with this while overrides install.
 const BRIDGE_KEY = '__lumenPageDialogBridge_a1f3c2';
 
-contextBridge.exposeInMainWorld(BRIDGE_KEY, {
+// Not on Google's account pages at all (they check the browser closely and never use prompt()): no bridge is even
+// exposed there.
+const onGoogleAccounts = /(^|\.)accounts\.google\.com$/.test(location.hostname);
+if (!onGoogleAccounts) contextBridge.exposeInMainWorld(BRIDGE_KEY, {
   request: (kind, message, defaultValue) => ipcRenderer.sendSync('page-dialog', { kind, message, defaultValue }),
 });
 
@@ -39,8 +42,14 @@ function installOverrides(bridgeKey) {
 }
 
 try {
-  // Not on Google's account pages: they check the browser closely, and never use prompt().
-  if (!/(^|\.)accounts\.google\.com$/.test(location.hostname)) contextBridge.executeInMainWorld({ func: installOverrides, args: [BRIDGE_KEY] });
+  if (!onGoogleAccounts) contextBridge.executeInMainWorld({ func: installOverrides, args: [BRIDGE_KEY] });
 } catch (err) {
   console.error('page dialogs: could not install alert/confirm/prompt overrides:', err.message);
 }
+
+// FedCM: Electron has none, so a page that sees its API (IdentityCredential) waits for a sign-in prompt that never
+// comes. main.js turns the feature off; if a Chromium version ever ignores that switch, the API is removed here too,
+// and Google's sign-in scripts use their iframe prompt instead.
+try {
+  contextBridge.executeInMainWorld({ func: () => { try { if ('IdentityCredential' in window) delete window.IdentityCredential; } catch { /* not removable */ } } });
+} catch { /* nothing to remove */ }

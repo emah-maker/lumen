@@ -1433,7 +1433,11 @@ function createWidgets(deps) {
   // redirects to a one-shot listener on 127.0.0.1 (features/oauth.js). Only this process sees the code,
   // the tokens and the client secret; Settings gets a message, never a token.
   let signIn = null;
-  const GMAIL_BLOCKED_HINT = 'Still waiting. If Google showed “Access blocked” or an “unverified app” page, this account can’t use Lumen’s built-in sign-in yet: use your own Google Cloud client (Settings › Gmail › Advanced), or try again.';
+  // What may have happened while Lumen waits. Until Google approves Lumen's client, it shows an "unverified app" page
+  // (Advanced › Go to Lumen gets past it) or, for some accounts, "Access blocked" (only an own client helps then).
+  const gmailBlockedHint = () => (googleClient()?.verified
+    ? 'Still waiting. Finish signing in, in your browser, or try again.'
+    : 'Still waiting. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client (Settings › Gmail › Advanced).');
   const staleGmail = () => { sessions.get('gmail')?.invalidate(); for (const w of list()) if (w.type === 'gmail') cache.delete(w.id); deps.onUpdate?.(); };
   // input: { clientId, clientSecret } from Settings' Advanced fields; both empty means Lumen's built-in
   // client ("Sign in with Google"). An own Client ID always wins over the built-in one.
@@ -1458,7 +1462,7 @@ function createWidgets(deps) {
       } catch (err) {
         // Lumen's own client: the user typed no Client ID, so "check them in Settings" would point nowhere.
         if (builtin && err?.kind === 'client') throw new Error('Lumen’s Google sign-in isn’t available right now. Update Lumen, or use your own Google Cloud client (Settings › Gmail › Advanced).');
-        if (err?.kind === 'timeout') throw new Error(builtin ? 'Sign-in timed out. If Google showed “Access blocked” or an “unverified app” page, this account can’t use Lumen’s built-in sign-in yet: use your own Google Cloud client (Settings › Gmail › Advanced). Otherwise, try again.' : 'Sign-in timed out. Try again.');
+        if (err?.kind === 'timeout') throw new Error(builtin && !googleClient()?.verified ? 'Sign-in timed out. If Google said Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen next time; if it said “Access blocked”, use your own Google Cloud client (Settings › Gmail › Advanced).' : 'Sign-in timed out. Try again.');
         throw err;
       }
       deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh }));
@@ -1491,7 +1495,7 @@ function createWidgets(deps) {
     // Google never comes back when it blocks the sign-in ("Access blocked", an unverified-app page): after a minute,
     // the card says what may have happened and what to do, instead of only waiting.
     const usesBuiltin = !GC.resolveClient({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).error && GC.resolveClient({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).source === 'builtin';
-    const hint = setTimeout(() => { if (attempt === pageSignIns && !sessionFor('gmail').connected()) show(usesBuiltin ? GMAIL_BLOCKED_HINT : 'Still waiting. Finish signing in, in your browser, or try again.'); }, 60000);
+    const hint = setTimeout(() => { if (attempt === pageSignIns && !sessionFor('gmail').connected()) show(usesBuiltin ? gmailBlockedHint() : 'Still waiting. Finish signing in, in your browser, or try again.'); }, 60000);
     hint.unref?.();
     gmailConnect({ clientId: w.clientId })
       .then(() => Promise.all(list().filter((x) => x.type === 'gmail').map((x) => refresh(x, { force: true }).catch(() => {}))))

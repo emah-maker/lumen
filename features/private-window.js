@@ -60,8 +60,10 @@ function createPrivateWindows(deps) {
 
   function setupSession(rec) {
     const ses = rec.ses;
-    // The Sec-CH-UA headers Chrome sends on secure requests (normal tabs get them from settings-backend.js).
-    if (deps.chromeHintHeaders) {
+    // The profile's proxy, Do Not Track / Global Privacy Control, languages and Chrome hints (settings-backend.js);
+    // without it, a private window would connect directly even when a proxy is set.
+    if (deps.mirrorSession) deps.mirrorSession(ses);
+    else if (deps.chromeHintHeaders) {
       ses.webRequest.onBeforeSendHeaders((details, callback) => {
         const headers = details.requestHeaders;
         if (/^https:/.test(details.url)) {
@@ -100,12 +102,25 @@ function createPrivateWindows(deps) {
     // Only web pages (and the private new-tab page) in a private tab.
     wc.on('will-navigate', (event) => { if (!isWebUrl(event.url) && !sameFile(event.url, NEWTAB_URL)) event.preventDefault(); });
     deps.chromeIdentity?.(wc);
+    pageMenu(rec, wc);
     wc.setWindowOpenHandler(({ url, disposition }) => popupOrTab(rec, url, disposition));
     wc.on('destroyed', () => closeTab(rec, tab.id, { destroyed: true }));
   }
 
   // A sign-in or payment popup ("Sign in with Google" on a site) stays a popup, in this window's private session,
   // with window.opener kept so it can report back to the page; a link that opens a tab opens a private tab.
+  // A right-click menu for private pages and popups: edit, and open a link in a new private tab.
+  function pageMenu(rec, wc) {
+    if (!deps.Menu) return;
+    wc.on('context-menu', (_e, p) => {
+      const items = [];
+      if (p.linkURL && isWebUrl(p.linkURL)) items.push({ label: 'Open Link in New Private Tab', click: () => openTab(rec, p.linkURL, { background: true }) }, { type: 'separator' });
+      if (p.isEditable) items.push({ role: 'cut', enabled: p.editFlags.canCut }, { role: 'copy', enabled: p.editFlags.canCopy }, { role: 'paste', enabled: p.editFlags.canPaste }, { type: 'separator' }, { role: 'selectAll' });
+      else if (p.selectionText) items.push({ role: 'copy' });
+      if (!items.length) return;
+      deps.Menu.buildFromTemplate(items).popup({ window: BrowserWindow.fromWebContents(wc) || rec.win });
+    });
+  }
   function popupOrTab(rec, url, disposition) {
     if (disposition === 'new-window' && (isWebUrl(url) || url === 'about:blank')) {
       return {
@@ -121,6 +136,11 @@ function createPrivateWindows(deps) {
           const retitle = () => { if (child.isDestroyed()) return; try { const u = new URL(wc.getURL()); child.setTitle(`${u.protocol === 'https:' ? '🔒 ' : ''}${u.host} — Private${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`); } catch { child.setTitle('Lumen (Private)'); } };
           wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });
           wc.on('did-navigate', retitle);
+          wc.on('did-navigate-in-page', retitle);
+          pageMenu(rec, wc);
+          // It belongs to this private window: it closes with it (whose session is then cleared).
+          (rec.popups ||= new Set()).add(child);
+          child.on('closed', () => rec.popups?.delete(child));
           wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); } });
           wc.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
           return wc;
@@ -128,7 +148,7 @@ function createPrivateWindows(deps) {
       };
     }
     // A tab: a page's window.open gets that window back (it keeps window.opener), as in normal windows.
-    if (isWebUrl(url) && (disposition === 'foreground-tab' || disposition === 'background-tab')) {
+    if (alive(rec) && (isWebUrl(url) || url === 'about:blank') && (disposition === 'foreground-tab' || disposition === 'background-tab')) {
       return {
         action: 'allow',
         outlivesOpener: true,
@@ -227,6 +247,7 @@ function createPrivateWindows(deps) {
       windows.delete(rec);
       for (const t of rec.tabs.splice(0)) { try { t.view.webContents.close(); } catch {} }
       // Memory-only already; clear it now so nothing lingers until Lumen quits.
+      for (const p of rec.popups || []) if (!p.isDestroyed()) p.destroy(); // its sign-in popups go with it
       rec.ses.clearStorageData().catch(() => {});
       rec.ses.clearCache().catch(() => {});
       rec.ses.clearAuthCache?.().catch?.(() => {});
