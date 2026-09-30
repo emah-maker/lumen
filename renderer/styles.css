@@ -181,6 +181,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
   transition: flex-basis var(--t-smooth) var(--spring-smooth), width var(--t-smooth) var(--spring-smooth), margin var(--t-smooth) var(--spring-smooth), opacity 140ms ease-out, scale var(--t-smooth) var(--spring-snappy);
 }
 .tab-drop-slot.open { flex-basis: var(--slot-w, 200px); width: var(--slot-w, 200px); margin: 0; opacity: 1; scale: 1; }
+.tab-drop-slot.instant { transition: none; }
 .tab-drop-ghost { width: var(--slot-w, 200px); height: 100%; }
 .tab-drop-ghost .tab-inner { font-weight: 500; }
 .tab-drop-ghost .tab-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

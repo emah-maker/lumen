@@ -3364,7 +3364,15 @@ function moveTabsBetween(src, dst, ids, index, { focus = true, active = ids[0], 
     let at = Number.isInteger(index) ? index : undefined;
     if (group && at !== undefined) at = withWindow(dst, () => outsideGroups(at)); // a group never lands inside another
     const done = [];
-    for (const id of ids) {
+    // Pinned tabs go to the end of the pinned run; the others where they were dropped, in order after each other.
+    const isPinned = (id) => Boolean(tabsOf(src).find((t) => t.id === id)?.pinned);
+    for (const id of ids.filter(isPinned)) {
+      const end = tabsOf(dst).filter((t) => t.pinned).length;
+      if (!moveTabBetween(src, dst, id, end, { focus: false, keepSrc: true, show: false })) continue;
+      done.push(id);
+      if (at !== undefined) at++; // one more tab ahead of the drop point
+    }
+    for (const id of ids.filter((x) => !isPinned(x))) {
       if (!moveTabBetween(src, dst, id, at, { focus: false, keepSrc: true, show: false })) continue;
       done.push(id);
       if (at !== undefined) at = tabsOf(dst).findIndex((t) => t.id === id) + 1;
@@ -3454,6 +3462,10 @@ function groupForMove(rec, groupId) {
 }
 // Tabs moved into `rec` from the menu (no drag, no slot): its strip says so to screen readers, and a
 // multi-selection stays selected there, as in Chrome.
+// A multi-selection moved into a new window from the menu stays selected there (the window announces itself).
+function keepSelection(rec, ids) {
+  if (ids.length > 1 && rcAlive(rec)) rec.win.webContents.send('tab:moved-here', { ids, quiet: true });
+}
 function arrivedFromMenu(rec, ids) {
   if (!rcAlive(rec)) return;
   const title = withWindow(rec, () => { const t0 = tabs.find((t) => t.id === ids[0]); return t0 ? tabTitle(t0) : ''; });
@@ -3487,7 +3499,7 @@ function moveTabToWindowId(src, tabId, windowId, index) {
 // itself, like its title bar. Main polls the cursor; the renderer that holds the pointer reports the
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
 const tabDragMath = require('./features/tab-drag-math');
-let tabDragTimeoutMs = 15000; // with the mouse still and no release seen (see tickTabDrag)
+let tabDragTimeoutMs = 30000; // with the mouse still and no release seen (see tickTabDrag)
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
 // Windows front first, as far as Lumen can tell: the order they were last focused in (Electron has no
@@ -3687,7 +3699,7 @@ function hideDragCard(d, kind) {
 // closes after a while unused or with the last window.
 let spareRec = null;
 let spareIdle = null;
-const SPARE_IDLE_MS = 180000; // kept warm a few minutes: a quick flick-and-drop then finds it ready
+const SPARE_IDLE_MS = 60000; // kept warm a minute: a quick flick-and-drop finds it ready, without holding memory for long
 function closeSpare() {
   clearTimeout(spareIdle);
   const rec = spareRec;
@@ -3985,13 +3997,13 @@ function tearOffTab(src, tabId, point, ids = [tabId], group = null) {
   const spare = takeSpare({ width: at.width, height: at.height });
   if (spare) {
     spare.win.setBounds({ x: at.x, y: at.y, width: at.width, height: at.height }); // one call: no size drift on mixed-DPI setups
-    if (moveTabsBetween(src, spare, ids, 0, { focus: false, active: tabId, group })) revealNewWindow(spare, tabId);
+    if (moveTabsBetween(src, spare, ids, 0, { focus: false, active: tabId, group })) revealNewWindow(spare, tabId, () => keepSelection(spare, ids));
     else spare.win.close();
     return true;
   }
   const rec = createWindow({
     size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src,
-    adopt: { src, tabId, ids, group, focus: false, done: (ok) => { if (ok && rcAlive(rec)) revealNewWindow(rec, tabId); } },
+    adopt: { src, tabId, ids, group, focus: false, done: (ok) => { if (ok && rcAlive(rec)) revealNewWindow(rec, tabId, () => keepSelection(rec, ids)); } },
   });
   return true;
 }
