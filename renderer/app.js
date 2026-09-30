@@ -265,7 +265,7 @@ function releaseHeldTab(quiet = false) {
   heldTab = null;
   const shown = [...$('tabs').querySelectorAll('.held')];
   shown.forEach((t) => t.classList.remove('held'));
-  if (quiet || quiet?.type || !landingSlot) return;
+  if (quiet || !landingSlot || !shown.some((t) => t.classList.contains('tab'))) return; // they left for another window: the slot closes on its own
   // Dropped back into this strip: the tabs take the slot that stayed open for them (renderTabs keeps it
   // in place until now), so nothing shifts as they appear.
   clearTimeout(landingSlot.timer);
@@ -280,6 +280,7 @@ function releaseHeldTab(quiet = false) {
   placeIndicator(false);
 }
 window.browser.onTabDragDone?.(() => releaseHeldTab());
+window.browser.onTabDragAbort?.(() => { if (drag) endTabDrag({ type: 'lostcapture' }); });
 // This window was just made for dragged tabs: say so to screen readers.
 window.browser.onTabArrived?.((info) => {
   const live = $('tab-live');
@@ -354,9 +355,13 @@ function showDropSlot(at) {
   const before = at.beforeId == null ? null : strip.querySelector(`.tab[data-id="${at.beforeId}"]`);
   const pinnedEnd = [...strip.querySelectorAll('.tab.pinned')].pop();
   let ref = before || null;
-  // Before a group's first tab means before the group: the slot goes ahead of its label, outside it.
-  const label = ref?.previousElementSibling;
-  if (label?.classList.contains('group-label') && (lastTabState?.tabs || []).find((t) => t.id === at.beforeId)?.groupId === Number(label.dataset.group)) ref = label;
+  // Before a group's first tab means before the group: the slot goes ahead of its label, outside it —
+  // unless it is the dragged tab's own group (put back at its start, it stays in). Tabs that are out on the
+  // card or folded away don't count as neighbours.
+  let label = ref?.previousElementSibling;
+  while (label?.matches('.handed, .held, .gathered, .tab-drop-slot')) label = label.previousElementSibling;
+  const refGroup = (lastTabState?.tabs || []).find((t) => t.id === at.beforeId)?.groupId;
+  if (label?.classList.contains('group-label') && refGroup === Number(label.dataset.group) && at.tab?.ownGroup !== refGroup) ref = label;
   if (dropSlot) closeSlot(dropSlot.el);
   const el = document.createElement('div');
   const pinned = Boolean(at.tab?.pinned);
@@ -376,6 +381,17 @@ function showDropSlot(at) {
   else if (!pinned && ref && pinnedEnd && ref.classList.contains('pinned')) strip.insertBefore(el, pinnedEnd.nextSibling);
   else strip.insertBefore(el, ref);
   dropSlot = { el, beforeId: at.beforeId };
+  // Inside a group (between two of its tabs, or right after its label): the slot takes the group's colour,
+  // since dropping there joins it.
+  const groupOf = (n, dir) => {
+    while (n && n.matches('.handed, .held, .gathered, .tab-drop-slot')) n = n[dir];
+    if (!n) return null;
+    if (n.classList.contains('group-label')) return dir === 'previousElementSibling' ? Number(n.dataset.group) : null;
+    return (lastTabState?.tabs || []).find((t) => t.id === Number(n.dataset.id))?.groupId || null;
+  };
+  const inside = !at.tab?.group && groupOf(el.previousElementSibling, 'previousElementSibling');
+  const color = inside && inside === groupOf(el.nextElementSibling, 'nextElementSibling') && (lastTabState?.groups || []).find((g) => g.id === inside)?.color;
+  if (color) { el.classList.add('in-group'); el.style.setProperty('--group-color', `var(--g-${String(color).replace(/[^a-z]/g, '')})`); }
   if (motionReduced()) el.classList.add('open');
   else requestAnimationFrame(() => el.classList.add('open'));
   trackIndicator(460);
@@ -485,6 +501,13 @@ function endTabDrag(e) {
     t.classList.remove('dragging', 'tearing', 'handed');
     if (!blockMove) t.classList.remove('gathered');
   });
+  // Cancelled after it left the strip: the tabs open back up for it rather than popping in.
+  if (handed && escaped && !single && !motionReduced()) {
+    const back = [...$('tabs').querySelectorAll('.tab, .group-label')].filter((t) => (group || []).includes(Number(t.dataset.id)) || t === dragEl);
+    back.forEach((t) => { t.classList.add('handed', 'returning'); void t.offsetWidth; t.classList.remove('handed'); });
+    setTimeout(() => back.forEach((t) => t.classList.remove('returning')), 340);
+    trackIndicator(340);
+  }
   // Released outside the strip: the tab stays hidden until main has put it where it was dropped
   // ('tab:dragdone'), so it doesn't flash back here first. Escape shows it again at once.
   if (handed && !escaped && !single) { holdDroppedTab(id, group); if (groupId != null) dragEl.classList.add('held'); }
@@ -598,7 +621,8 @@ function groupLabel(group, count, crowded, label = null) {
     label.addEventListener('pointercancel', endTabDrag);
     label.oncontextmenu = (e) => { e.preventDefault(); window.browser.groupMenu(group.id, { x: e.clientX, y: e.clientY }); };
   }
-  label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '');
+  label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '')
+    + (drag?.handed && !drag.single && drag.groupId === group.id ? ' handed' : '');
   label.style.setProperty('--group-color', `var(--g-${group.color})`);
   label.setAttribute('aria-expanded', String(!group.collapsed));
   label.setAttribute('aria-label', t(count === 1 ? 'tabs.group.label.one' : 'tabs.group.label.other', { name: group.name, count }));
@@ -677,7 +701,7 @@ function faviconImg(el, key, urls, retried = false) {
 
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
-  el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
+  el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
     + (selectedTabs.has(tab.id) && !active ? ' selected' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
@@ -1078,7 +1102,10 @@ window.browser.onOrganizeNote?.(({ text, undo }) => {
 });
 
 function renderTabs(state) {
-  if (drag || renamingGroup !== null || stripPressed) {
+  // Updates wait while tabs are being moved here, but not while they are out on the card: the strip then
+  // shows the window as it is (the tab beside the dragged one active, say), keeping the dragged tabs folded.
+  const out = drag?.handed && !drag.single;
+  if (renamingGroup !== null || (!out && (drag || stripPressed))) {
     pendingState = state;
     return;
   }
@@ -1097,9 +1124,7 @@ function renderTabs(state) {
   const fresh = state.tabs.filter((t) => !before.has(String(t.id))).map((t) => String(t.id));
   let landedIds = [];
   let filled = false;
-  if (landing && heldTab?.untilState) { filled = true; landedIds = heldTab.ids.filter((x) => state.tabs.some((t) => t.id === x)).map(String); releaseHeldTab(true); }
-  else if (landing && !heldTab && fresh.length) { filled = true; landedIds = fresh; }
-  else if (!landing && heldTab?.untilState) releaseHeldTab(true); // a block move along this strip: main's update has come
+  if (landing && !heldTab && fresh.length) { filled = true; landedIds = fresh; }
   if (filled) { clearTimeout(landing.timer); landing.el.remove(); landingSlot = null; }
   const switched = state.activeId !== lastActiveId;
   const groupsById = new Map((state.groups || []).map((g) => [g.id, g]));

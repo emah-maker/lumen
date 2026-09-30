@@ -464,6 +464,7 @@ contextBridge.exposeInMainWorld('browser', {
   dragTabEnd: () => ipcRenderer.send('tab:dragend'), // the button came up
   dragTabCancel: () => ipcRenderer.send('tab:dragcancel'), // Escape
   onTabDropAt: on('tab:dropat'), // { beforeId } while a dragged window hovers this strip, null when it leaves
+  onTabDragAbort: on('tab:dragabort'), // main gave up on a drag whose release never came
   onTabArrived: on('tab:arrived'), // this new window was just given dragged tabs ({ count }): announced
   dragTabMove: () => ipcRenderer.send('tab:dragmove'), // the pointer moved during a drag main.js drives
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
