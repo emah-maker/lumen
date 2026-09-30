@@ -49,8 +49,30 @@ if (!fs.existsSync(preload.OUT) || fs.readFileSync(preload.OUT, 'utf8').replace(
   console.warn('warning: preload.bundle.js was out of date and has been rebuilt; commit it');
 }
 
+// Lumen's built-in Google client (one-click "Sign in with Google" for the Gmail widget): from
+// LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET (the release workflow passes repository secrets)
+// into features/google-client.json for this build only; the file is gitignored and removed afterwards.
+// Without them the build has no built-in client and Settings shows the paste-your-own-client flow.
+const googleFile = path.join(root, 'features', 'google-client.json');
+const googleId = (process.env.LUMEN_GOOGLE_CLIENT_ID || '').trim();
+const googleSecret = (process.env.LUMEN_GOOGLE_CLIENT_SECRET || '').trim();
+let wroteGoogle = false;
+if (googleId && googleSecret) {
+  const { builtinClient } = require('../features/google-client');
+  if (!builtinClient({ env: { LUMEN_GOOGLE_CLIENT_ID: googleId, LUMEN_GOOGLE_CLIENT_SECRET: googleSecret }, file: {} })) {
+    console.error('LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET are set but do not look like a Google Desktop OAuth client');
+    process.exit(1);
+  }
+  fs.writeFileSync(googleFile, `${JSON.stringify({ clientId: googleId, clientSecret: googleSecret })}\n`);
+  wroteGoogle = true;
+  console.log('Built-in Google client: included (one-click Gmail sign-in)');
+} else {
+  console.log('Built-in Google client: not set (LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET); Gmail uses the paste-your-own-client flow');
+}
+
 console.log(`Building ${platformFlag.slice(2)} into ${out}`);
 const result = spawnSync(process.execPath, [require.resolve('electron-builder/cli.js'), ...builderArgs], { cwd: root, stdio: 'inherit' });
+if (wroteGoogle) fs.rmSync(googleFile, { force: true });
 if (result.status !== 0) process.exit(result.status || 1);
 
 // The Windows exe must be the unmodified Electron binary.

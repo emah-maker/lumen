@@ -27,11 +27,13 @@ function cleanClientSecret(v) {
   const s = typeof v === 'string' ? v.trim() : '';
   return /^[A-Za-z0-9_-]{8,200}$/.test(s) ? s : '';
 }
-// The stored (or form) config -> a checked one, or null without a usable Client ID.
+// The stored (or form) config -> a checked one, or null for a Client ID that isn't one. No Client ID
+// ('') means Lumen's built-in Google client signs in (features/google-client.js).
 function cleanConfig(c) {
   const i = c && typeof c === 'object' ? c : {};
-  const clientId = cleanClientId(i.clientId);
-  if (!clientId) return null;
+  const raw = typeof i.clientId === 'string' ? i.clientId.trim() : '';
+  const clientId = cleanClientId(raw);
+  if (raw && !clientId) return null;
   return { clientId, count: count(Number(i.count), MIN_COUNT, MAX_COUNT) ?? DEFAULT_COUNT, snippets: i.snippets !== false };
 }
 
@@ -111,8 +113,10 @@ function shape(label, messages, cfg) {
   const list = messages.map((m) => normalizeMessage(m, cfg)).filter(Boolean).slice(0, cfg.count);
   return { state: 'ok', unread, total, messages: list, open: 'https://mail.google.com/mail/u/0/#inbox' };
 }
-// The card's data when there is nothing to show yet: the user has to connect (again).
-const reconnect = (message) => ({ state: 'reconnect', message: flat(message, 200) || 'Connect Gmail in Settings.' });
+// The card's data when there is nothing to show yet: the user has to connect (again). oneClick: the
+// card may offer "Sign in with Google" itself (a client is ready: Lumen's own, or the user's with its
+// secret stored); otherwise its button opens Settings.
+const reconnect = (message, { oneClick = false } = {}) => ({ state: 'reconnect', message: flat(message, 200) || 'Connect Gmail in Settings.', oneClick: oneClick === true });
 
 // A failed Gmail API answer -> what the user should read (never the body: it can echo request details).
 function apiError(status, text) {

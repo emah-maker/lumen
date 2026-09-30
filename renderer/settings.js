@@ -887,23 +887,31 @@ async function buildWidgets(card) {
       inputs.count = sel('widget-gmail-count', tr('settings.gmail.count', 'Messages shown'), [3, 4, 5, 6, 8, 10].map((n) => [n, String(n)]), g.count || 5);
       inputs.snippets = tog('widget-gmail-snippets', tr('settings.gmail.snippets', 'Show a short preview under each subject'), g.snippets !== false);
       const status = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-status' });
-      const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: tr('settings.gmail.connect', 'Connect Gmail') });
+      // builtin: Lumen was built with its own Google client, so "Sign in with Google" needs no setup and
+      // the user's own Google Cloud client moves under Advanced (it still wins when its Client ID is filled in).
+      const builtin = Boolean(ws.gmailClient?.builtin);
+      const own = () => Boolean(inputs.clientId.value.trim());
+      const connectLabel = () => (builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
+      const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: connectLabel() });
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
       const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
         h('span', { class: 'note', text: 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.' }));
       const adv = advanced([
-        helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
+        builtin ? h('div', { class: 'row stack' }, h('span', { class: 'note', text: tr('settings.gmail.ownHint', 'Optional. Sign in with Google works without this. To use a Google Cloud project of your own instead, paste its Desktop app client here; it is then used instead of Lumen’s.') })) : null,
+        helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
         setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, 'From the same client. Stored encrypted by your system.'),
-      ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !g.clientId);
+      ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !builtin && !g.clientId);
+      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : 'Advanced';
+      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); });
       const draw = () => {
         disconnect.hidden = !connected();
         connect.hidden = connected();
-        connect.textContent = tr('settings.gmail.connect', 'Connect Gmail');
+        connect.textContent = connectLabel();
         if (!status.textContent) { status.textContent = connected() ? tr('settings.gmail.connected', 'A Google account is connected.') : tr('settings.gmail.notConnected', 'Not connected yet.'); status.className = `sp-status${connected() ? ' on' : ''}`; }
       };
       connect.addEventListener('click', async () => {
-        if (!inputs.clientId.value.trim()) { adv.open = true; flash(status, 'First add your Google Cloud Client ID and secret under Advanced.', 'warn'); inputs.clientId.focus(); return; }
+        if (!builtin && !own()) { adv.open = true; flash(status, 'First add your Google Cloud Client ID and secret under Advanced.', 'warn'); inputs.clientId.focus(); return; }
         connect.disabled = true;
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
