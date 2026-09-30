@@ -247,8 +247,10 @@ function readSettings() {
 let settingsGen = 0; // bumped by every write: an async write that is no longer the latest doesn't land
 // Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
 // with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
+let settingsPending = false; // an async write not yet known to be on disk
 function writeSettings(settings) {
   settingsCache = { ...settings };
+  settingsPending = true;
   const gen = ++settingsGen;
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen);
 }
@@ -256,6 +258,7 @@ const writeSettingsAsync = writeSettings; // (the periodic session save)
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   settingsCache = { ...settings };
+  settingsPending = false;
   settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
@@ -790,6 +793,7 @@ function syncExtensions(fn) {
 // ---------- ad blocker (features/adblock.js) ----------
 
 const adblock = createAdblock({
+  peekSettings: () => settingsCache || readSettings(), // (read on every request: no copy)
   app, session, readSettings, writeSettings, isWebUrl,
   activeContents: () => activeTab()?.webContents,
   realUrl: (wc) => realUrl(wc),
@@ -1047,7 +1051,7 @@ function recordVisit(url, title) {
   entry.last = Date.now();
   if (title) entry.title = title;
   history.set(url, entry);
-  historyVersion++;
+  if (entry.visits >= 3) historyVersion++; // (only pages visited 3+ times are in frequentSites: others don't change it)
   saveHistorySoon();
 }
 
@@ -1396,7 +1400,7 @@ function takeSpareNewTab() {
   if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
   return s.view;
 }
-const spareSoon = () => setTimeout(makeSpareNewTab, 60).unref?.(); // (after this tab's first frame is under way)
+const spareSoon = () => setTimeout(makeSpareNewTab, 700).unref?.(); // (once this tab has drawn and the first keys are in)
 
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
@@ -1427,7 +1431,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
     tab.spareFilling = true;
     // (At most 100 ms: an occluded or minimized window draws no frames, and the tab must not stay blank.)
-    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
+    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); true`, true)
       .catch(() => wc.loadURL(url).catch(() => {}));
     Promise.race([filled, new Promise((r) => setTimeout(r, 100))])
       .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
@@ -2691,8 +2695,16 @@ function frequentSitesNow(limit) {
 // A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images), written once.
 const faviconFiles = new Map(); // data URL hash -> file URL
 const FAVICON_FILE_URL = /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z0-9]+$/i;
+const faviconFileOf = new Map(); // data: address -> its file (no sha1 of 50 KB per lookup)
 function faviconFile(dataUrl) {
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+  if (faviconFileOf.has(dataUrl)) return faviconFileOf.get(dataUrl);
+  const out = faviconFileNow(dataUrl);
+  if (faviconFileOf.size > 500) faviconFileOf.clear();
+  faviconFileOf.set(dataUrl, out);
+  return out;
+}
+function faviconFileNow(dataUrl) {
   const key = require('crypto').createHash('sha1').update(dataUrl).digest('hex').slice(0, 20);
   if (faviconFiles.has(key)) return faviconFiles.get(key);
   const m = dataUrl.match(/^data:image\/([a-z+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
@@ -4585,7 +4597,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
-  else if (settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
+  if (settingsPending && settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
   quitting = true;
 });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -5873,8 +5885,7 @@ app.whenReady().then(async () => {
   createWindow();
   // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
   const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
-  await atMost(extending);
-  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await atMost(blocking);
+  await atMost(Promise.all([extending, fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin')) ? blocking : null]));
   perf.mark('adblockReady');
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them

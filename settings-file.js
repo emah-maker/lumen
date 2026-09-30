@@ -61,8 +61,10 @@ function writeJsonAtomic(file, data) {
 // older data over newer. Its temp file is its own, apart from the synchronous writer's.
 let chain = Promise.resolve();
 function writeJsonAtomicAsync(file, data, stillLatest = () => true) {
-  const text = JSON.stringify(data, null, 2);
+  // (`data` is a snapshot the caller no longer changes: it is turned into text only if this write still runs.)
   const run = async () => {
+    if (!stillLatest()) return; // a newer write is queued: this one has nothing to do
+    const text = JSON.stringify(data, null, 2);
     const fsp = fs.promises;
     const tmp = `${file}.tmp-async`;
     await fsp.mkdir(path.dirname(file), { recursive: true });

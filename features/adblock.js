@@ -46,9 +46,14 @@ function createAdblock(deps) {
   let blocker = null;
   const blockedCount = new Map(); // webContents id -> requests blocked on the current page
 
+  // Asked on every request: the allow list's Set is rebuilt only when the setting changes.
+  let memo = null;
   function settings() {
-    const { adblock = true, adblockAllow = [] } = deps.readSettings();
-    return { enabled: adblock, allow: new Set(adblockAllow) };
+    const s = (deps.peekSettings || deps.readSettings)();
+    const { adblock = true, adblockAllow = [] } = s;
+    if (memo && memo.adblock === adblock && memo.list === adblockAllow) return memo.out;
+    memo = { adblock, list: adblockAllow, out: { enabled: adblock, allow: new Set(adblockAllow) } };
+    return memo.out;
   }
 
   function on(pageUrl) {
@@ -111,7 +116,18 @@ function createAdblock(deps) {
     const isTest = require('../test-mode').isTest();
     // `blocker` is wired into the sessions once; `engine` is what matches requests and pages, and is swapped for a
     // freshly built one (patched, or from new lists) without re-wiring anything.
+    // The swap's deserialize takes ~30-80 ms on the main thread: done when the user has been idle a couple of seconds.
+    const whenIdle = () => new Promise((resolve) => {
+      const started = Date.now();
+      const check = () => {
+        let idle = 0;
+        try { idle = electron.powerMonitor.getSystemIdleTime(); } catch { idle = 99; }
+        if (idle >= 2 || Date.now() - started > 120000) resolve(); else setTimeout(check, 3000).unref?.();
+      };
+      check();
+    });
     const loadPatched = async () => {
+      await whenIdle();
       const fresh = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(patched)));
       engine = fresh;
       cosmetics = fresh.onInjectCosmeticFilters;

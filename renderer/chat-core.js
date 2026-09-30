@@ -928,6 +928,15 @@ window.assistant.onEvent((event) => {
       turn.textSource = '';
       break;
     }
+    case 'tool_update': { // a step shown early (its input still streaming) gets its real label
+      const step = turn.steps.get(event.id);
+      if (!step) break;
+      const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
+      step.firstChild.textContent = label;
+      step.title = label;
+      if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
+      break;
+    }
     case 'tool_done': {
       const step = turn.steps.get(event.id);
       if (!step) break;
