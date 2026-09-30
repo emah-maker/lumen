@@ -162,7 +162,7 @@ async function loadModels() {
   prompt.placeholder = !current ? t('composer.setup') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
   setAssistantIdentity(current?.group);
 }
-window.assistant.onModelsUpdated?.(() => loadModels());
+window.assistant.onModelsUpdated?.(() => { loadModels(); catalog?.refreshOpen(); });
 // "More models…" (OpenRouter): every model OpenRouter has, in the same picker (renderer/model-catalog.js), opened
 // under the model button.
 let catalog = null;

@@ -116,5 +116,12 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
     select.value = mainSelect.value;
     picker.refresh();
   }
-  return { open };
+  // A fresher catalog arrived (models-updated) while this list is open: swapped in, where it stands.
+  async function refreshOpen() {
+    if (!picker || picker.menu.hidden || loading) return;
+    const models = await Promise.resolve().then(fetchModels).catch(() => null);
+    const key = catalogKey(models);
+    if (key && key !== shownKey && !picker.menu.hidden) { shownKey = key; select.replaceChildren(...build(models)); select.value = mainSelect.value; picker.refresh(); }
+  }
+  return { open, refreshOpen };
 };

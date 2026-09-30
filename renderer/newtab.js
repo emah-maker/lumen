@@ -139,6 +139,7 @@ function tickClock() {
 }
 const clockRange = document.createRange();
 let lastClockW = 0;
+document.fonts?.ready?.then(() => window.newtabSize?.fitNow?.()); // a clock font that loads late may be wider
 // Minutes only: wake every 10 s. With seconds: just after each second turns. Never draws while the tab is hidden.
 let clockTimer = 0;
 function scheduleClock() {

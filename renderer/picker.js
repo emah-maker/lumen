@@ -175,7 +175,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     }
     el.append(top);
     // A recent pick says where it is from ("OpenAI"), since it sits outside its provider's heading.
-    const detail = [recentRow ? o.dataset.provider || groupOf(o) : '', o.dataset.detail || ''].filter(Boolean).join(' · ');
+    const maker = recentRow ? o.dataset.provider || groupOf(o) : '';
+    const detail = [maker && !String(o.dataset.detail || '').startsWith(maker) ? maker : '', o.dataset.detail || ''].filter(Boolean).join(' · ');
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     el.title = [nameOf(o), o.dataset.more ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
     el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', ')); // what a screen reader says
@@ -203,13 +204,31 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   // "GPT-5"); a name that starts with the query ranks first, then a word that does, then anything else.
   // Search: every word must start a word somewhere (renderer/picker-match.js), best matches first.
   const PM = window.pickerMatch;
-  const unitWord = (w) => /^\$|^\d+(\.\d+)?[km]$/i.test(w); // "$3", "128k", "1m": a size or a price, not a version
-  const score = (o, words) => PM.score({
-    name: nameOf(o), id: o.value.replace(/^[a-z]+:/, ''),
-    group: `${o.parentElement?.dataset?.search ?? groupOf(o)} ${o.dataset.provider || ''}`.trim(),
-    badges: (o.dataset.badges || '').replace(/,/g, ' '),
-    detail: words.some(unitWord) ? (String(o.dataset.detail || '').match(/\$?\d+(\.\d+)?[KkMm]?/g) || []).join(' ') : '',
-  }, words.join(' '));
+  // A price or size word ("$3", "$0.3", "128k", "1m") is compared by value with the row's own prices and sizes, never
+  // with names or versions ("$3" is not Claude 3); every other word goes to the name matcher.
+  const unitWord = (w) => /^\$\d*(\.\d+)?$|^\d+(\.\d+)?[km]$/i.test(w);
+  const amounts = (detail) => {
+    const d = String(detail || '');
+    const prices = [...d.matchAll(/\$(\d+(?:\.\d+)?)/g)].map((m) => Number(m[1]));
+    const sizes = [...d.matchAll(/(\d+(?:\.\d+)?)([KkMm])\b/g)].map((m) => Number(m[1]) * (/m/i.test(m[2]) ? 1e6 : 1e3));
+    return { prices, sizes };
+  };
+  const unitMatch = (w, a) => {
+    if (w.startsWith('$')) { const v = Number(w.slice(1)); return w.length === 1 ? a.prices.length > 0 : a.prices.some((p) => Math.abs(p - v) < 1e-9); }
+    const m = w.match(/^(\d+(?:\.\d+)?)([km])$/i);
+    return Boolean(m) && a.sizes.some((s) => Math.abs(s - Number(m[1]) * (/m/i.test(m[2]) ? 1e6 : 1e3)) < 1);
+  };
+  const score = (o, words) => {
+    const units = words.filter(unitWord);
+    if (units.length) { const a = amounts(o.dataset.detail); if (!units.every((w) => unitMatch(w, a))) return 0; }
+    const rest = words.filter((w) => !unitWord(w));
+    if (!rest.length) return units.length ? 2 : 1;
+    return PM.score({
+      name: nameOf(o), id: o.value.replace(/^[a-z]+:/, ''),
+      group: `${o.parentElement?.dataset?.search ?? groupOf(o)} ${o.dataset.provider || ''}`.trim(),
+      badges: (o.dataset.badges || '').replace(/,/g, ' '),
+    }, rest.join(' '));
+  };
   function render() {
     const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
     const all = options();

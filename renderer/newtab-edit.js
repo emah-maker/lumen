@@ -704,6 +704,7 @@
       history.push({ kind: 'remove', ...info });
       showToast(T(info.system ? 'newtab.edit.hidden' : 'newtab.edit.removed', { title: info.title }));
       update();
+      setTimeout(update, REMOVE_UNDO_MS + 50); // once the browser lets go of it, Undo stops offering it
     },
     guides(item, list, obstacle, m) {
       if (!item || !m) return;
