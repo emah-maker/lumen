@@ -107,12 +107,13 @@
   function writingFormula(rest) {
     if (!rest || /^\s/.test(rest)) return false;
     if (/^\d/.test(rest)) {
-      if (/^\d[\d.,]*[kKmMbB]?(\/[a-z]*|\+|-)?([\s,.;:)!?]|$)/.test(rest)) return false;
+      if (/^\d[\d.,]*[kKmMbB]?(\/[a-z]*|\+|-)?([\s,.;:)!?*\]~'"]|$)/.test(rest)) return false; // (and "**$20**", "[$5]")
       if (/^\d[\d.,]*[kKmMbB]?\s*[-–—]\s*\$?(\d|$)/.test(rest)) return false; // a price range: "$5-$10", "$10-15", "$3k–$5k" // money: "$5 ", "$1.2M in", "$20/month", "$5k-"
       return /^\d[\d.,]*[A-Za-z\\^_+\-*=(]/.test(rest); // "$2x+…" holds
     }
     if (/^[a-z]{3,}\s/.test(rest)) return false; // "$name and": a variable in prose, not a formula
-    if (/^\{[A-Z_][A-Z0-9_]*\}?/.test(rest)) return false; // "${VAR}": shell
+    if (/^\{[A-Za-z_][A-Za-z0-9_]*\}?/.test(rest)) return false; // "${VAR}", "${var}": shell, a template
+    if (/^[a-z]+:[A-Za-z]/.test(rest) || /^_(\s|$)/.test(rest)) return false; // "$env:PATH", "$_"
     if (/^[A-Z][A-Z0-9_]+(\s|[:/;]|$)/.test(rest) && !/^[A-Z]$/.test(rest)) return /^[A-Z][A-Z0-9_]+$/.test(rest) && rest.length < 3; // "$HOME " is shell
     return /^[A-Za-z\\([|_^{-]/.test(rest);
   }
