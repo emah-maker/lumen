@@ -314,7 +314,7 @@ function createUpdates(deps) {
     canSelfUpdate: canSelfUpdate(),
     autoDownload: autoDownload(),
     disabled: reason,
-    dismissed: Boolean(state.version) && dismissed === state.version,
+    dismissed: Boolean(state.version || installFailed) && dismissed === dismissKey(),
     misplaced: placement.misplaced ? placement.why : null, // why this Mac copy can't update itself where it runs
     relocate: relocate(),
     queued,
@@ -326,6 +326,7 @@ function createUpdates(deps) {
   });
   const publish = () => deps.ui()?.send('updates:state', snapshot());
   const setState = (patch) => { if (patch.status && patch.status !== 'error') installFailed = false; Object.assign(state, patch); publish(); };
+  const dismissKey = () => state.version || 'install-failed'; // a failed install with no known version still has a pill to close
   const short = (err) => String(err?.message || err).split('\n')[0].slice(0, 200);
   const fail = (msg) => { moveError = msg; queued = false; publish(); return false; };
 
@@ -435,7 +436,8 @@ function createUpdates(deps) {
       if (!result) { if (state.status === 'checking') setState({ status: 'idle' }); } // the updater is inactive (unpackaged)
       else if (result.updateInfo && !isNewer(result.updateInfo.version, app.getVersion()) && state.status === 'checking') setState({ status: 'up-to-date' });
     } catch (err) {
-      if (state.status === 'checking') setState({ status: 'error', error: short(err) });
+      // Try again (or a check over a failed install) must say why it failed too; the version and installFailed stay.
+      if (state.status === 'checking' || retrying || state.status === 'error' || installFailed) setState({ status: 'error', error: short(err) });
     }
     checkRunning = false;
     state.lastChecked = Date.now();
@@ -509,7 +511,7 @@ function createUpdates(deps) {
       const asset = manualAsset({ kind, version: state.version, arch, files: info?.files });
       if (asset) deps.session.defaultSession.downloadURL(asset.url); // shows in Lumen's Downloads
       else require('electron').shell.openExternal(RELEASES_URL);
-      dismissed = state.version; // the toolbar prompt has done its job
+      dismissed = dismissKey(); // the toolbar prompt has done its job
     }
     publish();
     return snapshot();
@@ -579,12 +581,14 @@ function createUpdates(deps) {
     return true;
   }
 
+  function dismiss() { dismissed = dismissKey(); moveError = ''; publish(); return snapshot(); }
+
   function start() {
     const handle = (channel, fn) => deps.ipcMain.handle(channel, (_event, ...args) => fn(...args));
     handle('settings:updates-state', snapshot);
     handle('settings:updates-check', check);
     handle('settings:updates-apply', apply);
-    handle('settings:updates-dismiss', () => { dismissed = state.version; moveError = ''; publish(); return snapshot(); });
+    handle('settings:updates-dismiss', dismiss);
     if (reason) return;
     // The last swap couldn't replace the files: the old version is what's running.
     let lastSwapFailed = false;
@@ -627,6 +631,7 @@ function createUpdates(deps) {
     setKind: (k, replaceable = true) => { kind = k; mode = updateMode({ kind: k, replaceable: () => replaceable }); publish(); },
     restore: (lastSwapFailed) => restoreStaged(lastSwapFailed),
     openNewer: () => openNewerUserCopy(),
+    dismiss: () => dismiss(),
     setState: (patch) => setState(patch),
     willQuit: () => applyOnQuit(),
     reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; checkRunning = false; checkPromise = null; retrying = false; installFailed = false; publish(); },
