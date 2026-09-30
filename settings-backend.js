@@ -107,6 +107,8 @@ const DEFAULTS = {
   translateNever: [], // sites where the offer stays away
   translateConsent: [], // providers the user allowed to receive page text
   autoDownloadUpdates: true, // Windows setup installs: fetch new versions in the background (features/updates.js)
+  showWhatsNew: true, // the release notes come up once after Lumen updates (features/whats-new.js)
+  lastSeenVersion: '', // the newest Lumen version run in this profile ('' until the first run records it); internal
 };
 const RESTART_KEYS = ['hardwareAcceleration', 'forceDarkWebsites'];
 const PERMISSIONS = { geolocation: 'Location', media: 'Camera and microphone', notifications: 'Notifications', 'clipboard-read': 'Clipboard' };
@@ -181,6 +183,7 @@ function validate(key, value) {
     case 'homeWidgets': return cleanWidgets(value);
     case 'homeWidgetSizes': return cleanSizes(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
+    case 'lastSeenVersion': return value === '' ? '' : require('./features/whats-new').cleanVersion(value);
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -547,6 +550,7 @@ function create(deps) {
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
+    if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
@@ -723,7 +727,7 @@ function create(deps) {
   // ---- reset ----
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions']) delete s[key];
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
     userZoomed.clear();
@@ -814,6 +818,7 @@ function create(deps) {
       return true;
     });
     handle('prefs:about', about);
+    handle('prefs:whats-new', () => { deps.showWhatsNew?.(); return true; }); // the notes open over the window; the page doesn't wait for them
     handle('prefs:task-manager', taskManager);
     handle('prefs:restart-tab', restartTabProcess);
     handle('prefs:internals', internals);

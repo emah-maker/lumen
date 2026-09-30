@@ -9,6 +9,60 @@ const checkboxRow = document.getElementById('checkbox-row');
 const checkboxInput = document.getElementById('checkbox');
 const checkboxLabelEl = document.getElementById('checkbox-label');
 const buttonsEl = document.getElementById('buttons');
+const textEl = document.getElementById('text');
+const notesEl = document.getElementById('notes');
+const moreEl = document.getElementById('more');
+const linkEl = document.getElementById('notes-link');
+
+// A line of release notes: `code` and **bold** become elements, everything else stays text.
+function inline(parent, text) {
+  for (const part of String(text).split(/(`[^`]+`|\*\*[^*]+\*\*)/)) {
+    if (!part) continue;
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) parent.append(Object.assign(document.createElement('code'), { textContent: part.slice(1, -1) }));
+    else if (part.startsWith('**') && part.endsWith('**') && part.length > 4) parent.append(Object.assign(document.createElement('strong'), { textContent: part.slice(2, -2) }));
+    else parent.append(document.createTextNode(part));
+  }
+}
+
+function renderNotes(payload) {
+  notesEl.replaceChildren();
+  for (const release of payload.notes || []) {
+    const section = document.createElement('section');
+    section.className = 'release';
+    const heading = document.createElement('h3');
+    heading.textContent = release.version;
+    if (release.date) heading.append(Object.assign(document.createElement('span'), { className: 'date', textContent: release.date }));
+    section.append(heading);
+    let list = null;
+    for (const block of release.blocks || []) {
+      if (block.type === 'p') {
+        list = null;
+        const p = document.createElement('p');
+        inline(p, block.text);
+        section.append(p);
+      } else {
+        if (!list) { list = document.createElement('ul'); section.append(list); }
+        const li = document.createElement('li');
+        inline(li, block.text);
+        list.append(li);
+      }
+    }
+    notesEl.append(section);
+  }
+  notesEl.hidden = payload.kind !== 'notes';
+  moreEl.textContent = payload.more || '';
+  moreEl.hidden = !payload.more;
+  linkEl.hidden = !payload.link;
+  linkEl.textContent = payload.link?.label || '';
+  if (payload.link) linkEl.href = payload.link.url; else linkEl.removeAttribute('href');
+  const notes = payload.kind === 'notes';
+  card.classList.toggle('wide', notes);
+  card.setAttribute('role', notes ? 'dialog' : 'alertdialog');
+  // The switch stays in view under a long list; other dialogs keep it with their text.
+  if (notes) card.insertBefore(checkboxRow, buttonsEl);
+  else textEl.append(checkboxRow);
+  if (notes) document.getElementById('head').scrollTop = 0;
+}
 
 const DESTRUCTIVE = /^(remove|clear|delete|leave)$/i;
 
@@ -55,6 +109,8 @@ window.dialogHost.onShow((payload) => {
     fieldInputs.push(input);
   }
   fieldsEl.hidden = fieldInputs.length === 0;
+
+  renderNotes(payload);
 
   checkboxRow.hidden = !payload.checkboxLabel;
   checkboxLabelEl.textContent = payload.checkboxLabel || '';
