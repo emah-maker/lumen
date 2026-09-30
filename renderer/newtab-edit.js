@@ -95,6 +95,7 @@
     .w-sz-grip.w-sz-blocked { animation: w-sz-nudge 280ms ease-out; background: color-mix(in srgb, var(--accent) 45%, #d70015); }
     @keyframes w-sz-nudge { 30% { translate: 3px 0; } 60% { translate: -2px 0; } }
     body .w-card.w-blocking, body.w-editing .w-card.w-blocking { outline: 2px dashed color-mix(in srgb, #d70015 70%, transparent) !important; outline-offset: 4px !important; }
+    .w-sz-note.above { transform: translate(-50%, -100%); }
     .w-sz-note { position: absolute; z-index: 3; transform: translateX(-50%); max-width: 260px; padding: 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--bg, #fff) 90%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); color: var(--text);
       box-shadow: 0 0 0 0.5px var(--border), 0 8px 24px -8px rgba(0, 0, 0, 0.35); font: 500 12px/1.35 system-ui, sans-serif; text-align: center; opacity: 0; pointer-events: none; transition: opacity 160ms ease-out; }
     .w-sz-note.show { opacity: 1; }
@@ -293,7 +294,10 @@
     hideToast();
     if (!entry) { say(T('newtab.edit.nothing')); update(); return false; }
     let ok = true;
-    if (entry.kind === 'look') {
+    if (entry.kind === 'look' && SZ()?.get()[entry.key] !== entry.after) {
+      ok = false; // changed again since (Settings, another tab): the newer size stays
+      say(T('newtab.edit.nothing'));
+    } else if (entry.kind === 'look') {
       ok = restoreLook({ [entry.key]: entry.before });
       say(T('newtab.edit.undone', { what: T('newtab.edit.what.layout', { title: entry.title }) }));
     } else if (entry.kind === 'remove') {
@@ -405,6 +409,7 @@
       frameSearch.dataset.tag = tag;
       for (const g of [gripL, gripR]) {
         g.setAttribute('aria-valuemin', String(Math.min(WS.SEARCH_MIN, drawn))); // an Automatic width can be a little under the minimum
+        g.setAttribute('aria-valuemax', String(Math.max(drawn, Math.min(WS.SEARCH_MAX, Math.floor(window.innerWidth * 0.88)))));
         g.setAttribute('aria-valuenow', String(drawn));
         g.setAttribute('aria-valuetext', tag ? `${T('newtab.edit.search.sized', { width: drawn })}. ${tag}` : T('newtab.edit.search.sized', { width: drawn }));
       }
@@ -475,7 +480,8 @@
       const r = grip.getBoundingClientRect();
       note.textContent = T('newtab.edit.noRoom');
       note.style.left = `${Math.round(r.left + r.width / 2 + scrollX)}px`;
-      note.style.top = `${Math.round(r.bottom + 10 + scrollY)}px`;
+      note.style.top = grip === gripClock ? `${Math.round(r.top - 10 + scrollY)}px` : `${Math.round(r.bottom + 10 + scrollY)}px`;
+      note.classList.toggle('above', grip === gripClock);
       note.classList.add('show');
       clearTimeout(noteTimer);
       noteTimer = setTimeout(() => note.classList.remove('show'), 2600);
@@ -500,7 +506,12 @@
     const auto = key === 'search' && value === WS.SEARCH_DEFAULT; // Automatic: saved as it is, drawn as the cards allow
     if (record && !auto && !reset) { SZ().floor(); value = fitted(key, base, value, grip); }
     const same = (a, b) => a === b || (key === 'search' && !auto && Math.abs(a - b) <= 1);
-    if (value === stored || (record && same(value, base))) { SZ().restore(); placeSoon(); return false; } // nothing changes: drawn as before
+    if (value === stored || (record && !reset && same(value, base))) {
+      SZ().restore(); // nothing changes: drawn as before, and said
+      placeSoon();
+      if (record) { const now = drawnOf(key); say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(now) }) : T('newtab.edit.search.sized', { width: now })); }
+      return false;
+    }
     SZ().take(key, value); // saved here now, then in the browser
     placeSoon();
     window.widgetAct('wlook', 'look', { k: key, v: String(value) });
@@ -620,8 +631,10 @@
       if (!plainKey(e)) return;
       const cur = drawnSearch(); // Automatic is stepped from the width it is drawn at
       const step = 2 * WS.SEARCH_STEP;
-      const to = { ArrowRight: cur + step, ArrowUp: cur + step, ArrowLeft: cur - step, ArrowDown: cur - step, PageUp: cur + 4 * step, PageDown: cur - 4 * step, Home: WS.SEARCH_MIN, End: WS.SEARCH_MAX }[e.key];
+      const cap = Math.max(WS.SEARCH_MIN, Math.min(WS.SEARCH_MAX, Math.floor(window.innerWidth * 0.88))); // the widest it is drawn in this window
+      let to = { ArrowRight: cur + step, ArrowUp: cur + step, ArrowLeft: cur - step, ArrowDown: cur - step, PageUp: cur + 4 * step, PageDown: cur - 4 * step, Home: WS.SEARCH_MIN, End: cap }[e.key];
       if (to === undefined) return;
+      to = Math.min(to, cap);
       e.preventDefault();
       e.stopPropagation();
       let next = WS.cleanSearchWidth(Math.round(to / WS.SEARCH_STEP) * WS.SEARCH_STEP);

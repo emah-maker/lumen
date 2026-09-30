@@ -147,7 +147,7 @@
     scheduled = requestAnimationFrame(() => {
       scheduled = 0;
       if (drag || !items.length) return;
-      if (window.newtabSize?.held?.()) return; // a clock or search-bar drag: the cards hold still until it ends
+      if (window.newtabSize?.held?.()) { measure(); place(view); return; } // a clock or search-bar drag: the cards keep their cells (new px for a new window) until it ends
       // A new window width: the column's sizes fitted to it first, so the cards are never drawn pushed meanwhile.
       if (!window.newtabSize?.held?.()) window.newtabSize?.fitNow?.();
       measure();
@@ -627,5 +627,6 @@
       }
     },
     blockers: () => [...lastBlockers],
+    signature: () => `${WL.encode(items)}|${o?.packed ? 1 : 0}|${stacked() ? 1 : 0}`, // what a fit depends on, from the cards
     relayout: () => relayout(), items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();

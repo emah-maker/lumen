@@ -243,8 +243,8 @@
   // A size set in Settings (or saved from a wider window) is drawn as big as the cards around the centre column allow
   // in this window, and no bigger, rather than pushing them: the clock steps down, the search bar narrows. Only what
   // is drawn changes: the saved size stays, and comes back where there is room for it.
-  // Cards whose saved places overlap the centre column even at its smallest (a narrow window): pushed whatever the
-  // clock and search bar do, so they never block a size.
+  // The centre column at its smallest (Small clock, narrowest bar): the grid measures what a size moves against it
+  // (WL.movedBy), so cards it pushes anyway, or docks it squeezes anyway, never block a size.
   function floorBlockers() {
     const grid = window.widgetGrid;
     if (!grid?.floor) return;
@@ -258,16 +258,20 @@
     paint();
   }
   const savedPx = () => (size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search);
+  let lastFit = null; // { key, clock, search }
   function fitToCards() {
     if (size.hold) return; // a resize is being dragged: what it draws stays as it is
+    const grid = window.widgetGrid;
+    const b = document.body.dataset;
+    const key = [document.documentElement.clientWidth, window.innerHeight, size.clock, size.search, grid?.signature?.() || '', headerEl?.hidden ? 1 : 0, window.newtabSystem?.dockedCount?.() ?? '', b.clockStyle, b.clockCard, b.greetingFont, document.getElementById('greeting')?.textContent || ''].join('|');
+    if (lastFit?.key === key) { size.viewClock = lastFit.clock; size.viewSearch = lastFit.search; paint(); return; }
     size.viewClock = null;
     size.viewSearch = null;
     paint();
-    const grid = window.widgetGrid;
+    const remember = () => { lastFit = { key, clock: size.viewClock, search: size.viewSearch }; };
     if (!grid?.centreFits) return;
     floorBlockers();
-    paint();
-    if (grid.centreFits()) return;
+    if (grid.centreFits()) { remember(); return; }
     const from = savedPx();
     const m = WL.metrics(document.documentElement.clientWidth);
     const lines = m.cols === 1 ? [] : [4, 6, 8, 10].map((s) => Math.floor(WL.spanPx(m, s)));
@@ -281,6 +285,7 @@
     size.viewClock = plan.clock;
     size.viewSearch = plan.search;
     paint();
+    remember();
   }
   window.newtabSize = {
     apply(clock, search) {

@@ -285,7 +285,10 @@ function movedBy(items, o, ob, floor) {
   const at = resolve(items, { ...o, obstacle: ob });
   const base = resolve(items, { ...o, obstacle: floor });
   const byId = new Map(base.map((it) => [it.id, it]));
-  return at.filter((it) => !it.snap && !same(it, byId.get(it.id) || it)).map((it) => it.id);
+  // A docked card fills the room beside the column (its width follows it), but losing its dock (too little room
+  // left: a new row or height) is a move like any other.
+  const moved = (it) => { const b = byId.get(it.id) || it; return it.snap ? it.y !== b.y || it.h !== b.h : !same(it, b); };
+  return at.filter(moved).map((it) => it.id);
 }
 // One column, in reading order, below the obstacle. Saved positions are untouched (this is a view).
 function stack(items, { obstacle = null } = {}) {

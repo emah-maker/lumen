@@ -31,6 +31,14 @@ module.exports = async function widgetEditUnits(check) {
       check(`movedBy (${packed ? 'packed' : 'unpacked'}): a wider column that reaches a card moves it (and what it knocks)`, moved.includes('b'), JSON.stringify(moved));
       check(`movedBy (${packed ? 'packed' : 'unpacked'}): a card out of reach is not counted`, !moved.includes('a'));
     }
+    // A dock squeezed below its minimum width loses its dock: that is a move.
+    {
+      const dock = [it('d', 'weather', 0, 0, 3, 10, { snap: 'left' })];
+      const o = { cols: 24, packed: true, rows: 30 };
+      const lost = WL.movedBy(dock, o, { x: 2, y: 0, w: 20, h: 4 }, { x: 8, y: 0, w: 8, h: 4 });
+      const kept = WL.resolve(dock, { ...o, obstacle: { x: 2, y: 0, w: 20, h: 4 } })[0];
+      check('movedBy: a dock squeezed out of its place counts', lost.includes('d') || (kept.y === 0 && kept.h >= 10), JSON.stringify({ lost, kept }));
+    }
     check('movedBy: docked cards never count', WL.movedBy([it('d', 'notes', 0, 0, 4, 6, { snap: 'left' })], { cols: 24, packed: true, rows: 30 }, { x: 2, y: 0, w: 20, h: 4 }, { x: 8, y: 0, w: 8, h: 4 }).length === 0);
     const widths = WS.fitWidths(800, [760, 700]);
     check('fit: nothing collides -> drawn as saved', JSON.stringify(WS.fitSizes({ clock: 'xl', search: 800, widths }, () => true)) === '{"clock":null,"search":null}');
