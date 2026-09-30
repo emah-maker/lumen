@@ -2661,7 +2661,7 @@ function describeError(err, auth = null) {
   const other = err.__provider ? providers.describeProviderError(err, err.__provider) : null;
   if (other) return other;
   if (isContextError(err)) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
-  if (err instanceof sdk().AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → You and AI.', action: 'settings', signInExpired: true };
+  if (err instanceof sdk().AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → AI and agents.', action: 'settings', signInExpired: true };
   if (err instanceof sdk().AuthenticationError) return { text: 'That API key was rejected. Add a valid key to continue.', action: 'settings' };
   if (err instanceof sdk().PermissionDeniedError) return { text: 'This API key does not have access to the selected model. Pick another in the model menu.' };
   if (err instanceof sdk().RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };

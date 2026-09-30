@@ -325,7 +325,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
     if (given.length !== tokenPath.length || !crypto.timingSafeEqual(given, tokenPath) || (route && route[0] !== '/')) return null;
     return { url, route: route.replace(/\/$/, '') };
   };
-  const NO_TOKEN = 'Wrong or missing token: use the full address from Lumen’s Settings (You and AI → Allow automation tools).';
+  const NO_TOKEN = 'Wrong or missing token: use the full address from Lumen’s Settings (Advanced → Automation → Allow automation tools).';
   // /json/list, the way Chromium's own port answers it, for the user's tabs.
   async function listPages() {
     const users = await userTargets();

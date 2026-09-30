@@ -17,7 +17,7 @@ API keys in `settings.json` are encrypted with the operating system's keychain. 
 
 The tables below give each setting's key in `settings.json` and its default. Edit the file only while Lumen is closed: Lumen rewrites it while it runs. Values that aren't valid are ignored and the default is used.
 
-## You and AI
+## AI and agents
 
 | Setting | Key | Default | What it does |
 |---|---|---|---|
