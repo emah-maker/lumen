@@ -1,0 +1,20 @@
+// Settings > Home > Widgets: the one-line summaries and the picker's words (renderer/widget-summary.js), pure, no window.
+const WS = require('../renderer/widget-summary');
+
+module.exports = async function widgetSummaryUnits(check) {
+  const ctx = { secrets: { todoist: true, github: false, spotify: true, muse: false }, connections: { gmail: false }, slack: { connected: true, team: 'Acme' }, spotify: { name: 'Ann' }, feedPresets: [{ id: 'bbc', name: 'BBC News' }] };
+  const wx = { type: 'weather', title: 'Weather', wx: { places: [{ name: 'Boston, Massachusetts, United States', lat: 42, lon: -71 }], units: 'f', days: 7 } };
+  check('widget summary: weather is "Boston · °F · 7 days"', WS.widgetSummary(wx, ctx) === 'Boston · °F · 7 days', WS.widgetSummary(wx, ctx));
+  const many = { ...wx, wx: { ...wx.wx, units: 'c', days: 10, places: [{ here: true, name: 'My location' }, { name: 'Paris, France', nick: 'Home' }, { name: 'Oslo, Norway' }, { name: 'Rome, Italy' }] } };
+  check('widget summary: several places are shortened, a nickname wins, My location is named', WS.widgetSummary(many, ctx) === 'My location, Home +2 · °C · 10 days', WS.widgetSummary(many, ctx));
+  check('widget summary: a weather card without places says so', /^No place yet/.test(WS.widgetSummary({ type: 'weather', wx: { places: [] } }, ctx)), '');
+  check('widget summary: world clock lists places and the clock format', WS.widgetSummary({ type: 'worldclock', wc: { places: [{ name: 'Tokyo, Japan' }, { name: 'Lima, Peru' }], clock: '24' } }, ctx) === 'Tokyo, Lima · 24-hour', '');
+  check('widget summary: calendar and web page show the host, not the whole (secret) address', WS.widgetSummary({ type: 'calendar', url: 'webcal://www.example.com/secret/abc.ics' }, ctx) === 'example.com' && WS.widgetSummary({ type: 'embed', url: 'https://dash.example.org/x?y=1', height: 'large' }, ctx) === 'dash.example.org · large height', '');
+  check('widget summary: headlines name the preset feed and the count', WS.widgetSummary({ type: 'feed', preset: 'bbc', count: 5 }, ctx) === 'BBC News · 5 headlines', '');
+  check('widget summary: a widget that needs an account says "Not connected" instead of settings', WS.widgetSummary({ type: 'gmail', count: 5 }, ctx) === 'Not connected' && WS.widgetSummary({ type: 'github', gh: {} }, ctx) === 'Not connected' && WS.widgetSummary({ type: 'muse', muse: {} }, ctx) === 'No key yet', '');
+  check('widget summary: connected accounts say who or what, plus the choices', WS.widgetSummary({ type: 'spotify', art: true }, ctx) === 'Connected as Ann' && WS.widgetSummary({ type: 'slack' }, ctx) === 'Connected to Acme' && WS.widgetSummary({ type: 'todoist', todo: { source: 'todayOverdue', max: 10 } }, ctx) === 'Today and overdue · 10 shown', WS.widgetSummary({ type: 'spotify', art: true }, ctx));
+  check('widget summary: the Spotify web player has nothing to connect', WS.widgetSummary({ type: 'spotify', mode: 'web' }, ctx) === 'Web player' && WS.accountStatus({ type: 'spotify', mode: 'web' }, ctx) === null, '');
+  check('widget summary: stocks and crypto list their symbols', WS.widgetSummary({ type: 'crypto', mk: { coins: [{ id: 'bitcoin', sym: 'BTC' }, { id: 'ethereum', sym: 'ETH' }] } }, ctx) === 'BTC, ETH' && /^AAPL, MSFT/.test(WS.widgetSummary({ type: 'stocks', mk: { symbols: ['AAPL', 'MSFT'] } }, { secrets: { twelvedata: true } })), '');
+  check('widget summary: garbage never throws and falls back to the backend line', WS.widgetSummary({ type: 'weather', wx: { places: [null] }, summary: 'fallback' }, ctx) !== undefined && WS.widgetSummary(null) === '' && WS.widgetSummary({ type: 'nope', summary: 'x' }, ctx) === 'x', '');
+  check('widget picker: every kind has a name and a one-line description, in an order', WS.ORDER.every((t) => WS.KINDS[t] && WS.kindName(t) && WS.kindHint(t)) && WS.ORDER.length === Object.keys(WS.KINDS).length && WS.kindName('weather') === 'Weather', '');
+};

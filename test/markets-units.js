@@ -140,7 +140,7 @@ module.exports = async function marketsUnits(check) {
   await settle(w, id);
   check('stocks: saved, the key is stored as a secret and never in the widget', store.secrets.twelvedata === KEY && !JSON.stringify(store.settings).includes(KEY), '');
   check('stocks: the watchlist is ONE request with the key in a header, not the URL', calls.length >= 1 && calls.every((c) => c.url.includes('symbol=AAPL%2CMSFT%2CTSLA') && !c.url.includes(KEY) && c.headers.Authorization === `apikey ${KEY}`), JSON.stringify(calls));
-  check('stocks: the card starts at 4x3 cells', saved.widget.w === 4 && saved.widget.h === 3 && WL.DEFAULT_SIZE.stocks.w === 4 && WL.DEFAULT_SIZE.crypto.h === 3, JSON.stringify(saved.widget));
+  check('stocks: the card starts 3 wide (its 4 wide default capped to the side area) by 3 cells', saved.widget.w === 3 && saved.widget.h === 3 && WL.DEFAULT_SIZE.stocks.w === 4 && WL.DEFAULT_SIZE.crypto.h === 3, JSON.stringify(saved.widget));
   let d = page(w, id).data;
   check('stocks: rows carry price, percent change and the source; Delayed badge and attribution', d.rows.length === 3 && d.rows[0].sym === 'AAPL' && d.rows[0].px === 100 && d.rows[0].chg === 2.5 && d.badge === 'Delayed' && d.attribution === 'Data: Twelve Data' && d.marketOpen === true && d.asOf === Math.floor(clock / 1000) * 1000,JSON.stringify(d).slice(0, 300));
   check('stocks: a fresh portfolio is the starting cash, tradable', d.pf.cash === 50000 && d.pf.equity === 50000 && d.pf.positions.length === 0 && d.tradable === true, JSON.stringify(d.pf));

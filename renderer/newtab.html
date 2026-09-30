@@ -12,7 +12,10 @@
       --border: rgba(0, 0, 0, 0.1); --accent: #007aff; --on-accent: #ffffff; --green: #248a3d; --shadow: rgba(0, 0, 0, 0.14);
       --mono-l: 92%; --mono-t: 32%;
       --ease: cubic-bezier(0.16, 1, 0.3, 1);
+      /* Spacing tokens, the 8pt scale; the widget grid (features/widget-layout.js) uses the same: 24 px gutter, 24 px page margin (32 from 1240 px), 48 px rows. */
+      --space-1: 8px; --space-2: 16px; --space-3: 24px; --space-4: 32px; --gutter: 24px; --margin: 24px; --row: 48px;
     }
+    @media (min-width: 1240px) { :root { --margin: 32px; } }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #1c1c1e; --card: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.08);
@@ -28,7 +31,7 @@
       -webkit-font-smoothing: antialiased; letter-spacing: -0.005em;
     }
     ::selection { background: var(--ring); }
-    main { width: min(640px, 88vw); margin: 0 auto; padding: clamp(40px, 12vh, 132px) 0 48px; }
+    main { --clock-size: 88px; --search-w: 640px; width: min(var(--search-w), 88vw); margin: 0 auto; padding: clamp(40px, 12vh, 132px) 0 48px; }
 
     /* [look] Backgrounds (Settings → Appearance → New tab page). On anything but Plain, text turns
        light and the cards become frosted glass over the picture or gradient. */
@@ -80,7 +83,7 @@
     body.on-media .frequent a, body.on-media .privacy, body.on-media .w-card { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
     /* The clock: large, light, and steady (tabular digits don't jitter as minutes change). Always full size: it never
        shrinks with the window and is never clipped or scrolled (the header is pinned in the centre column, never a card). */
-    .clock { margin: 0 0 4px; font-size: 88px; white-space: nowrap; overflow: visible; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+    .clock { margin: 0 0 4px; font-size: var(--clock-size); white-space: nowrap; overflow: visible; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .clock[hidden] { display: none; }
     main { animation: arrive 700ms var(--ease) both; }
     @keyframes arrive { from { opacity: 0; transform: translateY(8px); } }
@@ -88,11 +91,11 @@
       main, #backdrop::before { animation: none !important; }
     }
 
-    header { margin-bottom: 20px; }
+    header { margin-bottom: var(--space-3); }
     .date { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
     h1 { margin: 2px 0 0; font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; }
 
-    form { position: relative; margin-bottom: 32px; }
+    form { position: relative; margin-bottom: var(--gutter); }
     form > svg { position: absolute; left: 15px; top: 23px; width: 16px; height: 16px; margin-top: -8px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; pointer-events: none; }
     input {
       width: 100%; box-sizing: border-box; height: 46px; padding: 0 44px 0 40px; border: none; border-radius: 12px;
@@ -119,7 +122,7 @@
     .mode button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .mode-hint { margin-left: 8px; font-size: 11.5px; color: var(--muted); }
 
-    section { margin-top: 28px; }
+    section { margin-top: var(--gutter); }
     section:first-of-type { margin-top: 0; }
     h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 0; }
 
@@ -317,10 +320,13 @@
     .wx-pop { display: block; width: 70%; height: 3px; border-radius: 2px; background: var(--field); position: relative; overflow: hidden; }
     .wx-pop::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--p, 0%); background: var(--drop); }
     .wx-days { flex-direction: column; border-top: 0.5px solid var(--border); padding-top: 4px; }
-    .wx-day { appearance: none; display: grid; grid-template-columns: 46px 22px 32px 28px minmax(40px, 1fr) 28px; align-items: center; gap: 6px; width: 100%; margin: 0; padding: 4px 4px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: default; outline: none; font-variant-numeric: tabular-nums; }
+    .wx-day { appearance: none; display: grid; grid-template-columns: 44px 20px minmax(28px, auto) minmax(24px, 1fr) minmax(28px, auto); align-items: center; column-gap: 8px; width: 100%; min-height: 32px; margin: 0; padding: 0 4px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: default; outline: none; font-variant-numeric: tabular-nums; }
     .wx-day:hover { background: var(--hover); }
     .wx-day svg { width: 20px; height: 20px; }
-    .wx-dn { font-weight: 550; } .wx-dp { color: var(--drop); font-size: 11px; } .wx-dl { color: var(--muted); text-align: right; } .wx-dh { font-weight: 550; }
+    /* Name, icon, [rain %], low, range bar (takes the rest of the row, never under ~60 px once the card is wide enough), high; temperatures right-aligned. */
+    .wx-dn { font-weight: 550; } .wx-dp { display: none; color: var(--drop); font-size: 11px; text-align: right; } .wx-dl { color: var(--muted); text-align: right; } .wx-dh { font-weight: 550; text-align: right; }
+    @container card (min-width: 280px) { .wx-day { grid-template-columns: 44px 20px 32px 28px minmax(60px, 1fr) 28px; } .wx-dp { display: block; } }
+    @container card (max-width: 219px) { .wx-day { grid-template-columns: minmax(0, 1fr) 20px 28px 28px; } .wx-bar { display: none; } }
     .wx-bar { position: relative; height: 4px; border-radius: 2px; background: var(--field); }
     .wx-bar i { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: linear-gradient(90deg, #5ac8fa, #ffb21a); }
     .wx-more { padding: 2px 4px 8px 52px; color: var(--muted); font-size: 11.5px; }
@@ -563,6 +569,9 @@
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
     .w-card.embed { padding-bottom: 10px; }
+    .w-card.sp-web .w-body { overflow: hidden; }
+    .sp-web-slot { flex: 1 1 0; min-height: 200px; width: 100%; border-radius: 10px; display: grid; place-items: center; font-size: 12px; opacity: .6; } /* Spotify's own page is drawn over this */
+    .sp-web-signin { margin: 0 0 0 auto; padding: 3px 10px; font-size: 12px; }
     .w-fallback { display: flex; align-items: center; gap: 12px; padding: 4px 0 2px; }
     .w-fallback .tile { flex: none; width: 42px; height: 42px; border-radius: 11px; font-size: 17px; }
     .w-fallback .w-note { margin: 0; padding: 0; flex: 1 1 auto; min-width: 0; }
@@ -576,6 +585,38 @@
       .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .frequent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
+    /* [widget polish] One anatomy for every card, no native scrollbars, whole rows only. What fits is decided in
+       newtab-widgets.js (settleCard); this is how it looks. Kept last so it wins over the per-widget rules above. */
+    .fit-off { display: none !important; }
+    .w-card { padding: 12px 16px 16px; }
+    .w-card > .w-head { gap: 8px; min-height: 24px; margin-bottom: 8px; }
+    .w-card > .w-foot { margin-top: 8px; font-size: 11px; }
+    @container card (min-width: 360px) and (min-height: 300px) { /* large cards: 20px sides, a little more air */
+      .w-card > .w-head, .w-card > .w-body, .w-card > .w-foot { margin-inline: 4px; }
+      .w-card > .w-head { margin-top: 4px; }
+      .w-card > .w-foot { margin-bottom: 4px; }
+    }
+    /* Scrollbars: none unless content really overflows (JS sets overflow inline); then thin, arrowless, and visible only on hover. */
+    .w-card :is(.w-body, .wx-cycle, .wx-hours, .wx-days, .wx-3h, .mu-wrap) { scrollbar-width: auto; }
+    .w-card *::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+    .w-card *::-webkit-scrollbar-button, .w-card *::-webkit-scrollbar-corner { display: none; width: 0; height: 0; }
+    .w-card *::-webkit-scrollbar-track { background: transparent; }
+    .w-card *::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: transparent; background-clip: padding-box; }
+    .w-card *:hover::-webkit-scrollbar-thumb { background-color: var(--faint); }
+    .w-card .wx-hours, .w-card .wx-days { overflow: hidden; }
+    /* Lists: a whole-row rhythm on 8px, rows that the card can hold are shown (the old size-based hiding is now measured), and "+N more". */
+    .w-card .w-row.later, .w-card .w-row.far { display: flex; }
+    .w-card .w-day.later { display: block; }
+    .w-list { margin: 0 -8px; }
+    .w-row { gap: 8px; padding: 6px 8px; }
+    .w-day { padding: 12px 8px 4px; }
+    .w-day:first-child { padding-top: 0; }
+    .w-fit-more { display: block; margin: 0; padding: 8px 0 0; color: var(--muted); font-size: 11.5px; text-decoration: none; outline: none; border-radius: 4px; }
+    a.w-fit-more:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+    .w-fit-more:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    /* Weather sections sit on the same 8px steps. */
+    .wx-details { margin-bottom: 8px; }
+    .wx-days { padding-top: 8px; }
   </style>
 </head>
 <body data-bg="plain">

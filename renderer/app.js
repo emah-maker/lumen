@@ -1022,7 +1022,7 @@ address.addEventListener('keydown', (e) => {
     e.preventDefault();
     const text = address.value.trim();
     hideSuggestions();
-    if (text) { showSidebar(true); ask(text); }
+    if (text) { showSidebar(true); askInNewChat(text); }
     addressDirty = false;
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (!suggest.items.length) return;
@@ -1039,25 +1039,11 @@ address.addEventListener('keydown', (e) => {
     showAddress();
   }
 });
-// Rough, on purpose: only decides whether Ask AI mode (below) treats the text as an address.
-const looksLikeAddress = (text) => /^[a-z][a-z\d+.-]*:\/\//i.test(text) || /^localhost(:\d+)?(\/|$)/i.test(text) || /^[^\s/]+\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(text);
-
-$('omnibox').addEventListener('submit', async (e) => {
+// The address bar always navigates or searches; the new-tab page's Search | Ask AI choice is its own
+// and never reaches here.
+$('omnibox').addEventListener('submit', (e) => {
   e.preventDefault();
   const item = suggest.items[suggest.selected];
-  // What was typed, without an inline completion still selected after it.
-  const completing = address.selectionStart > 0 && address.selectionStart < address.value.length && address.selectionEnd === address.value.length;
-  const typed = (completing ? address.value.slice(0, address.selectionStart) : address.value).trim();
-  // On the new-tab page in Ask AI mode, a question typed in the address bar goes to the assistant,
-  // as it would in the page's own box; an address still opens.
-  if (!item && typed && !looksLikeAddress(typed) && (await window.browser.homeMode?.()) === 'ask') {
-    hideSuggestions();
-    addressDirty = false;
-    address.blur();
-    showSidebar(true);
-    ask(typed);
-    return;
-  }
   navigate(item ? item.go : address.value.trim());
 });
 
@@ -1333,6 +1319,16 @@ resizer.addEventListener('keydown', (e) => {
   localStorage.setItem('sidebarWidth', String(width));
 });
 window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
+// Ctrl+Shift+K: the New chat button (it resets the chat, which stops a run in progress), opening the sidebar first.
+window.browser.onNewSidebarChat(async () => {
+  if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
+  // A hidden sidebar can't take focus: wait (briefly) until it is really shown.
+  for (let i = 0; i < 40 && document.body.classList.contains('sidebar-hidden'); i++) await new Promise((r) => setTimeout(r, 25));
+  $('new-chat').click();
+  const focusPrompt = () => $('prompt').focus({ preventScroll: true });
+  focusPrompt();
+  requestAnimationFrame(focusPrompt); // the new chat's reset can re-render the prompt area
+});
 
 // ---------- full-page chat ("Ask AI" from the homepage) ----------
 
@@ -1398,7 +1394,7 @@ $('sidebar').addEventListener('keydown', (e) => {
 window.browser.onAskFromHome?.(({ text, tabId }) => {
   fullChatTabId = tabId ?? lastTabState?.activeId ?? null;
   enterFull();
-  ask(text);
+  askInNewChat(text); // a fresh chat each time; the previous one stays in the chat list
 });
 window.browser.onAskSelection((text) => {
   showSidebar(true);

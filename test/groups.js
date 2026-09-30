@@ -22,6 +22,8 @@ const os = require('os');
   const siteB = `http://localhost:${port}`;
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-groups-'));
+  // This suite checks grouping by site first; by topic (the default) is switched on where it is tested.
+  fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ tabGrouping: 'site' }));
   const launch = () => electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile } });
   let app = await launch();
   let ui = await app.firstWindow();

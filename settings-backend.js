@@ -47,6 +47,8 @@ const DEFAULTS = {
   newTabEffectInteract: true, // [look] the pointer pulls, lights up or pushes the particles
   newTabImage: 0, // [look] when the wallpaper file (newtab-wallpaper.jpg in the profile) was last set; 0: none
   newTabClock: true, // [look] the big clock above the greeting
+  newTabClockSize: 'm', // [look] the clock's size: s | m | l | xl (Edit layout on the page resizes it too)
+  newTabSearchWidth: 640, // [look] the centred column / search bar width in px, 480-960
   newTabName: '', // [look] "Good evening, <name>"
   newTabHeader: true, // [look] the date and greeting (a system card, features/widget-system.js)
   newTabFavorites: true,
@@ -86,6 +88,8 @@ const DEFAULTS = {
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
+  organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
+  organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
@@ -114,6 +118,7 @@ const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: 
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
 const translate = require('./features/translate');
+const WS = require('./features/widget-system'); // the clock's steps and the search bar's width range
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const bool = (v) => v === true;
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
@@ -129,12 +134,15 @@ function validate(key, value) {
     case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
     case 'newTabEffectColor': return ['auto', 'accent', 'rainbow'].includes(value) || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabEffectAmount': case 'newTabEffectSpeed': case 'newTabEffectSize': return pick(value, EFFECT_LEVELS[key], null);
+    case 'newTabClockSize': return WS.cleanClockSize(value);
+    case 'newTabSearchWidth': return WS.cleanSearchWidth(value);
     case 'newTabName': return String(value ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40);
     case 'newTabImage': return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
+    case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
     case 'startupPages':
@@ -258,7 +266,7 @@ function create(deps) {
       effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
       accent: accentOf(p.accentColor),
-      clock: p.newTabClock, name: p.newTabName,
+      clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked === true,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
@@ -731,6 +739,13 @@ function create(deps) {
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
+    // A "Where do I get this?" link on a widget's page: only these fixed addresses, chosen by name, open in the browser.
+    const WIDGET_HELP = {
+      todoist: 'https://app.todoist.com/app/settings/integrations/developer', github: 'https://github.com/settings/personal-access-tokens', twelvedata: 'https://twelvedata.com/account/api-keys',
+      coingecko: 'https://www.coingecko.com/en/api', muse: 'https://dev.meta.ai', spotify: 'https://developer.spotify.com/dashboard', gmail: 'https://console.cloud.google.com/apis/credentials',
+      slack: 'https://api.slack.com/apps', calendar: 'https://support.google.com/calendar/answer/37648',
+    };
+    handle('prefs:widget-help', (key) => { const url = Object.hasOwn(WIDGET_HELP, key) ? WIDGET_HELP[key] : null; if (url) shell.openExternal(url).catch(() => {}); return Boolean(url); });
     // Slack sign-in: Open Slack (the approval page opens in the default browser), then the pasted address finishes it.
     handle('prefs:slack-start', (input) => {
       const out = deps.widgets.slackStart(input);

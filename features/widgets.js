@@ -53,6 +53,7 @@ const WC = require('./widget-colors');
 const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
 const SV = require('./spotify-view');
+const SW = require('./spotify-web');
 const GV = require('./gmail-view');
 const SL = require('./slack-view');
 const OA = require('./oauth');
@@ -357,19 +358,22 @@ const CONNECTORS = {
       return cfg ? { ...cfg, colors: WC.cleanMode(c.colors) } : null;
     },
     async resolve(input, x) {
-      const clientId = SV.cleanClientId(input.clientId);
-      if (!clientId) throw new Error('Paste your Spotify app’s Client ID (32 letters and digits).');
-      if (!x.secret()) throw new Error('Connect Spotify first (the Connect button).');
+      const clientId = SV.cleanClientId(input.clientId); // the user's own, or '' to use Lumen's
+      // Web player: Spotify's own site in the card, nothing to check here (the user signs in on the site itself).
+      if (SW.cleanMode(input) === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card shows open.spotify.com. Sign in there once.' };
+      if (!SV.effectiveClientId(clientId)) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
+      if (!x.secret()) throw new Error('Log in with Spotify first.');
       const me = await spotifyCall(x, { clientId }, 'GET', '/me');
       if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
       let name = '';
       try { name = str(JSON.parse(me.body)?.display_name, 60); } catch { /* the name is only for the message */ }
-      return { config: { clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
+      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
     },
     title: () => 'Spotify',
-    summary: (c) => `Now playing${c.art ? '' : ' · no album art'}`,
+    summary: (c) => (c.mode === 'web' ? 'Spotify web player' : `Now playing${c.art ? '' : ' · no album art'}`),
     async fetch(c, x) {
-      if (!x.secret()) throw new Error('Connect Spotify in Settings.');
+      if (c.mode === 'web') return { mode: 'web', url: SW.WEB_URL }; // the card is Spotify's own site (features/spotify-web.js)
+      if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
       const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
       if (res.status !== 204 && !res.ok) throw new Error(SV.playerError(res.status, res.body));
       let body = null;
@@ -381,8 +385,11 @@ const CONNECTORS = {
       if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
       return { ...data, art };
     },
+    // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
+    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn } : d),
     // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
     async act(c, action, x, cached) {
+      if (c.mode === 'web') return false;
       const req = SV.actionRequest(action.do);
       if (!req) return false;
       const res = await spotifyCall(x, c, req.method, req.path);
@@ -824,7 +831,7 @@ async function completedToday(x) {
 // a 429 already backs every request off (request() below) and reads as a calm message.
 async function spotifyCall(x, cfg, method, path, body) {
   const go = async (force) => {
-    const token = await spotifyAccess(x, cfg.clientId, force);
+    const token = await spotifyAccess(x, SV.effectiveClientId(cfg.clientId), force);
     return x.raw(`${x.endpoint('spotify')}${path}`, {
       method, max: 262144, body: body ? JSON.stringify(body) : undefined,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -842,7 +849,7 @@ async function spotifyAccess(x, clientId, force = false) {
   if (!s.pending) {
     s.pending = (async () => {
       const refresh = x.secret();
-      if (!refresh) throw new Error('Connect Spotify in Settings.');
+      if (!refresh) throw new Error('Log in with Spotify in Settings.');
       const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
         method: 'POST', max: 65536, body: SV.tokenForm('refresh', { clientId, refresh }),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -910,7 +917,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -986,6 +993,7 @@ function applyRects(widgets, items) {
 
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
+//         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
@@ -1007,7 +1015,7 @@ function createWidgets(deps) {
   const save = (widgets, extra = {}, sys = sysList()) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList([...widgets, ...sys]), ...extra });
   const trash = createTrash({ now, ttl: deps.trashMs ?? 30000 });
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
-  const sizeFor = (type) => sizes()[type] || WL.DEFAULT_SIZE[type] || { w: 4, h: 3 };
+  const sizeFor = (type) => sizes()[type] || WL.defaultSize(type); // a size the person used stays; a first card fits beside the centre column
   // A changed config invalidates its cached data; its size, place and paper trades don't.
   const keyOf = ({ span, height, x, y, w, h, snap, colors, pf, ...rest }) => JSON.stringify(rest);
 
@@ -1246,7 +1254,7 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
@@ -1391,9 +1399,9 @@ function createWidgets(deps) {
   // Settings' "Reset layout": every card its default size, packed in reading order.
   function resetLayout() {
     const widgets = list();
-    const rects = WL.flowPack(widgets.map((w) => WL.DEFAULT_SIZE[w.type] || { w: 4, h: 3 }));
+    const rects = WL.flowPack(widgets.map((w) => WL.defaultSize(w.type)));
     widgets.forEach((w, i) => { Object.assign(w, rects[i]); delete w.snap; });
-    save(widgets, { homeWidgetSizes: {} }, []); // and every section back in the centre column
+    save(widgets, { homeWidgetSizes: {}, newTabClockSize: SYS.CLOCK_DEFAULT, newTabSearchWidth: SYS.SEARCH_DEFAULT }, []); // and every section back in the centre column, at its default clock and search size
     deps.onUpdate?.();
     return true;
   }
@@ -1456,8 +1464,8 @@ function createWidgets(deps) {
   // Returns what main.js needs: the address to open, the state to check on return, and exchange(code),
   // which trades the code for tokens (the PKCE verifier stays in here) and stores the refresh token encrypted.
   function spotifyStart(clientIdInput) {
-    const clientId = SV.cleanClientId(clientIdInput);
-    if (!clientId) throw new Error('Paste your Spotify app’s Client ID first (32 letters and digits).');
+    const clientId = SV.effectiveClientId(clientIdInput);
+    if (!clientId) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
     const p = SV.pkce();
     const x = helpers('spotify');
     return {
@@ -1472,12 +1480,24 @@ function createWidgets(deps) {
         if (!res.ok) throw new Error(SV.tokenError(res.status, res.body));
         const t = SV.parseToken(res.body, now());
         deps.setSecret('spotify', t.refresh);
-        Object.assign(x.spotifyToken, { access: t.access, exp: t.exp });
+        Object.assign(x.spotifyToken, { access: t.access, exp: t.exp, name: undefined });
         for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+        await spotifyName(x, clientId); // "Connected as …" in Settings
         deps.onUpdate?.();
         return true;
       },
     };
+  }
+  // Who is signed in, for Settings' status line (kept in memory, never stored). '' when unknown.
+  async function spotifyName(x, clientId) {
+    const tok = x.spotifyToken;
+    if (!x.secret() || tok.namePending) return tok.name || '';
+    tok.namePending = true;
+    try {
+      const me = await spotifyCall(x, { clientId }, 'GET', '/me');
+      tok.name = me.ok ? str(JSON.parse(me.body)?.display_name, 60) || 'your account' : '';
+    } catch { tok.name = ''; } finally { tok.namePending = false; }
+    return tok.name;
   }
   // Settings' Disconnect: forget the refresh token (Spotify's own account page can revoke the app too).
   function spotifyDisconnect() {
@@ -1582,6 +1602,18 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // For Settings' Spotify page: the redirect to register on an own app, where the Client ID in use comes
+  // from ('user' is per widget, so Settings works that out), and who is signed in.
+  function spotifyState() {
+    const x = helpers('spotify');
+    const source = SV.clientIdSource({ env: process.env.LUMEN_SPOTIFY_CLIENT_ID });
+    if (x.secret() && x.spotifyToken.name === undefined && !x.spotifyToken.namePending) {
+      const own = list().find((w) => w.type === 'spotify')?.clientId;
+      const id = SV.effectiveClientId(own);
+      if (id) spotifyName(x, id).then(() => deps.onUpdate?.());
+    }
+    return { redirect: SV.REDIRECT_URI, shared: source !== 'none', name: x.secret() ? x.spotifyToken.name || '' : '' };
+  }
   // For Settings: the list with a line each, and which secrets are stored (never their values).
   function state() {
     const edit = pendingEdit;
@@ -1599,7 +1631,7 @@ function createWidgets(deps) {
       spans: SPANS,
       edit: typeof edit === 'string' ? edit : null,
       create: edit?.create || null, // the page's Add widget picked a kind: Settings opens the new-widget form for it
-      spotify: { redirect: SV.REDIRECT_URI },
+      spotify: spotifyState(),
     };
   }
 
@@ -1614,7 +1646,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|play|pause|next|previous|ask|buy|sell|resetpf)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -1647,6 +1679,11 @@ function createWidgets(deps) {
       action.items = WL.decode(params.get('l'));
       if (!action.items) return { invalid: true };
       action.dock = (params.get('d') || '').split(',').filter(SYS.isSystemId).slice(0, SYS.IDS.length); // system cards back to the centre column
+    }
+    if (action.do === 'look') { // Edit layout's clock size (k=clock&v=s|m|l|xl) and search bar width (k=search&v=480-960)
+      action.key = params.get('k') === 'clock' ? 'newTabClockSize' : params.get('k') === 'search' ? 'newTabSearchWidth' : null;
+      action.value = action.key === 'newTabClockSize' ? SYS.cleanClockSize(params.get('v')) : action.key ? SYS.cleanSearchWidth(/^\d{3,4}$/.test(params.get('v') || '') ? params.get('v') : null) : null;
+      if (!action.value) return { invalid: true };
     }
     if (action.do === 'create') { // the page's Add widget: open Settings' new-widget form for a kind
       action.type = Object.prototype.hasOwnProperty.call(CONNECTORS, params.get('type')) ? params.get('type') : null;
@@ -1689,6 +1726,7 @@ function createWidgets(deps) {
   async function act(action) {
     if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
     if (action.do === 'restore') return restore(action.id);
+    if (action.do === 'look') { deps.writeSettings({ ...deps.readSettings(), [action.key]: action.value }); deps.onUpdate?.(); return true; }
     if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);

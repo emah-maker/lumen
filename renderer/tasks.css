@@ -104,3 +104,19 @@
 .send-bg svg { width: 14px; height: 14px; stroke-width: 1.75; }
 .send-bg:not(:disabled):hover { color: var(--text); background: var(--hover); }
 .send-bg:disabled { opacity: 0.4; }
+
+/* Progress, "needs you" and results. */
+.tasks-btn.has-unseen::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px var(--bg); }
+.task-live { margin: 0; font-size: 11px; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+p.task-live { white-space: normal; overflow-wrap: anywhere; margin: 2px 0 6px; }
+.task-new { flex: none; align-self: center; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.task-row.unseen .task-title { font-weight: 600; }
+.task-needs-you { margin: 0 12px 8px; padding: 8px 10px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--warning); }
+.task-needs-you h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--warning); }
+.task-needs-item + .task-needs-item { margin-top: 8px; }
+.task-link { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; font-weight: 600; text-align: left; cursor: default; }
+.task-link:hover, .task-link:focus-visible { text-decoration: underline; outline: none; }
+.task-needs-item .task-approval { margin-top: 4px; }
+.task-pages { margin: 0; padding-left: 18px; font-size: 12px; overflow-wrap: anywhere; }
+.task-pages a { color: var(--accent); text-decoration: none; }
+.task-pages a:hover, .task-pages a:focus-visible { text-decoration: underline; }

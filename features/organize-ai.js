@@ -17,7 +17,7 @@ const estimateTokens = (s) => Math.ceil(String(s).length / 3.6);
 const TITLE_MAX = 70; // characters of a title in a group's samples
 const DESC_MAX = 80; // characters of a leftover tab's description
 const MIN_COHESION = 0.25; // a group looser than this is worth a second opinion
-const TIMEOUT_MS = 15000;
+const TIMEOUT_MS = 8000; // past this the quick local grouping stays as it is
 const MAX_PARALLEL = 3;
 const CHUNK_ABOVE_TABS = 120; // more tabs than this: several smaller requests instead of one giant one
 const CHUNK_ITEMS = 45; // groups + leftovers per request when chunking
@@ -92,7 +92,7 @@ function legacyWire(entries, pathWords = tg.pathWords) {
   return entries.map((e) => ({ id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(pathWords(e.url) ? { path: pathWords(e.url) } : {}) }));
 }
 
-const REFINE_PROMPT = 'Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic. Use only the ids given.';
+const REFINE_PROMPT = 'Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given.';
 
 const intItems = (props) => ({ type: 'array', items: { type: 'object', properties: props, required: Object.keys(props), additionalProperties: false } });
 const REFINE_SCHEMA = {
@@ -170,10 +170,26 @@ function clearName(g) {
   return g.cohesion == null || g.cohesion >= MIN_COHESION;
 }
 
+// Two groups that look like pieces of one topic (they share a top word, or most of one's hosts are
+// the other's): worth asking the model whether to merge them.
+function fragments(groups) {
+  const own = groups.filter((g) => !g.userNamed && g.entries?.length);
+  const words = own.map((g) => new Set(topWords(g.entries, 6)));
+  const hosts = own.map((g) => hostCounts(g.entries).slice(0, 3));
+  const out = [];
+  for (let i = 0; i < own.length; i++) for (let j = i + 1; j < own.length; j++) {
+    const sharedWord = [...words[i]].some((w) => w.length > 3 && words[j].has(w));
+    const sharedHosts = hosts[i].filter((h) => hosts[j].includes(h) && !tg.isAppOrSearch(`https://${h}/`)).length >= 2;
+    if (sharedWord || sharedHosts) out.push([own[i].id, own[j].id]);
+  }
+  return out;
+}
+
 function assess(view) {
   const left = view.leftovers.filter(askable);
   const vague = view.groups.filter((g) => !clearName(g));
-  return { needsAi: left.length > 0 || vague.length > 0, askableLeftovers: left, vagueGroups: vague };
+  const split = fragments(view.groups);
+  return { needsAi: left.length > 0 || vague.length > 0 || split.length > 0, askableLeftovers: left, vagueGroups: vague, fragments: split };
 }
 
 // ---------- remembering answers ----------
@@ -322,7 +338,13 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
   view.groups = view.groups.map((g) => ({ ...g, entries: g.entries.filter((e) => !skipId(e.id)) })).filter((g) => g.entries.length);
   view.leftovers = view.leftovers.filter((e) => !skipId(e.id)).slice(0, maxTabs);
   const tabs = view.groups.reduce((n, g) => n + g.entries.length, 0) + view.leftovers.length;
-  const finish = (reason) => { stats.reason = reason; stats.totalMs = now() - t0; onPhase('done', stats); return stats; };
+  const finish = (reason) => {
+    stats.reason = reason;
+    stats.totalMs = now() - t0;
+    try { const after = tabGroups.organizeView(); stats.finalGroups = after.groups.length; stats.loose = after.leftovers.length; } catch { /* a stub without organizeView */ }
+    onPhase('done', stats);
+    return stats;
+  };
   if (signal?.aborted) return finish('cancelled');
 
   const { plan: cachedPlan, pending } = cache.lookup(view);
@@ -377,5 +399,5 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
 module.exports = {
   hostOf, tabKey, groupKey, setKey, estimateTokens, topWords, groupSummary, leftoverSummary, buildWire, legacyWire,
   REFINE_PROMPT, REFINE_SCHEMA, REFINE_MAX_TOKENS, parseRefinement, askable, clearName, assess, createRefineCache, chunkView,
-  planApply, mergePlans, withTimeout, organizeProgressive, TIMEOUT_MS, MAX_PARALLEL, MIN_COHESION,
+  planApply, mergePlans, fragments, withTimeout, organizeProgressive, TIMEOUT_MS, MAX_PARALLEL, MIN_COHESION,
 };

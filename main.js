@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, powerMonitor, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
@@ -53,6 +53,7 @@ const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
+const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
 const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; // [widgets] Spotify's loopback sign-in
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
@@ -149,7 +150,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
-  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched', 'home:mode',
+  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
@@ -571,6 +572,7 @@ function setupPermissions() {
   settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
 
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
+    if (spotifyWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] Spotify's card: protected media only, never a prompt
     if (ALWAYS_ALLOWED.has(permission)) return callback(true);
     if (permission === 'openExternal') return callback(await askOpenExternal(wc, details));
     const reason = PROMPTABLE[permission];
@@ -599,8 +601,8 @@ function setupPermissions() {
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
   });
-  ses.setPermissionCheckHandler((_wc, permission, origin) =>
-    ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
+  ses.setPermissionCheckHandler((wc, permission, origin) =>
+    spotifyWeb.owns(wc) ? SW.permissionAllowed(permission) : ALWAYS_ALLOWED.has(permission) || permissionDecisions.get(`${origin}|${permission}`) === true);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
 }
 
@@ -700,7 +702,7 @@ const tabGroups = createTabGroups({
 // Automatic grouping: 'off' | 'site' | 'topic'. Before topics it was a switch (autoGroupTabs).
 function groupingMode() {
   const { tabGrouping, autoGroupTabs } = readSettings();
-  return ['off', 'site', 'topic'].includes(tabGrouping) ? tabGrouping : autoGroupTabs === false ? 'off' : 'site';
+  return ['off', 'site', 'topic'].includes(tabGrouping) ? tabGrouping : autoGroupTabs === false ? 'off' : 'topic'; // default: by topic (a site's tabs that share a topic still end up together)
 }
 let autoGroupTimer = null;
 // By topic, titles alone are often too short to link one topic across sites (MDN, Stack Overflow
@@ -723,6 +725,7 @@ function scheduleAutoGroup() {
   autoGroupTimer = setTimeout(() => {
     if (tabGroups.autoGroup()) sendTabs();
     if (groupingMode() === 'topic' && readSettings().topicAi === true) scheduleAiTopics();
+    scheduleAutoOrganize();
   }, groupingMode() === 'topic' ? 1500 : 400); // after the title usually arrives; by topic waits a little longer for the page text
 }
 
@@ -871,6 +874,7 @@ function showAppMenu({ x, y }) {
     { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
     { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
     { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
+    { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
     { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
     ...bgTasks.menuItems(wc?.getURL()), // Watch this page, Background tasks
     { type: 'separator' },
@@ -1192,6 +1196,7 @@ function layout() {
       tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
     }
   }
+  spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
 }
 // Turn the tab's full-width layout override on, change it or off (only when it changed).
 function setOverlay(tab, params) {
@@ -1256,7 +1261,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
 
   if (background) {
     const current = activeTab();
-    if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
+    if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
     sendTabs();
   } else {
     switchTab(id);
@@ -1622,17 +1627,6 @@ ipcMain.on('address:touched', () => {
   const wc = activeTab()?.webContents;
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
 });
-// The new-tab page's Search | Ask AI choice (kept in the page's own localStorage), so Enter in the
-// address bar can follow it while that page is showing.
-ipcMain.handle('home:mode', async () => {
-  const wc = activeTab()?.webContents;
-  if (!wc || !isNewTab(wc.getURL())) return null;
-  try {
-    return (await wc.executeJavaScript("localStorage.getItem('lumen.home.mode')")) === 'ask' ? 'ask' : 'search';
-  } catch {
-    return null;
-  }
-});
 
 function guardFirstLoadFocus(tab, url) {
   const openedAt = ++uiEventSeq;
@@ -1667,7 +1661,7 @@ function switchTab(id) {
   activeId = id;
   tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
   const current = activeTab();
-  if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
+  if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
   layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
   sendTabs();
@@ -1944,9 +1938,11 @@ async function organizeTabs() {
     sendTabs();
     if (!stats.groups && !stats.created) {
       organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // a note that closes itself, not a modal: nothing needs an answer
-    } else if (stats.reason === 'confident' || stats.reason === 'cached') organizeNote(t('organize.noAi'), { undo: true });
-    else if (stats.reason === 'refined') organizeNote(t('organize.refined'), { undo: true });
-    else if (stats.reason !== 'cancelled') organizeNote(t('organize.localOnly'), { undo: true });
+    } else if (stats.reason !== 'cancelled') {
+      const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : /timeout/.test(stats.failed) ? t('organize.slow') : t('organize.localOnly');
+      const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
+      organizeNote(`${how}.${what}`, { undo: true });
+    }
   } catch (err) {
     organizeNote(`${t('organize.failed')}: ${err.message}`);
   } finally {
@@ -2026,21 +2022,31 @@ function closeDuplicateTabs() {
   for (const id of ids) requestCloseTab(id);
 }
 
-// "Organize tabs automatically when idle" (off by default): after N idle minutes, with 8 or more loose tabs,
-// the LOCAL organizer groups them (never the AI) and a toast offers Undo.
+// "Organize tabs automatically" (on by default): a few seconds after the tabs change (Settings, default 5),
+// the LOCAL organizer groups the loose tabs (never the AI) and a note offers Undo. A handful of tabs that
+// are all one topic is left alone (features/organize-learn.js shouldAutoOrganize).
 let idleOrganizeKey = null;
-function idleOrganizeTick() {
+let autoOrganizeTimer = null;
+function autoOrganizeNow() {
   const settings = readSettings();
-  if (settings.organizeWhenIdle !== true) return;
+  if (settings.organizeWhenIdle === false) return false;
   try {
     const pool = tabGroups.loose();
     const key = organizeAi.setKey(pool);
-    if (!organizeLearn.shouldAutoOrganize({ enabled: true, idleSeconds: powerMonitor.getSystemIdleTime(), idleMinutes: Number(settings.organizeIdleMinutes) || 10, ungrouped: pool.length, key, lastKey: idleOrganizeKey, busy: organizing })) return;
+    const topics = pool.length >= 2 ? require('./tab-groups').topicClusters(pool).map((c) => c.ids) : [];
+    if (!organizeLearn.shouldAutoOrganize({ enabled: true, ungrouped: pool.length, topics, key, lastKey: idleOrganizeKey, busy: organizing, onlyMixed: settings.organizeOnlyMixed !== false })) return false;
     idleOrganizeKey = key;
-    if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); }
+    if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); return true; }
   } catch {}
+  return false;
 }
-if (!TEST) setInterval(idleOrganizeTick, 60000).unref();
+function scheduleAutoOrganize() {
+  if (TEST && global.__autoOrganizeInTest !== true) return;
+  clearTimeout(autoOrganizeTimer);
+  autoOrganizeTimer = setTimeout(autoOrganizeNow, organizeLearn.organizeDelay(readSettings().organizeDelaySeconds) * 1000);
+  autoOrganizeTimer.unref?.();
+}
+if (TEST) global.__autoOrganizeNow = autoOrganizeNow;
 
 const colorLabel = (c) => t(`color.${c}`);
 
@@ -2712,6 +2718,7 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
+  else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
   else if (mod && key === 'j') ui()?.send('toggle-sidebar');
   // macOS: Cmd+Option+Right/Left and Cmd+Shift+] / [ select the next / previous tab, as in Chrome
   else if (process.platform === 'darwin' && input.meta && input.alt && (key === 'arrowright' || key === 'arrowleft')) cycleTab(key === 'arrowright' ? 1 : -1);
@@ -2743,6 +2750,12 @@ function handleShortcut(event, input) {
   else if (key === 'f12') wc?.toggleDevTools();
   else handled = false;
   if (handled) event.preventDefault();
+}
+
+// Ctrl+Shift+K / the menu: a fresh chat in the sidebar (opens it if closed); the renderer clicks its New chat button.
+function newSidebarChat() {
+  ui()?.focus();
+  ui()?.send('new-sidebar-chat');
 }
 
 // Ctrl+Shift+L / the menu: open the chat as a full page, or from the page go back to the sidebar.
@@ -2977,6 +2990,7 @@ function macMenu() {
         { label: t('menu.actualSize'), ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
         { type: 'separator' },
         { label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
+        { label: t('menu.newSidebarChat'), ...shown('Shift+Cmd+K'), click: newSidebarChat },
         { label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage },
         { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
         { type: 'separator' },
@@ -3097,7 +3111,7 @@ function adoptTab(tab, index) {
   if (tab.view) {
     win.contentView.addChildView(tab.view);
     tab.view.setVisible(false);
-    syncExtensions(() => { try { extensions?.addTab(tab.view.webContents, win); } catch {} });
+    if (!tab.isolated) syncExtensions(() => { try { extensions?.addTab(tab.view.webContents, win); } catch {} });
   }
   switchTab(tab.id);
   tab.view?.webContents.focus();
@@ -3821,6 +3835,7 @@ const widgets = createWidgets({
   setSecret: setWidgetSecret,
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
+  spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {
@@ -3832,6 +3847,17 @@ const widgets = createWidgets({
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 if (TEST) global.__widgets = widgets;
+// [widgets] The Spotify widget's Web player (features/spotify-web.js): one persistent view in the normal session.
+const spotifyWeb = SW.createSpotifyWeb({
+  WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
+  getWindow: () => win,
+  getBounds: () => contentBounds,
+  activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
+  hasWidget: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'),
+  openTab: (url) => { if (win && !win.isDestroyed()) openTab(url); },
+  onSignIn: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+});
+app.on('before-quit', () => spotifyWeb.destroy());
 
 const settingsBackend = settingsPage.create({
   usage, // [usage] You and AI → Usage
@@ -4176,7 +4202,8 @@ ipcMain.handle('settings:get', () => {
     autoGroupTabs: groupingMode() !== 'off',
     tabGrouping: groupingMode(),
     topicAi: readSettings().topicAi === true,
-    organizeWhenIdle: readSettings().organizeWhenIdle === true,
+    organizeWhenIdle: readSettings().organizeWhenIdle !== false,
+    organizeDelaySeconds: organizeLearn.organizeDelay(readSettings().organizeDelaySeconds),
     organizeLearned: organizeLearner.size(),
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),

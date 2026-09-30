@@ -1,0 +1,1020 @@
+{
+ "description": "Realistic mixed tab sessions for the topic grouping benchmark (test/topics-realistic.js). group: what a person would file the tab under (null = should stay loose). text: the meta description / first heading main.js reads after load. names: per group, a regex source a good name should match.",
+ "sessions": [
+  {
+   "name": "trip: two weeks in Japan (many domains)",
+   "names": {
+    "japan": "japan|tokyo|kyoto|trip"
+   },
+   "tabs": [
+    {
+     "group": "japan",
+     "title": "tokyo itinerary 10 days - Google Search",
+     "url": "https://www.google.com/search?q=tokyo+itinerary+10+days"
+    },
+    {
+     "group": "japan",
+     "title": "Flights from Boston (BOS) to Tokyo (HND) - Google Flights",
+     "url": "https://www.google.com/travel/flights?q=Flights%20to%20HND%20from%20BOS",
+     "text": "Find cheap flights from Boston to Tokyo Haneda"
+    },
+    {
+     "group": "japan",
+     "title": "Boston to Tokyo flights from $842 | Kayak",
+     "url": "https://www.kayak.com/flights/BOS-TYO/2026-10-04",
+     "text": "Compare flight deals to Tokyo"
+    },
+    {
+     "group": "japan",
+     "title": "ANA Airlines - Nonstop flights to Haneda",
+     "url": "https://www.ana.co.jp/en/us/",
+     "text": "Book ANA flights to Japan"
+    },
+    {
+     "group": "japan",
+     "title": "Shinjuku hotels from $64 - Booking.com",
+     "url": "https://www.booking.com/city/jp/shinjuku.html",
+     "text": "Find hotels in Shinjuku, Tokyo"
+    },
+    {
+     "group": "japan",
+     "title": "Hotel Gracery Shinjuku - Airbnb",
+     "url": "https://www.airbnb.com/rooms/48213987",
+     "text": "Stay near Kabukicho in Tokyo"
+    },
+    {
+     "group": "japan",
+     "title": "Kyoto ryokan with onsen | Tripadvisor",
+     "url": "https://www.tripadvisor.com/Hotels-g298564-Kyoto_Kyoto_Prefecture_Kansai-Hotels.html",
+     "text": "Best ryokan in Kyoto"
+    },
+    {
+     "group": "japan",
+     "title": "Tokyo - Google Maps",
+     "url": "https://www.google.com/maps/place/Tokyo,+Japan"
+    },
+    {
+     "group": "japan",
+     "title": "Senso-ji Temple - Google Maps",
+     "url": "https://www.google.com/maps/place/Senso-ji"
+    },
+    {
+     "group": "japan",
+     "title": "r/JapanTravel - Is the JR Pass still worth it in 2026?",
+     "url": "https://www.reddit.com/r/JapanTravel/comments/1k2a3b/is_the_jr_pass_still_worth_it_in_2026/",
+     "text": "Prices went up, is it still worth it for Tokyo Kyoto Osaka"
+    },
+    {
+     "group": "japan",
+     "title": "r/JapanTravel - Tokyo 8 day itinerary feedback please",
+     "url": "https://www.reddit.com/r/JapanTravel/comments/1k9zzz/tokyo_8_day_itinerary_feedback_please/"
+    },
+    {
+     "group": "japan",
+     "title": "r/JapanTravel - Suica vs Pasmo for tourists",
+     "url": "https://www.reddit.com/r/JapanTravel/comments/1kq11a/suica_vs_pasmo_for_tourists/"
+    },
+    {
+     "group": "japan",
+     "title": "The Ultimate 10 Day Japan Itinerary - Nomadic Matt",
+     "url": "https://www.nomadicmatt.com/travel-guides/japan-travel-tips/10-day-japan-itinerary/",
+     "text": "Tokyo, Kyoto, Osaka and Hiroshima in ten days"
+    },
+    {
+     "group": "japan",
+     "title": "Where to eat in Tokyo: 30 best restaurants - Eater",
+     "url": "https://www.eater.com/maps/best-restaurants-tokyo"
+    },
+    {
+     "group": "japan",
+     "title": "Japan Rail Pass prices and routes - Japan Guide",
+     "url": "https://www.japan-guide.com/e/e2361.html"
+    },
+    {
+     "group": "japan",
+     "title": "Tokyo Subway Ticket: 24, 48, 72 hour passes - Tokyo Metro",
+     "url": "https://www.tokyometro.jp/en/ticket/travel/index.html"
+    },
+    {
+     "group": "japan",
+     "title": "How to use the trains in Japan (Complete Guide) - YouTube",
+     "url": "https://www.youtube.com/watch?v=Jx3kTr9aQp0",
+     "text": "A complete guide to Shinkansen and local trains"
+    },
+    {
+     "group": "japan",
+     "title": "4K Tokyo walking tour Shibuya to Harajuku - YouTube",
+     "url": "https://www.youtube.com/watch?v=Zh8sPq21cVk"
+    },
+    {
+     "group": "japan",
+     "title": "teamLab Planets Tokyo tickets - Klook",
+     "url": "https://www.klook.com/en-US/activity/1531-teamlab-planets-tokyo/",
+     "text": "Digital art museum in Toyosu"
+    },
+    {
+     "group": "japan",
+     "title": "Fushimi Inari Shrine, Kyoto - Lonely Planet",
+     "url": "https://www.lonelyplanet.com/japan/kyoto/fushimi-inari-taisha"
+    },
+    {
+     "group": "japan",
+     "title": "Best travel credit cards with no foreign transaction fees - NerdWallet",
+     "url": "https://www.nerdwallet.com/best/credit-cards/no-foreign-transaction-fee",
+     "text": "Avoid fees when you travel abroad in Japan"
+    },
+    {
+     "group": "japan",
+     "title": "Japan Trip 2026 - Google Docs",
+     "url": "https://docs.google.com/document/d/1AbCdEfG/edit"
+    },
+    {
+     "group": "japan",
+     "title": "Visa Waiver for U.S. citizens visiting Japan - Ministry of Foreign Affairs of Japan",
+     "url": "https://www.mofa.go.jp/j_info/visit/visa/short/novisa.html",
+     "text": "Citizens of the United States can stay 90 days without a visa"
+    },
+    {
+     "group": "japan",
+     "title": "Renew a passport - travel.state.gov",
+     "url": "https://travel.state.gov/content/travel/en/passports/have-passport/renew.html",
+     "text": "Renew your US passport by mail"
+    },
+    {
+     "group": "japan",
+     "title": "Visit Japan Web - customs and immigration registration",
+     "url": "https://vjw-lp.digital.go.jp/en/"
+    },
+    {
+     "group": null,
+     "title": "Inbox (12) - mah.e@northeastern.edu - Gmail",
+     "url": "https://mail.google.com/mail/u/0/#inbox"
+    },
+    {
+     "group": null,
+     "title": "Spotify - Web Player: Music for everyone",
+     "url": "https://open.spotify.com/"
+    },
+    {
+     "group": null,
+     "title": "Weather Forecast Boston - AccuWeather",
+     "url": "https://www.accuweather.com/en/us/boston/02108/weather-forecast/348735"
+    }
+   ]
+  },
+  {
+   "name": "school: ME2380 Thermodynamics + a writing course",
+   "names": {
+    "thermo": "me2380|me 2380|thermo|entropy",
+    "writing": "writing|essay|engw|1111"
+   },
+   "tabs": [
+    {
+     "group": "thermo",
+     "title": "Dashboard",
+     "url": "https://canvas.northeastern.edu/"
+    },
+    {
+     "group": "thermo",
+     "title": "ME 2380 Thermodynamics: Home",
+     "url": "https://canvas.northeastern.edu/courses/218842",
+     "text": "Course home page"
+    },
+    {
+     "group": "thermo",
+     "title": "ME 2380: Assignments",
+     "url": "https://canvas.northeastern.edu/courses/218842/assignments"
+    },
+    {
+     "group": "thermo",
+     "title": "Homework 7 - Entropy and the Second Law - ME 2380",
+     "url": "https://canvas.northeastern.edu/courses/218842/assignments/4419205"
+    },
+    {
+     "group": "thermo",
+     "title": "ME 2380: Syllabus",
+     "url": "https://canvas.northeastern.edu/courses/218842/assignments/syllabus"
+    },
+    {
+     "group": "thermo",
+     "title": "zyBooks: Thermodynamics NEU-ME2380-Fall2026",
+     "url": "https://learn.zybooks.com/zybook/NEUME2380Fall2026",
+     "text": "Interactive textbook"
+    },
+    {
+     "group": "thermo",
+     "title": "5.3 Entropy change of an ideal gas - zyBooks",
+     "url": "https://learn.zybooks.com/zybook/NEUME2380Fall2026/chapter/5/section/3"
+    },
+    {
+     "group": "thermo",
+     "title": "4.1 The Rankine cycle - zyBooks",
+     "url": "https://learn.zybooks.com/zybook/NEUME2380Fall2026/chapter/4/section/1"
+    },
+    {
+     "group": "thermo",
+     "title": "Second Law of Thermodynamics and Entropy - Khan Academy",
+     "url": "https://www.khanacademy.org/science/physics/thermodynamics/laws-of-thermodynamics/a/what-is-the-second-law-of-thermodynamics",
+     "text": "Entropy and the second law"
+    },
+    {
+     "group": "thermo",
+     "title": "Lecture 12: Entropy - MIT 2.005 Thermal-Fluids Engineering I - YouTube",
+     "url": "https://www.youtube.com/watch?v=Xw_p9e2eHq8",
+     "text": "MIT OpenCourseWare lecture on entropy and the second law"
+    },
+    {
+     "group": "thermo",
+     "title": "Rankine Cycle Explained with Example Problem - YouTube",
+     "url": "https://www.youtube.com/watch?v=Lp1sd7Ek4tM"
+    },
+    {
+     "group": "thermo",
+     "title": "Thermodynamics Practice Problems - The Organic Chemistry Tutor - YouTube",
+     "url": "https://www.youtube.com/watch?v=q9mJ3xVf5Ao"
+    },
+    {
+     "group": "thermo",
+     "title": "Cengel Thermodynamics 9th edition solutions chapter 7 | Chegg.com",
+     "url": "https://www.chegg.com/homework-help/thermodynamics-an-engineering-approach-9th-edition-chapter-7-solutions-9781260048667",
+     "text": "Step-by-step solutions for entropy problems"
+    },
+    {
+     "group": "thermo",
+     "title": "Thermodynamics Formula Sheet.pdf",
+     "url": "https://canvas.northeastern.edu/courses/218842/files/33812/download"
+    },
+    {
+     "group": "thermo",
+     "title": "Steam Tables (Cengel Appendix).pdf",
+     "url": "https://web.mit.edu/16.unified/www/FALL/thermodynamics/steam-tables.pdf"
+    },
+    {
+     "group": "thermo",
+     "title": "Isentropic process - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Isentropic_process"
+    },
+    {
+     "group": "thermo",
+     "title": "Piazza | ME 2380 Fall 2026",
+     "url": "https://piazza.com/northeastern/fall2026/me2380/home"
+    },
+    {
+     "group": "thermo",
+     "title": "Gradescope: ME 2380",
+     "url": "https://www.gradescope.com/courses/771102"
+    },
+    {
+     "group": "writing",
+     "title": "ENGW 1111: Home",
+     "url": "https://canvas.northeastern.edu/courses/219005",
+     "text": "First-year writing"
+    },
+    {
+     "group": "writing",
+     "title": "Essay 2 Draft - Google Docs",
+     "url": "https://docs.google.com/document/d/1QwErTy/edit"
+    },
+    {
+     "group": "writing",
+     "title": "How to Write a Thesis Statement | Purdue OWL",
+     "url": "https://owl.purdue.edu/owl/general_writing/thesis_statement_tips.html",
+     "text": "Writing a thesis statement for an essay"
+    },
+    {
+     "group": "writing",
+     "title": "Rhetorical analysis essay structure - Scribbr",
+     "url": "https://www.scribbr.com/academic-essay/rhetorical-analysis/"
+    },
+    {
+     "group": "writing",
+     "title": "MLA Works Cited: Electronic Sources | Purdue OWL",
+     "url": "https://owl.purdue.edu/owl/research_and_citation/mla_style/mla_formatting_and_style_guide/mla_works_cited_electronic_sources.html",
+     "text": "MLA citation for an essay"
+    },
+    {
+     "group": null,
+     "title": "Northeastern Dining: Stetson East menu",
+     "url": "https://nudining.com/public/stetson-east"
+    },
+    {
+     "group": null,
+     "title": "Campus Shuttle Schedule - NUPD",
+     "url": "https://www.northeastern.edu/nupd/shuttle"
+    },
+    {
+     "group": null,
+     "title": "Twitch",
+     "url": "https://www.twitch.tv/directory"
+    }
+   ]
+  },
+  {
+   "name": "shopping: noise-cancelling headphones + a standing desk",
+   "names": {
+    "headphones": "headphone|sony|bose|xm5",
+    "desk": "desk|standing"
+   },
+   "tabs": [
+    {
+     "group": "headphones",
+     "title": "best noise cancelling headphones 2026 - Google Search",
+     "url": "https://www.google.com/search?q=best+noise+cancelling+headphones+2026"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony WH-1000XM5 Wireless Noise Canceling Headphones - Amazon.com",
+     "url": "https://www.amazon.com/Sony-WH-1000XM5-Canceling-Headphones-Hands-Free/dp/B09XS7JWHH",
+     "text": "Industry leading noise cancellation"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony WH-1000XM5 Wireless Noise-Canceling Headphones - Best Buy",
+     "url": "https://www.bestbuy.com/site/sony-wh1000xm5-wireless-noise-cancelling-headphones-black/6505727.p"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony WH-1000XM5 Review - RTINGS.com",
+     "url": "https://www.rtings.com/headphones/reviews/sony/wh-1000xm5-wireless",
+     "text": "Sound quality and noise isolation tested"
+    },
+    {
+     "group": "headphones",
+     "title": "Bose QuietComfort Ultra Headphones - Bose",
+     "url": "https://www.bose.com/p/headphones/bose-quietcomfort-ultra-headphones/QCUH-HEADPHONEARN.html"
+    },
+    {
+     "group": "headphones",
+     "title": "Bose QuietComfort Ultra vs Sony WH-1000XM5: which is better? - The Verge",
+     "url": "https://www.theverge.com/23920161/bose-quietcomfort-ultra-vs-sony-wh-1000xm5",
+     "text": "We compared the two flagship headphones"
+    },
+    {
+     "group": "headphones",
+     "title": "Best Noise-Canceling Headphones of 2026 | Wirecutter",
+     "url": "https://www.nytimes.com/wirecutter/reviews/the-best-noise-cancelling-headphones/"
+    },
+    {
+     "group": "headphones",
+     "title": "r/headphones - XM5 vs QC Ultra for commuting?",
+     "url": "https://www.reddit.com/r/headphones/comments/18abc1/xm5_vs_qc_ultra_for_commuting/",
+     "text": "Looking for the best ANC for the train"
+    },
+    {
+     "group": "headphones",
+     "title": "r/BuyItForLife - Are Sony XM5 hinges still a problem?",
+     "url": "https://www.reddit.com/r/BuyItForLife/comments/19bde2/are_sony_xm5_hinges_still_a_problem/"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony WH-1000XM5 vs Bose QC Ultra - Full Comparison - YouTube",
+     "url": "https://www.youtube.com/watch?v=5nQ2wR8kLmE"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony XM5 Long Term Review: 1 Year Later - YouTube",
+     "url": "https://www.youtube.com/watch?v=Yy7hVb3dC0g"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony WH-1000XM5 price history - CamelCamelCamel",
+     "url": "https://camelcamelcamel.com/product/B09XS7JWHH",
+     "text": "Amazon price tracker"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony WH-1000XM5 Wireless Headphones - Sony Electronics",
+     "url": "https://electronics.sony.com/audio/headphones/headband/p/wh1000xm5-b"
+    },
+    {
+     "group": "headphones",
+     "title": "Sony WH-1000XM5 - Target",
+     "url": "https://www.target.com/p/sony-wh-1000xm5-wireless-noise-canceling-headphones/-/A-84957214"
+    },
+    {
+     "group": "desk",
+     "title": "Uplift V2 Standing Desk - UPLIFT Desk",
+     "url": "https://www.upliftdesk.com/uplift-v2-standing-desk-v2-or-v2-commercial/",
+     "text": "Height adjustable standing desk"
+    },
+    {
+     "group": "desk",
+     "title": "FlexiSpot E7 Standing Desk - FlexiSpot",
+     "url": "https://www.flexispot.com/standing-desks/e7"
+    },
+    {
+     "group": "desk",
+     "title": "Best Standing Desks of 2026 | Wirecutter",
+     "url": "https://www.nytimes.com/wirecutter/reviews/best-standing-desks/"
+    },
+    {
+     "group": "desk",
+     "title": "r/StandingDesk - Uplift vs Flexispot after 2 years",
+     "url": "https://www.reddit.com/r/StandingDesk/comments/1a1b2c/uplift_vs_flexispot_after_2_years/"
+    },
+    {
+     "group": "desk",
+     "title": "Standing desk frame reviews - YouTube",
+     "url": "https://www.youtube.com/watch?v=Hn3mD9qZ7bI"
+    },
+    {
+     "group": null,
+     "title": "Your Orders - Amazon.com",
+     "url": "https://www.amazon.com/gp/css/order-history"
+    },
+    {
+     "group": null,
+     "title": "Chase Online Banking",
+     "url": "https://secure.chase.com/web/auth/dashboard"
+    },
+    {
+     "group": null,
+     "title": "Trader Joe's Fearless Flyer",
+     "url": "https://www.traderjoes.com/home/fearless-flyer"
+    }
+   ]
+  },
+  {
+   "name": "dev: TanStack Query app + Docker compose",
+   "names": {
+    "query": "query|tanstack|react",
+    "docker": "docker|compose"
+   },
+   "tabs": [
+    {
+     "group": "query",
+     "title": "Overview | TanStack Query React Docs",
+     "url": "https://tanstack.com/query/latest/docs/framework/react/overview",
+     "text": "Powerful asynchronous state management for React"
+    },
+    {
+     "group": "query",
+     "title": "useQuery | TanStack Query React Docs",
+     "url": "https://tanstack.com/query/latest/docs/framework/react/reference/useQuery"
+    },
+    {
+     "group": "query",
+     "title": "Mutations | TanStack Query React Docs",
+     "url": "https://tanstack.com/query/latest/docs/framework/react/guides/mutations"
+    },
+    {
+     "group": "query",
+     "title": "Query Invalidation | TanStack Query React Docs",
+     "url": "https://tanstack.com/query/latest/docs/framework/react/guides/query-invalidation"
+    },
+    {
+     "group": "query",
+     "title": "TanStack/query: Powerful asynchronous state management",
+     "url": "https://github.com/TanStack/query"
+    },
+    {
+     "group": "query",
+     "title": "useQuery refetches on every window focus, how to disable? · TanStack/query · Discussion #4412",
+     "url": "https://github.com/TanStack/query/discussions/4412"
+    },
+    {
+     "group": "query",
+     "title": "react-query - useQuery not refetching after mutation - Stack Overflow",
+     "url": "https://stackoverflow.com/questions/68234513/react-query-usequery-not-refetching-after-mutation",
+     "text": "I invalidate the query key but data stays stale"
+    },
+    {
+     "group": "query",
+     "title": "How to invalidate queries in TanStack Query v5 - Stack Overflow",
+     "url": "https://stackoverflow.com/questions/77521013/how-to-invalidate-queries-in-tanstack-query-v5"
+    },
+    {
+     "group": "query",
+     "title": "Practical React Query - TkDodo's blog",
+     "url": "https://tkdodo.eu/blog/practical-react-query",
+     "text": "Practical tips for using React Query"
+    },
+    {
+     "group": "query",
+     "title": "Using Fetch - Web APIs | MDN",
+     "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch"
+    },
+    {
+     "group": "query",
+     "title": "AbortController - Web APIs | MDN",
+     "url": "https://developer.mozilla.org/en-US/docs/Web/API/AbortController"
+    },
+    {
+     "group": "query",
+     "title": "Suspense – React",
+     "url": "https://react.dev/reference/react/Suspense"
+    },
+    {
+     "group": "query",
+     "title": "Pull requests · myorg/dashboard-app",
+     "url": "https://github.com/myorg/dashboard-app/pulls"
+    },
+    {
+     "group": "query",
+     "title": "Migrate to react-query v5 by sam · Pull Request #341 · myorg/dashboard-app",
+     "url": "https://github.com/myorg/dashboard-app/pull/341"
+    },
+    {
+     "group": "docker",
+     "title": "Docker Compose overview | Docker Docs",
+     "url": "https://docs.docker.com/compose/",
+     "text": "Docker Compose is a tool for defining and running multi-container applications"
+    },
+    {
+     "group": "docker",
+     "title": "Compose file reference | Docker Docs",
+     "url": "https://docs.docker.com/reference/compose-file/"
+    },
+    {
+     "group": "docker",
+     "title": "docker compose up - depends_on healthcheck not waiting - Stack Overflow",
+     "url": "https://stackoverflow.com/questions/31746182/docker-compose-wait-for-container-x-before-starting-y"
+    },
+    {
+     "group": "docker",
+     "title": "Networking in Compose | Docker Docs",
+     "url": "https://docs.docker.com/compose/how-tos/networking/"
+    },
+    {
+     "group": "docker",
+     "title": "postgres - Official Image | Docker Hub",
+     "url": "https://hub.docker.com/_/postgres",
+     "text": "Docker official image for PostgreSQL"
+    },
+    {
+     "group": "docker",
+     "title": "How to persist data with Docker volumes - YouTube",
+     "url": "https://www.youtube.com/watch?v=p2PH_YPCsis"
+    },
+    {
+     "group": null,
+     "title": "Slack | general | Acme",
+     "url": "https://app.slack.com/client/T01/C01"
+    },
+    {
+     "group": null,
+     "title": "Inbox (3) - Gmail",
+     "url": "https://mail.google.com/mail/u/0/#inbox"
+    },
+    {
+     "group": null,
+     "title": "Hacker News",
+     "url": "https://news.ycombinator.com/"
+    }
+   ]
+  },
+  {
+   "name": "news: Fed decision, NBA Finals, an election",
+   "names": {
+    "fed": "fed|rate|inflation",
+    "nba": "nba|finals|celtics",
+    "elect": "elect|senate|poll|georgia"
+   },
+   "tabs": [
+    {
+     "group": "fed",
+     "title": "Fed holds interest rates steady, signals two cuts this year - Reuters",
+     "url": "https://www.reuters.com/markets/us/fed-holds-rates-steady-2026-09-17/",
+     "text": "Federal Reserve leaves benchmark rate unchanged as inflation cools"
+    },
+    {
+     "group": "fed",
+     "title": "Fed Leaves Rates Unchanged as Powell Points to Cooling Inflation - The New York Times",
+     "url": "https://www.nytimes.com/2026/09/17/business/economy/fed-interest-rates.html"
+    },
+    {
+     "group": "fed",
+     "title": "Federal Reserve holds rates; what it means for mortgages - CNBC",
+     "url": "https://www.cnbc.com/2026/09/17/fed-decision-mortgage-rates.html"
+    },
+    {
+     "group": "fed",
+     "title": "Stocks rally after Fed decision - Bloomberg",
+     "url": "https://www.bloomberg.com/news/articles/2026-09-17/stocks-rally-after-fed-holds-rates"
+    },
+    {
+     "group": "fed",
+     "title": "FOMC statement September 17, 2026 - Federal Reserve Board",
+     "url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260917a.htm"
+    },
+    {
+     "group": "fed",
+     "title": "Powell press conference: full replay - YouTube",
+     "url": "https://www.youtube.com/watch?v=Kq8f2mNxT4c"
+    },
+    {
+     "group": "fed",
+     "title": "What the Fed rate decision means for your savings - Wall Street Journal",
+     "url": "https://www.wsj.com/personal-finance/fed-rate-decision-savings"
+    },
+    {
+     "group": "fed",
+     "title": "r/economics - Fed holds rates, cuts expected in December",
+     "url": "https://www.reddit.com/r/economics/comments/1fed17/fed_holds_rates_cuts_expected_in_december/"
+    },
+    {
+     "group": "nba",
+     "title": "Celtics beat Nuggets in Game 6 to win NBA Finals - ESPN",
+     "url": "https://www.espn.com/nba/story/_/id/41200/celtics-beat-nuggets-game-6-nba-finals",
+     "text": "Boston clinches the title"
+    },
+    {
+     "group": "nba",
+     "title": "NBA Finals Game 6 highlights - YouTube",
+     "url": "https://www.youtube.com/watch?v=Nb6HiGhL1ts"
+    },
+    {
+     "group": "nba",
+     "title": "Finals MVP: Jayson Tatum is the star of the series - The Athletic",
+     "url": "https://www.nytimes.com/athletic/5512/celtics-finals-mvp-tatum/"
+    },
+    {
+     "group": "nba",
+     "title": "Celtics championship parade route and time - Boston.com",
+     "url": "https://www.boston.com/sports/celtics/2026/06/celtics-parade-route/"
+    },
+    {
+     "group": "nba",
+     "title": "r/nba - Game Thread: Nuggets at Celtics (Game 6)",
+     "url": "https://www.reddit.com/r/nba/comments/1g6xyz/game_thread_nuggets_at_celtics_game_6/"
+    },
+    {
+     "group": "nba",
+     "title": "NBA Finals 2026 - Box Score - Basketball Reference",
+     "url": "https://www.basketball-reference.com/boxscores/202606190BOS.html"
+    },
+    {
+     "group": "elect",
+     "title": "Senate race poll: Ossoff leads by 3 in Georgia - Politico",
+     "url": "https://www.politico.com/news/2026/09/20/georgia-senate-poll-ossoff",
+     "text": "New poll shows tight race"
+    },
+    {
+     "group": "elect",
+     "title": "Georgia Senate polls - FiveThirtyEight",
+     "url": "https://projects.fivethirtyeight.com/polls/senate/georgia/"
+    },
+    {
+     "group": "elect",
+     "title": "Georgia Senate debate: takeaways - AP News",
+     "url": "https://apnews.com/article/georgia-senate-debate-takeaways"
+    },
+    {
+     "group": null,
+     "title": "Weather - Boston, MA",
+     "url": "https://weather.com/weather/today/l/boston"
+    },
+    {
+     "group": null,
+     "title": "Wordle - The New York Times",
+     "url": "https://www.nytimes.com/games/wordle/index.html"
+    },
+    {
+     "group": null,
+     "title": "Trump signs new tariff order on steel imports - BBC News",
+     "url": "https://www.bbc.com/news/business-77123456"
+    }
+   ]
+  },
+  {
+   "name": "recipes: sourdough starter + weeknight meal prep",
+   "names": {
+    "sourdough": "sourdough|bread|starter|levain",
+    "mealprep": "meal|prep|chicken|dinner|grocery"
+   },
+   "tabs": [
+    {
+     "group": "sourdough",
+     "title": "sourdough starter from scratch - Google Search",
+     "url": "https://www.google.com/search?q=sourdough+starter+from+scratch"
+    },
+    {
+     "group": "sourdough",
+     "title": "Sourdough Starter Recipe | King Arthur Baking",
+     "url": "https://www.kingarthurbaking.com/recipes/sourdough-starter-recipe",
+     "text": "Make your own sourdough starter with flour and water"
+    },
+    {
+     "group": "sourdough",
+     "title": "How to Make a Sourdough Starter - Serious Eats",
+     "url": "https://www.seriouseats.com/how-to-make-sourdough-starter"
+    },
+    {
+     "group": "sourdough",
+     "title": "Beginner Sourdough Bread Recipe - The Clever Carrot",
+     "url": "https://www.theclevercarrot.com/2014/01/sourdough-bread-a-beginners-guide/"
+    },
+    {
+     "group": "sourdough",
+     "title": "r/Sourdough - My starter has hooch, is it dead?",
+     "url": "https://www.reddit.com/r/Sourdough/comments/1s1a2b/my_starter_has_hooch_is_it_dead/"
+    },
+    {
+     "group": "sourdough",
+     "title": "r/Sourdough - First loaf, dense crumb. What went wrong?",
+     "url": "https://www.reddit.com/r/Sourdough/comments/1s9c3d/first_loaf_dense_crumb_what_went_wrong/"
+    },
+    {
+     "group": "sourdough",
+     "title": "Sourdough for Beginners: Complete Guide - YouTube",
+     "url": "https://www.youtube.com/watch?v=Dm5k1sTqB8w"
+    },
+    {
+     "group": "sourdough",
+     "title": "Dutch oven bread baking temperature - Bon Appetit",
+     "url": "https://www.bonappetit.com/story/dutch-oven-bread"
+    },
+    {
+     "group": "sourdough",
+     "title": "Bread flour vs all-purpose flour - Bob's Red Mill",
+     "url": "https://www.bobsredmill.com/blog/baking-tips/bread-flour-vs-all-purpose/"
+    },
+    {
+     "group": "sourdough",
+     "title": "Lodge Enameled Cast Iron Dutch Oven 6 Qt - Amazon.com",
+     "url": "https://www.amazon.com/Lodge-Enameled-Cast-Iron-Dutch/dp/B00063RWYI",
+     "text": "Enameled cast iron dutch oven for baking bread"
+    },
+    {
+     "group": "mealprep",
+     "title": "Sunday meal prep for the week: 5 easy dinners - Budget Bytes",
+     "url": "https://www.budgetbytes.com/sunday-meal-prep-5-easy-dinners/",
+     "text": "Weeknight meal prep ideas"
+    },
+    {
+     "group": "mealprep",
+     "title": "Sheet Pan Chicken Thighs with Vegetables - NYT Cooking",
+     "url": "https://cooking.nytimes.com/recipes/1018012-sheet-pan-chicken-thighs"
+    },
+    {
+     "group": "mealprep",
+     "title": "30 High Protein Meal Prep Ideas - EatingWell",
+     "url": "https://www.eatingwell.com/gallery/high-protein-meal-prep/"
+    },
+    {
+     "group": "mealprep",
+     "title": "Meal Prep Chicken Burrito Bowls - YouTube",
+     "url": "https://www.youtube.com/watch?v=Vb7ynE3pQ2A"
+    },
+    {
+     "group": "mealprep",
+     "title": "Grocery list - Google Keep",
+     "url": "https://keep.google.com/u/0/#NOTE/1A2b"
+    },
+    {
+     "group": "mealprep",
+     "title": "Instacart: Shop Whole Foods Market",
+     "url": "https://www.instacart.com/store/whole-foods/storefront"
+    },
+    {
+     "group": "mealprep",
+     "title": "How long does cooked chicken last in the fridge? - USDA",
+     "url": "https://www.fsis.usda.gov/food-safety/safe-food-handling-and-preparation/food-safety-basics/leftovers-and-food-safety"
+    },
+    {
+     "group": null,
+     "title": "Netflix",
+     "url": "https://www.netflix.com/browse"
+    },
+    {
+     "group": null,
+     "title": "Commuter Rail Schedule - MBTA",
+     "url": "https://www.mbta.com/schedules/commuter-rail"
+    }
+   ]
+  },
+  {
+   "name": "jobs: software engineer search + relocation to Seattle",
+   "names": {
+    "jobs": "job|engineer|interview|resume|salary|offer",
+    "seattle": "seattle|apartment|rent|moving"
+   },
+   "tabs": [
+    {
+     "group": "jobs",
+     "title": "Software Engineer II, Backend - Stripe Jobs",
+     "url": "https://stripe.com/jobs/listing/software-engineer-backend/5501",
+     "text": "Join Stripe as a backend engineer"
+    },
+    {
+     "group": "jobs",
+     "title": "Software Engineer, New Grad 2026 - Amazon.jobs",
+     "url": "https://www.amazon.jobs/en/jobs/2871234/software-development-engineer-new-grad"
+    },
+    {
+     "group": "jobs",
+     "title": "Software Engineer - Microsoft Careers",
+     "url": "https://careers.microsoft.com/v2/global/en/job/1712345"
+    },
+    {
+     "group": "jobs",
+     "title": "312 Software Engineer jobs in Seattle, WA (New) | LinkedIn",
+     "url": "https://www.linkedin.com/jobs/software-engineer-jobs-seattle-wa"
+    },
+    {
+     "group": "jobs",
+     "title": "Software Engineer Jobs - Indeed",
+     "url": "https://www.indeed.com/q-software-engineer-jobs.html"
+    },
+    {
+     "group": "jobs",
+     "title": "Stripe Software Engineer Interview Questions | Glassdoor",
+     "url": "https://www.glassdoor.com/Interview/Stripe-Software-Engineer-Interview-Questions-EI_IE671932.0,6_KO7,24.htm"
+    },
+    {
+     "group": "jobs",
+     "title": "Stripe Software Engineer Salary - Levels.fyi",
+     "url": "https://www.levels.fyi/companies/stripe/salaries/software-engineer",
+     "text": "Software Engineer compensation at Stripe"
+    },
+    {
+     "group": "jobs",
+     "title": "Two Sum - LeetCode",
+     "url": "https://leetcode.com/problems/two-sum/",
+     "text": "Coding interview practice"
+    },
+    {
+     "group": "jobs",
+     "title": "Top Interview Questions - LeetCode",
+     "url": "https://leetcode.com/problem-list/top-interview-questions/",
+     "text": "Coding interview practice"
+    },
+    {
+     "group": "jobs",
+     "title": "Grokking the System Design Interview - Educative",
+     "url": "https://www.educative.io/courses/grokking-the-system-design-interview"
+    },
+    {
+     "group": "jobs",
+     "title": "Software Engineer Resume Examples for 2026 - Zety",
+     "url": "https://zety.com/resume-examples/software-engineer"
+    },
+    {
+     "group": "jobs",
+     "title": "My Resume - Overleaf, Online LaTeX Editor",
+     "url": "https://www.overleaf.com/project/64abc123"
+    },
+    {
+     "group": "jobs",
+     "title": "r/cscareerquestions - New grad offer negotiation: Stripe vs Amazon",
+     "url": "https://www.reddit.com/r/cscareerquestions/comments/1nq2/new_grad_offer_negotiation_stripe_vs_amazon/"
+    },
+    {
+     "group": "jobs",
+     "title": "How to Negotiate a Job Offer - YouTube",
+     "url": "https://www.youtube.com/watch?v=bB2pT9nXcYo"
+    },
+    {
+     "group": "seattle",
+     "title": "2 Bedroom Apartments for Rent in Capitol Hill, Seattle, WA - Zillow",
+     "url": "https://www.zillow.com/capitol-hill-seattle-wa/rentals/"
+    },
+    {
+     "group": "seattle",
+     "title": "Capitol Hill Seattle Apartments - Apartments.com",
+     "url": "https://www.apartments.com/capitol-hill-seattle-wa/"
+    },
+    {
+     "group": "seattle",
+     "title": "Moving to Seattle: cost of living and neighborhoods - NerdWallet",
+     "url": "https://www.nerdwallet.com/article/finance/moving-to-seattle"
+    },
+    {
+     "group": "seattle",
+     "title": "r/SeattleWA - Moving to Seattle in November, what should I know?",
+     "url": "https://www.reddit.com/r/SeattleWA/comments/1mv1/moving_to_seattle_in_november_what_should_i_know/"
+    },
+    {
+     "group": "seattle",
+     "title": "Seattle light rail map - Sound Transit",
+     "url": "https://www.soundtransit.org/ride-with-us/system-map"
+    },
+    {
+     "group": "seattle",
+     "title": "U-Haul Moving Truck Rental Boston to Seattle",
+     "url": "https://www.uhaul.com/Truck-Rental/Boston-MA-to-Seattle-WA/"
+    },
+    {
+     "group": null,
+     "title": "YouTube",
+     "url": "https://www.youtube.com/"
+    },
+    {
+     "group": null,
+     "title": "Calendar - Week of Sep 28, 2026 - Google Calendar",
+     "url": "https://calendar.google.com/calendar/u/0/r/week"
+    }
+   ]
+  },
+  {
+   "name": "mixed: unrelated tabs with two small topics",
+   "names": {
+    "pandas": "pandas|dataframe|python",
+    "guitar": "guitar|chord|wonderwall"
+   },
+   "tabs": [
+    {
+     "group": "pandas",
+     "title": "pandas.DataFrame.groupby — pandas 2.2 documentation",
+     "url": "https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.groupby.html",
+     "text": "Group DataFrame using a mapper or by a Series of columns"
+    },
+    {
+     "group": "pandas",
+     "title": "python - Pandas groupby and aggregate multiple columns - Stack Overflow",
+     "url": "https://stackoverflow.com/questions/14529838/apply-multiple-functions-to-multiple-groupby-columns"
+    },
+    {
+     "group": "pandas",
+     "title": "Pandas Tutorial: DataFrames in Python - DataCamp",
+     "url": "https://www.datacamp.com/tutorial/pandas"
+    },
+    {
+     "group": "pandas",
+     "title": "pandas-dev/pandas: Flexible and powerful data analysis",
+     "url": "https://github.com/pandas-dev/pandas"
+    },
+    {
+     "group": "guitar",
+     "title": "Wonderwall Chords by Oasis - Ultimate Guitar",
+     "url": "https://tabs.ultimate-guitar.com/tab/oasis/wonderwall-chords-39122"
+    },
+    {
+     "group": "guitar",
+     "title": "Beginner guitar chords you must know - Fender",
+     "url": "https://www.fender.com/articles/play/beginner-guitar-chords"
+    },
+    {
+     "group": "guitar",
+     "title": "Wonderwall - Oasis (Easy Guitar Tutorial) - YouTube",
+     "url": "https://www.youtube.com/watch?v=lJ4lY8oQx9s"
+    },
+    {
+     "group": null,
+     "title": "Bulbasaur (Pokémon) - Bulbapedia",
+     "url": "https://bulbapedia.bulbagarden.net/wiki/Bulbasaur_(Pok%C3%A9mon)"
+    },
+    {
+     "group": null,
+     "title": "Roman Empire - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Roman_Empire"
+    },
+    {
+     "group": null,
+     "title": "Lofi Girl - beats to relax/study to - YouTube",
+     "url": "https://www.youtube.com/watch?v=jfKfPfyJRdk"
+    },
+    {
+     "group": null,
+     "title": "Best Buy Store Locator",
+     "url": "https://www.bestbuy.com/site/store-locator"
+    },
+    {
+     "group": null,
+     "title": "Sign in to your account",
+     "url": "https://login.microsoftonline.com/common/oauth2/authorize"
+    },
+    {
+     "group": null,
+     "title": "Chipotle Mexican Grill Menu & Order Online",
+     "url": "https://www.chipotle.com/order"
+    },
+    {
+     "group": null,
+     "title": "NYC Marathon 2026 course map - TCS",
+     "url": "https://www.nyrr.org/tcsnycmarathon/runners/course-information"
+    },
+    {
+     "group": null,
+     "title": "How does a refrigerator work? - HowStuffWorks",
+     "url": "https://home.howstuffworks.com/fridge.htm"
+    },
+    {
+     "group": null,
+     "title": "Inbox (5) - Gmail",
+     "url": "https://mail.google.com/mail/u/0/#inbox"
+    },
+    {
+     "group": null,
+     "title": "Documentation | Prisma",
+     "url": "https://www.prisma.io/docs"
+    },
+    {
+     "group": null,
+     "title": "Cat videos compilation 2026 - YouTube",
+     "url": "https://www.youtube.com/watch?v=Tq9dYfCatZ1"
+    },
+    {
+     "group": null,
+     "title": "Etsy - Handmade gifts",
+     "url": "https://www.etsy.com/"
+    },
+    {
+     "group": null,
+     "title": "Tesla Model 3 - Tesla",
+     "url": "https://www.tesla.com/model3"
+    }
+   ]
+  }
+ ]
+}

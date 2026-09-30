@@ -141,7 +141,7 @@
   // Edit layout on: every shown section becomes a card where it stands.
   function freeAll() {
     if (stackedNow()) return;
-    const m = WL.metrics(document.documentElement.clientWidth);
+    const m = window.widgetGrid?.metrics() || WL.metrics(document.documentElement.clientWidth); // rows lined up with the centre column
     const boxes = {};
     const rectOfNode = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }; };
     for (const id of WS.IDS) {
@@ -171,7 +171,39 @@
   }
   addEventListener('resize', () => {
     if (stackedNow() !== lastStacked) requestAnimationFrame(refill);
+    if (size.search === WS.SEARCH_DEFAULT) paint(); // the column's span follows the window
   });
+
+  // The centre column's own size: --clock-size and --search-w on <main> (Settings newTabClockSize / newTabSearchWidth).
+  // apply() is the saved look (ignored while Edit layout is dragging, `hold`); preview() the live value of a drag.
+  // The grid watches <main>'s size, so the cards beside it re-resolve by themselves.
+  const size = { clock: WS.CLOCK_DEFAULT, search: WS.SEARCH_DEFAULT, hold: false };
+  // The default search width is the width of the centre column's columns, so the column has no dead padding
+  // beside it (640 px sits between column spans; the grid rounds up to the next even span). A width somebody
+  // chose (anything but the default) is kept as it is; one column when stacked keeps the CSS default.
+  function defaultSearchPx() {
+    const m = WL.metrics(document.documentElement.clientWidth);
+    return m.cols === 1 ? WS.SEARCH_DEFAULT : Math.round(WL.spanPx(m, WL.centreSpan(m, WS.SEARCH_DEFAULT)) * 100) / 100;
+  }
+  function paint() {
+    mainEl.style.setProperty('--clock-size', `${WS.CLOCK_PX[size.clock]}px`);
+    mainEl.style.setProperty('--search-w', `${size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search}px`);
+  }
+  window.newtabSize = {
+    apply(clock, search) {
+      if (size.hold) return;
+      size.clock = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
+      size.search = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
+      paint();
+    },
+    preview(clock, search) {
+      if (clock) size.clock = WS.cleanClockSize(clock) || size.clock;
+      if (search) size.search = WS.cleanSearchWidth(search) || size.search;
+      paint();
+    },
+    hold(on) { size.hold = Boolean(on); },
+    get: () => ({ clock: size.clock, search: size.search }),
+  };
 
   const isPristine = (id) => WS.isSystemId(id) && !persisted.has(id) && !touched.has(id);
   window.newtabSystem = {

@@ -101,7 +101,7 @@ module.exports = async function githubUnits(check) {
   check('github widget: a Check stores nothing', !secrets.github && !(settings.homeWidgets || []).length, '');
 
   const saved = await W.save({ type: 'github', token: TOKEN, gh: { max: 5, notifications: true } });
-  check('github widget: saved with the token in the encrypted slot only', secrets.github === TOKEN && !JSON.stringify(settings).includes(TOKEN) && saved.widget.gh.max === 5 && saved.widget.w === 6 && saved.widget.h === 4, JSON.stringify(saved.widget));
+  check('github widget: saved with the token in the encrypted slot only', secrets.github === TOKEN && !JSON.stringify(settings).includes(TOKEN) && saved.widget.gh.max === 5 && saved.widget.w === 3 && saved.widget.h === 4, JSON.stringify(saved.widget));
   let card = await settle();
   check('github widget: the page gets 5 items of 42, the unread count and no token', card.data.reviews.items.length === 5 && card.data.reviews.total === 42 && card.data.notifications.count === 7 && !JSON.stringify(W.forPage()).includes(TOKEN) && !JSON.stringify(W.state()).includes(TOKEN) && W.state().secrets.github === true, JSON.stringify(card).slice(0, 300));
   check('github widget: the type is in Settings’ picker with its label', W.state().types.some((t) => t.type === 'github' && t.label === 'GitHub') && W.state().widgets[0].summary.includes('review requests'), JSON.stringify(W.state().types));

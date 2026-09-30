@@ -47,6 +47,8 @@ function lookOf(l) {
     effectStyle: effectStyleOf(look.effectStyle),
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
+    clockSize: window.WidgetSystem.cleanClockSize(look.clockSize) || 'm',
+    searchWidth: window.WidgetSystem.cleanSearchWidth(look.searchWidth) || 640,
     name: typeof look.name === 'string' ? look.name.slice(0, 40) : '',
     sections: { header: sections.header !== false, favorites: sections.favorites !== false, frequent: sections.frequent !== false, privacy: sections.privacy !== false },
     packed: look.widgetsPacked === true, // off unless switched on: cards stay where they are put. [widgets] Keep widgets packed
@@ -77,6 +79,7 @@ function applyLook(look) {
     root.setProperty('--ring', `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, 0.3)`);
   } else { root.removeProperty('--accent'); root.removeProperty('--ring'); }
   document.getElementById('clock').hidden = !look.clock;
+  window.newtabSize?.apply(look.clockSize, look.searchWidth); // [look] --clock-size / --search-w on <main>
   document.body.dataset.wpack = look.packed ? '1' : '0';
   document.body.classList.toggle('calm', look.still || look.lite); // [widgets] no wiggle or sliding with Reduce motion or Performance mode
   applyEffect(look);

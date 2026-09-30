@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "productName": "Lumen",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Lumen: an AI browser that works with Claude, ChatGPT, Grok and Gemini, and with any AI agent through MCP",
   "main": "main.js",
   "scripts": {

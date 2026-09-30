@@ -80,7 +80,7 @@ module.exports = async function museChecks(check) {
   check('muse connector: the key is stored as a secret, never in settings.json or the widget list', secrets.muse === KEY && !JSON.stringify(settings).includes(KEY) && !JSON.stringify(widgets.forPage()).includes(KEY) && !JSON.stringify(widgets.state()).includes(KEY) && widgets.state().secrets.muse === true, JSON.stringify(settings).slice(0, 200));
   check('muse connector: saving asks nothing of Meta by itself except the one brief', calls.length === 1 && calls[0].url === 'https://api.meta.ai/v1/chat/completions' && calls[0].method === 'POST' && calls[0].headers.Authorization === `Bearer ${KEY}` && calls[0].body.stream === false && calls[0].body.max_tokens === MV.MAX_TOKENS.brief, JSON.stringify(calls.map((c) => [c.url, c.body?.max_tokens])));
   let card = widgets.forPage()[0];
-  check('muse connector: the card gets {answer, sources} as plain data, 4x4, titled Muse', card.type === 'muse' && card.title === 'Muse' && card.data.answer === 'Today: things happened.' && Array.isArray(card.data.sources) && card.layout.w === 4 && card.layout.h === 4, JSON.stringify(card).slice(0, 300));
+  check('muse connector: the card gets {answer, sources} as plain data, 3x4 (side-area cap), titled Muse', card.type === 'muse' && card.title === 'Muse' && card.data.answer === 'Today: things happened.' && Array.isArray(card.data.sources) && card.layout.w === 3 && card.layout.h === 4, JSON.stringify(card).slice(0, 300));
 
   clock += 60e3;
   await widgets.forPage();

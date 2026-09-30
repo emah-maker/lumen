@@ -6,6 +6,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const SW = require('./spotify-web');
 
 // Spotify only accepts a redirect address that was registered on the app, exactly. A loopback
 // address over http is allowed, so this one is fixed and Settings tells the user to register it.
@@ -23,11 +24,28 @@ function cleanClientId(v) {
   const id = typeof v === 'string' ? v.trim().toLowerCase() : '';
   return /^[0-9a-f]{32}$/.test(id) ? id : '';
 }
-// The stored (or form) config -> a checked one, or null without a usable Client ID.
+// Lumen's own public Spotify app (PKCE needs no secret, so a Client ID can ship in the browser). Its
+// redirect, http://127.0.0.1:43917/callback, is registered on it. While the app is in Spotify's development
+// mode only accounts added under User Management in the Spotify dashboard can sign in. LUMEN_SPOTIFY_CLIENT_ID
+// overrides it for development; a Client ID the user entered under Advanced beats both.
+const BUILTIN_SPOTIFY_CLIENT_ID = 'a838d9aea90848a38fd106ae14fcf5d0';
+// Which Client ID signs in: the user's own, else the environment's, else the built-in one. '' if none.
+function pickClientId({ user, env, builtin = BUILTIN_SPOTIFY_CLIENT_ID } = {}) {
+  return cleanClientId(user) || cleanClientId(env) || cleanClientId(builtin);
+}
+// The same for this process (the environment is read here, in the main process only).
+function effectiveClientId(user) {
+  return pickClientId({ user, env: typeof process !== 'undefined' ? process.env?.LUMEN_SPOTIFY_CLIENT_ID : '' });
+}
+// Where the Client ID in use comes from: 'user' | 'env' | 'builtin' | 'none'.
+function clientIdSource({ user, env, builtin = BUILTIN_SPOTIFY_CLIENT_ID } = {}) {
+  return cleanClientId(user) ? 'user' : cleanClientId(env) ? 'env' : cleanClientId(builtin) ? 'builtin' : 'none';
+}
+// The stored (or form) config -> a checked one, or null when it isn't an object. The Client ID is the
+// user's own and may be empty: the built-in or environment one is used then.
 function cleanConfig(c) {
-  const i = c && typeof c === 'object' ? c : {};
-  const clientId = cleanClientId(i.clientId);
-  return clientId ? { clientId, art: i.art !== false } : null;
+  if (!c || typeof c !== 'object') return null;
+  return { mode: SW.cleanMode(c), clientId: cleanClientId(c.clientId), art: c.art !== false };
 }
 
 // ---- sign-in (RFC 7636 PKCE) ----
@@ -167,6 +185,6 @@ function actionRequest(name) {
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, MAX_ART_BYTES, ACTIONS,
-  cleanClientId, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
+  BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest,
 };

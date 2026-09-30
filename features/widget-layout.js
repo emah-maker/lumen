@@ -3,8 +3,9 @@
 // (renderer/newtab-widgets.js drags, resizes and draws) and by the unit tests.
 //
 // A layout is a list of items { id, type, x, y, w, h, snap? } in grid cells: COLS (12) columns wide,
-// rows as tall as you like. The page also has an obstacle: the centre column (greeting, search,
-// shortcuts) is a rect { x, y: 0, w, h } that widgets never overlap; they sit beside it or below.
+// rows as tall as you like (fixed 48 px rows, 24 px gutters: see metrics()). The page also has an obstacle:
+// the centre column (greeting, search, shortcuts) is one rect { x, y: 0, w, h } of whole columns, centred,
+// that widgets never overlap; they sit beside it (all the side columns, at any height) or below it.
 //
 //   resolve(items, o)          a valid layout: nothing overlaps, in bounds, out of the obstacle
 //   move(items, id, to, o)     put one item somewhere; the rest are pushed out of the way
@@ -24,9 +25,15 @@
 'use strict';
 
 const COLS = 12;
-const ROW = 56; // px, one row of cells
-const GAP = 12; // px between cells
-const OB_MARGIN = 40; // px kept clear between side cards and the centre column
+// The page grid, on the 8pt scale (Material's layout grid: 8dp baseline, 24 gutters, 24/32 margins; iOS-style fixed
+// cells so cards line up on both axes): a column is as wide as the window leaves it, a row is always ROW px, and
+// GAP (the gutter, one spacing token) separates cells sideways and down. Row pitch = ROW + GAP = 72 = 8 x 9; a 3-row card is 192 px tall, as before.
+const ROW = 48; // px, one row of cells
+const GAP = 24; // px between cells: the gutter, sideways and down
+const MARGIN = 24; // px, page margin (MARGIN_WIDE from WIDE_AT px up)
+const MARGIN_WIDE = 32;
+const WIDE_AT = 1240; // Material's 'expanded' breakpoint: 12 columns from here
+const MIN_CENTRE = 420; // px, the narrowest the centre column's columns may be
 const MAX_Y = 200;
 // Any size from 2x2 cells up to the whole grid width and 20 rows, for every kind of card: the
 // content adapts to the box it is given (container queries in newtab.html), it isn't cut.
@@ -47,6 +54,14 @@ const LIMITS = {
 };
 const FALLBACK_LIMITS = { minW: 2, minH: 2, maxW: 12, maxH: 20 };
 const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, spotify: { w: 4, h: 3 }, gmail: { w: 4, h: 4 }, slack: { w: 4, h: 4 }, github: { w: 6, h: 4 }, feed: { w: 4, h: 4 }, worldclock: { w: 4, h: 3 }, muse: { w: 4, h: 4 }, stocks: { w: 4, h: 3 }, crypto: { w: 4, h: 3 }, embed: { w: 12, h: 6 } };
+// A new card's width is capped to the free side area beside the centre column (3 columns of 12 with a 6-column
+// centre), so it lands beside the search bar instead of below it. A web page (embed) keeps its full-width default.
+const SIDE_DEFAULT = 3;
+function defaultSize(type, side = SIDE_DEFAULT) {
+  const size = DEFAULT_SIZE[type] || { w: 4, h: 3 };
+  if (type === 'embed' || !Number.isFinite(side)) return { ...size };
+  return { w: Math.min(size.w, Math.max(limitsOf(type).minW, Math.floor(side))), h: size.h };
+}
 // Quick sizes in edit mode.
 const PRESETS = { small: { w: 3, h: 2 }, medium: { w: 4, h: 3 }, large: { w: 6, h: 5 }, wide: { w: 8, h: 3 }, tall: { w: 3, h: 7 } };
 // What older Lumens stored: a width of 2, 3, 4 or 6 of six columns and, for a web page, a frame height.
@@ -401,25 +416,36 @@ function firstFit(items, { w, h }, cols = COLS, obstacle = null) {
 const flowOrder = (items) => flowSort(items);
 
 // ---- the page's grid ----
-// Cell metrics for a page width: 12 columns from 900 px up, one column below. `top` is where row 0
-// starts. Pure, so tests can use the numbers the page does.
-function metrics(width) {
+// Cell metrics for a page width, after Material's responsive layout grid: 12 columns from 900 px up (the saved
+// layout is one 12-column layout, so the 4/8-column tiers are not separate grids here) and one stacked column
+// below; 24 px gutters; 24 px margins, 32 px from 1240 px. `formBottom` (page px: the bottom of the search box
+// block) lines the rows up with the centre column: `top`, where row 0 starts, is chosen (24..95 px) so that the
+// row after the block starts exactly one gutter below it. Pure, so tests can use the numbers the page does.
+function metrics(width, formBottom) {
   const cols = width >= 900 ? COLS : 1;
-  const pad = width >= 1100 ? 20 : 16; // outer gutter: side cards hug the window edge
+  const pad = width >= WIDE_AT ? MARGIN_WIDE : MARGIN;
   const cw = (width - pad * 2 - GAP * (cols - 1)) / cols;
-  return { cols, pad, top: 16, cw, pitchX: cw + GAP, pitchY: ROW + GAP, width };
+  const pitchY = ROW + GAP;
+  let top = MARGIN;
+  if (Number.isFinite(formBottom) && formBottom > 0) top = formBottom + GAP - Math.max(0, Math.floor((formBottom + GAP - MARGIN) / pitchY)) * pitchY;
+  return { cols, pad, top, cw, pitchX: cw + GAP, pitchY, width, tier: width < 600 ? 'compact' : width < WIDE_AT ? 'medium' : 'expanded' };
 }
-// The centre column's box (page px: left, right, bottom) -> an obstacle rect in cells.
-function obstacleFor(box, m, margin = OB_MARGIN) {
-  const rows = Math.max(0, Math.ceil((box.bottom - m.top + GAP) / m.pitchY));
+const spanPx = (m, span) => span * m.cw + (span - 1) * GAP;
+// How many columns the centre column takes: the smallest even number (so it stays centred) that holds `boxWidth` px,
+// between 4 and 10 columns and never narrower than MIN_CENTRE px. One column when stacked.
+function centreSpan(m, boxWidth) {
+  if (m.cols === 1) return 1;
+  let s = 4;
+  while (s < 10 && (spanPx(m, s) < MIN_CENTRE || spanPx(m, s) < (Number.isFinite(boxWidth) ? boxWidth : 0) - 0.5)) s += 2;
+  return s;
+}
+// The centre column (page px: `bottom` of its lowest block) -> one clean rectangle of cells, centred, whole
+// columns; the gutter is the only gap between it and the cards beside or below it.
+function obstacleFor(bottom, m, span = 6) {
+  const rows = Math.max(1, Math.ceil((bottom - m.top + GAP) / m.pitchY - 0.01));
   if (m.cols === 1) return { x: 0, y: 0, w: 1, h: rows };
-  let first = -1;
-  let last = -1;
-  for (let c = 0; c < m.cols; c++) {
-    const left = m.pad + c * m.pitchX;
-    if (left + m.cw > box.left - margin && left < box.right + margin) { if (first < 0) first = c; last = c; }
-  }
-  return first < 0 ? null : { x: first, y: 0, w: last - first + 1, h: rows };
+  const w = Math.min(m.cols, span);
+  return { x: Math.floor((m.cols - w) / 2), y: 0, w, h: rows };
 }
 const cellToPx = (r, m) => ({ left: m.pad + r.x * m.pitchX, top: m.top + r.y * m.pitchY, width: r.w * m.cw + (r.w - 1) * GAP, height: r.h * ROW + (r.h - 1) * GAP });
 
@@ -440,10 +466,10 @@ function decode(text) {
 }
 
 const api = {
-  COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, PRESETS, SPANS, SNAPS, FRAME_PX,
+  COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, SIDE_DEFAULT, defaultSize, PRESETS, SPANS, SNAPS, FRAME_PX,
   limitsOf, cleanRect, cleanSnap, sizeFromLegacy, mirror, fromLegacy, flowPack, overlap, rectOf, same,
   resolve, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
-  OB_MARGIN, metrics, obstacleFor, cellToPx, encode, decode,
+  MARGIN, MARGIN_WIDE, WIDE_AT, MIN_CENTRE, metrics, centreSpan, spanPx, obstacleFor, cellToPx, encode, decode,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetLayout = api;

@@ -159,13 +159,14 @@ const WIDGET_RENDERERS = {
       const label = text(p.label, 80) || 'Weather';
       sec.setAttribute('role', 'group');
       sec.setAttribute('aria-label', label);
+      // One place: the card's title already says where, so the name isn't repeated inside (several places keep theirs).
       const name = el('div', 'wx-name');
-      name.append(el('span', 'wx-city', label));
+      if (places.length > 1) name.append(el('span', 'wx-city', label));
       if (p.here) {
         name.append(el('span', 'wx-approx', 'approximate'));
         name.append(iconButton(ICON_LOCATE, `Update my location for ${label}`, () => widgetAct(w.id, 'locate')));
       }
-      sec.append(name);
+      if (name.children.length) sec.append(name);
       if (typeof p.error === 'string') { sec.append(el('p', 'w-note', text(p.error, 200))); return sec; }
       const now = el('div', 'wx-now');
       const cond = WMO[p.code] || 'Weather';
@@ -226,7 +227,7 @@ const WIDGET_RENDERERS = {
             hs.append(c);
           }
           if (hs.children.length) more.append(hs);
-          btn.addEventListener('click', () => { const open = btn.getAttribute('aria-expanded') !== 'true'; btn.setAttribute('aria-expanded', String(open)); more.hidden = !open; });
+          btn.addEventListener('click', () => { const open = btn.getAttribute('aria-expanded') !== 'true'; btn.setAttribute('aria-expanded', String(open)); more.hidden = !open; requestAnimationFrame(() => settleCard(btn.closest('.w-card'))); });
           list.append(btn, more);
         });
         sec.append(list);
@@ -280,6 +281,19 @@ const WIDGET_RENDERERS = {
   // data: URL that main made from bytes it sniffed itself; the buttons ask main to call Spotify.
   spotify(w, card) {
     const d = w.data;
+    if (d.mode === 'web') { // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
+      card.el.classList.add('sp-web');
+      card.head.append(openLink('https://open.spotify.com/', 'Open in Spotify'));
+      if (d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
+        const signIn = link('https://open.spotify.com/', 'Open in a tab to sign in', 'w-btn primary');
+        signIn.classList.add('sp-web-signin');
+        card.head.append(signIn);
+      }
+      const slot = el('div', 'sp-web-slot', 'Loading Spotify…');
+      slot.setAttribute('role', 'status');
+      card.body.append(slot);
+      return;
+    }
     card.head.append(refreshButton(w));
     const open = typeof d.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(d.url) ? d.url : null;
     if (open) card.head.append(openLink(open, 'Open in Spotify'));
@@ -1142,6 +1156,128 @@ function fitClockRows(body, list) {
   for (const r of rows) r.hidden = false;
   const room = body.clientHeight;
   for (let i = rows.length - 1; i > 0 && list.scrollHeight > room + 1; i--) rows[i].hidden = true;
+}
+
+// ---- Fitting: a card shows what fits, whole pieces only ----
+// Nothing in a card scrolls unless its content really is taller than it: weather drops its least
+// important parts first (details, then the hourly strip, then days from the end), lists show whole
+// rows and end with a "+N more" line, and only if something still doesn't fit does the card get a
+// thin scrollbar (styled in newtab.html, "[widget polish]"). Idempotent: every pass starts clean.
+const isShown = (n) => Boolean(n) && n.getClientRects().length > 0;
+const SLACK = 2; // px of rounding that is not overflow
+const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
+const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
+const fitOff = (n) => n.classList.add('fit-off');
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'embed', 'muse', 'stocks', 'crypto'];
+function fitPlace(sec, cycle) {
+  // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
+  for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {
+    if (!isShown(strip) || getComputedStyle(strip).flexDirection !== 'row') continue;
+    const kids = [...strip.children].filter((c) => !c.classList.contains('wx-more'));
+    for (let i = kids.length - 1; i > 0 && tooWide(strip); i--) fitOff(kids[i]);
+  }
+  if (!tooTall(cycle)) return;
+  for (const part of [sec.querySelector('.wx-details'), sec.querySelector('.wx-hours')]) {
+    if (isShown(part)) { fitOff(part); if (!tooTall(cycle)) return; }
+  }
+  const days = sec.querySelector('.wx-days');
+  if (!isShown(days)) return;
+  if (getComputedStyle(days).flexDirection === 'row') { fitOff(days); return; }
+  const rows = [...days.querySelectorAll('.wx-day')];
+  for (let i = rows.length - 1; i >= 0 && tooTall(cycle); i--) {
+    if (rows.slice(i).some((r) => r.getAttribute('aria-expanded') === 'true')) break; // never under the day being read
+    fitOff(rows[i]);
+    if (rows[i].nextElementSibling?.classList.contains('wx-more')) fitOff(rows[i].nextElementSibling);
+  }
+  if (!rows.some((r) => !r.classList.contains('fit-off'))) fitOff(days);
+}
+function fitWeather(cardEl) {
+  const wrap = cardEl.querySelector('.wx-places');
+  const cycle = wrap?.querySelector('.wx-cycle');
+  if (!cycle) return;
+  const secs = [...cycle.children];
+  const was = secs.findIndex((s) => s.classList.contains('active'));
+  if (isShown(cycle)) {
+    for (const sec of secs) { // each place is measured as if it were the one showing
+      if (secs.length > 1) secs.forEach((s) => s.classList.toggle('active', s === sec));
+      fitPlace(sec, cycle);
+    }
+    if (secs.length > 1) secs.forEach((s, i) => s.classList.toggle('active', i === was));
+  }
+  const list = wrap.querySelector('.wx-list');
+  if (isShown(list)) {
+    const rows = [...list.children];
+    for (let i = rows.length - 1; i > 0 && tooTall(wrap); i--) fitOff(rows[i]);
+  }
+}
+// Task, agenda, mail and headline lists: whole rows, then "+N more".
+function fitLists(cardEl, body) {
+  const lists = [...body.querySelectorAll('.w-list')].filter(isShown);
+  if (!lists.length || !tooTall(body)) return;
+  const rows = lists.flatMap((l) => [...l.children].filter((c) => c.classList.contains('w-row') && isShown(c)));
+  if (rows.length < 2) return;
+  const extra = [...body.querySelectorAll('.w-more')].reduce((n, m) => n + (parseInt(/\d+/.exec(m.textContent)?.[0], 10) || 0), 0); // "3 more in Todoist"
+  const done = body.querySelector('.td-done');
+  if (done) { fitOff(done); if (!tooTall(body)) return; }
+  body.querySelectorAll('.w-more').forEach(fitOff);
+  const href = cardEl.querySelector('.w-head a.w-link')?.href;
+  const more = href ? link(href, '', 'w-fit-more') : el('p', 'w-fit-more');
+  const live = (l) => [...l.children].some((c) => c.classList.contains('w-row') && !c.classList.contains('fit-off'));
+  const tidy = () => { // a day heading or section with nothing left under it goes too
+    for (const l of lists) {
+      let head = null;
+      let any = false;
+      const close = () => { if (head) head.classList.toggle('fit-off', !any); };
+      for (const c of l.children) {
+        if (c.classList.contains('w-day')) { close(); head = c; any = false; } else if (c.classList.contains('w-row') && !c.classList.contains('fit-off')) any = true;
+      }
+      close();
+      l.closest('.gh-section')?.classList.toggle('fit-off', !live(l));
+    }
+    (lists.filter(live).pop() || lists[0]).after(more);
+  };
+  let gone = 0;
+  const label = () => { more.replaceChildren(`+${gone + extra} more`); };
+  label();
+  tidy();
+  for (let i = rows.length - 1; i > 0 && tooTall(body); i--) {
+    fitOff(rows[i]);
+    gone++;
+    label();
+    tidy();
+  }
+}
+function settleCard(cardEl) {
+  if (!cardEl?.isConnected || cardEl.classList.contains('sys')) return; // the page's own sections fit themselves (newtab-system.js)
+  const body = cardEl.querySelector('.w-body');
+  if (!body) return;
+  const scrollers = [body, ...cardEl.querySelectorAll('.wx-cycle, .mu-wrap')];
+  for (const n of scrollers) { n.style.overflowY = 'hidden'; n.style.overflowX = 'hidden'; }
+  cardEl.querySelectorAll('.fit-off').forEach((n) => n.classList.remove('fit-off'));
+  cardEl.querySelectorAll('.w-fit-more').forEach((n) => n.remove());
+  if (cardEl.classList.contains('weather')) fitWeather(cardEl);
+  else if (!NO_LIST_FIT.some((c) => cardEl.classList.contains(c))) fitLists(cardEl, body);
+  // Only what still overflows may scroll (thin, and only while hovered); a card that fits doesn't move or catch the wheel.
+  for (const n of scrollers) {
+    n.style.overflowY = tooTall(n) ? 'auto' : 'hidden';
+    n.style.overflowX = tooWide(n) ? 'auto' : 'hidden';
+  }
+}
+{
+  const queue = new Set();
+  const flush = () => { const cards = [...queue]; queue.clear(); for (const c of cards) settleCard(c); };
+  const ro = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
+    for (const e of entries) queue.add(e.target);
+    requestAnimationFrame(flush);
+  }) : null;
+  const seen = new WeakSet();
+  const watch = () => {
+    for (const c of document.querySelectorAll('#widgets > .w-card')) if (!seen.has(c)) { seen.add(c); ro?.observe(c, { box: 'border-box' }); queue.add(c); }
+    if (queue.size) requestAnimationFrame(flush);
+  };
+  const box = document.getElementById('widgets');
+  if (box) new MutationObserver(watch).observe(box, { childList: true });
+  window.settleWidgetCard = settleCard;
 }
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card

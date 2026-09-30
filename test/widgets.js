@@ -275,7 +275,7 @@ function server(opts) {
   await sp("document.getElementById('widget-save').click()");
   for (let i = 0; i < 40 && (await sp("Boolean(document.getElementById('widget-form'))")); i++) await sleep(150);
   let s = await listState();
-  check('Settings: the weather widget lists its places', s.items.length === 5 && /Boston, Trip, My location · °/.test(s.items[4]), JSON.stringify(s));
+  check('Settings: the weather widget lists its places', s.items.length === 5 && /Weather/.test(s.items[4]) && /Boston, Trip \+1 · °/.test(s.items[4]), JSON.stringify(s));
   await sp("document.getElementById('widget-add').click()");
   await sp(`document.querySelector('.seg [data-type=todoist]').click(); document.getElementById('widget-token').value = ${JSON.stringify(TOKEN)};`);
   await sp("document.getElementById('widget-load-projects').click()");
@@ -283,7 +283,7 @@ function server(opts) {
   await sp("document.getElementById('widget-save').click()");
   for (let i = 0; i < 40 && (await sp("Boolean(document.getElementById('widget-form'))")); i++) await sleep(150);
   s = await listState();
-  check('Settings: a Todoist widget is added with its token (today and overdue by default)', s.items.length === 6 && /Today and overdue tasks/.test(s.items[5]) && /3 tasks/.test(s.note), JSON.stringify(s));
+  check('Settings: a Todoist widget is added with its token (today and overdue by default)', s.items.length === 6 && /Today and overdue/.test(s.items[5]) && /3 tasks/.test(s.note), JSON.stringify(s));
   const saved = settingsFile();
   check('the token is not in settings.json in plain text (only encrypted)', !saved.includes(TOKEN) && !saved.includes(TOKEN.slice(4, 20)) && Boolean(JSON.parse(saved).keys?.['widget:todoist']), 'plain or missing');
   check('the Settings page never gets the token back', !(await sp('JSON.stringify(document.body.innerText) + JSON.stringify(window.lumenSettings && Object.keys(window.lumenSettings))')).includes(TOKEN), 'leaked');
@@ -321,9 +321,9 @@ function server(opts) {
     },
     info() {
       const main = document.querySelector('main');
-      const m = WidgetLayout.metrics(document.documentElement.clientWidth);
+      const m = window.widgetGrid.geometry().m;
       const top = document.getElementById('widgets');
-      return { w: innerWidth, h: innerHeight, mainLeft: main.offsetLeft, mainRight: main.offsetLeft + main.offsetWidth, mainBottom: main.offsetTop + main.offsetHeight - 32, mainTop: main.getBoundingClientRect().top + scrollY + parseFloat(getComputedStyle(main).paddingTop), margin: main.style.marginTop, cols: m.cols, boxH: top.style.height };
+      return { w: innerWidth, h: innerHeight, mainLeft: main.offsetLeft, mainRight: main.offsetLeft + main.offsetWidth, mainBottom: (() => { const s = document.getElementById('sections'); const f = main.querySelector('form'); const n = s && s.offsetHeight > 0 ? s : f; return n.offsetTop + n.offsetHeight - (parseFloat(main.style.marginTop) || 0); })(), mainTop: main.getBoundingClientRect().top + scrollY + parseFloat(getComputedStyle(main).paddingTop), margin: main.style.marginTop, cols: m.cols, boxH: top.style.height };
     },
     rects() { return [...document.querySelectorAll('.w-card')].map((c) => { const r = c.getBoundingClientRect(); return { id: c.dataset.id, cell: c.dataset.cell, snap: c.dataset.snap || '', left: r.left, right: r.right, top: r.top + scrollY, bottom: r.bottom + scrollY }; }); },
   }; 1`);
@@ -443,7 +443,7 @@ function server(opts) {
 
   // ---- Weather: places, My location, by day ----
   const wx = (id) => page(`(() => { const c = document.querySelector('.w-card[data-id="${id}"]'); if (!c) return null; return {
-    cities: [...c.querySelectorAll('.wx-city')].map((e) => e.textContent), temps: [...c.querySelectorAll('.wx-temp')].map((e) => e.textContent), rows: [...c.querySelectorAll('.wx-row .wx-rc')].map((e) => e.textContent), rowTemps: [...c.querySelectorAll('.wx-row .wx-rt')].map((e) => e.textContent),
+    title: c.querySelector('.w-head h2')?.textContent, cities: [...c.querySelectorAll('.wx-city')].map((e) => e.textContent), temps: [...c.querySelectorAll('.wx-temp')].map((e) => e.textContent), rows: [...c.querySelectorAll('.wx-row .wx-rc')].map((e) => e.textContent), rowTemps: [...c.querySelectorAll('.wx-row .wx-rt')].map((e) => e.textContent),
     dots: c.querySelectorAll('.wx-dot').length, active: [...c.querySelectorAll('.wx-place')].findIndex((e) => e.classList.contains('active')), ask: c.querySelector('.wx-ask')?.textContent || '', approx: Boolean(c.querySelector('.wx-approx')),
     days: [...c.querySelectorAll('.wx-day')].map((d) => [d.querySelector('.wx-dn').textContent, d.querySelector('.wx-dl').textContent, d.querySelector('.wx-dh').textContent, d.querySelector('.wx-dp').textContent]),
     foot: c.querySelector('.w-foot')?.textContent || '', footWarn: c.querySelector('.w-foot')?.classList.contains('warn'), details: [...c.querySelectorAll('.wx-details dt')].map((e) => e.textContent), note: c.querySelector('.w-note')?.textContent || '' }; })()`);
@@ -469,7 +469,7 @@ function server(opts) {
   await W('save', { type: 'weather', city: '', wx: { places: [{ name: 'Paris, Île-de-France, France', lat: 48.85341, lon: 2.3488 }], units: 'c', wind: 'kmh', clock: '24', days: 10, hours: 24 } });
   const paris = (await W('list')).find((x) => x.type === 'weather' && x.wx.places[0].name.startsWith('Paris') && x.wx.places.length === 1);
   const w2 = await untilWx(paris.id, (x) => x.temps.length === 1);
-  check('two weather widgets show different places (Boston and Paris) with their own units', w2.cities.join() === 'Paris' && w2.temps[0] === '13°' && (await wx(ID.weather)).temps[0] === '68°', JSON.stringify(w2));
+  check('two weather widgets show different places (Boston and Paris) with their own units', w2.title === 'Paris' && w2.cities.length === 0 && w2.temps[0] === '13°' && (await wx(ID.weather)).temps[0] === '68°', JSON.stringify(w2));
   check('a ten-day widget in 24-hour time shows ten days', w2.days.length === 10, w2.days.length);
   const bos = await wx(ID.weather);
   check('by-day rows: weekday, low, high, chance of rain on a shared scale (Boston: today 55°/70°)', bos.days[0][0] === 'Today' && bos.days[0][1] === '55°' && bos.days[0][2] === '70°' && bos.days[0][3] === '10%' && bos.days[6][2] === '76°' && bos.days.length === 7, JSON.stringify(bos.days));
@@ -491,15 +491,16 @@ function server(opts) {
   check('weather 2x2: temperature and icon only', (await disp(ID.weather, '.wx-hours')) === 'none' && (await disp(ID.weather, '.wx-details')) === 'none' && (await disp(ID.weather, '.wx-days')) === 'none' && (await disp(ID.weather, '.wx-text')) === 'none' && (await disp(ID.weather, '.wx-temp')) !== 'none', JSON.stringify(await page(`(() => { const r = document.querySelector('.w-card[data-id="${ID.weather}"]').getBoundingClientRect(); return [r.width, r.height]; })()`)));
   await sizeTo(ID.weather, 4, 3);
   check('weather 4x3: the hourly strip comes in', (await disp(ID.weather, '.wx-hours')) === 'flex' && (await disp(ID.weather, '.wx-days')) === 'none' && (await disp(ID.weather, '.wx-details')) === 'none', await disp(ID.weather, '.wx-hours'));
-  await sizeTo(ID.weather, 4, 6);
-  check('weather 4x6: the by-day forecast and details come in', (await disp(ID.weather, '.wx-days')) === 'flex' && (await disp(ID.weather, '.wx-details')) === 'grid', `${await disp(ID.weather, '.wx-days')} ${await disp(ID.weather, '.wx-details')}`);
+  await sizeTo(ID.weather, 4, 11);
+  check('weather 4x11: the by-day forecast and details come in', (await disp(ID.weather, '.wx-days')) === 'flex' && (await disp(ID.weather, '.wx-details')) === 'grid', `${await disp(ID.weather, '.wx-days')} ${await disp(ID.weather, '.wx-details')}`);
   await sizeTo(ID.todo, 2, 2);
   check('Todoist 2x2: a count and the next task', (await disp(ID.todo, '.td-summary')) === 'flex' && (await disp(ID.todo, '.td-full')) === 'none' && /^3tasks/.test((await todo()).summary), JSON.stringify(await todo()));
   await sizeTo(ID.todo, 4, 4);
   check('Todoist 4x4: the full list', (await disp(ID.todo, '.td-summary')) === 'none' && (await disp(ID.todo, '.td-full')) === 'flex', '');
   await sizeTo(ID.cal, 4, 2);
   check('calendar small: the next event only', await page(`[...document.querySelectorAll('.w-card[data-id="${ID.cal}"] .w-row')].filter((r) => getComputedStyle(r).display !== 'none').length === 1`), '');
-  await sizeTo(ID.cal, 4, 6);
+  // Cards now drop what does not fit (fitCard), so "tall" means tall enough for the whole content at the 48 px row pitch.
+  await sizeTo(ID.cal, 4, 12);
   check('calendar tall: the whole agenda', await page(`[...document.querySelectorAll('.w-card[data-id="${ID.cal}"] .w-row')].every((r) => getComputedStyle(r).display !== 'none')`), '');
   const anySize = (await W('layout', [{ id: ID.deny, x: 0, y: 0, w: 2, h: 2 }]), (await W('list')).find((x) => x.id === ID.deny));
   check('any size from 2x2 up is accepted and stored (no fixed steps)', anySize.w === 2 && anySize.h === 2, JSON.stringify(anySize));
@@ -514,13 +515,13 @@ function server(opts) {
   await page(`(() => { const f = document.querySelector('#widgets iframe'); window.__frame = f; window.__loads = 0; f.addEventListener('load', () => { window.__loads++; }); window.__domOrder = [...document.querySelectorAll('.w-card')].map((c) => c.dataset.id).join(); return 1; })()`);
   const layoutOf = async () => (await W('list')).map((x) => `${x.id}:${x.x},${x.y},${x.w},${x.h}${x.snap ? `,${x.snap}` : ''}`).join(';');
   inf = await info();
-  const obstacle = await page('(() => { const i = window.__t.info(); const m = WidgetLayout.metrics(innerWidth); return WidgetLayout.obstacleFor({ left: i.mainLeft, right: i.mainRight, bottom: i.mainBottom }, m); })()');
+  const obstacle = await page('window.widgetGrid.geometry().o.obstacle');
   pgr = await cardsNow();
   check('a fresh page: every card visible with its own place, none over the centre column', allClear(pgr, inf) && pgr.length === 7, JSON.stringify(pgr.map((c) => [c.id, c.cell])));
   const rightX = inf.w - 70;
   // Cards are no longer packed upward: the card stays in the cell its top edge lands on, which is
   // the row nearest to (pointer y - where it was grabbed), not row 0.
-  const dropRow = await page(`(() => { const c = window.__t.card(${JSON.stringify(ID.weather)}); const g = c.querySelector('.w-head h2').getBoundingClientRect(); const grabY = g.top + Math.min(g.height / 2, 12); const m = WidgetLayout.metrics(innerWidth); return Math.max(0, Math.round((120 - (grabY - c.getBoundingClientRect().top) - scrollY - m.top) / m.pitchY)); })()`);
+  const dropRow = await page(`(() => { const c = window.__t.card(${JSON.stringify(ID.weather)}); const g = c.querySelector('.w-head h2').getBoundingClientRect(); const grabY = g.top + Math.min(g.height / 2, 12); const m = window.widgetGrid.geometry().m; return Math.max(0, Math.round((120 - (grabY - c.getBoundingClientRect().top) - scrollY - m.top) / m.pitchY)); })()`);
   let d = await page(`window.__t.drag(${JSON.stringify(ID.weather)}, { x: ${rightX}, y: 120 })`);
   for (let i = 0; i < 20 && !new RegExp(`^${obstacle.x + obstacle.w},${dropRow},3,3`).test((await W('list')).find((x) => x.id === ID.weather) ? ((x) => `${x.x},${x.y},${x.w},${x.h}`)((await W('list')).find((x) => x.id === ID.weather)) : ''); i++) await sleep(150);
   pgr = await cardsNow();
@@ -663,7 +664,7 @@ function server(opts) {
   await sp("document.getElementById('widget-reset').click()").catch(() => {});
   const okReset = await waitFor("/Layout reset/.test(document.getElementById('widget-list-note').textContent)");
   const afterReset = await W('list');
-  check('Settings → Reset layout: every card back to its default size, packed in order', okReset && afterReset.every((x) => !x.snap) && afterReset.find((x) => x.type === 'embed').w === 12 && afterReset.find((x) => x.type === 'calendar').w === 6 && afterReset.find((x) => x.id === ID.weather).w === 4, JSON.stringify(afterReset.map((x) => [x.type, x.w, x.h, x.snap])));
+  check('Settings → Reset layout: every card back to its default size (capped to the 3-column side area; embeds stay full width), packed in order', okReset && afterReset.every((x) => !x.snap) && afterReset.find((x) => x.type === 'embed').w === 12 && afterReset.find((x) => x.type === 'calendar').w === 3 && afterReset.find((x) => x.id === ID.weather).w === 3, JSON.stringify(afterReset.map((x) => [x.type, x.w, x.h, x.snap])));
   await sleep(600);
   check('…and the page follows without reloading the frame', await page('document.querySelector("#widgets iframe") === window.__frame && window.__loads === 0'), '');
   check('an older Lumen can still read the list: span and height mirrored, in reading order', afterReset.every((x) => [2, 3, 4, 6].includes(x.span)) && afterReset.filter((x) => x.type === 'embed').every((x) => ['small', 'medium', 'large', 'tall'].includes(x.height)) && afterReset.every((x, i, a) => i === 0 || a[i - 1].y < x.y || (a[i - 1].y === x.y && a[i - 1].x <= x.x)), JSON.stringify(afterReset.map((x) => [x.y, x.x, x.span])));
