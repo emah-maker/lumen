@@ -809,7 +809,9 @@ const privateWindows = createPrivateWindows({
   // Private tabs present themselves as Chrome too (the same identity and request headers as normal tabs), or
   // Google sign-in in a private window is refused as an unknown browser.
   chromeIdentity: (wc) => applyChromeIdentity(wc),
-  chromeHintHeaders: UA_HINT_HEADERS,
+  // A getter: UA_HINT_HEADERS is declared further down, so reading it here at load time threw
+  // (a ReferenceError before initialization) and Lumen never opened a window.
+  get chromeHintHeaders() { return UA_HINT_HEADERS; },
   // Its sign-in popups behave as normal ones: page settings, an error page when a load fails, the "Google refused" note.
   popupWebPreferences: () => settingsBackend.tabWebPreferences(false),
   popupFailPage: (wc) => popupFailPage(wc),
