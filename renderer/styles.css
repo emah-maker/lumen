@@ -150,7 +150,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tab.dragging.tearing { opacity: 0.6; scale: 0.96; }
 /* The tab has left for a window of its own (main.js drives that drag): it keeps its DOM node, which holds
    the pointer, but takes no room. */
-.tab.dragging.handed { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
+.tab.dragging.handed, .tab.held { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
 /* Another window's tab is being dragged over this strip: where it would land. */
 .tab.drop-before::before, .tab.drop-end::after { content: ''; position: absolute; top: 2px; bottom: 2px; width: 3px; border-radius: 2px; background: var(--accent); z-index: 4; }
 .tab.drop-before::before { left: -3px; }

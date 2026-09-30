@@ -36,6 +36,9 @@ function fixAppName(app) {
 const shortcutDirs = (app) => [
   app.getPath('desktop'),
   path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+  // Pinned to the taskbar: Windows keeps its own copy of the shortcut here, and draws the pinned
+  // button from it (not from the running window), so a stale icon here is the one on the taskbar.
+  path.join(app.getPath('appData'), 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar'),
   ...(process.env.PUBLIC ? [path.join(process.env.PUBLIC, 'Desktop')] : []),
   ...(process.env.ProgramData ? [path.join(process.env.ProgramData, 'Microsoft', 'Windows', 'Start Menu', 'Programs')] : []),
 ];
@@ -45,7 +48,7 @@ const shortcutDirs = (app) => [
 function installShortcuts(app, shell, appId) {
   const exe = process.execPath;
   const options = { target: exe, cwd: path.dirname(exe), icon: appIcon(), iconIndex: 0, appUserModelId: appId, description: 'Lumen, the AI browser' };
-  for (const dir of shortcutDirs(app)) {
+  for (const dir of shortcutDirs(app).filter((d) => !/User Pinned/i.test(d))) { // pinning is the user's choice
     shell.writeShortcutLink(path.join(dir, 'Lumen.lnk'), 'create', options);
     fs.rmSync(path.join(dir, 'Claude Browser.lnk'), { force: true }); // the shortcut from before the rename
   }
