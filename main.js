@@ -3809,10 +3809,10 @@ function takeSpare(size) {
 }
 const isSpare = (rec) => Boolean(rec?.prepared);
 
-function setDragHover(d, hit) {
+function setDragHover(d, hit, { cancel = false } = {}) {
   const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId && Boolean(d.hover?.outside) === Boolean(hit?.outside) && (d.hover?.edge || 0) === (hit?.edge || 0);
   if (same) return;
-  if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', null);
+  if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', cancel ? { cancel: true } : null);
   const wasOver = Boolean(d.hover);
   d.hover = hit;
   if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId, outside: Boolean(hit.outside), edge: hit.edge || 0, tab: d.ghost });
@@ -3895,7 +3895,7 @@ function finishTabDrag(reason) {
   const rec = d.rec;
   const target = d.hover;
   if (rcAlive(rec)) rec.win.webContents.removeListener('before-input-event', d.escape);
-  setDragHover(d, null);
+  setDragHover(d, null, { cancel: reason !== 'commit' }); // a cancel closes the hovered strip's slot at once
   if (!rcAlive(rec)) { if (d.card) hideDragCard(d, 'cancel'); return; }
   if (d.card) { finishCardDrag(d, reason, target); return; }
   // An only-tab window: it stays where it was dropped, joins the strip it is over, or goes back (Escape).
