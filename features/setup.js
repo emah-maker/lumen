@@ -17,6 +17,9 @@ function reg(args) {
 }
 
 // `freshInstall()`: no settings file existed when this launch first read settings.
+// `reg query … /v ProgId` output -> whether it names this ProgID.
+const progIdIs = (out, progId) => Boolean(out && new RegExp(`ProgId\\s+REG_SZ\\s+${progId}\\s*$`, 'm').test(out));
+
 function create({ app, shell, readSettings, writeSettings, importer, importBrowser, freshInstall }) {
   // The welcome shows on a fresh install until it's finished or skipped (a quit halfway shows it again).
   function welcomePending() {
@@ -62,8 +65,10 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   let lastDefault = null; // the last answer, for the synchronous app menu
   async function isDefault() {
     if (process.platform === 'win32') {
-      const out = await reg(['query', 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', '/v', 'ProgId']);
-      lastDefault = Boolean(out && new RegExp(`ProgId\\s+REG_SZ\\s+${PROG_ID}\\b`).test(out));
+      // (Newer Windows 11 builds keep the choice under UserChoiceLatest, older ones under UserChoice.)
+      const base = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https';
+      const outs = await Promise.all(['UserChoiceLatest', 'UserChoice'].map((k) => reg(['query', `${base}\\${k}`, '/v', 'ProgId'])));
+      lastDefault = progIdIs(outs.find(Boolean), PROG_ID);
     } else {
       lastDefault = app.isDefaultProtocolClient('https');
     }
@@ -99,4 +104,4 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   return { welcomePending, welcomeDone, isDefault, lastDefault: () => lastDefault, makeDefault, importFrom, state };
 }
 
-module.exports = { create, PROG_ID };
+module.exports = { create, PROG_ID, progIdIs };

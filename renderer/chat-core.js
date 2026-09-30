@@ -40,7 +40,8 @@ async function refreshSetup() {
     : signedOut
       ? t('setup.claudeCode.signedOut')
       : t('setup.claudeCode.ready');
-  optional('setup-claude-code').disabled = !s.claudeCode;
+  optional('setup-claude-code').classList.toggle('missing', !s.claudeCode); // (still clickable: it looks again)
+  optional('setup-claude-code-get').hidden = Boolean(s.claudeCode);
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -50,13 +51,13 @@ async function refreshSetup() {
       ? t('welcome.ai.ready', { name: s.models.find((m) => m.id === s.model)?.label || s.model })
       : t('welcome.ai.detail');
   }
+  if (pendingAsk && Date.now() - pendingAsk.at > 10 * 60 * 1000) { pendingAsk = null; optional('setup-pending').hidden = true; } // (old: not sent out of the blue)
   if (ready && pendingAsk && !running) {
     const p = pendingAsk;
     pendingAsk = null;
     optional('setup-pending').hidden = true;
     optional('setup').classList.remove('attention');
     await loadModels();
-    if (welcoming) finishWelcome({ focus: false });
     if (prompt.value.trim() === p.text.trim()) { prompt.value = ''; autosize(); updateSend(); }
     ask(p.text, p.images, p.tabs);
   }
@@ -90,7 +91,11 @@ async function showWelcome() {
       note.textContent = t('welcome.import.running', { browser: b.label });
       const r = await window.assistant.setup.importFrom(b.id).catch((err) => ({ ok: false, error: err.message }));
       for (const other of actions.querySelectorAll('button')) other.disabled = false;
-      note.textContent = r.ok ? t('welcome.import.done', { browser: r.label, bookmarks: r.bookmarks.toLocaleString(), history: r.history.toLocaleString() }) : t('welcome.import.failed', { error: r.error });
+      note.textContent = r.ok ? t('welcome.import.done', {
+        browser: r.label,
+        bookmarks: t(r.bookmarks === 1 ? 'import.bookmarks.one' : 'import.bookmarks.other', { count: r.bookmarks.toLocaleString() }),
+        history: t(r.history === 1 ? 'import.history.one' : 'import.history.other', { count: r.history.toLocaleString() }),
+      }) : t('welcome.import.failed', { error: r.error });
       note.classList.toggle('err', !r.ok);
       if (r.ok) $('welcome-step-import').classList.add('done');
     };
@@ -98,6 +103,7 @@ async function showWelcome() {
   }));
   showDefault(st.isDefault);
   refreshSetup();
+  announce(`${t('welcome.title')}. ${t('welcome.lead')}`);
   welcome.querySelector('.setup-option:not(:disabled)')?.focus({ preventScroll: true });
 }
 function showDefault(isDefault) {
@@ -129,8 +135,9 @@ function finishWelcome({ focus = true } = {}) {
   if (focus) prompt.focus();
 }
 optional('setup-claude-code').onclick = async () => {
-  // Signed out a moment ago? Ask the CLI again first (the user may have just run /login).
+  // Signed out a moment ago, or just installed? Ask again first (no restart needed).
   const status = await window.lumenExtras?.claudeCodeStatus?.(true).catch(() => null);
+  if (status && !status.installed) { setupError(t('setup.claudeCode.notFound')); return; }
   if (status?.signedIn !== false && await window.assistant.setModel('claudecode:default')) await loadModels();
   refreshSetup();
 };
@@ -347,12 +354,18 @@ jump.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" st
 jump.setAttribute('aria-label', t('chat.jumpLatest'));
 jump.title = t('chat.jumpLatest');
 let jumping = 0; // (a jump's own scroll events don't count as the user scrolling away)
+const catchUp = () => { if (stuck && jumping) messages.scrollTop = messages.scrollHeight; };
+// The user scrolling (wheel, touch, keys) during a jump takes over: the jump no longer holds the view.
+for (const type of ['wheel', 'touchstart', 'keydown']) messages.addEventListener(type, () => { if (jumping) { jumping = 0; messages.removeEventListener('scrollend', catchUp); } }, { passive: true });
 jump.addEventListener('click', () => {
   stuck = true;
   jumping = Date.now();
   const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches && messages.scrollHeight - messages.scrollTop - messages.clientHeight < messages.clientHeight * 6;
   messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); // (a long way down: at once)
-  messages.addEventListener('scrollend', () => { if (stuck) messages.scrollTop = messages.scrollHeight; }, { once: true }); // (it grew meanwhile)
+  if (!atBottom()) { // (the reply grew meanwhile: the end, once the smooth scroll stops)
+    messages.removeEventListener('scrollend', catchUp);
+    messages.addEventListener('scrollend', catchUp, { once: true });
+  }
   jump.hidden = true;
 });
 messages.after(jump);
@@ -563,7 +576,7 @@ function ask(text, images = [], tabs = null) {
   }
   // Nothing connected: the question is kept (back in the box) and sent as soon as an AI is connected.
   if (!modelReady) {
-    pendingAsk = { text, images, tabs };
+    pendingAsk = { text, images, tabs, at: Date.now() };
     if (!prompt.value.trim() && text) { prompt.value = text; autosize(); updateSend(); }
     const pending = optional('setup-pending');
     pending.textContent = t('setup.pending');
@@ -645,20 +658,25 @@ function editLast() {
   bubble.cancelEdit = restore;
   bubble.classList.add('editing');
   for (const n of kept) if (n.nodeType === Node.TEXT_NODE) n.remove();
-  bubble.append(box, row);
+  const tabsLine = bubble.querySelector(':scope > .msg-tabs');
+  if (tabsLine) tabsLine.before(box, row); else bubble.append(box, row);
   if (actions) actions.hidden = true;
   fit();
   box.focus();
   box.setSelectionRange(box.value.length, box.value.length);
   box.addEventListener('input', () => { fit(); send.disabled = !box.value.trim() && !again.images?.length; });
-  cancel.onclick = () => { restore(); prompt.focus(); };
+  cancel.onclick = () => { restore(); (actions?.querySelector('button') || prompt).focus(); };
   send.onclick = async () => {
     const text = box.value.trim();
     if ((!text && !again.images?.length) || running) return;
     if (!modelReady) { restore(); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') })); return; }
     send.disabled = true;
     const result = await window.assistant.rewind?.(again.text);
-    if (result !== 'rewound' && result !== 'absent') { restore(); return; }
+    if (result !== 'rewound' && result !== 'absent') {
+      restore();
+      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.editFailed') }));
+      return;
+    }
     while (bubble.nextSibling) bubble.nextSibling.remove();
     bubble.remove();
     ask(text, again.images || [], again.tabs);

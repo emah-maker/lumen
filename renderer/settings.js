@@ -76,7 +76,11 @@ const KEY_PAGES = {
   gemini: 'https://aistudio.google.com/apikey',
   openrouter: 'https://openrouter.ai/keys',
 };
-const importSummary = (r) => `Imported from ${r.label}: ${r.bookmarks === 1 ? '1 bookmark' : `${r.bookmarks.toLocaleString()} bookmarks`} and ${r.history === 1 ? '1 history entry' : `${r.history.toLocaleString()} history entries`}.`;
+const importSummary = (r) => tr('settings.import.done', 'Imported from {browser}: {bookmarks} and {history}.', {
+  browser: r.label,
+  bookmarks: tr(r.bookmarks === 1 ? 'import.bookmarks.one' : 'import.bookmarks.other', r.bookmarks === 1 ? '{count} bookmark' : '{count} bookmarks', { count: r.bookmarks.toLocaleString() }),
+  history: tr(r.history === 1 ? 'import.history.one' : 'import.history.other', r.history === 1 ? '{count} history entry' : '{count} history entries', { count: r.history.toLocaleString() }),
+});
 const flash = (el, text, cls = 'ok') => { el.textContent = text; el.className = `note ${cls}`; };
 const langName = (() => {
   let names;
@@ -201,7 +205,7 @@ async function buildAi(card) {
     extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
     onMore: () => openCatalog(),
   });
-  const noModels = h('p', { class: 'note', id: 'ai-model-empty', text: 'No AI connected yet. Add a key or sign in under Accounts and keys below.' });
+  const noModels = h('p', { class: 'note', id: 'ai-model-empty', text: tr('settings.ai.noModels', 'No AI connected yet. Add a key or sign in under Accounts and keys below.') });
   modelPicker.parentElement.append(noModels);
   const showEmpty = () => { noModels.hidden = ai.models.length > 0; modelPicker.hidden = !ai.models.length; settingsPicker.button?.toggleAttribute('hidden', !ai.models.length); };
   const refreshModels = async () => {
@@ -283,7 +287,7 @@ async function buildAi(card) {
       const state = info.stored ? 'Saved' : info.env ? 'From environment' : 'Not set';
       const rowNote = status();
       const view = (message = '', cls = 'ok') => { line.replaceChildren(...[
-        h('span', { class: 'grow' }, info.label, KEY_PAGES[provider] && !info.stored && !info.env ? h('a', { class: 'key-get', href: KEY_PAGES[provider], text: 'Get a key', onclick: (e) => { e.preventDefault(); S.openUrl(KEY_PAGES[provider]); } }) : null),
+        h('span', { class: 'grow' }, info.label, KEY_PAGES[provider] && !info.stored && !info.env ? h('a', { class: 'key-get', href: KEY_PAGES[provider], text: tr('settings.ai.getKey', 'Get a key'), onclick: (e) => { e.preventDefault(); S.openUrl(KEY_PAGES[provider]); } }) : null),
         h('span', { class: `note key-state${info.stored || info.env ? ' set' : ''}`, text: state }),
         h('button', { text: info.stored ? 'Change' : 'Add', 'aria-label': `${info.stored ? 'Change' : 'Add'} ${info.label} key`, onclick: edit }),
         provider === 'openrouter' && !info.stored ? h('button', {
@@ -361,7 +365,7 @@ async function buildAi(card) {
       }));
   };
   S.ai.onCliProgress((text) => { cliNote.textContent = text; });
-  const cliRow = row('Sign in with your Anthropic account', 'Uses an OAuth profile from the Anthropic CLI instead of an API key.', cliButtons);
+  const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
   card.at('ai-accounts').append(cliRow);
   S.ai.cliStatus().then(renderCli).catch(() => {});
@@ -451,10 +455,10 @@ async function buildAi(card) {
       onclick: async (e) => {
         const btn = e.target;
         btn.disabled = true;
-        flash(note, `Importing from ${b.label}…`, '');
+        flash(note, tr('welcome.import.running', 'Importing from {browser}…', { browser: b.label }), '');
         const r = S.ai.importQuiet ? await S.ai.importQuiet(b.id) : (await S.ai.importFrom(b.id), null);
         btn.disabled = false;
-        if (r) flash(note, r.ok ? importSummary(r) : `Couldn’t import from ${b.label}: ${r.error}`, r.ok ? 'ok' : 'err');
+        if (r) flash(note, r.ok ? importSummary(r) : tr('settings.import.failed', 'Couldn’t import from {browser}: {error}', { browser: b.label, error: r.error }), r.ok ? 'ok' : 'err');
         else note.textContent = '';
       },
     })) : [h('span', { class: 'note', text: 'No other browsers found.' })]), found.length ? note : '');
@@ -462,19 +466,19 @@ async function buildAi(card) {
 
   // Default browser (features/setup.js): what the system says now, and a button that asks it.
   const defaultNote = status('default-browser-status');
-  const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: 'Make default' });
+  const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: tr('welcome.default.button', 'Make default') });
   const renderDefault = async () => {
     const yes = await S.ai.isDefaultBrowser?.().catch(() => null);
     defaultButton.hidden = yes === true;
-    flash(defaultNote, yes ? 'Lumen is your default browser.' : 'Lumen isn’t your default browser. Links from other apps open elsewhere.', yes ? 'ok' : '');
+    flash(defaultNote, yes ? tr('welcome.default.done', 'Lumen is your default browser.') : tr('settings.default.not', 'Lumen isn’t your default browser. Links from other apps open elsewhere.'), yes ? 'ok' : '');
   };
   defaultButton.onclick = async () => {
     const r = await S.ai.makeDefaultBrowser?.().catch(() => null);
-    if (r?.opened === 'windows-settings') flash(defaultNote, 'In the Windows Settings window that opened, set Lumen as the default for web links (HTTP and HTTPS).', '');
+    if (r?.opened === 'windows-settings') flash(defaultNote, tr(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual', 'In the Windows Settings window that opened, set Lumen as the default for HTTP and HTTPS links.'), '');
     else renderDefault();
   };
   window.addEventListener('focus', renderDefault); // (back from the system's settings)
-  const defaultRow = row('Default browser', 'Links you open in other apps (mail, chat, documents) open in your default browser.', defaultButton);
+  const defaultRow = row(tr('settings.default.title', 'Default browser'), tr('settings.default.desc', 'Links you open in other apps (mail, chat, documents) open in your default browser.'), defaultButton);
   defaultRow.querySelector('.text').append(defaultNote);
   card.at('default-browser').append(defaultRow);
   renderDefault();

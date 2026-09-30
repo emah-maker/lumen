@@ -899,10 +899,10 @@ body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { dis
 .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
 
 /* Edit on the latest message you sent: a row under its bubble, on hover or focus; not while its reply runs. */
-.msg-user-actions { height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
+.msg-user-actions { position: relative; height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
 .msg-user-actions[hidden] { display: none; }
 .msg.user:hover + .msg-user-actions, .msg-user-actions:hover, .msg-user-actions:focus-within { opacity: 1; }
-.msg-user-actions .msg-edit { float: right; position: relative; top: -16px; height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.msg-user-actions .msg-edit { position: absolute; right: 2px; top: -16px; height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
 .msg-user-actions .msg-edit:hover { background: var(--field); color: var(--text); }
 body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions { visibility: hidden; }
 .btn:disabled, .btn.primary:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
@@ -947,3 +947,11 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: nowrap; animation: status-pulse 1.6s ease-in-out infinite; }
 @keyframes status-pulse { 50% { opacity: 0.55; } }
 :root.pref-reduce-motion .working[data-status]::after { animation: none; }
+
+/* Setup card: Claude Code not found yet (still clickable: it looks again), and where to get it. */
+.setup-option.missing { opacity: 0.75; }
+.setup-get { align-self: flex-start; margin: -2px 0 2px 12px; font-size: 12px; color: var(--accent); text-decoration: none; }
+.setup-get:hover { text-decoration: underline; }
+.setup-get[hidden] { display: none; }
+.welcome-done-label { display: none; }
+.welcome-step.done .welcome-done-label { display: inline; position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
