@@ -2487,10 +2487,15 @@ async function swapHelperRuns() {
   const f = (name, id, group = '') => ({ name, id, group, badges: '' });
   const hit = (q, fields) => PM.score(fields, q) > 0;
   check('picker search: versions and sizes are found', hit('2.5', f('Gemini 2.5 Flash', 'gemini-2.5-flash')) && hit('gemini 2.5', f('Gemini 2.5 Flash', 'gemini-2.5-flash')) && hit('4o', f('GPT-4o mini', 'gpt-4o-mini')) && hit('opus 5.5', f('Opus 5.5', 'claude-opus-5-5')) && hit('gpt 5.6', f('GPT-5.6', 'gpt-5.6')) && hit('gpt5', f('GPT-5.6', 'gpt-5.6')) && hit('70b', f('Llama 3.3 70B', 'meta-llama/llama-3.3-70b')) && hit('k2', f('Kimi K2', 'moonshotai/kimi-k2')), '');
+  check('picker search: a version ends where its number does', !hit('2.5', f('Qwen3 235B A22B Instruct 2507', 'qwen/qwen3-235b-a22b-2507')) && !hit('2.5', f('Model 256K', 'x/model-256k')) && hit('2.5', f('Gemini 2.5 Pro', 'gemini-2.5-pro')) && !hit('4.1', f('GPT-4.15', 'gpt-4.15')), '');
+  check('picker search: a group ranks first only when named outright', PM.score(f('MiniMax M2', 'minimax/m2', 'MiniMax'), 'mini') < PM.score(f('GPT-4o mini', 'openai/gpt-4o-mini', 'OpenAI'), 'mini'), '');
+  check('picker search: the note line is searched too (free models)', PM.score({ name: 'DeepSeek R1', id: 'deepseek/r1:free', group: 'DeepSeek', badges: 'free', detail: '64K context · Free' }, 'free') > 0, '');
   check('picker search: no mid-word matches', !hit('mini', f('Gemini 2.5 Pro', 'gemini-2.5-pro')) && !hit('5', f('Gemini Pro', 'gemini-pro-15x')) && hit('mini', f('GPT-5.6 mini', 'gpt-5.6-mini')), '');
   check('picker search: a provider name puts its group first', PM.score(f('Opus 5.5', 'claude-opus-5-5', 'Claude'), 'claude') > PM.score(f('Claude Sonnet 5', 'anthropic/claude-sonnet-5', 'OpenRouter'), 'claude'), '');
   const MN = require('../features/model-names');
   check('model names: Non-Reasoning, GPT-OSS, o1 preview as a badge only', MN.prettyModel('grok-4-fast-non-reasoning') === 'Grok 4 Fast Non-Reasoning' && MN.prettyModel('gpt-oss-120b') === 'GPT-OSS 120B' && MN.prettyModel('o1-preview') === 'o1', [MN.prettyModel('grok-4-fast-non-reasoning'), MN.prettyModel('gpt-oss-120b'), MN.prettyModel('o1-preview')].join('|'));
+  check('model names: -chat-latest, -exp and -preview twins of a listed model go', (() => { const r = MN.rankModels(['gpt-5.6', 'gpt-5.6-chat-latest', 'o1', 'o1-preview', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'], 12); return !r.includes('gpt-5.6-chat-latest') && !r.includes('o1-preview') && !r.includes('gemini-2.0-flash-exp') && r.includes('gpt-5.6') && r.includes('o1'); })(), '');
+  check('model names: OpenAI writes GPT-4 Turbo', MN.prettyModel('gpt-4-turbo') === 'GPT-4 Turbo' && MN.prettyModel('learnlm-2.0-flash') === 'LearnLM 2.0 Flash', MN.prettyModel('gpt-4-turbo'));
   check('model names: a dated preview of a listed model is dropped', !MN.rankModels(['gemini-2.5-flash', 'gemini-2.5-flash-preview-09-2025', 'gemini-2.5-pro'], 12).includes('gemini-2.5-flash-preview-09-2025'), '');
 }
 // ---- tab drag geometry (features/tab-drag-math.js)

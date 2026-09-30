@@ -55,6 +55,7 @@
 }
 .picker-badge.warn { background: color-mix(in srgb, #ff9500 18%, transparent); color: color-mix(in srgb, #ff9500 70%, var(--text)); }
 .picker-more { padding-left: 28px; color: color-mix(in srgb, var(--accent) 72%, var(--text)); font-weight: 500; } /* readable on the dark menu too */
+.picker-section > .picker-more:not(.picker-extra) { color: color-mix(in srgb, var(--text) 62%, transparent); font-weight: 500; font-size: 12px; } /* "Show all": quieter than a model or "More models…" */
 .picker-extra { margin-top: 4px; border-top: 0.5px solid var(--border); border-radius: 0 0 7px 7px; padding-top: 8px; }
 .picker-extra .picker-detail { font-weight: 400; }
 .picker-empty { padding: 14px 16px 16px; color: var(--muted); font-size: 12.5px; }

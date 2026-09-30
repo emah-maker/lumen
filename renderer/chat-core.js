@@ -165,6 +165,7 @@ window.assistant.onModelsUpdated?.(() => loadModels());
 // "More models…" (OpenRouter): every model OpenRouter has, in the same picker (search, vendor headings, readable
 // names, "chat only" badges, recents), opened under the model button. Its list is loaded once per session.
 let openRouterSelect = null;
+let catalogLoading = false;
 let openRouterPicker = null;
 async function openModelSearch(query = '') {
   if (!openRouterSelect) {
@@ -172,20 +173,34 @@ async function openModelSearch(query = '') {
     openRouterSelect.setAttribute('aria-label', t('models.search'));
     document.querySelector('.model-picker').append(openRouterSelect);
     openRouterPicker = window.lumenPicker(openRouterSelect, { recentKey: 'model', anchor: modelPicker.button, title: 'models.allOpenRouter', placeholder: t('models.search'), headings: true, onBack: () => modelPicker.open() });
-    openRouterSelect.addEventListener('change', async () => {
-      if (await window.assistant.setModel(openRouterSelect.value)) await loadModels();
-      modelPicker.button.focus();
+    // A pick here becomes the main picker's value and goes through its one change handler (the "Now using" notice,
+    // the "from your next message" note, refreshSetup, focus back to the prompt, and what to do if it is refused).
+    openRouterSelect.addEventListener('change', () => {
+      const main = $('model');
+      const picked = openRouterSelect.selectedOptions[0];
+      if (!picked) return;
+      if (![...main.options].some((o) => o.value === picked.value)) {
+        const o = picked.cloneNode(true);
+        o.dataset.provider = 'OpenRouter';
+        (main.querySelector('optgroup[label="OpenRouter"]') || main).append(o);
+      }
+      main.value = picked.value;
+      main.dispatchEvent(new Event('change', { bubbles: true }));
     });
   }
   openRouterSelect.value = $('model').value;
   if (openRouterSelect.options.length) { openRouterPicker.open(query); return; }
-  // First time: the list opens at once, saying it is loading, and fills in when the catalog arrives.
+  // First time: the list opens at once, saying it is loading, and fills in when the catalog arrives (one fetch,
+  // however often it is asked for meanwhile).
   openRouterPicker.setLoading(true);
   openRouterPicker.open(query);
+  if (catalogLoading) return;
+  catalogLoading = true;
   let models = [];
   try { models = await window.assistant.openRouterModels(); } catch { models = []; }
+  catalogLoading = false;
   openRouterPicker.setLoading(false);
-  if (!models.length) { openRouterPicker.close(false); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.loadFailed') })); return; }
+  if (!models.length) { openRouterPicker.close(true); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.loadFailed') })); return; }
   // Vendors by the names OpenRouter itself gives them ("NVIDIA: …", "MiniMax: …": the most common prefix of that
   // vendor's model names), the best-known first, then A–Z.
   const VENDORS = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', 'x-ai': 'xAI', 'meta-llama': 'Meta', mistralai: 'Mistral', deepseek: 'DeepSeek', qwen: 'Qwen', openrouter: 'OpenRouter' };
@@ -211,7 +226,7 @@ async function openModelSearch(query = '') {
     const price = !Number.isFinite(m.pricePerM) ? '' : m.pricePerM === 0 ? t('models.free') : t('models.price', { n: m.pricePerM < 1 ? m.pricePerM.toFixed(2) : String(Math.round(m.pricePerM * 10) / 10) });
     const bits = [m.context ? t('models.context', { n: short(m.context) }) : '', price].filter(Boolean);
     if (bits.length) o.dataset.detail = bits.join(' · ');
-    if (!m.tools) o.dataset.badges = 'chat only';
+    o.dataset.badges = [m.free ? 'free' : '', m.tools ? '' : 'chat only'].filter(Boolean).join(',');
     vendors.get(vendor).append(o);
   }
   const rank = (v) => { const i = FIRST.indexOf(v); return i === -1 ? FIRST.length : i; };

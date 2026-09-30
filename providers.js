@@ -25,7 +25,7 @@ const PROVIDERS = {
     label: 'Gemini',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     defaults: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-    include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live|computer-use|robotics)/.test(id),
+    include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live|audio|computer-use|robotics)/.test(id),
   },
   // One key for many companies' models. Ids look like "anthropic/claude-opus-5.5".
   openrouter: {
@@ -57,10 +57,12 @@ async function openRouterCatalog({ cacheFile, fetchImpl = netFetch() } = {}) {
 // The API's list -> text models, with whether they can call tools (needed to act in tabs).
 function parseOpenRouterModels(json) {
   return (json?.data || [])
-    .filter((m) => m?.id && !String(m.id).includes(':') && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
+    // Plain ids, and OpenRouter's ":free" variants (one of the things people look for most there).
+    .filter((m) => m?.id && (!String(m.id).includes(':') || /:free$/.test(String(m.id))) && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
     .map((m) => ({
       id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0,
       context: Number(m.context_length) || 0, // for the picker's detail line
+      free: /:free$/.test(String(m.id)),
       pricePerM: Number.isFinite(Number(m.pricing?.prompt)) ? Number(m.pricing.prompt) * 1e6 : undefined, // $ per million input tokens
     }));
 }

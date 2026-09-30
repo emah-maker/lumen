@@ -373,7 +373,7 @@ function modelOptions() {
     // OpenRouter: models picked from "More models…" (the last few) join the short list.
     const saved = providers.splitModel(readSettings().model || '');
     if (provider === 'openrouter') {
-      for (const m of [...(readSettings().recentOpenRouter || []), ...(saved.provider === 'openrouter' ? [saved.model] : [])]) if (typeof m === 'string' && !list.includes(m)) list.push(m);
+      for (const m of [...(saved.provider === 'openrouter' ? [saved.model] : []), ...(readSettings().recentOpenRouter || [])].reverse()) if (typeof m === 'string' && !list.includes(m)) list.unshift(m); // first: never folded away
     }
     const entries = list.map((model) => {
       const chatOnly = !providers.canUseTools(provider, model);
@@ -4665,6 +4665,11 @@ const skillPageScripts = require('./page-scripts');
 const SKILL_WORLD = 1002; // a JavaScript world of our own, apart from the page's and the agent's
 const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
+// The model list or the chosen model changed: every window's sidebar, every chat page and Settings reload theirs.
+function modelsChanged() {
+  for (const rec of winRecs) if (rcAlive(rec) && !isSpare(rec)) rec.win.webContents.send('models-updated');
+  for (const wc of [...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)]) if (wc && !wc.isDestroyed()) wc.send('models-updated');
+}
 const skillSurfaces = () => [ui(), ...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)].filter((wc) => wc && !wc.isDestroyed());
 // One model call outside the chat (the proposal for "Create a skill from this chat"): same routes as tab grouping.
 async function completeSkillJson({ system, user, schema }) {
@@ -5374,6 +5379,7 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   // The last few OpenRouter models picked from its catalog stay in the short list, so switching between them is one click.
   const recentOpenRouter = pickedFromMore ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
   writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
+  modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
   return agent.setModel(id) ? 'next-message' : true;
 });

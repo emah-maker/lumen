@@ -80,6 +80,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     // "You and AI" reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),
+      onModelsUpdated: (cb) => ipcRenderer.on('models-updated', () => cb()), // the model was changed elsewhere (the sidebar)
       setKey: call('settings:set-key'),
       setProviderKey: call('settings:set-provider-key'),
       safeBrowsing: call('settings:safe-browsing'),

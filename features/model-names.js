@@ -14,7 +14,7 @@ const DATE = /-(\d{4}-\d{2}-\d{2}|\d{8}|\d{2}-\d{4}|\d{2}-\d{2}|\d{4}|0\d\d)$/;
 const snapshotOf = (id) => { const m = DATE.exec(String(id)); return m ? m[1] : null; };
 const withoutDate = (id) => String(id).replace(DATE, '');
 
-const WORDS = { oss: 'OSS', glm: 'GLM', chatgpt: 'ChatGPT', it: 'IT', er: 'ER', gpt: 'GPT', gemini: 'Gemini', grok: 'Grok', claude: 'Claude', llama: 'Llama', mistral: 'Mistral', qwen: 'Qwen', deepseek: 'DeepSeek', flash: 'Flash', pro: 'Pro', lite: 'Lite', ultra: 'Ultra', nano: 'Nano', exp: 'Experimental', preview: 'Preview', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable', turbo: 'Turbo', vision: 'Vision', fast: 'Fast', reasoning: 'Reasoning', code: 'Code', beta: 'Beta', latest: 'Latest', mini: 'Mini' };
+const WORDS = { learnlm: 'LearnLM', oss: 'OSS', glm: 'GLM', chatgpt: 'ChatGPT', it: 'IT', er: 'ER', gpt: 'GPT', gemini: 'Gemini', grok: 'Grok', claude: 'Claude', llama: 'Llama', mistral: 'Mistral', qwen: 'Qwen', deepseek: 'DeepSeek', flash: 'Flash', pro: 'Pro', lite: 'Lite', ultra: 'Ultra', nano: 'Nano', exp: 'Experimental', preview: 'Preview', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable', turbo: 'Turbo', vision: 'Vision', fast: 'Fast', reasoning: 'Reasoning', code: 'Code', beta: 'Beta', latest: 'Latest', mini: 'Mini' };
 // OpenAI's own style keeps size words lower case ("GPT-5.6 mini", "o3 pro").
 const LOWER_AFTER = new Set(['gpt', 'o']);
 const SETTLEDNESS = /^(preview|exp|experimental|beta)$/i;
@@ -36,7 +36,7 @@ function nameFrom(s, { keepStatus = false } = {}) {
     if (/^\d+(\.\d+)*[a-z]?$/.test(p)) { out.push(family === 'gpt' && out.length === 1 ? `-${p}` : ` ${p}`); continue; } // GPT-5.6, Gemini 2.5
     // Sizes read as sizes ("120B", "27B", "A22B"); OpenAI keeps its lower-case words.
     const sized = /^[a-z]?\d+[bkm]$/i.test(p) ? p.toUpperCase() : null;
-    const word = sized || (LOWER_AFTER.has(family) && !WORDS[p.toLowerCase()]?.match(/^[A-Z]{2,}$/) ? p.toLowerCase() : WORDS[p.toLowerCase()] || p.charAt(0).toUpperCase() + p.slice(1));
+    const word = sized || (LOWER_AFTER.has(family) && p.toLowerCase() !== 'turbo' && !WORDS[p.toLowerCase()]?.match(/^[A-Z]{2,}$/) ? p.toLowerCase() : WORDS[p.toLowerCase()] || p.charAt(0).toUpperCase() + p.slice(1)); // OpenAI writes "GPT-4 Turbo"
     // "flash-lite" reads as one word in Google's names.
     if (family === 'gemini' && p.toLowerCase() === 'lite' && /Flash$/.test(out[out.length - 1] || '')) { out[out.length - 1] += `-${word}`; continue; }
     out.push(` ${word}`);
@@ -83,8 +83,9 @@ function rankModels(ids, max = 12) {
   const list = [...new Set((ids || []).map(String).filter(Boolean))];
   const aliases = new Set(list.filter((id) => !snapshotOf(id)));
   // A dated snapshot goes when its alias is listed, as does a dated preview of it ("…-flash-preview-09-2025").
-  const baseOf = (id) => withoutDate(id).replace(/-(preview|exp)$/, '');
-  const kept = list.filter((id) => !snapshotOf(id) || (!aliases.has(withoutDate(id)) && !aliases.has(baseOf(id))));
+  const baseOf = (id) => withoutDate(id).replace(/-(preview|exp|chat-latest|latest)$/, '');
+  // Also a "-chat-latest", "-latest", "-exp" or "-preview" id when the plain one is listed (o1-preview beside o1).
+  const kept = list.filter((id) => (snapshotOf(id) ? !aliases.has(withoutDate(id)) && !aliases.has(baseOf(id)) : baseOf(id) === id || !aliases.has(baseOf(id))));
   const families = new Map();
   for (const id of kept.sort(newestFirst)) { const f = familyOf(id); if (!families.has(f)) families.set(f, []); families.get(f).push(id); }
   const order = [...families.keys()]; // already newest family first (sorted above)

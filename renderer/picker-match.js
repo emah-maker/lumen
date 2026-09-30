@@ -19,12 +19,24 @@
     }
     return out;
   }
-  // Does `word` start at a word start of `text` (reading on through punctuation)?
+  // Does `word` start at a word start of `text` (reading on through punctuation)? A word that ends in a digit must
+  // end where the text's number does: "2.5" finds "2.5 Flash", not "256K" or "2507".
   function startsAt(text, word) {
     const w = norm(word);
     if (!w) return false;
     const s = String(text || '').toLowerCase();
-    return wordStarts(s).some((i) => norm(s.slice(i)).startsWith(w));
+    return wordStarts(s).some((i) => {
+      let k = 0, j = i;
+      for (; j < s.length && k < w.length; j++) {
+        if (!/[a-z0-9]/.test(s[j])) continue;
+        if (s[j] !== w[k]) return false;
+        k++;
+      }
+      if (k < w.length) return false;
+      // Straight on into more digits is another number (2.5 vs 256, 2507; 4.1 vs 4.15); a dot then more ("5" in "5.6") is a sub-version.
+      if (/\d/.test(w[w.length - 1]) && /\d/.test(s[j] || '')) return false;
+      return true;
+    });
   }
   // fields: { name, id, group, badges }. 0: no match; higher is better. 4: the words name the group ("claude" ->
   // the Claude group first); 3: the name starts with the whole query; 2: every word starts a word of the name;
@@ -32,10 +44,18 @@
   function score(fields, query) {
     const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return 1;
-    const all = [fields.name, fields.id, fields.group, fields.badges];
+    const all = [fields.name, fields.id, fields.group, fields.badges, fields.detail];
     if (!words.every((w) => all.some((f) => startsAt(f, w)))) return 0;
-    if (fields.group && words.every((w) => startsAt(fields.group, w))) return 4;
-    if (norm(fields.name).startsWith(norm(words.join('')))) return 3;
+    // The group ranks first only when the words name it outright ("claude"), not when one merely starts it ("mini" -> MiniMax).
+    const groupWords = String(fields.group || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    if (groupWords.length && words.every((w) => groupWords.includes(norm(w)))) return 4;
+    // Whole words of the name beat words it merely starts with ("mini" is a word of "GPT-4o mini", only the start of "MiniMax").
+    const nameWords = String(fields.name || '').toLowerCase().split(/[^a-z0-9]+|(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])/).filter(Boolean);
+    const whole = words.every((w) => nameWords.includes(norm(w)));
+    const prefix = norm(fields.name).startsWith(norm(words.join('')));
+    if (whole && prefix) return 3.5;
+    if (whole) return 3;
+    if (prefix) return 2.5;
     return words.every((w) => startsAt(fields.name, w)) ? 2 : 1;
   }
   const api = { score, startsAt, wordStarts };

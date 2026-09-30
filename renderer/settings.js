@@ -185,6 +185,7 @@ async function buildAi(card) {
     if (ai.model) modelPicker.value = ai.model;
     modelPicker.pickerSync?.();
   };
+  S.ai.onModelsUpdated?.(() => refreshModels()); // picked in the sidebar: Settings shows it too
   const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role: 'switch', 'aria-label': 'Short, focused answers', checked: ai.adhdMode, onchange: (e) => S.ai.setAdhdMode(e.target.checked) });
   const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
     [['off', 'Off'], ['site', 'By site'], ['topic', 'By topic']].map(([value, text]) => h('option', { value, text, selected: ai.tabGrouping === value })));

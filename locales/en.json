@@ -258,6 +258,8 @@
   "models.free": "Free",
   "picker.back": "Back to the short list",
   "picker.count": "{n} models",
+  "picker.countOne": "1 model",
+  "picker.badge.free": "free",
   "models.context": "{n} context",
   "models.price": "${n}/M input",
   "picker.loading": "Loading models…",
