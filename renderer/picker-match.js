@@ -60,7 +60,7 @@
   }
 // Prices and context sizes as people say them: $1.25 (not $1.3), $0.075, "128K" for 131072 tokens (a power of two
   // counts in 1024s), "1M" for 1048576.
-  const moneyText = (p) => (p >= 1 ? String(+p.toFixed(2)) : p >= 0.1 ? p.toFixed(2) : String(Number(p.toPrecision(3))));
+  const moneyText = (p) => (p >= 1 ? p.toFixed(2).replace(/\.00$/, '') : p >= 0.1 ? p.toFixed(2) : String(Number(p.toPrecision(3))));
   const sizeText = (n) => {
     const k = n % 1000 !== 0 && n % 1024 === 0 ? 1024 : 1000; // 128000 and 131072 both read 128K
     return n >= k * k ? `${Math.round((n / (k * k)) * 10) / 10}M` : n >= k ? `${Math.round(n / k)}K` : String(n);
@@ -75,7 +75,7 @@
       if (Number(v) === 0 && !v.endsWith('.') && !/\.\d/.test(v)) return free || price === 0;
       if (!Number.isFinite(price) || price < 0) return false;
       const shown = moneyText(price);
-      return Math.abs(price - Number(v)) < 1e-9 || Math.abs(Number(shown) - Number(v)) < 1e-9 || (v.endsWith('.') && shown.startsWith(v)) || (/\.\d$/.test(v) && shown.startsWith(v));
+      return Math.abs(price - Number(v)) < 1e-9 || Math.abs(Number(shown) - Number(v)) < 1e-9 || (v.endsWith('.') && shown.startsWith(v)) || (/\.\d+$/.test(v) && shown.startsWith(v));
     }
     const m = w.match(/^(\d+(?:\.\d+)?)([km])$/);
     if (!m || !context) return false;
