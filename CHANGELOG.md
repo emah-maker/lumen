@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New-tab clock styles: Classic (unchanged, the default), Rounded, Thin (large and ultralight, date on top, like a lock screen), Serif, Mono and Stacked (heavy hours over minutes), each previewed in Settings > Home. Also 12- or 24-hour time, seconds, showing the date, a Soft or Glass card behind the clock, a stronger text shadow over backgrounds, and a font for the greeting (Classic, Match clock, Rounded, Serif, Thin, Mono or Handwritten). All system fonts, and nothing changes unless you pick something.
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

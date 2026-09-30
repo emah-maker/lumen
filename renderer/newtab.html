@@ -95,6 +95,60 @@
     .date { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
     h1 { margin: 2px 0 0; font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.025em; }
 
+    /* [look] Clock styles and greeting fonts (Settings → Home; features/clock-styles.js has the choices). Each style is
+       a whole look: face, weight, size, tracking and where the date sits. System fonts only (the page loads none);
+       Classic, no card and no extra shadow are exactly the page as it always was, so none of them has a rule here.
+       The preview tiles in settings.css use the same stacks. */
+    header {
+      --f-display: -apple-system, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+      --f-rounded: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display", system-ui, sans-serif;
+      --f-serif: ui-serif, "New York", "Iowan Old Style", Cambria, Georgia, serif; /* Cambria before Georgia: lining digits on Windows */
+      --f-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+      --f-hand: "Segoe Print", "Bradley Hand", "Noteworthy", "Chalkboard SE", cursive;
+    }
+    .clock-card[hidden], .date[hidden] { display: none !important; }
+    .clock-s { margin-left: 0.06em; font-size: 0.36em; font-weight: 400; letter-spacing: 0; color: var(--muted); }
+    body[data-clock-style="rounded"] .clock { font-family: var(--f-rounded); font-size: calc(var(--clock-size) * 0.92); font-weight: 500; letter-spacing: -0.03em; }
+    body[data-clock-style="rounded"] .date { font-family: var(--f-rounded); font-size: 13px; font-weight: 600; }
+    /* Thin: big ultralight numerals with the date on top, as on a lock screen. */
+    body[data-clock-style="thin"] .clock-card { display: flex; flex-direction: column-reverse; align-items: flex-start; }
+    body[data-clock-style="thin"] .clock { margin: 0; font-family: var(--f-display); font-size: calc(var(--clock-size) * 1.3); line-height: 0.92; font-weight: 100; letter-spacing: -0.05em; }
+    body[data-clock-style="thin"] .date { margin: 0 0 2px 0.06em; font-family: var(--f-display); font-size: 15px; font-weight: 550; letter-spacing: -0.01em; color: var(--text); opacity: 0.86; }
+    body[data-clock-style="thin"] .clock-card:has(.clock[hidden]) .date { margin-bottom: 0; }
+    body[data-clock-style="serif"] .clock { font-family: var(--f-serif); font-size: calc(var(--clock-size) * 0.95); font-weight: 400; letter-spacing: -0.025em; font-variant-numeric: tabular-nums lining-nums; font-optical-sizing: auto; }
+    body[data-clock-style="serif"] .date { font-family: var(--f-serif); font-size: 15px; font-weight: 400; font-style: italic; letter-spacing: 0; }
+    body[data-clock-style="mono"] .clock { font-family: var(--f-mono); font-size: calc(var(--clock-size) * 0.78); font-weight: 300; letter-spacing: -0.03em; }
+    body[data-clock-style="mono"] .date { margin-top: 4px; font-family: var(--f-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; }
+    /* Stacked: heavy hours over minutes (the separator is still there for screen readers). */
+    body[data-clock-style="bold"] .clock { display: grid; grid-template-columns: auto auto; justify-content: start; align-items: end; margin-bottom: 8px; font-family: var(--f-display); font-size: calc(var(--clock-size) * 0.82); line-height: 0.86; font-weight: 800; letter-spacing: -0.045em; }
+    body[data-clock-style="bold"] .clock[hidden] { display: none; }
+    body[data-clock-style="bold"] .clock-h { grid-area: 1 / 1; }
+    body[data-clock-style="bold"] .clock-m { grid-area: 2 / 1; }
+    body[data-clock-style="bold"] .clock-s { grid-area: 2 / 2; margin: 0 0 0.3em 0.14em; font-weight: 600; }
+    body[data-clock-style="bold"] .clock-sep { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    body[data-clock-style="bold"] .date { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    /* Behind the clock and date: nothing (default), a soft card, or glass. The text keeps its place in the column. */
+    body[data-clock-card="soft"] .clock-card, body[data-clock-card="glass"] .clock-card { width: fit-content; max-width: calc(100% + 40px); margin: 0 -20px 12px; padding: 14px 20px 16px; border-radius: 24px; box-sizing: border-box; }
+    body[data-clock-card="soft"] .clock-card { background: var(--card); box-shadow: 0 0 0 0.5px var(--border); }
+    body[data-clock-card="glass"] .clock-card {
+      background: color-mix(in srgb, var(--bg) 62%, transparent);
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.5), 0 0 0 0.5px var(--border), 0 12px 32px -14px var(--shadow);
+      -webkit-backdrop-filter: blur(28px) saturate(1.8); backdrop-filter: blur(28px) saturate(1.8);
+    }
+    body.on-media[data-clock-card="soft"] .clock-card { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
+    body.on-media[data-clock-card="glass"] .clock-card { background: rgba(255, 255, 255, 0.14); box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.2), 0 16px 40px -18px rgba(0, 0, 0, 0.5); }
+    /* Over an animated effect: no blur (it would re-sample the moving canvas every frame), a denser card instead. */
+    body.on-media.has-effect[data-clock-card] .clock-card { -webkit-backdrop-filter: none; backdrop-filter: none; }
+    body.on-media.has-effect:is([data-clock-card="soft"], [data-clock-card="glass"]) .clock-card { background: rgba(28, 28, 32, 0.68); }
+    /* A stronger shadow under the clock, date and greeting, over a background or picture only. */
+    body.on-media[data-clock-shadow="1"] header { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 2px 24px rgba(0, 0, 0, 0.38); }
+    /* The greeting's face. */
+    body[data-greeting-font="rounded"] h1 { font-family: var(--f-rounded); letter-spacing: -0.02em; }
+    body[data-greeting-font="serif"] h1 { font-family: var(--f-serif); font-size: 30px; font-weight: 500; letter-spacing: -0.015em; font-optical-sizing: auto; }
+    body[data-greeting-font="thin"] h1 { font-family: var(--f-display); font-size: 32px; font-weight: 250; letter-spacing: -0.035em; }
+    body[data-greeting-font="mono"] h1 { font-family: var(--f-mono); font-size: 24px; font-weight: 500; letter-spacing: -0.03em; }
+    body[data-greeting-font="hand"] h1 { margin-top: 4px; font-family: var(--f-hand); font-size: 28px; line-height: 1.3; font-weight: 400; letter-spacing: 0; }
+
     form { position: relative; margin-bottom: var(--gutter); }
     form > svg { position: absolute; left: 15px; top: 23px; width: 16px; height: 16px; margin-top: -8px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; pointer-events: none; }
     input {
@@ -623,8 +677,10 @@
   <div id="backdrop" aria-hidden="true"></div>
   <main>
     <header>
-      <p class="clock" id="clock" hidden></p>
-      <p class="date" id="date"></p>
+      <div class="clock-card" id="clock-card">
+        <p class="clock" id="clock" hidden></p>
+        <p class="date" id="date"></p>
+      </div>
       <h1 id="greeting">Hello</h1>
     </header>
     <form action="https://www.google.com/search" method="get" role="search">
@@ -644,6 +700,7 @@
   <script src="../features/widget-system.js"></script>
   <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>
+  <script src="../features/clock-styles.js"></script>
   <script src="newtab-system.js"></script>
   <script src="../features/worldclock-view.js"></script>
   <script src="newtab-widgets.js"></script>
