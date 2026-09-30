@@ -189,10 +189,27 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
 .reduce-motion *, .reduce-motion *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { .pane { animation: none; } }
 
+/* Settings is a tab, so with the AI sidebar open in an 800px window it gets ~440px. A mid width
+   gives the page more of it; a narrow one turns the categories into one row that scrolls sideways
+   (it was a full-height list stacked above the page, 11 rows to scroll past before any setting). */
+@media (max-width: 960px) {
+  body { grid-template-columns: 200px minmax(0, 1fr); }
+  main { padding: 24px 24px 96px; }
+}
 @media (max-width: 720px) {
   body { grid-template-columns: 1fr; }
-  .nav { position: static; height: auto; padding-bottom: 8px; }
-  main { padding: 16px; }
+  .nav { position: static; height: auto; padding: 12px 12px 8px; overflow: visible; box-shadow: inset 0 -1px 0 var(--hairline); }
+  .nav .search { padding: 0 0 8px; }
+  #nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
+  #nav::-webkit-scrollbar { display: none; }
+  .nav a { flex: none; gap: 6px; min-height: 30px; margin: 0; padding: 3px 10px 3px 4px; }
+  .nav a .ic { width: 22px; height: 22px; }
+  main { padding: 16px 16px 96px; }
+  /* A row's controls (a 220px field, a picker) go under the label when both don't fit, instead of
+     squeezing the label to a few characters a line. */
+  .row { flex-wrap: wrap; row-gap: 8px; }
+  .row .text { flex: 1 1 180px; }
+  .row .controls { flex: 0 1 auto; max-width: 100%; margin-left: auto; }
 }
 
 /* https-only.html */

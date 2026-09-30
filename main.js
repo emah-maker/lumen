@@ -39,6 +39,7 @@ const { createTabGroups, siteName, pathWords, siteHint } = require('./tab-groups
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
+const appMenuLayout = require('./features/app-menu-layout'); // the ⋯ menu folds into submenus to fit short windows
 const sidebarOverlay = require('./features/sidebar-overlay'); // the AI sidebar floats over the new-tab page instead of re-flowing it
 const { createAdblock, hostOf } = require('./features/adblock');
 const { createDownloads } = require('./features/downloads');
@@ -799,7 +800,11 @@ async function setupExtensions() {
       const b = view.getBounds();
       const w = win.getBounds();
       const x = Math.max(w.x + 8, Math.min(b.x, w.x + w.width - b.width - 8));
-      if (x !== b.x) view.setBounds({ ...b, x });
+      // A tall popup (up to 600px) on a short screen ran below the taskbar: stop it at the work
+      // area's bottom and let the popup's page scroll, as Chrome does.
+      const area = screen.getDisplayMatching(b).workArea;
+      const height = Math.min(b.height, Math.max(120, area.y + area.height - 8 - b.y));
+      if (x !== b.x || height !== b.height) view.setBounds({ ...b, x, height });
     };
     popup.whenReady().then(() => setTimeout(async () => {
       if (popup.isDestroyed() || !popup.hidden || !popup.browserWindow) return;
@@ -866,45 +871,79 @@ function extensionsMenu() {
   return items;
 }
 
-function showAppMenu({ x, y }) {
+// The ⋯ menu. Its sections are listed flat, as they show on a tall window; on a short window or
+// screen features/app-menu-layout.js folds the marked ones into submenus (More Tools first, then the
+// page commands, zoom, the tab extras and the AI entries) until it fits below the button, so it
+// doesn't open with scroll arrows or run past the window. { x, y, right } is the button's left,
+// bottom and right edge in the UI's window coordinates (`right` is missing from older callers).
+function showAppMenu({ x, y, right }) {
   const wc = activeTab()?.webContents;
-  Menu.buildFromTemplate([
-    { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
-    { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
-    { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
-    { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
-    { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
-    { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
-    { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
-    ...bgTasks.menuItems(wc?.getURL()), // Watch this page, Background tasks
-    { type: 'separator' },
-    { label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } },
-    { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
-    { label: t('menu.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
-    { label: t('menu.actualSize'), accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
-    { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
-    { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.savePage(wc).catch(() => {}) },
-    { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: isWebUrl(wc?.getURL()), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
-    { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: isWebUrl(wc?.getURL()), click: () => takeScreenshot(wc) },
-    { label: t('menu.qrCode'), enabled: isWebUrl(wc?.getURL()), click: () => showQrCode(wc) },
-    { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
-    ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
-    ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
-    { type: 'separator' },
-    { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
-    { label: t('menu.history'), submenu: historyMenu() },
-    { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), accelerator: process.platform === 'darwin' ? 'Alt+Cmd+L' : 'Ctrl+Shift+J', click: () => managers.open('downloads') }, { type: 'separator' }, ...downloads.menu()] },
-    { type: 'separator' },
-    { label: t('menu.tabGroups'), submenu: tabGroupsMenu() },
-    { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
-    { label: t('menu.import'), submenu: importMenu() },
-    { label: t('menu.adBlocker'), submenu: adblock.menu() },
-    { label: t('menu.extensions'), submenu: extensionsMenu() },
-    { label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }, // [settings]
-    ...(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
-    { type: 'separator' },
-    { label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() },
-  ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
+  const web = isWebUrl(wc?.getURL());
+  const chunk = (items, id, label, order) => ({ items, fold: id ? { id, label, order } : null });
+  const more = (items) => chunk(items, 'more', t('menu.moreTools'), 1);
+  const groups = [
+    [
+      chunk([
+        { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
+        { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
+      ]),
+      chunk([
+        { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
+        { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
+        { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
+      ], 'tabs', t('menu.tabsAndFiles'), 4),
+      chunk([
+        { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
+        { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
+        ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
+      ], 'ai', t('menu.aiAndTasks'), 5),
+    ],
+    [
+      chunk([{ label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: () => { ui()?.focus(); ui()?.send('find:open'); } }]),
+      chunk([
+        { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
+        { label: t('menu.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
+        { label: t('menu.actualSize'), accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
+        ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
+      ], 'zoom', t('menu.zoom'), 3),
+      chunk([
+        { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => wc?.print({}, () => {}) },
+        { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: web, click: () => pageTools.savePage(wc).catch(() => {}) },
+        { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: web, click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
+        { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: web, click: () => takeScreenshot(wc) },
+        { label: t('menu.qrCode'), enabled: web, click: () => showQrCode(wc) },
+        { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
+        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
+      ], 'page', t('menu.thisPage'), 2),
+    ],
+    [
+      chunk([
+        { label: t('menu.bookmarks'), submenu: bookmarksMenu() },
+        { label: t('menu.history'), submenu: historyMenu() },
+        { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), accelerator: process.platform === 'darwin' ? 'Alt+Cmd+L' : 'Ctrl+Shift+J', click: () => managers.open('downloads') }, { type: 'separator' }, ...downloads.menu()] },
+      ]),
+    ],
+    [
+      more([
+        { label: t('menu.tabGroups'), submenu: tabGroupsMenu() },
+        { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
+        { label: t('menu.import'), submenu: importMenu() },
+        { label: t('menu.adBlocker'), submenu: adblock.menu() },
+        { label: t('menu.extensions'), submenu: extensionsMenu() },
+      ]),
+      chunk([{ label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }]), // [settings]
+      more(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
+    ],
+    [more([{ label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() }])],
+  ];
+  // Screen DIPs: the button's bottom edge, and the lower of the window's bottom and the work area's.
+  const content = win.getContentBounds();
+  const anchor = { x: content.x + Math.round(x), y: content.y + Math.round(y) };
+  const { workArea } = screen.getDisplayNearestPoint(anchor);
+  const available = appMenuLayout.availableBelow({ anchorY: anchor.y, windowBottom: content.y + content.height, workAreaBottom: workArea.y + workArea.height });
+  const { template } = appMenuLayout.fold(groups, available);
+  const left = Number.isFinite(right) ? appMenuLayout.anchorX({ left: x, right, contentWidth: content.width, menuWidth: appMenuLayout.estimateWidth(template) }) : x;
+  Menu.buildFromTemplate(template).popup({ window: win, x: Math.round(left), y: Math.round(y) });
 }
 
 // ---------- history & address bar suggestions ----------
@@ -1003,7 +1042,10 @@ function createSuggestView() {
 function showSuggestions(rect, payload) {
   if (!suggestView) createSuggestView();
   win.contentView.addChildView(suggestView); // re-adding moves it to the top
-  suggestView.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) });
+  // Never taller than the window below the address bar: on a short window the list scrolls inside
+  // the view (suggest.html) instead of running off the bottom.
+  const height = Math.max(0, Math.min(rect.height, win.getContentSize()[1] - rect.y));
+  suggestView.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(height) });
   suggestView.setVisible(true);
   const send = () => suggestView.webContents.send('suggest:items', payload);
   if (suggestView.webContents.isLoading()) suggestView.webContents.once('did-finish-load', send);
