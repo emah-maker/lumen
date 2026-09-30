@@ -180,12 +180,14 @@ async function buildAi(card) {
   modelPicker.parentElement.classList.add('picker-host');
   // "More models…" opens OpenRouter's whole catalog here too (renderer/model-catalog.js).
   let catalog = null;
+  const openCatalog = (q = '') => {
+    catalog ||= window.lumenModelCatalog({ mainSelect: modelPicker, anchor: settingsPicker.button, host: modelPicker.parentElement, fetchModels: () => S.ai.openRouterModels(), onBack: () => settingsPicker.open(), onFail: (text) => { const n = modelPicker.parentElement.querySelector('.catalog-fail') || modelPicker.parentElement.appendChild(h('span', { class: 'catalog-fail', role: 'status' })); flash(n, text, 'err'); } });
+    catalog.open(q);
+  };
   const settingsPicker = window.lumenPicker(modelPicker, {
     recentKey: 'model',
-    onMore: () => {
-      catalog ||= window.lumenModelCatalog({ mainSelect: modelPicker, anchor: settingsPicker.button, host: modelPicker.parentElement, fetchModels: () => S.ai.openRouterModels(), onBack: () => settingsPicker.open(), onFail: (text) => { const n = modelPicker.parentElement.querySelector('.catalog-fail') || modelPicker.parentElement.appendChild(h('span', { class: 'catalog-fail', role: 'status' })); flash(n, text, 'err'); } });
-      catalog.open();
-    },
+    extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
+    onMore: () => openCatalog(),
   });
   const refreshModels = async () => {
     ai = await S.ai.get();

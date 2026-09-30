@@ -46,7 +46,7 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
   const FIRST = ['anthropic', 'openai', 'google', 'x-ai', 'meta-llama', 'mistralai', 'deepseek', 'qwen'];
   const short = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
   // A price per million input tokens: OpenRouter gives -1 for a price that varies (its router), shown as such.
-  const priceText = (p) => (!Number.isFinite(p) ? '' : p < 0 ? tr('models.priceVaries', 'price varies') : p === 0 ? '' : tr('models.price', '${n}/M input', { n: p < 1 ? p.toFixed(2) : String(Math.round(p * 10) / 10) }));
+  const priceText = (p) => (!Number.isFinite(p) ? '' : p < 0 ? tr('models.priceVaries', 'price varies') : p === 0 ? '' : tr('models.price', '${n}/M input', { n: p < 0.01 ? String(Number(p.toPrecision(2))) : p < 1 ? p.toFixed(2) : String(Math.round(p * 10) / 10) }));
   function build(models) {
     // Vendors by the names OpenRouter itself gives them: the most common prefix of that vendor's model names.
     const prefixes = new Map();

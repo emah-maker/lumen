@@ -190,11 +190,11 @@ $('model').addEventListener('change', async (e) => {
     await loadModels();
     return;
   }
-  const label = select.selectedOptions[0].textContent;
+  const label = select.selectedOptions[0].dataset.name || select.selectedOptions[0].textContent; // the readable name the picker shows
   select.title = select.selectedOptions[0].title;
   // From main's list, not the <optgroup>: a lone group is drawn without one (see loadModels).
   const group = modelGroups.get(select.value) ?? select.selectedOptions[0].parentElement?.label;
-  prompt.placeholder = t('composer.ask', { name: group === 'Claude' ? 'Claude' : select.selectedOptions[0].textContent });
+  prompt.placeholder = t('composer.ask', { name: group === 'Claude' ? 'Claude' : label });
   setAssistantIdentity(group);
   modelReady = true; // picking a model from the (visible) picker means one is already connected
   refreshSetup();

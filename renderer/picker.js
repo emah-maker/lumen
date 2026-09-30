@@ -83,6 +83,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   const passes = (o) => o.dataset.more || filters.every((f) => !on.has(f.key) || f.test(o));
   menu.append(head, search, chips, list, live);
   let loading = false;
+  let slow = false; // the first load has taken more than 3 s
+  let slowTimer = 0;
   let centreNext = false; // on open, the current model is scrolled to the middle, with its neighbours in view
   select.classList.add('picker-native');
   select.tabIndex = -1;
@@ -212,12 +214,19 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     // The last picks first (not while searching, and only when the list is long enough to need them), without
     // the current one, which is marked in its group anyway.
     if (!words.length && all.length > 7) {
-      const recents = recent().map((v) => all.find((o) => o.value === v)).filter((o) => o && !o.dataset.more && !o.selected).slice(0, 3);
+      const recents = recent().map((v) => all.find((o) => o.value === v)).filter((o) => o && !o.dataset.more && !o.selected && passes(o)).slice(0, 3);
       if (recents.length) {
-        out.push(heading(tr('picker.recent', 'Recent')));
+        // A section like a vendor's, so its sticky heading gives way to the next one as the list scrolls.
+        const section = Object.assign(document.createElement('div'), { className: 'picker-section picker-recent' });
+        section.setAttribute('role', 'group');
+        const h = heading(tr('picker.recent', 'Recent'));
+        h.id = `${uid}-gr`;
+        section.setAttribute('aria-labelledby', h.id);
+        section.append(h);
         recentRow = true;
-        recents.forEach((o, i) => out.push(row(o, `r${i}`)));
+        recents.forEach((o, i) => section.append(row(o, `r${i}`)));
         recentRow = false;
+        out.push(section);
       }
     }
     const groups = new Map();
@@ -229,6 +238,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       if (!groups.has(g)) groups.set(g, []);
       groups.get(g).push({ o, sc });
     }
+    const matched = [...groups.values()].reduce((k, ms) => k + ms.filter((m) => !m.o.dataset.more).length, 0); // before folding
     let ordered = [...groups];
     if (words.length) {
       for (const [, members] of ordered) members.sort((a, b) => b.sc - a.sc);
@@ -259,10 +269,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     empty.textContent = loading ? tr('picker.loading', 'Loading models…') : words.length ? tr('picker.none', 'No models match “{q}”', { q: search.value.trim() }) : tr('picker.noneFiltered', 'No models match these filters');
     if (loading) empty.hidden = false;
     out.push(empty); // right after the models, before any extra rows
-    const found = rows.filter((r) => r.value != null).length;
+    const found = matched;
     const said = loading ? empty.textContent : words.length || on.size ? (found === 1 ? tr('picker.countOne', '1 model') : found ? tr('picker.count', '{n} models', { n: found }) : empty.textContent) : '';
     if (live.textContent !== said) live.textContent = said;
-    if (title) head.querySelector('.picker-title').textContent = loading ? tr('picker.loading', 'Loading models…') : tr(title, title, { n: all.filter((o) => !o.dataset.more).length });
+    const total = all.filter((o) => !o.dataset.more).length;
+    // Narrowed by a search or a filter: how many of all match ("37 of 412").
+    if (title) head.querySelector('.picker-title').textContent = loading ? (slow ? tr('picker.slow', 'Still loading… OpenRouter is slow to answer') : tr('picker.loading', 'Loading models…')) : tr(title, title, { n: words.length || on.size ? tr('picker.of', '{n} of {total}', { n: matched, total }) : total });
     for (const [i, x] of (extra?.(search.value.trim()) || []).entries()) {
       const el = actionRow(`x${i}`, x.label, x.detail || '', () => { close(); x.run(search.value.trim()); }, 'picker-more picker-extra');
       rows.push({ el, run: x.run });
@@ -323,6 +335,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   }
   function open(initial = '') {
     expanded = new Set();
+    on.clear();
+    for (const c of chips.children) c.setAttribute('aria-pressed', 'false');
     rows = []; // a reopened list starts at the current model, not wherever the pointer or arrows last were
     active = -1;
     focusValue = null;
@@ -358,6 +372,9 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   });
   const page = () => Math.max(1, Math.floor(list.clientHeight / 44));
   function onKey(e) {
+    const onControl = e.target.closest?.('.picker-chip, .picker-back');
+    if (onControl && (e.key === 'Enter' || e.key === ' ')) return; // the button's own click
+    if (onControl && /^(Arrow(Up|Down)|Page(Up|Down))$/.test(e.key)) owner().focus(); // the list's keys: the highlight is announced there
     if (e.key === 'ArrowDown') setActive(active + 1);
     else if (e.key === 'ArrowUp') setActive(active - 1);
     else if (e.key === 'PageDown') setActive(active + page());
@@ -387,5 +404,5 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   menu.addEventListener('keydown', onKey);
   sync();
   // setLoading(true): the list says it is loading (the OpenRouter catalog's first fetch); refresh(): redraw if open.
-  return { button, menu, sync, open, close, setLoading: (on) => { loading = Boolean(on); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) render(); } };
+  return { button, menu, sync, open, close, setLoading: (v) => { loading = Boolean(v); slow = false; clearTimeout(slowTimer); if (loading) slowTimer = setTimeout(() => { slow = true; if (!menu.hidden) render(); }, 3000); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) render(); } };
 };

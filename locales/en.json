@@ -277,6 +277,8 @@
   "picker.recent": "Recent",
   "picker.showAll": "Show all {n}",
   "picker.none": "No models match “{q}”",
+  "picker.of": "{n} of {total}",
+  "picker.slow": "Still loading… OpenRouter is slow to answer",
   "picker.filters": "Filters",
   "picker.noneFiltered": "No models match these filters",
   "tabs.movedHere": "{title}: tab moved here",

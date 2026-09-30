@@ -381,7 +381,8 @@ function modelOptions() {
       // OpenRouter rows are named as OpenRouter names them (as its catalog shows them); the others from their id.
       const name = (provider === 'openrouter' && providers.openRouterName(model)) || modelNames.prettyModel(model) || model;
       const snap = modelNames.snapshotOf(model);
-      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges: modelNames.badgesFor(model, { chatOnly }), detail: snap ? `Snapshot ${snap}` : chatOnly ? 'Can’t act in your tabs' : '', title: model };
+      const badges = [...new Set([...(provider === 'openrouter' && /:free$/.test(model) ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, detail: snap ? `Snapshot ${snap}` : chatOnly ? 'Can’t act in your tabs' : '', title: model };
     });
     if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });

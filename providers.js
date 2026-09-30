@@ -294,7 +294,8 @@ function describeProviderError(err, provider) {
 function openRouterName(model) {
   const m = catalog?.models?.find((x) => x.id === model);
   if (!m?.name) return null;
-  return String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : m.name;
+  const bare = String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : String(m.name);
+  return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
 }
 
 module.exports = { PROVIDERS, openRouterName, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
