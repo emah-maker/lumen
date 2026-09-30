@@ -1322,8 +1322,12 @@ window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribut
 // Ctrl+Shift+K: the New chat button (it resets the chat, which stops a run in progress), opening the sidebar first.
 window.browser.onNewSidebarChat(async () => {
   if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
+  // A hidden sidebar can't take focus: wait (briefly) until it is really shown.
+  for (let i = 0; i < 40 && document.body.classList.contains('sidebar-hidden'); i++) await new Promise((r) => setTimeout(r, 25));
   $('new-chat').click();
-  $('prompt').focus({ preventScroll: true });
+  const focusPrompt = () => $('prompt').focus({ preventScroll: true });
+  focusPrompt();
+  requestAnimationFrame(focusPrompt); // the new chat's reset can re-render the prompt area
 });
 
 // ---------- full-page chat ("Ask AI" from the homepage) ----------

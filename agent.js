@@ -2056,9 +2056,11 @@ ${same}
       case 'read_tabs': return this.readTabs(input);
       case 'read_urls': {
         const urls = input.urls.slice(0, 6).map((u) => webUrl(u));
-        const shown = this.showResearch({ urls }); // each page, in a background tab (a side effect: what is read is fetched below)
-        let pages;
-        try { pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true })))); } finally { shown(); }
+        const pages = await Promise.all(urls.map((url) => readInBackground(url, (wc) => this.guardRedirects(wc, { clientSide: true }))));
+        // [research tabs] Shown only after the read, and only the final address of each page that was read:
+        // a redirect to a host the user did not allow never loads in a tab (test/exfil.js).
+        const readOk = pages.filter((p) => p.title !== '' && !/^Could not read this page/.test(p.text) && !this.browser.aiOff?.(p.url)).map((p) => p.url);
+        if (readOk.length) this.showResearch({ urls: readOk })();
         return pages.map((p) => (this.browser.aiOff?.(p.url) // [ai controls] it redirected to such a site
           ? `(${siteOf(p.url)}: the user turned off AI on this site, so its content is not shown.)`
           : `<untrusted_page_content url="${p.url}">\nTitle: ${p.title}\n${p.text}\n</untrusted_page_content>`)).join('\n\n');

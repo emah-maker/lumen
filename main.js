@@ -1261,7 +1261,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
 
   if (background) {
     const current = activeTab();
-    if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
+    if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
     sendTabs();
   } else {
     switchTab(id);
@@ -1661,7 +1661,7 @@ function switchTab(id) {
   activeId = id;
   tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
   const current = activeTab();
-  if (current) syncExtensions(() => extensions?.selectTab(current.webContents));
+  if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
   layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
   sendTabs();
@@ -3111,7 +3111,7 @@ function adoptTab(tab, index) {
   if (tab.view) {
     win.contentView.addChildView(tab.view);
     tab.view.setVisible(false);
-    syncExtensions(() => { try { extensions?.addTab(tab.view.webContents, win); } catch {} });
+    if (!tab.isolated) syncExtensions(() => { try { extensions?.addTab(tab.view.webContents, win); } catch {} });
   }
   switchTab(tab.id);
   tab.view?.webContents.focus();

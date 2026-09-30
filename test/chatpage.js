@@ -237,11 +237,6 @@ const fakeClient = (app) => app.evaluate(() => {
   check('Ctrl+Shift+L opens the page', Boolean(await waitFor(chatTab)), JSON.stringify(await tabs()));
   await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'L', control: true, shift: true }));
   check('and Ctrl+Shift+L on the page goes back to the sidebar', await waitFor(async () => !(await chatTab())) && await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden'))), 'still open');
-  // Ctrl+Shift+K: a fresh sidebar chat, opening the sidebar if it was closed, with the prompt focused
-  await ui.click('#toggle-sidebar');
-  await waitFor(() => ui.evaluate(() => document.body.classList.contains('sidebar-hidden')));
-  await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'K', control: true, shift: true }));
-  check('Ctrl+Shift+K opens a closed sidebar with the prompt focused', await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden') && document.activeElement === document.getElementById('prompt'))), 'not open/focused');
   await ui.click('#open-chat-page');
   await waitFor(chatTab);
   const oneChatTab = (await tabs()).filter((t) => t.chat).length === 1;
@@ -259,6 +254,12 @@ const fakeClient = (app) => app.evaluate(() => {
   check('the restored page works: it loads the saved chat', await waitFor(async () => /first from the sidebar/.test(await inPage("document.getElementById('messages').textContent")), 10000), await inPage("document.getElementById('messages').textContent"));
   check('and has its API (the preload came along)', await inPage("typeof window.assistant?.state") === 'function', 'no preload');
 
+  // (last: it starts a fresh chat, so the restore checks above still see the saved one)
+  // Ctrl+Shift+K: a fresh sidebar chat, opening the sidebar if it was closed, with the prompt focused
+  await ui.click('#toggle-sidebar');
+  await waitFor(() => ui.evaluate(() => document.body.classList.contains('sidebar-hidden')));
+  await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'K', control: true, shift: true }));
+  check('Ctrl+Shift+K opens a closed sidebar with the prompt focused', await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden') && document.activeElement === document.getElementById('prompt'))), 'not open/focused');
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
