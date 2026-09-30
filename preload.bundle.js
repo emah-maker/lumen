@@ -545,7 +545,12 @@ contextBridge.exposeInMainWorld('assistant', {
     remove: (id) => ipcRenderer.invoke('chats:delete', id),
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     onUsage: on('chats:usage'),
+    onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
   },
+  // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
+  sidebarState: (open) => ipcRenderer.send('chat:sidebar-state', open),
+  onAttention: on('agent:attention'), // { state: 'approval' | 'unread' | null, approvals, unread }
+  onOpenChat: on('agent:open-chat'), // { id }: show the sidebar on that chat
   // Background tasks (renderer/tasks.js, features/background-runner.js)
   tasks: {
     state: () => ipcRenderer.invoke('tasks:state'),

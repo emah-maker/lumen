@@ -1224,6 +1224,7 @@ async function showSidebar(visible) {
   const body = document.body;
   $('sidebar').classList.remove('prewarm'); // never animate from the warm-up layout
   $('toggle-sidebar').setAttribute('aria-pressed', String(visible));
+  window.assistant.sidebarState?.(visible); // main: when to notify about a reply, and the unread mark
   if (earlyFreeze) {
     const pending = earlyFreeze;
     earlyFreeze = null;
@@ -1328,7 +1329,7 @@ resizer.addEventListener('keydown', (e) => {
   localStorage.setItem('sidebarWidth', String(width));
 });
 window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
-// Ctrl+Shift+K: the New chat button (it resets the chat, which stops a run in progress), opening the sidebar first.
+// Ctrl+Shift+K: the New chat button, opening the sidebar first (a run in progress keeps going in its own chat).
 window.browser.onNewSidebarChat(async () => {
   if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
   // A hidden sidebar can't take focus: wait (briefly) until it is really shown.
@@ -1365,6 +1366,7 @@ function enterFull() {
   $('sidebar').style.removeProperty('--reveal');
   reveal = 1;
   $('toggle-sidebar').setAttribute('aria-pressed', 'true');
+  window.assistant.sidebarState?.(true);
   $('prompt').focus({ preventScroll: true });
 }
 
@@ -1493,6 +1495,24 @@ window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('wind
 // ---------- the chat's hooks into the sidebar (chat-core.js) ----------
 
 chatHost.running = () => reportBounds(); // the AI frame around the page appears and goes with a reply
+
+// The AI working on its own (features/chat-runs.js): a dot on the toolbar button when a reply finished
+// while the sidebar was closed, or a run (in any chat) waits for an OK; the Chats button shows the same
+// for chats other than the open one. A notification clicked opens the sidebar on its chat.
+window.assistant.sidebarState?.(!document.body.classList.contains('sidebar-hidden'));
+window.assistant.onAttention?.(({ state } = {}) => {
+  for (const id of ['toggle-sidebar', 'chat-history']) {
+    const el = $(id);
+    if (!el) continue;
+    if (state) el.dataset.attention = state;
+    else delete el.dataset.attention;
+  }
+});
+window.assistant.onOpenChat?.(async ({ id } = {}) => {
+  if (chatFull) exitFull();
+  if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
+  await window.chatList?.openChat?.(id);
+});
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');

@@ -297,6 +297,7 @@ const NEW_TOOLS = [
 
 // Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
 const pdfText = require('./features/pdf-text');
+const { captureTab } = require('./features/tab-capture');
 const TRIMMED = {
   read_page: 'Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.',
   navigate: 'Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.',
@@ -393,9 +394,9 @@ async function screenshot(agent, wc, input, h) {
   if (input.region) {
     const z = wc.getZoomFactor();
     const r = input.region;
-    image = await wc.capturePage({ x: Math.round(r.x * z), y: Math.round(r.y * z), width: Math.max(1, Math.round(r.width * z)), height: Math.max(1, Math.round(r.height * z)) });
+    image = await captureTab(wc, { x: Math.round(r.x * z), y: Math.round(r.y * z), width: Math.max(1, Math.round(r.width * z)), height: Math.max(1, Math.round(r.height * z)) });
   } else {
-    image = await wc.capturePage();
+    image = await captureTab(wc); // a tab behind another one too (features/tab-capture.js)
   }
   if (image.getSize().width > maxWidth) image = image.resize({ width: maxWidth });
   const size = image.getSize();

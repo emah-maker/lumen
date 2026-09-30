@@ -3270,7 +3270,78 @@ async function bgCliRuns() {
   check('research tabs: the setting exists, on by default, and is a plain boolean', SB.DEFAULTS?.researchTabs === true || /researchTabs: true/.test(fs.readFileSync(path.join(__dirname, '..', 'settings-backend.js'), 'utf8')), '');
 }
 
-schedulerRuns().catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./clock-style-units')(check)).catch((err) => check('new-tab clock styles and greeting fonts', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./widget-summary-units')(check)).catch((err) => check('widget settings summaries', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => require('./small-screen-units')(check)).catch((err) => check('app menu on small screens', false, err.stack)).then(() => require('./signed-in-units')(check)).catch((err) => check('signed-in sites (read_urls as_user)', false, err.stack)).then(() => {
+// ---- [background chats] the sidebar AI working on its own (features/chat-runs.js, agent.js detach)
+async function backgroundChatRuns() {
+  const CR = require('../features/chat-runs');
+  const on = { notifications: true, notifyDone: true };
+  const away = { focused: true, sidebarOpen: false, chatOpen: true, onRunTab: true };
+  const watching = { focused: true, sidebarOpen: true, chatOpen: true, onRunTab: true };
+  check('chat runs: a reply the user is watching sends no notification and no unread mark', !CR.plan('done', { settings: on, ...watching }).os && !CR.plan('done', { settings: on, ...watching }).unread, '');
+  check('chat runs: finished with the sidebar closed: notification and the unread mark', CR.plan('done', { settings: on, ...away }).os && CR.plan('done', { settings: on, ...away }).unread, '');
+  check('chat runs: finished while the user is on another tab, or Lumen is not in front: notification', CR.plan('done', { settings: on, ...watching, onRunTab: false }).os && CR.plan('done', { settings: on, ...watching, focused: false }).os && !CR.plan('done', { settings: on, ...watching, onRunTab: false }).unread, '');
+  check('chat runs: finished in a chat that is not open: notification, and the chat is marked unread', CR.plan('done', { settings: on, ...watching, chatOpen: false }).os && CR.plan('done', { settings: on, ...watching, chatOpen: false }).unread, '');
+  check('chat runs: Stop never notifies', !CR.plan('stopped', { settings: on, ...away }).os && !CR.plan('stopped', { settings: on, ...away }).unread, '');
+  check('chat runs: uses the Background tasks setting: off means no notification; "finished" alone can be off', !CR.plan('done', { settings: { notifications: false }, ...away }).os && !CR.plan('done', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('approval', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('failed', { settings: { ...on, notifyDone: false }, ...away }).os, '');
+  check('chat runs: no setting saved yet means notify', CR.plan('done', { settings: undefined, ...away }).os, '');
+  check('chat runs: outcome of a run', CR.outcome({ error: 'x' }) === 'failed' && CR.outcome({ stopped: true }) === 'stopped' && CR.outcome({}) === 'done' && CR.outcome({ error: 'x', stopped: true }) === 'failed', '');
+  check('chat runs: notification text', CR.notification('done', { reply: '## Found **3** flights\nmore' }).title === 'Lumen finished: Found 3 flights' && CR.notification('failed', { error: 'Rate limited.\nlater' }).title === 'Lumen stopped: Rate limited.' && CR.notification('approval', {}).title === 'Lumen needs your OK' && CR.notification('done', { reply: '' }).title === 'Lumen finished', JSON.stringify(CR.notification('done', { reply: '## Found **3** flights\nmore' })));
+  check('chat runs: notification text uses the UI language when it has the string', CR.notification('done', { reply: 'ok' }, (k, v) => (k === 'agent.notify.done' ? `Fertig: ${v.reply}` : k)).title === 'Fertig: ok', '');
+  check('chat runs: first line is cut on a long reply and skips rules and links', CR.firstLine('x'.repeat(200)).length === 90 && CR.firstLine('---\n[Docs](https://a.b) here') === 'Docs here', CR.firstLine('---\n[Docs](https://a.b) here'));
+  check('chat runs: at most two at once; a message in a running chat replaces its run', CR.canStart({ busy: 1 }) && !CR.canStart({ busy: 2 }) && CR.canStart({ busy: 2, sameChatRunning: true }) && CR.MAX_RUNS === 2, '');
+  check('chat runs: the button mark: an OK outranks an unread reply', CR.attention({ approvals: 1, unread: 3 }) === 'approval' && CR.attention({ unread: 1 }) === 'unread' && CR.attention({}) === null, '');
+  check('chat runs: a chat row: needs OK, running, unread', CR.chatBadge({ running: true, approvals: 1 }) === 'approval' && CR.chatBadge({ running: true, unread: true }) === 'running' && CR.chatBadge({ unread: true }) === 'unread' && CR.chatBadge({}) === null, '');
+  const TC = require('../features/tab-capture');
+  const clip = TC.cssClip({ x: 30, y: 60, width: 300, height: 150 }, 1.5);
+  check('tab capture: a crop in view pixels maps to CSS pixels for DevTools', clip.x === 20 && clip.y === 40 && clip.width === 200 && clip.height === 100 && clip.scale === 1, JSON.stringify(clip));
+  const fakeImage = (empty) => ({ isEmpty: () => empty });
+  const got = await TC.captureTab({ capturePage: async () => fakeImage(false) }).then((img) => !img.isEmpty(), () => false);
+  const hidden = await TC.captureTab({ capturePage: async () => fakeImage(true), getZoomFactor: () => 1, debugger: { isAttached: () => false, attach() { throw new Error('no devtools here'); } } }).then(() => 'image', (err) => err.message);
+  check('tab capture: an empty capture of a hidden tab is not handed back as a screenshot', got && /Could not take a screenshot/.test(hidden), hidden);
+
+  // agent.js: a chat left mid-reply keeps running; two chats never drive one tab.
+  const { Agent } = require('../agent');
+  const wcOf = (id) => ({ id, getURL: () => `https://site${id}.example/`, isDestroyed: () => false });
+  const agent = new Agent({ activeTab: () => ({ id: 1, webContents: wcOf(1) }), tabById: (id) => ({ id, webContents: wcOf(id) }), listTabs: () => [] }, () => null);
+  const started = [];
+  agent.runOnce = (text, emit, images, extra, skill, messages, rec) => new Promise((resolve) => {
+    started.push({ text, messages, rec });
+    rec.controller.signal.addEventListener('abort', () => resolve());
+  });
+  const chatA = agent.messages;
+  const runA = agent.run('long task', () => {});
+  check('agent: the open chat is running', agent.running && agent.busyCount === 1, '');
+  agent.approvedHosts.add('site1.example');
+  agent.detach(); // New chat while it runs
+  const chatB = agent.messages;
+  check('agent: New chat leaves the run going in its own chat, and the new chat starts empty', !agent.running && agent.runningFor(chatA) && agent.busyCount === 1 && chatB !== chatA && chatB.length === 0 && !agent.approvedHosts.has('site1.example') && started[0].rec.hosts.has('site1.example'), '');
+  const runB = agent.run('second task', () => {});
+  check('agent: the new chat runs at the same time', agent.running && agent.busyCount === 2 && !started[0].rec.controller.signal.aborted, '');
+  agent.stop();
+  await runB;
+  check('agent: Stop in the new chat stops only its own run', started[1].rec.controller.signal.aborted && !started[0].rec.controller.signal.aborted && agent.runningFor(chatA) && !agent.runningFor(chatB), '');
+  agent.attach(chatA, started[0].rec.hosts);
+  check('agent: opening the running chat again picks its run up with its approved sites', agent.running && agent.approvedHosts.has('site1.example'), '');
+  agent.stop();
+  await runA;
+  check('agent: ...and Stop there ends it', !agent.running && agent.busyCount === 0, '');
+  // The tab lock between two chats' runs.
+  const signal = new AbortController().signal;
+  let release;
+  const holding = new Promise((r) => { release = r; });
+  const inA = agent.inTask(1, signal, () => holding, chatA);
+  check('agent: the tabs running chats work in are known (main.js turns background throttling off there)', JSON.stringify(agent.runTabIds()) === '[1]' && agent.runTabIdFor(chatA) === 1, JSON.stringify(agent.runTabIds()));
+  let busyError = null;
+  let ownOk = false;
+  await agent.inTask(1, signal, async () => { try { agent.taskTab(); } catch (err) { busyError = err.message; } }, chatB);
+  await agent.inTask(2, signal, async () => { ownOk = agent.taskTab().id === 2; }, chatB);
+  const aStillOk = await agent.inTask(1, signal, async () => agent.taskTab().id === 1, chatA);
+  release();
+  await inA;
+  check('agent: a run in another chat cannot act on the tab a running chat works in', /in use by a task running in another chat/.test(String(busyError)) && ownOk && aStillOk, String(busyError));
+  check('agent: once that run ends the tab is free again', agent.runTabIds().length === 0, JSON.stringify(agent.runTabIds()));
+}
+
+backgroundChatRuns().catch((err) => check('background chats', false, err.stack)).then(() => schedulerRuns()).catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./clock-style-units')(check)).catch((err) => check('new-tab clock styles and greeting fonts', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./widget-summary-units')(check)).catch((err) => check('widget settings summaries', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => require('./small-screen-units')(check)).catch((err) => check('app menu on small screens', false, err.stack)).then(() => require('./signed-in-units')(check)).catch((err) => check('signed-in sites (read_urls as_user)', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

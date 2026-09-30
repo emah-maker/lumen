@@ -45,6 +45,7 @@
     if (!view) { await render(); return; } // gone (deleted, or unreadable on this machine)
     clearChatView();
     showHistory(view.items);
+    resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);
     closePanel(false);
     prompt.focus();
@@ -73,6 +74,9 @@
 
   api.onUsage(refreshUsage);
   api.list().then((r) => refreshUsage(r.currentUsage)).catch(() => {});
+  // A chat started or stopped running, needs an OK, or finished unseen: its row's mark changes.
+  api.onChanged?.(() => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
 
-  window.chatList = { refreshUsage, open: openPanel, close: closePanel };
+  // openChat(id): a notification was clicked (app.js); the open chat stays as it is.
+  window.chatList = { refreshUsage, open: openPanel, close: closePanel, openChat: async (id) => { const { current } = await api.list(); if (id && id !== current) await openChat(id); } };
 })();
