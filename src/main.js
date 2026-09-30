@@ -2623,7 +2623,7 @@ function tabGroupsMenu() {
     { label: t('menu.organizeByTopic'), click: organizeByTopic },
     { label: t('menu.mergeGroups'), enabled: tabGroups.state().length > 1, click: mergeGroups },
     { label: t('menu.undoOrganize'), enabled: tabGroups.canUndo(), click: undoOrganize },
-    { label: t('menu.organizeWithAi'), click: organizeTabs }, // while it refines, choosing it again cancels the refinement
+    ...(readSettings().topicAi === true ? [{ label: t('menu.organizeWithAi'), click: organizeTabs }] : []), // one "Organize Tabs" unless AI is on; while it refines, choosing the AI item again cancels it
     { type: 'separator' },
     { label: t('menu.groupAutomatically'), enabled: false },
     ...[['off', t('menu.off')], ['site', t('menu.bySite')], ['topic', t('menu.byTopic')]].map(([value, label]) => ({ label, type: 'radio', checked: mode === value, click: () => setTabGrouping(value) })),

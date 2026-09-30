@@ -85,7 +85,8 @@ library libraries open source powerful comprehensive community resources ecosyst
 le la les des du un une et en pour que qui dans sur avec voir jour jours par au aux pas plus est sont ce cette
 el los las del una por para con como que mas dias dia paso donde libre gratis
 der die das und ein eine mit von zu für auf ist im den dem
-de da do dos das os um uma com para por mais`.split(/\s+/));
+de da do dos das os um uma com para por mais
+как что это для при все или его ещё тоже так уже они чем про над под без`.split(/\s+/));
 const TOPIC_THRESHOLD = 0.34;
 const COMMON_WORD_SHARE = Number(process.env.CW || 0.9); // a word this share of the tabs carry says nothing about which group
 // Small pools (2-3 loose tabs) need stronger evidence than a full cluster does before forming a
@@ -99,6 +100,7 @@ const CENTROID_MERGE_THRESHOLD = 0.3;
 // that site's template, not a topic - it shouldn't count when linking two tabs of that same site.
 const SITE_TEMPLATE_RATIO = 0.7;
 const SITE_TEMPLATE_PENALTY = 0.15;
+const SITE_DOMINANT = 0.8; // this share of a group on one site: it is named for the site
 const MAX_GROUP = 40; // a bigger cluster is split again, more strictly
 const TEXT_WEIGHT = 0.7; // page text (meta description/h1): more deliberate than a URL path, less than the title
 const BIGRAM_VEC_WEIGHT = 0.5; // a 2-word combination is more specific than either word alone
@@ -215,12 +217,33 @@ function charTrigrams(text) {
 }
 
 // Informative tokens of a text, in order, with stem key + original surface (for naming/bigrams).
+// Scripts written without spaces (or with words too short for the 3-letter floor): a run of Han, Hiragana, Katakana or Hangul
+// is read as character bigrams ("東京のホテル" -> 東京, ホテ, テル), the usual stand-in for word segmentation.
+const CJK = /\p{scx=Han}|\p{scx=Hiragana}|\p{scx=Katakana}|\p{scx=Hangul}/u;
+const CJK_RUNS = /\p{scx=Han}+|\p{scx=Hiragana}+|\p{scx=Katakana}+|\p{scx=Hangul}+|[^\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}]+/gu;
+function cjkTokens(chunk) {
+  const out = [];
+  for (const [run] of chunk.matchAll(CJK_RUNS)) {
+    if (!CJK.test(run)) { out.push(...tokens(run)); continue; }
+    const chars = [...run];
+    if (chars.length < 2 || (/^\p{scx=Hiragana}+$/u.test(run) && chars.length < 3)) continue; // a lone character or a particle ("の", "です")
+    for (let i = 0; i < chars.length - 1; i++) { const g = chars[i] + chars[i + 1]; out.push({ key: g, surface: g }); }
+  }
+  return out;
+}
+// Endings of Russian (and Ukrainian) nouns and adjectives: "Берлин", "Берлина", "в Берлине" are one word.
+const CYRILLIC_ENDING = /(?:ами|ями|ого|его|ому|ему|ыми|ими|ах|ях|ов|ев|ей|ой|ом|ем|ую|юю|ая|яя|ое|ее|ые|ие|ых|их|ам|ям|а|я|у|ю|ы|и|е|о)$/;
+function stemWord(w) {
+  if (/[Ѐ-ӿ]/.test(w)) return w.length > 5 ? w.replace(CYRILLIC_ENDING, '') : w;
+  return stem(w);
+}
 function tokens(text) {
   const out = [];
   for (const raw of String(text).split(/[^\p{L}\p{N}]+/u)) {
+    if (CJK.test(raw)) { out.push(...cjkTokens(raw)); continue; }
     const w = raw.toLowerCase();
     if (w.length < 3 || /^\d+$/.test(w) || STOPWORDS.has(w)) continue;
-    out.push({ key: stem(w), surface: raw });
+    out.push({ key: stemWord(w), surface: raw });
   }
   return out;
 }
@@ -668,7 +691,7 @@ const hostMatches = (host, sites) => sites.split(/\s+/).some((s) => (s.endsWith(
 function categoryOf({ url, title }) {
   const host = hostname(url).replace(/^www\./, '');
   const cats = knowledge.FALLBACK_CATEGORIES;
-  const strong = cats.find((c) => !c.weak && host && (hostMatches(host, c.hosts) || (c.edu && INSTITUTION.test(host))));
+  const strong = cats.find((c) => !c.weak && host && (hostMatches(host, c.hosts) || (c.hostRe && c.hostRe.test(host))));
   if (strong) return strong;
   const byTitle = cats.find((c) => c.title.test(String(title || '')));
   if (byTitle) return byTitle;
@@ -818,8 +841,17 @@ function topicClusters(entries, { threshold = TOPIC_THRESHOLD, categories = fals
     // Every tab on a site of one hint: the hint names the group when nothing better does (the site's
     // own name - "Northeastern" for its Canvas - says less), and always when the hint formed it.
     const sharedHint = members[0].siteHint && members.every((d) => d.siteHint === members[0].siteHint) ? members[0].siteHint : '';
+    // Nearly every tab one site's (12 GitHub repos, a dozen Wikipedia pages): the group is that site's, not a category ("Dev docs").
+    const siteCount = new Map();
+    for (const d of members) siteCount.set(d.siteKey, (siteCount.get(d.siteKey) || 0) + 1);
+    const [topSite, topSiteCount] = [...siteCount].sort((x, y) => y[1] - x[1])[0] || [];
+    const oneSite = members.length >= 3 && topSite && topSiteCount / members.length >= SITE_DOMINANT && !SEARCH_DOMAINS.has(topSite);
+    const kindOfSite = (n) => knowledge.BROAD_HINTS.has(n) || knowledge.FALLBACK_CATEGORIES.some((k) => k.name === n); // a name that says a KIND of site
     let name;
-    if (hintOf.has(idsKey(c))) name = hintOf.get(idsKey(c));
+    if (oneSite && !(topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) && (!top || kindOfSite(hintOf.get(idsKey(c)) || sharedHint))) {
+      const lead = members.find((d) => d.siteKey === topSite);
+      name = siteName(lead.url, lead.title);
+    } else if (hintOf.has(idsKey(c))) name = hintOf.get(idsKey(c));
     else if (topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) {
       const kinds = new Set(members.filter((d) => repoOf(d.url)?.name === topRepo).map((d) => repoPageKind(d.url)));
       const kind = kinds.size === 1 ? [...kinds][0] : '';

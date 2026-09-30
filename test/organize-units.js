@@ -154,4 +154,41 @@ const at = (w, id) => w.tabs().find((t) => t.id === id); // grouping reorders th
   check('31-tab bar: deterministic', run().g.state().map((g) => g.name).join() === named.map((g) => g.name).join());
 }
 
+// Organizes a list of [title, url] and returns { name per tab index (or ''), same(i, j) }.
+function organized(specs) {
+  const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }]));
+  w.g.organizeByTopic();
+  const names = w.g.state();
+  const name = (i) => names.find((g) => g.id === at(w, i + 1).groupId)?.name || '';
+  return { name, same: (i, j) => Boolean(at(w, i + 1).groupId) && at(w, i + 1).groupId === at(w, j + 1).groupId };
+}
+
+// 12. government sites are "Government", never "School"; schools are still "School"
+{
+  const r = organized([['Where is my refund? | Internal Revenue Service', 'https://www.irs.gov/refunds'], ['Driver license renewal - California DMV', 'https://www.dmv.ca.gov/portal/'], ['Universal Credit - GOV.UK', 'https://www.gov.uk/universal-credit'],
+    ['Syllabus - CS 3500', 'https://www.northeastern.edu/cs3500'], ['Reading list', 'https://www.cam.ac.uk/reading'], ['Schoology - Home', 'https://app.schoology.com/home']]);
+  check('irs.gov + dmv.ca.gov group as Government, not School', r.same(0, 1) && /^government$/i.test(r.name(0)), r.name(0));
+  check('a .gov.uk page joins them', r.same(0, 2), r.name(2));
+  check('.edu / .ac.uk / schoology still School', r.same(3, 4) && /school/i.test(r.name(3)) && !r.same(0, 3), `${r.name(3)} / ${r.name(4)}`);
+}
+
+// 13. CJK and Cyrillic titles group
+{
+  const jp = organized([['東京のホテル予約 - 宿泊サイト', 'https://yado.jp/tokyo'], ['東京観光スポット おすすめ20選', 'https://kanko.jp/tokyo'], ['Easy Banana Bread Recipe', 'https://a.example/banana-bread']]);
+  check('Japanese Tokyo hotel + sightseeing tabs group', jp.same(0, 1) && !jp.same(0, 2), `${jp.name(0)}|${jp.name(1)}`);
+  check('the Japanese group is named for Tokyo', /東京/.test(jp.name(0)) || /travel/i.test(jp.name(0)), jp.name(0));
+  const ru = organized([['Отели Берлина — лучшие предложения', 'https://otely.ru/berlin'], ['Берлин: что посмотреть за 3 дня', 'https://gid.travel/berlin'], ['Входящие — Яндекс Почта', 'https://mail.yandex.ru/'], ['Письма — Почта Mail.ru', 'https://e.mail.ru/inbox']]);
+  check('Russian Berlin tabs group', ru.same(0, 1), `${ru.name(0)}`);
+  check('Russian mail tabs group apart from Berlin', ru.same(2, 3) && !ru.same(0, 2), `${ru.name(2)}`);
+  const tok = tg.tokens('東京のホテルとコーヒー Москва');
+  check('tokens: CJK bigrams, Katakana long-vowel kept, Cyrillic word', tok.some((t) => t.key === '東京') && tok.some((t) => t.key === 'ホテ') && tok.some((t) => t.key === 'ヒー') && tok.some((t) => /^москв/.test(t.key)), tok.map((t) => t.key).join());
+}
+
+// 14. a group that is almost all one site is named for the site, not a category
+{
+  const gh = Array.from({ length: 12 }, (_, i) => [`acme/tool${i} - ${['parser', 'router', 'logger', 'cache'][i % 4]} library`, `https://github.com/acme/tool${i}`]);
+  const r = organized([...gh, ['React docs', 'https://react.dev/learn'], ['Node docs', 'https://nodejs.org/api']]);
+  check('12 GitHub repos: named GitHub, not Dev docs', r.same(0, 11) && r.name(0) === 'GitHub', r.name(0));
+}
+
 process.exit(failed ? 1 : 0);
