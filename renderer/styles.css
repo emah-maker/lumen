@@ -197,6 +197,11 @@ button:active:not(:disabled) { transform: scale(0.94); }
 :root.pref-reduce-motion .tab.landed { animation: none; }
 /* Travelling with the dragged tab (a multi-selection, a group's tabs): folded into it. */
 .tab.gathered { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -2px; overflow: hidden; opacity: 0; pointer-events: none; transition: none; }
+/* Folded away (out on the card, waiting to land, gathered into another tab): no width at all, whatever
+   the tab is otherwise (the active tab's min-width and a pinned tab's fixed width would leave a hole). */
+.tab.handed, .tab.held, .tab.gathered { width: 0 !important; min-width: 0 !important; flex: 0 0 0 !important; padding: 0 !important; }
+/* A group label dragged along its strip follows the pointer, like a tab. */
+.group-label.dragging.floating { position: fixed; z-index: 6; flex: none; margin: 0; }
 .tab-gather-count { margin-left: auto; }
 /* A whole group in a drop slot: its colour and name. */
 .tab-drop-ghost.group .tab-inner { gap: 7px; }

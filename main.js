@@ -3404,7 +3404,9 @@ function outsideGroups(at) {
 // a multi-selection or a group dragged along its own strip. `groupId`: they are that group and stay it
 // (and never land inside another group); otherwise they join a group only if dropped inside one. One
 // update, and nothing is learned for automatic grouping (tabs were moved, not regrouped).
-function moveBlock(ids, beforeId, groupId = null) {
+// `join` (from a drag in this strip): the group the drop slot showed them joining, or null for none; left out,
+// they join a group only if dropped between two of its tabs (or, all from one group, at its edge).
+function moveBlock(ids, beforeId, groupId = null, join = undefined) {
   const keep = groupId != null && tabGroups.groups.has(groupId) ? groupId : null;
   // Pinned tabs move as well, but only inside the pinned run (they stay first). The others move
   // as one block to the drop. Each run keeps the order the selection had in the strip, which is
@@ -3413,7 +3415,7 @@ function moveBlock(ids, beforeId, groupId = null) {
   if (!moving.length) return false;
   const pinnedMoving = moving.filter((t) => t.pinned);
   const looseMoving = moving.filter((t) => !t.pinned);
-  const own = looseMoving.length === 1 && pinnedMoving.length === 0 ? looseMoving[0].groupId : null; // a single tab dropped at the edge of its own group stays in it
+  const own = looseMoving.length && looseMoving.every((t) => t.groupId && t.groupId === looseMoving[0].groupId) ? looseMoving[0].groupId : null; // dropped at the edge of their own group, they stay in it
   for (const t of moving) tabs.splice(tabs.indexOf(t), 1);
   const pinnedCount = tabs.filter((t) => t.pinned).length;
   let at = beforeId == null ? tabs.length : tabs.findIndex((t) => t.id === beforeId);
@@ -3429,19 +3431,20 @@ function moveBlock(ids, beforeId, groupId = null) {
     if (keep) looseAt = outsideGroups(looseAt); // a group never lands inside another
     tabs.splice(looseAt, 0, ...looseMoving);
     const prev = tabs[looseAt - 1], next = tabs[looseAt + looseMoving.length];
-    const join = keep || (prev?.groupId && prev.groupId === next?.groupId ? prev.groupId : null) || (own && (prev?.groupId === own || next?.groupId === own) ? own : null);
-    for (const t of looseMoving) { t.groupId = join; t.userRemoved = !join; t.userMoved = true; }
+    const into = keep || (join !== undefined ? (join != null && tabGroups.groups.has(join) ? join : null)
+      : (prev?.groupId && prev.groupId === next?.groupId ? prev.groupId : null) || (own && (prev?.groupId === own || next?.groupId === own) ? own : null));
+    for (const t of looseMoving) { t.groupId = into; t.userRemoved = !into; t.userMoved = true; }
   }
   for (const t of pinnedMoving) t.userMoved = true;
   tabGroups.cleanup();
   sendTabs();
   return true;
 }
-ipcMain.on('tab:move-block', (event, ids, beforeId, groupId) => {
+ipcMain.on('tab:move-block', (event, ids, beforeId, groupId, join) => {
   const rec = recOfSender(event.sender);
   if (!rec || !Array.isArray(ids)) return;
   const list = ids.filter(Number.isInteger).slice(0, 1000);
-  withWindow(rec, () => moveBlock(list, Number.isInteger(beforeId) ? beforeId : null, Number.isInteger(groupId) ? groupId : null));
+  withWindow(rec, () => moveBlock(list, Number.isInteger(beforeId) ? beforeId : null, Number.isInteger(groupId) ? groupId : null, Number.isInteger(join) ? join : join === null ? null : undefined));
   event.sender.send('tab:dragdone'); // after the tabs update: the strip shows the moved tabs in their new places
 });
 function regroup(rec, ids, group) {

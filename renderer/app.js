@@ -190,14 +190,26 @@ function moveGroupDrag(e) {
     // nothing around it moves until the pointer does.
     const strip = $('tabs');
     const parts = [drag.el, ...drag.members.map((x) => strip.querySelector(`.tab[data-id="${x}"]`)).filter(Boolean)];
-    drag.slotWidth = Math.min(480, parts.reduce((w, el) => w + el.getBoundingClientRect().width, 0) + 4 * (parts.length - 1));
+    drag.slotWidth = parts.reduce((w, el) => w + el.getBoundingClientRect().width, 0) + 4 * (parts.length - 1); // its real width: nothing beside it moves
     const order = (lastTabState?.tabs || []).filter((t) => !t.pinned);
     const lastMember = order.map((t) => t.id).lastIndexOf(drag.members[drag.members.length - 1]);
     drag.slotBefore = order.slice(lastMember + 1).find((t) => !drag.members.includes(t.id))?.id ?? null;
     drag.slotShown = true;
+    drag.alongHome = drag.slotBefore;
     const group = (lastTabState?.groups || []).find((g) => g.id === drag.groupId);
-    showDropSlot({ beforeId: drag.slotBefore, width: drag.slotWidth, instant: true, tab: { title: group?.name || '', count: drag.members.length, group: group ? { name: group.name, color: group.color } : null } });
-    gatherTabs(drag.members, null, drag.el, false);
+    const lr = drag.el.getBoundingClientRect();
+    showDropSlot({ beforeId: drag.slotBefore, width: drag.slotWidth, instant: true, ghost: false, tab: { title: group?.name || '', count: drag.members.length, group: group ? { name: group.name, color: group.color } : null } });
+    gatherTabs(drag.members, null, null, false);
+    // The label (with its count) follows the pointer, as a tab does; its tabs are folded into it.
+    drag.el.style.left = `${lr.left}px`;
+    drag.el.style.top = `${lr.top}px`;
+    drag.el.style.width = `${lr.width}px`;
+    drag.el.classList.add('floating');
+    drag.labelLeft = lr.left;
+  }
+  if (drag.along) {
+    const sr = $('tabs').getBoundingClientRect();
+    drag.el.style.transform = `translate(${Math.max(sr.left - drag.labelLeft, Math.min(sr.right - drag.labelLeft - drag.el.offsetWidth, dx))}px, ${lift}px)`;
   }
   if (!drag.along) drag.el.style.transform = `translate(${Math.sign(dx) * Math.min(12, Math.abs(dx) * 0.3)}px, ${lift}px)`;
   drag.el.classList.toggle('tearing', !drag.along && Math.abs(dy) > 14);
@@ -209,7 +221,7 @@ function moveGroupDrag(e) {
         drag.slotShown = true;
         drag.slotBefore = beforeId;
         const group = (lastTabState?.groups || []).find((g) => g.id === drag.groupId);
-        showDropSlot({ beforeId, width: drag.slotWidth, tab: { title: group?.name || '', count: drag.members.length, group: group ? { name: group.name, color: group.color } : null } });
+        showDropSlot({ beforeId, width: drag.slotWidth, ghost: false, tab: { title: group?.name || '', count: drag.members.length, group: group ? { name: group.name, color: group.color } : null } });
       }
     }
     return;
@@ -407,7 +419,7 @@ function showDropSlot(at) {
     return;
   }
   clearLandingSlot();
-  if (dropSlot && dropSlot.beforeId === at.beforeId && dropSlot.el.isConnected) return;
+  if (dropSlot && dropSlot.beforeId === at.beforeId && dropSlot.outside === Boolean(at.outside) && dropSlot.el.isConnected) return;
   let before = at.beforeId == null ? null : strip.querySelector(`.tab[data-id="${at.beforeId}"]`);
   // The tab it lands before isn't drawn (it is inside a collapsed group): the slot goes before that group's label.
   if (!before && at.beforeId != null) {
@@ -422,7 +434,9 @@ function showDropSlot(at) {
   let label = ref?.classList.contains('tab') ? ref.previousElementSibling : null;
   while (label?.matches('.handed, .held, .gathered, .floating, .tab-drop-slot')) label = label.previousElementSibling;
   const refGroup = (lastTabState?.tabs || []).find((t) => t.id === at.beforeId)?.groupId;
-  if (label?.classList.contains('group-label') && refGroup === Number(label.dataset.group) && at.tab?.ownGroup !== refGroup) ref = label;
+  // A drag in this strip says which side of the label it means (`outside`); a tab from elsewhere lands outside.
+  const beforeLabel = 'outside' in at ? Boolean(at.outside) : at.tab?.ownGroup !== refGroup;
+  if (label?.classList.contains('group-label') && refGroup === Number(label.dataset.group) && beforeLabel) ref = label;
   if (dropSlot) closeSlot(dropSlot.el);
   const el = document.createElement('div');
   const pinned = Boolean(at.tab?.pinned);
@@ -443,7 +457,7 @@ function showDropSlot(at) {
   if (pinned && (!ref || !ref.classList.contains('pinned'))) strip.insertBefore(el, pinnedEnd ? pinnedEnd.nextSibling : firstLoose || null);
   else if (!pinned && ref && pinnedEnd && ref.classList.contains('pinned')) strip.insertBefore(el, pinnedEnd.nextSibling);
   else strip.insertBefore(el, ref);
-  dropSlot = { el, beforeId: at.beforeId };
+  dropSlot = { el, beforeId: at.beforeId, outside: Boolean(at.outside) };
   // Inside a group (between two of its tabs, or right after its label): the slot takes the group's colour,
   // since dropping there joins it.
   const groupOf = (n, dir) => {
@@ -455,6 +469,8 @@ function showDropSlot(at) {
   const inside = !at.tab?.group && groupOf(el.previousElementSibling, 'previousElementSibling');
   const color = inside && inside === groupOf(el.nextElementSibling, 'nextElementSibling') && (lastTabState?.groups || []).find((g) => g.id === inside)?.color;
   if (color) { el.classList.add('in-group'); el.style.setProperty('--group-color', `var(--g-${String(color).replace(/[^a-z]/g, '')})`); }
+  // A group moved along its own strip: no ghost (its label follows the pointer), the slot in the group's colour.
+  if (at.ghost === false && at.tab?.group) { el.classList.add('in-group'); el.style.setProperty('--group-color', `var(--g-${String(at.tab.group.color || 'gray').replace(/[^a-z]/g, '')})`); }
   // `instant`: opened already at full width, in the same frame the dragged thing leaves the flow, so the
   // tabs around it don't close up and then spring back open.
   if (motionReduced() || at.instant) {
@@ -532,28 +548,50 @@ function stripTargets(skip = [], pinned = false) {
     const r = el.getBoundingClientRect();
     if (r.width < 1) continue;
     let id;
+    let outside = false;
     if (el.classList.contains('group-label')) {
       if (pinned) continue;
       id = tabsNow.find((t) => t.groupId === Number(el.dataset.group) && !skip.includes(t.id))?.id;
+      outside = true; // before the label: before the group, outside it
     } else {
       id = Number(el.dataset.id);
       if (skip.includes(id) || el.classList.contains('pinned') !== Boolean(pinned)) continue;
     }
-    if (id != null) out.push({ id, mid: r.left + r.width / 2 });
+    if (id != null) out.push({ id, mid: r.left + r.width / 2, outside });
   }
   return out;
 }
 // For main.js's hit-testing while another window's tab is dragged over this strip (stripGeometry).
 function stripDropTargets() { return stripTargets([], false).concat(stripTargets([], true)).sort((a, b) => a.mid - b.mid); }
+// { id, outside } (outside: before that tab's group label, out of the group), or null for the end.
 function tabDropBefore(x, skip, pinned) {
-  return stripTargets(skip, pinned).find((t) => x < t.mid)?.id ?? null;
+  return stripTargets(skip, pinned).find((t) => x < t.mid) || null;
 }
 // The tab after `id` among the ones that can be dropped before (same pinned kind, not being dragged): where
 // its slot opens when it first lifts out, so the strip doesn't change at all in that frame.
-function nextTarget(id, skip, pinned) {
-  const order = (lastTabState?.tabs || []).filter((t) => Boolean(t.pinned) === Boolean(pinned) && (t.id === id || !skip.includes(t.id)));
-  const i = order.findIndex((t) => t.id === id);
-  return i === -1 ? null : order[i + 1]?.id ?? null;
+// The drop target right after `el` as the strip shows it ({ id, outside }, id null for the end): its own place,
+// taken from what is drawn, so a tab alone on show in a collapsed group opens its slot exactly where it is.
+function nextTarget(el, skip) {
+  let n = el.nextElementSibling;
+  while (n && (n.matches('.floating, .gathered, .handed, .held, .tab-drop-slot, .tab-ghost') || (n.classList.contains('tab') && skip.includes(Number(n.dataset.id))))) n = n.nextElementSibling;
+  if (!n) return { id: null, outside: false };
+  if (n.classList.contains('group-label')) {
+    const id = (lastTabState?.tabs || []).find((t) => t.groupId === Number(n.dataset.group) && !skip.includes(t.id))?.id ?? null;
+    return { id, outside: id != null };
+  }
+  return { id: Number(n.dataset.id), outside: false };
+}
+const targetKey = (t) => `${t?.id ?? 'end'}${t?.outside ? '<' : ''}`;
+// The group a slot sits inside, as drawn (between two of its tabs, or right after its label), or null.
+function slotGroup(el) {
+  const groupOf = (n, dir) => {
+    while (n && n.matches('.handed, .held, .gathered, .floating, .tab-drop-slot')) n = n[dir];
+    if (!n) return null;
+    if (n.classList.contains('group-label')) return dir === 'previousElementSibling' ? Number(n.dataset.group) : null;
+    return (lastTabState?.tabs || []).find((t) => t.id === Number(n.dataset.id))?.groupId || null;
+  };
+  const g = groupOf(el.previousElementSibling, 'previousElementSibling');
+  return g && g === groupOf(el.nextElementSibling, 'nextElementSibling') ? g : null;
 }
 // moveTab's index: where `id` goes in the full order once it has been taken out, so it lands
 // before `beforeId` (or at the end).
@@ -624,9 +662,12 @@ function moveTabDrag(e) {
   // Held within the strip's visible edges; near an edge an overflowing strip scrolls to reach more tabs.
   const bar = $('tabs');
   const br = bar.getBoundingClientRect();
-  if (bar.scrollWidth > bar.clientWidth + 1) {
-    if (e.clientX < br.left + 28) bar.scrollLeft -= 14;
-    else if (e.clientX > br.right - 28) bar.scrollLeft += 14;
+  // Held near an edge of an overflowing strip, it keeps scrolling (not only while the mouse moves).
+  drag.edge = bar.scrollWidth > bar.clientWidth + 1 ? (e.clientX < br.left + 28 ? -1 : e.clientX > br.right - 28 ? 1 : 0) : 0;
+  if (drag.edge && !drag.edgeTimer) {
+    const d = drag;
+    const tick = () => { if (drag !== d || !d.edge) { d.edgeTimer = 0; return; } bar.scrollLeft += 9 * d.edge; d.edgeTimer = requestAnimationFrame(tick); };
+    d.edgeTimer = requestAnimationFrame(tick);
   }
   const dx = Math.max(br.left - rects[from].left, Math.min(br.right - rects[from].right, drag.dx));
   // Pulled up or down, the tab follows with resistance, and lifts off as it nears the point where it comes out.
@@ -643,34 +684,46 @@ function moveTabDrag(e) {
   if (!drag.floated) {
     const r = rects[from];
     // The slot opens at the tab's own place, already full width, in the same frame the tab lifts out.
+    const home = nextTarget(drag.el, skip);
     drag.slotShown = true;
-    drag.slotBefore = nextTarget(drag.id, skip, pinned);
-    showDropSlot({ beforeId: drag.slotBefore, ghost: false, width: r.width, instant: true, tab: { pinned } });
+    drag.slotBefore = home.id;
+    drag.slotKey = drag.homeKey = targetKey(home);
+    // A selection spread over the strip is gathered by any drop, even at the dragged tab's own place.
+    if (drag.gathered) {
+      const order = (lastTabState?.tabs || []).map((t) => t.id);
+      const at = drag.gathered.map((x) => order.indexOf(x));
+      if (at.some((k, i) => i && k !== at[i - 1] + 1)) drag.homeKey = null;
+    }
+    const own = (lastTabState?.tabs || []).find((t) => t.id === drag.id);
+    showDropSlot({ beforeId: home.id, outside: home.outside, ghost: false, width: r.width, instant: true, tab: { pinned, ownGroup: own?.groupId || null } });
     drag.el.style.left = `${r.left}px`;
     drag.el.style.top = `${r.top}px`;
     drag.el.style.width = `${r.width}px`;
     drag.el.classList.add('floating');
     drag.floated = true;
   }
-  const beforeId = tabDropBefore(e.clientX, skip, pinned);
-  if (!drag.slotShown || drag.slotBefore !== beforeId) {
+  const hit = tabDropBefore(e.clientX, skip, pinned);
+  if (!drag.slotShown || drag.slotKey !== targetKey(hit)) {
     drag.slotShown = true;
-    drag.slotBefore = beforeId;
+    drag.slotBefore = hit?.id ?? null;
+    drag.slotKey = targetKey(hit);
     const tab = (lastTabState?.tabs || []).find((t) => t.id === drag.id);
-    showDropSlot({ beforeId, ghost: false, width: drag.rects[drag.from].width, tab: tab ? { title: tab.title, favicons: tab.favicons, page: tab.page, pinned: Boolean(tab.pinned), ownGroup: drag.gathered ? null : tab.groupId || null } : { pinned } });
+    showDropSlot({ beforeId: drag.slotBefore, outside: Boolean(hit?.outside), ghost: false, width: drag.rects[drag.from].width, tab: tab ? { pinned: Boolean(tab.pinned), ownGroup: tab.groupId || null } : { pinned } });
   }
 }
 
 function endTabDrag(e) {
   if (!drag) return;
-  const { moved, from, to, id, ids, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single } = drag;
+  const { moved, from, to, id, ids, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
   // Escape, a cancelled pointer or a lost one: nothing moves.
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);
   const toIndex = slotShown ? indexBefore(slotBefore ?? null, id) : from;
   // A single tab released over a different slot lands there. The same slot it already occupied is
   // not a move (nothing is marked as placed by hand).
-  const slotMove = moved && !handed && !escaped && slotShown && !gathered && !along && fromIndex !== -1 && fromIndex !== toIndex;
+  // Released at its own place (the slot never left it): nothing moves, nothing is marked as placed by hand.
+  const sameSpot = along ? (slotBefore ?? null) === (alongHome ?? null) : Boolean(homeKey) && slotKey === homeKey;
+  const slotMove = moved && !handed && !escaped && slotShown && !gathered && !along && fromIndex !== -1 && !sameSpot;
   const floated = drag.floated;
   // Anything lifted out of the flow settles by FLIP: into the slot (a move), or back home (Escape, or let
   // go where it started), from where it was on screen.
@@ -709,7 +762,7 @@ function endTabDrag(e) {
       if (escaped) window.browser.dragTabCancel?.(); else window.browser.dragTabEnd?.();
     } else if (escaped) {
       // Escape before the tab left the strip: it stays where it was.
-    } else if (along) {
+    } else if (along && !sameSpot) {
       // A group dragged along its strip: its label and tabs take the slot's place, and glide there.
       const strip = $('tabs');
       const at = dropSlot?.el?.isConnected ? dropSlot.el : null;
@@ -720,26 +773,30 @@ function endTabDrag(e) {
       settled = true;
       expectMove();
       window.browser.moveTabs?.(members, slotBefore ?? null, groupId);
-    } else if (gathered && floated) {
-      // A multi-selection: the tabs land together in the slot, gliding from where they were on screen.
+    } else if (gathered && floated && !sameSpot) {
+      // A multi-selection: the tabs land together in the slot, gliding from where they were on screen, in
+      // the group the slot showed (its tint), or out of any.
       const strip = $('tabs');
       const at = dropSlot?.el?.isConnected ? dropSlot.el : null;
+      const join = at ? slotGroup(at) : null;
       for (const x of gathered) { const el = strip.querySelector(`.tab[data-id="${x}"]`); if (el) { el.classList.remove('gathered'); strip.insertBefore(el, at); } }
       at?.remove();
       dropSlot = null;
       settleFrom(before);
       settled = true;
       expectMove();
-      window.browser.moveTabs?.(gathered, slotBefore ?? null, null);
+      window.browser.moveTabs?.(gathered, slotBefore ?? null, null, join);
     } else if (slotMove) {
       // The tab drops into the slot from where it floated, staying visible; main then confirms the order.
       const at = dropSlot?.el?.isConnected ? dropSlot.el : null;
+      const join = at ? slotGroup(at) : null; // exactly the group the slot showed it joining (or none)
       if (at) { at.parentNode.insertBefore(dragEl, at); at.remove(); }
       dropSlot = null;
       settleFrom(before);
       settled = true;
       expectMove();
-      window.browser.moveTab?.(id, toIndex, true);
+      if (dragEl.classList.contains('pinned')) window.browser.moveTab?.(id, toIndex, true);
+      else window.browser.moveTabs?.([id], slotBefore ?? null, null, join);
     }
   }
   // Escape, or let go where it started: the slot goes and the tab glides back home (it never left its
