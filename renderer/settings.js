@@ -461,7 +461,7 @@ async function buildAi(card) {
         if (r) flash(note, r.ok ? importSummary(r) : tr('settings.import.failed', 'Couldn’t import from {browser}: {error}', { browser: b.label, error: r.error }), r.ok ? 'ok' : 'err');
         else note.textContent = '';
       },
-    })) : [h('span', { class: 'note', text: 'No other browsers found.' })]), found.length ? note : '');
+    })) : [h('span', { class: 'note', text: tr('welcome.import.none', 'No other browsers found on this computer.') })]), found.length ? note : '');
   }).catch(() => {});
 
   // Default browser (features/setup.js): what the system says now, and a button that asks it.
@@ -475,7 +475,8 @@ async function buildAi(card) {
   defaultButton.onclick = async () => {
     const r = await S.ai.makeDefaultBrowser?.().catch(() => null);
     if (r?.opened === 'windows-settings') flash(defaultNote, tr(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual', 'In the Windows Settings window that opened, set Lumen as the default for HTTP and HTTPS links.'), '');
-    else renderDefault();
+    else if (r?.isDefault) renderDefault();
+    else flash(defaultNote, r ? tr('welcome.default.notTaken', 'Your system didn’t make Lumen the default. Choose it in your system’s default-apps settings.') : tr('welcome.default.failed', 'Lumen couldn’t ask your system to make it the default. Try again, or choose it in your system’s default-apps settings.'), 'err');
   };
   window.addEventListener('focus', renderDefault); // (back from the system's settings)
   const defaultRow = row(tr('settings.default.title', 'Default browser'), tr('settings.default.desc', 'Links you open in other apps (mail, chat, documents) open in your default browser.'), defaultButton);

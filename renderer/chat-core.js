@@ -121,7 +121,8 @@ if (welcome) {
     const r = await window.assistant.setup.makeDefault().catch(() => null);
     const note = $('welcome-default-note');
     if (r?.opened === 'windows-settings') note.textContent = t(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual');
-    else showDefault(r?.isDefault);
+    else if (r?.isDefault) showDefault(true);
+    else note.textContent = t(r ? 'welcome.default.notTaken' : 'welcome.default.failed'); // (never a click that seems to do nothing)
   };
   // Back from the system's Default apps page: did it take?
   window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then(showDefault).catch(() => {}); });
@@ -142,7 +143,8 @@ optional('setup-claude-code').onclick = async () => {
   // Signed out a moment ago, or just installed? Ask again first (no restart needed).
   const status = await window.lumenExtras?.claudeCodeStatus?.(true).catch(() => null);
   if (status && !status.installed) { setupError(t('setup.claudeCode.notFound')); return; }
-  if (status?.signedIn !== false && await window.assistant.setModel('claudecode:default')) await loadModels();
+  if (status?.signedIn === false) { setupError(t('setup.claudeCode.signedOut')); return; }
+  if (await window.assistant.setModel('claudecode:default')) await loadModels();
   refreshSetup();
 };
 optional('setup-grok').onclick = async () => {

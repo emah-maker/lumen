@@ -1071,7 +1071,7 @@
   "welcome.lead": "A browser with an AI that reads and works in your tabs, and asks before it acts. Three quick steps: do any of them now, or later in Settings.",
   "welcome.ai": "Connect an AI",
   "welcome.ai.detail": "Pick one way in. You can add others later in Settings.",
-  "welcome.ai.ready": "Connected: {name}.",
+  "welcome.ai.ready": "Ready: {name}.",
   "welcome.import": "Bring your bookmarks and history",
   "welcome.import.detail": "From another browser on this computer. Passwords and cookies stay there.",
   "welcome.import.none": "No other browsers found on this computer.",
@@ -1103,6 +1103,8 @@
   "chat.editFailed": "That message couldn’t be changed: the chat moved on. Nothing was sent.",
   "setup.grok": "Use your own Grok Build",
   "setup.grok.detail": "Found on this computer: xAI’s agent, with your own Grok sign-in.",
-  "setup.grok.signedOut": "Not signed in yet: open a terminal, run grok and sign in. Then click here.",
-  "setup.grok.notFound": "Grok Build isn’t found any more. Install it again, then click here."
+  "setup.grok.signedOut": "Not signed in yet: open a terminal, run grok, and sign in with your xAI account when it asks. Then click here.",
+  "setup.grok.notFound": "Grok Build isn’t found any more. Install it again, then click here.",
+  "welcome.default.notTaken": "Your system didn’t make Lumen the default. Choose it in your system’s default-apps settings.",
+  "welcome.default.failed": "Lumen couldn’t ask your system to make it the default. Try again, or choose it in your system’s default-apps settings."
 }
