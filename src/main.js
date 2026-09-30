@@ -2917,6 +2917,10 @@ if (TEST) global.__managers = { managers, siteActivity, history: () => history, 
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
 // brand list, headers and window.chrome all come from browser/chrome-identity.js so they agree.
 const CHROME_IDENTITY = require('./browser/chrome-identity');
+// Google's sign-in hosts refuse a Chrome-shaped Electron whatever it reports; they get a Firefox identity instead
+// (browser/google-auth-identity.js): Firefox's User-Agent, no client hints, Firefox's navigator, no window.chrome.
+const GOOGLE_AUTH = require('./browser/google-auth-identity');
+const FIREFOX_PROFILE = GOOGLE_AUTH.firefoxProfile(process.platform);
 const UA_METADATA = CHROME_IDENTITY.uaMetadata({
   chromeVersion: process.versions.chrome, platform: process.platform, arch: process.arch,
   release: require('os').release(), systemVersion: process.platform === 'darwin' ? process.getSystemVersion() : '',
@@ -3019,24 +3023,43 @@ function applyChromeIdentity(wc) {
   }
   identified.add(wc);
   const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
+  const firefox = { userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform }; // no userAgentMetadata: Firefox has no client hints
   const basic = { userAgent: override.userAgent, userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }; // (if this DevTools rejects the newest metadata fields, the brands still apply)
   const send = (method, params, sessionId) => wc.debugger.sendCommand(method, params, sessionId);
   // Workers have no Emulation domain; Network sets the same thing there.
-  const identify = (sessionId) => send('Emulation.setUserAgentOverride', override, sessionId)
-    .catch(() => send('Emulation.setUserAgentOverride', basic, sessionId))
-    .catch(() => send('Network.setUserAgentOverride', override, sessionId))
-    .catch(() => send('Network.setUserAgentOverride', basic, sessionId)).catch(() => {});
+  // asFirefox: the target is a Google sign-in page (see GOOGLE_AUTH): nothing of Chrome's brands may show there.
+  const identify = (sessionId, asFirefox = false) => (asFirefox
+    ? send('Emulation.setUserAgentOverride', firefox, sessionId).catch(() => send('Network.setUserAgentOverride', firefox, sessionId)).catch(() => {})
+    : send('Emulation.setUserAgentOverride', override, sessionId)
+      .catch(() => send('Emulation.setUserAgentOverride', basic, sessionId))
+      .catch(() => send('Network.setUserAgentOverride', override, sessionId))
+      .catch(() => send('Network.setUserAgentOverride', basic, sessionId)).catch(() => {}));
   // window.chrome and navigator.webdriver, at document start in every frame (browser/chrome-identity.js); not in workers.
-  const script = (sessionId) => send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {});
+  // (Both scripts name the hosts they act on: the Chrome one skips Google's sign-in hosts, the Firefox one runs only there.)
+  const script = (sessionId) => Promise.all([
+    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
+    send('Page.addScriptToEvaluateOnNewDocument', { source: GOOGLE_AUTH.firefoxScript(FIREFOX_PROFILE), runImmediately: true }, sessionId).catch(() => {}),
+  ]);
   const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
     const frame = targetInfo.type === 'iframe';
-    Promise.all([identify(sessionId), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
+    Promise.all([identify(sessionId, frame && GOOGLE_AUTH.isAuthUrl(targetInfo.url)), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
       .finally(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
   });
-  identify();
+  // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
+  // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
+  // settings-backend.js and the navigator by the script above, so neither waits on this.)
+  let asFirefox = false;
+  const follow = (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    const want = GOOGLE_AUTH.isAuthUrl(details.url);
+    if (want !== asFirefox) { asFirefox = want; identify(undefined, want); }
+  };
+  wc.on('did-start-navigation', follow);
+  wc.on('did-redirect-navigation', follow);
+  identify(undefined, GOOGLE_AUTH.isAuthUrl(wc.getURL()) ? (asFirefox = true) : false);
   script();
   autoAttach();
 }

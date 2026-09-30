@@ -398,6 +398,8 @@ function create(deps) {
     if (hot?.ref !== ref) hot = { ref, value: prefs() };
     return hot.value;
   };
+  const googleAuth = require('../browser/google-auth-identity'); // Google sign-in is Firefox's identity, not Chrome's
+  const firefoxProfile = googleAuth.firefoxProfile(process.platform);
   function setupHeaders(target = ses()) {
     target.webRequest.onBeforeSendHeaders((details, callback) => {
       const p = hotPrefs();
@@ -416,6 +418,8 @@ function create(deps) {
       if (p.blockThirdPartyCookies && isThirdParty(details)) {
         for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie') delete headers[name];
       }
+      // Google's sign-in hosts see Firefox (Firefox's User-Agent, no client hints), last so nothing above adds one back.
+      if (googleAuth.isAuthUrl(details.url)) headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile);
       callback({ requestHeaders: headers });
     });
   }
