@@ -1368,6 +1368,16 @@ function layout() {
     }
   }
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
+  raiseOverlays();
+}
+// Layering (bottom to top): the UI view, tab views, suggestions, downloads panel, dialogs. A tab view added later
+// (a new tab, a woken one) lands above an overlay that is showing and would hide it; put those back on top, in order.
+function raiseOverlays() {
+  if (!win || win.isDestroyed()) return;
+  const order = [suggestView, downloadsView].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
+  const topTab = () => Math.max(-1, ...tabs.filter((t) => t.view).map((t) => win.contentView.children.indexOf(t.view)));
+  for (const v of order) if (win.contentView.children.indexOf(v) < topTab()) win.contentView.addChildView(v);
+  dialogs.raise();
 }
 // Turn the tab's full-width layout override on, change it or off (only when it changed).
 function setOverlay(tab, params) {
@@ -2181,11 +2191,14 @@ async function organizeTabs() {
   if (organizing) { organizeAbort?.abort(); return; }
   organizing = true;
   organizeAbort = new AbortController();
-  ui()?.send('tabs:organizing', true);
+  const rec = curRec;
+  const back = (fn) => withWindow(rec, fn);
+  const inWin = (groups) => Object.fromEntries(['organizeByTopic', 'organizeSeq', 'organizeView', 'applyRefinement'].map((k) => [k, (...a) => back(() => groups[k](...a))]));
+  ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
-    if (tabGroups.candidates().length < 2) throw new Error(t('organize.tooFew'));
+    if (tabGroups.candidates().length < 2) throw tooFewMessage();
     const stats = await organizeAi.organizeProgressive({
-      tabGroups,
+      tabGroups: inWin(tabGroups), // the model's answer arrives later: it must land in THIS window's tabs, not whichever is current by then
       cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
       signal: organizeAbort.signal,
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
@@ -2196,25 +2209,32 @@ async function organizeTabs() {
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
       onPhase: (name) => {
-        if (name === 'local') { sendTabs(); ui()?.send('tabs:organizing', 'refine'); } // the groups are there; the model may still refine them
-        else if (name === 'refined') sendTabs();
+        if (name === 'local') back(() => { sendTabs(); ui()?.send('tabs:organizing', 'refine'); }); // the groups are there; the model may still refine them
+        else if (name === 'refined') back(sendTabs);
       },
     });
-    sendTabs();
+    back(sendTabs);
     if (!stats.groups && !stats.created) {
-      organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // a note that closes itself, not a modal: nothing needs an answer
+      back(() => organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`, { undo: tabGroups.canUndo() })); // a note that closes itself, not a modal: nothing needs an answer (Undo if old automatic groups were dissolved)
     } else if (stats.reason !== 'cancelled') {
       const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : /timeout/.test(stats.failed) ? t('organize.slow') : t('organize.localOnly');
       const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
-      organizeNote(`${how}.${what}`, { undo: true });
+      back(() => organizeNote(`${how}.${what}`, { undo: true }));
     }
   } catch (err) {
-    organizeNote(`${t('organize.failed')}: ${err.message}`);
+    back(() => organizeNote(err.tooFew ? err.message : `${t('organize.failed')}: ${err.message}`)); // "nothing to organize" isn't a failure
   } finally {
     organizing = false;
     organizeAbort = null;
-    ui()?.send('tabs:organizing', false);
+    back(() => ui()?.send('tabs:organizing', false));
   }
+}
+// Why Organize has nothing to work on: no pages at all, or only pinned tabs / tabs in groups the user made.
+function tooFewMessage() {
+  const c = tabGroups.organizeCounts();
+  const err = new Error(c.web >= 2 ? t(c.pinned ? 'organize.onlyPinnedOrGrouped' : 'organize.onlyGrouped') : t('organize.tooFew'));
+  err.tooFew = true;
+  return err;
 }
 
 // ---- topic groups: local clusters (tab-groups.js), or named by the cheapest model of the chat's provider
@@ -2265,6 +2285,7 @@ function scheduleAiTopics() {
 // "Organize Tabs by Topic" (tab menu, ⋯ → Tab Groups): regroups loose tabs and automatic groups.
 async function organizeByTopic() {
   let proposal = null;
+  if (tabGroups.candidates().length < 2) { organizeNote(tooFewMessage().message); return 0; } // say why, rather than do nothing
   if (readSettings().topicAi === true) {
     proposal = await proposeGroups(cheapTopicModel(), topicList(tabGroups.candidates())).catch(() => null); // falls back to local
   }

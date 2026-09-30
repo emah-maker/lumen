@@ -8,17 +8,16 @@
 #chat-history.active { color: var(--accent); background: var(--accent-soft); }
 
 .chat-list {
-  position: absolute; top: 46px; right: 0; bottom: 0; z-index: 3;
+  position: absolute; top: 46px; right: 0; bottom: 0; z-index: var(--z-panel);
   display: flex; flex-direction: column;
   background: var(--bg); border-top: 1px solid var(--hairline);
   animation: chat-list-in var(--t-base) var(--ease-out);
 }
 .chat-list[hidden] { display: none; }
-/* The header is its own stacking layer (z-index 2), so an open model menu inside it would paint under
-   this list (z-index 3): while a menu is open the header goes above the list. */
-.sidebar-head:has(.picker-menu:not([hidden])) { z-index: 4; }
+/* The header sits above the panels (--z-head > --z-panel, styles.css), so its More menu, auto-allow tip and model menu
+   always cover the list; no per-menu z-index juggling. */
 /* No transitions on the header: under Reduce motion / Performance mode every transition is squashed to 0.01ms
-   but still runs, and a running z-index transition kept the header at 2 for a frame (menu under the list). */
+   but still runs, and a running z-index transition could keep the header under a panel for a frame. */
 .sidebar-head { transition: none; }
 @keyframes chat-list-in { from { opacity: 0; transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) { .chat-list { animation: none; } }

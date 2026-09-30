@@ -57,6 +57,13 @@ function createDialogs(deps) {
     if (overlay) overlay.setVisible(false);
   }
 
+  // A tab view added after the overlay sits above it (new tab while a dialog shows): back on top.
+  function raise() {
+    if (!overlay || overlay.webContents.isDestroyed() || !overlay.getVisible() || !host || host.isDestroyed()) return;
+    const kids = host.contentView.children;
+    if (kids[kids.length - 1] !== overlay) host.contentView.addChildView(overlay); // (layout() runs per frame while the sidebar animates)
+  }
+
   // A dialog tied to a tab (`owner`) is cancelled the moment that tab navigates away or is closed,
   // whether it is on screen yet or still waiting in the queue.
   function watchOwner(item) {
@@ -272,6 +279,7 @@ function createDialogs(deps) {
     showNotes,
     currentKind: () => showing?.kind ?? null, // for tests
     layout,
+    raise,
     refresh,
     pendingFor,
     currentId: () => showing?.payload.id ?? null, // for tests

@@ -13,7 +13,7 @@
 #toggle-sidebar.has-task-attention { position: relative; }
 #toggle-sidebar.has-task-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 2px var(--bg); }
 
-.task-panel { z-index: 4; }
+.task-panel { z-index: var(--z-panel-over); } /* over the chat list if both were ever open */
 .task-head { gap: 4px; }
 .task-head h2 { flex: 1; min-width: 0; margin: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-note { margin: 0 20px 6px; font-size: 11px; color: var(--muted); }
@@ -74,7 +74,7 @@
 .task-field .task-minutes { flex: none; width: 64px; }
 
 .task-create {
-  position: absolute; inset: 46px 0 0; z-index: 6; display: flex; align-items: flex-start; justify-content: center; padding: 12px 10px;
+  position: absolute; inset: 46px 0 0; z-index: var(--z-modal); display: flex; align-items: flex-start; justify-content: center; padding: 12px 10px;
   background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(6px); overflow-y: auto;
 }
 .task-create-card {
@@ -88,7 +88,7 @@
 /* The sidebar gives its children a fixed width (styles.css), so the banner names its own. */
 .sidebar > .task-toast { width: calc(var(--sidebar-width) - 25px); }
 .task-toast {
-  position: absolute; top: 50px; right: 12px; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px;
+  position: absolute; top: 50px; right: 12px; z-index: var(--z-toast); display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px;
   border-radius: 10px; background: var(--surface-raised); font-size: 12px; box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 10px 28px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
   animation: chat-list-in var(--t-base) var(--ease-out);
 }

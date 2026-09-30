@@ -1148,6 +1148,16 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // dragged into place or put into a group themselves. Pinned tabs never.
   const movable = (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
   const loose = () => getTabs().filter((t) => !t.groupId && movable(t));
+  // What an explicit Organize regroups: every loose web tab (a hand-drag, a restored session or a pin toggle only
+  // stop AUTOMATIC grouping, not a request to organize) and tabs in automatic groups the user didn't put them in.
+  // Never pinned tabs, closing tabs, or tabs in a group the user made or named.
+  const organizable = (t) => !pinned(t) && !t.closing && isWeb(urlOf(t))
+    && (!t.groupId || (Boolean(groups.get(t.groupId)?.auto) && !groups.get(t.groupId).userNamed && !t.userMoved && !t.userPlaced));
+  // Why there may be nothing to organize: { web, pinned, kept } (web tabs overall, pinned ones, ones in the user's own groups).
+  const organizeCounts = () => {
+    const all = getTabs().filter((t) => !t.closing && isWeb(urlOf(t)));
+    return { web: all.length, pinned: all.filter(pinned).length, kept: all.filter((t) => !pinned(t) && !organizable(t)).length };
+  };
 
   // By topic, continuously: each tab whose title, address or page text changed (or that has no group)
   // is scored against every automatic group - topic groups and by-site groups alike - and joins, or
@@ -1225,7 +1235,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
       seq: ++undoSeq,
       order: getTabs().map((t) => t.id),
       tabs: new Map(getTabs().map((t) => [t.id, t.groupId || null])),
-      flags: new Map(getTabs().map((t) => [t.id, { userRemoved: Boolean(t.userRemoved), userPlaced: Boolean(t.userPlaced), autoMoves: t.autoMoves || 0 }])),
+      flags: new Map(getTabs().map((t) => [t.id, { userRemoved: Boolean(t.userRemoved), userPlaced: Boolean(t.userPlaced), userMoved: Boolean(t.userMoved), autoMoves: t.autoMoves || 0 }])),
       groups: snapshot(),
     };
     autoUndo = null; // this step includes everything the automatic ones did
@@ -1240,7 +1250,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     saveUndo();
     // An explicit Organize is a request to regroup: userRemoved (set on every loose tab of a restored session, or by a
     // hand-ungroup) must not hide tabs from it. saveUndo() just kept the flags, so Undo brings them back.
-    for (const t of getTabs()) t.userRemoved = false;
+    for (const t of getTabs()) { if (!t.groupId && organizable(t)) { t.userMoved = false; t.userPlaced = false; } t.userRemoved = false; } // loose tabs dragged by hand count too (Undo restores the marks)
     const prior = [...groups.values()].filter((g) => g.auto).map((g) => ({ ...g, ids: new Set(members(g.id).map((t) => t.id)) }));
     for (const g of prior) ungroupAll(g.id);
     for (const t of getTabs()) { t.autoMoves = 0; t.autoKey = null; }
@@ -1455,7 +1465,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   return {
     groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, organizeLoose, mergeGroups, entryFor: (id) => { const t = tabById(id); return t ? entry(t) : null; }, groupEntries: (id) => members(id).map(entry), organizeView, applyRefinement, organizeSeq: () => (undoState ? undoState.seq : null), undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
-    candidates: () => getTabs().filter((t) => (!t.groupId || groups.get(t.groupId)?.auto) && !pinned(t) && !t.userMoved && !t.userPlaced && isWeb(urlOf(t))).map(entry), arrange, cleanup, state, snapshot, restore, members,
+    candidates: () => getTabs().filter(organizable).map(entry), organizeCounts, arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,
   };
 }
