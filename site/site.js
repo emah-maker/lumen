@@ -34,8 +34,18 @@
   try {
     const res = await fetch('https://api.github.com/repos/emah-maker/lumen/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
     if (!res.ok) return; // rate-limited or offline: the button still links to the latest release
-    const tag = (await res.json()).tag_name;
+    const rel = await res.json();
+    const tag = rel.tag_name;
     if (typeof tag === 'string' && /^v?\d+\.\d+\.\d+$/.test(tag)) slot.textContent = tag;
+    // One obvious download: the file for this computer (Apple silicon assumed on a Mac; the Intel
+    // dmg is linked next to the button). Anything unexpected keeps the releases page link.
+    const os = /Mac/i.test(navigator.platform) ? 'mac' : /Win/i.test(navigator.platform) ? 'win' : '';
+    const find = (re) => (rel.assets || []).find((x) => re.test(x.name) && /^https:\/\/github\.com\//.test(x.browser_download_url || ''));
+    const pick = os === 'mac' ? find(/-mac-arm64\.dmg$/) : os === 'win' ? find(/-Setup-.*\.exe$/) : null;
+    const btn = slot.closest('a');
+    if (pick && btn) btn.href = pick.browser_download_url;
+    const intel = find(/-mac-x64\.dmg$/);
+    if (os === 'mac' && intel && btn) btn.insertAdjacentHTML('afterend', `<a class="btn ghost" href="${intel.browser_download_url}">Intel Mac</a>`);
   } catch (err) {
     console.warn('latest release: not shown', err);
   }

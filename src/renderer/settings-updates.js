@@ -18,6 +18,8 @@ function updateAgo(ms) {
 // What the status line says and what the action button does, for one state.
 function updateView(u) {
   if (u.disabled) return { note: UPDATE_DISABLED[u.disabled] || 'Updates are off.', cls: '' };
+  // A Mac copy running from the disk image or a temporary location: one button moves it, then updates install themselves.
+  if (u.misplaced) return { note: `${u.misplaced === 'unwritable' ? 'Lumen is somewhere it can’t update itself.' : 'Lumen is running from the disk image or a temporary location, so it can’t update itself.'} Move it to Applications and updates will download and install on their own.${u.version ? ` (Lumen ${u.version} is available.)` : ''}`, cls: 'ok', action: 'Move to Applications' };
   switch (u.status) {
     case 'checking': return { note: 'Checking for updates…', cls: '' };
     case 'up-to-date': return { note: 'Lumen is up to date.', cls: 'ok' };
@@ -25,7 +27,7 @@ function updateView(u) {
     case 'downloaded': return { note: `Lumen ${u.version} is ready. Restart to update, or it installs when you quit. Your settings and tabs are kept.`, cls: 'ok', action: 'Restart to update' };
     case 'available':
       if (u.canSelfUpdate) return { note: `Lumen ${u.version} is available.`, cls: 'ok', action: 'Download' };
-      return { note: `Lumen ${u.version} is available. This copy can't replace itself where it is installed.${u.kind === 'mac' ? ' Open the downloaded disk image and drag Lumen to Applications.' : u.asset ? ' Unzip it over this copy.' : ''}`, cls: 'ok', action: u.asset ? `Download ${u.asset.name}` : 'Open releases page' };
+      return { note: `Lumen ${u.version} is available. This copy can't replace itself where it is installed.${u.kind === 'mac' ? ' Open the downloaded disk image and drag Lumen to Applications (Lumen needs an administrator to write there).' : u.asset ? ' Unzip it over this copy.' : ''}`, cls: 'ok', action: u.asset ? `Download ${u.asset.name}` : 'Open releases page' };
     case 'error': return u.version && u.canSelfUpdate
       ? { note: `Couldn’t update to Lumen ${u.version}: ${u.error || 'unknown error'}`, cls: 'err', action: 'Try again' }
       : { note: `Couldn’t check for updates: ${u.error || 'unknown error'}`, cls: 'err' };
@@ -45,7 +47,7 @@ async function buildUpdates(card) {
   r.dataset.search += ' update version check download';
   const auto = toggle('autoDownloadUpdates', 'Download updates automatically',
     u.canSelfUpdate ? 'New versions download in the background; Lumen asks you to restart when one is ready. Off: Lumen asks before downloading.'
-      : 'This copy can’t replace itself where it is installed (a portable exe, a folder that needs administrator rights, or Linux). It tells you when a new version is out and downloads it when you ask.');
+      : 'This copy can’t replace itself where it is installed (a portable exe, a folder that needs administrator rights, a Mac app outside Applications, or Linux). It tells you when a new version is out and downloads it when you ask.');
   auto.querySelector('input').disabled = !u.canSelfUpdate;
 
   function render() {

@@ -102,8 +102,10 @@
       "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Lumen",
@@ -192,6 +194,24 @@
     },
     "dmg": {
       "title": "Lumen",
+      "iconSize": 96,
+      "window": {
+        "width": 540,
+        "height": 360
+      },
+      "contents": [
+        {
+          "x": 140,
+          "y": 170,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 170,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     }
   }
