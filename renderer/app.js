@@ -186,7 +186,9 @@ function moveGroupDrag(e) {
   // drifted down first. (Requiring the vertical move to stay under 14px dropped the gesture: a
   // release inside the strip then did nothing, and continuing out tore the group off.) Tear-off
   // still wins once the pointer is actually outside the strip.
-  if (!drag.along && Math.abs(dx) > 12 && !draggedOut(e)) {
+  // The group is every tab of the window: the label drags the window itself right away, like an only tab.
+  const whole = drag.members.length >= (lastTabState?.tabs.length || 0);
+  if (!drag.along && !whole && Math.abs(dx) > 12 && !draggedOut(e)) {
     // Along the strip: the label and its tabs fold away and the slot shows the group where it would land
     // (the same picture as any tab dragged over a strip).
     drag.along = true;
@@ -219,7 +221,7 @@ function moveGroupDrag(e) {
   if (!drag.along) drag.el.style.transform = `translate(${Math.sign(dx) * Math.min(12, Math.abs(dx) * 0.3)}px, ${lift}px)`;
   drag.el.classList.toggle('tearing', !drag.along && Math.abs(dy) > 14);
   if (!drag.prepped && window.browser.dragTabPrep && nearEdge(e)) { drag.prepped = true; window.browser.dragTabPrep(drag.id); }
-  if (!draggedOut(e)) {
+  if (!draggedOut(e) && !whole) {
     if (drag.along) {
       drag.lastX = e.clientX;
       groupRetarget(e.clientX);
@@ -501,7 +503,17 @@ function showDropSlot(at) {
   trackIndicator(460);
   el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 }
-window.browser.onTabDropAt?.(showDropSlot);
+// A tab from another window held near an edge of this (overflowing) strip: it scrolls, as for a drag within it.
+let dropEdge = 0;
+let dropEdgeTimer = 0;
+window.browser.onTabDropAt?.((at) => {
+  dropEdge = at?.edge || 0;
+  if (dropEdge && !dropEdgeTimer) {
+    const tick = () => { if (!dropEdge || !dropSlot) { dropEdgeTimer = 0; return; } $('tabs').scrollLeft += 9 * dropEdge; dropEdgeTimer = requestAnimationFrame(tick); };
+    dropEdgeTimer = requestAnimationFrame(tick);
+  }
+  showDropSlot(at);
+});
 
 // Dragged this far outside the strip (or out of the window), releasing the tab hands it to main.js:
 // into another window's strip if the cursor is over one, else into a new window of its own.

@@ -3579,7 +3579,7 @@ app.on('browser-window-focus', (_e, w) => {
   focusOrder.unshift(w.id);
 });
 const frontRank = (w) => { const i = focusOrder.indexOf(w.id); return i === -1 ? focusOrder.length + w.id : i; };
-const DRAG_OVER_STRIP_OPACITY = 0.55; // an only-tab window being dragged: see through it to the strip it is over
+const DRAG_OVER_STRIP_OPACITY = 0.12; // all but gone over a strip: the slot and ghost there are what you see (Chrome hides it) // an only-tab window being dragged: see through it to the strip it is over
 
 // Where each window's tabs sit (client coordinates); refreshed while dragging, off the hot path. The
 // window being dragged (only-tab drags) is not a target; the window a card came from is.
@@ -3589,10 +3589,11 @@ async function stripGeometry(rec) {
     // stripDropTargets (app.js): tabs and group labels on show, a label standing for its group's first tab.
     const tabs = typeof stripDropTargets === 'function' ? stripDropTargets()
       : [...document.querySelectorAll('#tabs .tab')].filter((el) => !el.matches('.handed, .held, .gathered')).map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; });
-    return { hidden: document.visibilityState === 'hidden', bottom: strip.bottom, tabs };
+    const el = document.getElementById('tabs');
+    return { hidden: document.visibilityState === 'hidden', bottom: strip.bottom, left: strip.left, right: strip.right, overflows: el.scrollWidth > el.clientWidth + 1, tabs };
   })()`).catch(() => null);
   // Chromium marks a window 'hidden' when other windows (any app's) cover it completely: not a target.
-  return info && !info.hidden && { rec, bottom: info.bottom, tabs: info.tabs };
+  return info && !info.hidden && { rec, bottom: info.bottom, left: info.left, right: info.right, overflows: info.overflows, tabs: info.tabs };
 }
 async function refreshDragStrips(d) {
   if (d.refreshing) return;
@@ -3799,12 +3800,12 @@ function takeSpare(size) {
 const isSpare = (rec) => Boolean(rec?.prepared);
 
 function setDragHover(d, hit) {
-  const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId && Boolean(d.hover?.outside) === Boolean(hit?.outside);
+  const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId && Boolean(d.hover?.outside) === Boolean(hit?.outside) && (d.hover?.edge || 0) === (hit?.edge || 0);
   if (same) return;
   if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', null);
   const wasOver = Boolean(d.hover);
   d.hover = hit;
-  if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId, outside: Boolean(hit.outside), tab: d.ghost });
+  if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId, outside: Boolean(hit.outside), edge: hit.edge || 0, tab: d.ghost });
   if (d.card) { if (wasOver !== Boolean(hit)) cardCall('compact', Boolean(hit)); return; }
   if (!TEST_BACKGROUND && rcAlive(d.rec)) { try { d.rec.win.setOpacity(hit ? DRAG_OVER_STRIP_OPACITY : 1); } catch {} }
 }
@@ -3845,7 +3846,15 @@ function tickTabDrag() {
     while (i > 0 && i < rest.length && rest[i - 1].groupId && rest[i - 1].groupId === rest[i].groupId) i++;
     return rest[i]?.id ?? null;
   }) : hit?.beforeId;
-  setDragHover(d, hit && { rec: hit.key, beforeId: beforeId ?? null, outside: groupsAlong ? true : Boolean(hit.outside) });
+  // Near the edge of an overflowing strip it is over, that strip scrolls (as it does for a drag within it).
+  let edge = 0;
+  const g = hit && d.strips.get(hit.key);
+  if (g?.overflows) {
+    const x = cursor.x - hit.key.win.getContentBounds().x;
+    edge = x < g.left + 28 ? -1 : x > g.right - 28 ? 1 : 0;
+  }
+  setDragHover(d, hit && { rec: hit.key, beforeId: beforeId ?? null, outside: groupsAlong ? true : Boolean(hit.outside), edge });
+  if (edge) d.stripsAt = 0; // the tabs are moving under it: measure again at once
 }
 // Every window that could be under the cursor, front first: the strips a tab can join, and the windows that
 // only get in the way (private windows, a normal window whose strip hasn't been measured yet).
@@ -3924,7 +3933,9 @@ function finishCardDrag(d, reason, target) {
   if (target && rcAlive(target.rec)) {
     if (target.rec === src) {
       // Along its own strip, before the tab the slot was opened in front of (the end if none).
-      withWindow(src, () => {
+      // One strip update with the dragged tab already in front (an update showing the stepped-aside neighbour
+      // active would end the multi-selection), and the selection kept.
+      batchTabs(() => withWindow(src, () => {
         const before = target.beforeId != null && !ids.includes(target.beforeId) ? target.beforeId : null;
         if (ids.length === 1 && !d.group && tabs.find((t) => t.id === ids[0])?.pinned) {
           const others = tabs.filter((t) => t.id !== ids[0]);
@@ -3943,7 +3954,8 @@ function finishCardDrag(d, reason, target) {
           if (!home) moveBlock(ids, before, d.group ? d.groupId : null, d.group ? undefined : join); // dropped back at its own place: nothing to do
         }
         if (activeId !== d.tabId && tabs.some((t) => t.id === d.tabId)) switchTab(d.tabId);
-      });
+      }));
+      keepSelection(src, ids);
       wakeDeferredAside(d); // the neighbour loads only if the dragged tab did not come back to the front
     } else {
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
