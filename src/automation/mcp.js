@@ -211,7 +211,7 @@ function defaultUserData() {
 // How to start Lumen: this same executable; in development (electron from node_modules) pass the app folder.
 function defaultLaunch() {
   const dev = /[\\/]node_modules[\\/]electron[\\/]/i.test(process.execPath);
-  return { command: process.execPath, args: dev ? [__dirname] : [] };
+  return { command: process.execPath, args: dev ? [path.join(__dirname, '..', '..')] : [] }; // the app folder (package.json), two up from src/automation
 }
 
 async function relay() {
