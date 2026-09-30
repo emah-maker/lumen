@@ -14,7 +14,17 @@
   const MACROS = {
     '\\si': '\\mathrm{#1}', '\\unit': '\\mathrm{#1}', '\\SI': '#1\\,\\mathrm{#2}', '\\qty': '#1\\,\\mathrm{#2}', '\\num': '#1', '\\ang': '#1^\\circ',
     '\\dv': '\\frac{\\mathrm{d}#1}{\\mathrm{d}#2}', '\\pdv': '\\frac{\\partial #1}{\\partial #2}', '\\abs': '\\left|#1\\right|', '\\norm': '\\left\\lVert#1\\right\\rVert',
+    '\\vb': '\\mathbf{#1}', '\\vu': '\\hat{\\mathbf{#1}}', '\\grad': '\\nabla', '\\curl': '\\nabla\\times', '\\divergence': '\\nabla\\cdot', '\\mathds': '\\mathbb{#1}', '\\bra': '\\langle #1\\rvert', '\\ket': '\\lvert #1\\rangle', '\\braket': '\\langle #1\\rangle',
+    // siunitx units (inside \si, \SI, \qty, \unit): prefixes, units, and \per, \squared, \cubed
+    '\\per': '/', '\\squared': '^2', '\\cubed': '^3', '\\percent': '\\%', '\\degree': '^\\circ', '\\celsius': '^\\circ\\mathrm{C}', '\\degreeCelsius': '^\\circ\\mathrm{C}', '\\ohm': '\\Omega',
+    '\\kilo': 'k', '\\mega': 'M', '\\giga': 'G', '\\tera': 'T', '\\centi': 'c', '\\milli': 'm', '\\micro': '\\mu{}', '\\nano': 'n', '\\pico': 'p',
+    '\\meter': 'm', '\\metre': 'm', '\\second': 's', '\\gram': 'g', '\\ampere': 'A', '\\kelvin': 'K', '\\mole': 'mol', '\\candela': 'cd', '\\hertz': 'Hz', '\\newton': 'N',
+    '\\pascal': 'Pa', '\\joule': 'J', '\\watt': 'W', '\\coulomb': 'C', '\\volt': 'V', '\\farad': 'F', '\\tesla': 'T', '\\liter': 'L', '\\litre': 'L', '\\hour': 'h', '\\minute': 'min', '\\electronvolt': 'eV',
   };
+  // Before typesetting: \num{3e8} and \SI{3e8}{…} as 3×10⁸, and \dv[2]{y}{x} (an optional argument Temml macros can't take).
+  const prepare = (tex) => tex
+    .replace(/\\(num|SI|qty)\{\s*([+-]?[\d.]+)[eE]([+-]?\d+)\s*\}/g, (_m, c, a, b) => `\\${c}{${a}\\times10^{${Number(b)}}}`)
+    .replace(/\\(p?)dv\[(\w+)\]\{([^{}]*)\}\{([^{}]*)\}/g, (_m, p, n, a, b) => (p ? `\\frac{\\partial^{${n}} ${a}}{\\partial ${b}^{${n}}}` : `\\frac{\\mathrm{d}^{${n}} ${a}}{\\mathrm{d} ${b}^{${n}}}`));
   // Temml (168 KB) loads the first time a reply has math, not at start-up (and mhchem, 35 KB, the first time one has
   // chemistry); formulas drawn before it arrives show their source for that moment and are then typeset in place.
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
@@ -41,7 +51,15 @@
   }
   // display: true (a block), 'inline' (a display formula written inside a sentence: in the line, at display size),
   // false (inline).
+  const done = new Map(); // tex|display -> html (the stream redraws its tail every frame)
   function typeset(tex, display) {
+    const hit = done.get(`${display}|${tex}`);
+    if (hit) return hit;
+    const html = typesetNow(tex, display);
+    if (!/data-tex=/.test(html)) { done.set(`${display}|${tex}`, html); if (done.size > 400) done.delete(done.keys().next().value); }
+    return html;
+  }
+  function typesetNow(tex, display) {
     const temml = (typeof window !== 'undefined' && window.temml) || globalThis.temml;
     const chem = CHEM.test(tex);
     const ready = temml && (!chem || loads.mhchem === 'ready' || globalThis.temmlChem);
@@ -49,7 +67,7 @@
     if (ready) {
       try {
         const env = /^\s*\\begin\{/.test(tex);
-        const clean = tex.replace(/\\label\{[^}]*\}/g, '');
+        const clean = prepare(tex.replace(/\\label\{[^}]*\}/g, ''));
         const src = display === 'inline' && !env ? `\\displaystyle ${clean}` : clean;
         const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500, macros: { ...MACROS } });
         if (display === true) return `<div class="math-block">${html}</div>`;
@@ -88,7 +106,11 @@
   // and shell variables ("$HOME ") can't, and are shown as they come.
   function writingFormula(rest) {
     if (!rest || /^\s/.test(rest)) return false;
-    if (/^\d/.test(rest)) return /^\d[\d.,]*$/.test(rest) || /^\d[\d.,]*[A-Za-z\\^_+\-*/=(]/.test(rest); // "$2x+…" holds; "$5 " is money
+    if (/^\d/.test(rest)) {
+      if (/^\d[\d.,]*[kKmMbB]?(\/[a-z]*|\+|-)?([\s,.;:)!?]|$)/.test(rest)) return false; // money: "$5 ", "$1.2M in", "$20/month", "$5k-"
+      return /^\d[\d.,]*[A-Za-z\\^_+\-*=(]/.test(rest); // "$2x+…" holds
+    }
+    if (/^[a-z]{3,}\s/.test(rest)) return false; // "$name and": a variable in prose, not a formula
     if (/^[A-Z][A-Z0-9_]+(\s|[:/;]|$)/.test(rest) && !/^[A-Z]$/.test(rest)) return /^[A-Z][A-Z0-9_]+$/.test(rest) && rest.length < 3; // "$HOME " is shell
     return /^[A-Za-z\\([|_^{-]/.test(rest);
   }
@@ -169,11 +191,11 @@
         // "\[1\]": a citation in escaped brackets, not math.
         if (e !== -1 && /^[\d\s,–-]+$/.test(tex)) { out += `[${tex}]`; i = e + 2; continue; }
         if (e > i + 2 && !/\n\s*\n/.test(tex)) m = { tex, end: e + 2, display: true };
-        else if (e === -1 && open === -1) open = i;
+        else if (e === -1 && open === -1 && source.length - i < 300) open = i;
       } else if (source.startsWith('\\(', i)) {
         const e = source.indexOf('\\)', i + 2);
         if (e > i + 2 && !source.slice(i, e).includes('\n\n')) m = { tex: source.slice(i + 2, e), end: e + 2, display: false };
-        else if (e === -1 && open === -1) open = i;
+        else if (e === -1 && open === -1 && source.length - i < 300) open = i;
       } else if (source.startsWith('\\begin{', i)) {
         const env = source.slice(i).match(new RegExp(`^\\\\begin\\{((?:${ENVS})\\*?)\\}`));
         const endTag = env ? `\\end{${env[1]}}` : '';
@@ -455,7 +477,7 @@
       else if (!fenced) {
         const plain = line.replace(/`[^`]*`/g, '').replace(/\\\$/g, '');
         if (/^\s*\$\$|\$\$\s*$/.test(plain)) dollars += (plain.match(/\$\$/g) || []).length; // "($$)" mid-line is a price tier
-        brackets += (plain.match(/\\\[/g) || []).length - (plain.match(/\\\]/g) || []).length;
+        if (/^\s*\\\[|\\\]\s*$/.test(plain)) brackets += (plain.match(/\\\[/g) || []).length - (plain.match(/\\\]/g) || []).length; // (a \[ mid-line is a path or a citation)
         envs += (plain.match(/\\begin\{/g) || []).length - (plain.match(/\\end\{/g) || []).length;
         if (line.trim() === '' && pos > 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
       }

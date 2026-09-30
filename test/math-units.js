@@ -135,6 +135,16 @@ check('streaming: formulas starting with a digit, ( or | wait; money and shell t
   assert.strictEqual(md.openMath('Set $HOME to'), -1);
 });
 
+check('streaming: everyday money and prose variables never hold the line', () => {
+  for (const s of ['The Pro plan costs $20/month and', 'Revenue grew from $1.2M in', 'From $5k-', 'Only $9.99 now', 'PHP variables like $name and']) assert.strictEqual(md.openMath(s), -1, s);
+  assert.strictEqual(md.openMath('Solve $2x+1'), 'Solve '.length);
+});
+check('streaming: a stray \\( in a path holds only a short tail, and never the stable prefix', () => {
+  const long = `C:\\Users\\(name)\\docs ${'word '.repeat(80)}`;
+  assert.strictEqual(md.openMath(long), -1);
+  assert.ok(md.stableLength('Path C:\\Users\\[x\n\nNext\n\nMore') > 10);
+});
+
 // With Temml: MathML, with the source kept as an annotation (copying a selection keeps the LaTeX).
 const ctx = { globalThis: {} };
 vm.createContext(ctx);
@@ -164,6 +174,13 @@ check('Temml: a long inline formula gets its own scroller; an environment in a s
 });
 check('Temml: siunitx and physics commands render', () => {
   for (const t of ['$\\SI{5}{kg}$', '$\\dv{f}{x}$', '$\\abs{x}$']) assert.ok(!md.render(t).includes('math-src'), t);
+});
+check('Temml: siunitx units, \\num exponents, \\dv[2] and physics vectors render', () => {
+  for (const t of ['$\\SI{9.8}{\\meter\\per\\second\\squared}$', '$\\si{\\kilo\\gram}$', '$\\num{3e8}$', '$\\dv[2]{y}{x}$', '$\\vb{E} = -\\grad V$', '$\\bar{x}$']) {
+    const html = md.render(t);
+    assert.ok(!html.includes('math-src'), `${t} -> ${html.slice(0, 120)}`);
+  }
+  assert.match(md.render('$\\num{3e8}$'), /×|&#xd7;|times/);
 });
 check('Temml: HTML in a formula stays text', () => {
   const html = md.render('$\\text{<img src=x onerror=alert(1)>}$');
