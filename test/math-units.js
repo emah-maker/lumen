@@ -46,8 +46,51 @@ check('a | inside math does not split a table cell', () => {
 check('streaming: a blank line inside $$ is not a block end', () => {
   const s = 'Intro\n\n$$\na\n\nb';
   assert.strictEqual(md.stableLength(s), 'Intro\n\n'.length);
-  assert.strictEqual(md.inMath('x $$ y'), true);
-  assert.strictEqual(md.inMath('x $$ y $$'), false);
+  assert.strictEqual(md.inMath('x\n$$\ny'), true);
+  assert.strictEqual(md.inMath('x\n$$\ny\n$$'), false);
+});
+
+check('price tiers are not math', () => {
+  for (const s of ['- **Nopa** ($$) - Californian\n- **Zuni** ($$$) - Mediterranean', 'Price range: $$ to $$$$', 'Cheap ($) to fancy ($$$$)']) {
+    assert.strictEqual(md.liftMath(s).maths.length, 0, s);
+    assert.strictEqual(md.openMath(s), -1, s);
+  }
+});
+check('$$ on its own line with spaces inside is a block', () => {
+  const { maths } = md.liftMath('Then\n$$ x^2 + 1 $$\nso');
+  assert.strictEqual(maths.length, 1);
+  assert.strictEqual(maths[0].display, true);
+});
+check('dollars in a web address stay in the link', () => {
+  const html = md.render('See https://graph.microsoft.com/v1.0/me/messages?$select=subject&$top=5 now');
+  assert.match(html, /<a href="https:\/\/graph\.microsoft\.com\/v1\.0\/me\/messages\?\$select=subject&amp;\$top=5">/);
+  assert.strictEqual(md.liftMath('[x](https://a.b/?$a$b)').maths.length, 0);
+});
+check('escaped citations \\[1\\] stay brackets', () => {
+  const html = md.render('as shown \\[1\\] and \\[2, 3\\].');
+  assert.match(html, /as shown \[1\] and \[2, 3\]\./);
+});
+check('more environments: vmatrix, aligned, array', () => {
+  for (const env of ['vmatrix', 'Bmatrix', 'aligned', 'gathered', 'array', 'smallmatrix']) {
+    assert.strictEqual(md.liftMath(`\\begin{${env}}a\\end{${env}}`).maths.length, 1, env);
+  }
+});
+check('a formula indented under a list item stays in it', () => {
+  const html = md.render('1. Solve:\n   $$x^2=4$$\n2. Done');
+  assert.match(html, /^<ol><li>Solve:<pre class="math-src"[^>]*>x\^2=4<\/pre><\/li><li>Done<\/li><\/ol>$/);
+});
+check('streaming: an unfinished formula is found, money is not', () => {
+  assert.strictEqual(md.openMath('The area is $\\pi r'), 'The area is '.length);
+  assert.strictEqual(md.openMath('Let \\(\\alpha + '), 'Let '.length);
+  assert.strictEqual(md.openMath('So\n\\begin{align}x&=1'), 'So\n'.length);
+  assert.strictEqual(md.openMath('It costs $5 and'), -1);
+  assert.strictEqual(md.openMath('Done: $x$.'), -1);
+});
+check('streaming: stableLength is linear (long math reply)', () => {
+  const big = Array.from({ length: 3000 }, (_, k) => `Line ${k} with $x_${k}$\n`).join('\n');
+  const t0 = Date.now();
+  md.stableLength(big);
+  assert.ok(Date.now() - t0 < 200, `${Date.now() - t0} ms`);
 });
 
 // With Temml: MathML, with the source kept as an annotation (copying a selection keeps the LaTeX).
@@ -63,11 +106,14 @@ check('Temml: inline MathML', () => {
 });
 check('Temml: display block', () => {
   const html = md.render('$$\n\\frac{a}{b}\n$$');
-  assert.match(html, /^<div class="math-block" role="math"><math[^>]*display="block"/);
+  assert.match(html, /^<div class="math-block"><math[^>]*display="block"/);
 });
 check('Temml: bad LaTeX falls back to its source, not a red error', () => {
   const html = md.render('Bad: $\\frac{a$ end');
   assert.ok(!html.includes('temml-error'), html);
+});
+check('Temml: a display formula inside a sentence is drawn at display size', () => {
+  assert.match(md.render('so $$\\sum_{i=1}^n i$$ holds'), /\\displaystyle/);
 });
 check('Temml: HTML in a formula stays text', () => {
   const html = md.render('$\\text{<img src=x onerror=alert(1)>}$');

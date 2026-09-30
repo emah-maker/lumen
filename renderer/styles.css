@@ -521,6 +521,7 @@ body.chat-full .setup { text-align: left; }
 /* Math (typeset by Temml as MathML, see markdown.js): a touch larger than the text, as in print; a wide display
    formula scrolls sideways on its own instead of widening the bubble. */
 .msg.assistant math { font-size: 1.1em; }
+.msg.assistant { counter-reset: tmlEqnNo; } /* equation numbers start at (1) in each reply */
 .msg.assistant .math-block { overflow-x: auto; overflow-y: hidden; margin: 6px 0 10px; padding: 2px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .msg.assistant .math-block:last-child { margin-bottom: 0; }
 .msg.assistant .math-block math { font-size: 1.18em; }

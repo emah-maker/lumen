@@ -1,65 +1,102 @@
 // Minimal, safe markdown -> HTML for assistant replies. All input is HTML-escaped first.
-// Math ($…$, \(…\), $$…$$, \[…\], \begin{align}…) is typeset as MathML by Temml (renderer/vendor/temml.min.js),
-// which Chromium draws natively; without Temml (tests, a load failure) the formula shows as its source.
+// Math ($…$, \(…\), $$…$$, \[…\], \begin{align}…, \ce{…}) is typeset as MathML by Temml (renderer/vendor/temml.min.js,
+// with mhchem for chemistry), which Chromium draws natively; without Temml (tests, a load failure) the formula shows
+// as its source. Copying keeps each formula's LaTeX ($…$), from a selection or the copy button (markdownPlainText).
 (function () {
   // ---------- math ----------
   // Math is lifted out of the raw text before anything else (so markdown never reads its * _ | [ as formatting)
   // and put back, typeset, at the end. A formula is held as a private-use token:  n .
   const TOKEN = /(\d+)/g;
-  const ENVS = 'equation|align|gather|multline|alignat|flalign|eqnarray|cases|matrix|pmatrix|bmatrix';
+  const ENVS = 'equation|align|aligned|alignat|alignedat|gather|gathered|multline|split|flalign|eqnarray|cases|dcases|rcases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|subarray|CD';
   const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  // Temml (168 KB) loads the first time a reply has math, not at start-up; formulas drawn before it arrives show
-  // their source for that moment and are then typeset in place.
+  const CHEM = /\\(ce|pu)\b/;
+  // Temml (168 KB) loads the first time a reply has math, not at start-up (and mhchem, 35 KB, the first time one has
+  // chemistry); formulas drawn before it arrives show their source for that moment and are then typeset in place.
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
-  let loading = false;
-  function loadTemml() {
-    if (loading || typeof document === 'undefined' || !here) return;
-    loading = true;
-    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: new URL('vendor/temml.css', here).href });
-    const js = Object.assign(document.createElement('script'), { src: new URL('vendor/temml.min.js', here).href, async: true });
-    js.onload = () => {
-      for (const el of document.querySelectorAll('.math-src[data-tex]')) {
-        const html = typeset(el.dataset.tex, el.dataset.display === '1');
-        if (!/class="math-src/.test(html)) el.outerHTML = html;
-      }
-    };
-    js.onerror = () => { loading = false; }; // tried again with the next formula
-    document.head.append(css, js);
+  const loads = {};
+  function load(name, file, after) {
+    if (loads[name] || typeof document === 'undefined' || !here) return;
+    loads[name] = 'loading';
+    const js = Object.assign(document.createElement('script'), { src: new URL(file, here).href, async: true });
+    js.onload = () => { loads[name] = 'ready'; after?.(); upgrade(); };
+    js.onerror = () => { loads[name] = null; }; // tried again with the next formula
+    document.head.append(js);
   }
+  function upgrade() {
+    for (const el of document.querySelectorAll('.math-src[data-tex]')) {
+      const html = typeset(el.dataset.tex, el.dataset.display === '1');
+      if (!/class="math-src[^"]*" data-tex/.test(html)) el.outerHTML = html;
+    }
+  }
+  function loadTemml(chem) {
+    if (typeof document === 'undefined' || !here) return;
+    if (!loads.css) { loads.css = 'ready'; document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: new URL('vendor/temml.css', here).href })); }
+    load('temml', 'vendor/temml.min.js', () => { if (chem) load('mhchem', 'vendor/mhchem.min.js'); });
+    if (chem && window.temml) load('mhchem', 'vendor/mhchem.min.js');
+  }
+  // display: true (a block), 'inline' (a display formula written inside a sentence: in the line, at display size),
+  // false (inline).
   function typeset(tex, display) {
     const temml = (typeof window !== 'undefined' && window.temml) || globalThis.temml;
-    if (!temml) loadTemml();
-    if (temml) {
+    const chem = CHEM.test(tex);
+    const ready = temml && (!chem || loads.mhchem === 'ready' || globalThis.temmlChem);
+    if (!ready) loadTemml(chem);
+    if (ready) {
       try {
-        const html = temml.renderToString(tex, { displayMode: display, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500 });
-        return display ? `<div class="math-block" role="math">${html}</div>` : html;
+        const src = display === 'inline' ? `\\displaystyle ${tex}` : tex;
+        const html = temml.renderToString(src, { displayMode: display === true, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500 });
+        return display === true ? `<div class="math-block">${html}</div>` : html;
       } catch { /* not LaTeX it can read: its source, below */ }
     }
-    const src = escapeHtml(display ? tex.trim() : tex);
-    const data = temml ? '' : ` data-tex="${escapeHtml(tex)}" data-display="${display ? 1 : 0}"`; // to be typeset once Temml is here
-    return display ? `<pre class="math-src"${data}>${src}</pre>` : `<code class="math-src"${data}>${src}</code>`;
+    const block = display === true;
+    const shown = escapeHtml(block ? tex.trim() : tex);
+    // Waiting for Temml (or mhchem): marked, to be typeset in place once it is here. A formula it can't read stays source.
+    const data = ready ? '' : ` data-tex="${escapeHtml(tex)}" data-display="${block ? 1 : 0}"`;
+    return block ? `<pre class="math-src"${data}>${shown}</pre>` : `<code class="math-src"${data}>${shown}</code>`;
   }
   // A lone $ is a formula only when it reads like one (Pandoc's rule): "$x$" and "$\alpha + 1$" are; "$5 and $10",
   // "costs $5-$10" and "$ 5" are money. Its content is on one line.
   function dollarEnd(s, i) {
-    if (/\s/.test(s[i + 1] || ' ') || s[i + 1] === '$') return -1;
+    // It opens on something a formula starts with (a letter, digit, \, {, (, [, |, a sign): "($)" is a price tier.
+    if (!/[A-Za-z0-9\\{([|+-]/.test(s[i + 1] || '')) return -1;
     for (let j = i + 1; j < s.length; j++) {
       const c = s[j];
       if (c === '\n') return -1;
       if (c === '\\') { j++; continue; }
-      if (c === '$') return !/\s/.test(s[j - 1]) && !/\d/.test(s[j + 1] || '') ? j : -1;
+      if (c === '$') return !/\s/.test(s[j - 1]) && !/[\d$]/.test(s[j + 1] || '') ? j : -1;
     }
     return -1;
   }
-  // Lifts the math out of `source`: returns the text with tokens in its place, and the formulas. Code (fenced and
-  // `inline`) is left alone. A display formula on lines of its own becomes a line of its own, drawn as a block.
+  const texLike = (t) => /[A-Za-z0-9\\]/.test(t); // "$$ – $$", "( $$ )": not a formula
+  // The end of a $$ formula starting at i, or -1. On lines of its own it may span lines (never a blank one); written
+  // inside a line, it closes on that line and starts right after the $$, so price tiers ("($$)", "$$ to $$$$") stay
+  // text. A $$ … $$ that is the whole line may have spaces inside.
+  function displayDollarEnd(s, i, atLineStart) {
+    const lineEnd = s.indexOf('\n', i) === -1 ? s.length : s.indexOf('\n', i);
+    const e = s.indexOf('$$', i + 2);
+    if (e === -1) return -1;
+    const tex = s.slice(i + 2, e);
+    if (!texLike(tex)) return -1;
+    if (e < lineEnd) {
+      const wholeLine = atLineStart && !s.slice(e + 2, lineEnd).trim();
+      return wholeLine || !/^\s/.test(tex) ? e : -1;
+    }
+    return atLineStart && !/\n\s*\n/.test(tex) ? e : -1;
+  }
+  const URL_START = /^https?:\/\//;
+  // Scans `source` for math. Returns the text with tokens in its place, the formulas, and `open`: where a formula
+  // starts that has not closed yet (a reply still streaming), or -1. Code (fenced and `inline`) and web addresses
+  // are left alone. A display formula on a line of its own stays on that line (with its indent: inside a list item,
+  // it belongs to that item).
   function liftMath(source) {
     const maths = [];
     let out = '';
     let i = 0;
     let fenced = false;
+    let open = -1;
     const put = (tex, display) => { maths.push({ tex, display }); return `${maths.length - 1}`; };
     const lineStart = (k) => k === 0 || source[k - 1] === '\n';
+    const onlySpaceBefore = (k) => { const b = source.lastIndexOf('\n', k - 1) + 1; return !source.slice(b, k).trim(); };
     while (i < source.length) {
       if (lineStart(i) && source.startsWith('```', i)) fenced = !fenced;
       if (fenced || (lineStart(i) && source.startsWith('```', i))) {
@@ -77,43 +114,98 @@
         if (close !== -1 && (nl === -1 || close < nl)) { out += source.slice(i, close + run.length); i = close + run.length; continue; }
         out += run; i += run.length; continue;
       }
+      // A web address (bare, or a link's target) is never math: "…?$select=a&$top=5" keeps its dollars.
+      if ((c === 'h') && URL_START.test(source.slice(i, i + 8)) && (i === 0 || /[\s(<[]/.test(source[i - 1]))) {
+        const m = source.slice(i).match(/^\S+/)[0];
+        out += m; i += m.length; continue;
+      }
       if (c === '\\' && source[i + 1] === '$') { out += '$'; i += 2; continue; } // \$ is a dollar sign
       let m = null;
       if (source.startsWith('$$', i)) {
-        const e = source.indexOf('$$', i + 2);
-        if (e > i + 2) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
+        const e = displayDollarEnd(source, i, onlySpaceBefore(i));
+        if (e !== -1) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
+        else if (open === -1 && onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1 && !/\n\s*\n/.test(source.slice(i))) open = i;
+        if (!m) { out += '$$'; i += 2; continue; }
       } else if (source.startsWith('\\[', i)) {
         const e = source.indexOf('\\]', i + 2);
-        if (e > i + 2) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
+        const tex = e === -1 ? '' : source.slice(i + 2, e);
+        // "\[1\]": a citation in escaped brackets, not math.
+        if (e !== -1 && /^[\d\s,–-]+$/.test(tex)) { out += `[${tex}]`; i = e + 2; continue; }
+        if (e > i + 2 && !/\n\s*\n/.test(tex)) m = { tex, end: e + 2, display: true };
+        else if (e === -1 && open === -1) open = i;
       } else if (source.startsWith('\\(', i)) {
         const e = source.indexOf('\\)', i + 2);
         if (e > i + 2 && !source.slice(i, e).includes('\n\n')) m = { tex: source.slice(i + 2, e), end: e + 2, display: false };
+        else if (e === -1 && open === -1) open = i;
       } else if (source.startsWith('\\begin{', i)) {
         const env = source.slice(i).match(new RegExp(`^\\\\begin\\{((?:${ENVS})\\*?)\\}`));
         const endTag = env ? `\\end{${env[1]}}` : '';
         const e = env ? source.indexOf(endTag, i) : -1;
         if (e !== -1) m = { tex: source.slice(i, e + endTag.length), end: e + endTag.length, display: true };
+        else if (env && open === -1) open = i;
       } else if (c === '$') {
         const e = dollarEnd(source, i);
         if (e !== -1) m = { tex: source.slice(i + 1, e), end: e + 1, display: false };
+        // Still being written: a $ that opens like a formula (not money: "$5") on the last, unfinished line.
+        else if (open === -1 && source.indexOf('\n', i) === -1 && /^[A-Za-z\\]/.test(source[i + 1] || '')) open = i;
       }
       if (!m) { out += c; i++; continue; }
       if (m.display) {
-        // On lines of its own: a block. Inside a sentence: drawn in the line, at display size.
-        const before = out.slice(out.lastIndexOf('\n') + 1);
+        // On a line of its own: a block (its indent kept). Inside a sentence: in the line, at display size.
         const nl = source.indexOf('\n', m.end);
-        const after = source.slice(m.end, nl === -1 ? source.length : nl);
-        const own = !before.trim() && !after.trim();
-        out += own ? `\n${put(m.tex, true)}\n` : put(m.tex, 'inline');
+        const own = onlySpaceBefore(i) && !source.slice(m.end, nl === -1 ? source.length : nl).trim();
+        out += put(m.tex, own ? true : 'inline');
         i = m.end;
         continue;
       }
       out += put(m.tex, false);
       i = m.end;
     }
-    return { text: out, maths };
+    return { text: out, maths, open };
   }
-  const dropMath = (html, maths) => html.replace(TOKEN, (_t, n) => (maths[n] ? typeset(maths[n].tex, maths[n].display === true) : ''));
+  const dropMath = (html, maths) => html.replace(TOKEN, (_t, n) => (maths[n] ? typeset(maths[n].tex, maths[n].display) : ''));
+  // Where a streaming reply's unfinished formula starts (or -1): the text from there waits until it closes.
+  const openMath = (source) => liftMath(String(source || '')).open;
+
+  // Copying a selection that has formulas in it: the plain text gets each formula's LaTeX ($…$, $$…$$ for a block),
+  // not the flattened glyphs ("E=mc2"). The HTML copy keeps the MathML.
+  function plainOf(node) {
+    const copy = node.cloneNode(true);
+    for (const el of copy.querySelectorAll?.('.reply-copy, .reply-model') || []) el.remove();
+    for (const math of copy.querySelectorAll?.('math') || []) {
+      const tex = math.querySelector('annotation')?.textContent;
+      if (tex == null) continue;
+      const block = math.getAttribute('display') === 'block';
+      math.replaceWith(document.createTextNode(block ? `\n$$${tex}$$\n` : `$${tex}$`));
+    }
+    // innerText needs layout: measured off screen at the node's own width.
+    const box = document.createElement('div');
+    Object.assign(box.style, { position: 'fixed', left: '-10000px', top: '0', width: `${node.clientWidth || 400}px`, whiteSpace: 'normal' });
+    box.append(copy);
+    document.body.append(box);
+    const text = box.innerText;
+    box.remove();
+    return text.replace(/\n{3,}/g, '\n\n').trim();
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('copy', (e) => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !e.clipboardData) return;
+      const range = sel.getRangeAt(0);
+      const mathOf = (n) => (n instanceof Element ? n : n.parentElement)?.closest('math');
+      const a = mathOf(range.startContainer);
+      const b = mathOf(range.endContainer);
+      if (a) range.setStartBefore(a); // a selection that starts or ends inside a formula takes all of it
+      if (b) range.setEndAfter(b);
+      const frag = range.cloneContents();
+      if (!frag.querySelector('annotation')) return;
+      const holder = document.createElement('div');
+      holder.append(frag);
+      e.clipboardData.setData('text/html', holder.innerHTML);
+      e.clipboardData.setData('text/plain', plainOf(holder));
+      e.preventDefault();
+    });
+  }
 
   const escape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -253,10 +345,14 @@
       const numbered = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
 
       // A display formula on a line of its own is a block of its own.
-      const block = line.match(/^\s*\uE000(\d+)\uE001\s*$/);
-      if (block && maths[block[1]]?.display === true) {
+      const block = line.match(/^(\s*)\uE000(\d+)\uE001\s*$/);
+      if (block && maths[block[2]]?.display === true) {
+        const token = `\uE000${block[2]}\uE001`;
+        // Indented under a list item: part of that item (the list goes on after it).
+        const last = out.length - 1;
+        if (list && block[1] && /<\/li>$/.test(out[last] || '')) { flushParagraph(); out[last] = out[last].replace(/<\/li>$/, `${token}</li>`); continue; }
         flushParagraph(); closeList();
-        out.push(`\uE000${block[1]}\uE001`);
+        out.push(token);
         continue;
       }
 
@@ -287,26 +383,31 @@
     return out.join('');
   }
 
-  // Is the end of `text` inside an open $$ or \[ formula (outside code)? Rough but safe: it only delays a redraw.
-  function inMath(text) {
-    const plain = text.replace(/```[\s\S]*?(```|$)/g, '').replace(/`[^`\n]*`/g, '');
-    const dollars = (plain.match(/\$\$/g) || []).length;
-    return dollars % 2 === 1 || plain.lastIndexOf('\\[') > plain.lastIndexOf('\\]');
-  }
+  // Is the end of `text` inside a formula that has not closed ($$, \[, \begin{…})? It only delays a redraw.
+  const inMath = (text) => openMath(text) !== -1;
 
-  // Where a streaming reply's finished blocks end: just after the last blank line that is outside a
-  // code fence. Everything before it renders the same however much text follows, so a stream only
-  // has to redraw the text after it. Blocks (lists, tables, paragraphs) all end at a blank line.
+  // Where a streaming reply's finished blocks end: just after the last blank line that is outside a code fence and
+  // outside a formula. Everything before it renders the same however much text follows, so a stream only has to
+  // redraw the text after it. Blocks (lists, tables, paragraphs) all end at a blank line. One pass over the text.
   function stableLength(source) {
     let fenced = false;
+    let dollars = 0; // $$ seen outside code (odd: inside a display formula)
+    let brackets = 0; // \[ minus \]
+    let envs = 0; // \begin minus \end
     let stable = 0;
     let pos = 0;
     while (pos < source.length) {
-      let end = source.indexOf('\n', pos);
+      const end = source.indexOf('\n', pos);
       if (end === -1) break; // an unfinished last line is never stable
       const line = source.slice(pos, end);
       if (/^```/.test(line)) fenced = !fenced;
-      else if (!fenced && line.trim() === '' && pos > 0 && !inMath(source.slice(0, pos))) stable = end + 1;
+      else if (!fenced) {
+        const plain = line.replace(/`[^`]*`/g, '').replace(/\\\$/g, '');
+        dollars += (plain.match(/\$\$/g) || []).length;
+        brackets += (plain.match(/\\\[/g) || []).length - (plain.match(/\\\]/g) || []).length;
+        envs += (plain.match(/\\begin\{/g) || []).length - (plain.match(/\\end\{/g) || []).length;
+        if (line.trim() === '' && pos > 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
+      }
       pos = end + 1;
     }
     return stable;
@@ -316,6 +417,8 @@
     window.renderMarkdown = render;
     window.markdownStableLength = stableLength;
     window.markdownInMath = inMath;
+    window.markdownOpenMath = openMath;
+    window.markdownPlainText = plainOf;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath, openMath };
 })();

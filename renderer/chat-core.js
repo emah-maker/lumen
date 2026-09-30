@@ -667,10 +667,9 @@ window.assistant.onEvent((event) => {
 // While a reply streams, hold back a trailing link that hasn't finished arriving
 // ("[text](https://…" with no closing parenthesis yet), so raw markdown never flashes.
 function settledMarkdown(source) {
-  if (window.markdownInMath?.(source)) {
-    const at = Math.max(source.lastIndexOf('$$'), source.lastIndexOf('\\['));
-    if (at !== -1) return settledMarkdown(source.slice(0, at));
-  }
+  // A formula still being written ($…, $$…, \(…, \[…, \begin{…}) waits until it closes, instead of flashing its LaTeX.
+  const openAt = window.markdownOpenMath?.(source) ?? -1;
+  if (openAt !== -1) return settledMarkdown(source.slice(0, openAt));
   const open = source.lastIndexOf('[');
   if (open === -1) return source;
   const tail = source.slice(open);
@@ -710,7 +709,7 @@ function finishReply(bubble, source) {
   button.onclick = async () => {
     try {
       const html = window.renderMarkdown(source);
-      const text = bubble.innerText.trim() || source;
+      const text = (window.markdownPlainText ? window.markdownPlainText(bubble) : bubble.innerText.trim()) || source; // formulas as their LaTeX
       if (window.ClipboardItem) {
         await navigator.clipboard.write([new ClipboardItem({
           'text/plain': new Blob([text], { type: 'text/plain' }),
