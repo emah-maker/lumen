@@ -44,9 +44,9 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
   }
   const VENDORS = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', 'x-ai': 'xAI', 'meta-llama': 'Meta', mistralai: 'Mistral', deepseek: 'DeepSeek', qwen: 'Qwen', openrouter: 'OpenRouter' };
   const FIRST = ['anthropic', 'openai', 'google', 'x-ai', 'meta-llama', 'mistralai', 'deepseek', 'qwen'];
-  const short = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
+  const short = (n) => window.pickerFormat.size(n);
   // A price per million input tokens: OpenRouter gives -1 for a price that varies (its router), shown as such.
-  const priceText = (p) => (!Number.isFinite(p) ? '' : p < 0 ? tr('models.priceVaries', 'price varies') : p === 0 ? '' : p < 0.01 ? tr('models.priceTiny', '<$0.01/M input') : tr('models.price', '${n}/M input', { n: p < 1 ? p.toFixed(2) : String(Math.round(p * 10) / 10) }));
+  const priceText = (p) => (!Number.isFinite(p) ? '' : p < 0 ? tr('models.priceVaries', 'price varies') : p === 0 ? '' : p < 0.01 ? tr('models.priceTiny', '<$0.01/M input') : tr('models.price', '${n}/M input', { n: window.pickerFormat.money(p) }));
   function build(models) {
     // Vendors by the names OpenRouter itself gives them: the most common prefix of that vendor's model names.
     const prefixes = new Map();
@@ -71,6 +71,7 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
       const bits = [m.context ? tr('models.context', '{n} context', { n: short(m.context) }) : '', priceText(m.pricePerM)].filter(Boolean);
       if (bits.length) o.dataset.detail = bits.join(' · ');
       if (m.context) o.dataset.context = String(m.context);
+      if (Number.isFinite(m.pricePerM)) o.dataset.price = String(m.pricePerM); // searched by value ("$1.25", "$0")
       o.dataset.badges = [m.free || m.pricePerM === 0 ? 'free' : '', m.tools ? '' : 'chat only'].filter(Boolean).join(',');
       vendors.get(vendor).append(o);
     }

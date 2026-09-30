@@ -58,7 +58,32 @@
     if (prefix) return 2.5;
     return words.every((w) => startsAt(fields.name, w)) ? 2 : 1;
   }
-  const api = { score, startsAt, wordStarts };
+// Prices and context sizes as people say them: $1.25 (not $1.3), $0.075, "128K" for 131072 tokens (a power of two
+  // counts in 1024s), "1M" for 1048576.
+  const moneyText = (p) => (p >= 1 ? String(+p.toFixed(2)) : p >= 0.1 ? p.toFixed(2) : String(Number(p.toPrecision(3))));
+  const sizeText = (n) => {
+    const k = n % 1000 !== 0 && n % 1024 === 0 ? 1024 : 1000; // 128000 and 131072 both read 128K
+    return n >= k * k ? `${Math.round((n / (k * k)) * 10) / 10}M` : n >= k ? `${Math.round(n / k)}K` : String(n);
+  };
+  // A price or size word ("$3", "$0.3", "$0", "128k", "1m") against a row's raw price (per million input tokens) and
+  // context size: by value, 128k meaning 128,000 or 131,072; "$0" a free model; "$0." still being typed, a prefix.
+  function unitMatches(word, { price, context, free }) {
+    const w = String(word).toLowerCase();
+    if (w.startsWith('$')) {
+      const v = w.slice(1);
+      if (!v) return Number.isFinite(price) || free;
+      if (Number(v) === 0 && !v.endsWith('.') && !/\.\d/.test(v)) return free || price === 0;
+      if (!Number.isFinite(price) || price < 0) return false;
+      const shown = moneyText(price);
+      return Math.abs(price - Number(v)) < 1e-9 || Math.abs(Number(shown) - Number(v)) < 1e-9 || (v.endsWith('.') && shown.startsWith(v)) || (/\.\d$/.test(v) && shown.startsWith(v));
+    }
+    const m = w.match(/^(\d+(?:\.\d+)?)([km])$/);
+    if (!m || !context) return false;
+    const n = Number(m[1]);
+    return m[2] === 'k' ? [1000, 1024].some((k) => Math.abs(context - n * k) < k / 2) : [1e6, 1048576].some((k) => Math.abs(context - n * k) < k * 0.05);
+  }
+  const unitWord = (w) => /^\$\d*(\.\d*)?$|^\d+(\.\d+)?[km]$/i.test(w);
+  const api = { score, startsAt, wordStarts, unitMatches, unitWord, format: { money: moneyText, size: sizeText } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.pickerMatch = api;
+  else { root.pickerMatch = api; root.pickerFormat = api.format; }
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -168,7 +168,7 @@ async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); return o; })));
+    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
   card.append(
     row('Model', 'The model the assistant in the sidebar uses.', h('select', {
       id: 'ai-model',
@@ -195,7 +195,7 @@ async function buildAi(card) {
     if (ai.model) modelPicker.value = ai.model;
     modelPicker.pickerSync?.();
   };
-  S.ai.onModelsUpdated?.(() => refreshModels()); // picked in the sidebar: Settings shows it too
+  S.ai.onModelsUpdated?.(() => { refreshModels(); catalog?.refreshOpen(); }); // picked in the sidebar, or a fresher catalog: Settings shows it too
   const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role: 'switch', 'aria-label': 'Short, focused answers', checked: ai.adhdMode, onchange: (e) => S.ai.setAdhdMode(e.target.checked) });
   const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
     [['off', 'Off'], ['site', 'By site'], ['topic', 'By topic']].map(([value, text]) => h('option', { value, text, selected: ai.tabGrouping === value })));

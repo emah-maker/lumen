@@ -150,6 +150,8 @@ async function loadModels() {
     if (m.provider) option.dataset.provider = m.provider;
     if (m.detail) option.dataset.detail = m.detail;
     if (m.badges?.length) option.dataset.badges = m.badges.join(',');
+    if (Number.isFinite(m.price)) option.dataset.price = String(m.price); // searched by value
+    if (m.context) option.dataset.context = String(m.context);
     if (m.title) option.title = m.title;
     if (m.more) option.dataset.more = '1';
     groups.get(m.group).append(option);

@@ -388,8 +388,9 @@ function modelOptions() {
       const isFree = provider === 'openrouter' && (/:free$/.test(model) || providers.openRouterInfo(model)?.free || providers.openRouterInfo(model)?.pricePerM === 0);
       const badges = [...new Set([...(isFree ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
       const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
-      const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: orInfo.context >= 1e6 ? `${Math.round(orInfo.context / 1e5) / 10}M` : `${Math.round(orInfo.context / 1000)}K` }) : '', orInfo.pricePerM < 0 ? t('models.priceVaries') : orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: orInfo.pricePerM < 1 ? orInfo.pricePerM.toFixed(2) : String(Math.round(orInfo.pricePerM * 10) / 10) })) : ''].filter(Boolean).join(' · ') : '';
-      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
+      const fmt = require('./renderer/picker-match').format; // the catalog's own rules ($1.25, 128K)
+      const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: fmt.size(orInfo.context) }) : '', orInfo.pricePerM < 0 ? t('models.priceVaries') : orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: fmt.money(orInfo.pricePerM) })) : ''].filter(Boolean).join(' · ') : '';
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
     });
     if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });

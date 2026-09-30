@@ -204,23 +204,17 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   // "GPT-5"); a name that starts with the query ranks first, then a word that does, then anything else.
   // Search: every word must start a word somewhere (renderer/picker-match.js), best matches first.
   const PM = window.pickerMatch;
-  // A price or size word ("$3", "$0.3", "128k", "1m") is compared by value with the row's own prices and sizes, never
-  // with names or versions ("$3" is not Claude 3); every other word goes to the name matcher.
-  const unitWord = (w) => /^\$\d*(\.\d+)?$|^\d+(\.\d+)?[km]$/i.test(w);
-  const amounts = (detail) => {
-    const d = String(detail || '');
-    const prices = [...d.matchAll(/\$(\d+(?:\.\d+)?)/g)].map((m) => Number(m[1]));
-    const sizes = [...d.matchAll(/(\d+(?:\.\d+)?)([KkMm])\b/g)].map((m) => Number(m[1]) * (/m/i.test(m[2]) ? 1e6 : 1e3));
-    return { prices, sizes };
-  };
-  const unitMatch = (w, a) => {
-    if (w.startsWith('$')) { const v = Number(w.slice(1)); return w.length === 1 ? a.prices.length > 0 : a.prices.some((p) => Math.abs(p - v) < 1e-9); }
-    const m = w.match(/^(\d+(?:\.\d+)?)([km])$/i);
-    return Boolean(m) && a.sizes.some((s) => Math.abs(s - Number(m[1]) * (/m/i.test(m[2]) ? 1e6 : 1e3)) < 1);
-  };
+  // A price or size word ("$3", "$0.3", "128k", "1m") is compared by value with the row's own price and context
+  // (picker-match.js unitMatches), never with names or versions ("$3" is not Claude 3).
+  const unitWord = PM.unitWord;
+  const rawOf = (o) => ({
+    price: o.dataset.price !== undefined && o.dataset.price !== '' ? Number(o.dataset.price) : undefined,
+    context: Number(o.dataset.context) || 0,
+    free: (o.dataset.badges || '').split(',').includes('free'),
+  });
   const score = (o, words) => {
     const units = words.filter(unitWord);
-    if (units.length) { const a = amounts(o.dataset.detail); if (!units.every((w) => unitMatch(w, a))) return 0; }
+    if (units.length) { const raw = rawOf(o); if (!units.every((w) => PM.unitMatches(w, raw))) return 0; }
     const rest = words.filter((w) => !unitWord(w));
     if (!rest.length) return units.length ? 2 : 1;
     return PM.score({
@@ -310,8 +304,10 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     list.replaceChildren(...out);
     const selected = rows.findIndex((r) => r.value === select.value);
     const again = keepActive != null ? rows.findIndex((r) => r.value === keepActive) : -1;
-    setActive(words.length ? 0 : again !== -1 ? again : selected !== -1 ? selected : 0);
+    setActive(words.length && !keepHighlight ? 0 : again !== -1 ? again : words.length ? 0 : selected !== -1 ? selected : 0);
+    keepHighlight = false;
   }
+  let keepHighlight = false; // (set by refresh(): the list changed under the user, the highlight stays put)
   // Placed against the window (fixed), inside whatever clips the picker's surroundings (the sidebar, whose edge
   // the page view is drawn over): under the button, or above it when there's more room there.
   function clipBox() {
@@ -437,5 +433,5 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   }, { passive: false });
   sync();
   // setLoading(true): the list says it is loading (the OpenRouter catalog's first fetch); refresh(): redraw if open.
-  return { button, menu, sync, open, close, setLoading: (v) => { loading = Boolean(v); slow = false; clearTimeout(slowTimer); if (loading) slowTimer = setTimeout(() => { slow = true; if (!menu.hidden) render(); }, 3000); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) render(); } };
+  return { button, menu, sync, open, close, setLoading: (v) => { loading = Boolean(v); slow = false; clearTimeout(slowTimer); if (loading) slowTimer = setTimeout(() => { slow = true; if (!menu.hidden) render(); }, 3000); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) { keepHighlight = true; render(); } } };
 };
