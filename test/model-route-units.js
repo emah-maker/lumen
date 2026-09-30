@@ -1,6 +1,6 @@
 // Auto model routing (features/model-route.js): difficulty scoring, the tier -> model table, a picked
 // model never overridden, and follow-ups keeping the previous tier. Plain Node; no Electron, no CLI.
-const { score, tierFor, route, TABLE, modelForTier } = require('../features/model-route');
+const { score, tierFor, route, TABLE, modelForTier } = require('../src/features/model-route');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };

@@ -4,9 +4,9 @@
 // counts and messages against a fake Web API, and createWidgets() end to end against a fake fetch:
 // sign-in, encrypted-secret-only storage, refresh on expiry, 429 back-off, invalid_auth -> reconnect,
 // and that nothing but display text reaches forPage().
-const OA = require('../features/oauth');
-const SL = require('../features/slack-view');
-const { createWidgets, cleanWidget } = require('../features/widgets');
+const OA = require('../src/features/oauth');
+const SL = require('../src/features/slack-view');
+const { createWidgets, cleanWidget } = require('../src/features/widgets');
 
 module.exports = async function slackUnits(check) {
   // ---- oauth.js ----

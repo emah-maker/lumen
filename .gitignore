@@ -8,6 +8,8 @@ shot-*.png
 !.env.example
 .claude/
 out/
+# The GitHub Pages site, built by scripts/build-site.js
+_site/
 .DS_Store
 Thumbs.db
 # Test and dev profiles (CLAUDE_BROWSER_PROFILE / userData pointed inside the repo)
@@ -17,4 +19,4 @@ user-data/
 userData/
 lumen-profile*/
 # Lumen's built-in Google OAuth client, written by scripts/build.js from LUMEN_GOOGLE_CLIENT_ID / _SECRET
-features/google-client.json
+src/features/google-client.json

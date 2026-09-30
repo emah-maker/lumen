@@ -1,6 +1,6 @@
 // First run and default browser (features/setup.js): who sees the welcome, how it ends, and reading Windows' choice.
 const assert = require('assert');
-const { create, progIdIs, PROG_ID } = require('../features/setup');
+const { create, progIdIs, PROG_ID } = require('../src/features/setup');
 
 function make({ fresh, settings = {} }) {
   let s = { ...settings };

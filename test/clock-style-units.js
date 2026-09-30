@@ -4,8 +4,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const CS = require('../features/clock-styles');
-const SB = require('../settings-backend');
+const CS = require('../src/features/clock-styles');
+const SB = require('../src/settings/settings-backend');
 
 module.exports = async function clockStyleUnits(check) {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
@@ -61,8 +61,8 @@ module.exports = async function clockStyleUnits(check) {
   check('clock: a bad locale still gives a time', /^\d{1,2}:\d\d$/.test(CS.clockParts(at, { locale: 'not a locale!!' }).text), CS.clockParts(at, { locale: 'not a locale!!' }).text);
 
   // ---- every style has a look on the page and a preview in Settings; system fonts only ----
-  const page = read('renderer/newtab.html');
-  const css = read('renderer/settings.css');
+  const page = read('src/renderer/newtab.html');
+  const css = read('src/renderer/settings.css');
   const missingLook = CS.CLOCK_STYLES.filter((s) => s.id !== 'classic' && !page.includes(`data-clock-style="${s.id}"`)).map((s) => s.id);
   const missingPreview = CS.CLOCK_STYLES.filter((s) => s.id !== 'classic' && !css.includes(`.cs-${s.id}`)).map((s) => s.id);
   check('clock styles: each one is drawn on the page and previewed in Settings', !missingLook.length && !missingPreview.length, JSON.stringify({ missingLook, missingPreview }));
@@ -75,7 +75,7 @@ module.exports = async function clockStyleUnits(check) {
   check('clock styles: digits are tabular so they never jitter', /\.clock \{[^}]*tabular-nums/.test(page) && /\.ct-face \{[^}]*tabular-nums/.test(css), '');
   const scripts = [...page.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
   check('clock styles: the page loads the module before newtab.js', scripts.indexOf('../features/clock-styles.js') >= 0 && scripts.indexOf('../features/clock-styles.js') < scripts.indexOf('newtab.js'), JSON.stringify(scripts));
-  const js = read('renderer/newtab.js');
+  const js = read('src/renderer/newtab.js');
   check('clock: the time is built from text nodes, never HTML', /replaceChildren\(span\('clock-h'/.test(js) && !/clock[^\n]*innerHTML/.test(js), '');
   check('clock: seconds wake the page every second only when shown', /seconds \? 1000 : 10000/.test(js), '');
 };

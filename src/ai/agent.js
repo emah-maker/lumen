@@ -6,11 +6,11 @@ const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
-const modelRoute = require('./features/model-route'); // [model route]
-const { addUsage } = require('./features/chat-usage');
+const modelRoute = require('../features/model-route'); // [model route]
+const { addUsage } = require('../features/chat-usage');
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
-const pdfText = require('./features/pdf-text');
-const { captureTab } = require('./features/tab-capture');
+const pdfText = require('../features/pdf-text');
+const { captureTab } = require('../features/tab-capture');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -544,9 +544,9 @@ const SEARCH_HOST = 'html.duckduckgo.com';
 const ID_TOOLS = new Set(['click', 'type_text', 'hover']); // tools that take an element_id from a read
 const TAB_FREE_TOOLS = new Set(['list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait']);
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps' };
-const { siteOf } = require('./features/ai-sites');
-const signedIn = require('./features/signed-in-sites'); // [signed-in sites] read_urls as_user
-const tabsAsk = require('./features/tabs-ask');
+const { siteOf } = require('../features/ai-sites');
+const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
+const tabsAsk = require('../features/tabs-ask');
 // ---- [/ai controls]
 
 // The hosts a DESTINATION_TOOLS call would contact (read_urls reads at most 6). Invalid or non-web

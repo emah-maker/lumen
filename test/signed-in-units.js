@@ -2,7 +2,7 @@
 // Agent.planSignedIn): who gets asked, what each answer grants, sensitive hosts, redirects, outside
 // agents (MCP), private windows, and the stored list's validation. No Electron window.
 module.exports = async function signedInUnits(check) {
-  const S = require('../features/signed-in-sites');
+  const S = require('../src/features/signed-in-sites');
 
   // ---- sensitive hosts
   for (const host of ['paypal.com', 'www.paypal.com', 'chase.com', 'secure.chase.com', 'tdbank.com', 'onlinebanking.example.com', 'bankofamerica.com',
@@ -52,10 +52,10 @@ module.exports = async function signedInUnits(check) {
   check('signed-in: settings validation keeps valid hosts once, drops sensitive and junk', JSON.stringify(cleaned) === JSON.stringify([{ host: 'canvas.example.edu', added: 5 }, { host: 'a.example', added: 0 }]), JSON.stringify(cleaned));
   check('signed-in: a damaged setting reads as no sites', S.clean('garbage').length === 0 && S.clean({ host: 'a.example' }).length === 0, '');
   check('signed-in: the list is capped', S.clean(Array.from({ length: S.MAX_SITES + 20 }, (_, i) => `h${i}.example`)).length === S.MAX_SITES, '');
-  const SB = require('../settings-backend');
+  const SB = require('../src/settings/settings-backend');
   check('signed-in: the setting exists, empty by default, validated by settings-backend', Array.isArray(SB.DEFAULTS.aiSignedInSites) && SB.DEFAULTS.aiSignedInSites.length === 0
     && JSON.stringify(SB.validate('aiSignedInSites', ['x.example', 'chase.com'])) === JSON.stringify([{ host: 'x.example', added: 0 }]), JSON.stringify(SB.validate('aiSignedInSites', ['x.example', 'chase.com'])));
-  check('signed-in: Settings can\'t add a host with the generic setter', /key === 'aiSignedInSites'\) throw/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'settings-backend.js'), 'utf8')), '');
+  check('signed-in: Settings can\'t add a host with the generic setter', /key === 'aiSignedInSites'\) throw/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'src/settings/settings-backend.js'), 'utf8')), '');
   let saved = {};
   let clock = 1000;
   const store = S.createSignedInSites({ readSettings: () => ({ ...saved }), writeSettings: (v) => { saved = v; }, now: () => clock });
@@ -77,7 +77,7 @@ module.exports = async function signedInUnits(check) {
   check('signed-in: only settings:* channels, and no "add" channel', Object.keys(handlers).every((ch) => ch.startsWith('settings:')) && !Object.keys(handlers).some((ch) => /add/.test(ch)), Object.keys(handlers).join());
 
   // ---- Agent.planSignedIn: the card, the answers, MCP
-  const { Agent } = require('../agent');
+  const { Agent } = require('../src/ai/agent');
   const run = async ({ answers = {}, external = false, deps = {}, urls, asUser = true, noDeps = false }) => {
     const added = [];
     const cards = [];
@@ -165,5 +165,5 @@ module.exports = async function signedInUnits(check) {
     agent.closeSignedInTabs(null);
     check('closeSignedInTabs: the run\'s signed-in tabs are handed back to main.js to close', closed.join() === '4,9', closed.join());
   }
-  check('read_urls: as_user is in the schema and validated', require('../agent').validateInput('read_urls', { urls: ['https://a.example'], as_user: true }) === null && require('../agent').validateInput('read_urls', { urls: ['https://a.example'], as_user: 'yes' }) !== null, '');
+  check('read_urls: as_user is in the schema and validated', require('../src/ai/agent').validateInput('read_urls', { urls: ['https://a.example'], as_user: true }) === null && require('../src/ai/agent').validateInput('read_urls', { urls: ['https://a.example'], as_user: 'yes' }) !== null, '');
 };

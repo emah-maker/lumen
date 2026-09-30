@@ -212,7 +212,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   check('a web page has no skills API, no settings API, no Node', page.api === 'undefined' && page.settings === 'undefined' && page.assistant === 'undefined' && page.require === 'undefined', JSON.stringify(page));
   const gated = await app.evaluate(() => ['skills:list', 'skills:menu', 'skills:context', 'skills:prepare', 'skills:save', 'skills:delete', 'skills:reset', 'skills:export', 'skills:import-pick', 'skills:import-text', 'skills:import-commit', 'skills:take-draft', 'skills:draft-from-chat', 'skills:preview'].filter((c) => !global.__ipcGate.gated(c)));
   check('every skills channel is gated to Lumen\'s own UI and settings page', gated.length === 0, gated.join());
-  const chatIpc = [...(/const CHAT_IPC = new Set\(\[([^\]]*)\]\)/.exec(fs.readFileSync(path.join(__dirname, '..', 'features', 'chat-page.js'), 'utf8'))?.[1] || '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const chatIpc = [...(/const CHAT_IPC = new Set\(\[([^\]]*)\]\)/.exec(fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-page.js'), 'utf8'))?.[1] || '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
   check('the full-page chat may use only the run-time skills calls, not the editing ones', chatIpc.includes('skills:menu') && chatIpc.includes('skills:prepare') && !chatIpc.includes('skills:save') && !chatIpc.includes('skills:list') && !chatIpc.includes('skills:import-commit'), JSON.stringify(chatIpc.filter((c) => /skills/.test(c))));
 
   // ---- 11. the full-page chat has the same menu

@@ -60,7 +60,7 @@ const say = (rec, text, extra = {}) => {
 const echo = (rec, msg, n) => say(rec, `reply ${n}: ${msg.message.content[0].text}`);
 
 async function engineRuns() {
-  const cc = require('../claude-code');
+  const cc = require('../src/ai/claude-code');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agentic-'));
   const gateLog = { opened: [], closed: [] };
   let tokens = 0;
@@ -292,7 +292,7 @@ async function engineRuns() {
 }
 
 async function snapshotRuns() {
-  const snap = require('../snapshot');
+  const snap = require('../src/ai/snapshot');
   let lines = ['# Shop', '[1] button "Add"'];
   let url = 'https://a.test/';
   const wc = { id: 901, isDestroyed: () => false, getURL: () => url };
@@ -357,7 +357,7 @@ async function snapshotRuns() {
   check('read cache: entries of another session are not matched', rc.check(1, 'u', 's', 'page') === null, '');
 
   // The registry pass: read_page's own walk and labels, without the page text.
-  const scripts = require('../page-scripts');
+  const scripts = require('../src/ai/page-scripts');
   const reg = snap.registryScript(scripts);
   let parses = true;
   try { new Function(`return ${reg}`); } catch { parses = false; }
@@ -368,7 +368,7 @@ async function snapshotRuns() {
 
 // Grok Build, without grok: setup written once per content change, status event at spawn, thinking not held.
 async function grokRuns() {
-  const gb = require('../grok-build');
+  const gb = require('../src/ai/grok-build');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-grok-'));
   const userHome = path.join(tmp, 'user');
   fs.mkdirSync(userHome);
@@ -418,7 +418,7 @@ async function grokRuns() {
 }
 
 function routeRuns() {
-  const { route, tierFor } = require('../features/model-route');
+  const { route, tierFor } = require('../src/features/model-route');
   const heavy = { tier: 'heavy', turns: 2 };
   const light = 'what time is it in Tokyo and what is the weather there right now, please';
   check('route pin: in a resumed session a light message keeps the heavy model', route({ engine: 'claudecode', prompt: light, previous: heavy, pinned: true }).model === 'opus', '');
@@ -429,7 +429,7 @@ function routeRuns() {
 }
 
 function transcriptRuns() {
-  const { transcriptFor } = require('../agent');
+  const { transcriptFor } = require('../src/ai/agent');
   const items = transcriptFor([
     { role: 'user', content: 'book it' },
     { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'click', input: {} }] },
@@ -448,7 +448,7 @@ function transcriptRuns() {
 }
 
 function promptRuns() {
-  const { cliSystemPrompt } = require('../agent');
+  const { cliSystemPrompt } = require('../src/ai/agent');
   const picked = cliSystemPrompt({ model: 'claudecode:opus' }, 'claudecode');
   const plain = cliSystemPrompt({ model: 'claudecode:default' }, 'claudecode', { background: true });
   check('Claude Code prompt: with its own prompt replaced, Lumen\'s names the tools, the date and a picked model', /mcp__lumen__read_page/.test(picked) && /Today's date is \d{4}-\d\d-\d\d\./.test(picked) && /model answering is Claude Opus/.test(picked), picked.slice(-300));
@@ -456,7 +456,7 @@ function promptRuns() {
 }
 
 function searchRuns() {
-  const { parseSearchHtml } = require('../agent');
+  const { parseSearchHtml } = require('../src/ai/agent');
   const html = `<div class="serp"><div class="result results_links web-result "><div class="links_main result__body">
     <h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%3Fx%3D1&amp;rut=abc">Example <b>Domain</b> &amp; more</a></h2>
     <a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">This is the <b>first</b> snippet&#x27;s text.</a></div></div>
@@ -472,7 +472,7 @@ function searchRuns() {
 }
 
 async function settleRuns() {
-  const { settleAfterAction } = require('../agent');
+  const { settleAfterAction } = require('../src/ai/agent');
   const fakeWc = ({ quietAfter, navigate }) => {
     const wc = new EventEmitter();
     let loading = false;

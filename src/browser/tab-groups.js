@@ -1,7 +1,7 @@
 // Tab groups: the model, automatic grouping rules, and site names. main.js owns the tabs; this
 // module works on the same array through the accessors passed to createTabGroups().
 const { getDomain } = require('tldts-experimental');
-const knowledge = require('./features/topic-knowledge');
+const knowledge = require('../features/topic-knowledge');
 
 const GROUP_COLORS = ['blue', 'purple', 'pink', 'red', 'orange', 'yellow', 'green', 'gray'];
 

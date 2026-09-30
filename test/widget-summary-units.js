@@ -1,5 +1,5 @@
 // Settings > Home > Widgets: the one-line summaries and the picker's words (renderer/widget-summary.js), pure, no window.
-const WS = require('../renderer/widget-summary');
+const WS = require('../src/renderer/widget-summary');
 
 module.exports = async function widgetSummaryUnits(check) {
   const ctx = { secrets: { todoist: true, github: false, spotify: true, muse: false }, connections: { gmail: false }, slack: { connected: true, team: 'Acme' }, spotify: { name: 'Ann' }, feedPresets: [{ id: 'bbc', name: 'BBC News' }] };

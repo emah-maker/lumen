@@ -13,7 +13,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const HTML = path.join(__dirname, '..', 'renderer', 'tool-overlay.html');
-const PRELOAD = path.join(__dirname, '..', 'tool-overlay-preload.js');
+const PRELOAD = path.join(__dirname, '..', 'preload', 'tool-overlay-preload.js');
 const TOAST = { width: 380, height: 118, margin: 16 };
 
 // deps: { ipcMain, WebContentsView }

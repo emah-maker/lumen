@@ -9,7 +9,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
-const mcpClient = require('../features/mcp-client');
+const mcpClient = require('../src/features/mcp-client');
 const { openSettingsTab } = require('./settings-tab');
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'fake-mcp-server.js');
@@ -218,7 +218,7 @@ async function lumenPart() {
       try { await agent.execute('fake__echo', { text: 'direct' }); out.exec = 'ran'; } catch (e) { out.exec = e.message; }
       return out;
     });
-    const valid = await app.evaluate(() => require('./agent').validateInput('fake__echo', { text: 'x' })).catch(() => 'Unknown tool');
+    const valid = await app.evaluate(() => require('./ai/agent').validateInput('fake__echo', { text: 'x' })).catch(() => 'Unknown tool');
     check('outside MCP agents can’t call them (gate and input check refuse)', /Unknown tool/.test(outside.gate) && /Unknown tool/.test(String(valid)), JSON.stringify({ outside, valid }));
     check('a call without a card first is refused', /Unknown tool/.test(outside.exec), outside.exec);
 

@@ -13,8 +13,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const gb = require('../grok-build');
-const { startHttp } = require('../mcp-http');
+const gb = require('../src/ai/grok-build');
+const { startHttp } = require('../src/automation/mcp-http');
 
 const MODEL = process.env.GROK_TEST_MODEL || 'grok-4.7-build-fast';
 

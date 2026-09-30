@@ -6,7 +6,7 @@ const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parsePlan, fiveHourOf } = require('../features/usage');
+const { parsePlan, fiveHourOf } = require('../src/features/usage');
 
 const USAGE_TEXT = [
   'You are currently using your subscription to power your Claude Code usage',

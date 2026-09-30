@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CHANGELOG = path.join(__dirname, '..', 'CHANGELOG.md');
+const CHANGELOG = path.join(__dirname, '..', '..', 'CHANGELOG.md');
 const CHANGELOG_URL = 'https://github.com/emah-maker/lumen/blob/main/CHANGELOG.md';
 const MAX_RELEASES = 12; // a long-skipped update lists this many, newest first, and links to the rest
 const ON_DEMAND = 3; // Help → What's New… shows this many releases up to the running one

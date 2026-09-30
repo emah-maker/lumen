@@ -216,7 +216,7 @@ async function groups() {
 const AGENT_PROMPT = 'Open Hacker News and list the top 5 stories with their points, one line each.';
 
 async function agent() {
-  const bin = await require('../claude-code').findClaude();
+  const bin = await require('../src/ai/claude-code').findClaude();
   if (!bin) { log('agent: SKIPPED, the claude CLI is not installed'); return; }
   const status = spawnSync(bin, ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 10000 });
   let signedIn = false;

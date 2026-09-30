@@ -8,8 +8,8 @@ module.exports = async function passwordUnits(check) {
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
-  const P = require('../features/passwords');
-  const PG = require('../features/password-page');
+  const P = require('../src/features/passwords');
+  const PG = require('../src/features/password-page');
   const root = path.join(__dirname, '..');
   const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
@@ -39,7 +39,7 @@ module.exports = async function passwordUnits(check) {
   check('passwords: never on the settings tab or Lumen\'s own pages', P.verdict({ ...ok, settings: true }).reason === 'internal' && P.verdict({ ...ok, internal: true }).reason === 'internal', '');
   check('passwords: never in a tab the AI opened to read signed in', P.verdict({ ...ok, aiTab: true }).reason === 'ai', '');
   check('passwords: never on plain http (other than localhost)', P.verdict({ ...ok, url: 'http://example.com/login' }).reason === 'not-secure' && P.verdict({ ...ok, url: 'http://localhost:3000/' }).ok, '');
-  const SB = require('../settings-backend');
+  const SB = require('../src/settings/settings-backend');
   check('passwords: not a generic setting (prefs:set can\'t turn it on)', !('savePasswords' in SB.DEFAULTS) && !('passwordsNever' in SB.DEFAULTS), '');
   check('passwords: lumen://settings/passwords opens the sub-page', SB.SECTION_LINKS.includes('passwords'), '');
 
@@ -91,7 +91,7 @@ module.exports = async function passwordUnits(check) {
   const fillCode = PG.fill('me', 'p"w\\</script>');
   check('fill: values go into the script as JSON strings, and it never submits', fillCode.includes(JSON.stringify('p"w\\</script>')) && !/\.submit\(|requestSubmit|\.click\(\)/.test(fillCode), '');
   check('fill: the page scripts compile', (() => { try { new Function(PG.watch()); new Function(PG.fill('a', 'b')); new Function(PG.FLUSH); return true; } catch (err) { return err.message; } })() === true, '');
-  check('page world: its own isolated world, not the AI\'s (1001) or the skills world (1002)', ![0, 1001, 1002].includes(PG.PASSWORD_WORLD) && /CLAUDE_WORLD = 1001/.test(read('agent.js')) && /SKILL_WORLD = 1002/.test(read('main.js')), PG.PASSWORD_WORLD);
+  check('page world: its own isolated world, not the AI\'s (1001) or the skills world (1002)', ![0, 1001, 1002].includes(PG.PASSWORD_WORLD) && /CLAUDE_WORLD = 1001/.test(read('src/ai/agent.js')) && /SKILL_WORLD = 1002/.test(read('src/main.js')), PG.PASSWORD_WORLD);
 
   // ---- CSV import
   const csv = P.parseCsv('﻿a,"b,c","d ""q"" e","multi\nline"\r\n1,2,3,4\n\n');
@@ -178,9 +178,9 @@ module.exports = async function passwordUnits(check) {
   });
   rt.register({ handle: (ch, fn) => { ipc[ch] = fn; } });
   const call = (ch, ...args) => ipc[ch]('settings-page', ...args);
-  const mainList = /PASSWORD_CHANNELS = \[([^\]]*)\]/.exec(read('main.js'))?.[1].match(/'([a-z-]+)'/g).map((c) => `settings:passwords-${c.slice(1, -1)}`) || [];
+  const mainList = /PASSWORD_CHANNELS = \[([^\]]*)\]/.exec(read('src/main.js'))?.[1].match(/'([a-z-]+)'/g).map((c) => `settings:passwords-${c.slice(1, -1)}`) || [];
   check('runtime: main.js registers exactly the settings channels the module answers', JSON.stringify(mainList.sort()) === JSON.stringify(rt.channels().sort()), `${mainList} vs ${rt.channels()}`);
-  check('runtime: the module isn\'t loaded at startup unless it is on', /if \(readSettings\(\)\.savePasswords === true\) passwords\(\);/.test(read('main.js')) && !/^const .*require\('\.\/features\/passwords'\)/m.test(read('main.js')), '');
+  check('runtime: the module isn\'t loaded at startup unless it is on', /if \(readSettings\(\)\.savePasswords === true\) passwords\(\);/.test(read('src/main.js')) && !/^const .*require\('\.\/features\/passwords'\)/m.test(read('src/main.js')), '');
   check('runtime: off by default', !rt.enabled() && rt.stateOf(tab) === null && settings.savePasswords === undefined, JSON.stringify(settings));
   check('runtime: settings channels only, each refusing anything but the settings page', Object.keys(ipc).every((ch) => ch.startsWith('settings:passwords-'))
     && (() => { try { ipc['settings:passwords-list']('a-web-page'); return false; } catch { return true; } })(), Object.keys(ipc).join());
@@ -238,20 +238,20 @@ module.exports = async function passwordUnits(check) {
     && (await call('settings:passwords-never-remove', 'example.com')).never.length === 0, '');
 
   // ---- isolation from the AI (static): nothing AI-facing reaches the vault
-  for (const file of ['agent.js', 'mcp.js', 'mcp-http.js', 'snapshot.js', 'page-scripts.js', 'automation.js', 'cdp-inproc.js', 'claude-code.js', 'grok-build.js',
-    'features/ai-agents.js', 'features/background-runner.js', 'features/background-agents.js', 'features/tabs-ask.js', 'features/mcp-client.js', 'features/chat-store.js', 'features/skills.js']) {
+  for (const file of ['src/ai/agent.js', 'mcp.js', 'src/automation/mcp-http.js', 'src/ai/snapshot.js', 'src/ai/page-scripts.js', 'src/automation/automation.js', 'src/automation/cdp-inproc.js', 'src/ai/claude-code.js', 'src/ai/grok-build.js',
+    'src/features/ai-agents.js', 'src/features/background-runner.js', 'src/features/background-agents.js', 'src/features/tabs-ask.js', 'src/features/mcp-client.js', 'src/features/chat-store.js', 'src/features/skills.js']) {
     check(`isolation: ${file} doesn't load the password vault`, !/require\([^)]*passwords?['"/]|password-page/.test(read(file)), '');
   }
-  check('isolation: the Agent gets a yes/no only (passwordFilled), never the vault', /passwordFilled: \(wc\) => Boolean\(passwordsRt\?\.filledIn\(wc\)\)/.test(read('main.js'))
-    && !/passwords\.(vault|fillLogin|stateOf|act)\b/.test(read('agent.js')), '');
-  check('isolation: read_page and find never read a password field\'s value', /!secretField\(el\)/.test(read('page-scripts.js')) && /secretField\(entry\.el\) \? null : entry\.el\.value/.test(read('page-scripts.js'))
-    && /!secretField\(el\)/.test(read('snapshot.js')), '');
-  check('isolation: no password is logged', !/console\.(log|error|warn)\([^)]*password/i.test(read('features/passwords.js')) && !/console\./.test(read('features/password-page.js')), '');
-  check('isolation: the browser UI gets no password (only site, count and username)', !/\.password\b/.test(read('renderer/passwords.js')) && /passwordsAct: \(action\) => ipcRenderer\.send\('passwords:act', action\),/.test(read('preload.js')), '');
-  check('isolation: outside CDP clients never see the settings tab', /userTabs: \(\) => tabs\.filter\(\(t\) => alive\(t\) && !t\.settings\)/.test(read('main.js')), '');
+  check('isolation: the Agent gets a yes/no only (passwordFilled), never the vault', /passwordFilled: \(wc\) => Boolean\(passwordsRt\?\.filledIn\(wc\)\)/.test(read('src/main.js'))
+    && !/passwords\.(vault|fillLogin|stateOf|act)\b/.test(read('src/ai/agent.js')), '');
+  check('isolation: read_page and find never read a password field\'s value', /!secretField\(el\)/.test(read('src/ai/page-scripts.js')) && /secretField\(entry\.el\) \? null : entry\.el\.value/.test(read('src/ai/page-scripts.js'))
+    && /!secretField\(el\)/.test(read('src/ai/snapshot.js')), '');
+  check('isolation: no password is logged', !/console\.(log|error|warn)\([^)]*password/i.test(read('src/features/passwords.js')) && !/console\./.test(read('src/features/password-page.js')), '');
+  check('isolation: the browser UI gets no password (only site, count and username)', !/\.password\b/.test(read('src/renderer/passwords.js')) && /passwordsAct: \(action\) => ipcRenderer\.send\('passwords:act', action\),/.test(read('src/preload/preload.js')), '');
+  check('isolation: outside CDP clients never see the settings tab', /userTabs: \(\) => tabs\.filter\(\(t\) => alive\(t\) && !t\.settings\)/.test(read('src/main.js')), '');
 
   // ---- run_script on a page where the user filled a password (the sidebar AI and MCP share this path)
-  const { Agent } = require('../agent');
+  const { Agent } = require('../src/ai/agent');
   const ran = [];
   const pageWc = { id: 7, isDestroyed: () => false, getURL: () => 'https://example.com/login', isLoading: () => false, executeJavaScript: async (code) => { ran.push(code); return '"ok"'; }, executeJavaScriptInIsolatedWorld: async () => null };
   let isFilled = true;

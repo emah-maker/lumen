@@ -3,8 +3,8 @@
 // refusals) and the connector in features/widgets.js against a stand-in for api.github.com (a fetch that
 // answers with canned Responses): a bad token, rate limits (Retry-After, x-ratelimit-reset), paging caps,
 // partly refused lists, and the token staying out of everything the page gets.
-const GV = require('../features/github-view');
-const { createWidgets } = require('../features/widgets');
+const GV = require('../src/features/github-view');
+const { createWidgets } = require('../src/features/widgets');
 
 const TOKEN = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
 const json = (obj, init = {}) => new Response(JSON.stringify(obj), { status: 200, headers: { 'content-type': 'application/json', ...init.headers }, ...init });

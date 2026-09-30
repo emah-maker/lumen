@@ -58,4 +58,4 @@ A path is a list of names separated by dots, with `[n]` for the nth element of a
 - Answers bigger than 2 MB are cut off, and all widgets together make at most 40 requests a minute.
 - For a whole web page rather than values from it, use the **Web page** widget.
 
-The code is in `features/custom-widget.js`, and the tests are in `test/local-custom-units.js`.
+The code is in `src/features/custom-widget.js`, and the tests are in `test/local-custom-units.js`.

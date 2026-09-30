@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const md = require('../renderer/markdown.js');
+const md = require('../src/renderer/markdown.js');
 let failed = 0;
 const check = (name, fn) => { try { fn(); console.log(`PASS  ${name}`); } catch (e) { failed++; console.log(`FAIL  ${name}\n      ${e.message}`); } };
 
@@ -154,7 +154,7 @@ check('streaming: emphasised prices, suffixes and shell/template variables never
 // With Temml: MathML, with the source kept as an annotation (copying a selection keeps the LaTeX).
 const ctx = { globalThis: {} };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'vendor', 'temml.min.js'), 'utf8') + ';globalThis.temml = temml;', ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'vendor', 'temml.min.js'), 'utf8') + ';globalThis.temml = temml;', ctx);
 globalThis.temml = ctx.globalThis.temml;
 check('Temml: inline MathML', () => {
   const html = md.render('Euler: $e^{i\\pi}+1=0$.');

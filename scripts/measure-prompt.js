@@ -7,8 +7,8 @@
 // 6 letters, each digit run a piece per 3 digits, each other non-space character one piece).
 const fs = require('fs');
 const path = require('path');
-const agent = require('../agent');
-const bg = require('../features/background-agents');
+const agent = require('../src/ai/agent');
+const bg = require('../src/features/background-agents');
 // The Chat Completions tool shape providers.js sends (its toolSchema, not exported).
 const toolSchema = (tools) => tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
@@ -58,8 +58,8 @@ total('background task: instructions (user turn)', [bg.taskPrompt(task, 'task').
 total('background task: CLI system', [cliSystemPrompt({ model: DEFAULT_MODEL, adhdMode: false }, 'claudecode', { background: true })]);
 const src = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const quoted = (file, name) => { const m = new RegExp(`const ${name} = '((?:[^'\\\\]|\\\\.)*)'`).exec(src(file)); return m ? m[1] : ''; };
-total('organize: ORGANIZE_PROMPT', [quoted('main.js', 'ORGANIZE_PROMPT')]);
-total('organize: REFINE_PROMPT', [quoted('features/organize-ai.js', 'REFINE_PROMPT')]);
+total('organize: ORGANIZE_PROMPT', [quoted('src/main.js', 'ORGANIZE_PROMPT')]);
+total('organize: REFINE_PROMPT', [quoted('src/features/organize-ai.js', 'REFINE_PROMPT')]);
 
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify({ rows, totals }, null, 1));

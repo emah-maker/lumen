@@ -152,7 +152,7 @@ const os = require('os');
   legacy.kill();
 
   // A connection without the token is refused.
-  const channel = require('../mcp').channelPath(profile);
+  const channel = require('../src/automation/mcp').channelPath(profile);
   const refused = await new Promise((resolve) => {
     // Answer the challenge with a proof made from the wrong token.
     const s = net.connect(channel);
@@ -184,7 +184,7 @@ const os = require('os');
       const m = buf.match(/"lumenChallenge":"([0-9a-f]+)"/);
       if (m && !s.__answered) {
         s.__answered = true;
-        s.write(`${JSON.stringify({ lumenProof: require('../mcp').proofFor(token, m[1]) })}\n`);
+        s.write(`${JSON.stringify({ lumenProof: require('../src/automation/mcp').proofFor(token, m[1]) })}\n`);
       }
       if (/"lumenAuth":"ok"/.test(buf)) { s.destroy(); resolve(buf); }
     });

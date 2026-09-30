@@ -9,7 +9,7 @@ const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const W = require('../features/whats-new');
+const W = require('../src/features/whats-new');
 
 const root = path.join(__dirname, '..');
 const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
