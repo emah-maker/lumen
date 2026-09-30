@@ -51,8 +51,10 @@ async function main() {
   const marker = /(?:TASK|SIDE)-[A-Z0-9]+/.exec(prompt)?.[0] || 'NONE';
   let steps = [{ say: 'No script.' }];
   try { steps = JSON.parse(fs.readFileSync(path.join(dir, 'scripts.json'), 'utf8'))[marker] || steps; } catch {}
-  const cleanArgv = argv.map((a, i) => (argv[i - 1] === '--system-prompt-override' || argv[i - 1] === '--append-system-prompt' ? '(system prompt)' : a));
-  log({ event: 'start', marker, session, argv: cleanArgv, cwd: process.cwd(), env: Object.keys(process.env), home: process.env.GROK_HOME || null, system: argv[argv.indexOf('--append-system-prompt') + 1] || argv[argv.indexOf('--system-prompt-override') + 1] || '' });
+  const SYSTEM_FLAGS = ['--system-prompt-override', '--system-prompt', '--append-system-prompt'];
+  const cleanArgv = argv.map((a, i) => (SYSTEM_FLAGS.includes(argv[i - 1]) ? '(system prompt)' : a));
+  const systemAt = argv.findIndex((a) => SYSTEM_FLAGS.includes(a));
+  log({ event: 'start', marker, session, argv: cleanArgv, cwd: process.cwd(), env: Object.keys(process.env), home: process.env.GROK_HOME || null, system: systemAt >= 0 ? argv[systemAt + 1] || '' : '' });
 
   // ---- talking to Lumen
   let bridge = null;

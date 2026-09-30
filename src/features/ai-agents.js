@@ -103,21 +103,36 @@ function setupAiAgents(deps) {
   const bgEngines = new Set();
   // Tests run the CLIs as a fake process (test/fixtures/fake-cli.js): its `spawn` stands in for both engines'.
   const cliSpawn = () => (require('../test-mode').isTest() && process.env.LUMEN_TEST_CLI_SPAWN ? require(process.env.LUMEN_TEST_CLI_SPAWN).spawn : undefined);
+  // The fake CLI (test/fixtures/fake-cli.js) speaks only the stdio bridge and reads one message to
+  // the end of stdin: under it Claude Code runs one process per message over the bridge, as before.
+  const oneShotClaude = () => Boolean(cliSpawn());
 
   // ---------- Claude Code engine (created on first use) ----------
+  // Its MCP connection is Lumen's local HTTP server (startHttpGate, as Grok's), with a token per CLI
+  // process, else the stdio bridge; the sidebar's CLI stays running between a chat's messages.
 
   let claudeCode = null;
   let claudeCodeFound = false;
   let claudeCodeSignedIn = 'unknown'; // true | false | 'unknown' — mirrors claudeCode.status().signedIn
   let claudeCodeDetail = null; // subscription label (e.g. 'enterprise'), when known
   const claudeCodeModule = () => require('../ai/claude-code');
+  const newClaudeCode = (extra = {}) => new (claudeCodeModule().ClaudeCodeEngine)({
+    userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), gate: oneShotClaude() ? null : startHttpGate, keepAlive: !oneShotClaude(), spawn: cliSpawn(), onFresh: freshReads, ...extra,
+  });
+  // A new CLI process or session: the model no longer has its earlier page reads, so "unchanged since your
+  // last read" would point at nothing (snapshot.js ReadCache); the cache is keyed by the new session too.
+  function freshReads({ sessionId } = {}) { try { require('../ai/snapshot').reads.reset(sessionId); } catch {} }
   const claudeCodeEngine = () => {
-    if (!claudeCode) {
-      const { ClaudeCodeEngine } = claudeCodeModule();
-      claudeCode = new ClaudeCodeEngine({ userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn() });
-    }
+    claudeCode ||= newClaudeCode();
     return claudeCode;
   };
+  // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends.
+  agent.onEngineReset = () => { freshReads(); claudeCode?.release(); }; // (the read cache too: the chat's CLI session is gone)
+  // The composer was focused or typed in (renderer/chat-core.js): Claude Code's process starts ahead of the
+  // message (agent.prewarm: a no-op for any other engine, and cheap when repeated).
+  // text: what is already typed (routed for the model guess); the preload passes it through.
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} });
+  app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
   // Runs grok with Lumen's own GROK_HOME, whose config has only the `lumen` MCP server (see
@@ -139,7 +154,7 @@ function setupAiAgents(deps) {
       const { GrokBuildEngine } = grokBuildModule();
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
-      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn() });
+      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
     }
     return grokBuild;
   };
@@ -154,8 +169,10 @@ function setupAiAgents(deps) {
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
     if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
+    owner.callBegin?.(engineRun); // the card can wait on the user: the inactivity watchdog waits too
+    let answer = false;
     try {
-      const answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
+      answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
         action: 'terminal',
         title: 'Grok wants to run a terminal command',
         args,
@@ -163,15 +180,21 @@ function setupAiAgents(deps) {
       return answer === 'always' ? 'always' : answer ? 'once' : 'deny';
     } catch {
       return 'deny'; // the user hit Stop while the card was up
+    } finally {
+      // An allowed command may run silently for a long time, so the watchdog stays off for the rest of this run.
+      if (!answer) owner.callEnd?.(engineRun);
     }
   }
 
+  // Lumen's local HTTP MCP server (mcp-http.js): Grok's tools and gate, and Claude Code's tools.
+  // Only Lumen's own live engine runs are served (a token per run or CLI process).
   let grokGate = null;
   function startGrokGate() {
     grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval })
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }
+  const startHttpGate = startGrokGate;
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
@@ -186,22 +209,35 @@ function setupAiAgents(deps) {
 
   // Runs one browser tool for an external agent, with the same per-site approval as the sidebar,
   // and shows each call as a step in the sidebar.
+  const LABEL_FIRST = new Set(['click', 'type_text', 'fill_form', 'press_key']); // their labels are read from the page before the action runs
+  const LABEL_WAIT_MS = 150;
+  const OUTSIDE_LABEL_WAIT_MS = 1500; // outside agents (no early row): the label goes in the first event, for up to this long
   async function mcpCallTool(name, args, session) {
-    const problem = deps.validateToolInput(name, args);
-    if (problem) return { content: [{ type: 'text', text: `Invalid input: ${problem}` }], isError: true };
     session.approvedHosts ||= new Set();
-    const stepId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
     const owner = engineForSession(session);
     const engineRun = owner ? owner.active : null;
+    // A kept Claude Code process between messages owns its session, but no message is running to act for.
+    if (owner && !engineRun) return { content: [{ type: 'text', text: 'No message is in progress in Lumen for this call.' }], isError: true };
+    // Claude Code may already show this call's row, from while its input was still streaming (claude-code.js claimStep).
+    // Claimed before anything can refuse the call: the rows are matched to calls first-in-first-out, and a
+    // refused call must not leave its early row spinning.
+    const early = engineRun ? owner.claimStep?.(name) || null : null;
+    const refuse = (text) => {
+      if (early) engineRun.emit({ type: 'tool_done', id: early, ok: false, error: text });
+      return { content: [{ type: 'text', text }], isError: true };
+    };
+    const problem = deps.validateToolInput(name, args);
+    if (problem) return refuse(`Invalid input: ${problem}`);
+    const stepId = early || `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // A background task's CLI run brings its own Agent (work tab, approved sites, taint, approval cards
     // for the Tasks panel): each of its calls runs there, never in the sidebar's Agent or the user's tab.
     const runAgent = engineRun?.agent || agent;
     const toUi = engineRun ? engineRun.emit : mcpEvent;
     const signal = engineRun ? engineRun.signal : session.controller.signal;
     const scope = engineRun && runAgent.engineScope();
-    if (engineRun?.agent && !scope) return { content: [{ type: 'text', text: 'This background task is not running any more.' }], isError: true };
+    if (engineRun?.agent && !scope) return refuse('This background task is not running any more.');
     // `run` carries the "has read page content" taint (agent.ensureAllowed): the engine's message
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
@@ -212,16 +248,40 @@ function setupAiAgents(deps) {
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     const front = scope ? null : agent.browser.activeTab()?.id;
     const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn));
-    const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
-    toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
+    // The row shows at once with its generic label; describeStep's specific one follows as a tool_update
+    // (renderer) and never holds the call up. Only a label that reads the page as it is before the call
+    // acts (a click or type names its element) is waited for, for at most LABEL_WAIT_MS, then the call goes on.
+    // acting: the call's action has begun, so a page-reading label (click/type) arriving now would name the
+    // element from the page AFTER the action: it is dropped (a wrong name is worse than the generic one).
+    let finished = false;
+    let acting = false;
+    const labelled = inPin(() => runAgent.describeStep(name, args)).catch(() => null);
+    const named = (label) => { if (label && !finished && !(acting && LABEL_FIRST.has(name))) toUi({ type: 'tool_update', id: stepId, name, input: args, label, clientName: session.clientName }); };
+    let first = null;
+    // An outside agent has no early row to rename later: its first 'tool' event carries the specific label
+    // (waited for up to OUTSIDE_LABEL_WAIT_MS); the sidebar's own engine shows its row at once.
+    const waitMs = engineRun ? (LABEL_FIRST.has(name) ? LABEL_WAIT_MS : 0) : OUTSIDE_LABEL_WAIT_MS;
+    if (waitMs) {
+      let timer;
+      first = await Promise.race([labelled, new Promise((resolve) => { timer = setTimeout(resolve, waitMs, null); })]);
+      clearTimeout(timer);
+    }
+    // A new row carries the label when it is known by now (else the generic one); an early row is named in place.
+    if (!early) toUi({ type: 'tool', id: stepId, name, input: args, label: first, clientName: session.clientName });
+    else named(first);
+    labelled.then((label) => { if (label !== first) named(label); });
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
     // an outside agent's call is pinned to the tab in front when it arrives, so the approval card and
     // the action it allows are about the same tab. Stop ends a long wait at once, either way.
     const work = async () => {
       await runAgent.ensureAllowed(name, emit, signal, allow);
+      acting = true;
       return abortable(runAgent.execute(name, args), signal);
     };
+    // The engine counts this call (a message that ran a tool is never re-sent silently) and pauses its
+    // inactivity watchdog while it runs, approval card included (claude-code.js callBegin).
+    if (engineRun) owner.callBegin?.(engineRun);
     try {
       const result = await inPin(work);
       toUi({ type: 'tool_done', id: stepId, ok: true });
@@ -230,6 +290,9 @@ function setupAiAgents(deps) {
       const message = signal.aborted ? 'Stopped by the user.' : String(err?.message || err);
       toUi({ type: 'tool_done', id: stepId, ok: false, error: message.split('\n')[0] });
       return { content: [{ type: 'text', text: message }], isError: true };
+    } finally {
+      finished = true; // a label still being worked out is dropped: the row is done
+      if (engineRun) owner.callEnd?.(engineRun);
     }
   }
 
@@ -483,13 +546,21 @@ function setupAiAgents(deps) {
       startAutomation();
       // Looking for the CLIs (and loading claude-code.js/grok-build.js) waits until the window is up.
       setTimeout(() => {
-        Promise.allSettled([refreshClaudeCodeStatus(false), grokSidebar() ? refreshGrokBuildStatus(false) : null])
+        // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
+        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false)])
           .then(() => { detecting = false; ui()?.send('models-updated'); });
       }, 300);
     },
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild):/.test(String(id)),
     mcpServer: () => mcpServer,
+    // The setup card's "Use your own Grok Build": on in the sidebar, looked for again (just installed or signed in).
+    async useGrokBuild() {
+      if (readSettings().grokSidebar !== true) writeSettings({ ...readSettings(), grokSidebar: true });
+      const s = await refreshGrokBuildStatus(true).catch(() => ({ installed: false, signedIn: false }));
+      ui()?.send('models-updated');
+      return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
+    },
     // Are the local CLIs there, and signed in (background tasks list them, or say why not).
     cliStatus: () => ({
       claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },
@@ -501,10 +572,10 @@ function setupAiAgents(deps) {
     async backgroundEngine(kind) {
       const userData = app.getPath('userData');
       if (kind === 'claudecode') {
-        const engine = new (claudeCodeModule().ClaudeCodeEngine)({ userData, mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn() });
+        const engine = newClaudeCode({ keepAlive: false }); // one message, then its process ends
         engine.bin = await claudeCodeEngine().detect();
         bgEngines.add(engine);
-        return { engine, release: () => { bgEngines.delete(engine); } };
+        return { engine, release: () => { engine.release(); bgEngines.delete(engine); } };
       }
       if (kind === 'grokbuild') {
         const root = path.join(userData, 'grok-bg', crypto.randomBytes(6).toString('hex'));

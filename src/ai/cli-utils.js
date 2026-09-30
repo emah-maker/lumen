@@ -58,4 +58,40 @@ function usageOf(result) {
   };
 }
 
-module.exports = { exists, lookup, killTree, engineModel, validModel, usageOf };
+// Per-turn totals from a kept process's result messages. Whether a result's total_cost_usd / usage
+// count one message or the whole process so far is not documented for stream-json input, so both are
+// handled: when this is a later result of the same process and EVERY counter (cost and each usage
+// field) is >= the previous result's, the totals are read as cumulative and the previous ones are
+// subtracted; any counter that went down proves per-turn semantics and latches it for the process
+// (state.perTurn). Unavoidable false positive: per-turn totals that all happen to grow are read as
+// cumulative until one shrinks. modelUsage rows are subtracted the same way (contextWindow is not a counter).
+// state: { last, perTurn } kept on the process. Returns the result to report (the input when unchanged).
+const USAGE_KEYS = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'];
+const ROW_KEYS = ['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens', 'costUSD', 'webSearchRequests'];
+function perTurnResult(result, state) {
+  if (!result || typeof result !== 'object' || !state) return result;
+  const prev = state.last;
+  state.last = result;
+  if (!prev || state.perTurn) return result;
+  const num = (v) => Number(v) || 0;
+  const pairs = [[num(result.total_cost_usd), num(prev.total_cost_usd)], ...USAGE_KEYS.map((k) => [num(result.usage?.[k]), num(prev.usage?.[k])])];
+  // A counter that went down, or totals identical to the last result's (a real turn always adds tokens),
+  // can only be per-turn numbers.
+  if (pairs.some(([now, before]) => now < before) || pairs.every(([now, before]) => now === before)) { state.perTurn = true; return result; }
+  const out = { ...result, total_cost_usd: Math.max(0, num(result.total_cost_usd) - num(prev.total_cost_usd)) };
+  if (result.usage && typeof result.usage === 'object') {
+    out.usage = { ...result.usage };
+    for (const k of USAGE_KEYS) if (result.usage[k] != null) out.usage[k] = num(result.usage[k]) - num(prev.usage?.[k]);
+  }
+  if (result.modelUsage && typeof result.modelUsage === 'object') {
+    out.modelUsage = {};
+    for (const [model, row] of Object.entries(result.modelUsage)) {
+      const before = prev.modelUsage?.[model] || {};
+      out.modelUsage[model] = { ...row };
+      for (const k of ROW_KEYS) if (typeof row?.[k] === 'number') out.modelUsage[model][k] = Math.max(0, row[k] - num(before[k]));
+    }
+  }
+  return out;
+}
+
+module.exports = { exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult };

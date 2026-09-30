@@ -3,7 +3,8 @@
 // from the prompt text and what is attached, bucketed into light / standard / heavy, then looked up
 // in TABLE. A model the user picked (anything but 'default') is never touched, and neither is an
 // engine with no row in TABLE (Grok Build: its model ids come from `grok models`, so no fixed tiers).
-// Agent.claudeCodeTurn calls route(); the previous tier is kept in the chat's settings (ccAutoTier).
+// Agent.claudeCodePlan calls route(); the previous tier is kept in the chat's settings (ccAutoTier),
+// and is pinned (never lowered) while the chat's CLI session lasts.
 
 const TIERS = ['light', 'standard', 'heavy'];
 
@@ -49,13 +50,16 @@ const tierOf = (s) => (s <= -2 ? 'light' : s >= 5 ? 'heavy' : 'standard');
 // routed turn. A short follow-up ("continue", "fix it", "yes") never drops below the previous turn's
 // tier, so a hard task isn't handed to a smaller model halfway through; a real change of subject
 // (a long or heavier message) is scored on its own.
-function tierFor(prompt, { imageCount = 0, tabCount = 0, previous = null } = {}) {
+// pinned: the message continues a CLI session routed before (Claude Code --resume). The tier then
+// never goes down, whatever the message: another model mid-session starts its prompt cache from
+// scratch. It can still go up for a harder message. A new session is scored on its own again.
+function tierFor(prompt, { imageCount = 0, tabCount = 0, previous = null, pinned = false } = {}) {
   const s = score(prompt, { imageCount, tabCount });
   let tier = tierOf(s);
   const t = String(prompt || '').trim();
   const prev = previous && TIERS.includes(previous.tier) && previous.turns > 0 ? previous.tier : null;
   const followUp = Boolean(prev) && (ACK.test(t) || (t.length <= 40 && !imageCount && !count(t, LIGHT_WORDS)));
-  if (followUp && TIERS.indexOf(prev) > TIERS.indexOf(tier)) tier = prev;
+  if ((followUp || (pinned && prev)) && TIERS.indexOf(prev) > TIERS.indexOf(tier)) tier = prev;
   return { tier, score: s, followUp };
 }
 
@@ -66,9 +70,9 @@ const labelFor = (model) => `Auto · ${NAMES[model] || model}`;
 
 // The one call. `picked` is the model part of the picker id ('default' when none was chosen).
 // Returns { model, auto, tier?, score?, label? }: model is what to pass on (the picked one unless auto-routed).
-function route({ engine, picked = 'default', prompt, imageCount = 0, tabCount = 0, previous = null, enabled = true } = {}) {
+function route({ engine, picked = 'default', prompt, imageCount = 0, tabCount = 0, previous = null, pinned = false, enabled = true } = {}) {
   if (!enabled || (picked && picked !== 'default') || !TABLE[engine]) return { model: picked || 'default', auto: false };
-  const { tier, score: s, followUp } = tierFor(prompt, { imageCount, tabCount, previous });
+  const { tier, score: s, followUp } = tierFor(prompt, { imageCount, tabCount, previous, pinned });
   const model = modelForTier(engine, tier);
   return { model, auto: true, tier, score: s, followUp, label: labelFor(model) };
 }

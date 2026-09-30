@@ -28,8 +28,11 @@ function setupError(text) {
   if (!el) { el = Object.assign(document.createElement('div'), { className: 'error setup-error' }); el.setAttribute('role', 'alert'); card.append(el); }
   el.textContent = text;
 }
+function clearSetupError() { optional('setup').querySelector?.('.setup-error')?.remove(); }
+for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok']) optional(id).addEventListener('click', clearSetupError, true);
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
+  if (s.model) clearSetupError();
   // A local engine (Claude Code, Grok Build) found but signed out can't answer yet: while it's the
   // pick, the card stays up.
   const signedOut = s.models.find((m) => m.id === 'claudecode:default')?.signedIn === false;
@@ -40,7 +43,12 @@ async function refreshSetup() {
     : signedOut
       ? t('setup.claudeCode.signedOut')
       : t('setup.claudeCode.ready');
-  optional('setup-claude-code').disabled = !s.claudeCode;
+  optional('setup-claude-code').classList.toggle('missing', !s.claudeCode); // (still clickable: it looks again)
+  optional('setup-claude-code-get').hidden = Boolean(s.claudeCode);
+  // Grok Build, once it's found on this computer (the sidebar only: the full-page chat can't switch it on).
+  const grok = s.grokBuild || {};
+  optional('setup-grok').hidden = !grok.installed || !window.assistant.useGrokBuild;
+  optional('setup-grok-detail').textContent = grok.signedIn === false ? t('setup.grok.signedOut') : t('setup.grok.detail');
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -50,13 +58,13 @@ async function refreshSetup() {
       ? t('welcome.ai.ready', { name: s.models.find((m) => m.id === s.model)?.label || s.model })
       : t('welcome.ai.detail');
   }
+  if (pendingAsk && Date.now() - pendingAsk.at > 10 * 60 * 1000) { pendingAsk = null; optional('setup-pending').hidden = true; } // (old: not sent out of the blue)
   if (ready && pendingAsk && !running) {
     const p = pendingAsk;
     pendingAsk = null;
     optional('setup-pending').hidden = true;
     optional('setup').classList.remove('attention');
     await loadModels();
-    if (welcoming) finishWelcome({ focus: false });
     if (prompt.value.trim() === p.text.trim()) { prompt.value = ''; autosize(); updateSend(); }
     ask(p.text, p.images, p.tabs);
   }
@@ -90,31 +98,38 @@ async function showWelcome() {
       note.textContent = t('welcome.import.running', { browser: b.label });
       const r = await window.assistant.setup.importFrom(b.id).catch((err) => ({ ok: false, error: err.message }));
       for (const other of actions.querySelectorAll('button')) other.disabled = false;
-      note.textContent = r.ok ? t('welcome.import.done', { browser: r.label, bookmarks: r.bookmarks.toLocaleString(), history: r.history.toLocaleString() }) : t('welcome.import.failed', { error: r.error });
+      note.textContent = r.ok ? t('welcome.import.done', {
+        browser: r.label,
+        bookmarks: t(r.bookmarks === 1 ? 'import.bookmarks.one' : 'import.bookmarks.other', { count: r.bookmarks.toLocaleString() }),
+        history: t(r.history === 1 ? 'import.history.one' : 'import.history.other', { count: r.history.toLocaleString() }),
+      }) : t('welcome.import.failed', { error: r.error });
       note.classList.toggle('err', !r.ok);
       if (r.ok) $('welcome-step-import').classList.add('done');
     };
     return btn;
   }));
-  showDefault(st.isDefault);
+  showDefault(st.isDefault || st.devBuild); // (a copy run from source doesn't offer it)
   refreshSetup();
+  announce(`${t('welcome.title')}. ${t('welcome.lead')}`);
   welcome.querySelector('.setup-option:not(:disabled)')?.focus({ preventScroll: true });
 }
 function showDefault(isDefault) {
   if (!welcome) return;
-  $('welcome-step-default').classList.toggle('done', Boolean(isDefault));
-  $('welcome-make-default').hidden = Boolean(isDefault);
-  if (isDefault) $('welcome-default-note').textContent = t('welcome.default.done');
+  $('welcome-step-default').hidden = Boolean(isDefault); // (already the default: nothing to offer)
 }
 if (welcome) {
   $('welcome-make-default').onclick = async () => {
     const r = await window.assistant.setup.makeDefault().catch(() => null);
     const note = $('welcome-default-note');
-    if (r?.opened === 'windows-settings') note.textContent = t(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual');
-    else showDefault(r?.isDefault);
+    if (r?.devBuild) note.textContent = t('welcome.default.devBuild');
+    else if (r?.opened === 'windows-settings') note.textContent = t(r.ok ? 'welcome.default.windows' : 'welcome.default.windowsManual');
+    else if (r?.isDefault) showDefault(true);
+    else if (r?.opened === 'system-prompt') note.textContent = t('welcome.default.confirm');
+    else note.textContent = t(r ? 'welcome.default.notTaken' : 'welcome.default.failed'); // (never a click that seems to do nothing)
   };
   // Back from the system's Default apps page: did it take?
-  window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then(showDefault).catch(() => {}); });
+  // Back from system settings: the line goes if it took; otherwise its instruction is simply cleared.
+  window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then((yes) => { if (yes) showDefault(true); else $('welcome-default-note').textContent = ''; }).catch(() => {}); });
   $('welcome-done').onclick = () => finishWelcome();
   window.assistant.setup?.onWelcome?.(() => showWelcome());
 }
@@ -129,9 +144,18 @@ function finishWelcome({ focus = true } = {}) {
   if (focus) prompt.focus();
 }
 optional('setup-claude-code').onclick = async () => {
-  // Signed out a moment ago? Ask the CLI again first (the user may have just run /login).
+  // Signed out a moment ago, or just installed? Ask again first (no restart needed).
   const status = await window.lumenExtras?.claudeCodeStatus?.(true).catch(() => null);
-  if (status?.signedIn !== false && await window.assistant.setModel('claudecode:default')) await loadModels();
+  if (status && !status.installed) { setupError(t('setup.claudeCode.notFound')); return; }
+  if (status?.signedIn === false) { setupError(t('setup.claudeCode.stillSignedOut')); return; }
+  if (await window.assistant.setModel('claudecode:default')) await loadModels();
+  refreshSetup();
+};
+optional('setup-grok').onclick = async () => {
+  const r = await window.assistant.useGrokBuild?.().catch(() => null);
+  if (!r?.installed) { setupError(t('setup.grok.notFound')); return; }
+  if (!r.signedIn) { setupError(t('setup.grok.signedOut')); return; }
+  if (await window.assistant.setModel('grokbuild:default')) await loadModels();
   refreshSetup();
 };
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
@@ -347,11 +371,18 @@ jump.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" st
 jump.setAttribute('aria-label', t('chat.jumpLatest'));
 jump.title = t('chat.jumpLatest');
 let jumping = 0; // (a jump's own scroll events don't count as the user scrolling away)
+const catchUp = () => { if (stuck && jumping) messages.scrollTop = messages.scrollHeight; };
+// The user scrolling (wheel, touch, keys) during a jump takes over: the jump no longer holds the view.
+for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) messages.addEventListener(type, (e) => { if (type === 'keydown' && e.target !== messages) return; if (jumping) { jumping = 0; messages.removeEventListener('scrollend', catchUp); } }, { passive: true });
 jump.addEventListener('click', () => {
   stuck = true;
   jumping = Date.now();
   const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches && messages.scrollHeight - messages.scrollTop - messages.clientHeight < messages.clientHeight * 6;
   messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); // (a long way down: at once)
+  if (!atBottom()) { // (the reply grew meanwhile: the end, once the smooth scroll stops)
+    messages.removeEventListener('scrollend', catchUp);
+    messages.addEventListener('scrollend', catchUp, { once: true });
+  }
   jump.hidden = true;
 });
 messages.after(jump);
@@ -362,7 +393,7 @@ messages.addEventListener('scroll', () => {
 }, { passive: true });
 function scrollToBottom(force = false) {
   if (force) stuck = true;
-  if (stuck) messages.scrollTop = messages.scrollHeight;
+  if (stuck && (force || Date.now() - jumping >= 700)) messages.scrollTop = messages.scrollHeight; // (a smooth jump finishes first)
   jump.hidden = stuck || !messages.querySelector('.msg');
 }
 
@@ -562,7 +593,7 @@ function ask(text, images = [], tabs = null) {
   }
   // Nothing connected: the question is kept (back in the box) and sent as soon as an AI is connected.
   if (!modelReady) {
-    pendingAsk = { text, images, tabs };
+    pendingAsk = { text, images, tabs, at: Date.now() };
     if (!prompt.value.trim() && text) { prompt.value = text; autosize(); updateSend(); }
     const pending = optional('setup-pending');
     pending.textContent = t('setup.pending');
@@ -604,7 +635,7 @@ async function askAgain() {
   if (result === 'absent') { // only after a failure (Retry): a Regenerate that finds nothing to take back does nothing
     const us = messages.querySelectorAll('.msg.user');
     let failed = false;
-    for (let n = us[us.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.querySelector?.('.error') || n.classList.contains('error')) { failed = true; break; }
+    for (let n = us[us.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.querySelector?.('.error, .notice.stopped') || n.classList.contains('error') || n.classList.contains('stopped') || n.classList.contains('reply-actions-only')) { failed = true; break; }
     if (!failed) {
       for (const b of messages.querySelectorAll('.reply-regen')) b.remove();
       append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.nothingToRegenerate') }));
@@ -618,32 +649,77 @@ async function askAgain() {
   return true;
 }
 
-// Edit (the latest message you sent, once its reply is done): takes that exchange back and puts the message,
-// with its images, in the box to change and send again.
-async function editLast() {
+// Edit (the latest message you sent, once its reply is done): the bubble becomes a text box in place, as in
+// Claude.ai and ChatGPT. Nothing is taken back until Send; Cancel or Esc leaves everything as it was. The composer
+// (and whatever is typed there) is untouched.
+function editLast() {
   if (running || !lastAsk) return;
+  const bubble = [...messages.querySelectorAll('.msg.user')].pop();
+  if (!bubble || bubble.classList.contains('editing') || bubble.dataset.skill) return; // (a skill runs again with Regenerate)
   const again = lastAsk;
-  const result = await window.assistant.rewind?.(again.text);
-  if (result !== 'rewound' && result !== 'absent') return;
-  const users = messages.querySelectorAll('.msg.user');
-  const from = users[users.length - 1];
-  if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
-  lastAsk = null;
-  prompt.value = again.text;
-  if (again.images?.length) { attachments = [...again.images]; renderAttachments(); }
-  autosize();
-  updateSend();
-  prompt.focus();
-  prompt.setSelectionRange(prompt.value.length, prompt.value.length);
-  if (!messages.querySelector('.msg')) refreshSetup?.();
+  const kept = [...bubble.childNodes];
+  const box = Object.assign(document.createElement('textarea'), { className: 'msg-edit-box', value: again.text, rows: 1 });
+  box.setAttribute('aria-label', t('chat.editMessage.title'));
+  const fit = () => { box.style.height = 'auto'; box.style.height = `${Math.min(box.scrollHeight, 240)}px`; };
+  const send = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: t('chat.editMessage.send') });
+  const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.editMessage.cancel') });
+  const row = Object.assign(document.createElement('div'), { className: 'msg-edit-actions' });
+  row.append(cancel, send);
+  const actions = bubble.nextElementSibling?.classList.contains('msg-user-actions') ? bubble.nextElementSibling : null;
+  const restore = () => {
+    bubble.classList.remove('editing');
+    bubble.replaceChildren(...kept);
+    if (actions) actions.hidden = false;
+    bubble.cancelEdit = null;
+  };
+  bubble.cancelEdit = restore;
+  bubble.classList.add('editing');
+  for (const n of kept) if (n.nodeType === Node.TEXT_NODE) n.remove();
+  const tabsLine = bubble.querySelector(':scope > .msg-tabs');
+  if (tabsLine) tabsLine.before(box, row); else bubble.append(box, row);
+  if (actions) actions.hidden = true;
+  fit();
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+  box.addEventListener('input', () => { fit(); send.disabled = !box.value.trim() && !again.images?.length; });
+  cancel.onclick = () => { restore(); (actions?.querySelector('button') || prompt).focus(); };
+  send.onclick = async () => {
+    const text = box.value.trim();
+    if ((!text && !again.images?.length) || running) return;
+    if (!modelReady) { restore(); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') })); return; }
+    send.disabled = true;
+    const result = await window.assistant.rewind?.(again.text);
+    if (result !== 'rewound' && result !== 'absent') {
+      restore();
+      append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.editFailed') }));
+      return;
+    }
+    while (bubble.nextSibling) bubble.nextSibling.remove();
+    bubble.remove();
+    ask(text, again.images || [], again.tabs);
+    prompt.focus();
+  };
+  box.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.onclick(); }
+    else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.onclick(); }
+  });
 }
+// The latest message you sent: Edit, in a row under the bubble (not inside it, so it's no part of its text).
 function markEditable(bubble) {
-  for (const b of messages.querySelectorAll('.msg-edit')) b.remove(); // only the latest message
+  for (const b of messages.querySelectorAll('.msg-user-actions')) b.remove(); // only the latest message
   if (!bubble) return;
+  const row = Object.assign(document.createElement('div'), { className: 'msg-user-actions' });
   const b = Object.assign(document.createElement('button'), { type: 'button', className: 'msg-edit', textContent: t('chat.editMessage') });
   b.title = t('chat.editMessage.title');
   b.onclick = () => editLast();
-  bubble.append(b);
+  row.append(b);
+  bubble.after(row);
+}
+// What a user bubble asked (for Regenerate and Edit after a restore or a chat switch).
+const bubbleAsks = new WeakMap();
+function askOf(bubble) {
+  return bubble ? bubbleAsks.get(bubble) || null : null;
 }
 
 // The user's bubble and the working line for a turn that is now running.
@@ -663,7 +739,9 @@ function startTurn(text, images, tabs = null) {
   }
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
-  for (const b of messages.querySelectorAll('.reply-regen')) b.remove(); // only the latest reply can be regenerated
+  bubbleAsks.set(bubble, { text, images, tabs });
+  for (const b of messages.querySelectorAll('.reply-regen, .reply-actions-only')) b.remove(); // only the latest reply can be regenerated
+  for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (an edit left open)
   append(bubble, { force: true }); // your own message always comes into view
   markEditable(bubble);
   beginTurn();
@@ -683,6 +761,8 @@ function beginTurn() {
 // events that follow belong to it, and any approval card it waits on shows again.
 function resumeLive(live) {
   if (!live || turn) return;
+  const lastUser = [...messages.querySelectorAll('.msg.user')].pop();
+  if (askOf(lastUser)) lastAsk = askOf(lastUser);
   beginTurn();
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
@@ -780,6 +860,7 @@ function drawTail(el) {
   if (stable > el.stableLen) {
     el.insertAdjacentHTML('beforeend', window.renderMarkdown(source.slice(el.stableLen, stable)));
     el.stableLen = stable;
+    decorateCode(el, { colour: true }); // (finished blocks: coloured now, not when the reply ends)
     el.headNodes = el.childNodes.length;
   }
   const tail = settledMarkdown(source.slice(el.stableLen));
@@ -796,7 +877,8 @@ function flushStreaming(el) {
   decorateCode(el);
 }
 // Each code block in a finished reply: its language, and a Copy button for just that code.
-function decorateCode(root) {
+// `colour`: colour these blocks even while the reply streams (they're finished: the stable part of the reply).
+function decorateCode(root, { colour = false } = {}) {
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -811,7 +893,7 @@ function decorateCode(root) {
     pre.replaceWith(box);
     box.append(head, pre);
     const code = pre.querySelector('code');
-    if (code && window.highlightCode && !root.classList?.contains('streaming')) window.highlightCode(code, pre.dataset.lang);
+    if (code && window.highlightCode && (colour || !root.classList?.contains('streaming'))) window.highlightCode(code, pre.dataset.lang);
   }
   // A finished reply's blocks, decorated while they streamed, get their colours now.
   if (window.highlightCode && !root?.classList?.contains('streaming')) for (const code of root?.querySelectorAll?.('.code-block pre:not(.math-src) > code:not([data-hl])') || []) window.highlightCode(code, code.parentElement.dataset.lang);
@@ -828,6 +910,9 @@ window.assistant.onEvent((event) => {
   // clear, or the toolbar's "waiting for approval" badge stayed on.
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
   if (!turn || event.runId !== runId) return;
+  // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
+  if (event.type === 'status') { if (turn.working) turn.working.dataset.status = event.text || ''; return; }
+  if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
   switch (event.type) {
     case 'turn_start':
     case 'text_block':
@@ -882,6 +967,15 @@ window.assistant.onEvent((event) => {
       turn.textSource = '';
       break;
     }
+    case 'tool_update': { // a step shown early (its input still streaming) gets its real label
+      const step = turn.steps.get(event.id);
+      if (!step) break;
+      const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
+      step.firstChild.textContent = label;
+      step.title = label;
+      if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
+      break;
+    }
     case 'tool_done': {
       const step = turn.steps.get(event.id);
       if (!step) break;
@@ -908,7 +1002,8 @@ window.assistant.onEvent((event) => {
       syncWorking();
       break;
     case 'notice': {
-      const notice = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.text }));
+      if (event.stopped) turn.stopped = true;
+      const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t('chat.stopped') : event.text }));
       if (event.action === 'continue') {
         const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
         button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
@@ -917,7 +1012,10 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'error': {
-      const error = appendToTurn(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
+      const errorEl = Object.assign(document.createElement('div'), { className: 'error', textContent: event.text });
+      errorEl.setAttribute('role', 'alert');
+      const error = appendToTurn(errorEl);
+      turn.failed = true;
       if (event.action === 'settings') {
         const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: t('chat.setupAi') });
         button.onclick = openAiSettings;
@@ -933,12 +1031,12 @@ window.assistant.onEvent((event) => {
       settleThinking();
       finishReply(turn.text, turn.textSource, { latest: true });
       // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
-      if (!turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
+      if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
         const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only' });
         row.append(regenButton());
         turn.working.before(row);
       }
-      announce([...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
+      if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
       labelReply(turn.text, event.model);
       scrollToBottom(); // (the reply's copy button and label were added below its end)
       endStream();
@@ -1277,6 +1375,7 @@ function showHistory(items) {
         bubble.append(row);
       }
       if (item.text) bubble.append(document.createTextNode(item.text));
+      bubbleAsks.set(bubble, { text: item.text || '', images: images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), tabs: null });
     } else if (item.role === 'assistant' && item.text) {
       if (item.steps) {
         const summary = document.createElement('div');
@@ -1311,6 +1410,16 @@ function showHistory(items) {
     lastReply.querySelector('.reply-copy')?.remove();
     finishReply(lastReply, items[items.length - 1].text, { latest: true });
     markEditable([...messages.querySelectorAll('.msg.user')].pop());
+  } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length)) {
+    // It ends on your message: its reply stopped before saying anything. Regenerate and Edit still work.
+    const lastBubble = [...messages.querySelectorAll('.msg.user')].pop();
+    lastAsk = askOf(lastBubble);
+    if (lastAsk) {
+      markEditable(lastBubble);
+      const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only restored' });
+      row.append(regenButton());
+      append(row);
+    }
   }
   messages.scrollTop = messages.scrollHeight;
 }
@@ -1351,7 +1460,27 @@ function autosize() {
   prompt.style.height = 'auto';
   prompt.style.height = `${Math.min(prompt.scrollHeight, 160)}px`;
 }
-prompt.addEventListener('input', () => { autosize(); updateSend(); });
+// Claude Code's process starts while the user types (main: agent.prewarm, a no-op for any other engine); at most every 20 s.
+let prewarmAt = 0;
+// The composer's text so far is passed along (the model guess routes it); the main side backs off after failures.
+// The words typed re-route a guessed warm-up at a first phrase (12 characters) and again at a sentence (40), and
+// when the box loses focus with text in it; main keeps the process unless they route to another model.
+let prewarmStage = 0;
+const prewarm = (force = false) => {
+  const length = prompt.value.trim().length;
+  const stage = length >= 40 ? 2 : length >= 12 ? 1 : 0;
+  const reroute = stage > prewarmStage;
+  if (running || (!force && !reroute && Date.now() - prewarmAt < 20000)) return;
+  if (force && prompt.value === prewarmSent) return; // (blur with nothing new typed: nothing to re-route)
+  prewarmAt = Date.now();
+  prewarmStage = Math.max(prewarmStage, stage);
+  prewarmSent = prompt.value;
+  try { window.assistant?.prewarm?.(prompt.value); } catch {}
+};
+let prewarmSent = '';
+prompt.addEventListener('blur', () => { if (prompt.value.trim()) prewarm(true); else prewarmStage = 0; });
+prompt.addEventListener('focus', () => prewarm());
+prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -1423,7 +1552,17 @@ function clearChatView() {
   lastAsk = null; // another chat: its last message isn't known here
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
-  for (const q of queued.splice(0)) q.notice.remove();
+  const unsent = queued.splice(0);
+  for (const q of unsent) q.notice.remove();
+  // Messages still waiting for the other chat's reply aren't lost: they come back to the box, to send here or not.
+  if (unsent.some((q) => q.text || q.images?.length)) {
+    const texts = unsent.map((q) => q.text).filter(Boolean);
+    if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
+    const images = unsent.flatMap((q) => q.images || []);
+    if (images.length) { attachments = [...attachments, ...images]; renderAttachments(); }
+    autosize();
+    updateSend();
+  }
   messages.querySelectorAll(':scope > :not(#empty)').forEach((el) => el.remove());
   window.tabsAsk?.reset(); // "@" chips and the once-per-chat "all tabs" confirm start over
   $('empty').hidden = false;

@@ -158,7 +158,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -247,15 +247,19 @@ function readSettings() {
 let settingsGen = 0; // bumped by every write: an async write that is no longer the latest doesn't land
 // Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
 // with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
+let settingsPending = false; // an async write not yet known to be on disk
 function writeSettings(settings) {
   settingsCache = { ...settings };
+  settingsPending = true;
   const gen = ++settingsGen;
-  settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen);
+  settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen)
+    .then(() => { if (gen === settingsGen) settingsPending = false; }); // (on disk: quitting has nothing left to write)
 }
 const writeSettingsAsync = writeSettings; // (the periodic session save)
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   settingsCache = { ...settings };
+  settingsPending = false;
   settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
@@ -790,6 +794,7 @@ function syncExtensions(fn) {
 // ---------- ad blocker (features/adblock.js) ----------
 
 const adblock = createAdblock({
+  peekSettings: () => settingsCache || readSettings(), // (read on every request: no copy)
   app, session, readSettings, writeSettings, isWebUrl,
   activeContents: () => activeTab()?.webContents,
   realUrl: (wc) => realUrl(wc),
@@ -1049,7 +1054,7 @@ function recordVisit(url, title) {
   entry.last = Date.now();
   if (title) entry.title = title;
   history.set(url, entry);
-  historyVersion++;
+  if (entry.visits >= 3) historyVersion++; // (only pages visited 3+ times are in frequentSites: others don't change it)
   saveHistorySoon();
 }
 
@@ -1292,7 +1297,7 @@ function sendTabsSoon() {
   if (!rec) { sendTabs(); return; }
   if (tabsSoon.has(rec)) return;
   tabsSoon.add(rec);
-  setImmediate(() => { tabsSoon.delete(rec); if (rcAlive(rec)) withWindow(rec, sendTabs); });
+  setTimeout(() => { tabsSoon.delete(rec); if (rcAlive(rec)) withWindow(rec, sendTabs); }, 16); // (one frame: a load's events arrive in separate turns)
 }
 
 function activeTab() {
@@ -1398,7 +1403,7 @@ function takeSpareNewTab() {
   if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
   return s.view;
 }
-const spareSoon = () => setTimeout(makeSpareNewTab, 400).unref?.();
+const spareSoon = () => setTimeout(makeSpareNewTab, 700).unref?.(); // (once this tab has drawn and the first keys are in)
 
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
@@ -1416,6 +1421,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
       ...(isolated ? { partition: isolated } : {}),
     },
   });
+  // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
+  if (plainNewTab && !spare && !adopted) { try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
   tabs.push(tab);
@@ -1427,7 +1434,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
     tab.spareFilling = true;
     // (At most 100 ms: an occluded or minimized window draws no frames, and the tab must not stay blank.)
-    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
+    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); true`, true)
       .catch(() => wc.loadURL(url).catch(() => {}));
     Promise.race([filled, new Promise((r) => setTimeout(r, 100))])
       .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
@@ -2691,8 +2698,16 @@ function frequentSitesNow(limit) {
 // A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images), written once.
 const faviconFiles = new Map(); // data URL hash -> file URL
 const FAVICON_FILE_URL = /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z0-9]+$/i;
+const faviconFileOf = new Map(); // data: address -> its file (no sha1 of 50 KB per lookup)
 function faviconFile(dataUrl) {
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+  if (faviconFileOf.has(dataUrl)) return faviconFileOf.get(dataUrl);
+  const out = faviconFileNow(dataUrl);
+  if (faviconFileOf.size > 500) faviconFileOf.clear();
+  faviconFileOf.set(dataUrl, out);
+  return out;
+}
+function faviconFileNow(dataUrl) {
   const key = require('crypto').createHash('sha1').update(dataUrl).digest('hex').slice(0, 20);
   if (faviconFiles.has(key)) return faviconFiles.get(key);
   const m = dataUrl.match(/^data:image\/([a-z+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
@@ -4585,7 +4600,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
-  else if (settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
+  if (settingsPending && settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
   quitting = true;
 });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -5557,8 +5572,10 @@ ipcMain.handle('settings:get', () => {
     // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
+    grokBuild: aiAgents.cliStatus().grokbuild, // { installed, signedIn, enabled }: the setup card offers it once found
   };
 });
+ipcMain.handle('settings:use-grok-build', () => aiAgents.useGrokBuild());
 // A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
 // the first message. Offline (can't check), it's saved anyway, and the caller is told so.
 // Safe Browsing's status and key, for the settings page's Privacy section. The key is kept
@@ -5846,7 +5863,7 @@ app.whenReady().then(async () => {
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
-  instance.fixShortcutIcons(app, shell);
+  setTimeout(() => instance.fixShortcutIcons(app, shell), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app); // Explorer says Lumen, not Electron
   aiAgents.start(); // MCP server, CDP automation (if on), Claude Code detection
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
@@ -5873,12 +5890,11 @@ app.whenReady().then(async () => {
   createWindow();
   // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
   const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
-  await atMost(extending);
-  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await atMost(blocking);
+  await atMost(Promise.all([extending, fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin')) ? blocking : null]));
   perf.mark('adblockReady');
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
-  setTimeout(makeSpareNewTab, 4000).unref?.(); // a new-tab page ready for the first Ctrl+T
+  setTimeout(makeSpareNewTab, 1500).unref?.(); // a new-tab page ready for the first Ctrl+T
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours

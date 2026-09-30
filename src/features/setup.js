@@ -17,6 +17,9 @@ function reg(args) {
 }
 
 // `freshInstall()`: no settings file existed when this launch first read settings.
+// `reg query … /v ProgId` output -> whether it names this ProgID.
+const progIdIs = (out, progId) => Boolean(out && new RegExp(`ProgId\\s+REG_SZ\\s+${progId}\\s*$`, 'm').test(out));
+
 function create({ app, shell, readSettings, writeSettings, importer, importBrowser, freshInstall }) {
   // The welcome shows on a fresh install until it's finished or skipped (a quit halfway shows it again).
   function welcomePending() {
@@ -62,8 +65,10 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   let lastDefault = null; // the last answer, for the synchronous app menu
   async function isDefault() {
     if (process.platform === 'win32') {
-      const out = await reg(['query', 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', '/v', 'ProgId']);
-      lastDefault = Boolean(out && new RegExp(`ProgId\\s+REG_SZ\\s+${PROG_ID}\\b`).test(out));
+      // (Newer Windows 11 builds keep the choice under UserChoiceLatest, older ones under UserChoice.)
+      const base = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https';
+      const outs = await Promise.all(['UserChoiceLatest', 'UserChoice'].map((k) => reg(['query', `${base}\\${k}`, '/v', 'ProgId'])));
+      lastDefault = progIdIs(outs.find(Boolean), PROG_ID);
     } else {
       lastDefault = app.isDefaultProtocolClient('https');
     }
@@ -71,6 +76,7 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   }
   // The user's choice either way: Windows opens its Default apps page on Lumen (it asks there), macOS asks by itself.
   async function makeDefault() {
+    if (process.defaultApp) return { ok: false, devBuild: true }; // (run from source: it would register electron.exe)
     if (process.platform === 'win32') {
       const ok = await registerOnWindows();
       await shell.openExternal(ok ? 'ms-settings:defaultapps?registeredAppUser=Lumen' : 'ms-settings:defaultapps').catch(() => {});
@@ -78,7 +84,12 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
     }
     const args = process.defaultApp ? [process.execPath, [path.resolve(process.argv[1] || '.')]] : [];
     for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme, ...args);
-    return { ok: true, isDefault: await isDefault() };
+    // (macOS confirms in its own dialog: the answer comes a moment later, so it's waited for before judging.)
+    for (let i = 0; i < 10; i++) {
+      if (await isDefault()) return { ok: true, isDefault: true };
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { ok: true, isDefault: false, opened: process.platform === 'darwin' ? 'system-prompt' : undefined };
   }
 
   // Import for the welcome and Settings: the result comes back to the page (no native dialog).
@@ -88,15 +99,16 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
       const result = importBrowser(id);
       return { ok: true, label: result.label, bookmarks: result.bookmarks, history: result.history };
     } catch (err) {
-      return { ok: false, error: err.message };
+      const locked = /locked|busy|EBUSY|EPERM|SQLITE_BUSY/i.test(String(err?.message || ''));
+      return { ok: false, error: locked ? 'that browser is still open. Close it, then try again.' : err.message };
     }
   }
 
   async function state() {
-    return { welcome: welcomePending(), browsers: importer.detectBrowsers(), isDefault: await isDefault(), platform: process.platform };
+    return { welcome: welcomePending(), browsers: importer.detectBrowsers(), isDefault: await isDefault(), platform: process.platform, devBuild: Boolean(process.defaultApp) };
   }
 
   return { welcomePending, welcomeDone, isDefault, lastDefault: () => lastDefault, makeDefault, importFrom, state };
 }
 
-module.exports = { create, PROG_ID };
+module.exports = { create, PROG_ID, progIdIs };

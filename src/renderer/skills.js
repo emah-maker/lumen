@@ -109,8 +109,8 @@
   }
   const startBase = window.startTurn;
   if (typeof startBase === 'function') {
-    window.startTurn = function startTurn(text, images) {
-      const result = startBase.call(this, text, images);
+    window.startTurn = function startTurn(text, images, ...rest) {
+      const result = startBase.call(this, text, images, ...rest);
       decorate([...messages.querySelectorAll(':scope > .msg.user')].pop());
       return result;
     };

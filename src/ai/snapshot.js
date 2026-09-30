@@ -21,15 +21,22 @@ const lastSnapshot = new Map(); // webContents id -> { url, lines }
 const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'read_tabs', 'web_search', 'read_pdf']);
 const FRESH_CALLS = 6;
 class ReadCache {
-  constructor() { this.tabs = new Map(); this.seq = 0; }
-  tick(name) { this.seq++; if (!READ_ONLY.has(name)) this.tabs.clear(); }
+  // acted: how many acting tools have run (batch's baseline reuse compares it, see batch below).
+  // session: the CLI session the cache belongs to; entries are keyed by it, and reset() clears them.
+  constructor() { this.tabs = new Map(); this.seq = 0; this.acted = 0; this.session = ''; }
+  tick(name) { this.seq++; if (!READ_ONLY.has(name)) { this.acted++; this.tabs.clear(); } }
+  // A model that no longer has the earlier read in its context (new CLI process or session, rewind,
+  // engine reset, expired-session handoff) must get the page again, not "unchanged".
+  clear() { this.tabs.clear(); lastSnapshot.clear(); }
+  reset(session = '') { this.clear(); this.session = String(session || ''); }
   // Returns the short reply when this read repeats the last one, else remembers it and returns null.
   check(tabId, url, shape, content) {
-    const prev = this.tabs.get(tabId);
+    const key = `${this.session}|${tabId}`;
+    const prev = this.tabs.get(key);
     const fingerprint = `${content.length}:${content}`;
     const same = Boolean(prev) && prev.url === url && prev.shape === shape && prev.fingerprint === fingerprint;
     const fresh = same && this.seq - prev.seq <= FRESH_CALLS;
-    this.tabs.set(tabId, fresh ? prev : { url, shape, fingerprint, seq: this.seq });
+    this.tabs.set(key, fresh ? prev : { url, shape, fingerprint, seq: this.seq });
     if (fresh) {
       return `Unchanged since your last read (${this.seq - prev.seq} calls ago): same URL and content, and the [ids] from that read are still valid. Act on it, use find for a detail, or read_page since_last:true after acting.`;
     }
@@ -339,8 +346,29 @@ const ACTING = ['batch'];
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
 
-async function compact(agent, wc, input, h) {
-  await h.runScript(wc, h.scripts.readPage(0, 0)); // builds the element registry the refs point into
+// read_page's registry pass alone: the same walk and labels that build window.__claudeEls (so ids
+// match what click / type_text resolve), without the page's full innerText and the element list it
+// returns. Cut from page-scripts.js readPage at the line that stores the registry; if that line
+// ever moves, the full read runs instead. Cached per readPage source.
+const REGISTRY_MARK = 'window.__claudeEls = registry;';
+let registryCache = { src: null, script: null };
+function registryScript(scripts) {
+  const src = scripts.readPage(0, 0);
+  if (registryCache.src === src) return registryCache.script;
+  const at = src.indexOf(REGISTRY_MARK);
+  const script = at < 0 || !src.includes('accessibleName') ? src
+    : `${src.slice(0, at)}${REGISTRY_MARK}
+    registry.forEach((entry) => { entry.label = accessibleName(entry.el).slice(0, 80); });
+    return { totalElements: registry.length };
+  })()`;
+  registryCache = { src, script };
+  return script;
+}
+
+// dedupe: a read the model asked for itself (read_page), in the sidebar's own chat (h.dedupe): an
+// identical read soon after the last one gets the short "unchanged" line (ReadCache).
+async function compact(agent, wc, input, h, { dedupe = false } = {}) {
+  await h.runScript(wc, registryScript(h.scripts)); // builds the element registry the refs point into
   const result = await h.runScript(wc, serialize(compactOutline, {
     maxChars: Math.min(Math.max(Number(input.max_chars) || 6000, 1000), 20000),
     blockChars: 280,
@@ -349,7 +377,7 @@ async function compact(agent, wc, input, h) {
   }), 15000);
   const url = wc.getURL();
   const previous = lastSnapshot.get(wc.id);
-  lastSnapshot.set(wc.id, { url, lines: result.lines });
+  lastSnapshot.set(wc.id, { url, lines: result.lines, seq: reads.seq, acted: reads.acted });
   let body;
   if (input.since_last && previous && previous.url === url) {
     const before = new Set(previous.lines);
@@ -365,6 +393,8 @@ async function compact(agent, wc, input, h) {
   } else {
     body = `${input.since_last && previous ? '(new page)\n' : ''}${result.lines.join('\n')}`;
     if (result.clipped) body += `\n… outline clipped at ${result.totalLines} lines (${result.elements} controls). Use find, or start_line:${result.startLine + result.lines.length}.`;
+    const same = dedupe && !input.since_last && h.dedupe?.() ? reads.check(wc.id, url, `c|${input.start_line || 0}|${Boolean(input.hrefs)}`, body) : null;
+    if (same) body = same;
   }
   return `<untrusted_page_content>\n${body}\n</untrusted_page_content>`;
 }
@@ -376,11 +406,18 @@ async function outline(agent, wc, h) {
 ${await compact(agent, wc, { mode: 'compact', max_chars: 4000 }, h)}`; } catch { return ''; }
 }
 
+// True when the last compact read of this tab (same URL, few calls ago) is still the baseline for the
+// acting tool now running: no acting tool since it (this tool's own tick is the one after).
+function baselineKnown(wc) {
+  const last = lastSnapshot.get(wc.id);
+  return Boolean(last) && last.url === wc.getURL() && last.acted === reads.acted - 1 && reads.seq - last.seq <= FRESH_CALLS;
+}
+
 // Runs an acting tool and appends what changed on the page (the batch diff), so no read_page follows.
 async function observe(agent, run, h) {
   const can = (wc) => !wc.isDestroyed() && !agent.browser.aiOff?.(wc.getURL());
   const before = agent.requireTab();
-  if (can(before)) await compact(agent, before, { mode: 'compact' }, h).catch(() => {}); // the baseline
+  if (can(before) && !baselineKnown(before)) await compact(agent, before, { mode: 'compact' }, h).catch(() => {}); // the baseline
   const result = await run();
   if (typeof result !== 'string') return result;
   const tab = agent.requireTab();
@@ -418,6 +455,11 @@ async function screenshot(agent, wc, input, h) {
 async function batch(agent, wc, input, h) {
   const steps = Array.isArray(input.steps) ? input.steps.slice(0, 12) : [];
   if (!steps.length) throw new Error('batch needs at least one step.');
+  // The baseline the closing diff compares with (as observe takes): without it the diff was against
+  // whatever was read last, often another page, and said "Now on a new page" after a same-page batch.
+  // A recent compact read of this same tab and URL with no acting tool since (this batch's own tick
+  // is the one after it) is that baseline already: its registry still holds the ids, so no second read.
+  if (!baselineKnown(wc) && !wc.isDestroyed() && !agent.browser.aiOff?.(wc.getURL())) await compact(agent, wc, { mode: 'compact' }, h).catch(() => {});
   const startHost = hostOf(wc.getURL());
   const report = [];
   for (const [i, step] of steps.entries()) {
@@ -458,7 +500,7 @@ async function batch(agent, wc, input, h) {
 // Handles the efficient tools; returns undefined for everything else.
 async function execute(agent, name, input, h) {
   reads.tick(name);
-  if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h);
+  if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h, { dedupe: true });
   if (name === 'read_page' && input.extract) {
     const wc = agent.requireTab();
     const r = await h.runScript(wc, serialize(extractData, { kind: input.extract, selector: input.selector ? String(input.selector) : '' }), 15000);
@@ -471,7 +513,7 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
-    await h.runScript(wc, h.scripts.readPage(0, 0));
+    await h.runScript(wc, registryScript(h.scripts)); // the refs it returns point into this registry
     const r = await h.runScript(wc, serialize(findMatches, { query: String(input.query || ''), max: Math.min(Math.max(Number(input.max) || 8, 1), 20) }));
     if (!r.matches.length) return `No matches for "${input.query}" on ${r.url}.`;
     return `<untrusted_page_content>\n${r.matches.join('\n')}\n</untrusted_page_content>`;
@@ -480,4 +522,4 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   return undefined;
 }
 
-module.exports = { OBSERVE_TOOLS, observe, outline, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches };
+module.exports = { OBSERVE_TOOLS, observe, outline, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };

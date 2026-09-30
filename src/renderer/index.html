@@ -152,11 +152,12 @@
       <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
         <div class="empty" id="empty">
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>
-          <section class="welcome" id="welcome" hidden aria-labelledby="welcome-title">
+          <section class="welcome" id="welcome" hidden role="region" aria-labelledby="welcome-title">
             <h2 class="welcome-title" id="welcome-title" data-i18n="welcome.title">Welcome to Lumen</h2>
-            <p class="welcome-lead" data-i18n="welcome.lead">A browser with an AI that reads and works in your tabs, and asks before it acts. Three quick steps; skip any of them.</p>
+            <p class="welcome-lead" data-i18n="welcome.lead">A browser with an AI that reads and works in your tabs, and asks before it acts. Two quick steps: do them now, or later in Settings.</p>
             <ol class="welcome-steps">
               <li class="welcome-step" id="welcome-step-ai">
+                <span class="sr-only welcome-done-label" data-i18n="welcome.stepDone">Done:</span>
                 <span class="welcome-num" aria-hidden="true">1</span>
                 <div class="welcome-body">
                   <p class="welcome-step-title" data-i18n="welcome.ai">Connect an AI</p>
@@ -165,6 +166,7 @@
                 </div>
               </li>
               <li class="welcome-step" id="welcome-step-import">
+                <span class="sr-only welcome-done-label" data-i18n="welcome.stepDone">Done:</span>
                 <span class="welcome-num" aria-hidden="true">2</span>
                 <div class="welcome-body">
                   <p class="welcome-step-title" data-i18n="welcome.import">Bring your bookmarks and history</p>
@@ -173,17 +175,13 @@
                   <p class="welcome-note" id="welcome-import-note" role="status"></p>
                 </div>
               </li>
-              <li class="welcome-step" id="welcome-step-default">
-                <span class="welcome-num" aria-hidden="true">3</span>
-                <div class="welcome-body">
-                  <p class="welcome-step-title" data-i18n="welcome.default">Make Lumen your default browser</p>
-                  <p class="welcome-step-detail" data-i18n="welcome.default.detail">Links from other apps (mail, chat, documents) then open here.</p>
-                  <div class="welcome-actions"><button class="btn" type="button" id="welcome-make-default" data-i18n="welcome.default.button">Make default</button></div>
-                  <p class="welcome-note" id="welcome-default-note" role="status"></p>
-                </div>
-              </li>
             </ol>
             <div class="welcome-foot">
+              <p class="welcome-default" id="welcome-step-default">
+                <span data-i18n="welcome.default.ask">Want links from other apps to open here?</span>
+                <button class="link-btn" type="button" id="welcome-make-default" data-i18n="welcome.default.button">Make Lumen your default browser</button>
+                <span class="welcome-note" id="welcome-default-note" role="status"></span>
+              </p>
               <button class="btn primary" type="button" id="welcome-done" data-i18n="welcome.done">Start browsing</button>
             </div>
           </section>
@@ -193,6 +191,11 @@
             <button class="setup-option" type="button" id="setup-claude-code">
               <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
               <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
+            </button>
+            <a class="setup-get" id="setup-claude-code-get" href="https://claude.com/claude-code" target="_blank" rel="noopener" hidden data-i18n="setup.claudeCode.get">Get Claude Code</a>
+            <button class="setup-option" type="button" id="setup-grok" hidden>
+              <span class="setup-name" data-i18n="setup.grok">Use your own Grok Build</span>
+              <span class="setup-detail" id="setup-grok-detail" data-i18n="setup.grok.detail">Found on this computer: xAI's agent, with your own Grok sign-in.</span>
             </button>
             <button class="setup-option" type="button" id="setup-openrouter">
               <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>

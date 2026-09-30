@@ -898,12 +898,19 @@ body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { dis
 .tk-kw { color: var(--tk-kw); } .tk-str { color: var(--tk-str); } .tk-num { color: var(--tk-num); } .tk-fn { color: var(--tk-fn); }
 .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
 
-/* Edit on the latest message you sent: under its corner, on hover or focus; not while its reply runs. */
-.msg.user { position: relative; }
-.msg.user .msg-edit { position: absolute; right: 2px; bottom: -21px; height: 20px; padding: 0 7px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; white-space: nowrap; opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
-.msg.user:hover .msg-edit, .msg.user .msg-edit:focus-visible { opacity: 1; }
-.msg.user .msg-edit:hover { background: var(--field); color: var(--text); }
-body.agent-active .msg.user .msg-edit { display: none; }
+/* Edit on the latest message you sent: a row under its bubble, on hover or focus; not while its reply runs. */
+.msg-user-actions { position: relative; height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
+.msg-user-actions[hidden] { display: none; }
+.msg.user:hover + .msg-user-actions, .msg-user-actions:hover, .msg-user-actions:focus-within { opacity: 1; }
+.msg-user-actions .msg-edit { position: absolute; right: 2px; top: -16px; height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.msg-user-actions .msg-edit:hover { background: var(--field); color: var(--text); }
+body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions { visibility: hidden; }
+.btn:disabled, .btn.primary:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
+.msg.user.editing .msg-images { margin-bottom: 6px; }
+/* Editing it in place. */
+.msg.user.editing { margin-left: 0; padding: 8px; white-space: normal; }
+.msg-edit-box { display: block; width: 100%; box-sizing: border-box; min-height: 36px; max-height: 240px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface, var(--bg)); color: var(--text); font: inherit; line-height: 1.45; resize: none; outline: none; }
+.msg-edit-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 /* A reply that ended without text (stopped, or on a step): only its Regenerate. */
 .msg.assistant.reply-actions-only { height: 22px; margin: 4px 0 16px; }
 .msg.assistant.reply-actions-only .reply-regen { position: static; opacity: 0.75; }
@@ -934,3 +941,26 @@ body.agent-active .msg.user .msg-edit { display: none; }
 .setup.attention .setup-option { animation: setup-attention 900ms var(--ease-out, ease-out) 1; }
 @keyframes setup-attention { 30% { box-shadow: 0 0 0 2px var(--accent); } }
 :root.pref-reduce-motion .setup.attention .setup-option { animation: none; }
+/* A passing status beside the working dots ("Starting Claude Code…"). */
+.working[data-status] { width: auto; height: auto; overflow: visible; background: none; }
+.working[data-status]::before { display: none; }
+.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: nowrap; animation: status-pulse 1.6s ease-in-out infinite; }
+@keyframes status-pulse { 50% { opacity: 0.55; } }
+:root.pref-reduce-motion .working[data-status]::after { animation: none; }
+
+/* Setup card: Claude Code not found yet (still clickable: it looks again), and where to get it. */
+.setup-option.missing { opacity: 0.75; }
+.setup-get { align-self: flex-start; margin: -2px 0 2px 12px; font-size: 12px; color: var(--accent); text-decoration: none; }
+.setup-get:hover { text-decoration: underline; }
+.setup-get[hidden] { display: none; }
+.welcome-done-label { display: none; }
+.welcome-step.done .welcome-done-label { display: inline; position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* The default browser, offered once and quietly under the welcome (never a step, never a pop-up). */
+.welcome-foot { align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.welcome-default { margin: 0; flex: 1 1 200px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.welcome-default[hidden] { display: none; }
+.welcome-default .welcome-note { display: block; margin-top: 4px; }
+.link-btn { padding: 0; border: none; background: none; color: var(--accent); font: inherit; cursor: pointer; text-align: left; }
+.link-btn:hover { text-decoration: underline; }
+.link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }

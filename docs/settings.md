@@ -17,7 +17,14 @@ API keys in `settings.json` are encrypted with the operating system's keychain. 
 
 The tables below give each setting's key in `settings.json` and its default. Edit the file only while Lumen is closed: Lumen rewrites it while it runs. Values that aren't valid are ignored and the default is used.
 
-## You and AI
+## General
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Default browser | — | — | Shows whether Lumen is the default browser and asks the system to make it so. On Windows, Lumen registers itself as a browser for the current user (so Default apps can offer it) and opens Default apps on Lumen; the choice is read from the user's HTTPS association. |
+| First-run welcome | `welcome` | `pending` on a new install | The sidebar's welcome (connect an AI, import; an optional default-browser line) shows while this is `pending` and never again once it is `done`. Existing profiles never get it. |
+
+## AI and agents
 
 | Setting | Key | Default | What it does |
 |---|---|---|---|

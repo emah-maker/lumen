@@ -46,9 +46,15 @@ function createAdblock(deps) {
   let blocker = null;
   const blockedCount = new Map(); // webContents id -> requests blocked on the current page
 
+  // Asked on every request: the allow list's Set is rebuilt only when the setting changes.
+  let memo = null;
+  const NO_HOSTS = Object.freeze([]);
   function settings() {
-    const { adblock = true, adblockAllow = [] } = deps.readSettings();
-    return { enabled: adblock, allow: new Set(adblockAllow) };
+    const s = (deps.peekSettings || deps.readSettings)();
+    const { adblock = true, adblockAllow = NO_HOSTS } = s;
+    if (memo && memo.adblock === adblock && memo.list === adblockAllow) return memo.out;
+    memo = { adblock, list: adblockAllow, out: { enabled: adblock, allow: new Set(adblockAllow) } };
+    return memo.out;
   }
 
   function on(pageUrl) {
@@ -111,11 +117,25 @@ function createAdblock(deps) {
     const isTest = require('../test-mode').isTest();
     // `blocker` is wired into the sessions once; `engine` is what matches requests and pages, and is swapped for a
     // freshly built one (patched, or from new lists) without re-wiring anything.
+    // The swap's deserialize takes ~30-80 ms on the main thread: done when the user has been idle a couple of seconds.
+    const whenIdle = () => new Promise((resolve) => {
+      const started = Date.now();
+      const check = () => {
+        let idle = 0;
+        try { idle = electron.powerMonitor.getSystemIdleTime(); } catch { idle = 99; }
+        if (idle >= 2 || Date.now() - started > 120000) resolve(); else setTimeout(check, 3000).unref?.();
+      };
+      check();
+    });
     const loadPatched = async () => {
+      await whenIdle();
       const fresh = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(patched)));
       engine = fresh;
       cosmetics = fresh.onInjectCosmeticFilters;
       headers = fresh.onHeadersReceived;
+      // The wired-in instance keeps only its handlers and config: its lists now point at the new engine's, so
+      // the old engine's ~18 MB is freed instead of kept for the session.
+      for (const key of Object.keys(blocker)) if (typeof blocker[key] !== 'function' && key !== 'config' && key !== 'contexts' && key in fresh) blocker[key] = fresh[key];
       if (isTest) global.__adblockEngine = fresh;
     };
     // The slow jobs run in a worker thread (features/adblock-worker.js); `refresh` fetches new lists first.
@@ -140,9 +160,16 @@ function createAdblock(deps) {
           .then(() => fs.promises.writeFile(`${patched}.json`, JSON.stringify({ patch: PATCH, baseMtime: st.mtimeMs, baseSize: st.size }))))
           .catch(() => {});
       }, 3000).unref?.();
-    } else if (!isTest && baseStat && Date.now() - baseStat.mtimeMs > LISTS_MAX_AGE_MS) {
-      // Lists a day old: new ones are fetched and built in the background a minute in, and used from then on.
-      setTimeout(async () => { if (await inWorker(true)) await loadPatched().catch(() => {}); }, 60000).unref?.();
+    }
+    // Lists a day old: new ones are fetched and built in the background (a minute in, then checked every few
+    // hours while Lumen stays open), and used from then on.
+    const refreshIfOld = async () => {
+      const st = await fs.promises.stat(base).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > LISTS_MAX_AGE_MS && (await inWorker(true))) await loadPatched().catch(() => {});
+    };
+    if (!isTest) {
+      setTimeout(refreshIfOld, 60000).unref?.();
+      setInterval(refreshIfOld, 6 * 60 * 60 * 1000).unref?.();
     }
     let engine = blocker;
     if (isTest) global.__adblockEngine = blocker;

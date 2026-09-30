@@ -2376,6 +2376,13 @@ window.assistant.onMcpEvent?.((event) => {
     case 'tool':
       mcpStepRow(event);
       break;
+    case 'tool_update': { // the specific label of a step already shown (an outside agent's usually came in its 'tool' event)
+      const step = mcpSteps.get(event.id);
+      if (!step || !event.label || !step.firstChild) break;
+      step.firstChild.textContent = `${event.clientName}: ${event.label}`;
+      step.title = step.firstChild.textContent;
+      break;
+    }
     case 'tool_done': {
       const step = mcpSteps.get(event.id);
       if (!step) break;

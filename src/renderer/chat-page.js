@@ -46,7 +46,9 @@
     if (query && !shown.length) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: t('chats.noMatch') }));
   }
   async function renderList() {
-    const focused = document.activeElement?.closest?.('.chat-item')?.dataset.id;
+    const focusedRow = document.activeElement?.closest?.('.chat-item');
+    const focused = focusedRow?.dataset.id;
+    const focusedAt = focused ? [...items.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
     const { current, chats } = await api.list();
     lastChats = chats;
     lastCurrent = current;
@@ -55,7 +57,11 @@
     if (searchBox?.hidden) { query = ''; searchBox.value = ''; }
     drawItems();
     empty.hidden = chats.length > 0;
-    if (focused) items.querySelector(`.chat-item[data-id="${CSS.escape(focused)}"] .chat-open`)?.focus();
+    if (focused) {
+      const rows = [...items.querySelectorAll('.chat-item')];
+      const row = rows.find((r) => r.dataset.id === focused) || rows[Math.min(focusedAt, rows.length - 1)];
+      (row?.querySelector('.chat-open') || (searchBox && !searchBox.hidden ? searchBox : null) || prompt)?.focus();
+    }
   }
   async function openChat(id) {
     const view = await api.open(id);

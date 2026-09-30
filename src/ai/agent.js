@@ -398,11 +398,21 @@ function grokBuildNote(model) {
   return model ? `${GROK_BUILD_NOTE} The model answering is ${model} (xAI's Grok); if the user asks which model you are, say ${model}.` : GROK_BUILD_NOTE;
 }
 
+// CLAUDE_CODE_NOTE plus what Claude Code's own system prompt used to give before --system-prompt
+// replaced it (claude-code.js buildArgs): today's date, and the model when Lumen knows it.
+// `model`: the `claude --model` alias this run gets ('default': the CLI's choice, unnamed).
+function claudeCodeNote(model = 'default', now = new Date()) {
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const family = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' }[String(model).replace(/\[.*\]$/, '')];
+  const who = model && model !== 'default' ? ` The model answering is ${family ? `Claude ${family}` : model} (Anthropic).` : '';
+  return `${CLAUDE_CODE_NOTE} Today's date is ${day}.${who}`;
+}
+
 // The system prompt of a CLI engine run. `background`: the run is a background task, whose final reply
 // is saved as the task's result instead of showing in the sidebar chat (features/background-runner.js).
 function cliSystemPrompt(settings, engine, { background = false } = {}) {
   const picked = engineModel(settings.model);
-  const note = engine === 'grokbuild' ? grokBuildNote(picked === 'default' ? null : picked) : CLAUDE_CODE_NOTE;
+  const note = engine === 'grokbuild' ? grokBuildNote(picked === 'default' ? null : picked) : claudeCodeNote(picked);
   return systemFor(settings) + (background ? note.replace("Your reply appears in Lumen's sidebar chat.", "You are running as a background task: your final reply is saved as the task's result.") : note);
 }
 
@@ -665,6 +675,76 @@ async function waitForLoad(wc, timeoutMs = 8000) {
   if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
 }
 
+// In the page (Claude's isolated world, same DOM): resolves once the DOM has had no mutations for
+// quietMs, or after capMs on a page that never settles (an animation, a ticker: mutations that never pause
+// for quietMs within capMs, so a constantly animating page costs ~capMs per action, not 1.5 s).
+function domQuiet({ quietMs, capMs, extendMs = 700 }) {
+  return new Promise((resolve) => {
+    let timer = null;
+    let cap = null;
+    let poll = null;
+    let observer = null;
+    let extended = false;
+    const finish = (why) => { clearTimeout(timer); clearTimeout(cap); clearInterval(poll); observer?.disconnect(); resolve(why); };
+    // A loading marker the user can see (a spinner, a progress bar, a busy region): hidden or static ones
+    // left in the page from before the action don't count.
+    const shown = (el) => el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length > 0;
+    const markers = () => {
+      try { return [...document.querySelectorAll('[aria-busy="true"], [role="progressbar"]:not([aria-valuenow="100"]), progress:not([value])')].filter(shown); } catch { return []; }
+    };
+    // Markers that outlived a whole wait before (a spinner that never goes) are this page's furniture: ignored.
+    // Any other visible one counts, including one the click itself showed before this check began.
+    const known = (globalThis.__lumenStaticMarkers ||= new WeakSet());
+    const loading = () => markers().some((el) => !known.has(el));
+    // Quiet, but the page shows a new loading marker (a fetch after a click): one more wait, up to extendMs.
+    const done = (why) => {
+      if (why === 'quiet' && !extended && loading()) {
+        extended = true;
+        clearTimeout(timer);
+        clearTimeout(cap);
+        cap = setTimeout(() => { for (const el of markers()) known.add(el); finish('busy'); }, extendMs); // (outlived it: furniture)
+        poll = setInterval(() => { if (!loading()) finish('quiet'); }, 50);
+        return;
+      }
+      finish(why);
+    };
+    try {
+      observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(() => done('quiet'), quietMs); });
+      observer.observe(document.documentElement || document, { subtree: true, childList: true, attributes: true, characterData: true });
+    } catch {}
+    timer = setTimeout(() => done('quiet'), quietMs);
+    cap = setTimeout(() => done('busy'), capMs);
+  });
+}
+const DOM_QUIET = `(${domQuiet.toString()})({ quietMs: 100, capMs: 650 })`;
+
+// After an input (click, key, Enter, form submit): a navigation it starts is waited for as
+// waitForLoad does; otherwise only until the page's DOM goes quiet (~100 ms, at most ~650 ms), not a
+// fixed 550 ms. (A tab behind another one has its timers throttled, so there it can take ~1 s.)
+async function settleAfterAction(wc, timeoutMs = 8000) {
+  if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
+  let onStart = null;
+  const started = new Promise((resolve) => {
+    // A same-document navigation (pushState, #hash) loads nothing: the DOM check covers it.
+    onStart = (event, _url, inPlace, isMainFrame) => {
+      if ((event?.isMainFrame ?? isMainFrame) === false || (event?.isSameDocument ?? inPlace) === true) return;
+      resolve('navigation');
+    };
+    if (typeof wc.on === 'function') wc.on('did-start-navigation', onStart);
+  });
+  try {
+    const first = wc.isLoading() ? 'navigation' : await Promise.race([
+      started,
+      runScript(wc, DOM_QUIET, 2500).catch(() => (wc.isDestroyed() || wc.isLoading() ? 'navigation' : 'quiet')),
+      sleep(2000).then(() => 'busy'),
+    ]);
+    if (first === 'navigation' || (!wc.isDestroyed() && wc.isLoading())) return await waitForLoad(wc, timeoutMs);
+  } finally {
+    if (!wc.isDestroyed() && typeof wc.removeListener === 'function') wc.removeListener('did-start-navigation', onStart);
+  }
+  if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
+}
+
 // Claude's page scripts run in an isolated JavaScript world: same DOM, separate globals, so a
 // page can neither see Claude's element registry nor tamper with it. run_script (code Claude
 // writes to use the page's own JavaScript) is the one thing that runs in the page's world.
@@ -728,8 +808,51 @@ async function readInBackground(url, guard = () => null) {
   }
 }
 
-// Top results from DuckDuckGo's HTML endpoint, loaded in a hidden cookie-less view.
+// DuckDuckGo's HTML results page -> up to 8 { title, url, snippet }, the same fields the hidden
+// view's script below reads (.result, a.result__a, .result__snippet, the uddg redirect unwrapped).
+// null when the HTML isn't a results page at all (an error or bot check), so the view is tried.
+function parseSearchHtml(html) {
+  const s = String(html || '');
+  if (!/class="[^"]*\bresult\b/.test(s) && !/class="[^"]*\bno-results\b/.test(s)) return null;
+  const decode = (t) => t.replace(/<[^>]*>/g, '').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp|#39);/gi, (m, e) => {
+    const k = e.toLowerCase();
+    if (k[0] === '#') { const n = k[1] === 'x' ? parseInt(k.slice(2), 16) : Number(k.slice(1)); return Number.isFinite(n) ? String.fromCodePoint(n) : m; }
+    return { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }[k] ?? m;
+  }).replace(/\s+/g, ' ').trim();
+  const rows = [];
+  // Each result's block runs from its result__a link to the next one.
+  const links = [...s.matchAll(/<a\b[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>([\s\S]*?)<\/a>/gi)];
+  links.forEach((m, i) => {
+    if (rows.length >= 8) return;
+    const href = /\bhref="([^"]*)"/i.exec(m[0])?.[1] || '';
+    let url = decode(href);
+    if (url.startsWith('//')) url = `https:${url}`;
+    try { const u = new URL(url); if (u.searchParams.get('uddg')) url = u.searchParams.get('uddg'); } catch {}
+    const block = s.slice(m.index + m[0].length, links[i + 1]?.index ?? s.length);
+    const snippet = decode(/class="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/(?:a|div|td|span)>/i.exec(block)?.[1] || '').slice(0, 240);
+    if (url && /^https?:/.test(url)) rows.push({ title: decode(m[1]), url, snippet });
+  });
+  // DuckDuckGo's own "no results" page is an answer ([]), not a failure: the hidden view would only load the same page again.
+  // A results page that yielded no rows is unreadable (null: the view is tried).
+  if (!rows.length && !/class="[^"]*\bno-results\b/.test(s)) return null;
+  return rows;
+}
+
+// Top results from DuckDuckGo's HTML endpoint: fetched straight from the main process in the same
+// cookie-less in-memory session the hidden view uses (no page to load and render, 0.3-0.8 s sooner),
+// else loaded in that hidden view.
 async function searchWeb(query) {
+  const url = `https://${SEARCH_HOST}/html/?q=${encodeURIComponent(query)}`;
+  try {
+    const ses = require('electron').session.fromPartition('claude-reader');
+    const res = await ses.fetch(url, { signal: AbortSignal.timeout(8000), headers: { accept: 'text/html' } });
+    const rows = res.ok ? parseSearchHtml(await res.text()) : null;
+    if (rows) return rows; // [] is DuckDuckGo saying it found nothing
+  } catch {}
+  return searchWebInView(query);
+}
+
+async function searchWebInView(query) {
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, partition: 'claude-reader' } });
   const wc = view.webContents;
   wc.setAudioMuted(true);
@@ -760,6 +883,9 @@ function transcriptFor(chatMessages) {
     if (m.role === 'user') {
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '')).join('\n').trim();
       const images = blocks.filter((b) => b.type === 'image' && b.source?.type === 'base64').map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
+      // A message from the user starts a new exchange: one that ended without a final reply (stopped
+      // mid-tool) must not lend its step count or "acted" to the next.
+      if (text || images.length) { steps = 0; acted = false; }
       if (text === 'The user attached the image(s) above without a message.') items.push({ role: 'user', text: '', images });
       else if (text || images.length) items.push({ role: 'user', text, images });
     } else {
@@ -931,6 +1057,7 @@ class Agent {
     // A saved chat may hold page content from before the restart: treat it as having read some.
     if (messages.length) messages.tainted = true;
     this.messages = messages;
+    this.onEngineReset?.();
   }
 
   // Retry / Regenerate: the last exchange (from the user's last message on) is taken back, so asking again doesn't
@@ -950,6 +1077,7 @@ class Agent {
       repairHistory(m);
       // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
       if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; }
+      this.onEngineReset?.(); // its kept Claude Code process holds the old session (features/ai-agents.js)
       return 'rewound';
     }
     return 'absent';
@@ -986,6 +1114,7 @@ class Agent {
     this.approvedHosts = new Set();
     this.lastPageContext = null;
     this.nextModel = null;
+    this.onEngineReset?.(); // an idle kept Claude Code process ends; one mid-reply goes on
   }
 
   // Makes a chat that is still running (left with detach) the open one again: the same array, so its
@@ -1057,7 +1186,7 @@ class Agent {
       const tab = this.browser.activeTab();
       await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill });
     } catch (err) {
-      if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
+      if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.', stopped: true });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
       repairHistory(messages);
     } finally {
@@ -1091,9 +1220,22 @@ class Agent {
     // Tabs the user picked with "@" are attached too (read where they are, never switched to); the
     // current tab's own text is not sent twice when it is one of them.
     const wanted = tabsAsk.cleanIds(extra.tabs);
-    const attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
-    if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
-    const page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+    // Claude Code: its process (or the chat's kept one) is started now, while the page and any "@" tabs
+    // are read; the message goes to its stdin once they are (claudeCodeTurn).
+    const ccPlan = viaClaudeCode && !this.engineRunScope ? this.claudeCodePlan(messages, userText, images.length, wanted.length) : null;
+    if (ccPlan) this.engines.claudecode.warm?.(ccPlan.spawn);
+    // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
+    if (viaGrokBuild && !this.engineRunScope) this.engines.grokbuild.prepare?.().catch?.(() => {});
+    let attached;
+    let page;
+    try {
+      attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
+      if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
+      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+    } catch (err) {
+      if (ccPlan) this.engines.claudecode.release?.(); // stopped or failed before the message was sent: the warm process is of no use
+      throw err;
+    }
     // The attached page text (or a skill's page, selection or clipboard text) counts as reading the page (see ensureAllowed).
     if (page || attached.block || this.skillRun?.tainted) this.markTainted();
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
@@ -1114,7 +1256,7 @@ class Agent {
       if (this.engineRunScope) throw new Error(`${viaClaudeCode ? 'Claude Code' : 'Grok Build'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
       this.engineRunScope = taskScope.getStore();
       try {
-        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, emit, { userText, tabCount: attached.tabs.length });
+        if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, emit, { userText, tabCount: wanted.length, plan: ccPlan });
         else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, emit);
       } finally {
         this.engineRunScope = null;
@@ -1170,49 +1312,103 @@ class Agent {
 
   // ---- [claude code engine] One message through the user's Claude Code CLI. The session id lives
   // in the chat's settings, so follow-ups resume it and New chat (reset) starts a fresh one.
+  // What a Claude Code message needs before it is sent, worked out before the page is read so the
+  // CLI can be started meanwhile (runTask): the routed model, the session and the process's argv inputs.
+  // [model route] No model picked ('claudecode:default'): choose haiku / sonnet / opus for this message
+  // from how hard it looks (features/model-route.js). A picked model, or Settings > auto model off, is left alone.
+  // Within a CLI session the tier is pinned (it can only go up): a different model mid-session loses
+  // the prompt cache. A new session (new chat, rewind, an expired one) is routed afresh.
+  claudeCodePlan(messages, userText, imageCount = 0, tabCount = 0) {
+    const settings = messages.settings;
+    const resume = Boolean(settings.ccSession);
+    const routed = modelRoute.route({
+      engine: 'claudecode', picked: engineModel(settings.model), prompt: userText, imageCount, tabCount,
+      previous: { tier: settings.ccAutoTier, turns: settings.ccAutoTurns || 0 }, pinned: resume, enabled: this.browser.autoModel?.() !== false,
+    });
+    // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
+    const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), systemPrompt: systemFor(settings) + claudeCodeNote(routed.model) } };
+  }
+
+  // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
+  // chat's next Claude Code message will want a process, so it is started now instead of at send (runTask
+  // warms again, which keeps it when the plan's key matches). Does nothing for any other engine, during a
+  // run, or when a process is already kept or starting; repeated calls cost a model check. The message
+  // isn't known, so the model is a guess: text already typed in the composer is routed as is; else a typical
+  // short first browser prompt (PREWARM_GUESS: "open a page", routes to the light tier like "open youtube",
+  // "summarize this page", "click the login button"). A picked model, or a resumed session's pinned tier,
+  // is exactly what routing gives. A different model at send just replaces the process. A pre-warmed process
+  // that no message takes is released after ~3 min, and pre-warming backs off after failures (claude-code.js).
+  prewarm(text = '', { retried = false } = {}) {
+    const messages = this.messages;
+    const settings = messages?.settings;
+    if (!settings || !String(settings.model).startsWith('claudecode:') || this.engineRunScope || this.running) return false;
+    const cc = this.engines?.claudecode;
+    if (!cc?.warm || cc.canPrewarm?.() === false) return false;
+    const typed = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
+    const plan = this.claudeCodePlan(messages, typed || PREWARM_GUESS, 0, 0);
+    // Already warm: kept, unless the words typed since route to another model (the guess is then replaced once).
+    // Still starting (its model not known yet): the typed words are looked at again once it has started.
+    if (cc.isWarm?.() && typed && cc.warmModel && cc.warmModel() === null) {
+      clearTimeout(this.prewarmRetry);
+      if (retried) return false; // (once: a warm-up that never reports its model is left alone)
+      this.prewarmRetry = setTimeout(() => { if (!this.running) { try { this.prewarm(typed, { retried: true }); } catch {} } }, 1500);
+      this.prewarmRetry.unref?.();
+      return false;
+    }
+    if (cc.isWarm?.() && !(typed && cc.warmModel && cc.warmModel() !== (plan.spawn.model || 'default'))) return false;
+    if (!plan.resume) this.prewarmed = { messages, id: plan.spawn.sessionId };
+    cc.warm(plan.spawn, { speculative: true });
+    return true;
+  }
+
   async claudeCodeTurn(messages, prompt, images, signal, emit, hint = {}) {
     const settings = messages.settings;
-    // [model route] No model picked ('claudecode:default'): choose haiku / sonnet / opus for this message
-    // from how hard it looks (features/model-route.js). A picked model, or Settings > auto model off, is left alone.
-    const routed = modelRoute.route({
-      engine: 'claudecode', picked: engineModel(settings.model), prompt: hint.userText ?? prompt, imageCount: images.length, tabCount: hint.tabCount || 0,
-      previous: { tier: settings.ccAutoTier, turns: settings.ccAutoTurns || 0 }, enabled: this.browser.autoModel?.() !== false,
-    });
+    const { routed, spawn } = hint.plan || this.claudeCodePlan(messages, hint.userText ?? prompt, images.length, hint.tabCount || 0);
     if (routed.auto) {
       settings.ccAutoTier = routed.tier;
       settings.ccAutoTurns = (settings.ccAutoTurns || 0) + 1;
       if (settings.ccAutoModel !== routed.model) { settings.ccAutoModel = routed.model; emit({ type: 'notice', text: routed.label }); }
     } else { delete settings.ccAutoTier; delete settings.ccAutoTurns; delete settings.ccAutoModel; }
-    const resume = Boolean(settings.ccSession);
-    let text = prompt;
-    let historyImages = [];
-    if (!resume && messages.length > 1) {
-      // Switched to Claude Code mid-chat: hand it the conversation so far. There's no CLI session
-      // yet to carry earlier pictures (that's what --resume is for on later turns), so any images
-      // from earlier user turns ride along as image blocks on this first message too.
+    // Switched to Claude Code mid-chat (or its session expired): hand it the conversation so far.
+    // There's no CLI session yet to carry earlier pictures (that's what --resume is for on later
+    // turns), so any images from earlier user turns ride along as image blocks on this first message too.
+    const handoff = () => {
+      if (messages.length <= 1) return { text: prompt, images };
       const priorItems = transcriptFor(messages).slice(0, -1);
       const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
-      if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       const priorImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
-      historyImages = capHistoryImages(priorImages, images, emit);
-    }
+      return { text: earlier ? `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}` : prompt, images: [...capHistoryImages(priorImages, images, emit), ...images] };
+    };
+    const first = spawn.resume ? { text: prompt, images } : handoff();
+    this.prewarmed = null; // (its session id is this message's now)
+    const onLateUsage = ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); };
     emit({ type: 'turn_start' });
-    const out = await this.engines.claudecode.run({
-      prompt: text,
-      images: [...historyImages, ...images],
-      sessionId: settings.ccSession || crypto.randomUUID(),
-      resume,
-      model: routed.model, // 'default', a `claude --model` alias, or the alias auto-routing chose
-      maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: no cap)
-      systemPrompt: systemFor(settings) + CLAUDE_CODE_NOTE,
+    let out = await this.engines.claudecode.run({
+      ...spawn, // sessionId, resume, model ('default', a `claude --model` alias, or the alias auto-routing chose), maxTurns (Settings: Max steps per task, 0: no cap), systemPrompt
+      prompt: first.text,
+      images: first.images,
+      quietExpired: true,
       signal,
       emit,
+      // A capped chat's next process starts only when the next message can't want another model: a picked one, or the top tier.
+      prestart: !routed.auto || routed.tier === 'heavy',
+      // Stop: the interrupted turn's usage arrives after this message returned (claude-code.js interrupt).
+      lateUsage: onLateUsage,
     });
+    if (out.expired && !signal.aborted) {
+      // The CLI no longer has this chat's session (cleared, or from another machine): start a new one
+      // at once, handed the conversation so far, instead of failing the message.
+      delete settings.ccSession;
+      snapshot.reads.clear(); // the model of the new session has seen none of the earlier reads
+      const again = handoff();
+      out = await this.engines.claudecode.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage });
+    }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
-    if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
+    if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
@@ -1263,7 +1459,7 @@ class Agent {
     if (logged?.notice) emit({ type: 'notice', text: logged.notice });
     if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
-    if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
+    if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
@@ -1529,7 +1725,7 @@ class Agent {
       const toggle = await runScript(wc, scripts.findToggle(text));
       if (toggle) {
         await runScript(wc, scripts.domClick(toggle));
-        await waitForLoad(wc, 5000); // a toggle may expand in place or open a search page
+        await settleAfterAction(wc, 5000); // a toggle may expand in place or open a search page
         await runScript(wc, scripts.readPage(0, 0));
         found = await runScript(wc, scripts.findTarget(text, mode));
       }
@@ -2213,7 +2409,7 @@ ${same}
         const url = webUrl(input.url);
         if (wc.isLoading()) await waitForLoad(wc);
         await wc.loadURL(url).catch(() => {}); // redirects reject with ERR_ABORTED; the load still happens
-        await waitForLoad(wc);
+        await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for
         await this.settleRedirects(wc);
         let loaded = `Loaded ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
         if (input.wait_for) {
@@ -2234,7 +2430,7 @@ ${same}
         // screen, so it gets a DOM click instead.
         if (target.covered || !this.taskTabInFront()) await runScript(wc, scripts.domClick(id));
         else await this.mouseClick(wc, x, y);
-        await waitForLoad(wc);
+        await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
         return `Clicked element ${id} (${target.tag} ${quote(target.label || '')}).${moved}`;
       }
@@ -2276,7 +2472,7 @@ ${same}
           const urlBefore = wc.getURL();
           const submitted = await runScript(wc, scripts.submitForm(lastId));
           if (!submitted) this.pressKey(wc, 'Enter');
-          await waitForLoad(wc);
+          await settleAfterAction(wc);
           report.push(`Submitted.${wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : ''}`);
         }
         return report.join('\n');
@@ -2351,7 +2547,7 @@ ${same}
         await wc.insertText(input.text);
         if (input.press_enter) {
           this.pressKey(wc, 'Enter');
-          await waitForLoad(wc);
+          await settleAfterAction(wc);
           return `Typed into element ${input.element_id} and pressed Enter. Page is ${wc.getURL()}.${captchaNote(wc.getURL())}`;
         }
         return `Typed into element ${input.element_id}.`;
@@ -2361,7 +2557,7 @@ ${same}
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
         this.pressKey(wc, input.key, modifiers);
-        await waitForLoad(wc);
+        await settleAfterAction(wc);
         return `Pressed ${[...modifiers, input.key].join('+')}.`;
       }
       case 'click_at': {
@@ -2371,7 +2567,7 @@ ${same}
         const { ratio } = this.screenshotScale;
         const urlBefore = wc.getURL();
         await this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio));
-        await waitForLoad(wc);
+        await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : '';
         return `Clicked at (${input.x}, ${input.y}).${moved}`;
       }
@@ -2542,7 +2738,7 @@ function describeError(err, auth = null) {
   const other = err.__provider ? providers.describeProviderError(err, err.__provider) : null;
   if (other) return other;
   if (isContextError(err)) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
-  if (err instanceof sdk().AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → You and AI.', action: 'settings', signInExpired: true };
+  if (err instanceof sdk().AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → AI and agents.', action: 'settings', signInExpired: true };
   if (err instanceof sdk().AuthenticationError) return { text: 'That API key was rejected. Add a valid key to continue.', action: 'settings' };
   if (err instanceof sdk().PermissionDeniedError) return { text: 'This API key does not have access to the selected model. Pick another in the model menu.' };
   if (err instanceof sdk().RateLimitError) return { text: 'Rate limited by the API. Wait a moment and try again.' };
@@ -2556,5 +2752,7 @@ function describeError(err, auth = null) {
 
 // Tools offered to external agents over MCP: every browser tool plus the client-side web search.
 const EXTERNAL_TOOLS = OTHER_TOOLS;
+// What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
+const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext };
+module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
