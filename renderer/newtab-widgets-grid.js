@@ -53,6 +53,14 @@
   const stacked = () => !m || m.cols === 1;
 
   // ---- drawing ----
+  // The clock's digits can run wider than the column (a big Thin clock beside a narrow search bar): their width.
+  const clockRange = document.createRange();
+  function clockTextWidth() {
+    const c = document.getElementById('clock');
+    if (!c || c.hidden || !c.getClientRects().length) return 0;
+    clockRange.selectNodeContents(c);
+    return Math.ceil(clockRange.getBoundingClientRect().width);
+  }
   function measure(quiet = false) {
     const width = document.documentElement.clientWidth;
     // The centre column's blocks, measured on the page (offsetTop is the page's, not the transform-animated box): the
@@ -66,9 +74,9 @@
     m = WL.metrics(width, gridBottom(formBottom));
     // The centre column is only an obstacle while something is docked in it (every section may have become a card).
     const docked = window.newtabSystem ? window.newtabSystem.dockedCount() > 0 : true;
-    const obstacle = docked ? WL.obstacleFor(contentBottom, m, WL.centreSpan(m, mainEl.offsetWidth)) : null;
+    const obstacle = docked ? WL.obstacleFor(contentBottom, m, WL.centreSpan(m, Math.max(mainEl.offsetWidth, clockTextWidth()))) : null;
     // While the clock or search bar is being resized, packing holds off: cards don't move up and back during the drag.
-    o = { cols: m.cols, obstacle, packed: body.dataset.wpack === '1' && !window.newtabSize?.held?.(), rows: WL.pageRows(window.innerHeight, m) };
+    o = { cols: m.cols, obstacle, packed: body.dataset.wpack === '1', rows: WL.pageRows(window.innerHeight, m) };
     body.classList.toggle('w-stacked', m.cols === 1);
     if (m.cols === 1 && editing) setEditing(false);
     if (!quiet) announceMode();
@@ -138,6 +146,7 @@
     scheduled = requestAnimationFrame(() => {
       scheduled = 0;
       if (drag || !items.length) return;
+      if (window.newtabSize?.held?.()) return; // a clock or search-bar drag: the cards hold still until it ends
       // A new window width: the column's sizes fitted to it first, so the cards are never drawn pushed meanwhile.
       if (!window.newtabSize?.held?.()) window.newtabSize?.fitNow?.();
       measure();
@@ -598,7 +607,10 @@
       // Against the cards' saved places, not where the last layout drew them (which may already have been pushed).
       const ob = o.obstacle && { ...o.obstacle, y: o.obstacle.y + WL.bannerRows(items, o) };
       ({ m, o } = keep);
-      lastBlockers = ob ? items.filter((it) => it.snap !== 'top' && !ignore?.has(it.id)).filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
+      // Where the cards are drawn when nothing pushes them (packed, when packing is on); docked cards (snapped to a
+      // side or corner) take the room beside the column, whatever it is, so they never block a size.
+      const free = o.packed ? WL.resolve(items, { ...o, obstacle: null }) : items;
+      lastBlockers = ob ? free.filter((it) => !it.snap && !ignore?.has(it.id)).filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
       return lastBlockers.length === 0;
     },
     // Outline, for a moment, the cards that stopped the last clock or search-bar resize.
@@ -611,5 +623,6 @@
         blockTimers.set(id, setTimeout(() => { card.classList.remove('w-blocking'); blockTimers.delete(id); }, 1100));
       }
     },
-    blockers: () => [...lastBlockers], items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
+    blockers: () => [...lastBlockers],
+    relayout: () => relayout(), items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();

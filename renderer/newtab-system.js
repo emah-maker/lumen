@@ -196,7 +196,8 @@
   let refHeight = 0;
   function plainHeaderHeight() {
     const greetingText = document.getElementById('greeting')?.textContent || '';
-    const key = [mainEl.clientWidth, greetingText].join('|');
+    const refWidth = Math.round(defaultSearchPx());
+    const key = [refWidth, greetingText].join('|');
     if (key === refKey) return refHeight;
     refKey = key;
     const copy = headerEl.cloneNode(true);
@@ -207,7 +208,7 @@
     copy.querySelector('.clock')?.replaceChildren(span('clock-h', '8'), span('clock-sep', ':'), span('clock-m', '88'));
     const date = copy.querySelector('.date');
     if (date && !date.textContent) date.textContent = 'Wednesday, September 30';
-    Object.assign(copy.style, { position: 'absolute', visibility: 'hidden', left: '0', top: '0', width: `${mainEl.clientWidth}px`, animation: 'none', pointerEvents: 'none' });
+    Object.assign(copy.style, { position: 'absolute', visibility: 'hidden', left: '0', top: '0', width: `${refWidth}px`, animation: 'none', pointerEvents: 'none' });
     copy.style.setProperty('--clock-size', `${WS.CLOCK_PX[WS.CLOCK_DEFAULT]}px`);
     copy.setAttribute('aria-hidden', 'true');
     const b = document.body.dataset;
@@ -260,9 +261,9 @@
   }
   const savedPx = () => (size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search);
   function fitToCards() {
+    if (size.hold) return; // a resize is being dragged: what it draws stays as it is
     size.viewClock = null;
     size.viewSearch = null;
-    if (size.hold) return;
     paint();
     const grid = window.widgetGrid;
     if (!grid?.centreFits || grid.centreFits()) return;

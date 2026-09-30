@@ -314,7 +314,7 @@
     const now = SZ()?.get();
     if (now && (now.clock !== WS.CLOCK_DEFAULT || now.search !== WS.SEARCH_DEFAULT)) entry.look = { clock: now.clock, search: now.search };
     history.push(entry);
-    SZ()?.preview(WS.CLOCK_DEFAULT, WS.SEARCH_DEFAULT); // the browser writes the defaults too (features/widgets.js resetLayout)
+    if (SZ()) { SZ().take('clock', WS.CLOCK_DEFAULT); SZ().take('search', WS.SEARCH_DEFAULT); } // the browser writes them too (features/widgets.js resetLayout)
     placeSoon();
     window.newtabSystem?.untouch(WS.IDS);
     window.widgetAct('wreset', 'reset');
@@ -380,8 +380,12 @@
       put(frameClock, left - 4, r.top - 2);
       put(gripClock, left + w + 4, r.top - 2); // its top corner: the clock grows upward, towards the pointer
       const now = SZ().drawnClock?.() || SZ().get().clock; // what is drawn (a size that doesn't fit here is drawn smaller)
+      const savedClock = SZ().get().clock;
+      const tagClock = now !== savedClock ? T('newtab.edit.drawnSmaller', { size: clockName(savedClock) }) : '';
+      frameClock.classList.toggle('w-sz-smaller', Boolean(tagClock));
+      frameClock.dataset.tag = tagClock;
       gripClock.setAttribute('aria-valuenow', String(WS.CLOCK_STEPS.indexOf(now)));
-      gripClock.setAttribute('aria-valuetext', clockName(now));
+      gripClock.setAttribute('aria-valuetext', tagClock ? `${clockName(now)}. ${tagClock}` : clockName(now));
     }
     const f = searchNode();
     if (f) {
@@ -395,8 +399,13 @@
       const saved = SZ().get().search;
       const smaller = SZ().drawnSearch() !== saved; // a saved width the cards here leave no room for
       frameSearch.classList.toggle('w-sz-smaller', smaller);
-      frameSearch.dataset.tag = smaller ? T('newtab.edit.drawnSmaller', { width: saved === WS.SEARCH_DEFAULT ? T('newtab.edit.automatic') : `${saved} px` }) : '';
-      for (const g of [gripL, gripR]) { g.setAttribute('aria-valuenow', String(drawn)); g.setAttribute('aria-valuetext', T('newtab.edit.search.sized', { width: drawn })); }
+      const tag = smaller ? T('newtab.edit.drawnNarrower', { size: saved === WS.SEARCH_DEFAULT ? T('newtab.edit.automatic') : `${saved} px` }) : '';
+      frameSearch.dataset.tag = tag;
+      for (const g of [gripL, gripR]) {
+        g.setAttribute('aria-valuemin', String(Math.min(WS.SEARCH_MIN, drawn))); // an Automatic width can be a little under the minimum
+        g.setAttribute('aria-valuenow', String(drawn));
+        g.setAttribute('aria-valuetext', tag ? `${T('newtab.edit.search.sized', { width: drawn })}. ${tag}` : T('newtab.edit.search.sized', { width: drawn }));
+      }
     }
   }
   let sizerFrame = 0;
@@ -483,8 +492,10 @@
   function setLook(key, value, { record = true, from, grip = null } = {}) {
     const stored = SZ().get()[key];
     const base = from ?? drawnOf(key);
-    if (record) { ignore = SZ().floor(); value = fitted(key, base, value, grip); }
-    if (value === stored || (record && value === base)) { SZ().restore(); placeSoon(); return false; } // nothing changes: drawn as before
+    const auto = key === 'search' && value === WS.SEARCH_DEFAULT; // Automatic: saved as it is, drawn as the cards allow
+    if (record && !auto) { ignore = SZ().floor(); value = fitted(key, base, value, grip); }
+    const same = (a, b) => a === b || (key === 'search' && !auto && Math.abs(a - b) <= 1);
+    if (value === stored || (record && same(value, base))) { SZ().restore(); placeSoon(); return false; } // nothing changes: drawn as before
     SZ().take(key, value); // saved here now, then in the browser
     placeSoon();
     window.widgetAct('wlook', 'look', { k: key, v: String(value) });
@@ -492,7 +503,8 @@
       history.push({ kind: 'look', key, before: stored, after: value, title: T(`newtab.edit.${key}`) });
       update();
     }
-    if (!grip?.classList.contains('w-sz-blocked')) say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(value) }) : T('newtab.edit.search.sized', { width: value }));
+    const shown = drawnOf(key); // what is drawn now (a restored size may be drawn smaller here)
+    if (!grip?.classList.contains('w-sz-blocked')) say(key === 'clock' ? T('newtab.edit.clock.sized', { size: clockName(shown) }) : T('newtab.edit.search.sized', { width: shown }));
     return true;
   }
   const gridInfo = () => { const m = grid()?.metrics?.() || grid()?.geometry().m; return m && Number.isFinite(m.pitchX) ? { pitch: m.pitchX, pad: m.pad, width: m.width } : null; };
@@ -514,16 +526,25 @@
     const step = () => {
       frame = 0;
       if (!pending) return;
-      const next = want(pending.clientX - x0, pending.clientY - y0);
+      const ddx = pending.clientX - x0;
+      const ddy = pending.clientY - y0;
+      if (!latest && Math.hypot(ddx, ddy) < 3) { pending = null; return; } // a click's jitter is not a resize
+      const next = want(ddx, ddy);
       pending = null;
       const from = latest ? latest.value : startDrawn[next.key];
       if (latest && next.value === latest.wanted) return;
-      latest = { key: next.key, wanted: next.value, value: fitted(next.key, from, next.value, grip) };
+      // Held at the limit and pulling further: still blocked, nothing to measure again.
+      if (latest?.limit != null && latest.key === next.key && !bigger(next.key, latest.limit, next.value)) return;
+      const got = fitted(next.key, from, next.value, grip);
+      latest = { key: next.key, wanted: next.value, value: got, limit: got !== next.value && bigger(next.key, next.value, got) ? next.value : null };
       placeSoon();
     };
     const move = (ev) => { pending = ev; if (!frame) frame = requestAnimationFrame(step); };
+    let done = false;
     const finish = () => {
+      done = true;
       if (frame) { cancelAnimationFrame(frame); frame = 0; step(); }
+      grip.removeEventListener('lostpointercapture', lost);
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', end);
       grip.removeEventListener('pointercancel', end);
@@ -531,6 +552,7 @@
       SZ().hold(false);
       document.body.classList.remove('w-dragging');
       unblock(grip);
+      grid()?.relayout?.(); // the cards, held still during the drag, settle around the new size
     };
     const cancel = () => { finish(); latest = null; SZ().restore(); placeSoon(); };
     // Escape during the drag puts the size back (and does not also leave Edit layout).
@@ -538,10 +560,14 @@
     const end = (ev) => {
       grip.releasePointerCapture?.(ev.pointerId);
       if (ev.type === 'pointercancel') { cancel(); return; }
+      if (done) return;
       finish();
       if (!latest) { SZ().restore(); placeSoon(); return; }
       setLook(latest.key, latest.value, { from: startDrawn[latest.key], grip });
     };
+    // The capture taken away (the grip hidden, a window switch): the drag ends as if released, never stuck holding.
+    const lost = (ev) => { if (!done) end(ev); };
+    grip.addEventListener('lostpointercapture', lost);
     grip.addEventListener('pointermove', move);
     grip.addEventListener('pointerup', end);
     grip.addEventListener('pointercancel', end);
@@ -556,6 +582,17 @@
     grip.addEventListener('pointerdown', (e) => {
       const base = drawnSearch();
       dragSizer(grip, e, (dx) => ({ key: 'search', value: WS.snapSearchWidth(base + 2 * dir * dx, gridInfo()) }));
+    });
+  }
+  // Double-click a grip, or press Delete or Backspace on it: back to the default (Medium clock, Automatic width).
+  gripClock.addEventListener('dblclick', () => setLook('clock', WS.CLOCK_DEFAULT, { grip: gripClock }));
+  for (const g of [gripL, gripR]) g.addEventListener('dblclick', () => setLook('search', WS.SEARCH_DEFAULT, { grip: g }));
+  for (const g of [gripClock, gripL, gripR]) {
+    g.addEventListener('keydown', (e) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (g === gripClock) setLook('clock', WS.CLOCK_DEFAULT, { grip: g }); else setLook('search', WS.SEARCH_DEFAULT, { grip: g });
     });
   }
   // Keyboard: the arrows step (Shift works too, as before), PageUp/PageDown take bigger steps, Home/End go to the ends.
