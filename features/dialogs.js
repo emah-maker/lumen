@@ -228,9 +228,49 @@ function createDialogs(deps) {
     });
   }
 
+  // Release notes (features/whats-new.js): { title, message, notes: [{ version, date, blocks: [{ type, text }] }],
+  // more, link: { label, url }, buttons, checkboxLabel, checkboxChecked } -> Promise<{ response, checkboxChecked }>.
+  // A wider card whose list scrolls; the text is drawn with textContent, never as HTML.
+  function showNotes(opts = {}) {
+    return new Promise((resolve) => {
+      const { buttons, cancelId, defaultId } = baseOptions(opts, ['OK']);
+      const text = (v, max) => String(v ?? '').slice(0, max);
+      const notes = (Array.isArray(opts.notes) ? opts.notes : []).slice(0, 50).map((r) => ({
+        version: text(r.version, 40),
+        date: text(r.date, 40),
+        blocks: (Array.isArray(r.blocks) ? r.blocks : []).slice(0, 60).map((b) => ({ type: b.type === 'p' ? 'p' : 'li', text: text(b.text, 4000) })),
+      }));
+      const link = opts.link && /^https:\/\//.test(String(opts.link.url)) ? { label: text(opts.link.label, 80), url: String(opts.link.url) } : null;
+      const item = {
+        kind: 'notes',
+        owner: null,
+        resolve,
+        payload: {
+          id: ++seq,
+          kind: 'notes',
+          title: opts.title || '',
+          message: String(opts.message || ''),
+          detail: '',
+          notes,
+          more: opts.more ? String(opts.more) : '',
+          link,
+          buttons,
+          defaultId,
+          cancelId,
+          checkboxLabel: opts.checkboxLabel || '',
+          checkboxChecked: Boolean(opts.checkboxChecked),
+        },
+        cancelledResult: () => ({ response: cancelId, checkboxChecked: Boolean(opts.checkboxChecked) }),
+      };
+      enqueue(item);
+    });
+  }
+
   return {
     showMessageBox,
     ask,
+    showNotes,
+    currentKind: () => showing?.kind ?? null, // for tests
     layout,
     refresh,
     pendingFor,

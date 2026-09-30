@@ -419,6 +419,13 @@ if (TEST) {
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
+// ---------- what's new after an update (features/whats-new.js): once, over the first window ----------
+const whatsNew = require('./features/whats-new').createWhatsNew({
+  app, readSettings, writeSettings, t, test: TEST,
+  showNotes: (opts) => dialogs.showNotes(opts),
+});
+if (TEST) global.__whatsNew = whatsNew;
+
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
 // overlay per window (features/tool-overlay.js). Loaded on first use.
 const toolOverlay = lazy(() => require('./features/tool-overlay').createToolOverlay({ ipcMain, WebContentsView }));
@@ -941,6 +948,7 @@ function showAppMenu({ x, y, right }) {
       ]),
       chunk([{ label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }]), // [settings]
       more(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
+      more([{ label: t('menu.whatsNew'), click: () => whatsNew.open() }]),
     ],
     [more([{ label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() }])],
   ];
@@ -3190,7 +3198,7 @@ function macMenu() {
     },
     { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
     { role: 'windowMenu' },
-    { role: 'help', submenu: [{ label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
+    { role: 'help', submenu: [{ label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
 }
 
@@ -3835,6 +3843,9 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     perf.mark('uiReady');
     downloads.send(); // last session's downloads: the toolbar button shows when there are any
     openLinksFromOtherApps(pendingLinks.splice(0));
+    // After an update, the release notes come up once, a moment after the restored tabs (only the
+    // first normal window asks; whatsNew.check runs once per launch).
+    if (firstWindow) setTimeout(() => { if (!w.isDestroyed()) whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message)); }, 1200);
   });
   return rec;
 }
@@ -4304,6 +4315,7 @@ const settingsBackend = settingsPage.create({
   usage, // [usage] You and AI → Usage
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
+  showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
