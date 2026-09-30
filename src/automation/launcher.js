@@ -45,6 +45,15 @@ const DETACHED = process.platform === 'win32';
 // links it was sent as events (macOS).
 const launcherArgs = (argv, links = []) => [__filename, ...argv.slice(1), ...links];
 
+// Switches the browser this starts gets on its own command line, whatever main.js and prepareAutomation do in it
+// (they set the same ones with app.commandLine, which only the process that runs them has: nothing is inherited
+// from the first process). With Chromium's debugging pipe on, pages say navigator.webdriver = true unless
+// AutomationControlled is off, and Google refuses sign-in to such a browser; FedCm is off so Google's One Tap
+// uses its iframe prompt (Electron has no FedCM UI).
+const CHILD_SWITCHES = ['--disable-blink-features=AutomationControlled', '--disable-features=FedCm'];
+// The browser's arguments: `argv` is this launcher's [node, launcher.js, ...what the first process got].
+const browserArgs = (argv) => [...argv.slice(2), ...CHILD_SWITCHES];
+
 // From the first Lumen process: run this file with the same arguments. The caller exits right after.
 function relaunch(links = []) {
   spawn(process.execPath, launcherArgs(process.argv, links), {
@@ -76,7 +85,7 @@ function run() {
   const env = { ...process.env, [CHILD_ENV]: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   // Windows: Lumen's end is overlapped, so its reads don't block its writes on the same handle.
-  const child = spawn(process.execPath, process.argv.slice(2), { env, stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe', 'overlapped'], detached: DETACHED });
+  const child = spawn(process.execPath, browserArgs(process.argv), { env, stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe', 'overlapped'], detached: DETACHED });
   const [,,, toChromium, fromChromium, lumen] = child.stdio;
   for (const stream of [toChromium, fromChromium, lumen]) stream.on('error', () => {});
   fromChromium.pipe(lumen);
@@ -90,4 +99,4 @@ function run() {
 
 if (require.main === module) run();
 
-module.exports = { available, isLaunched, relaunch, handOver, launcherArgs, LUMEN_FD };
+module.exports = { available, isLaunched, relaunch, handOver, launcherArgs, browserArgs, CHILD_SWITCHES, LUMEN_FD };
