@@ -284,6 +284,56 @@ async function engineRuns() {
   check('onFresh: reset once, when the first message takes the process (not again for the kept one)', freshCalls === 1, String(freshCalls));
   fr.dispose();
 
+  // A speculative (composer-focus) warm that no message takes is released after prewarmIdleMs, not the 10-min idle.
+  const pw = make({ prewarmIdleMs: 40, idleMs: 5000 });
+  pw.warm({ sessionId: 'sess-pw', resume: false, systemPrompt: 'SYS', model: 'haiku', maxTurns: 0 }, { speculative: true });
+  await sleep(15);
+  const pwRec = cli.spawned[cli.spawned.length - 1];
+  check('prewarm idle: a speculative process is up at first', pwRec.session === 'sess-pw' && !pwRec.killed, '');
+  await sleep(80);
+  check('prewarm idle: an unused speculative process is released after the short timeout', pwRec.killed && pw.proc === null, '');
+  const pw2 = make({ prewarmIdleMs: 40, idleMs: 5000 });
+  pw2.warm({ sessionId: 'sess-pw2', resume: false, systemPrompt: 'SYS', model: 'haiku', maxTurns: 0 }, { speculative: true });
+  await sleep(15);
+  const pw2Rec = cli.spawned[cli.spawned.length - 1];
+  await pw2.run(opts({ sessionId: 'sess-pw2', model: 'haiku' }));
+  await sleep(80);
+  check('prewarm idle: a process a message took is on the normal idle timeout', !pw2Rec.killed && pw2.proc !== null, '');
+  pw2.dispose();
+
+  // Pre-warm backoff: an unused warm process that dies on its own pauses pre-warming (doubling), a good turn resets it.
+  const bo = make({ warmBackoffMs: 60, warmBackoffMaxMs: 120 });
+  check('backoff: pre-warming is allowed at first', bo.canPrewarm() === true, '');
+  const dieWarm = async (id) => {
+    bo.warm({ sessionId: id, resume: false, systemPrompt: 'SYS', model: 'haiku', maxTurns: 0 }, { speculative: true });
+    await sleep(15);
+    cli.spawned[cli.spawned.length - 1].exit(1);
+    await sleep(15);
+  };
+  await dieWarm('sess-bo1');
+  check('backoff: after an unused process dies, pre-warming pauses (the base delay)', bo.canPrewarm() === false && bo.warmBlock.delay === 60, JSON.stringify(bo.warmBlock));
+  await sleep(70);
+  check('backoff: and resumes once the delay passes', bo.canPrewarm() === true, '');
+  await dieWarm('sess-bo2');
+  check('backoff: a second failure doubles the delay', bo.warmBlock.delay === 120 && bo.canPrewarm() === false, JSON.stringify(bo.warmBlock));
+  await sleep(130);
+  await dieWarm('sess-bo3');
+  check('backoff: the delay is capped at the max', bo.warmBlock.delay === 120, JSON.stringify(bo.warmBlock));
+  await bo.run(opts({ sessionId: 'sess-bo4' }));
+  check('backoff: a successful turn resets it', bo.warmBlock.delay === 0 && bo.canPrewarm() === true, JSON.stringify(bo.warmBlock));
+  bo.dispose();
+  const killedOurs = make({ warmBackoffMs: 60 });
+  killedOurs.warm({ sessionId: 'sess-bo5', resume: false, systemPrompt: 'SYS', model: 'haiku', maxTurns: 0 });
+  await sleep(15);
+  killedOurs.release();
+  await sleep(15);
+  check('backoff: a process Lumen itself released is not a failure', killedOurs.canPrewarm() === true, JSON.stringify(killedOurs.warmBlock));
+  const signedOut = make();
+  signedOut.statusCache = { at: Date.now(), value: { signedIn: false, accountType: null, detail: null } };
+  check('backoff: no pre-warm when Claude Code says it is signed out (unknown is fine)', signedOut.canPrewarm() === false, '');
+  signedOut.statusCache = { at: Date.now(), value: { signedIn: 'unknown' } };
+  check('backoff: an unknown sign-in state does not block pre-warming', signedOut.canPrewarm() === true, '');
+
   // A call reports into its own message's counters, even when another message is active by then.
   const own = make();
   const armed = [0, 0];
@@ -519,6 +569,22 @@ async function grokRuns() {
   const waited = await waiting;
   check('grok: the watchdog is paused while a Lumen tool call is running', stillUp && waited.text === 'waited' && !waited.failed, JSON.stringify({ stillUp, waited }));
 
+  // Pre-output phase: a chat's first message may wait for Lumen's tools before Grok prints a line, so the
+  // watchdog (60 ms here) gets firstWaitExtraMs on top until the first stdout line; a resumed one doesn't.
+  const live2 = new gb.GrokBuildEngine({ userData: tmp, gate: async () => gate, spawn: spawnLive, kill: killLive, watchdogMs: 60, firstWaitExtraMs: 300 });
+  live2.bin = process.execPath;
+  const runFirst = (resume) => live2.run({ prompt: 'p', sessionId: 'sess', resume, systemPrompt: 'SYS', signal: new AbortController().signal, emit: () => {} });
+  const n0 = live.length;
+  script = (child) => setTimeout(() => { child.out({ type: 'system', subtype: 'init', session_id: 's' }); child.finish('slow start'); }, 150);
+  const slow = await runFirst(false);
+  check('grok: a first message slow to print its first line (past the watchdog, within the MCP-wait allowance) is not called hung', slow.text === 'slow start' && !slow.failed && !live[n0].killed, JSON.stringify(slow));
+  script = () => {};
+  const silent = await runFirst(true);
+  check('grok: a resumed message silent from the start still hits the plain watchdog', silent.failed === true && live[live.length - 1].killed === true, JSON.stringify(silent));
+  script = () => {};
+  const silentFirst = await runFirst(false);
+  check('grok: a first message silent past the allowance is still ended', silentFirst.failed === true && live[live.length - 1].killed === true, JSON.stringify(silentFirst));
+
   if (oldHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = oldHome;
   fs.rmSync(tmp, { recursive: true, force: true });
 }
@@ -607,6 +673,27 @@ async function settleRuns() {
   setTimeout(() => spa.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true }), 20);
   await settleAfterAction(spa);
   check('settle: a same-document navigation (pushState) is not waited on as a load', Date.now() - t < 400, `${Date.now() - t} ms`);
+
+  // The in-page DOM wait itself (run against a fake MutationObserver): a constantly mutating page resolves at ~650 ms.
+  const vm = require('vm');
+  const { DOM_QUIET } = require('../src/ai/agent');
+  const runQuiet = (mutateEveryMs) => new Promise((resolve) => {
+    let fire = null;
+    class FakeObserver { constructor(cb) { fire = cb; } observe() { if (mutateEveryMs) this.tick = setInterval(() => fire([]), mutateEveryMs); } disconnect() { clearInterval(this.tick); } }
+    const start = Date.now();
+    vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: FakeObserver, setTimeout, clearTimeout }).then((why) => resolve({ why, ms: Date.now() - start }));
+  });
+  const still = await runQuiet(0);
+  check('settle: a page with no mutations is quiet after ~100 ms', still.why === 'quiet' && still.ms >= 90 && still.ms < 400, JSON.stringify(still));
+  const animating = await runQuiet(30);
+  check('settle: mutations that never pause for 100 ms stop being waited on at ~650 ms (not 1.5 s)', animating.why === 'busy' && animating.ms >= 600 && animating.ms < 1000, JSON.stringify(animating));
+  const bursty = await runQuiet(0).then(() => new Promise((resolve) => {
+    let fire = null;
+    class Obs { constructor(cb) { fire = cb; } observe() { let n = 0; this.tick = setInterval(() => { if (++n > 4) clearInterval(this.tick); else fire([]); }, 40); } disconnect() { clearInterval(this.tick); } }
+    const start = Date.now();
+    vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: Obs, setTimeout, clearTimeout }).then((why) => resolve({ why, ms: Date.now() - start }));
+  }));
+  check('settle: a burst of mutations that then pauses still resolves quiet', bursty.why === 'quiet' && bursty.ms < 500, JSON.stringify(bursty));
 }
 
 // Lumen's MCP tool entry (features/ai-agents.js mcpCallTool) driven through a sidebar Claude Code run, with fakes.
@@ -618,6 +705,7 @@ async function toolCallRuns() {
   let callTool = null;
   const realStart = mcp.startServer;
   mcp.startServer = (o) => { callTool = o.callTool; return { disconnectAll() {}, close() {} }; };
+  const outside = []; // events sent to the renderer for outside (non-sidebar-engine) agents
   const calls = []; // what the fake agent was asked, in order
   let describe = async () => null;
   const fakeAgent = {
@@ -640,7 +728,7 @@ async function toolCallRuns() {
     validateToolInput: (name, args) => (args?.bad ? 'bad field' : null),
     readSettings: () => settings,
     writeSettings: () => {},
-    ui: () => null,
+    ui: () => ({ send: (ch, ev) => { if (ch === 'mcp:event') outside.push(ev); } }), // an outside agent's events (mcpEvent)
   });
   try { await handlers['mcp:set-enabled']({}, true); } finally { mcp.startServer = realStart; }
   const eng = fakeAgent.engines.claudecode; // created here, never run: only its `active` run and early rows matter
@@ -694,6 +782,33 @@ async function toolCallRuns() {
   await callTool('click', { element_id: 3 }, session);
   check('step label: a click whose label is ready in time shows it on the row itself', events[0].type === 'tool' && events[0].label === 'Clicking "Buy" button' && !events.some((e) => e.type === 'tool_update'), JSON.stringify(events));
 
+  // Item 4: a click's label that lands after the action began is dropped (it would name the post-action page).
+  events.length = 0;
+  describe = async () => { await sleep(250); return 'Clicking "Next page"'; };
+  fakeAgent.execute = async () => { await sleep(400); return 'ok'; };
+  await callTool('click', { element_id: 4 }, session);
+  check('step label: a click label arriving after the action started is dropped, not applied to the row', events[0].type === 'tool' && events[0].label == null && !events.some((e) => e.type === 'tool_update'), JSON.stringify(events));
+  events.length = 0;
+  describe = async () => { await sleep(250); return 'Reading'; };
+  fakeAgent.execute = async () => { await sleep(400); return 'ok'; };
+  await callTool('read_page', {}, session);
+  check('step label: a page-independent label (read_page) arriving mid-call still updates the row', events.some((e) => e.type === 'tool_update' && e.label === 'Reading'), JSON.stringify(events));
+
+  // Item 3: an outside agent has no early row, so its first 'tool' event carries the specific label.
+  const outsideSession = { clientName: 'Codex', controller: new AbortController(), approvedHosts: new Set() };
+  outside.length = 0;
+  describe = async () => { await sleep(60); return 'Reading the page "Pricing"'; };
+  fakeAgent.execute = async () => 'ok';
+  await callTool('read_page', {}, outsideSession);
+  check('outside agent: the first tool event has the specific label (no generic row then a late update)', outside[0]?.type === 'tool' && outside[0].label === 'Reading the page "Pricing"' && outside[0].clientName === 'Codex' && !outside.some((e) => e.type === 'tool_update'), JSON.stringify(outside));
+  outside.length = 0;
+  describe = async () => { await sleep(1700); return 'Very late'; };
+  const tOut = Date.now();
+  await callTool('read_page', {}, outsideSession);
+  check('outside agent: a label that takes longer than the cap does not hold the call up (the row shows generic)', Date.now() - tOut < 1900 && outside[0].type === 'tool' && outside[0].label == null, JSON.stringify({ ms: Date.now() - tOut, outside }));
+  fakeAgent.execute = async (name) => { calls.push(`execute:${name}`); return 'ok'; };
+  describe = async () => null;
+
   // Pre-warm: a no-op unless this chat's engine is Claude Code; cheap when repeated.
   const { Agent } = require('../src/ai/agent');
   let warms = [];
@@ -722,6 +837,28 @@ async function toolCallRuns() {
   resumed.prewarm();
   check('prewarm: a chat with a session resumes it (the pinned model, not a new id)', warms.length === 1 && warms[0].sessionId === 'sess-existing' && warms[0].resume === true && warms[0].model === 'opus', JSON.stringify(warms));
   const sameChannel = handlers['agent:prewarm'];
+  // The warm process is usable for the common first prompts: the pre-warmed model is what they route to.
+  const routeModel = (text) => Agent.prototype.claudeCodePlan.call(chat('claudecode:default'), { settings: { model: 'claudecode:default' } }, text, 0, 0).spawn.model;
+  const typical = ['open youtube', 'summarize this page', 'click the login button', 'go to github.com', 'search for cheap flights'];
+  warms = [];
+  const fresh1 = chat('claudecode:default');
+  fresh1.prewarm();
+  check('prewarm: an empty composer warms the light tier (haiku), what typical first prompts route to', warms[0].model === 'haiku' && typical.every((p) => routeModel(p) === warms[0].model), JSON.stringify({ warm: warms[0]?.model, routed: typical.map(routeModel) }));
+  warms = [];
+  chat('claudecode:default').prewarm('fix the race condition in the scheduler and refactor the tests');
+  check('prewarm: text already typed is routed as is (a hard prompt warms the heavier model)', warms.length === 1 && warms[0].model !== 'haiku', JSON.stringify(warms));
+  warms = [];
+  chat('claudecode:sonnet').prewarm('open youtube');
+  check('prewarm: a picked model is exactly what is warmed', warms[0]?.model === 'sonnet', JSON.stringify(warms));
+  warms = [];
+  const held = chat('claudecode:default');
+  held.engines.claudecode.canPrewarm = () => false;
+  check('prewarm: nothing while the engine says it is backing off or signed out', held.prewarm() === false && warms.length === 0, JSON.stringify(warms));
+  const specific = chat('claudecode:default');
+  let flagged = null;
+  specific.engines.claudecode.warm = (o, f) => { flagged = f; warms.push(o); };
+  specific.prewarm();
+  check('prewarm: the warm is marked speculative (released after ~3 min unused)', flagged?.speculative === true, JSON.stringify(flagged));
   check('prewarm: the IPC channel is registered and never throws', typeof sameChannel === 'function' && (() => { try { sameChannel({}); return true; } catch { return false; } })(), '');
   eng.active = null;
   fs.rmSync(tmp, { recursive: true, force: true });

@@ -130,7 +130,8 @@ function setupAiAgents(deps) {
   agent.onEngineReset = () => { freshReads(); claudeCode?.release(); }; // (the read cache too: the chat's CLI session is gone)
   // The composer was focused or typed in (renderer/chat-core.js): Claude Code's process starts ahead of the
   // message (agent.prewarm: a no-op for any other engine, and cheap when repeated).
-  ipcMain.on('agent:prewarm', () => { try { agent.prewarm(); } catch {} });
+  // text: what is already typed (routed for the model guess); the preload passes it through.
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} });
   app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
@@ -210,6 +211,7 @@ function setupAiAgents(deps) {
   // and shows each call as a step in the sidebar.
   const LABEL_FIRST = new Set(['click', 'type_text', 'fill_form', 'press_key']); // their labels are read from the page before the action runs
   const LABEL_WAIT_MS = 150;
+  const OUTSIDE_LABEL_WAIT_MS = 1500; // outside agents (no early row): the label goes in the first event, for up to this long
   async function mcpCallTool(name, args, session) {
     session.approvedHosts ||= new Set();
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
@@ -249,13 +251,19 @@ function setupAiAgents(deps) {
     // The row shows at once with its generic label; describeStep's specific one follows as a tool_update
     // (renderer) and never holds the call up. Only a label that reads the page as it is before the call
     // acts (a click or type names its element) is waited for, for at most LABEL_WAIT_MS, then the call goes on.
+    // acting: the call's action has begun, so a page-reading label (click/type) arriving now would name the
+    // element from the page AFTER the action: it is dropped (a wrong name is worse than the generic one).
     let finished = false;
+    let acting = false;
     const labelled = inPin(() => runAgent.describeStep(name, args)).catch(() => null);
-    const named = (label) => { if (label && !finished) toUi({ type: 'tool_update', id: stepId, name, input: args, label, clientName: session.clientName }); };
+    const named = (label) => { if (label && !finished && !(acting && LABEL_FIRST.has(name))) toUi({ type: 'tool_update', id: stepId, name, input: args, label, clientName: session.clientName }); };
     let first = null;
-    if (LABEL_FIRST.has(name)) {
+    // An outside agent has no early row to rename later: its first 'tool' event carries the specific label
+    // (waited for up to OUTSIDE_LABEL_WAIT_MS); the sidebar's own engine shows its row at once.
+    const waitMs = engineRun ? (LABEL_FIRST.has(name) ? LABEL_WAIT_MS : 0) : OUTSIDE_LABEL_WAIT_MS;
+    if (waitMs) {
       let timer;
-      first = await Promise.race([labelled, new Promise((resolve) => { timer = setTimeout(resolve, LABEL_WAIT_MS, null); })]);
+      first = await Promise.race([labelled, new Promise((resolve) => { timer = setTimeout(resolve, waitMs, null); })]);
       clearTimeout(timer);
     }
     // A new row carries the label when it is known by now (else the generic one); an early row is named in place.
@@ -268,6 +276,7 @@ function setupAiAgents(deps) {
     // the action it allows are about the same tab. Stop ends a long wait at once, either way.
     const work = async () => {
       await runAgent.ensureAllowed(name, emit, signal, allow);
+      acting = true;
       return abortable(runAgent.execute(name, args), signal);
     };
     // The engine counts this call (a message that ran a tool is never re-sent silently) and pauses its

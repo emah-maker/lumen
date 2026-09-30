@@ -92,6 +92,12 @@ function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'defaul
 
 // A CLI kept for the chat's next message is stopped after this long without one.
 const IDLE_MS = 10 * 60 * 1000;
+// A process pre-warmed on composer focus (agent.js prewarm) that no message has taken is released after this long.
+const PREWARM_IDLE_MS = 3 * 60 * 1000;
+// After a pre-warmed process dies unused (a broken CLI, no sign-in), pre-warming pauses this long, doubling per
+// repeat up to the max; a successful turn resets it.
+const WARM_BACKOFF_MS = 5 * 60 * 1000;
+const WARM_BACKOFF_MAX_MS = 30 * 60 * 1000;
 // A message whose process says nothing (no stdout line, no Lumen tool call in flight) for this long
 // is ended with an error; the next message starts the process again with --resume.
 const WATCHDOG_MS = 90 * 1000;
@@ -193,8 +199,12 @@ class ClaudeCodeEngine {
   // watchdogMs / interruptMs: see WATCHDOG_MS / INTERRUPT_MS (0 turns the watchdog off). onFresh({ sessionId,
   // resume }): a new CLI process starts, so anything the model saw through the old one (snapshot.js's
   // repeat-read cache) no longer counts (features/ai-agents.js).
-  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, interruptMs = INTERRUPT_MS, onFresh = null, spawn: spawnChild = spawn, kill = killTree }) {
+  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
     this.kind = 'claudecode';
+    this.prewarmIdleMs = prewarmIdleMs;
+    this.warmBackoffMs = warmBackoffMs;
+    this.warmBackoffMaxMs = warmBackoffMaxMs;
+    this.warmBlock = { until: 0, delay: 0 }; // pre-warm pause after unused warm processes died (warmFailed)
     this.watchdogMs = watchdogMs;
     this.interruptMs = interruptMs;
     this.onFresh = onFresh;
@@ -277,6 +287,7 @@ class ClaudeCodeEngine {
       proc.code = code;
       clearTimeout(proc.idle);
       if (this.proc === proc) this.proc = null;
+      if (proc.warmed && !proc.turns && !proc.disposed) this.warmFailed(); // a pre-warmed process died on its own, unused
       try { http?.server.close(tag); } catch {}
       fs.rm(dir, { recursive: true, force: true }, () => {});
       proc.turn?.exit(code);
@@ -325,15 +336,29 @@ class ClaudeCodeEngine {
 
   // Starts (or keeps) the CLI for the chat's next message ahead of time, so the process start and
   // its MCP connection overlap with reading the page (agent.js runTask). Never mid-message.
-  warm(opts) {
+  // speculative (agent.js prewarm, before any message exists): released after prewarmIdleMs unused, not idleMs.
+  warm(opts, { speculative = false } = {}) {
     if (this.busy || this.active || !this.keepAlive) return;
     const gen = this.gen;
     this.warming++;
     this.take(opts).then((p) => {
-      if (!p || p.exited || p.turn) return;
+      if (!p || (p.exited && !p.turns)) { this.warmFailed(); return; } // no CLI, or it died at spawn
+      if (p.exited || p.turn) return;
+      p.warmed = true;
       if (gen !== this.gen) this.dispose(p); // release() came while it was starting: nobody wants this one
-      else this.idleLater(p);
+      else this.idleLater(p, speculative && !p.turns ? this.prewarmIdleMs : this.idleMs);
     }).catch(() => {}).finally(() => { this.warming--; });
+  }
+
+  // Pre-warming backs off: 5 min after an unused warm process died, doubling to 30 min (reset by a successful turn).
+  warmFailed() {
+    const delay = this.warmBlock.delay ? Math.min(this.warmBlock.delay * 2, this.warmBackoffMaxMs) : this.warmBackoffMs;
+    this.warmBlock = { until: Date.now() + delay, delay };
+  }
+
+  // Whether a speculative start is worth it now: not in backoff, and the CLI's last sign-in check wasn't "signed out".
+  canPrewarm() {
+    return Date.now() >= this.warmBlock.until && this.statusCache?.value?.signedIn !== false;
   }
 
   // A process is kept or being started (agent.js prewarm starts none on top of it).
@@ -341,9 +366,9 @@ class ClaudeCodeEngine {
     return this.warming > 0 || Boolean(this.proc && !this.proc.exited);
   }
 
-  idleLater(proc) {
+  idleLater(proc, ms = this.idleMs) {
     clearTimeout(proc.idle);
-    proc.idle = setTimeout(() => this.dispose(proc), this.idleMs);
+    proc.idle = setTimeout(() => this.dispose(proc), ms);
     proc.idle.unref?.();
   }
 
@@ -352,6 +377,7 @@ class ClaudeCodeEngine {
   dispose(proc = this.proc) {
     if (!proc) return;
     clearTimeout(proc.idle);
+    proc.disposed = true; // ended by us: not a warm failure
     if (this.proc === proc) this.proc = null;
     try { proc.http?.server.close(proc.tag); } catch {}
     if (!proc.exited && proc.child) this.kill(proc.child);
@@ -564,6 +590,7 @@ class ClaudeCodeEngine {
     this.clearEarly(emit);
     if (this.active?.tag === tag) this.active = null;
     const ok = Boolean(result && !result.is_error && result.subtype === 'success');
+    if (ok) this.warmBlock = { until: 0, delay: 0 }; // a working CLI: pre-warming is worth trying again
     if (!proc.single) {
       if (ok && !signal.aborted && !proc.exited) { if (newSession) proc.rekey(newSession); this.idleLater(proc); } // kept for the chat's next message
       else if (!proc.drain) this.dispose(proc); // a failed, stalled or capped turn: the next message starts clean (--resume); a stopped one is draining

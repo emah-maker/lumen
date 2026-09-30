@@ -330,6 +330,9 @@ const DENIED = ['spawn_subagent', 'kill_command_or_subagent', 'get_command_or_su
 const DEFAULT_MAX_TURNS = 100;
 // A Grok process silent on stdout this long, with no Lumen tool call running, is hung (claude-code.js WATCHDOG_MS).
 const WATCHDOG_MS = 90 * 1000;
+// Before a chat's first message's first stdout line, Grok may legitimately wait for Lumen's MCP tools (its own wait,
+// logged on stderr): the pre-output phase gets this much on top of the watchdog.
+const FIRST_WAIT_EXTRA_MS = 60 * 1000;
 // A background task's grok (features/background-runner.js) has nobody to ask in the moment and gets no
 // shell at all: run_terminal_command is denied like the other three, and not allowed.
 const argsBase = (background = false) => [
@@ -599,7 +602,8 @@ class GrokBuildEngine {
   // onFresh({ sessionId, resume }): a new grok process starts (one per message), so the page reads the
   // model saw before no longer count (snapshot.js's repeat-read cache, features/ai-agents.js).
   // watchdogMs: a run whose stdout is silent this long (no Lumen tool call in flight) is hung and is ended (0: off).
-  constructor({ userData, gate, lumenReady = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
+  constructor({ userData, gate, lumenReady = null, onFresh = null, watchdogMs = WATCHDOG_MS, firstWaitExtraMs = FIRST_WAIT_EXTRA_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
+    this.firstWaitExtraMs = firstWaitExtraMs;
     this.kind = 'grokbuild';
     this.watchdogMs = watchdogMs;
     this.onFresh = onFresh;
@@ -764,10 +768,14 @@ class GrokBuildEngine {
     this.active = active;
     let over = false; // the process has ended (the watchdog stays off)
     let stalled = false;
+    // started: Grok has printed its first stdout line. Until then (process start, and on a chat's first message
+    // its wait for Lumen's tools) the allowance is watchdogMs + firstWaitExtraMs, so a slow start isn't called hung.
+    let started = false;
     active.arm = () => {
       clearTimeout(active.dog);
       if (!this.watchdogMs || over || active.inflight > 0) return;
-      active.dog = setTimeout(() => { stalled = true; this.kill(child); }, this.watchdogMs);
+      const ms = this.watchdogMs + (started || !waitForLumen ? 0 : this.firstWaitExtraMs);
+      active.dog = setTimeout(() => { stalled = true; this.kill(child); }, ms);
     };
     // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background
     // "leader" process, `grok leader list/kill`, did not show up in Lumen's GROK_HOME in testing.)
@@ -847,6 +855,7 @@ class GrokBuildEngine {
     };
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
+      started = true;
       active.arm(); // any output restarts the watchdog
       buffer += chunk;
       let i;

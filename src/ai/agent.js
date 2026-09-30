@@ -676,7 +676,8 @@ async function waitForLoad(wc, timeoutMs = 8000) {
 }
 
 // In the page (Claude's isolated world, same DOM): resolves once the DOM has had no mutations for
-// quietMs, or after capMs on a page that never settles (an animation, a ticker).
+// quietMs, or after capMs on a page that never settles (an animation, a ticker: mutations that never pause
+// for quietMs within capMs, so a constantly animating page costs ~capMs per action, not 1.5 s).
 function domQuiet({ quietMs, capMs }) {
   return new Promise((resolve) => {
     let timer = null;
@@ -691,10 +692,10 @@ function domQuiet({ quietMs, capMs }) {
     cap = setTimeout(() => done('busy'), capMs);
   });
 }
-const DOM_QUIET = `(${domQuiet.toString()})({ quietMs: 100, capMs: 1500 })`;
+const DOM_QUIET = `(${domQuiet.toString()})({ quietMs: 100, capMs: 650 })`;
 
 // After an input (click, key, Enter, form submit): a navigation it starts is waited for as
-// waitForLoad does; otherwise only until the page's DOM goes quiet (~100 ms, at most 1.5 s), not a
+// waitForLoad does; otherwise only until the page's DOM goes quiet (~100 ms, at most ~650 ms), not a
 // fixed 550 ms. (A tab behind another one has its timers throttled, so there it can take ~1 s.)
 async function settleAfterAction(wc, timeoutMs = 8000) {
   if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
@@ -1309,17 +1310,21 @@ class Agent {
   // chat's next Claude Code message will want a process, so it is started now instead of at send (runTask
   // warms again, which keeps it when the plan's key matches). Does nothing for any other engine, during a
   // run, or when a process is already kept or starting; repeated calls cost a model check. The message
-  // isn't known, so the routed model is the one an empty prompt gets ('standard' with auto-routing, or the
-  // pinned tier of a resumed session); a different one at send just replaces it. Idles out as any warm one.
-  prewarm() {
+  // isn't known, so the model is a guess: text already typed in the composer is routed as is; else a typical
+  // short first browser prompt (PREWARM_GUESS: "open a page", routes to the light tier like "open youtube",
+  // "summarize this page", "click the login button"). A picked model, or a resumed session's pinned tier,
+  // is exactly what routing gives. A different model at send just replaces the process. A pre-warmed process
+  // that no message takes is released after ~3 min, and pre-warming backs off after failures (claude-code.js).
+  prewarm(text = '') {
     const messages = this.messages;
     const settings = messages?.settings;
     if (!settings || !String(settings.model).startsWith('claudecode:') || this.engineRunScope || this.running) return false;
     const cc = this.engines?.claudecode;
-    if (!cc?.warm || cc.isWarm?.()) return false;
-    const plan = this.claudeCodePlan(messages, '', 0, 0);
+    if (!cc?.warm || cc.isWarm?.() || cc.canPrewarm?.() === false) return false;
+    const typed = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
+    const plan = this.claudeCodePlan(messages, typed || PREWARM_GUESS, 0, 0);
     if (!plan.resume) this.prewarmed = { messages, id: plan.spawn.sessionId };
-    cc.warm(plan.spawn);
+    cc.warm(plan.spawn, { speculative: true });
     return true;
   }
 
@@ -2713,5 +2718,7 @@ function describeError(err, auth = null) {
 
 // Tools offered to external agents over MCP: every browser tool plus the client-side web search.
 const EXTERNAL_TOOLS = OTHER_TOOLS;
+// What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
+const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction };
+module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET };

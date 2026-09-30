@@ -1462,7 +1462,8 @@ function autosize() {
 }
 // Claude Code's process starts while the user types (main: agent.prewarm, a no-op for any other engine); at most every 20 s.
 let prewarmAt = 0;
-const prewarm = () => { if (running || Date.now() - prewarmAt < 20000) return; prewarmAt = Date.now(); try { window.assistant?.prewarm?.(); } catch {} };
+// The composer's text so far is passed along (the model guess routes it); the main side backs off after failures.
+const prewarm = () => { if (running || Date.now() - prewarmAt < 20000) return; prewarmAt = Date.now(); try { window.assistant?.prewarm?.(prompt.value); } catch {} };
 prompt.addEventListener('focus', prewarm);
 prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
