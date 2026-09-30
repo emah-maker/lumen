@@ -93,9 +93,15 @@ const SITE_HINTS = {
   Shopping: 'amazon.com ebay.com etsy.com',
 };
 
-// Hints that name a KIND of site rather than one task: every project of every person lives on GitHub,
-// so two GitHub tabs are not one topic for being there. A model is still told them, and a group whose
-// tabs all have one is still named for it when nothing better is left, but they never link tabs locally.
-const BROAD_HINTS = new Set(['Code']);
+// The hints a model may give a site the table above doesn't know ("Organize with AI" asks it about
+// those hosts, features/organize-ai.js; the answers are kept in the profile, features/organize-learn.js).
+// "none": the site is used for many things, or the model doesn't know it.
+const AI_HINTS = ['School', 'Job search', 'Code', 'Travel', 'Shopping', 'News', 'Finance', 'Health', 'Social', 'Entertainment', 'Work', 'Reference'];
 
-module.exports = { PLACES, CONCEPTS, SITE_CATEGORIES, SITE_HINTS, BROAD_HINTS };
+// Hints that name a KIND of site rather than one task: every project of every person lives on GitHub,
+// and two news articles or two videos are rarely one topic for being on such a site. A model is still
+// told them, and a group whose tabs all have one is still named for it when nothing better is left, but
+// they never link tabs locally.
+const BROAD_HINTS = new Set(['Code', 'News', 'Social', 'Entertainment', 'Work', 'Reference']);
+
+module.exports = { PLACES, CONCEPTS, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

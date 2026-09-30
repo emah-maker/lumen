@@ -8,6 +8,7 @@
 // scripts/measure-organize.js run it against a fake model.
 const crypto = require('crypto');
 const tg = require('../tab-groups');
+const { AI_HINTS } = require('./topic-knowledge');
 
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; } };
 const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
@@ -21,6 +22,7 @@ const TIMEOUT_MS = 8000; // past this the quick local grouping stays as it is
 const MAX_PARALLEL = 3;
 const CHUNK_ABOVE_TABS = 120; // more tabs than this: several smaller requests instead of one giant one
 const CHUNK_ITEMS = 45; // groups + leftovers per request when chunking
+const MAX_HINT_HOSTS = 20; // hosts per request a model is asked what they are for (a few output tokens each)
 const GENERIC_NAMES = new Set(['group', 'tabs', 'tab', 'page', 'pages', 'new', 'other', 'misc', 'stuff', 'things', 'links', 'home', 'core concepts', 'getting started']);
 
 // ---------- what a tab is called: stable keys, so the same tabs are recognised next time ----------
@@ -62,11 +64,15 @@ function sample(entries, k) {
 
 const cleanTitle = (e) => clip(tg.stripSiteSegment(e.title || '', e.url || ''), TITLE_MAX);
 
-// The site hint most of these tabs have ("School" for Canvas, see features/topic-knowledge.js), or ''.
-// Worked out from the host and path only, so it tells the model nothing the host doesn't already.
+// A tab's site hint: the fixed table's (features/topic-knowledge.js), else what a model said about
+// the site before (e.aiHint, kept by features/organize-learn.js). From the host and path only.
+const hintOf = (e) => tg.siteHint(e.url) || e.aiHint || '';
+
+// The site hint most of these tabs have ("School" for Canvas), or ''. It tells the model nothing the
+// host doesn't already.
 function majorHint(entries) {
   const count = new Map();
-  for (const e of entries) { const h = tg.siteHint(e.url); if (h) count.set(h, (count.get(h) || 0) + 1); }
+  for (const e of entries) { const h = hintOf(e); if (h) count.set(h, (count.get(h) || 0) + 1); }
   return [...count].find(([, n]) => n * 2 > entries.length)?.[0] || '';
 }
 
@@ -90,14 +96,30 @@ function leftoverSummary(entries) {
 }
 
 // view: { groups: [{ id, name, cohesion, entries }], leftovers: [entry] } -> the request body.
-function buildWire(view) {
+// hosts: sites to ask what they are for (q), host names only (see unknownHosts).
+function buildWire(view, hosts = []) {
   const wire = { g: view.groups.map(groupSummary) };
   if (view.leftovers.length) wire.u = leftoverSummary(view.leftovers);
   // Site hints of the ungrouped tabs, written once per hint: { School: [tabIds] }.
   const hints = {};
-  for (const e of view.leftovers) { const h = tg.siteHint(e.url); if (h) (hints[h] ||= []).push(e.id); }
+  for (const e of view.leftovers) { const h = hintOf(e); if (h) (hints[h] ||= []).push(e.id); }
   if (Object.keys(hints).length) wire.k = hints;
+  if (hosts.length) wire.q = hosts;
   return wire;
+}
+
+// The sites among these tabs that no hint is known for: not in the fixed table, not an app or search
+// engine, and never answered before (lookup(url) is undefined, see organize-learn aiHint). As host
+// names only (tab-groups hintHost: "canvas.northeastern.edu"), each once, at most MAX_HINT_HOSTS.
+function unknownHosts(entries, lookup, max = MAX_HINT_HOSTS) {
+  const out = [];
+  for (const e of entries) {
+    if (out.length >= max) break;
+    if (tg.siteHint(e.url) || tg.isAppOrSearch(e.url) || lookup(e.url) !== undefined) continue;
+    const host = tg.hintHost(e.url);
+    if (host && !out.includes(host)) out.push(host);
+  }
+  return out;
 }
 
 // The same request the way it used to be made: every tab, with host and path words, one long list.
@@ -105,7 +127,7 @@ function legacyWire(entries, pathWords = tg.pathWords) {
   return entries.map((e) => ({ id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(pathWords(e.url) ? { path: pathWords(e.url) } : {}) }));
 }
 
-const REFINE_PROMPT = 'Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, k site hint, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. k = site hints of ungrouped tabs: {hint: [tabIds]}. A site hint means the site is nearly always that task (Canvas and Gradescope are School, Indeed is Job search): tabs with one hint, and tabs of one host, usually belong together or in the group with that hint or host, unless their titles are clearly different topics (two courses, two projects). Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given.';
+const REFINE_PROMPT = `Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, k site hint, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. k = site hints of ungrouped tabs: {hint: [tabIds]}. A site hint means the site is nearly always that task (Canvas and Gradescope are School, Indeed is Job search): tabs with one hint, and tabs of one host, usually belong together or in the group with that hint or host, unless their titles are clearly different topics (two courses, two projects). Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given. q = hosts to classify: h = [{s host, k}] for each, k what the site is nearly always used for (${AI_HINTS.join(', ')}), or none when it is used for many things or you do not know it (a university's own site is School).`;
 
 const intItems = (props) => ({ type: 'array', items: { type: 'object', properties: props, required: Object.keys(props), additionalProperties: false } });
 const REFINE_SCHEMA = {
@@ -115,23 +137,31 @@ const REFINE_SCHEMA = {
     p: intItems({ t: { type: 'integer' }, i: { type: 'integer' } }),
     g: intItems({ s: { type: 'string' }, t: { type: 'array', items: { type: 'integer' } } }),
     m: intItems({ a: { type: 'integer' }, b: { type: 'integer' } }),
+    h: intItems({ s: { type: 'string' }, k: { type: 'string', enum: [...AI_HINTS, 'none'] } }),
   },
-  required: ['n', 'p', 'g', 'm'],
+  required: ['n', 'p', 'g', 'm', 'h'],
   additionalProperties: false,
 };
 const REFINE_MAX_TOKENS = 700;
 
 // ---------- reading the answer, safely ----------
 
-// -> { names: Map(groupId -> name), place: Map(tabId -> groupId), groups: [{ name, ids }], merges: [[into, from]] }
-// or null when it is not an object. Anything unknown, repeated or out of range is dropped.
-function parseRefinement(json, { groupIds, leftoverIds }) {
+// -> { names: Map(groupId -> name), place: Map(tabId -> groupId), groups: [{ name, ids }], merges: [[into, from]],
+// hints: Map(host -> hint | 'none') } or null when it is not an object. Anything unknown, repeated or out of
+// range is dropped; a host that was asked about (hosts) and left out of the answer counts as "none".
+function parseRefinement(json, { groupIds, leftoverIds, hosts = [] }) {
   if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
   const G = groupIds instanceof Set ? groupIds : new Set(groupIds);
   const L = leftoverIds instanceof Set ? leftoverIds : new Set(leftoverIds);
   const list = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : []);
   const int = (v) => (Number.isInteger(Number(v)) && v !== null && v !== '' ? Number(v) : null);
-  const plan = { names: new Map(), place: new Map(), groups: [], merges: [] };
+  const plan = { names: new Map(), place: new Map(), groups: [], merges: [], hints: new Map() };
+  const asked = new Set(hosts);
+  for (const { s, k } of list(json.h)) {
+    const host = String(s || '').trim().toLowerCase().replace(/^www\./, '');
+    if (asked.has(host) && !plan.hints.has(host)) plan.hints.set(host, AI_HINTS.includes(k) ? k : 'none');
+  }
+  for (const host of asked) if (!plan.hints.has(host)) plan.hints.set(host, 'none');
   for (const { i, s } of list(json.n)) {
     const id = int(i);
     const name = tg.cleanGroupName(s);
@@ -338,9 +368,13 @@ async function pool(items, limit, fn) {
 // ask(wire, { signal }) -> the model's JSON. Phase 1 (local, one step of undo) is applied before any
 // request; phase 2 renames / places / merges in place, guarded so it can't undo the user's own edits.
 // Every failure keeps the local result. onPhase(name, info): 'local' | 'asking' | 'refined' | 'done'.
-async function organizeProgressive({ tabGroups, ask, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false } = {}) {
+// hints (optional): { lookup(url) -> hint | '' | undefined, learn(Map host -> hint) }, the learner's aiHint
+// and learnAiHints. Sites no hint is known for ride along in the same request (q, host names only), and
+// what the model says they are for is kept for next time and for local grouping; with nothing else to
+// ask, a request with only those hosts is made. A failed or late answer teaches nothing.
+async function organizeProgressive({ tabGroups, ask, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false, hints = null } = {}) {
   const t0 = now();
-  const stats = { groups: 0, aiUsed: false, reason: '', cached: false, requests: 0, chunks: 0, failed: '', wire: [], renamed: 0, placed: 0, created: 0, merged: 0, localMs: 0, totalMs: 0 };
+  const stats = { groups: 0, aiUsed: false, reason: '', cached: false, requests: 0, chunks: 0, failed: '', wire: [], renamed: 0, placed: 0, created: 0, merged: 0, hinted: 0, localMs: 0, totalMs: 0 };
   const count = tabGroups.organizeByTopic(null);
   const seq = tabGroups.organizeSeq();
   stats.groups = count;
@@ -359,6 +393,18 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
     return stats;
   };
   if (signal?.aborted) return finish('cancelled');
+  const hosts = hints ? unknownHosts([...view.groups.flatMap((g) => g.entries), ...view.leftovers], hints.lookup) : [];
+  const learnHints = (plan) => { if (hints && plan?.hints?.size) stats.hinted += hints.learn(plan.hints) || 0; };
+  // Only the unknown sites to ask about: one small request, the groups stay as they are.
+  const askHostsOnly = async () => {
+    if (!hosts.length) return;
+    const wire = buildWire({ groups: [], leftovers: [] }, hosts);
+    stats.requests++;
+    stats.wire.push(JSON.stringify(wire));
+    try {
+      learnHints(parseRefinement(await withTimeout(Promise.resolve(ask(wire, { signal })), timeoutMs, signal), { groupIds: [], leftoverIds: [], hosts }));
+    } catch (err) { stats.failed = err.code || err.message || 'failed'; }
+  };
 
   const { plan: cachedPlan, pending } = cache.lookup(view);
   const need = alwaysAsk ? { needsAi: true, askableLeftovers: pending.leftovers } : assess({ groups: pending.groups, leftovers: pending.leftovers });
@@ -374,29 +420,32 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
   if (!need.needsAi) {
     stats.cached = !cachedEmpty;
     if (!cachedEmpty) applyPlan(cachedPlan);
-    return finish(cachedEmpty ? 'confident' : 'cached');
+    await askHostsOnly();
+    return finish(signal?.aborted ? 'cancelled' : cachedEmpty ? 'confident' : 'cached');
   }
 
   const sendView = { groups: pending.groups.length ? pending.groups : [], leftovers: need.askableLeftovers };
   // Groups already named well are only context for placing leftovers: keep them small but present.
   const context = view.groups.filter((g) => !pending.groups.includes(g));
   if (sendView.leftovers.length && context.length) sendView.groups = [...sendView.groups, ...context.map((g) => ({ ...g, ctx: true }))]; // already named: only their words are context
-  if (!sendView.groups.length && !sendView.leftovers.length) { stats.cached = !cachedEmpty; if (!cachedEmpty) applyPlan(cachedPlan); return finish('cached'); }
+  if (!sendView.groups.length && !sendView.leftovers.length) { stats.cached = !cachedEmpty; if (!cachedEmpty) applyPlan(cachedPlan); await askHostsOnly(); return finish(signal?.aborted ? 'cancelled' : 'cached'); }
   const chunks = chunkView(sendView, { tabs });
   stats.aiUsed = true;
   stats.chunks = chunks.length;
   onPhase('asking', { chunks: chunks.length });
   const plans = [];
   let failure = '';
-  await pool(chunks, MAX_PARALLEL, async (chunk) => {
-    const wire = buildWire(chunk);
+  await pool(chunks, MAX_PARALLEL, async (chunk, ci) => {
+    const asked = ci === 0 ? hosts : []; // the unknown sites ride along with the first request only
+    const wire = buildWire(chunk, asked);
     stats.requests++;
     stats.wire.push(JSON.stringify(wire));
     try {
       const json = await withTimeout(Promise.resolve(ask(wire, { signal })), timeoutMs, signal);
-      const parsed = parseRefinement(json, { groupIds: chunk.groups.map((g) => g.id), leftoverIds: chunk.leftovers.map((e) => e.id) });
+      const parsed = parseRefinement(json, { groupIds: chunk.groups.map((g) => g.id), leftoverIds: chunk.leftovers.map((e) => e.id), hosts: asked });
       if (!parsed) throw new Error('Unusable answer.');
       cache.remember(view, chunk, parsed);
+      learnHints(parsed);
       plans.push(parsed);
     } catch (err) {
       failure = failure || err.code || err.message || 'failed';
@@ -410,7 +459,7 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
 }
 
 module.exports = {
-  hostOf, tabKey, groupKey, setKey, estimateTokens, topWords, groupSummary, leftoverSummary, buildWire, legacyWire,
+  hostOf, tabKey, groupKey, setKey, estimateTokens, topWords, groupSummary, leftoverSummary, buildWire, legacyWire, unknownHosts, MAX_HINT_HOSTS,
   REFINE_PROMPT, REFINE_SCHEMA, REFINE_MAX_TOKENS, parseRefinement, askable, clearName, assess, createRefineCache, chunkView,
   planApply, mergePlans, fragments, withTimeout, organizeProgressive, TIMEOUT_MS, MAX_PARALLEL, MIN_COHESION,
 };

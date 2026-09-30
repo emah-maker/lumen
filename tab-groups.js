@@ -150,6 +150,18 @@ function siteHint(url) {
   }
   return '';
 }
+// The host a model is asked to hint about, and a learned hint is kept under: the registrable domain,
+// with the first subdomain label when it says something ("canvas.northeastern.edu", but "wikipedia.org"
+// for "en.m.wikipedia.org"). '' for an address, IP or single-label host that is nobody's site.
+const PLAIN_LABEL = /^(www\d*|m|mobile|web|app|apps|home|secure|login|auth|account|accounts|[a-z]{2})$/;
+function hintHost(url) {
+  const host = hostname(url).replace(/^www\./, '');
+  if (!host.includes('.') || /^[\d.]+$/.test(host) || host.includes(':') || /\.(local|localhost|test|internal)$/.test(host)) return '';
+  const domain = registrableDomain(url);
+  if (!domain || host === domain) return domain || '';
+  const first = host.slice(0, -(domain.length + 1)).split('.')[0];
+  return PLAIN_LABEL.test(first) ? domain : `${first}.${domain}`;
+}
 const COUNTRY_KEYS = new Set(Object.keys(knowledge.PLACES).map(stem));
 const INSTITUTION = /\.(edu|gov|mil)$|\.(ac|gov|edu)\.[a-z]{2}$/;
 const PLACE_WEIGHT = 0.8; // a city names its country: nearly as good as the country written out
@@ -327,7 +339,7 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
 
 // TF-IDF vectors for a set of entries, idf computed over just this set ("current tabs").
 function vectorize(entries) {
-  const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url), siteKey: siteKey(e.url), siteHint: siteHint(e.url) }));
+  const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url), siteKey: siteKey(e.url), siteHint: siteHint(e.url) || e.aiHint || '' }));
   const n = docs.length;
   // A site's own name ("nextjs.org", "zod.dev") is brand noise between two of its own pages, but
   // it IS the topic when a page of ANOTHER site names it (Stack Overflow "Next.js ...", a GitHub
@@ -1051,7 +1063,9 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   }
 
   const pinned = (t) => Boolean(t.pinned);
-  const entry = (t) => ({ id: t.id, title: titleOf(t), url: urlOf(t), text: textOf ? textOf(t) : '', hint: t.openerQuery || '' });
+  // aiHint: what a model once said this tab's site is for (features/organize-learn.js aiHint); the fixed
+  // table (siteHint) always wins over it, and a site the user filed under a group of their own has none.
+  const entry = (t) => { const url = urlOf(t); return { id: t.id, title: titleOf(t), url, text: textOf ? textOf(t) : '', hint: t.openerQuery || '', aiHint: learned?.aiHint?.(url) || '' }; };
   const keyOf = (t) => { const e = entry(t); return `${e.title}|${e.url}|${e.text.length}`; };
 
   function create(name, tabIds, { domain = null, color, topic = null, auto = false, cohesion } = {}) {
@@ -1443,4 +1457,4 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   };
 }
 
-module.exports = { _vectorize: vectorize, _cosine: cosine, createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, siteHint, GROUP_COLORS, MAX_AUTO_MOVES };
+module.exports = { _vectorize: vectorize, _cosine: cosine, createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, siteHint, hintHost, GROUP_COLORS, MAX_AUTO_MOVES };

@@ -1930,6 +1930,9 @@ async function organizeTabs() {
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
       ask: (wire, { signal } = {}) => refineGroups(cheapTopicModel(), wire, signal),
+      // Sites no hint is known for go along as host names; what the model says they are for is kept in
+      // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
+      hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
       onPhase: (name) => {
         if (name === 'local') { sendTabs(); ui()?.send('tabs:organizing', 'refine'); } // the groups are there; the model may still refine them
         else if (name === 'refined') sendTabs();
@@ -1971,7 +1974,7 @@ const topicList = (entries) => entries.slice(0, MAX_ORGANIZE_TABS).map((e) => {
   const tab = tabs.find((x) => x.id === e.id);
   const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
   const path = pathWords(e.url);
-  const hint = siteHint(e.url);
+  const hint = siteHint(e.url) || e.aiHint; // the fixed table first, then what a model said about the site
   return { id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(path ? { path } : {}), ...(hint ? { hint } : {}), ...(group ? { group: group.name } : {}), ...(e.id === activeId ? { active: true } : {}) };
 });
 

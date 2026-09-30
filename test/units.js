@@ -2020,7 +2020,7 @@ async function organizeAiRuns() {
   const vm = many.tg.organizeView();
   const legacy = JSON.stringify(oai.legacyWire(many.tg.candidates()));
   check('organize-ai: the summary of a 40-tab session is well under the old every-tab list', JSON.stringify(oai.buildWire(vm)).length < legacy.length * 0.6, `${JSON.stringify(oai.buildWire(vm)).length} vs ${legacy.length}`);
-  check('organize-ai: the answer schema is strict (no extra keys, all four lists required)', oai.REFINE_SCHEMA.additionalProperties === false && oai.REFINE_SCHEMA.required.join() === 'n,p,g,m' && oai.REFINE_MAX_TOKENS <= 800);
+  check('organize-ai: the answer schema is strict (no extra keys, all five lists required)', oai.REFINE_SCHEMA.additionalProperties === false && oai.REFINE_SCHEMA.required.join() === 'n,p,g,m,h' && oai.REFINE_MAX_TOKENS <= 800);
 
   // reading an answer
   const ctx = { groupIds: [1, 2, 3], leftoverIds: [7, 8, 9, 10] };
@@ -2185,6 +2185,49 @@ async function organizeAiRuns() {
     L.learnRename(auto, 'Summer Trip', lg.candidates());
     lg.organizeByTopic(null);
     check('learner: Organize names the same kind of group the way the user renamed it', lg.state().length === 1 && lg.state()[0].name === 'Summer Trip', JSON.stringify([auto, lg.state()]));
+  }
+  {
+    // AI site hints: Organize with AI asks the model what unknown sites are for (host names only), keeps
+    // the answers in the learner, and local grouping uses them after the fixed table.
+    const store = { saved: null };
+    const mk = () => learn.createLearner({ load: () => store.saved, save: (s) => { store.saved = JSON.parse(JSON.stringify(s)); } });
+    const L = mk();
+    let tabsArr = [];
+    const lg = tg.createTabGroups({ getTabs: () => tabsArr, setTabs: (l) => { tabsArr = l; }, urlOf: (t) => t.url, titleOf: (t) => t.title, textOf: () => '', isWeb: () => true, mode: () => 'topic', aiTopics: () => false, learned: L });
+    const add = (title, url) => tabsArr.push({ id: tabsArr.length + 1, title, url, groupId: null });
+    add('Dashboard', 'https://learn.myuni.example/'); add('My grades', 'https://learn.myuni.example/grades?term=fall'); add('Course registration', 'https://portal.otheruni.example/reg/2026');
+    add('Canvas home', 'https://canvas.northeastern.edu/'); add('Chocolate chip cookie recipe', 'https://recipes.example/cookies'); add('Weather Boston', 'https://weather.example/boston');
+    const sent = [];
+    const hints = (Lx) => ({ lookup: (u) => Lx.aiHint(u), learn: (m) => Lx.learnAiHints(m) });
+    const answer = { n: [], p: [], g: [], m: [], h: [{ s: 'learn.myuni.example', k: 'School' }, { s: 'portal.otheruni.example', k: 'School' }, { s: 'recipes.example', k: 'none' }, { s: 'canvas.northeastern.edu', k: 'Shopping' }, { s: 'weather.example', k: 'Galaxy' }] };
+    const r1 = await oai.organizeProgressive({ tabGroups: lg, ask: async (w) => { sent.push(w); return answer; }, hints: hints(L) });
+    const q = sent.flatMap((w) => w.q || []);
+    check('ai hints: unknown sites are asked about once, as host names only, never a table site, an app or a path', sent.length === 1 && q.sort().join() === 'learn.myuni.example,portal.otheruni.example,recipes.example,weather.example' && q.every((h) => /^[a-z0-9.-]+$/.test(h)) && !/grades|term=|\/reg/.test(JSON.stringify(sent)), JSON.stringify(sent));
+    check('ai hints: the answers are kept; an unknown hint is "none", a host not asked about is ignored', r1.hinted === 4 && L.aiHint('https://learn.myuni.example/x') === 'School' && L.aiHint('https://recipes.example/') === '' && L.aiHint('https://weather.example/') === '' && L.aiHint('https://canvas.northeastern.edu/') === undefined, JSON.stringify([r1, store.saved?.aiHints]));
+    lg.undoOrganize();
+    lg.organizeByTopic(null);
+    const inSchool = (id) => { const g = lg.groups.get(tabsArr.find((t) => t.id === id).groupId); return g?.name === 'School'; };
+    check('ai hints: local grouping uses a learned hint: two School portals and Canvas form one "School" group', [1, 2, 3, 4].every(inSchool) && !tabsArr.find((t) => t.id === 5).groupId, JSON.stringify([lg.state(), tabsArr.map((t) => t.groupId)]));
+    const again = await oai.organizeProgressive({ tabGroups: lg, ask: async (w) => { sent.push(w); return { n: [], p: [], g: [], m: [], h: [] }; }, hints: hints(mk()) });
+    check('ai hints: the kept answers (also after a restart) mean no host is asked again', sent.slice(1).every((w) => !w.q) && again.hinted === 0, JSON.stringify(sent.slice(1)));
+    L.learnAiHints({ 'canvas.northeastern.edu': 'Shopping' });
+    check('ai hints: the fixed table wins over a model\'s hint', tg._vectorize([lg.entryFor(4)])[0].siteHint === 'School', JSON.stringify(lg.entryFor(4)));
+    L.learnPlacement({ id: 9, title: 'Dashboard', url: 'https://learn.myuni.example/' }, 'My Uni');
+    check('ai hints: a site the user filed under a group of their own has no AI hint (what the user taught wins)', L.aiHint('https://learn.myuni.example/') === '' && L.aiHint('https://portal.otheruni.example/') === 'School');
+    check('ai hints: a hint is asked about again after 30 days', L.aiHint('https://portal.otheruni.example/', Date.now() + 31 * 864e5) === undefined);
+    const cap = learn.createLearner();
+    cap.learnAiHints(Object.fromEntries(Array.from({ length: 400 }, (_v, i) => [`h${i}.example`, 'News'])));
+    check('ai hints: capped, and junk hosts are dropped', Object.keys(cap.snapshot().aiHints).length === 300 && cap.learnAiHints({ 'bad host/x': 'School' }) === 0);
+    const news = tg.topicClusters([{ id: 1, title: 'Tariffs on steel imports', url: 'https://news1.example/a', aiHint: 'News' }, { id: 2, title: 'Local team wins final', url: 'https://news2.example/b', aiHint: 'News' }, { id: 3, title: 'Cookie recipe', url: 'https://r.example/c' }]);
+    check('ai hints: a broad hint (News) never links tabs locally', news.length === 0, JSON.stringify(news));
+    for (const [label, ask] of [['a failing model', async () => { throw new Error('offline'); }], ['a model that never answers', () => new Promise(() => {})]]) {
+      const L2 = learn.createLearner();
+      let t2 = [];
+      const g2 = tg.createTabGroups({ getTabs: () => t2, setTabs: (l) => { t2 = l; }, urlOf: (t) => t.url, titleOf: (t) => t.title, textOf: () => '', isWeb: () => true, mode: () => 'topic', aiTopics: () => false, learned: L2 });
+      for (const [i, [title, url]] of [['Sourdough starter tips', 'https://a.example/sourdough-starter'], ['Sourdough bread recipe', 'https://b.example/sourdough-bread'], ['Dashboard', 'https://learn.myuni.example/']].entries()) t2.push({ id: i + 1, title, url, groupId: null });
+      const r = await oai.organizeProgressive({ tabGroups: g2, ask, hints: hints(L2), timeoutMs: 60 });
+      check(`ai hints: ${label} teaches nothing and the local grouping stays`, r.hinted === 0 && L2.aiHint('https://learn.myuni.example/') === undefined && g2.state().length === 1, JSON.stringify(r));
+    }
   }
 
   {
