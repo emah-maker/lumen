@@ -473,20 +473,26 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty { margin: 0; width: mi
 .messages:has(#setup:not([hidden])) .chips { display: none; } /* nothing connected: starters that can't answer aren't offered */
 body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full .messages:has(#setup:not([hidden])) .chips { display: none; }
 /* Scrolled up while a reply streams: the way back down. */
-.jump-latest { position: absolute; left: 50%; bottom: calc(var(--composer-h, 64px) + 14px); transform: translateX(-50%); z-index: 3; width: 32px; height: 32px; border: none; border-radius: 50%; background: var(--card, var(--field)); color: var(--text); box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); font-size: 15px; cursor: pointer; transition: opacity var(--t-fast) ease-out, transform var(--t-fast) ease-out; }
+.jump-latest { position: absolute; left: 50%; bottom: calc(var(--composer-h, 64px) + 14px); transform: translateX(-50%); z-index: 3; width: 32px !important; max-width: 32px; height: 32px; padding: 0; border: none; border-radius: 50%; background: var(--card, var(--field)); color: var(--text); box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); font-size: 15px; cursor: pointer; transition: opacity var(--t-fast) ease-out, transform var(--t-fast) ease-out; }
 .jump-latest[hidden] { display: none; }
 .jump-latest:hover { transform: translateX(-50%) translateY(-1px); }
-/* Code blocks: the language, and a Copy button for just the code. */
-.msg.assistant pre.code-ready { position: relative; }
-.msg.assistant pre[data-lang] { padding-top: 26px; }
-.msg.assistant pre[data-lang]::before { content: attr(data-lang); position: absolute; left: 10px; top: 6px; font: 500 10.5px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
-.msg.assistant .code-copy { position: absolute; right: 6px; top: 4px; height: 20px; padding: 0 8px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; opacity: 0.7; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
-.msg.assistant pre:hover .code-copy, .msg.assistant .code-copy:focus-visible { opacity: 1; background: var(--hover, rgba(127,127,127,.12)); }
+/* Code blocks: a header bar (the language, Copy) above the code, which scrolls on its own. */
+.msg.assistant .code-block { margin: 0 0 8px; border-radius: 8px; background: var(--field); box-shadow: inset 0 1px 0 var(--highlight); overflow: hidden; }
+.msg.assistant .code-block pre { margin: 0; border-radius: 0; box-shadow: none; background: none; }
+.msg.assistant .code-head { display: flex; align-items: center; justify-content: space-between; height: 26px; padding: 0 4px 0 10px; border-bottom: 1px solid var(--hairline); }
+.msg.assistant .code-lang { font: 500 10.5px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
+.msg.assistant .code-copy { height: 20px; padding: 0 8px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
+.msg.assistant .code-copy:hover, .msg.assistant .code-copy:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 /* Regenerate, beside Copy on the latest reply. */
-.msg.assistant .reply-regen { position: absolute; bottom: -24px; left: 26px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.msg.assistant .reply-regen { position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
 .msg.assistant:hover .reply-regen, .msg.assistant .reply-regen:focus-visible { opacity: 1; }
 .msg.assistant .reply-regen:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 #auto-allow.armed { color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
+/* The header toggle, armed: says what a second click does, visibly. */
+#auto-allow.armed::after { content: attr(data-confirm); position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; white-space: nowrap; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+#auto-allow { position: relative; }
+.approval-always.armed { color: var(--warn, #d97706); }
+.msg.assistant .reply-regen.armed { opacity: 1; color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
 .setup-error { margin-top: 10px; }
 body.chat-full .setup { text-align: left; }
 

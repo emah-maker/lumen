@@ -39,6 +39,7 @@
     // A search once there are enough chats to need one; what was typed survives a redraw.
     const typing = document.activeElement === searchBox;
     searchBox = chats.length > 6 ? tools.search((q) => { query = q; drawList(); }) : null;
+    if (!searchBox) query = ''; // (few chats left: no box, so no filter either)
     if (searchBox) searchBox.value = query;
     const list = document.createElement('ul');
     list.className = 'chat-items';

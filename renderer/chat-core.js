@@ -233,9 +233,14 @@ const atBottom = () => messages.scrollHeight - messages.scrollTop - messages.cli
 const jump = Object.assign(document.createElement('button'), { type: 'button', className: 'jump-latest', hidden: true, textContent: '↓' });
 jump.setAttribute('aria-label', t('chat.jumpLatest'));
 jump.title = t('chat.jumpLatest');
-jump.addEventListener('click', () => { stuck = true; messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' }); jump.hidden = true; });
+let jumping = 0; // (a jump's own scroll events don't count as the user scrolling away)
+jump.addEventListener('click', () => { stuck = true; jumping = Date.now(); messages.scrollTop = messages.scrollHeight; jump.hidden = true; });
 messages.after(jump);
-messages.addEventListener('scroll', () => { stuck = atBottom(); jump.hidden = stuck || !messages.querySelector('.msg'); }, { passive: true });
+messages.addEventListener('scroll', () => {
+  if (Date.now() - jumping < 250) { stuck = true; return; }
+  stuck = atBottom();
+  jump.hidden = stuck || !messages.querySelector('.msg');
+}, { passive: true });
 function scrollToBottom(force = false) {
   if (force) stuck = true;
   if (stuck) messages.scrollTop = messages.scrollHeight;
@@ -428,13 +433,21 @@ function ask(text, images = [], tabs = null) {
   window.assistant.ask(text, runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
 }
 
+// The thinking block's summary once the answer starts: "Thought for 4s".
+function settleThinking() {
+  const box = turn?.thinking?.parentElement;
+  if (!box || !turn.thinkingSince || box.dataset.settled) return;
+  box.dataset.settled = '1';
+  box.firstChild.textContent = t('chat.thoughtFor', { n: Math.max(1, Math.round((Date.now() - turn.thinkingSince) / 1000)) });
+}
 // Retry (after an error) and Regenerate (the latest reply): the last exchange is taken back in main and on screen,
 // then asked again, as if it had never been sent.
 let lastAsk = null;
 async function askAgain() {
   if (running || !lastAsk) return;
   const again = lastAsk;
-  if (!(await window.assistant.rewind?.())) return;
+  const result = await window.assistant.rewind?.(again.text);
+  if (!result) return; // (a run is going: nothing is taken back)
   const users = messages.querySelectorAll('.msg.user');
   const from = users[users.length - 1];
   if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
@@ -589,12 +602,17 @@ function flushStreaming(el) {
 function decorateCode(root) {
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
+    const box = Object.assign(document.createElement('div'), { className: 'code-block' });
+    const head = Object.assign(document.createElement('div'), { className: 'code-head' });
+    head.append(Object.assign(document.createElement('span'), { className: 'code-lang', textContent: pre.dataset.lang || t('chat.code') }));
     const b = Object.assign(document.createElement('button'), { type: 'button', className: 'code-copy', textContent: t('chat.copyCode') });
     b.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(pre.querySelector('code')?.textContent ?? pre.textContent); b.textContent = t('chat.copied'); } catch { b.textContent = t('chat.copyFailed'); }
       setTimeout(() => { b.textContent = t('chat.copyCode'); }, 1400);
     });
-    pre.append(b);
+    head.append(b);
+    pre.replaceWith(box);
+    box.append(head, pre);
   }
 }
 
@@ -623,12 +641,14 @@ window.assistant.onEvent((event) => {
         details.innerHTML = '<summary></summary><div></div>';
         details.firstChild.textContent = t('chat.thinking');
         turn.thinking = appendToTurn(details).querySelector('div');
+        turn.thinkingSince = Date.now();
       }
       turn.thinking.textContent += event.text;
       moveWorkingToEnd();
       break;
     }
     case 'text': {
+      settleThinking();
       if (!turn.text) turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' }));
       turn.textSource += event.text;
       renderStreaming(turn.text, turn.textSource);
@@ -760,7 +780,21 @@ function finishReply(bubble, source, { latest = false } = {}) {
     const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen', title: t('chat.regenerate') });
     regen.setAttribute('aria-label', t('chat.regenerate'));
     regen.innerHTML = REGEN_ICON;
-    regen.onclick = () => askAgain();
+    // A turn that acted on pages (clicks, typing) would do so again: the first click says so, the second runs it.
+    regen.onclick = () => {
+      const users = messages.querySelectorAll('.msg.user');
+      let acted = false;
+      for (let n = users[users.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.classList.contains('step')) { acted = true; break; }
+      if (acted && !regen.dataset.armed) {
+        regen.dataset.armed = '1';
+        regen.classList.add('armed');
+        regen.title = t('chat.regenerateActs');
+        regen.setAttribute('aria-label', t('chat.regenerateActs'));
+        setTimeout(() => { delete regen.dataset.armed; regen.classList.remove('armed'); regen.title = t('chat.regenerate'); regen.setAttribute('aria-label', t('chat.regenerate')); }, 4000);
+        return;
+      }
+      askAgain();
+    };
     bubble.append(regen);
   }
   const button = document.createElement('button');
@@ -813,6 +847,7 @@ $('auto-allow').onclick = () => {
   if (!autoArmed) {
     btn.classList.add('armed');
     btn.title = t('sidebar.autoAllow.confirm');
+    btn.dataset.confirm = t('sidebar.autoAllow.confirm');
     autoArmed = setTimeout(() => { autoArmed = 0; btn.classList.remove('armed'); renderAutoAllow(); }, 4000);
     return;
   }
@@ -874,11 +909,16 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
     window.assistant.approve?.(approvalId, ok);
   };
   // Always allow: this one, and turns on auto-allow for every site (the bolt in the sidebar head).
-  const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: t('approval.always') });
+  const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: t('approval.allSites') });
   always.title = t('approval.always.title');
   deny.onclick = () => answer(false);
   allow.onclick = () => answer(true);
-  always.onclick = () => { always.disabled = true; setAutoAllow(true); answer(true); };
+  // Every site, from now on: a second click confirms (the first says what it means, in the button itself).
+  let alwaysArmed = false;
+  always.onclick = () => {
+    if (!alwaysArmed) { alwaysArmed = true; always.textContent = t('approval.allSites.confirm'); always.classList.add('armed'); return; }
+    always.disabled = true; setAutoAllow(true); answer(true);
+  };
   card.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target === card) { e.preventDefault(); answer(true); }
     else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
@@ -886,7 +926,7 @@ function showApproval(approvalId, host, { action, title: openTitle, query, args,
 
   actions.append(deny, always, allow);
   card.append(title, detail, actions);
-  append(card);
+  append(card, { force: true }); // waiting for you: always in view
   approvals.set(approvalId, { card, host });
   // Never focused for the user: Enter on the card means Allow, and a card that grabbed focus while
   // someone was typing a follow-up turned their Enter into an approval. Keyboard users Tab to it.
@@ -915,7 +955,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: "Don't allow" });
   const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: 'Allow once' });
-  const always = tainted && !terminal ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? 'Allow for this chat' : 'Always allow this tool', title: terminal ? 'Stop asking for terminal commands for the rest of this chat. Resets when you start a new chat.' : 'Stop asking for this tool (it still asks after the AI reads a page). Change it in Settings → You and AI.' });
+  const always = tainted && !terminal ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');
@@ -931,7 +971,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   });
   actions.append(...[deny, always, allow].filter(Boolean));
   card.append(title, detail, pre, actions);
-  append(card);
+  append(card, { force: true }); // waiting for you: always in view
   approvals.set(approvalId, { card, host, tool: true });
   scrollToBottom();
 }
@@ -969,7 +1009,7 @@ function showSignInApproval(approvalId, host, { noAlways = false } = {}) {
   });
   actions.append(...[always, once, deny].filter(Boolean));
   card.append(title, detail, actions);
-  append(card);
+  append(card, { force: true }); // waiting for you: always in view
   approvals.set(approvalId, { card, host, signin: true });
   scrollToBottom();
 }
@@ -1032,7 +1072,9 @@ window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
 // events follow, tagged with its run id.
 window.assistant.onRunStart?.(({ text, runId: id, images } = {}) => {
   if (running) return;
-  startTurn(String(text || ''), (images || []).map((a) => ({ ...a, url: `data:${a.media_type};base64,${a.data}` })));
+  const shown = (images || []).map((a) => ({ ...a, url: `data:${a.media_type};base64,${a.data}` }));
+  lastAsk = { text: String(text || ''), images: shown, tabs: null }; // started in the other view: this is the chat's last message now
+  startTurn(String(text || ''), shown);
   runId = id;
 });
 // The other view opened another chat, started a new one, or deleted this one.
@@ -1120,6 +1162,7 @@ document.querySelectorAll('.chip').forEach((chip) => {
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
 function clearChatView() {
   runId++;
+  lastAsk = null; // another chat: its last message isn't known here
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
   for (const q of queued.splice(0)) q.notice.remove();

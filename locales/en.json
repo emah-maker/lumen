@@ -988,5 +988,14 @@
   "chats.week": "Previous 7 days",
   "chats.earlier": "Earlier",
   "chats.search": "Search chats",
-  "chats.noMatch": "No chats match"
+  "chats.noMatch": "No chats match",
+  "approval.allSites": "Allow on all sites",
+  "approval.allSites.confirm": "Click again: allow on every site",
+  "chat.thoughtFor": "Thought for {n}s",
+  "chat.code": "code",
+  "chat.regenerateActs": "This reply acted on pages. Click again to run it again",
+  "approval.terminal.always": "Allow for this chat",
+  "approval.tool.always": "Always allow this tool",
+  "approval.terminal.always.title": "Stop asking for terminal commands for the rest of this chat. Resets when you start a new chat.",
+  "approval.tool.always.title": "Stop asking for this tool (it still asks after the AI reads a page). Change it in Settings → You and AI."
 }

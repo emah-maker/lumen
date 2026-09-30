@@ -52,6 +52,7 @@
     lastCurrent = current;
     if (chats.length > 6 && !searchBox) { searchBox = tools.search((q) => { query = q; drawItems(); }); items.before(searchBox); }
     if (searchBox) searchBox.hidden = chats.length <= 6;
+    if (searchBox?.hidden) { query = ''; searchBox.value = ''; }
     drawItems();
     empty.hidden = chats.length > 0;
     if (focused) items.querySelector(`.chat-item[data-id="${CSS.escape(focused)}"] .chat-open`)?.focus();

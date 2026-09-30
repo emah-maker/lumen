@@ -931,18 +931,24 @@ class Agent {
 
   // Retry / Regenerate: the last exchange (from the user's last message on) is taken back, so asking again doesn't
   // stack a second copy of it. True when there was one.
-  rewindLast() {
+  // expected: the user's text of that exchange. 'rewound' | 'absent' (that message never reached the history, e.g.
+  // it failed while the page was being read: nothing to take back) .
+  rewindLast(expected = '') {
     const m = this.messages;
+    const want = String(expected || '').trim().slice(0, 200);
     for (let i = m.length - 1; i >= 0; i--) {
-      const blocks = Array.isArray(m[i].content) ? m[i].content : [{ type: 'text' }];
-      if (m[i].role === 'user' && blocks.some((b) => b.type === 'text' || b.type === 'image')) {
-        m.splice(i);
-        m.simpleTurn = null;
-        repairHistory(m);
-        return true;
-      }
+      const blocks = Array.isArray(m[i].content) ? m[i].content : [{ type: 'text', text: String(m[i].content || '') }];
+      if (m[i].role !== 'user' || !blocks.some((b) => b.type === 'text' || b.type === 'image')) continue;
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n');
+      if (want && !text.includes(want)) return 'absent'; // the last exchange is an earlier one: it stays
+      m.splice(i);
+      m.simpleTurn = null;
+      repairHistory(m);
+      // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
+      if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; }
+      return 'rewound';
     }
-    return false;
+    return 'absent';
   }
 
   // What the sidebar shows for a restored chat (see transcriptFor).
