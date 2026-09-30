@@ -750,9 +750,11 @@ async function searchWeb(query) {
 
 // What the sidebar shows for a restored chat: user/assistant text and pasted images, no tool steps.
 // Also used for chats in the history list and for exporting one (main.js).
+const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
 function transcriptFor(chatMessages) {
   const items = [];
   let steps = 0;
+  let acted = false;
   for (const m of chatMessages) {
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'user') {
@@ -762,11 +764,13 @@ function transcriptFor(chatMessages) {
       else if (text || images.length) items.push({ role: 'user', text, images });
     } else {
       steps += blocks.filter((b) => b.type === 'tool_use' || b.type === 'server_tool_use').length;
+      acted ||= blocks.some((b) => b.type === 'tool_use' && ACTING_TOOL_NAMES.has(b.name));
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n').trim();
       const final = !blocks.some((b) => b.type === 'tool_use');
       if (text && final) {
-        items.push({ role: 'assistant', text, images: [], steps });
+        items.push({ role: 'assistant', text, images: [], steps, ...(acted ? { acted: true } : {}) });
         steps = 0;
+        acted = false;
       } else if (text) {
         items.push({ role: 'assistant', text, images: [] });
       }

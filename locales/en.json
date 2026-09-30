@@ -993,7 +993,7 @@
   "approval.allSites.confirm": "Confirm: all sites",
   "chat.thoughtFor": "Thought for {n}s",
   "chat.code": "code",
-  "chat.regenerateActs": "This reply acted on pages. Click again to run it again",
+  "chat.regenerateActs": "Runs its page actions again. Click to confirm.",
   "approval.terminal.always": "Allow for this chat",
   "approval.tool.always": "Always allow this tool",
   "approval.terminal.always.title": "Stop asking for terminal commands for the rest of this chat. Resets when you start a new chat.",

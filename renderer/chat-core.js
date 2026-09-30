@@ -236,6 +236,8 @@ $('model').addEventListener('change', async (e) => {
     }
   });
   document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) close(false); }, true);
+  menu.addEventListener('focusout', (e) => { if (!menu.contains(e.relatedTarget) && e.relatedTarget !== btn) close(false); });
+  for (const item of menu.querySelectorAll('.menu-item')) item.removeAttribute('title'); // the row already says it
 })();
 // ---------- chat ----------
 
@@ -409,7 +411,14 @@ const queued = [];
 function queueControls(entry) {
   const drop = () => { const i = queued.indexOf(entry); if (i !== -1) queued.splice(i, 1); entry.notice.remove(); };
   const edit = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.edit') });
-  edit.onclick = () => { drop(); prompt.value = entry.text; autosize?.(); updateSend?.(); prompt.focus(); };
+  edit.onclick = () => {
+    drop();
+    prompt.value = prompt.value.trim() ? `${prompt.value.replace(/\s+$/, '')}\n${entry.text}` : entry.text; // (a draft is kept)
+    if (entry.images?.length) { attachments = [...attachments, ...entry.images]; renderAttachments(); }
+    autosize();
+    updateSend();
+    prompt.focus();
+  };
   const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: '×', title: t('chat.queued.cancel') });
   cancel.setAttribute('aria-label', t('chat.queued.cancel'));
   cancel.onclick = drop;
@@ -481,7 +490,15 @@ async function askAgain() {
   if (running || !lastAsk) return;
   const again = lastAsk;
   const result = await window.assistant.rewind?.(again.text);
-  if (!result) return; // (a run is going: nothing is taken back)
+  // 'absent': the message never reached the history (it failed first): nothing to take back there, so it is
+  // simply asked again; anything else (a run going, no reply) changes nothing.
+  if (result !== 'rewound' && result !== 'absent') return;
+  if (result === 'absent') { // only after a failure (Retry): a Regenerate that finds nothing to take back does nothing
+    const us = messages.querySelectorAll('.msg.user');
+    let failed = false;
+    for (let n = us[us.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.querySelector?.('.error') || n.classList.contains('error')) { failed = true; break; }
+    if (!failed) return;
+  }
   const users = messages.querySelectorAll('.msg.user');
   const from = users[users.length - 1];
   if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
@@ -1101,10 +1118,18 @@ function showHistory(items) {
     append(bubble);
   }
   // Its last exchange can be asked again: the last message (text only; images aren't kept in the history view).
-  const lastUser = [...items].reverse().find((i) => i.role === 'user' && i.text);
+  const lastIndex = items.length - 1;
+  let u = lastIndex - 1;
+  while (u >= 0 && items[u].role !== 'user') u--;
+  const lastUser = u >= 0 ? items[u] : null;
   const lastReply = [...messages.querySelectorAll('.msg.assistant.restored')].pop();
-  if (lastUser && lastReply && items[items.length - 1]?.role === 'assistant') {
-    lastAsk = { text: lastUser.text, images: [], tabs: null };
+  if (lastUser && (lastUser.text || lastUser.images?.length) && lastReply && items[lastIndex]?.role === 'assistant') {
+    const imgs = (lastUser.images || []).filter((src) => typeof src === 'string' && /^data:image\/[a-z+.-]+;base64,/.test(src)).map((src) => {
+      const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/);
+      return { media_type, data, url: src };
+    });
+    lastAsk = { text: lastUser.text || '', images: imgs, tabs: null };
+    if (items[lastIndex].acted) { const step = document.createElement('div'); step.className = 'step done restored'; step.dataset.acts = '1'; step.hidden = true; lastReply.before(step); }
     lastReply.querySelector('.reply-copy')?.remove();
     finishReply(lastReply, items[items.length - 1].text, { latest: true });
   }
@@ -1152,12 +1177,20 @@ prompt.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
+    // While a reply runs, Enter sends what was typed after it (queued); it never stops the reply (the button does).
+    if (running) { if (prompt.value.trim() || attachments.length) sendComposer(); return; }
     $('composer').requestSubmit();
+  } else if (e.key === 'Escape' && running && !prompt.value) {
+    e.preventDefault();
+    window.assistant.stop(); // Esc in an empty composer stops the reply
   }
 });
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (running) { window.assistant.stop(); return; }
+  if (running) { window.assistant.stop(); return; } // the button, while running, is Stop
+  sendComposer();
+});
+async function sendComposer() {
   const text = prompt.value.trim();
   if (!text && attachments.length === 0) return;
   const images = attachments;
@@ -1166,9 +1199,10 @@ $('composer').addEventListener('submit', async (e) => {
   prompt.value = '';
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
-  if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs);
+  if (running) ask(text, images, tabs); // (queued for after the reply)
+  else if (!(await askOnNewTopic(text, images, tabs))) ask(text, images, tabs);
   updateSend();
-});
+}
 
 // A typed message with nothing in common with the open chat (renderer/chat-topic.js) starts a new
 // chat, as the New chat button would; the last one stays in the chat list. The notice it leaves has
