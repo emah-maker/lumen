@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Gmail widget: one-click "Sign in with Google", in Settings and right on the new-tab card, with no Google Cloud Console setup, in builds that include Lumen's own Google client (set at build time from `LUMEN_GOOGLE_CLIENT_ID` / `LUMEN_GOOGLE_CLIENT_SECRET`). It is the same read-only sign-in as before (gmail.readonly, PKCE, a one-time listener on 127.0.0.1, tokens encrypted and never sent to the new-tab page). Your own Google Cloud client is still available under "Advanced: use your own Google Cloud client" and is used instead when you fill it in. Builds without a built-in client keep the paste-your-own-client flow.
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

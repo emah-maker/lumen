@@ -89,6 +89,11 @@ jobs:
           # macOS: a stable self-signed identity keeps the Keychain's "Always Allow" across updates (scripts/after-sign.js).
           LUMEN_SIGN_P12: ${{ secrets.LUMEN_SIGN_P12 }}
           LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
+          # Gmail widget's one-click "Sign in with Google": Lumen's own Google Desktop OAuth client
+          # (features/google-client.js). Optional; without these secrets the build keeps the
+          # paste-your-own-client flow. An installed app's client secret is not confidential (RFC 8252).
+          LUMEN_GOOGLE_CLIENT_ID: ${{ secrets.LUMEN_GOOGLE_CLIENT_ID }}
+          LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}
         run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
       - name: List the zip in latest.yml

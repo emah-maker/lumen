@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const http = require('http');
 const OA = require('../features/oauth');
 const GV = require('../features/gmail-view');
+const GC = require('../features/google-client');
 const { createWidgets } = require('../features/widgets');
 
 const get = (url, headers = {}) => new Promise((resolve, reject) => {
@@ -124,7 +125,7 @@ module.exports = async function gmailUnits(check) {
   // ---- gmail-view: settings ----
   check('gmail: a Client ID must look like Google\'s', GV.cleanClientId(' 123456-abc_def.apps.googleusercontent.com ') === '123456-abc_def.apps.googleusercontent.com' && !GV.cleanClientId('abc') && !GV.cleanClientId('123.apps.googleusercontent.com.evil.com') && !GV.cleanClientId(5), '');
   check('gmail: a client secret is a plain token', GV.cleanClientSecret('GOCSPX-abc_DEF-123456') === 'GOCSPX-abc_DEF-123456' && !GV.cleanClientSecret('has space here') && !GV.cleanClientSecret('short') && !GV.cleanClientSecret(null), '');
-  check('gmail: config needs a Client ID, clamps the count and defaults the rest', GV.cleanConfig({}) === null && GV.cleanConfig({ clientId: '1-a.apps.googleusercontent.com', count: 99 }).count === 5 && GV.cleanConfig({ clientId: '1-a.apps.googleusercontent.com', count: 7 }).count === 7 && GV.cleanConfig({ clientId: '1-a.apps.googleusercontent.com', snippets: false }).snippets === false, '');
+  check('gmail: config refuses a Client ID that is not one (none means the built-in client), clamps the count and defaults the rest', GV.cleanConfig({ clientId: 'nope' }) === null && GV.cleanConfig({}).clientId === '' && GV.cleanConfig({ clientId: '1-a.apps.googleusercontent.com', count: 99 }).count === 5 && GV.cleanConfig({ clientId: '1-a.apps.googleusercontent.com', count: 7 }).count === 7 && GV.cleanConfig({ clientId: '1-a.apps.googleusercontent.com', snippets: false }).snippets === false, '');
   check('gmail: the config never carries a secret or token', !JSON.stringify(GV.cleanConfig({ clientId: '1-a.apps.googleusercontent.com', clientSecret: 'GOCSPX-zzzzzzzz', refresh: 'rt', token: 't' })).match(/GOCSPX|rt|"t"/), '');
 
   // ---- gmail-view: header text ----
@@ -157,7 +158,103 @@ module.exports = async function gmailUnits(check) {
 
   // ---- the connector, end to end against a fake Google ----
   await connectorRuns(check);
+  // ---- Lumen's built-in Google client: one-click sign-in ----
+  await builtinRuns(check);
 };
+
+// The built-in client (features/google-client.js): where it comes from, that a user's own client wins,
+// what Settings and the card are told, and the one-click sign-in end to end against a fake Google.
+async function builtinRuns(check) {
+  const BUILT = { clientId: '777-lumenbuiltin.apps.googleusercontent.com', clientSecret: 'GOCSPX-builtin-secret' };
+  const OWN = '4242-ownclient.apps.googleusercontent.com';
+  const env = (id, secret) => ({ LUMEN_GOOGLE_CLIENT_ID: id, LUMEN_GOOGLE_CLIENT_SECRET: secret });
+  check('google client: the environment\'s pair beats the build file\'s, and a half pair or garbage is no client',
+    JSON.stringify(GC.builtinClient({ env: env(BUILT.clientId, BUILT.clientSecret), file: { clientId: OWN, clientSecret: 'GOCSPX-file-secret' } })) === JSON.stringify(BUILT)
+    && GC.builtinClient({ env: {}, file: BUILT }).clientId === BUILT.clientId
+    && GC.builtinClient({ env: env(BUILT.clientId, ''), file: {} }) === null
+    && GC.builtinClient({ env: env('nope', BUILT.clientSecret), file: {} }) === null
+    && GC.builtinClient({ env: {}, file: {} }) === null, '');
+  check('google client: an id from the environment is never paired with the file\'s secret',
+    GC.builtinClient({ env: env(OWN, ''), file: BUILT }).clientId === BUILT.clientId && GC.builtinClient({ env: env(OWN, ''), file: BUILT }).clientSecret === BUILT.clientSecret, '');
+  const noOwn = GC.resolveClient({ clientId: '', clientSecret: '', stored: null, builtin: BUILT });
+  check('google client: with no own client the built-in one signs in', noOwn.source === 'builtin' && noOwn.clientId === BUILT.clientId && noOwn.clientSecret === BUILT.clientSecret, JSON.stringify(noOwn));
+  const typedOwn = GC.resolveClient({ clientId: OWN, clientSecret: 'GOCSPX-own-secret', builtin: BUILT });
+  const storedOwn = GC.resolveClient({ clientId: OWN, stored: { clientId: OWN, clientSecret: 'GOCSPX-own-stored' }, builtin: BUILT });
+  check('google client: an own client (typed, or its saved id with the stored secret) is preferred over the built-in one',
+    typedOwn.source === 'own' && typedOwn.clientId === OWN && typedOwn.clientSecret === 'GOCSPX-own-secret' && storedOwn.source === 'own' && storedOwn.clientSecret === 'GOCSPX-own-stored', JSON.stringify([typedOwn, storedOwn]));
+  check('google client: an own id without its secret, or a bad id, is an error and never falls back to the built-in client',
+    GC.resolveClient({ clientId: OWN, builtin: BUILT }).error === 'noSecret' && GC.resolveClient({ clientId: 'junk', builtin: BUILT }).error === 'badId'
+    && GC.resolveClient({ clientId: OWN, clientSecret: 'x y', builtin: BUILT }).error === 'badSecret' && GC.resolveClient({ builtin: null }).error === 'noClient', '');
+  check('google client: the UI says one-click only when a client is ready (built-in, or own with its secret stored)',
+    GC.uiState({ builtin: BUILT }).oneClick === true && GC.uiState({ builtin: BUILT }).builtin === true && GC.uiState({ builtin: null }).oneClick === false && GC.uiState({ builtin: null }).builtin === false
+    && GC.uiState({ clientId: OWN, stored: { clientId: OWN, clientSecret: 'GOCSPX-own-stored' }, builtin: null }).oneClick === true && GC.uiState({ clientId: OWN, stored: null, builtin: BUILT }).oneClick === false, '');
+
+  // End to end: a Gmail widget with no Client ID of its own, and no sign-in yet.
+  const hits = [];
+  const fetchFake = async (url, opts = {}) => {
+    const u = new URL(url);
+    hits.push(`${opts.method || 'GET'} ${u.host}${u.pathname}`);
+    const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    if (u.host === 'oauth2.googleapis.com' && u.pathname === '/token') {
+      const form = new URLSearchParams(String(opts.body || ''));
+      hits.push(`client=${form.get('client_id')} secret=${form.get('client_secret')}`);
+      return json(200, { access_token: 'ACCESS-B', expires_in: 3600, ...(form.get('grant_type') === 'authorization_code' ? { refresh_token: 'REFRESH-B' } : {}) });
+    }
+    if (u.host === 'oauth2.googleapis.com') return json(200, {});
+    if (u.pathname.endsWith('/labels/INBOX')) return json(200, { messagesUnread: 1, messagesTotal: 1 });
+    if (u.pathname.endsWith('/messages')) return json(200, { messages: [] });
+    return json(404, {});
+  };
+  let settings = { homeWidgets: [{ id: 'wgmailb1', type: 'gmail', count: 3 }] };
+  const secrets = {};
+  let opened = [];
+  let configured;
+  const make = (builtin) => createWidgets({
+    readSettings: () => settings, writeSettings: (s) => { settings = s; }, fetch: fetchFake,
+    getSecret: (n) => secrets[n] || null, setSecret: (n, v) => { if (v) secrets[n] = v; else delete secrets[n]; },
+    onUpdate: () => {}, onConfigure: (id) => { configured = id; }, rateMax: () => 1000, signInMs: 2000, googleClient: () => builtin,
+    openExternal: async (u) => { opened.push(u); const q = new URL(u).searchParams; setTimeout(() => http.get(`${q.get('redirect_uri')}?code=CODE&state=${q.get('state')}`).on('error', () => {}), 5); },
+  });
+  const shown = async (w) => { w.flush(); await w.refresh(w.list()[0], { force: true }); return w.forPage()[0]; };
+
+  const without = make(null);
+  let page = await shown(without);
+  check('gmail built-in: without a built-in client the card offers Settings, not one-click, and Settings shows the paste flow',
+    page.data?.state === 'reconnect' && page.data.oneClick === false && without.state().gmailClient.builtin === false, JSON.stringify(page.data));
+  check('gmail built-in: without a built-in client, Sign in still asks for a Client ID', await without.gmailConnect({ clientId: '' }).then(() => false, (e) => /Client ID/.test(e.message)), '');
+  configured = null;
+  await without.act(without.actionFrom('file:///lumen/newtab.html?widget=wgmailb1&do=signin'));
+  check('gmail built-in: the card\'s sign-in without a ready client opens Settings at the widget instead', configured === 'wgmailb1' && opened.length === 0, String(configured));
+
+  const w = make(BUILT);
+  page = await shown(w);
+  check('gmail built-in: with a built-in client the card offers one-click sign-in and Settings leads with Sign in with Google',
+    page.data?.state === 'reconnect' && page.data.oneClick === true && w.state().gmailClient.builtin === true && !JSON.stringify(w.state()).includes(BUILT.clientSecret), JSON.stringify(page.data));
+  const action = w.actionFrom('file:///lumen/newtab.html?widget=wgmailb1&do=signin');
+  check('gmail built-in: do=signin is a page action like the others', action && !action.invalid && action.do === 'signin', JSON.stringify(action));
+  opened = [];
+  await w.act(action);
+  const waiting = w.forPage()[0].data?.message || '';
+  for (let i = 0; i < 100 && !opened.length; i++) await new Promise((res) => setTimeout(res, 10)); // the listener starts before the browser opens
+  check('gmail built-in: the card\'s click shows a waiting line and opens Google\'s consent page with the built-in client',
+    /waiting/i.test(waiting) && opened.length === 1 && new URL(opened[0]).searchParams.get('client_id') === BUILT.clientId && new URL(opened[0]).searchParams.get('scope') === GV.SCOPE, opened[0]);
+  for (let i = 0; i < 100 && !OA.decodeCreds(secrets.gmail || '')?.refresh; i++) await new Promise((res) => setTimeout(res, 20));
+  const stored = OA.decodeCreds(secrets.gmail || '');
+  check('gmail built-in: after consent the sign-in is stored encrypted with the built-in client, and the code was traded with its secret',
+    stored?.refresh === 'REFRESH-B' && stored.clientId === BUILT.clientId && hits.includes(`client=${BUILT.clientId} secret=${BUILT.clientSecret}`), JSON.stringify(stored));
+  page = await shown(w);
+  check('gmail built-in: the card then shows the inbox, and neither settings.json nor the page carries the built-in secret or a token',
+    page.data?.state === 'ok' && !/GOCSPX|REFRESH-B|ACCESS-B/.test(JSON.stringify(settings) + JSON.stringify(w.forPage())), JSON.stringify(page.data).slice(0, 120));
+  const saved = await w.save({ type: 'gmail', clientId: '', count: 4 });
+  check('gmail built-in: Save with no Client ID keeps the built-in sign-in and writes no Client ID', saved.widget.clientId === '' && OA.decodeCreds(secrets.gmail).refresh === 'REFRESH-B', JSON.stringify(saved.widget));
+  opened = [];
+  await w.act(action);
+  check('gmail built-in: once connected, the card\'s sign-in does nothing', opened.length === 0, '');
+
+  opened = [];
+  const own = await w.gmailConnect({ clientId: OWN, clientSecret: 'GOCSPX-own-secret' }).catch((e) => e);
+  check('gmail built-in: a pasted own client is used instead of the built-in one', own.message === 'Gmail is connected.' && new URL(opened[0]).searchParams.get('client_id') === OWN && OA.decodeCreds(secrets.gmail).clientId === OWN, String(own.message || own));
+}
 
 // A fake Google: token endpoint + Gmail API. `state` says what each part answers.
 async function connectorRuns(check) {
@@ -195,7 +292,7 @@ async function connectorRuns(check) {
     fetch: fetchFake,
     getSecret: (name) => secrets[name] || null,
     setSecret: (name, value) => { if (value) secrets[name] = value; else delete secrets[name]; },
-    onUpdate: () => {}, now: () => clockNow, rateMax: () => 1000,
+    onUpdate: () => {}, now: () => clockNow, rateMax: () => 1000, googleClient: () => null, // no built-in client here: the paste flow
   });
   const fresh = () => w.list()[0];
   const shown = async (force = true) => { w.flush(); await w.refresh(fresh(), { force }); return w.forPage()[0]; };
@@ -262,7 +359,7 @@ async function connectorRuns(check) {
   // Connecting refuses what it cannot do, and never opens a page it was not asked to.
   check('gmail connect: it needs a Client ID and a client secret first', await w.gmailConnect({ clientId: '' }).then(() => false, (e) => /Client ID/.test(e.message)) && await w.gmailConnect({ clientId: CLIENT }).then(() => false, (e) => /client secret/i.test(e.message)), '');
   let opened = '';
-  const w2 = createWidgets({ readSettings: () => settings, writeSettings: () => {}, fetch: fetchFake, getSecret: (n) => secrets[n] || null, setSecret: (n, v) => { if (v) secrets[n] = v; else delete secrets[n]; }, onUpdate: () => {}, signInMs: 2000,
+  const w2 = createWidgets({ readSettings: () => settings, writeSettings: () => {}, fetch: fetchFake, getSecret: (n) => secrets[n] || null, setSecret: (n, v) => { if (v) secrets[n] = v; else delete secrets[n]; }, onUpdate: () => {}, signInMs: 2000, googleClient: () => null,
     openExternal: async (u) => { opened = u; const q = new URL(u).searchParams; setTimeout(() => http.get(`${q.get('redirect_uri')}?code=CODE&state=${q.get('state')}`).on('error', () => {}), 5); } });
   const connected = await w2.gmailConnect({ clientId: CLIENT, clientSecret: 'GOCSPX-fresh-secret' }).catch((e) => e);
   const consentUrl = opened ? new URL(opened) : null;

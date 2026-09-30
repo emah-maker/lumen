@@ -57,6 +57,7 @@ const SW = require('./spotify-web');
 const GV = require('./gmail-view');
 const SL = require('./slack-view');
 const OA = require('./oauth');
+const GC = require('./google-client'); // Lumen's built-in Google client (one-click Gmail sign-in), when it was built with one
 const WCK = require('./worldclock-view');
 const MV = require('./muse-view');
 const MK = require('./markets-view');
@@ -405,23 +406,20 @@ const CONNECTORS = {
   },
 
   // Read-only inbox summary: the unread count and the latest few subjects, senders and snippets. Signs
-  // in with the user's own Google Cloud OAuth client (features/oauth.js); see features/gmail-view.js.
+  // in with Lumen's built-in Google client (features/google-client.js) or, when the widget has one, the
+  // user's own Google Cloud OAuth client, which wins (features/oauth.js); see features/gmail-view.js.
   gmail: {
     label: 'Gmail',
     ttl: 5 * 60e3,
     secret: 'gmail',
     clean: (c) => { const g = GV.cleanConfig(c); return g ? { ...g, colors: WC.cleanMode(c.colors) } : null; },
     async resolve(input, x) {
-      const clientId = GV.cleanClientId(input.clientId);
-      if (!clientId) throw new Error('Paste the Client ID of your Google Cloud OAuth client (it ends in .apps.googleusercontent.com).');
-      const typed = typeof input.clientSecret === 'string' ? input.clientSecret.trim() : '';
-      if (typed && !GV.cleanClientSecret(typed)) throw new Error('That doesn’t look like a Google client secret.');
       const stored = OA.decodeCreds(x.secret());
-      const same = stored?.clientId === clientId;
-      const creds = { clientId, clientSecret: typed || (same ? stored.clientSecret : ''), refresh: same ? stored.refresh : '' };
-      if (!creds.clientSecret) throw new Error('Paste the client secret shown next to the Client ID in Google Cloud.');
-      if (!creds.refresh) throw new Error('Connect your Google account first: use Connect Gmail.');
-      const cfg = GV.cleanConfig({ ...input, clientId });
+      const client = gmailClient(input, stored, x.googleClient());
+      const same = stored?.clientId === client.clientId;
+      const creds = { clientId: client.clientId, clientSecret: client.clientSecret, refresh: same ? stored.refresh : '' };
+      if (!creds.refresh) throw new Error(client.source === 'builtin' ? 'Connect your Google account first: use Sign in with Google.' : 'Connect your Google account first: use Connect Gmail.');
+      const cfg = GV.cleanConfig({ ...input, clientId: client.source === 'own' ? client.clientId : '' }); // the built-in client is never written to settings.json
       const data = await gmailData(x, x.session(creds), { ...cfg, count: 3 });
       const changed = !stored || stored.clientId !== creds.clientId || stored.clientSecret !== creds.clientSecret || stored.refresh !== creds.refresh;
       return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, secret: changed ? OA.encodeCreds(creds) : undefined, message: `Connected. ${data.unread === 1 ? '1 unread message' : `${data.unread} unread messages`} in the inbox.` };
@@ -430,11 +428,13 @@ const CONNECTORS = {
     summary: (c) => `Inbox · ${c.count} latest`,
     async fetch(c, x) {
       const session = x.session();
-      if (!session.connected()) return GV.reconnect('Connect Gmail in Settings.');
+      // oneClick: the card's button can start the sign-in itself (do=signin) instead of opening Settings.
+      const oneClick = () => GC.uiState({ clientId: c.clientId, stored: OA.decodeCreds(x.secret()), builtin: x.googleClient() }).oneClick;
+      if (!session.connected()) { const one = oneClick(); return GV.reconnect(one ? 'Sign in to see your inbox here. Read-only: Lumen can’t send or delete anything.' : 'Connect Gmail in Settings.', { oneClick: one }); }
       try {
         return await gmailData(x, session, c);
       } catch (err) {
-        if (err?.reconnect) return GV.reconnect(err.message); // a revoked grant is a state the card shows, not an error
+        if (err?.reconnect) return GV.reconnect(err.message, { oneClick: oneClick() }); // a revoked grant is a state the card shows, not an error
         throw err;
       }
     },
@@ -868,6 +868,14 @@ async function spotifyAccess(x, clientId, force = false) {
   return s.access;
 }
 
+// Which Google client a Gmail sign-in or Check uses: the user's own (typed, or the widget's saved Client
+// ID with its stored secret) before Lumen's built-in one. Throws a message for the user when neither.
+function gmailClient(input, stored, builtin) {
+  const r = GC.resolveClient({ clientId: input?.clientId, clientSecret: input?.clientSecret, stored, builtin });
+  if (r.error) throw new Error(GC.MESSAGES[r.error]);
+  return r;
+}
+
 // Gmail's inbox: the label (unread count), the newest ids, then each message's headers (in parallel).
 async function gmailData(x, session, cfg) {
   try {
@@ -1083,6 +1091,8 @@ function createWidgets(deps) {
   // OAuth accounts by secret name: the access token is kept here, in memory, and the refresh token in
   // the encrypted secret (a JSON blob, see features/oauth.js).
   const sessions = new Map();
+  // Lumen's built-in Google client or null (tests hand in their own; see features/google-client.js).
+  const googleClient = () => (deps.googleClient ? deps.googleClient() : GC.builtinClient());
   const tokenUrl = () => deps.endpoints?.().googleToken || ENDPOINTS.googleToken;
   function sessionFor(name) {
     if (!sessions.has(name)) {
@@ -1124,6 +1134,7 @@ function createWidgets(deps) {
         return OA.createSession({ tokenUrl, post: formPost, now, load: () => held, save: (c) => { held = c; } });
       },
       backoff(ms) { backoffUntil = Math.max(backoffUntil, now() + Math.min(120e3, Math.max(1e3, ms))); },
+      googleClient,
       raw: (url, opts) => request(url, opts),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
@@ -1411,14 +1422,10 @@ function createWidgets(deps) {
   // the tokens and the client secret; Settings gets a message, never a token.
   let signIn = null;
   const staleGmail = () => { sessions.get('gmail')?.invalidate(); for (const w of list()) if (w.type === 'gmail') cache.delete(w.id); deps.onUpdate?.(); };
+  // input: { clientId, clientSecret } from Settings' Advanced fields; both empty means Lumen's built-in
+  // client ("Sign in with Google"). An own Client ID always wins over the built-in one.
   async function gmailConnect(input) {
-    const clientId = GV.cleanClientId(input?.clientId);
-    if (!clientId) throw new Error('Paste the Client ID of your Google Cloud OAuth client (it ends in .apps.googleusercontent.com).');
-    const typed = typeof input?.clientSecret === 'string' ? input.clientSecret.trim() : '';
-    if (typed && !GV.cleanClientSecret(typed)) throw new Error('That doesn’t look like a Google client secret.');
-    const stored = OA.decodeCreds(deps.getSecret('gmail'));
-    const clientSecret = typed || (stored?.clientId === clientId ? stored.clientSecret : '');
-    if (!clientSecret) throw new Error('Paste the client secret shown next to the Client ID in Google Cloud.');
+    const { clientId, clientSecret } = gmailClient(input, OA.decodeCreds(deps.getSecret('gmail')), googleClient());
     if (!deps.openExternal) throw new Error('Lumen can’t open your browser here.');
     const authBase = deps.endpoints?.().googleAuth || ENDPOINTS.googleAuth;
     signIn?.cancel(); // one sign-in at a time
@@ -1438,6 +1445,28 @@ function createWidgets(deps) {
     }
   }
   const gmailCancel = () => { signIn?.cancel(); return true; };
+  let pageSignIns = 0;
+  // The card's "Sign in with Google" (do=signin): the same sign-in as Settings', with the widget's own
+  // Client ID if it has one, else the built-in client. Only for a Gmail card that is not connected and
+  // can sign in without typing anything; otherwise it opens Settings at the widget. The page learns
+  // only what the card shows (a waiting or error line), never a token.
+  function gmailSignInFromPage(w) {
+    if (w.type !== 'gmail' || sessionFor('gmail').connected()) return false;
+    if (!GC.uiState({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).oneClick) { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
+    const show = (message) => {
+      const old = cache.get(w.id);
+      const entry = old && old.key === keyOf(w) ? old : { key: keyOf(w), undo: old?.undo };
+      Object.assign(entry, { data: GV.reconnect(message, { oneClick: true }), error: null, at: now() });
+      cache.set(w.id, entry);
+      deps.onUpdate?.();
+    };
+    const attempt = ++pageSignIns;
+    show('Finish signing in, in your browser. Lumen is waiting…');
+    gmailConnect({ clientId: w.clientId })
+      .then(() => Promise.all(list().filter((x) => x.type === 'gmail').map((x) => refresh(x, { force: true }).catch(() => {}))))
+      .catch((err) => { if (attempt === pageSignIns) show(String(err?.message || err)); }); // a newer click's wait is not overwritten by the one it cancelled
+    return true;
+  }
   // Best effort: tell Google the refresh token is no longer wanted.
   function revokeGoogle(creds) {
     if (!creds?.refresh) return Promise.resolve(false);
@@ -1624,6 +1653,7 @@ function createWidgets(deps) {
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
+      gmailClient: { builtin: Boolean(googleClient()) }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       feedPresets: FEED.PRESETS.map(({ id, name }) => ({ id, name })),
@@ -1637,7 +1667,7 @@ function createWidgets(deps) {
 
   // ---- page actions ----
   // The new-tab page asks by loading itself with ?widget=<id>&do=<action>[&task=<id>] (like its Ask
-  // AI box): refresh, complete, undo (&task), add (&text), play, pause, next, previous (Spotify), place (&to=<index>), size (&span, &height),
+  // AI box): refresh, complete, undo (&task), add (&text), play, pause, next, previous (Spotify), signin (Gmail), place (&to=<index>), size (&span, &height),
   // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure. main.js cancels that navigation and passes
   // the URL here. Null when it isn't one; { invalid: true } when it is one that is refused.
   function actionFrom(url) {
@@ -1646,7 +1676,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -1739,6 +1769,7 @@ function createWidgets(deps) {
     if (action.do === 'consent') return setLocationConsent(action.arg);
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
+    if (action.do === 'signin') return gmailSignInFromPage(w);
     const c = connector(w);
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;

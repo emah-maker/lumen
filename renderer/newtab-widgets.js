@@ -635,10 +635,13 @@ const WIDGET_RENDERERS = {
     if (d.state === 'reconnect') {
       const note = el('p', 'w-note');
       note.append(el('strong', null, 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
-      const fix = el('button', 'w-btn primary', 'Open Settings');
+      // oneClick: Lumen can start Google's sign-in (in the user's browser) straight from the card;
+      // otherwise the button opens Settings, where the user's own Google Cloud client is set up.
+      const oneClick = d.oneClick === true;
+      const fix = el('button', 'w-btn primary', oneClick ? 'Sign in with Google' : 'Open Settings');
       fix.type = 'button';
-      fix.setAttribute('aria-label', `Open settings to reconnect ${text(w.title, 60)}`);
-      fix.addEventListener('click', () => widgetAct(w.id, 'configure'));
+      fix.setAttribute('aria-label', oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
+      fix.addEventListener('click', () => widgetAct(w.id, oneClick ? 'signin' : 'configure'));
       const wrap = el('div');
       wrap.append(fix);
       card.body.append(note, wrap);
