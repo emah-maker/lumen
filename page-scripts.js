@@ -42,6 +42,11 @@ const HELPERS = `
     }
     return clean(el.getAttribute('placeholder') || el.title || el.name || '');
   };
+  // A field whose value is a secret, never read out: a password field, or one marked as a password
+  // (autocomplete current-password / new-password, a name like "password"): a page's "show password"
+  // button turns the field into a text field, but its value is still the password.
+  const secretField = (el) => el.tagName === 'INPUT' && (String(el.type).toLowerCase() === 'password'
+    || /password|one-time-code/i.test(el.getAttribute('autocomplete') || '') || /pass(word|wd|code)|pwd/i.test((el.name || '') + ' ' + (el.id || '')));
   const entryFor = (id) => {
     const entry = (window.__claudeEls || [])[id - 1];
     return entry && entry.el.isConnected ? entry : null;
@@ -86,7 +91,7 @@ function readPage(textOffset, elementOffset) {
       if (kind) item.kind = kind;
       if (el.tagName === 'A') item.href = el.href.slice(0, 150);
       if ((el.type === 'radio' || el.type === 'checkbox') && el.name) item.group = el.name;
-      if ('value' in el && el.tagName !== 'BUTTON' && el.value && el.type !== 'password' &&
+      if ('value' in el && el.tagName !== 'BUTTON' && el.value && !secretField(el) &&
           el.type !== 'radio' && el.type !== 'checkbox' && el.value !== label) item.value = String(el.value).slice(0, 80);
       if (el.tagName === 'SELECT') item.options = [...el.options].slice(0, 30).map((o) => o.text.trim());
       if (el.checked) item.checked = true;
@@ -263,7 +268,7 @@ function findTarget(text, mode) {
       if (!entry.el.isConnected) return;
       if (${JSON.stringify(mode)} === 'field' && !isField(entry.el)) return;
       const legend = ['radio', 'checkbox'].includes(entry.el.type) ? entry.el.closest('fieldset')?.querySelector('legend')?.innerText : null;
-      const names = [entry.label ?? accessibleName(entry.el), entry.el.getAttribute('placeholder'), entry.el.name, entry.el.value, legend]
+      const names = [entry.label ?? accessibleName(entry.el), entry.el.getAttribute('placeholder'), entry.el.name, secretField(entry.el) ? null : entry.el.value, legend] // never match on a password
         .filter(Boolean).map((n) => clean(String(n)).toLowerCase());
       let score = 0;
       for (const n of names) {

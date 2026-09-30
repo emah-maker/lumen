@@ -45,6 +45,9 @@ function compactOutline(opts) {
   const reg = window.__claudeEls || [];
   const idOf = new Map(reg.map((e, i) => [e.el, i + 1]));
   const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  // A password (or a field marked as one, even shown as text by a "show password" button): its value is never read out.
+  const secretField = (el) => el.tagName === 'INPUT' && (String(el.type).toLowerCase() === 'password'
+    || /password|one-time-code/i.test(el.getAttribute('autocomplete') || '') || /pass(word|wd|code)|pwd/i.test(`${el.name || ''} ${el.id || ''}`));
   const lines = [];
   const seen = new Set();
   let size = 0;
@@ -85,7 +88,7 @@ function compactOutline(opts) {
     const label = clean(entry.label || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || '').slice(0, 70);
     let line = `[${id}] ${kindOf(el)} "${label}"`;
     if (el.tagName === 'SELECT') line += ` = "${clean(el.selectedOptions?.[0]?.text)}" options: ${[...el.options].slice(0, 8).map((o) => clean(o.text)).join(' | ')}`;
-    else if ('value' in el && el.value && el.type !== 'password' && !['checkbox', 'radio', 'submit', 'button'].includes(el.type) && el.tagName !== 'BUTTON') line += ` = "${clean(el.value).slice(0, 60)}"`;
+    else if ('value' in el && el.value && !secretField(el) && !['checkbox', 'radio', 'submit', 'button'].includes(el.type) && el.tagName !== 'BUTTON') line += ` = "${clean(el.value).slice(0, 60)}"`;
     if (el.checked) line += ' (checked)';
     if (el.disabled) line += ' (disabled)';
     if (opts.hrefs && el.tagName === 'A' && el.href) line += ` -> ${el.href.slice(0, 120)}`;

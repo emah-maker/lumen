@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('browser', {
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
   translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg), // the translate infobar and button (features/translate.js)
+  passwordsAct: (action) => ipcRenderer.send('passwords:act', action), // [passwords] the save bar and the key button: no password ever passes here
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),

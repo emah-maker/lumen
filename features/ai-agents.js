@@ -474,6 +474,7 @@ function setupAiAgents(deps) {
   let detecting = true;
 
   return {
+    automationClients: () => automationProxy?.clients() || 0, // [passwords] CDP clients connected now (no filling while one is)
     start() {
       // Always listening (token-authenticated, profile-local), so an agent run while the setting is off
       // gets "turned off in Lumen settings" instead of its bridge deciding Lumen isn't running and

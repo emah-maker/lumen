@@ -40,6 +40,20 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       spotifyCancel: call('spotify:cancel'),
       spotifyDisconnect: call('spotify:disconnect'),
     },
+    // [passwords] Privacy and security → Passwords (features/passwords.js). No password comes out
+    // except through reveal, which asks for Touch ID (or a confirmation) first.
+    passwords: {
+      state: call('settings:passwords-state'),
+      setEnabled: call('settings:passwords-set-enabled'),
+      list: call('settings:passwords-list'),
+      reveal: call('settings:passwords-reveal'),
+      copy: call('settings:passwords-copy'),
+      update: call('settings:passwords-update'),
+      remove: call('settings:passwords-delete'),
+      removeAll: call('settings:passwords-delete-all'),
+      importCsv: call('settings:passwords-import'),
+      removeNever: call('settings:passwords-never-remove'),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     extensions: call('prefs:extensions'),

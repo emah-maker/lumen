@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, systemPreferences, components } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
@@ -161,6 +161,7 @@ const UI_ONLY_IPC = new Set([
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -1185,6 +1186,7 @@ function tabState() {
         page: settingsPage.isSettingsUrl(url) ? 'settings' : url.startsWith(HISTORY_URL) ? 'history' : pageTools.page(url) || managerPageOf(url), // Lumen's own pages get their own icon
         readerable: Boolean(t.readerable), // Reader mode can show this page (features/page-tools.js)
         translate: translate.stateOf(t), // the translate button and infobar (features/translate.js)
+        passwords: passwordsRt ? passwordsRt.stateOf(t) : null, // [passwords] the key button and the save bar: sites, usernames and counts only
         error: isErrorPage(wc.getURL()),
         security: siteSecurity.stateOf(wc), // 'broken' | 'mixed' | null: the lock's state beyond the scheme
         zoom: Math.round(wc.getZoomFactor() * 100),
@@ -1463,6 +1465,7 @@ function wireView(tab, url, history = null) {
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
   translate.attach(tab);
+  passwordsRt?.attach(tab); // [passwords] offers to save a sign-in; features/passwords.js decides which tabs
   wc.on('page-title-updated', (_e, title) => updateTitle(wc.getURL(), title));
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
@@ -2732,6 +2735,7 @@ function showContextMenu(wc, p) {
   }
   items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
+    if (passwordsRt) items.push(...passwordsRt.contextMenuItems(tabByContents(wc), p)); // [passwords] Fill <username>, on a site with saved logins
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
   } else if (selection) {
     const short = selection.length > 30 ? `${selection.slice(0, 29)}…` : selection;
@@ -4079,9 +4083,76 @@ const signedInReader = {
   },
 };
 if (TEST) global.__signedInSites = signedInSites;
+
+// [passwords] Saved passwords (features/passwords.js), off until the user turns on Settings → Privacy and
+// security → Save passwords. Encrypted with safeStorage (the OS keychain) in <profile>/passwords.bin.
+// Nothing here goes to the Agent below except filledIn(), a yes/no that makes run_script refuse a
+// site in a tab where the user filled a password. The module loads when the feature is on, or when
+// Settings first asks about it; until then no tab is watched and nothing is read from disk.
+const allTabsEverywhere = () => (winRecs.size ? [...winRecs].flatMap((rec) => (rcAlive(rec) ? tabsOf(rec) : [])) : tabs);
+async function passwordReauth(reason) {
+  if (TEST) return Boolean(await global.__passwordsReauth?.(reason));
+  if (process.platform === 'darwin' && systemPreferences.canPromptTouchID()) {
+    try { await systemPreferences.promptTouchID(reason); return true; } catch { return false; }
+  }
+  // No Touch ID (Windows, Linux, a Mac without it): a confirmation, not real authentication.
+  const { response, cancelled } = await dialogs.showMessageBox(win, { type: 'warning', message: t('passwords.reauth.confirm', { action: reason }), detail: t('passwords.reauth.detail'), buttons: [t('dialog.cancel'), t('passwords.reauth.continue')], defaultId: 0, cancelId: 0 });
+  return !cancelled && response === 1;
+}
+let passwordsRt = null;
+const passwords = () => {
+  if (passwordsRt) return passwordsRt;
+  passwordsRt = require('./features/passwords').createPasswords(passwordDeps());
+  for (const tab of allTabsEverywhere()) if (alive(tab)) passwordsRt.attach(tab); // tabs opened before it loaded
+  return passwordsRt;
+};
+const passwordDeps = () => ({
+  file: path.join(app.getPath('userData'), require('./features/passwords').FILE_NAME),
+  cipher: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    backend: () => (process.platform === 'linux' ? safeStorage.getSelectedStorageBackend?.() : null),
+    encrypt: (text) => safeStorage.encryptString(text),
+    decrypt: (buf) => safeStorage.decryptString(buf),
+  },
+  readSettings, writeSettings, t: (...a) => t(...a), sendTabs: () => sendTabs(),
+  tabOf: (wc) => allTabsEverywhere().find((x) => alive(x) && x.view.webContents === wc) || null,
+  facts: (tab) => {
+    const url = tab.view.webContents.getURL();
+    return { isolated: Boolean(tab.isolated), settings: Boolean(tab.settings), internal: Boolean(tab.managerPage) || isInternal(url) || isErrorPage(url) || chatPage.isChatUrl(url), aiTab: Boolean(tab.aiSignedIn) };
+  },
+  allTabs: allTabsEverywhere,
+  popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
+  openSettings: (section) => openSettingsPage(section),
+  reauth: passwordReauth,
+  confirm: async ({ message, detail, buttons, defaultId }) => {
+    if (TEST && global.__passwordsConfirm) return global.__passwordsConfirm({ message, buttons });
+    const { response, cancelled } = await dialogs.showMessageBox(win, { type: 'warning', message, detail, buttons, defaultId, cancelId: defaultId });
+    return cancelled ? defaultId : response;
+  },
+  notify: (message, detail) => { dialogs.showMessageBox(win, { type: 'info', message, detail, buttons: [t('dialog.ok')], defaultId: 0, cancelId: 0 }).catch(() => {}); },
+  clipboard,
+  pickCsv: async () => {
+    if (TEST) return global.__passwordsPickCsv?.() || null;
+    const { canceled, filePaths } = await electronDialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    return canceled ? null : filePaths[0] || null;
+  },
+  outsideDriver: () => Boolean(aiAgents?.automationClients?.()), // a CDP client could read the page: no filling then
+  isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event),
+});
+// The settings page's calls (features/passwords.js checks each one again and knows the same list).
+const PASSWORD_CHANNELS = ['state', 'set-enabled', 'list', 'reveal', 'copy', 'update', 'delete', 'delete-all', 'import', 'never-remove'].map((c) => `settings:passwords-${c}`);
+for (const channel of PASSWORD_CHANNELS) ipcMain.handle(channel, (event, ...args) => passwords().invoke(channel, event, ...args));
+ipcMain.on('passwords:act', (_e, action) => {
+  if (!passwordsRt || !['menu', 'save', 'never', 'not-now'].includes(action)) return;
+  passwordsRt.act(tabs.find((x) => x.id === activeId && alive(x)), action);
+});
+if (readSettings().savePasswords === true) passwords();
+if (TEST) Object.defineProperty(global, '__passwords', { get: passwords, configurable: true });
+if (TEST) global.__passwordChannels = PASSWORD_CHANNELS;
 const agent = new Agent({
   research: researchTabs,
   signedIn: signedInReader, // [signed-in sites]
+  passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
@@ -4977,7 +5048,8 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab,
   tools: EXTERNAL_TOOLS,
   validateToolInput,
-  userTabs: () => tabs.filter(alive).map((t) => ({ id: t.id, webContents: t.view.webContents })),
+  // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
+  userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
 });
 
 // ---------- updates from GitHub Releases (features/updates.js) ----------
