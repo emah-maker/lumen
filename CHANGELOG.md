@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The AI can read a site with your signed-in account when you allow it ("check my Canvas grades" without opening Canvas first): it asks "Let the AI use your signed-in <site> account?" with No (the default), Just this once, or Always for that site. The page opens as a background tab in your session, marked as the AI's and closed when it's done, and it stays read only: clicks, typing and forms still ask as usual. A redirect to another site is read signed out. Banks, payments, password managers and account-security pages are only ever allowed once, outside agents (MCP) and background tasks never get it, and the sites you allowed always are in Settings → You and AI → Signed-in sites the AI can use.
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

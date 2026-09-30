@@ -1281,6 +1281,7 @@ function wireView(tab, url, history = null) {
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
+    if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
     // An extension's pages open only from that same extension: a web page could otherwise open any
     // extension page it liked (and whatever that page does with its privileges).
@@ -3630,8 +3631,54 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
   groupExists: inRun((groupId) => tabGroups.groups.has(groupId)),
   setReading: inRun((id, on) => { const t = tabs.find((x) => x.id === id); if (t && Boolean(t.aiReading) !== on) { t.aiReading = on; sendTabs(); } }),
 });
+// [signed-in sites] read_urls as_user (features/signed-in-sites.js): with the user's OK per host, the
+// sidebar's AI reads a page with the user's own session, in a background tab of the run's window grouped
+// "AI: <host> (signed in)". Locked (no popups) while it is read; closed when the run ends unless the user
+// switched to it. Only this Agent gets it: background tasks and outside agents (MCP) read signed out.
+const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
+signedInSites.register(ipcMain);
+const tabAnywhere = (id) => {
+  for (const rec of winRecs) {
+    const t = rcAlive(rec) ? tabsOf(rec).find((x) => x.id === id) : null;
+    if (t) return { rec, t };
+  }
+  return null;
+};
+const signedInReader = {
+  hosts: () => signedInSites.hosts(),
+  add: (host) => signedInSites.add(host),
+  hasLogin: async (url) => require('./features/signed-in-sites').hasLoginCookies(await session.defaultSession.cookies.get({ url })),
+  privateWindow: () => { const rec = runRec && winRecs.has(runRec) ? runRec : curRec; return !rec || !winRecs.has(rec); }, // private windows have no record, so never
+  open: inRun((url) => {
+    const tab = openTab(url, { background: true }); // the user's default session: no partition
+    const t = tabs.find((x) => x.id === tab.id);
+    if (t) {
+      t.aiSignedIn = { openedAt: Date.now() };
+      t.aiLock = true;
+      t.aiReading = true;
+      try { tabGroups.create(`AI: ${require('./features/signed-in-sites').hostOfUrl(url)} (signed in)`, [t.id], { color: require('./features/research-tabs').GROUP_COLOR }); } catch {}
+      sendTabs();
+    }
+    return tab;
+  }),
+  unlock: (id) => {
+    const found = tabAnywhere(id);
+    if (!found) return;
+    found.t.aiLock = false;
+    found.t.aiReading = false;
+    withWindow(found.rec, () => sendTabs());
+  },
+  close: (id, { force = false } = {}) => {
+    const found = tabAnywhere(id);
+    if (!found?.t.aiSignedIn) return;
+    if (!force && (found.t.viewedAt || 0) >= found.t.aiSignedIn.openedAt) { found.t.aiLock = false; return; } // the user looked at it: it's theirs now
+    withWindow(found.rec, () => closeTab(id));
+  },
+};
+if (TEST) global.__signedInSites = signedInSites;
 const agent = new Agent({
   research: researchTabs,
+  signedIn: signedInReader, // [signed-in sites]
   externalTools: mcpClient, // [mcp client]
   activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,

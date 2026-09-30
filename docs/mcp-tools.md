@@ -75,11 +75,14 @@ Fill several fields by label/placeholder (text, select, date, checkbox "true"/"f
 
 ### `read_urls`
 
-Read up to 6 pages in parallel in hidden tabs without cookies/logins (use navigate for signed-in pages). Returns title + text.
+Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user's own account pages signed in. Returns title + text.
 
 | Parameter | Type | Required |
 |---|---|---|
 | `urls` | string[] | yes |
+| `as_user` | boolean | no |
+
+`as_user` works for the sidebar's own AI (including its Claude Code and Grok Build engines) only. Outside agents over MCP always read signed out: the result says so, and no card is shown.
 
 ### `read_pdf`
 
