@@ -131,7 +131,9 @@ function setupAiAgents(deps) {
   // The composer was focused or typed in (renderer/chat-core.js): Claude Code's process starts ahead of the
   // message (agent.prewarm: a no-op for any other engine, and cheap when repeated).
   // text: what is already typed (routed for the model guess); the preload passes it through.
-  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} });
+  // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
+  // take effect without a restart. Cheap when repeated.)
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} });
   app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
@@ -158,6 +160,18 @@ function setupAiAgents(deps) {
     }
     return grokBuild;
   };
+
+  // "Warm up Grok Build when Lumen starts" (grokWarmup, default on; features/grok-warmup.js): the setup a message
+  // starts with (binary, HTTP gate, config, sign-in link) is done in the background once the first tab has loaded
+  // and Lumen has looked for the CLIs. Only for someone who uses Grok Build (connected it, or picked it), and
+  // read live, so the toggle needs no restart.
+  const grokInUse = () => grokSidebar() || String(readSettings().model || '').startsWith('grokbuild:');
+  const grokWarmup = require('./grok-warmup').createGrokWarmup({
+    enabled: () => readSettings().grokWarmup !== false && grokInUse(),
+    engine: grokBuildEngine,
+    found: () => grokBuildFound,
+    powerMonitor: { on: (ev, cb) => { try { require('electron').powerMonitor.on(ev, cb); } catch { /* not ready / tests */ } } },
+  });
 
   // Grok's PreToolUse hook (mcp-http.js terminalDecision) asks this before letting a
   // run_terminal_command call through: the same approval card as an MCP tool's (renderer/app.js
@@ -549,7 +563,8 @@ function setupAiAgents(deps) {
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
         Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false)])
-          .then(() => { detecting = false; ui()?.send('models-updated'); });
+          .then(() => { detecting = false; ui()?.send('models-updated'); grokWarmup.afterLook(); });
+        grokWarmup.watchResume();
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
     },
