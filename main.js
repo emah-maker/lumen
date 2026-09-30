@@ -345,9 +345,9 @@ async function refreshModels(provider) {
   if (!key) {
     delete providerModels[provider];
   } else {
-    providerModels[provider] = await providers.listModels(provider, key, { cacheFile: provider === 'openrouter' ? OPENROUTER_CACHE() : undefined });
+    providerModels[provider] = await providers.listModels(provider, key, { cacheFile: provider === 'openrouter' ? OPENROUTER_CACHE() : undefined, onRefresh: () => refreshModels(provider) });
   }
-  ui()?.send('models-updated');
+  modelsChanged(); // every sidebar, chat page and Settings
 }
 
 // Is the Anthropic API itself usable: a saved key, an env key, or an `ant auth login` profile.
@@ -385,7 +385,8 @@ function modelOptions() {
       // OpenRouter rows are named as OpenRouter names them (as its catalog shows them); the others from their id.
       const name = (provider === 'openrouter' && providers.openRouterName(model)) || modelNames.prettyModel(model) || model;
       const snap = modelNames.snapshotOf(model);
-      const badges = [...new Set([...(provider === 'openrouter' && /:free$/.test(model) ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
+      const isFree = provider === 'openrouter' && (/:free$/.test(model) || providers.openRouterInfo(model)?.free || providers.openRouterInfo(model)?.pricePerM === 0);
+      const badges = [...new Set([...(isFree ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
       const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
       const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: orInfo.context >= 1e6 ? `${Math.round(orInfo.context / 1e5) / 10}M` : `${Math.round(orInfo.context / 1000)}K` }) : '', orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: orInfo.pricePerM < 1 ? orInfo.pricePerM.toFixed(2) : String(Math.round(orInfo.pricePerM * 10) / 10) })) : ''].filter(Boolean).join(' · ') : '';
       return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };

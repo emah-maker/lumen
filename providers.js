@@ -141,9 +141,9 @@ async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
 }
 
 // Lists chat models the key can use (newest-looking first); falls back to defaults on error.
-async function listModels(provider, apiKey, { cacheFile } = {}) {
+async function listModels(provider, apiKey, { cacheFile, onRefresh = null } = {}) {
   try {
-    if (provider === 'openrouter') return curatedOpenRouter((await openRouterCatalog({ cacheFile })).models);
+    if (provider === 'openrouter') return curatedOpenRouter((await openRouterCatalog({ cacheFile, onRefresh })).models); // (a day-old copy at once, refreshed behind)
     const page = await clientFor(provider, apiKey).models.list();
     const ids = [];
     for await (const m of page) ids.push(String(m.id).replace(/^models\//, ''));

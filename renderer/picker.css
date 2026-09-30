@@ -76,3 +76,7 @@
 .picker-chip:hover { color: var(--text); border-color: color-mix(in srgb, var(--text) 30%, transparent); }
 .picker-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--text); }
 .picker-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.picker-list { overscroll-behavior: contain; }
+/* A group's action ("More models…"): its footer, below a hairline, apart from the models and "Show n more". */
+.picker-item.picker-foot { margin-top: 4px; border-top: 1px solid var(--hairline, rgba(127,127,127,.18)); border-radius: 0 0 8px 8px; }

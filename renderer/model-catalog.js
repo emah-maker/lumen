@@ -75,12 +75,30 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
       vendors.get(vendor).append(o);
     }
     const rank = (v) => { const i = FIRST.indexOf(v); return i === -1 ? FIRST.length : i; };
-    return [...vendors].sort((a, b) => rank(a[0]) - rank(b[0]) || a[1].label.localeCompare(b[1].label)).map(([, g]) => g);
+    // Vendors with one or two models share an "Other vendors" section at the end (each row keeps its vendor's name
+    // as its tag, so a search for it still finds them), instead of dozens of tiny headings.
+    const other = Object.assign(document.createElement('optgroup'), { label: tr('models.otherVendors', 'Other vendors') });
+    const kept = [];
+    for (const [v, g] of vendors) {
+      if (FIRST.includes(v) || g.children.length > 2) { kept.push([v, g]); continue; }
+      for (const o of [...g.children]) { o.dataset.provider = g.label; other.append(o); }
+    }
+    const out = kept.sort((a, b) => rank(a[0]) - rank(b[0]) || a[1].label.localeCompare(b[1].label)).map(([, g]) => g);
+    if (other.children.length) out.push(other);
+    return out;
   }
+  let shownKey = '';
   async function open(query = '') {
     ensure();
     select.value = mainSelect.value;
-    if (select.options.length) { picker.open(query); return; }
+    if (select.options.length) {
+      picker.open(query);
+      // A fresher list than the one drawn (main refreshes a day-old copy behind the scenes): swapped in quietly.
+      const models = await Promise.resolve().then(fetchModels).catch(() => null);
+      const key = models?.length ? `${models.length}|${models[0].id}|${models[models.length - 1].id}` : '';
+      if (key && key !== shownKey && !picker.menu.hidden) { shownKey = key; select.replaceChildren(...build(models)); select.value = mainSelect.value; picker.refresh(); }
+      return;
+    }
     // First time: the list opens at once, saying it is loading, and fills in when the catalog arrives (one fetch,
     // however often it is asked for meanwhile).
     picker.setLoading(true);
@@ -91,6 +109,7 @@ window.lumenModelCatalog = ({ mainSelect, anchor, host, fetchModels, onBack = nu
     loading = false;
     picker.setLoading(false);
     if (!models?.length) { const open = !picker.menu.hidden; picker.close(open); if (open) onFail?.(tr('models.loadFailed', 'Couldn’t load the model list.')); return; }
+    shownKey = `${models.length}|${models[0].id}|${models[models.length - 1].id}`;
     select.replaceChildren(...build(models));
     select.value = mainSelect.value;
     picker.refresh();
