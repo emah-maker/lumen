@@ -1871,6 +1871,14 @@ function closeTab(id, { destroyed = false } = {}) {
   if (tab.view) win.contentView.removeChildView(tab.view); // no view to remove if it was sleeping
   if (!destroyed && alive(tab)) tab.view.webContents.close();
   if (tabs.length === 0) {
+    // Closing a window's last tab closes the window, as in Chrome. (A page that went away on its own, a crash,
+    // leaves a fresh tab instead: the window is never lost to that.)
+    if (!destroyed) {
+      const rec = curRec;
+      sendTabs();
+      setImmediate(() => { if (rcAlive(rec)) rec.win.close(); });
+      return;
+    }
     openTab();
     return;
   }
