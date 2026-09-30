@@ -3,7 +3,8 @@
 //   "Downloading Lumen vX… n%"           staging the zip (automatic), with "Restart to update": clicking
 //                                        it early queues the update ("… restarts when ready")
 //   "Lumen vX is ready · Restart to update"  one click applies it and relaunches
-//   "Couldn't update to vX · Try again"  the download, checksum or unpacking failed
+//   "Couldn't update to vX · Try again"  the download, checksum or unpacking failed ("Couldn't install vX"
+//                                        when the swap itself failed); the reason is the pill's title and aria-description
 //   "Move to Applications to update · Lumen vX · Move and update"  a Mac copy running from the dmg or
 //                                        Downloads (or a standard user's /Applications, ~/Applications):
 //                                        one click installs the update into Applications and relaunches
@@ -36,14 +37,18 @@
     const offer = u.status === 'available' && (u.relocate || !u.canSelfUpdate || !u.autoDownload);
     pill.hidden = Boolean(u.disabled) || (u.dismissed && !moveFailed) || !(ready || busy || failed || offer || moveFailed);
     if (pill.hidden) return;
-    const key = moveFailed ? '' : ready ? 'updates.ready' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.version ? 'updates.failed' : 'updates.installFailed')
+    const key = moveFailed ? '' : ready ? 'updates.ready' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.installFailed ? (u.version ? 'updates.installFailedVersion' : 'updates.installFailed') : 'updates.failed')
       : u.relocate === 'user' ? 'updates.moveToUserApps' : u.relocate ? 'updates.moveToUpdate' : 'updates.available';
     text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: u.progress || 0 });
-    pill.title = failed && u.error ? window.t('updates.failedWhy', { reason: u.error }) : ''; // the short reason on hover
+    // The short reason: on hover (title) and for keyboard, touch and screen-reader users (aria-description). A failed
+    // swap reads as the same sentence Settings shows.
+    const why = failed && u.error ? (u.installFailed ? window.t(u.version ? 'updates.installFailedWhy' : 'updates.installFailedNoVersionWhy', { version: u.version, reason: u.error.replace(/[.\s]+$/, '') }) : window.t('updates.failedWhy', { reason: u.error })) : '';
+    pill.title = why;
+    if (why) pill.setAttribute('aria-description', why); else pill.removeAttribute('aria-description');
     action.hidden = busy && u.queued; // queued: nothing left to click
     action.disabled = Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
     action.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
-    action.title = ready || busy ? window.t(u.blocked ? 'updates.restart.titleBlocked' : 'updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
+    action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => render(await api.apply()));
   close.addEventListener('click', async () => render(await api.dismiss()));

@@ -166,6 +166,17 @@ async function readBundleVersion(bundle, { readFile = fs.promises.readFile, exec
   return null;
 }
 
+// The same, synchronously (will-quit can't wait). `readFile`, `exec` and `platform` are injectable.
+function readBundleVersionSync(bundle, { readFile = fs.readFileSync, exec = execFileSync, platform = process.platform } = {}) {
+  const plist = path.posix.join(bundle, 'Contents', 'Info.plist');
+  let raw;
+  try { raw = readFile(plist); } catch { return null; }
+  const v = plistVersion(raw);
+  if (v) return v;
+  if (platform !== 'darwin') return null;
+  try { return plistVersion(exec('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', plist], { timeout: 3000 })); } catch { return null; }
+}
+
 // Installing `incoming` over an existing Lumen of version `existing` would lose nothing only when
 // the existing one is older. An unreadable version (null) doesn't block.
 const keepExisting = (existing, incoming) => Boolean(existing) && !isNewer(incoming, existing);
@@ -245,12 +256,7 @@ function createUpdates(deps) {
     exists: (p) => fs.existsSync(p),
     version: (bundle) => readBundleVersion(bundle),
     // XML plist directly; a binary one (darwin) through plutil; else null and the check is skipped
-    versionSync: (bundle) => {
-      const plist = path.posix.join(bundle, 'Contents', 'Info.plist');
-      try { const v = plistVersion(fs.readFileSync(plist)); if (v) return v; } catch { return null; }
-      if (process.platform !== 'darwin') return null;
-      try { return plistVersion(execFileSync('plutil', ['-convert', 'xml1', '-o', '-', plist], { timeout: 3000 })); } catch { return null; }
-    },
+    versionSync: (bundle) => readBundleVersionSync(bundle),
     running: (bundle) => runningFrom(bundle),
     dialog: (o) => require('electron').dialog.showMessageBox(o),
     // The other Lumen can't start while this one holds the single-instance lock, so it is opened a
@@ -289,12 +295,12 @@ function createUpdates(deps) {
   let relaunchOnQuit = false; // the user clicked Restart: the swap started at will-quit reopens Lumen
   let queued = false; // clicked while downloading: apply and relaunch as soon as it is ready
   let checkRunning = false; // a check is in flight (the status may stay as it was, see check())
+  let checkPromise = null; // that check, so Try again can wait for it instead of doing nothing
   let retrying = false; // Try again's re-check is running: the update it finds is downloaded and applied as a queued click would
-  let installFailed = false; // the last swap failed and left no marker naming the version
+  let installFailed = false; // the last swap failed (the marker may or may not name its version)
   let preparing = false; // checking the Applications folder before a relocated download
   let relocateTo = null; // the Lumen.app a relocated update is being installed to
   let moveError = ''; // why a move / relocated install couldn't go ahead (shown until dismissed or retried)
-  let blockedVersion = null; // the version the last swap failed on: not retried on quit (that would loop)
   const errFile = () => path.join(app.getPath('userData'), 'update-error.txt');
 
   const autoDownload = () => deps.prefs().autoDownloadUpdates !== false;
@@ -313,7 +319,6 @@ function createUpdates(deps) {
     relocate: relocate(),
     queued,
     checking: checkRunning, // a check is in flight even when the status underneath stays error/available/downloaded
-    blocked: Boolean(blockedVersion) && blockedVersion === state.version, // a quit won't retry this swap
     installFailed,
     moveError,
     asset: state.version && !canSelfUpdate() && !relocate() ? manualAsset({ kind, version: state.version, arch, files: info?.files }) : null,
@@ -351,7 +356,6 @@ function createUpdates(deps) {
     (cleaning ? cleaning.then(go) : Promise.resolve().then(go)) // not while an old staging folder is still being deleted
       .then((s) => {
         staged = s;
-        blockedVersion = null; // a fresh stage replaces the one that failed to swap: a quit may install it again
         setState({ status: 'downloaded', progress: 100 });
         if (queued) applyNow(); // the click that came while it downloaded
       })
@@ -414,9 +418,12 @@ function createUpdates(deps) {
     if (response === 0 && state.version === version) await apply();
   }
 
-  async function check() {
-    if (reason) return snapshot();
-    if (checkRunning || ['checking', 'downloading'].includes(state.status)) return snapshot();
+  function check() {
+    if (reason) return Promise.resolve(snapshot());
+    if (checkRunning || ['checking', 'downloading'].includes(state.status)) return Promise.resolve(snapshot());
+    return (checkPromise = runCheck().finally(() => { checkPromise = null; }));
+  }
+  async function runCheck() {
     const u = getUpdater();
     checkRunning = true;
     publish(); // the renderers show "Checking…" even while the status stays as it was
@@ -488,8 +495,8 @@ function createUpdates(deps) {
     // look again first; the update-available that follows downloads and applies it (retrying), so
     // Try again stays one click whatever the copy or the automatic-download setting.
     if (state.status === 'error' && (state.version || installFailed) && !info) {
-      retrying = true;
-      try { return await check(); } finally { retrying = false; }
+      retrying = true; // also when a background check is already running: its find is downloaded and applied too
+      try { return await (checkPromise || check()); } finally { retrying = false; }
     }
     const act = clickAction({ disabled: reason, canSelfUpdate: canSelfUpdate(), relocate: relocate(), hasVersion: Boolean(state.version), status: state.status, queued, staged: Boolean(staged), autoDownload: autoDownload() });
     if (act === 'move') return moveToApplications();
@@ -513,7 +520,6 @@ function createUpdates(deps) {
   // process to exit. Reopens Lumen only for the Restart click, not for a plain quit.
   function applyOnQuit() {
     if (reason || swapStarted || !(canSelfUpdate() || relocate()) || state.status !== 'downloaded' || !staged) return false;
-    if (!relaunchOnQuit && state.version && state.version === blockedVersion) return false; // cleared by the next fresh stage
     // A relocated install re-checks what is at the target now: a newer Lumen may have been put there
     // since the download, and it must not be replaced. (Sync: will-quit can't wait.)
     if (relocateTo && io.exists(relocateTo) && keepExisting(io.versionSync(relocateTo), state.version)) {
@@ -544,7 +550,7 @@ function createUpdates(deps) {
       const found = reloc ? null : zip.readStaged?.(execPath);
       const marked = found?.version || zip.readMarker?.(execPath)?.version;
       // the failed swap's version: Settings and the pill say what couldn't be installed, and Try again looks it up
-      if (lastSwapFailed && marked && !blockedVersion) { blockedVersion = marked; state.version = marked; }
+      if (lastSwapFailed && marked && !state.version) state.version = marked;
       if (found && !lastSwapFailed && isNewer(found.version, app.getVersion())) {
         staged = found.staged;
         Object.assign(state, { status: 'downloaded', version: found.version, progress: 100, error: '' });
@@ -554,7 +560,7 @@ function createUpdates(deps) {
       }
       stagingDirs.push(zip.swapPaths(execPath).staging);
     }
-    if (lastSwapFailed && !state.version) installFailed = true; // no marker: say the install failed, not the check
+    if (lastSwapFailed) installFailed = true; // say the install failed (with the version when a marker named it), not the check
     const done = Promise.all(stagingDirs.map((d) => fs.promises.rm(d, { recursive: true, force: true }).catch(() => {}))).then(() => { if (cleaning === done) cleaning = null; });
     cleaning = done;
   }
@@ -623,7 +629,7 @@ function createUpdates(deps) {
     openNewer: () => openNewerUserCopy(),
     setState: (patch) => setState(patch),
     willQuit: () => applyOnQuit(),
-    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; blockedVersion = null; checkRunning = false; retrying = false; installFailed = false; publish(); },
+    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; checkRunning = false; checkPromise = null; retrying = false; installFailed = false; publish(); },
   } : undefined;
 
   return { start, check, apply, applyOnQuit, state: snapshot, testHooks };
@@ -631,5 +637,5 @@ function createUpdates(deps) {
 
 module.exports = {
   createUpdates, disabledReason, installKind, updateMode, macPlacement, isNewer, stageAsset, manualAsset,
-  plistVersion, readBundleVersion, keepExisting, runningFrom, pickAppsDir, keepMessage, clickAction, shouldOfferMove, RELEASES_URL,
+  plistVersion, readBundleVersion, readBundleVersionSync, keepExisting, runningFrom, pickAppsDir, keepMessage, clickAction, shouldOfferMove, RELEASES_URL,
 };
