@@ -39,6 +39,7 @@ const DEFAULTS = {
   theme: 'system', // nativeTheme.themeSource: also what websites see as prefers-color-scheme
   accentColor: 'blue', // [look] a preset from ACCENTS, or '#rrggbb'
   newTabBackground: 'plain', // [look] plain | aurora | dusk | ocean | forest | sunset | graphite | image
+  newTabWidgetGlass: 'solid', // [look] the widget cards' background: solid | frosted (see-through, blurred) | clear (as transparent as it stays readable)
   newTabEffect: 'none', // [look] an animated layer over the background: none | particles | stars | bubbles | snow
   newTabEffectColor: 'auto', // [look] auto (white, or the text color on Plain) | accent | rainbow | #rrggbb
   newTabEffectAmount: 'normal', // [look] few | normal | many
@@ -141,6 +142,7 @@ function validate(key, value) {
     case 'accentColor': return ACCENTS[value] || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabBackground': return pick(value, NEW_TAB_BACKGROUNDS, null);
     case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
+    case 'newTabWidgetGlass': return pick(value, ['solid', 'frosted', 'clear'], null);
     case 'newTabEffectColor': return ['auto', 'accent', 'rainbow'].includes(value) || HEX.test(String(value)) ? String(value).toLowerCase() : null;
     case 'newTabEffectAmount': case 'newTabEffectSpeed': case 'newTabEffectSize': return pick(value, EFFECT_LEVELS[key], null);
     case 'newTabClockSize': return WS.cleanClockSize(value);
@@ -284,6 +286,7 @@ function create(deps) {
       clockStyle: { style: p.newTabClockStyle, hours: p.newTabClockHours, seconds: p.newTabClockSeconds, date: p.newTabClockDate, card: p.newTabClockCard, shadow: p.newTabClockShadow, greeting: p.newTabGreetingFont },
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked === true,
+      widgetGlass: p.newTabWidgetGlass,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };
   }

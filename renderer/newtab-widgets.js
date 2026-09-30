@@ -40,6 +40,7 @@ function skyIcon(code, day = true) {
   return wrap.firstChild;
 }
 const ICON_OPEN = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5h5v5M9.5 2.5 3 9"/></svg>';
+const ICON_EDIT = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.6 2.2l2.2 2.2L4.2 10H2v-2.2z"/></svg>';
 const ICON_REFRESH = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 6a4 4 0 1 1-1.2-2.85M9.6 1.6v2.2H7.4"/></svg>';
 const ICON_LOCATE = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><path d="M6 .8v1.8M6 9.4v1.8M.8 6h1.8M9.4 6h1.8"/></svg>';
 const ICON_REPEAT = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 5.5V5a2 2 0 0 1 2-2h5M9 1.5 10.5 3 9 4.5M10 6.5V7a2 2 0 0 1-2 2H3M3 10.5 1.5 9 3 7.5"/></svg>';
@@ -61,6 +62,8 @@ const el = (tag, cls, text) => {
   if (text !== undefined && text !== null) e.textContent = String(text);
   return e;
 };
+// Only the two TradingView embed pages features/tradingview-view.js builds.
+const tvUrl = (u) => { const s = safeUrl(u); if (!s) return null; try { const p = new URL(s); return p.hostname === 's.tradingview.com' && !p.port && !p.username && ['/widgetembed/', '/embed-widget/mini-symbol-overview/'].includes(p.pathname) ? s : null; } catch { return null; } };
 const safeUrl = (u) => (typeof u === 'string' && u.length < 2000 && /^https:\/\/[^\s"'<>\\]+$/i.test(u) ? u : null);
 // A github.com address (an issue, a pull request or one of its list pages), or null.
 const githubUrl = (u) => (typeof u === 'string' && u.length < 300 && /^https:\/\/github\.com\/[A-Za-z0-9_./#-]{0,250}$/.test(u) ? u : null);
@@ -478,7 +481,7 @@ const WIDGET_RENDERERS = {
       row.append(icon, main, time);
       if (show.sun !== false) { row.append(sun); row.classList.add('has-sun'); }
       list.append(row);
-      clockRows.set(row, { tz: p.tz, days: p.days, opts, icon, time, date: sub.querySelector('.wc-date'), off: sub.querySelector('.wc-off'), sun: show.sun !== false ? sun : null, sunKey: '', dayKey: '' });
+      clockRows.set(row, { tz: p.tz, days: p.days, opts, icon, time, date: sub.querySelector('.wc-date'), off: sub.querySelector('.wc-off'), sun: show.sun !== false ? sun : null, sunKey: '', dayKey: '', born: Date.now(), seen: false });
     }
     card.body.append(list);
     tickClocks();
@@ -801,6 +804,155 @@ const WIDGET_RENDERERS = {
   stocks: (w, card) => marketCard(w, card),
   crypto: (w, card) => marketCard(w, card),
 
+  // TradingView's own chart in a sandboxed frame (features/tradingview-view.js makes both addresses).
+  tradingview(w, card) {
+    const d = w.data;
+    const symbol = text(d.symbol, 60) || 'Chart';
+    const dark = d.theme === 'dark' || (d.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+    const url = tvUrl(dark ? d.dark : d.light);
+    if (!url) { card.body.append(el('p', 'w-note', 'This chart can’t be shown.')); return; }
+    card.head.append(openLink(`https://www.tradingview.com/symbols/${encodeURIComponent(symbol.replace(':', '-'))}/`, 'Open', `${symbol} on TradingView`));
+    card.el.classList.add('embed', 'tradingview');
+    const frame = document.createElement('iframe');
+    frame.className = 'w-frame';
+    // No top navigation and no Lumen privileges; popups (TradingView's own links) open as tabs.
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+    frame.referrerPolicy = 'no-referrer';
+    frame.loading = 'lazy';
+    frame.title = `${symbol} chart from TradingView`;
+    frame.src = url;
+    card.body.append(frame);
+  },
+
+  // Custom recipes (features/custom-widget.js): plain strings only, as numbers or a list.
+  custom(w, card) {
+    const d = w.data;
+    card.el.classList.add('custom');
+    if (d.view === 'stats') {
+      const grid = el('div', 'cw-stats');
+      for (const st of (Array.isArray(d.stats) ? d.stats : []).slice(0, 6)) {
+        const cell = el('div', 'cw-stat');
+        cell.append(el('span', 'cw-value', text(st?.value, 60) || '–'), el('span', 'cw-label', text(st?.label, 40)));
+        grid.append(cell);
+      }
+      card.body.append(grid);
+    } else {
+      const items = (Array.isArray(d.items) ? d.items : []).slice(0, 20);
+      if (!items.length) { card.body.append(el('p', 'w-note', 'Nothing to show right now.')); return; }
+      const ul = el('ul', 'cw-list');
+      for (const it of items) {
+        const li = el('li');
+        const url = safeUrl(it?.url);
+        const t = text(it?.title, 200);
+        li.append(url ? link(url, t) : el('span', 'cw-title', t));
+        if (text(it?.detail, 80)) li.append(el('span', 'cw-detail', text(it.detail, 80)));
+        ul.append(li);
+      }
+      card.body.append(ul);
+    }
+    if (text(d.host, 80)) card.body.append(el('p', 'cw-source', `From ${text(d.host, 80)}`));
+  },
+
+  // Notes: saved as you type (a second after the last key) and when you leave the box.
+  notes(w, card) {
+    const d = w.data;
+    card.el.classList.add('notes');
+    const area = el('textarea', 'nt-area');
+    area.maxLength = Number.isFinite(d.max) ? d.max : 4000;
+    area.placeholder = 'Write something…';
+    area.setAttribute('aria-label', `${w.title || 'Notes'}: note text`);
+    area.spellcheck = true;
+    const draft = noteDrafts.get(w.id);
+    area.value = draft ? draft.text : text(d.text, 4000);
+    let timer = null;
+    const save = () => {
+      clearTimeout(timer);
+      timer = null;
+      const d0 = noteDrafts.get(w.id);
+      if (d0 && d0.text !== d0.saved) { d0.saved = d0.text; widgetAct(w.id, 'note', { text: d0.text }); }
+    };
+    area.addEventListener('input', () => {
+      noteDrafts.set(w.id, { text: area.value, saved: noteDrafts.get(w.id)?.saved ?? text(d.text, 4000), focus: true, start: area.selectionStart, end: area.selectionEnd });
+      clearTimeout(timer);
+      timer = setTimeout(save, 1000);
+    });
+    area.addEventListener('keydown', (e) => e.stopPropagation()); // typing never reaches the page's shortcuts
+    area.addEventListener('select', () => { const dr = noteDrafts.get(w.id); if (dr) { dr.start = area.selectionStart; dr.end = area.selectionEnd; } });
+    area.addEventListener('focus', () => { const dr = noteDrafts.get(w.id) || { text: area.value, saved: area.value }; dr.focus = true; noteDrafts.set(w.id, dr); });
+    area.addEventListener('blur', () => { const dr = noteDrafts.get(w.id); if (dr) dr.focus = false; save(); });
+    card.body.append(area);
+    // A redraw (the save coming back) must not take the box away from someone typing in it.
+    if (draft?.focus) requestAnimationFrame(() => { area.focus(); try { area.setSelectionRange(draft.start ?? area.value.length, draft.end ?? area.value.length); } catch { /* nothing to restore */ } });
+    if (draft && draft.text === text(d.text, 4000) && !draft.focus) noteDrafts.delete(w.id);
+  },
+
+  countdown(w, card) {
+    const d = w.data;
+    card.el.classList.add('countdown');
+    const big = el('div', 'cd-big');
+    const unit = el('div', 'cd-unit');
+    const when = el('div', 'cd-when');
+    const target = Number(d.target);
+    if (!Number.isFinite(target)) { card.body.append(el('p', 'w-note', 'No date set.')); return; }
+    when.textContent = new Date(target).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', ...(d.time ? { hour: 'numeric', minute: '2-digit' } : {}) });
+    const paint = (now) => {
+      const ms = target - now;
+      const days = Math.floor(Math.abs(ms) / 86400e3);
+      const past = ms < 0;
+      if (!past && ms < 86400e3) {
+        const h = Math.floor(ms / 3600e3); const m = Math.floor((ms % 3600e3) / 60e3); const sec = Math.floor((ms % 60e3) / 1000);
+        big.textContent = `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+        unit.textContent = d.label ? `until ${text(d.label, 60)}` : 'to go';
+      } else if (past && days === 0) {
+        big.textContent = 'Today';
+        unit.textContent = text(d.label, 60);
+      } else {
+        big.textContent = days.toLocaleString();
+        unit.textContent = `${days === 1 ? 'day' : 'days'} ${past ? 'since' : 'until'} ${text(d.label, 60) || 'the date'}`;
+      }
+    };
+    paint(Date.now());
+    liveTicks.set(card.el, paint);
+    card.body.append(big, unit, when);
+  },
+
+  timer(w, card) {
+    const d = w.data;
+    card.el.classList.add('timer');
+    const phase = el('div', 'tm-phase');
+    const clock = el('div', 'tm-clock');
+    const bar = el('div', 'tm-bar');
+    const fill = el('i');
+    bar.append(fill);
+    const btns = el('div', 'tm-btns');
+    const btn = (label, arg, primary) => {
+      const b = el('button', primary ? 'w-btn primary' : 'w-btn', label);
+      b.type = 'button';
+      b.addEventListener('click', () => widgetAct(w.id, 'timer', { arg }));
+      return b;
+    };
+    const fmt = (ms) => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+    const total = Number(d.total) || 1;
+    const rest = d.phase === 'rest';
+    phase.textContent = d.pomodoro ? `${rest ? 'Break' : 'Focus'}${d.rounds ? ` · ${d.rounds} done` : ''}` : 'Timer';
+    const paint = (now) => {
+      const left = d.state === 'running' ? Math.max(0, d.endsAt - now) : d.state === 'done' ? 0 : Number(d.left) || 0;
+      clock.textContent = fmt(left);
+      fill.style.width = `${Math.round((1 - left / total) * 100)}%`;
+      if (d.state === 'running' && left === 0 && !card.el.classList.contains('tm-ended')) { card.el.classList.add('tm-ended'); widgetAct(w.id, 'refresh'); }
+    };
+    if (d.state === 'running') btns.append(btn('Pause', 'pause', true), btn('Reset', 'reset'));
+    else if (d.state === 'paused') btns.append(btn('Resume', 'start', true), btn('Reset', 'reset'));
+    else if (d.state === 'done') {
+      card.el.classList.add('tm-done');
+      phase.textContent = d.pomodoro ? (rest ? 'Break over' : 'Time for a break') : 'Time’s up';
+      btns.append(btn(d.pomodoro ? (rest ? 'Start focus' : 'Start break') : 'Again', 'start', true), btn('Reset', 'reset'));
+    } else btns.append(btn('Start', 'start', true), ...(d.pomodoro ? [btn(rest ? 'Skip to focus' : 'Skip to break', 'skip')] : []));
+    paint(Date.now());
+    if (d.state === 'running') liveTicks.set(card.el, paint);
+    card.body.append(phase, clock, bar, btns);
+  },
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -1034,6 +1186,8 @@ function buildCard(w) {
   if (w.data && typeof w.data === 'object') {
     try {
       WIDGET_RENDERERS[w.type]({ ...w, title }, card);
+      // Kinds the page can edit itself get a pencil (renderer/newtab-setup.js); the rest are edited in Settings.
+      if (w.setup && window.widgetSetup?.can(w.type)) card.head.append(iconButton(ICON_EDIT, `Edit ${title}`, () => { const t = window.widgetSetupTarget(w.id); if (t) window.widgetSetup.open(t); }));
     } catch (err) {
       console.error('widget', w.type, err);
       body.replaceChildren(el('p', 'w-note', 'This widget couldn’t be shown.'));
@@ -1080,7 +1234,7 @@ function renderWidgets(list) {
   const valid = stacks ? stacks.prepare(known, 12) : known.slice(0, 12);
   lastList.current = valid;
   const cards = valid.map((w) => {
-    const { span, height, layout, updated, warning, colors, stack, top, ...rest } = w; // a new size, place, age or turn in a stack is applied to the card as it is
+    const { span, height, layout, updated, warning, colors, setup, stack, top, ...rest } = w; // a new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked)
     const key = JSON.stringify(rest);
     const kept = shownWidgets.get(w.id);
     const card = kept && kept.key === key ? kept.el : buildCard(w);
@@ -1136,10 +1290,16 @@ function tickClocks() {
   if (!WCK) return;
   const now = Date.now();
   for (const [row, c] of clockRows) {
-    if (!row.isConnected) { clockRows.delete(row); continue; }
+    // A card is drawn before it is put on the page: only a row that was on the page and left it is gone.
+    if (row.isConnected) c.seen = true;
+    else if (c.seen || now - c.born > 10e3) { clockRows.delete(row); continue; }
     try {
       const t = WCK.timeText(now, c.tz, c.opts);
-      if (c.time.textContent !== t) c.time.textContent = t;
+      if (c.shown !== t) { // the digits big, AM/PM small
+        c.shown = t;
+        const m = /^(.*?)\s*([AaPp]\.?\s?[Mm]\.?)$/.exec(t);
+        if (m) c.time.replaceChildren(m[1], el('span', 'wc-ampm', m[2])); else c.time.textContent = t;
+      }
       const parts = WCK.zoneParts(now, c.tz);
       const day = WCK.dayFor(c.days, parts.date);
       const up = WCK.isDaylight(parts, day);
@@ -1157,6 +1317,17 @@ function tickClocks() {
   }
 }
 setInterval(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 1000);
+// Countdown and Timer cards count seconds here between reads (a card that left the page drops out).
+const liveTicks = new Map(); // card element -> paint(now)
+const noteDrafts = new Map(); // Notes card id -> { text, saved, focus, start, end }: what is typed survives a redraw
+setInterval(() => {
+  if (document.hidden || !liveTicks.size) return;
+  const now = Date.now();
+  for (const [cardEl, paint] of liveTicks) {
+    if (!cardEl.isConnected) { liveTicks.delete(cardEl); continue; }
+    try { paint(now); } catch (err) { console.error('widget tick', err); liveTicks.delete(cardEl); }
+  }
+}, 1000);
 // Show as many places as fit whole (at least the first); the rest are hidden, so the list never needs a scrollbar.
 function fitClockRows(body, list) {
   if (!body.isConnected) return;
@@ -1176,7 +1347,7 @@ const SLACK = 2; // px of rounding that is not overflow
 const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
 const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
 const fitOff = (n) => n.classList.add('fit-off');
-const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'embed', 'muse', 'stocks', 'crypto'];
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'custom'];
 function fitPlace(sec, cycle) {
   // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
   for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {
@@ -1325,4 +1496,6 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) tick
   }, 0));
 }
 window.renderWidgets = renderWidgets;
+// The page's own editor for card id, or null (a kind it can't edit, or a system card).
+window.widgetSetupTarget = (id) => { const w = lastList.current.find((x) => x.id === id); return w && w.setup && window.widgetSetup?.can(w.type) ? { id: w.id, type: w.type, title: w.title, setup: w.setup } : null; };
 window.widgetTypes = () => Object.keys(WIDGET_RENDERERS); // the kinds of card this file can draw (newtab-edit.js's Add widget picker)

@@ -87,6 +87,16 @@ const STRINGS = {
   'newtab.edit.type.stocks.hint': 'A watchlist and a paper portfolio',
   'newtab.edit.type.crypto': 'Crypto',
   'newtab.edit.type.crypto.hint': 'Coin prices and a paper portfolio',
+  'newtab.edit.type.tradingview': 'TradingView',
+  'newtab.edit.type.tradingview.hint': 'A live TradingView chart for a symbol',
+  'newtab.edit.type.notes': 'Notes',
+  'newtab.edit.type.notes.hint': 'A note that saves as you type',
+  'newtab.edit.type.countdown': 'Countdown',
+  'newtab.edit.type.countdown.hint': 'Days until a date',
+  'newtab.edit.type.timer': 'Timer',
+  'newtab.edit.type.timer.hint': 'A timer or Pomodoro focus and break',
+  'newtab.edit.type.custom': 'Custom',
+  'newtab.edit.type.custom.hint': 'Your own card from a JSON recipe',
   'newtab.edit.type.other.hint': 'Set up in Settings',
 };
 // Label and one line for the kinds of widget this file knows; another kind gets its name and a generic line.
@@ -103,6 +113,11 @@ const TYPE_INFO = {
   muse: ['newtab.edit.type.muse', 'newtab.edit.type.muse.hint'],
   stocks: ['newtab.edit.type.stocks', 'newtab.edit.type.stocks.hint'],
   crypto: ['newtab.edit.type.crypto', 'newtab.edit.type.crypto.hint'],
+  tradingview: ['newtab.edit.type.tradingview', 'newtab.edit.type.tradingview.hint'],
+  notes: ['newtab.edit.type.notes', 'newtab.edit.type.notes.hint'],
+  countdown: ['newtab.edit.type.countdown', 'newtab.edit.type.countdown.hint'],
+  timer: ['newtab.edit.type.timer', 'newtab.edit.type.timer.hint'],
+  custom: ['newtab.edit.type.custom', 'newtab.edit.type.custom.hint'],
   embed: ['newtab.edit.type.embed', 'newtab.edit.type.embed.hint'],
 };
 

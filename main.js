@@ -1385,7 +1385,7 @@ function wireView(tab, url, history = null) {
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
     tab.favicon = tab.favicons[0] || null;
   });
-  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url); });
+  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc); });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
@@ -2512,12 +2512,18 @@ function askFromHome(event, url, tabId) {
 
 // [widgets] The new-tab page's widget buttons (a Todoist checkbox, Refresh) load the page itself
 // with ?widget=<id>&do=…, the same way Ask AI does: cancel that and do it here.
-function widgetAction(event, url) {
+function widgetAction(event, url, wc = null) {
   if (!isNewTab(url)) return false;
   const action = widgets.actionFrom(url);
   if (!action) return false;
   event.preventDefault();
-  if (!action.invalid) widgets.act(action).catch((err) => console.error('[lumen] widget action:', err.message));
+  if (action.invalid) return true;
+  const done = widgets.act(action);
+  // The page's own add/edit form (do=setup) hears how it went: saved, or what to fix.
+  if (action.do === 'setup') {
+    done.then((r) => { if (wc && !wc.isDestroyed() && isNewTab(wc.getURL())) wc.executeJavaScript(`window.widgetSetupResult?.(${JSON.stringify(r)})`).catch(() => {}); });
+  }
+  done.catch((err) => console.error('[lumen] widget action:', err.message));
   return true;
 }
 

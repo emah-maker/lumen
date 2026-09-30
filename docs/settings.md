@@ -49,6 +49,7 @@ These are set from the sidebar rather than the settings page:
 | Font size | `fontSize` | `16` | `9`, `12`, `16`, `20` or `24` px. Applies to new tabs. |
 | Show bookmark button | `showBookmarkButton` | on | The star in the address bar. Ctrl+D bookmarks either way. |
 | Compact tabs | `compactTabs` | off | Shorter tabs in the tab strip. |
+| Widget cards | `newTabWidgetGlass` | `solid` | The new-tab widget cards' background: `solid`, `frosted` (see-through, blurred) or `clear` (as transparent as stays readable). |
 
 ## Search engine
 

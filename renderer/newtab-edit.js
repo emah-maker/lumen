@@ -233,6 +233,8 @@
         if (entry.kind === 'section') {
           window.widgetAct(entry.id, 'restore');
           say(T('newtab.edit.restored', { title: entry.label }));
+        } else if (window.widgetSetup?.can(entry.type)) {
+          window.widgetSetup.open({ type: entry.type }); // set up right here on the page (renderer/newtab-setup.js)
         } else {
           window.widgetAct('wcreate', 'create', { type: entry.type });
           say(T('newtab.edit.settingUp', { title: entry.label }));
