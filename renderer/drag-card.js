@@ -31,6 +31,8 @@
       $('shot').removeAttribute('src');
       if (imageOk(data.shot, false)) { $('shot').classList.add('loaded', 'instant'); $('shot').src = data.shot; } // taken before the drag: shown at once
       card.style.setProperty('--shot-h', `${Math.max(60, Math.round(Number(data.shotHeight) || 180))}px`);
+      card.style.width = '';
+      card.style.borderRadius = '';
       card.className = `${count > 1 ? 'card many' : 'card'}${data.compact ? ' compact' : ''}${data.bare ? ' bare' : ''}`;
       document.body.classList.toggle('compact', Boolean(data.compact));
       void card.offsetWidth; // start the grow-in from the small state
@@ -47,6 +49,8 @@
     },
     bare() { if (!$('shot').classList.contains('loaded')) card.classList.add('bare'); },
     wait() { card.classList.remove('compact'); card.classList.add('wait'); },
+    // Gliding into its slot: the chip takes the slot's width (and a tab's corners) on the way.
+    land(w) { if (w > 0) { card.style.width = `${Math.max(40, w)}px`; card.style.borderRadius = '8px'; } },
     compact(on) { card.classList.toggle('compact', Boolean(on)); document.body.classList.toggle('compact', Boolean(on)); },
     // 'drop' | 'join' | 'cancel'
     hide(kind) {

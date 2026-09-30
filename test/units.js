@@ -2518,6 +2518,12 @@ async function swapHelperRuns() {
   const other = { ...strip, key: 'v', bounds: { x: 1000, y: 100, width: 800, height: 600 } };
   check('drag: the first strip under the cursor wins', stripHit({ x: 1100, y: 120 }, [strip, other])?.key === 'v');
   check('drag: no strips, no hit', stripHit({ x: 1, y: 1 }, []) === null);
+{
+  const TDM = require('../features/tab-drag-math');
+  const win = [{ key: 'w', bounds: { x: 0, y: 0, width: 800, height: 600 }, bottom: 40, tabs: [{ id: 1, mid: 100 }] }];
+  check('stripHit: reached 6 px below the strip', Boolean(TDM.stripHit({ x: 50, y: 45 }, win)) && !TDM.stripHit({ x: 50, y: 50 }, win));
+  check('stripHit: the hovered strip lets go only ~30 px below it (no flicker along its edge)', Boolean(TDM.stripHit({ x: 50, y: 65 }, win, 6, 'w')) && !TDM.stripHit({ x: 50, y: 75 }, win, 6, 'w'));
+}
   const front = { ...strip, key: 'f', bounds: { x: 50, y: 110, width: 800, height: 600 } };
   check("drag: a front window's page hides the strip behind it", stripHit({ x: 300, y: 115 + 60 }, [front, strip]) === null && stripHit({ x: 300, y: 112 }, [front, strip])?.key === 'f', JSON.stringify(stripHit({ x: 300, y: 175 }, [front, strip])));
   check('drag: a window that takes no tabs (private) blocks the strip behind it', stripHit({ x: 300, y: 120 }, [{ bounds: { x: 0, y: 0, width: 500, height: 500 }, occluder: true }, strip]) === null);

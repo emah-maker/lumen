@@ -422,6 +422,20 @@ function createGhostTab(tab) {
   el.append(inner);
   return el;
 }
+// How wide a group's label is drawn with this name (measured once per name, off screen, as the strip draws it).
+const labelWidths = new Map();
+function groupLabelWidth(group) {
+  const name = String(group?.name || '');
+  if (labelWidths.has(name)) return labelWidths.get(name);
+  const probe = Object.assign(document.createElement('div'), { className: 'group-label' });
+  probe.append(Object.assign(document.createElement('span'), { className: 'group-name', textContent: name }), Object.assign(document.createElement('span'), { className: 'group-count', textContent: '9' }));
+  Object.assign(probe.style, { position: 'absolute', visibility: 'hidden', left: '-9999px' });
+  $('tabs').append(probe);
+  const w = Math.ceil(probe.getBoundingClientRect().width) + 4; // and the gap after it
+  probe.remove();
+  labelWidths.set(name, w);
+  return w;
+}
 function dropSlotWidth() {
   // A group being reordered folds its tabs to nothing (.gathered). Averaging those in collapsed
   // the slot toward the minimum. Only tabs that still have their real width count; with none left
@@ -472,7 +486,7 @@ function showDropSlot(at) {
   el.className = `tab-drop-slot${pinned ? ' pinned' : ''}`;
   el.setAttribute('aria-hidden', 'true');
   const count = Math.max(1, Number(at.tab?.count) || 1);
-  const labelW = at.tab?.group ? 28 + 7 * String(at.tab.group.name || '').length : 0; // a group brings its label too
+  const labelW = at.tab?.group ? groupLabelWidth(at.tab.group) : 0; // a group brings its label too
   const room = count * dropSlotWidth() + 4 * (count - 1) + labelW;
   const many = count === 1 && !labelW ? room : Math.min(strip.clientWidth / 2, room); // several tabs: their room, at most half the strip
   el.style.setProperty('--slot-w', `${at.width ? Math.round(at.width) : pinned ? 40 * count : many}px`);
@@ -507,6 +521,31 @@ function showDropSlot(at) {
   trackIndicator(460);
   el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 }
+// Tabs dropped here from another window arrive invisible while the chip that carries them glides into place, then
+// show as it fades (one picture of the tab at a time); a safety timer shows them whatever happens.
+let arriving = new Set();
+let arrivingTimer = 0;
+const showArrived = () => {
+  clearTimeout(arrivingTimer);
+  arriving = new Set();
+  for (const el of $('tabs').querySelectorAll('.tab.arriving')) el.classList.remove('arriving');
+};
+window.browser.onTabArriving?.(({ ids } = {}) => {
+  arriving = new Set((ids || []).map(Number));
+  clearTimeout(arrivingTimer);
+  arrivingTimer = setTimeout(showArrived, 700);
+});
+window.browser.onTabLanded?.(() => showArrived());
+// Where tabs `ids` sit (the first of them, as wide as all), or the slot kept open for them: for main's landing glide.
+function landingRect(ids) {
+  const els = (ids || []).map((id) => $('tabs').querySelector(`.tab[data-id="${id}"]`)).filter((el) => el && el.getClientRects().length);
+  const el = els[0] || landingSlot?.el || dropSlot?.el;
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  const w = els.length > 1 ? els[els.length - 1].getBoundingClientRect().right - r.left : r.width;
+  return { x: r.left, y: r.top, w, h: r.height };
+}
+window.landingRect = landingRect;
 // A tab from another window held near an edge of this (overflowing) strip: it scrolls, as for a drag within it.
 let dropEdge = 0;
 let dropEdgeTimer = 0;
@@ -1074,7 +1113,7 @@ function faviconImg(el, key, urls, retried = false) {
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
   el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
-    + (selectedTabs.has(tab.id) && !active ? ' selected' : '');
+    + (selectedTabs.has(tab.id) && !active ? ' selected' : '') + (arriving.has(tab.id) ? ' arriving' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
   el.setAttribute('aria-selected', String(active));

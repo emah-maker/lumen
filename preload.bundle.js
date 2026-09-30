@@ -463,6 +463,8 @@ contextBridge.exposeInMainWorld('browser', {
   dragTabStart: (id, grab) => ipcRenderer.send('tab:dragstart', id, grab),
   dragTabEnd: () => ipcRenderer.send('tab:dragend'), // the button came up
   dragTabCancel: () => ipcRenderer.send('tab:dragcancel'), // Escape
+  onTabArriving: on('tab:arriving'), // { ids }: tabs about to land here stay invisible until the chip that carries them arrives
+  onTabLanded: on('tab:landed'), // the chip has landed: they show
   onTabDropAt: on('tab:dropat'), // { beforeId } while a dragged window hovers this strip, null when it leaves
   onTabDragAbort: on('tab:dragabort'), // main gave up on a drag whose release never came
   onTabArrived: on('tab:arrived'),

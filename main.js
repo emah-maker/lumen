@@ -3785,8 +3785,17 @@ function wakeDeferredAside(d) {
 // drop's window can take a moment to show, and a quick second drag reuses the one card window).
 function hideDragCard(d, kind, landing = null) {
   if (!dragCard || dragCard.win.isDestroyed() || dragCard.owner !== d) return;
-  const slot = landing && rcAlive(landing.rec) && d.strips.get(landing.rec)?.slot;
-  if (kind === 'join' && slot && !motionReducedMain() && !TEST_BACKGROUND) { glideCard(d, landing.rec, slot); return; }
+  if (kind === 'join' && landing && rcAlive(landing.rec) && !motionReducedMain() && !TEST_BACKGROUND) {
+    const rec = landing.rec;
+    const ids = JSON.stringify(landing.ids || [d.tabId]);
+    // Where it lands, measured now: the tab itself (placed, still invisible) or else the slot kept open for it.
+    rec.win.webContents.executeJavaScript(`typeof landingRect === 'function' ? landingRect(${ids}) : null`, true).catch(() => null).then((slot) => {
+      if (dragCard?.owner !== d) return;
+      if (slot) glideCard(d, rec, slot, landing.ids);
+      else { cardCall('hide', 'join'); if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); }
+    });
+    return;
+  }
   cardCall('hide', kind);
   const card = dragCard;
   clearTimeout(card.hideTimer);
@@ -3801,6 +3810,7 @@ function glideCard(d, rec, slot) {
   const to = { x: Math.round(content.x + slot.x - CARD_PAD), y: Math.round(content.y + slot.y + (slot.h - CARD_HEAD) / 2 - CARD_PAD) };
   const [x0, y0] = card.win.getPosition();
   cardCall('compact', true);
+  cardCall('land', Math.round(slot.w || 0)); // and takes the slot's width on the way
   const t0 = Date.now();
   const ease = (t) => 1 - (1 - t) ** 3;
   clearInterval(card.glide);
@@ -3811,6 +3821,7 @@ function glideCard(d, rec, slot) {
     if (t < 1) return;
     clearInterval(card.glide);
     cardCall('hide', 'land');
+    if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); // the real tab shows as the chip fades over it
     clearTimeout(card.hideTimer);
     card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && card.owner === d) card.win.hide(); }, 160);
   }, 16);
@@ -3871,7 +3882,7 @@ function setDragHover(d, hit, { cancel = false, chipAs = 'cancel', dropping = fa
     // The window is out of sight over a strip, so the tab itself, as a small chip, stays under the cursor (as in Chrome).
     const tab = tabsOf(d.rec).find((t) => t.id === (d.tabId ?? d.ids?.[0]));
     if (hit && !d.chip && tab) { d.chip = true; showDragCard(d, tab, cursorPoint(), { compact: true, count: d.ghost?.count }); }
-    else if (!hit && d.chip) { d.chip = false; hideDragCard(d, chipAs, chipAs === 'join' ? d.hover0 : null); }
+    else if (!hit && d.chip) { d.chip = false; if (chipAs !== 'join') hideDragCard(d, chipAs); } // a merge lands its chip once the tabs are placed
   }
 }
 function tickTabDrag() {
@@ -3883,7 +3894,7 @@ function tickTabDrag() {
   const cursor = cursorPoint();
   if (!d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y) { d.lastCursor = cursor; d.movedAt = Date.now(); }
   // Measured from the last time the mouse moved: someone holding still over a strip isn't cut off.
-  if (Date.now() - (d.movedAt || d.started) > tabDragTimeoutMs) {
+  if (Date.now() - (d.movedAt || d.started) > (d.single && !d.hover ? Math.min(tabDragTimeoutMs, 30000) : tabDragTimeoutMs)) {
     d.rec.win.webContents.send('tab:dragabort'); // the strip lets go of its drag, and shows the tab again
     setDragHover(d, null);
     finishTabDrag(d.card ? 'cancel' : 'commit');
@@ -3967,6 +3978,8 @@ function finishTabDrag(reason) {
       const all = tabsOf(rec).filter((t) => !t.closing).map((t) => t.id);
       const groups = [...new Set(tabsOf(rec).map((t) => t.groupId).filter(Boolean))].map((g) => groupForMove(rec, g)).filter(Boolean);
       const dst = target.rec;
+      if (d.chip && !motionReducedMain() && !TEST_BACKGROUND) dst.win.webContents.send('tab:arriving', { ids: all });
+      d.mergeIds = all;
       let index = at === -1 ? undefined : at;
       if (groups.length && index !== undefined) index = withWindow(dst, () => outsideGroups(index)); // its groups don't split one there
       const merged = batchTabs(() => {
@@ -3980,6 +3993,9 @@ function finishTabDrag(reason) {
         return ok;
       }); // one update
       if (!merged && rcAlive(rec)) { try { rec.win.setOpacity(1); rec.win.show(); rec.win.focus(); } catch {} } // it didn't happen: the window comes back
+      // The chip lands in the tabs' place (they show as it arrives), or goes if the merge didn't happen.
+      if (merged) hideDragCard(d, 'join', { rec: dst, ids: all });
+      else { hideDragCard(d, 'cancel'); if (rcAlive(dst)) dst.win.webContents.send('tab:landed'); }
     } else {
       rec.win.focus();
     }
@@ -4025,7 +4041,12 @@ function finishCardDrag(d, reason, target) {
       wakeDeferredAside(d); // the neighbour loads only if the dragged tab did not come back to the front
     } else {
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
-      if (moveTabsBetween(src, target.rec, ids, at === -1 ? undefined : at, { active: d.tabId, group: d.group })) {
+      const gliding = !motionReducedMain() && !TEST_BACKGROUND && dragCard?.owner === d;
+      if (gliding) target.rec.win.webContents.send('tab:arriving', { ids });
+      d.landed = moveTabsBetween(src, target.rec, ids, at === -1 ? undefined : at, { active: d.tabId, group: d.group });
+      if (!d.landed && rcAlive(target.rec)) target.rec.win.webContents.send('tab:dropat', { cancel: true });
+      if (!d.landed && gliding) target.rec.win.webContents.send('tab:landed');
+      if (d.landed) {
         // Dropped right after a group's label in the other window: into that group (the slot showed it inside).
         if (!d.group && !target.outside && target.beforeId != null) withWindow(target.rec, () => {
           const g = tabs.find((t) => t.id === target.beforeId)?.groupId;
@@ -4035,7 +4056,7 @@ function finishCardDrag(d, reason, target) {
       }
       wakeDeferredAside(d);
     }
-    hideDragCard(d, 'join', target);
+    hideDragCard(d, d.landed === false ? 'cancel' : 'join', d.landed === false ? null : { rec: target.rec, ids });
     settled();
     return;
   }
@@ -4096,7 +4117,8 @@ function beginTabDrag(src, tabId, grab) {
   if (moving?.ids.includes(tabId) && single) d.chipGroup = moving.group; // the whole window is that group: its chip says so
   // What a strip it hovers shows in the slot it opens: the tab itself (its icon and title), as it will be there.
   const entry = withWindow(src, () => tabState().tabs.find((t) => t.id === tabId));
-  d.ghost = entry && { group: d.group ? { name: d.group.name, color: d.group.color } : null, title: entry.title, favicons: entry.favicons || [], page: entry.page || null, sleeping: Boolean(entry.sleeping), pinned: (single ? tabsOf(src).filter((t) => !t.closing) : tabsOf(src).filter((t) => d.ids.includes(t.id))).every((t) => t.pinned), count: single ? tabsOf(src).filter((t) => !t.closing).length : d.ids.length };
+  const ghostGroup = d.group || d.chipGroup;
+  d.ghost = entry && { group: ghostGroup ? { name: ghostGroup.name, color: ghostGroup.color } : null, title: entry.title, favicons: entry.favicons || [], page: entry.page || null, sleeping: Boolean(entry.sleeping), pinned: (single ? tabsOf(src).filter((t) => !t.closing) : tabsOf(src).filter((t) => d.ids.includes(t.id))).every((t) => t.pinned), count: single ? tabsOf(src).filter((t) => !t.closing).length : d.ids.length };
   const w = src.win;
   if (single) {
     if (!TEST_BACKGROUND) dragCardWindow(); // loaded now, so the chip shows the moment a strip is reached
