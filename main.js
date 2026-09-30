@@ -1334,10 +1334,36 @@ function researchSession() {
 const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 
 // `view`: a page that already exists (a window a page opened with window.open), adopted as this tab as it is.
+// ---- a new-tab page made ready before it is asked for: Ctrl+T shows one at once, as Chrome's spare renderer does.
+// One hidden page, loaded in the background; a new tab takes it and hands it its fresh data (the address's hash,
+// as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
+let spareNewTab = null; // { view, prefs, ready, at }
+function makeSpareNewTab() {
+  if (TEST || spareNewTab || !app.isReady()) return;
+  const prefs = settingsBackend.tabWebPreferences(false);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
+  const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
+  view.webContents.once('did-finish-load', () => { s.ready = true; });
+  view.webContents.loadURL(newTabUrl()).catch(() => {});
+  spareNewTab = s;
+}
+function takeSpareNewTab() {
+  const s = spareNewTab;
+  if (!s) return null;
+  spareNewTab = null;
+  const fresh = s.ready && !s.view.webContents.isDestroyed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)) && Date.now() - s.at < 30 * 60e3;
+  if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
+  return s.view;
+}
+const spareSoon = () => setTimeout(makeSpareNewTab, 1500).unref?.();
+
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
-  const view = adopted || new WebContentsView({
+  const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
+  const spare = plainNewTab ? takeSpareNewTab() : null;
+  if (plainNewTab) spareSoon();
+  const view = adopted || spare || new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
     webPreferences: {
@@ -1352,7 +1378,9 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
-  const wc = wireView(tab, url, history, { loaded: Boolean(adopted) }); // `history`: Duplicate's copy of back/forward
+  const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
+  // The spare page gets this tab's data in place (no reload, no extra history entry).
+  if (spare) wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => wc.loadURL(url).catch(() => {}));
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
@@ -5646,6 +5674,7 @@ app.whenReady().then(async () => {
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
+  setTimeout(makeSpareNewTab, 4000).unref?.(); // a new-tab page ready for the first Ctrl+T
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours
