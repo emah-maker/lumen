@@ -3814,10 +3814,14 @@ function hideDragCard(d, kind, landing = null) {
 function glideCard(d, rec, slot) {
   const card = dragCard;
   const content = rec.win.getContentBounds();
-  const to = { x: Math.round(content.x + slot.x - CARD_PAD), y: Math.round(content.y + slot.y + (slot.h - CARD_HEAD) / 2 - CARD_PAD) };
+  const to = { x: Math.round(content.x + slot.x - CARD_PAD), y: Math.round(content.y + slot.y - CARD_PAD) };
   const [x0, y0] = card.win.getPosition();
+  // Room for a landing wider than the card (two tabs, a group): the window grows to the right, its left edge kept.
+  const [cw, ch] = card.win.getSize();
+  const need = Math.max(CARD_WIDTH, Math.round(slot.w || 0)) + CARD_PAD * 2;
+  if (need > cw) card.win.setSize(need, ch);
   cardCall('compact', true);
-  cardCall('land', Math.round(slot.w || 0)); // and takes the slot's width on the way
+  cardCall('land', Math.round(slot.w || 0), Math.round(slot.h || 0)); // and takes the tab's width, height and corners on the way
   const t0 = Date.now();
   const ease = (t) => 1 - (1 - t) ** 3;
   clearInterval(card.glide);

@@ -316,7 +316,7 @@ function settleFrom(before) {
   for (const el of $('tabs').querySelectorAll('.tab, .group-label')) {
     const a = before.get(el);
     const b = el.getBoundingClientRect();
-    if (!a || a.width < 1) { el.animate([{ opacity: 0, transform: 'scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: SPRING_SNAPPY }); continue; }
+    if (!a || a.width < 1) { if (!el.classList.contains('arriving')) el.animate([{ opacity: 0, transform: 'scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: SPRING_SNAPPY }); continue; }
     const dx = a.left - b.left, dy = a.top - b.top;
     if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 340, easing: SPRING_SMOOTH });
   }
@@ -555,12 +555,15 @@ function landingRect(ids) {
   if (!placed(first)) first = null;
   let last = first;
   if (first) {
-    while (placed(first.previousElementSibling) && want.has(Number(first.previousElementSibling.dataset.id))) first = first.previousElementSibling;
-    while (placed(last.nextElementSibling) && want.has(Number(last.nextElementSibling.dataset.id))) last = last.nextElementSibling;
-    if (first.previousElementSibling?.matches('.group-label.arriving')) first = first.previousElementSibling; // its group's label comes with it
+    // Arriving tabs next to it, and arriving group labels among them (a merged window's groups come too).
+    const joins = (el) => placed(el) && (want.has(Number(el.dataset.id)) || el.matches('.group-label.arriving'));
+    while (joins(first.previousElementSibling)) first = first.previousElementSibling;
+    while (joins(last.nextElementSibling)) last = last.nextElementSibling;
   }
   const el = first || landingSlot?.el || dropSlot?.el;
   if (!el) return null;
+  clearTimeout(arrivingTimer); // measured: the chip is on its way, so the safety timer starts now
+  arrivingTimer = setTimeout(showArrived, 600);
   const sr = strip.getBoundingClientRect();
   // offsetLeft/offsetWidth: where it is laid out, not where the landing animation's scale and lift draw it now.
   const x = sr.left + el.offsetLeft - strip.scrollLeft;
@@ -1604,7 +1607,7 @@ function renderTabs(state) {
 
   // A tab arriving while widths are held (see holdTabWidths) would be squeezed in beside them.
   if (widthsHeld && wanted.some((el) => el.classList.contains('tab') && !before.has(el.dataset.id))) releaseTabWidths(false);
-  const landed = new Set(landedIds.map((x) => container.querySelector(`.tab[data-id="${x}"]`)).filter(Boolean));
+  const landed = new Set(landedIds.filter((x) => !arriving.has(Number(x))).map((x) => container.querySelector(`.tab[data-id="${x}"]`)).filter(Boolean));
   animateTabs(before, container, landed);
   if (landed.size) {
     for (const el of landed) {

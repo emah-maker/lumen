@@ -750,7 +750,7 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
   border: none; border-radius: 11px; font: inherit; font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
   background: color-mix(in srgb, var(--group-color) 15%, transparent);
   color: color-mix(in srgb, var(--group-color) 72%, var(--text));
-  transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
+  transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out, opacity 140ms ease-out;
 }
 .group-label:hover { background: color-mix(in srgb, var(--group-color) 24%, transparent); }
 .group-label:active { transform: scale(0.95); }
