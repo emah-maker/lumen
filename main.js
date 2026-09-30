@@ -35,7 +35,7 @@ const cliAuth = lazy(() => require('./cli-auth'));
 // touches this; a session that only ever uses Claude Code, Grok, or another provider never loads it.
 let anthropicSdk_ = null;
 const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
-const { createTabGroups, siteName, pathWords } = require('./tab-groups');
+const { createTabGroups, siteName, pathWords, siteHint } = require('./tab-groups');
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
@@ -1778,7 +1778,7 @@ const ORGANIZE_SCHEMA = {
   required: ['groups'],
   additionalProperties: false,
 };
-const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has an id, title, host and path words; "group" is the name of the group it is in now. Where tabs already belong together in a group, reuse that exact group name for them. The tab marked "active" is what the user is doing right now: keep it with its related tabs. Make 2 to 8 groups of at least 2 tabs each. Name each group specifically in 1-3 words (Title Case), like "Flights to Tokyo" or "React docs", never just a website. A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON only: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
+const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has an id, title, host and path words; "group" is the name of the group it is in now; "hint" is what its site is nearly always used for (School for Canvas or Gradescope, Job search for Indeed). Tabs of one host, and tabs with the same hint, usually belong in one group: keep them together unless their titles are clearly different topics (two courses, two projects), and when such a group has no better name, the hint is a good one. Where tabs already belong together in a group, reuse that exact group name for them. The tab marked "active" is what the user is doing right now: keep it with its related tabs. Make 2 to 8 groups of at least 2 tabs each. Name each group specifically in 1-3 words (Title Case), like "Flights to Tokyo" or "React docs", never just a website. A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON only: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
 
 // Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' picks) answer
 // it as a one-shot, tool-less run (cli-json.js), so no API key is needed. An API model without a
@@ -1930,6 +1930,9 @@ async function organizeTabs() {
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
       ask: (wire, { signal } = {}) => refineGroups(cheapTopicModel(), wire, signal),
+      // Sites no hint is known for go along as host names; what the model says they are for is kept in
+      // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
+      hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
       onPhase: (name) => {
         if (name === 'local') { sendTabs(); ui()?.send('tabs:organizing', 'refine'); } // the groups are there; the model may still refine them
         else if (name === 'refined') sendTabs();
@@ -1963,14 +1966,16 @@ function cheapTopicModel() {
   return `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
 }
 // What a model is told about a tab: id, title, host and the words of the address path. Never the page,
-// the full address or its query string. The active tab is marked, and a tab already in a group
-// carries the group's name so the model can keep it there.
+// the full address or its query string. The active tab is marked, a tab already in a group carries
+// the group's name so the model can keep it there, and a tab of a hinted site (tab-groups siteHint,
+// worked out from the host and path alone) carries that hint ("School" for Canvas).
 const MAX_ORGANIZE_TABS = 80;
 const topicList = (entries) => entries.slice(0, MAX_ORGANIZE_TABS).map((e) => {
   const tab = tabs.find((x) => x.id === e.id);
   const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
   const path = pathWords(e.url);
-  return { id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(path ? { path } : {}), ...(group ? { group: group.name } : {}), ...(e.id === activeId ? { active: true } : {}) };
+  const hint = siteHint(e.url) || e.aiHint; // the fixed table first, then what a model said about the site
+  return { id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(path ? { path } : {}), ...(hint ? { hint } : {}), ...(group ? { group: group.name } : {}), ...(e.id === activeId ? { active: true } : {}) };
 });
 
 let aiTopicsTimer = null;
