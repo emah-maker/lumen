@@ -368,7 +368,10 @@ window.browser.onTabMovedHere?.((info) => {
   const ids = Array.isArray(info?.ids) ? info.ids.filter(Number.isInteger) : [];
   const live = $('tab-live');
   if (live && ids.length && !info.quiet) live.textContent = ids.length > 1 ? t('tabs.movedHereMany', { n: ids.length }) : t('tabs.movedHere', { title: String(info.title || '') });
-  if (ids.length > 1) selectAfterRender = ids;
+  if (ids.length > 1) {
+    if (ids.every((x) => (lastTabState?.tabs || []).some((t) => t.id === x))) setSelection(ids); // the tabs arrived first: select now
+    else selectAfterRender = ids;
+  }
 });
 // This window was just made for dragged tabs: say so to screen readers.
 window.browser.onTabArrived?.((info) => {
@@ -484,13 +487,6 @@ function showDropSlot(at) {
   dropSlot = { el, beforeId: at.beforeId, outside: Boolean(at.outside) };
   // Inside a group (between two of its tabs, or right after its label): the slot takes the group's colour,
   // since dropping there joins it.
-  const groupOf = (n, dir) => {
-    while (n && n.matches('.handed, .held, .gathered, .floating, .tab-drop-slot')) n = n[dir];
-    if (!n) return null;
-    if (n.classList.contains('group-label')) return dir === 'previousElementSibling' ? Number(n.dataset.group) : null;
-    return (lastTabState?.tabs || []).find((t) => t.id === Number(n.dataset.id))?.groupId || null;
-  };
-  void groupOf;
   const inside = !at.tab?.group && slotGroup(el, at.ghost === false ? at.tab?.ownGroup || null : null);
   const color = inside && (lastTabState?.groups || []).find((g) => g.id === inside)?.color;
   if (color) { el.classList.add('in-group'); el.style.setProperty('--group-color', `var(--g-${String(color).replace(/[^a-z]/g, '')})`); }
@@ -693,6 +689,9 @@ function moveTabDrag(e) {
       drag.dx = e.clientX - drag.startX;
       drag.el.querySelector('.tab-inner')?.append(Object.assign(document.createElement('span'), { className: 'tab-drop-count tab-gather-count', textContent: String(drag.gathered.length) }));
     }
+    // Every tab of the window is moving (its only tab, or all of them selected): the window itself follows the
+    // pointer right away, like its title bar (as in Chrome), with the grabbed point staying under the cursor.
+    if (window.browser.dragTabStart && (lastTabState?.tabs.length || 0) - (drag.gathered || [drag.id]).length < 1) { handOffTabDrag(e); return; }
   }
   const { rects, from } = drag;
   // Held within the strip's visible edges; near an edge an overflowing strip scrolls to reach more tabs.
@@ -774,7 +773,7 @@ function endTabDrag(e) {
   // not a move (nothing is marked as placed by hand).
   // Released at its own place (the slot never left it): nothing moves, nothing is marked as placed by hand.
   const sameSpot = along ? (slotBefore ?? null) === (alongHome ?? null)
-    : Boolean(homeKey) && slotKey === homeKey && drag.homeGroup !== undefined && (dropSlot?.el?.isConnected ? slotGroup(dropSlot.el, drag.homeGroup) : null) === drag.homeGroup;
+    : Boolean(homeKey) && slotKey === homeKey && (drag.homeGroup === undefined || (dropSlot?.el?.isConnected ? slotGroup(dropSlot.el, drag.homeGroup) : null) === drag.homeGroup); // (spanning groups: at home, nothing changes)
   const ownGroup = drag.homeGroup || null;
   const slotMove = moved && !handed && !escaped && slotShown && !gathered && !along && fromIndex !== -1 && !sameSpot;
   const floated = drag.floated;

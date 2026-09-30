@@ -3588,11 +3588,9 @@ async function refreshDragStrips(d) {
     const next = new Map();
     // The window the card came from first: it is the one under the cursor most of the time.
     const recs = [...winRecs].sort((a, b) => (b === d.rec) - (a === d.rec));
-    for (const rec of recs) {
-      if ((d.single && rec === d.rec) || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized()) continue;
-      const g = await stripGeometry(rec);
-      if (g) next.set(rec, g);
-    }
+    // All at once, not one after another: a quick drop onto another window's strip finds it measured.
+    const found = await Promise.all(recs.filter((rec) => !((d.single && rec === d.rec) || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized())).map((rec) => stripGeometry(rec)));
+    for (const g of found) if (g) next.set(g.rec, g);
     if (tabDrag === d) d.strips = next;
   } finally { d.refreshing = false; }
 }
@@ -3826,14 +3824,15 @@ function tickTabDrag() {
   if (Date.now() - d.stripsAt > 120) { d.stripsAt = Date.now(); refreshDragStrips(d); }
   const hit = tabDragMath.stripHit(cursor, dropTargets(d));
   // A group is shown (and lands) after a group it is over, never inside it.
-  const beforeId = hit && d.group ? withWindow(hit.key, () => {
+  const groupsAlong = d.group || (d.single && tabsOf(d.rec).some((t) => t.groupId)); // groups never land inside another group
+  const beforeId = hit && groupsAlong ? withWindow(hit.key, () => {
     const rest = tabs.filter((t) => !d.ids.includes(t.id)); // the dragged group's own tabs are not where it lands
     let i = rest.findIndex((t) => t.id === hit.beforeId);
     if (i === -1) return null;
     while (i > 0 && i < rest.length && rest[i - 1].groupId && rest[i - 1].groupId === rest[i].groupId) i++;
     return rest[i]?.id ?? null;
   }) : hit?.beforeId;
-  setDragHover(d, hit && { rec: hit.key, beforeId: beforeId ?? null, outside: Boolean(hit.outside) && !d.group });
+  setDragHover(d, hit && { rec: hit.key, beforeId: beforeId ?? null, outside: groupsAlong ? true : Boolean(hit.outside) });
 }
 // Every window that could be under the cursor, front first: the strips a tab can join, and the windows that
 // only get in the way (private windows, a normal window whose strip hasn't been measured yet).
@@ -3882,7 +3881,16 @@ function finishTabDrag(reason) {
       const dst = target.rec;
       let index = at === -1 ? undefined : at;
       if (groups.length && index !== undefined) index = withWindow(dst, () => outsideGroups(index)); // its groups don't split one there
-      const merged = batchTabs(() => { const ok = moveTabsBetween(rec, dst, all, index, { active: d.tabId }); if (ok) for (const g of groups) regroup(dst, g.ids, g.group); return ok; }); // one update
+      const merged = batchTabs(() => {
+        const ok = moveTabsBetween(rec, dst, all, index, { active: d.tabId });
+        if (ok) for (const g of groups) regroup(dst, g.ids, g.group);
+        // No groups of its own and dropped right after a group's label: into that group, as the slot showed.
+        if (ok && !groups.length && !target.outside && target.beforeId != null) withWindow(dst, () => {
+          const g = tabs.find((t) => t.id === target.beforeId)?.groupId;
+          if (g && tabGroups.groups.has(g)) { for (const t of tabs) if (all.includes(t.id) && !t.pinned) { t.groupId = g; t.userRemoved = false; } sendTabs(); }
+        });
+        return ok;
+      }); // one update
       if (!merged && rcAlive(rec)) { try { rec.win.setOpacity(1); rec.win.show(); rec.win.focus(); } catch {} } // it didn't happen: the window comes back
     } else {
       rec.win.focus();
