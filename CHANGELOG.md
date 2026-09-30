@@ -6,6 +6,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 - A message on a new topic starts a new chat in the sidebar, so each chat stays about one thing. Follow-ups ("why?", "make it shorter", anything sharing a word with the chat) stay put, and the notice has "Keep in last chat" to move the message back.
 - Dragging a tab out of the strip is smooth and never stalls: a card with the page's snapshot follows the cursor while the tab stays put, becomes a tab over any strip (its own included) to show where it will land, and on release the tab joins that strip or opens in a window of its own that fades in right where you dropped it. Escape changes nothing.
+- Fixed: the page could vanish, leaving a blank (purple while the AI works) area, after opening or closing the sidebar quickly, until the sidebar was toggled again. A snapshot that finished after the sidebar had settled hid the page for good; now it is ignored, and a stuck snapshot ends on its own.
 - Lumen keeps its own icon on the taskbar, Desktop and Start menu after an update (an update used to remove the icon file those shortcuts named, so Windows fell back to Electron's), and "Open with" and Default apps say Lumen instead of Electron.
 
 ## 0.3.2 (2026-09-29)

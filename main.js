@@ -4152,14 +4152,29 @@ ipcMain.on('content-bounds', (_e, bounds) => {
   layout();
 });
 
+// Each freeze and thaw bumps the window's freeze number. A capture that finishes after a thaw (the
+// sidebar settled before the snapshot was ready) must not hide the page: it used to, and nothing thawed
+// it again, which left the page area blank (the purple of a running task) until the sidebar moved. The
+// flag is also set on the window that asked, not whichever window is current when the capture ends.
+// A freeze that is never thawed (a lost message) ends by itself.
+const freezeSeq = new WeakMap(); // window rec -> number
+let freezeCounter = 0;
+const FREEZE_MAX_MS = 2500;
 ipcMain.handle('view:freeze', async () => {
+  const rec = curRec;
   const wc = activeTab()?.webContents;
-  if (!wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
+  if (!rec || !wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
+  const seq = ++freezeCounter;
+  freezeSeq.set(rec, seq);
   try {
     const image = await wc.capturePage();
-    if (image.isEmpty()) return null;
-    viewFrozen = true;
-    layout();
+    if (image.isEmpty() || freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // thawed meanwhile
+    withWindow(rec, () => { viewFrozen = true; layout(); });
+    setTimeout(() => {
+      if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return;
+      freezeSeq.set(rec, ++freezeCounter);
+      withWindow(rec, () => { viewFrozen = false; layout(); });
+    }, FREEZE_MAX_MS);
     return `data:image/jpeg;base64,${image.toJPEG(88).toString('base64')}`;
   } catch {
     return null;
@@ -4173,6 +4188,7 @@ ipcMain.handle('view:warm', async () => {
   return true;
 });
 ipcMain.on('view:thaw', () => {
+  if (curRec) freezeSeq.set(curRec, ++freezeCounter); // a capture still in flight won't freeze after this
   viewFrozen = false;
   layout();
 });
