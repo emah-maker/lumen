@@ -1141,12 +1141,12 @@ function createSuggestView() {
 function showSuggestions(rect, payload) {
   if (!suggestView) createSuggestView();
   win.contentView.addChildView(suggestView); // re-adding moves it to the top
-  raiseOverlays(); // (the tool overlay and a dialog stay above it)
   // Never taller than the window below the address bar: on a short window the list scrolls inside
   // the view (suggest.html) instead of running off the bottom.
   const height = Math.max(0, Math.min(rect.height, win.getContentSize()[1] - rect.y));
   suggestView.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(height) });
   suggestView.setVisible(true);
+  raiseOverlays(); // (once visible, so it counts: the tool overlay and a dialog stay above it)
   const send = () => suggestView.webContents.send('suggest:items', payload);
   if (suggestView.webContents.isLoading()) suggestView.webContents.once('did-finish-load', send);
   else send();
@@ -1186,12 +1186,12 @@ function showDownloadsPanel(anchor) {
   downloadsAnchor = anchor;
   hideSuggestions();
   win.contentView.addChildView(downloadsView); // re-adding moves it to the top
-  raiseOverlays(); // (the tool overlay and a dialog stay above it)
   placeDownloadsPanel(160);
   const open = () => {
     downloadsView.webContents.send('downloads:list', downloads.panelList());
     downloadsView.webContents.send('downloads:open');
     downloadsView.setVisible(true);
+    raiseOverlays(); // (once visible, so it counts: the tool overlay and a dialog stay above it)
     downloadsView.webContents.focus();
   };
   if (downloadsView.webContents.isLoading()) downloadsView.webContents.once('did-finish-load', open);
