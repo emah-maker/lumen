@@ -10,6 +10,11 @@
   const ENVS = 'equation|align|aligned|alignat|alignedat|gather|gathered|multline|split|flalign|eqnarray|cases|dcases|rcases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|subarray|CD';
   const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const CHEM = /\\(ce|pu)\b/;
+  // siunitx and physics commands models often use, as plain LaTeX Temml knows.
+  const MACROS = {
+    '\\si': '\\mathrm{#1}', '\\unit': '\\mathrm{#1}', '\\SI': '#1\\,\\mathrm{#2}', '\\qty': '#1\\,\\mathrm{#2}', '\\num': '#1', '\\ang': '#1^\\circ',
+    '\\dv': '\\frac{\\mathrm{d}#1}{\\mathrm{d}#2}', '\\pdv': '\\frac{\\partial #1}{\\partial #2}', '\\abs': '\\left|#1\\right|', '\\norm': '\\left\\lVert#1\\right\\rVert',
+  };
   // Temml (168 KB) loads the first time a reply has math, not at start-up (and mhchem, 35 KB, the first time one has
   // chemistry); formulas drawn before it arrives show their source for that moment and are then typeset in place.
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
@@ -24,7 +29,7 @@
   }
   function upgrade() {
     for (const el of document.querySelectorAll('.math-src[data-tex]')) {
-      const html = typeset(el.dataset.tex, el.dataset.display === '1');
+      const html = typeset(el.dataset.tex, el.dataset.display === '1' ? true : el.dataset.display === 'i' ? 'inline' : false);
       if (!/class="math-src[^"]*" data-tex/.test(html)) el.outerHTML = html;
     }
   }
@@ -44,18 +49,19 @@
     if (ready) {
       try {
         const env = /^\s*\\begin\{/.test(tex);
-        const src = display === 'inline' && !env ? `\\displaystyle ${tex}` : tex;
-        const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500 });
+        const clean = tex.replace(/\\label\{[^}]*\}/g, '');
+        const src = display === 'inline' && !env ? `\\displaystyle ${clean}` : clean;
+        const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500, macros: { ...MACROS } });
         if (display === true) return `<div class="math-block">${html}</div>`;
         // A long formula in a line (or a display one written inside a sentence) gets its own sideways scroll: MathML
         // doesn't wrap, and a narrow sidebar bubble must not.
-        return display === 'inline' || env || tex.length > 40 ? `<span class="math-inline">${html}</span>` : html;
+        return display === 'inline' || env || tex.length > 40 || /\\(hspace|kern|hskip|quad)/.test(tex) ? `<span class="math-inline">${html}</span>` : html;
       } catch { /* not LaTeX it can read: its source, below */ }
     }
     const block = display === true;
     const shown = escapeHtml(block ? tex.trim() : tex);
     // Waiting for Temml (or mhchem): marked, to be typeset in place once it is here. A formula it can't read stays source.
-    const data = ready ? '' : ` data-tex="${escapeHtml(tex)}" data-display="${block ? 1 : 0}"`;
+    const data = ready ? '' : ` data-tex="${escapeHtml(tex)}" data-display="${block ? 1 : display === 'inline' ? 'i' : 0}"`;
     return block ? `<pre class="math-src"${data}>${shown}</pre>` : `<code class="math-src"${data}>${shown}</code>`;
   }
   // A lone $ is a formula only when it reads like one (Pandoc's rule): "$x$" and "$\alpha + 1$" are; "$5 and $10",
@@ -69,9 +75,22 @@
       if (c === '\\') { j++; continue; }
       // Not right before a digit ("$5-$10") or another $; before a letter only for a sub- or superscript ("H$_2$O"),
       // since "PATH=$PATH:$HOME" is shell text.
-      if (c === '$') return !/\s/.test(s[j - 1]) && !/[\d$]/.test(s[j + 1] || '') && (!/[A-Za-z]/.test(s[j + 1] || '') || /[_^]/.test(s[i + 1])) ? j : -1;
+      if (c === '$') {
+        const body = s.slice(i + 1, j);
+        const mathy = /[_^]/.test(s[i + 1]) || /\\[A-Za-z]/.test(body) || /^[A-Za-z]$/.test(body); // "$n$th", "5 $\mu$m", "$\times$2"
+        const next = s[j + 1] || '';
+        return !/\s/.test(s[j - 1]) && next !== '$' && (!/[A-Za-z0-9]/.test(next) || mathy) ? j : -1;
+      }
     }
     return -1;
+  }
+  // The text after a lone $ on the last, unfinished line: could it still become a formula? Money ("$5 and", "$1,200.")
+  // and shell variables ("$HOME ") can't, and are shown as they come.
+  function writingFormula(rest) {
+    if (!rest || /^\s/.test(rest)) return false;
+    if (/^\d/.test(rest)) return /^\d[\d.,]*$/.test(rest) || /^\d[\d.,]*[A-Za-z\\^_+\-*/=(]/.test(rest); // "$2x+…" holds; "$5 " is money
+    if (/^[A-Z][A-Z0-9_]+(\s|[:/;]|$)/.test(rest) && !/^[A-Z]$/.test(rest)) return /^[A-Z][A-Z0-9_]+$/.test(rest) && rest.length < 3; // "$HOME " is shell
+    return /^[A-Za-z\\([|_^{-]/.test(rest);
   }
   const texLike = (t) => /[A-Za-z0-9\\]/.test(t); // "$$ – $$", "( $$ )": not a formula
   // The end of a $$ formula starting at i, or -1. On lines of its own it may span lines (never a blank one); written
@@ -87,7 +106,8 @@
       const wholeLine = atLineStart && !s.slice(e + 2, lineEnd).trim();
       return wholeLine || !/^\s/.test(tex) ? e : -1;
     }
-    return atLineStart && !/\n\s*\n/.test(tex) ? e : -1;
+    const opener = s.slice(i + 2, lineEnd);
+    return atLineStart && !opener.trim() && !/\n\s*\n/.test(tex) ? e : -1;
   }
   const URL_START = /^https?:\/\//;
   // Scans `source` for math. Returns the text with tokens in its place, the formulas, and `open`: where a formula
@@ -141,7 +161,7 @@
       if (source.startsWith('$$', i)) {
         const e = displayDollarEnd(source, i, onlySpaceBefore(i));
         if (e !== -1) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
-        else if (open === -1 && onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1 && !/\n\s*\n/.test(source.slice(i))) open = i;
+        else if (open === -1 && onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1 && !/\n\s*\n/.test(source.slice(i)) && !source.slice(i + 2, (source.indexOf('\n', i) + 1 || source.length + 1) - 1).trim()) open = i;
         if (!m) { out += '$$'; i += 2; continue; }
       } else if (source.startsWith('\\[', i)) {
         const e = source.indexOf('\\]', i + 2);
@@ -164,7 +184,7 @@
         const e = dollarEnd(source, i);
         if (e !== -1) m = { tex: source.slice(i + 1, e), end: e + 1, display: false };
         // Still being written: a $ that opens like a formula (not money: "$5") on the last, unfinished line.
-        else if (open === -1 && source.indexOf('\n', i) === -1 && /^[A-Za-z\\]/.test(source[i + 1] || '')) open = i;
+        else if (open === -1 && source.indexOf('\n', i) === -1 && writingFormula(source.slice(i + 1))) open = i;
       }
       if (!m) { out += c; i++; continue; }
       if (m.display) {

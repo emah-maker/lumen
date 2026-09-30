@@ -118,6 +118,23 @@ check('private-use characters in the text are dropped, not swapped for formulas'
   assert.ok(!md.render('a 0 b $x$').includes(''));
 });
 
+check('clearly-math formulas may touch a word: $n$th, 5 $\\mu$m, $\\times$2', () => {
+  for (const s of ['the $n$th term', 'about 5 $\\mu$m wide', 'roughly $\\sim$10 users', 'scaled $\\times$2']) assert.strictEqual(md.liftMath(s).maths.length, 1, s);
+  assert.strictEqual(md.liftMath('export PATH=$PATH:$HOME/bin').maths.length, 0);
+  assert.strictEqual(md.liftMath('From $5-$10 a month').maths.length, 0);
+});
+check('a price legend at the start of lines is not math', () => {
+  assert.strictEqual(md.liftMath('$$ – moderate\n$$$ – expensive').maths.length, 0);
+});
+check('streaming: formulas starting with a digit, ( or | wait; money and shell text do not', () => {
+  assert.strictEqual(md.openMath('Solve $2x+1'), 'Solve '.length);
+  assert.strictEqual(md.openMath('Expand $(a+b'), 'Expand '.length);
+  assert.strictEqual(md.openMath('So $|x'), 'So '.length);
+  assert.strictEqual(md.openMath('Water is H$_2'), 'Water is H'.length);
+  assert.strictEqual(md.openMath('It costs $5 and'), -1);
+  assert.strictEqual(md.openMath('Set $HOME to'), -1);
+});
+
 // With Temml: MathML, with the source kept as an annotation (copying a selection keeps the LaTeX).
 const ctx = { globalThis: {} };
 vm.createContext(ctx);
@@ -144,6 +161,9 @@ check('Temml: a long inline formula gets its own scroller; an environment in a s
   assert.match(md.render('Long: $a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9$ ok'), /<span class="math-inline"><math/);
   const html = md.render('We have \\begin{aligned}x&=1\\end{aligned} and more');
   assert.ok(!html.includes('math-src'), html);
+});
+check('Temml: siunitx and physics commands render', () => {
+  for (const t of ['$\\SI{5}{kg}$', '$\\dv{f}{x}$', '$\\abs{x}$']) assert.ok(!md.render(t).includes('math-src'), t);
 });
 check('Temml: HTML in a formula stays text', () => {
   const html = md.render('$\\text{<img src=x onerror=alert(1)>}$');
