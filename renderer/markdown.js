@@ -375,6 +375,7 @@
     let list = null; // 'ul' | 'ol'
     let paragraph = [];
     let code = null;
+    let codeLang = '';
 
     const flushParagraph = () => {
       if (paragraph.length) out.push(`<p>${inline(paragraph.join('<br>'))}</p>`);
@@ -389,12 +390,12 @@
       const line = lines[n];
       if (code !== null) {
         if (/^```/.test(line)) {
-          out.push(`<pre><code>${code.join('\n')}</code></pre>`);
+          out.push(`<pre${codeLang ? ` data-lang="${codeLang}"` : ''}><code>${code.join('\n')}</code></pre>`);
           code = null;
         } else code.push(line);
         continue;
       }
-      if (/^```/.test(line)) { flushParagraph(); closeList(); code = []; continue; }
+      if (/^```/.test(line)) { flushParagraph(); closeList(); code = []; codeLang = (line.slice(3).trim().split(/\s/)[0] || '').replace(/[^\w+#.-]/g, '').slice(0, 20); continue; }
 
       if (line.includes('|') && n + 1 < lines.length && isSeparator(lines[n + 1])) {
         flushParagraph(); closeList();
@@ -454,7 +455,7 @@
         paragraph.push(line);
       }
     }
-    if (code !== null) out.push(`<pre><code>${code.join('\n')}</code></pre>`);
+    if (code !== null) out.push(`<pre${codeLang ? ` data-lang="${codeLang}"` : ''}><code>${code.join('\n')}</code></pre>`);
     flushParagraph(); closeList();
     return out.join('');
   }

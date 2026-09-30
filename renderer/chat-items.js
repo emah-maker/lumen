@@ -38,6 +38,49 @@
   };
 
   window.chatIconButton = iconButton;
+  // A long history stays usable: grouped by when it was last used (Today, Yesterday, Previous 7 days, Earlier),
+  // filtered by a search over titles, and walked with Up/Down/Home/End. Shared by the sidebar and lumen://chat.
+  window.chatListTools = {
+    // chats -> [{ label, chats }] in order; empty groups are left out.
+    group(chats, now = Date.now()) {
+      const day = new Date(now); day.setHours(0, 0, 0, 0);
+      const start = day.getTime();
+      const bands = [
+        { label: window.chatTr('chats.today', 'Today'), test: (t) => t >= start },
+        { label: window.chatTr('chats.yesterday', 'Yesterday'), test: (t) => t >= start - 864e5 },
+        { label: window.chatTr('chats.week', 'Previous 7 days'), test: (t) => t >= start - 7 * 864e5 },
+        { label: window.chatTr('chats.earlier', 'Earlier'), test: () => true },
+      ];
+      const out = bands.map((b) => ({ label: b.label, chats: [] }));
+      for (const c of chats) out[bands.findIndex((b) => b.test(c.updated || c.created || 0))].chats.push(c);
+      return out.filter((g) => g.chats.length);
+    },
+    matches: (chat, q) => !q || String(chat.title || '').toLowerCase().includes(q.toLowerCase()),
+    heading(label) {
+      const li = Object.assign(document.createElement('li'), { className: 'chat-group', textContent: label });
+      li.setAttribute('role', 'presentation');
+      return li;
+    },
+    search(onInput) {
+      const input = Object.assign(document.createElement('input'), { type: 'search', className: 'chat-search', placeholder: window.chatTr('chats.search', 'Search chats'), autocomplete: 'off', spellcheck: false });
+      input.setAttribute('aria-label', window.chatTr('chats.search', 'Search chats'));
+      input.addEventListener('input', () => onInput(input.value.trim()));
+      input.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); input.closest('.chat-list, #cp-list, body')?.querySelector('.chat-open')?.focus(); } });
+      return input;
+    },
+    // Up and Down move between chats, Home and End jump to the ends; Tab still leaves the list.
+    arrows(container) {
+      container.addEventListener('keydown', (e) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) || e.target.closest('input')) return;
+        const rows = [...container.querySelectorAll('.chat-open')];
+        if (!rows.length) return;
+        const at = rows.indexOf(e.target.closest('.chat-item')?.querySelector('.chat-open'));
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
+        e.preventDefault();
+        rows[next].focus();
+      });
+    },
+  };
   window.chatTr = tr;
   window.createChatItems = ({ api, open: onOpen, rerender, cleared }) => {
     function startRename(li, chat) {

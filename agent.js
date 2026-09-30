@@ -929,6 +929,22 @@ class Agent {
     this.messages = messages;
   }
 
+  // Retry / Regenerate: the last exchange (from the user's last message on) is taken back, so asking again doesn't
+  // stack a second copy of it. True when there was one.
+  rewindLast() {
+    const m = this.messages;
+    for (let i = m.length - 1; i >= 0; i--) {
+      const blocks = Array.isArray(m[i].content) ? m[i].content : [{ type: 'text' }];
+      if (m[i].role === 'user' && blocks.some((b) => b.type === 'text' || b.type === 'image')) {
+        m.splice(i);
+        m.simpleTurn = null;
+        repairHistory(m);
+        return true;
+      }
+    }
+    return false;
+  }
+
   // What the sidebar shows for a restored chat (see transcriptFor).
   transcript() {
     return transcriptFor(this.messages);

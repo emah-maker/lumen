@@ -546,6 +546,7 @@ contextBridge.exposeInMainWorld('assistant', {
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
   stop: () => ipcRenderer.send('agent:stop'),
   reset: () => ipcRenderer.send('agent:reset'),
+  rewind: () => ipcRenderer.invoke('agent:rewind'), // Retry / Regenerate: the last exchange taken back
   // The chat history list (renderer/chats.js)
   chats: {
     list: () => ipcRenderer.invoke('chats:list'),

@@ -5190,6 +5190,12 @@ ipcMain.on('agent:stop', () => agent.stop());
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.
+ipcMain.handle('agent:rewind', () => {
+  if (agent.runningFor(agent.messages)) return false; // never mid-run
+  const ok = agent.rewindLast();
+  if (ok) saveChatSoon(chatGeneration);
+  return ok;
+});
 ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });
 
 // ---- the sidebar's chat history list (features/chat-store.js)

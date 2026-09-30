@@ -974,5 +974,19 @@
   "google.refused.debugger": "An extension or automation tool is attached to this page, so Lumen couldn’t sign in to Google as a normal browser. Close that tool (or sign in in another tab) and try again.",
   "gmail.signin.done": "You can close this tab and go back to Lumen, which finishes connecting Gmail.",
   "gmail.signin.denied": "Gmail was not connected. You can close this tab.",
-  "google.refused.tipsTab": "Try again in a moment. If a VPN or proxy is on, turn it off and retry. If Google still refuses, use the site’s other way to sign in, such as an email link or a passkey."
+  "google.refused.tipsTab": "Try again in a moment. If a VPN or proxy is on, turn it off and retry. If Google still refuses, use the site’s other way to sign in, such as an email link or a passkey.",
+  "chat.jumpLatest": "Jump to latest",
+  "chat.retry": "Try again",
+  "chat.regenerate": "Regenerate reply",
+  "chat.copyCode": "Copy",
+  "chat.copied": "Copied",
+  "sidebar.autoAllow.confirm": "Click again to let the AI act on any site without asking",
+  "chats.title": "Chats",
+  "chats.close": "Close",
+  "chats.empty": "No saved chats yet. Chats appear here after the first reply.",
+  "chats.today": "Today",
+  "chats.week": "Previous 7 days",
+  "chats.earlier": "Earlier",
+  "chats.search": "Search chats",
+  "chats.noMatch": "No chats match"
 }

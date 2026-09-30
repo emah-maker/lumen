@@ -20,6 +20,14 @@ $('open-settings').onclick = openAiSettings;
 // "Set up an AI" in the empty sidebar, while nothing is connected: three equal ways in. `s.model`
 // is main's single source of truth for "is anything usable right now" — no client-side guessing,
 // so this can never disagree with the picker (see loadModels below).
+// A problem with a sign-in from the setup card, said on the card (not a native alert).
+function setupError(text) {
+  const card = optional('setup');
+  if (!card) return;
+  let el = card.querySelector('.setup-error');
+  if (!el) { el = Object.assign(document.createElement('div'), { className: 'error setup-error' }); el.setAttribute('role', 'alert'); card.append(el); }
+  el.textContent = text;
+}
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
   // A local engine (Claude Code, Grok Build) found but signed out can't answer yet: while it's the
@@ -53,9 +61,9 @@ optional('setup-openrouter').onclick = async () => {
   try {
     const r = await window.assistant.openRouterSignIn();
     if (r?.ok) { await loadModels(); refreshSetup(); }
-    else if (r?.message && !r.cancelled) alert(r.message);
+    else if (r?.message && !r.cancelled) setupError(r.message);
   } catch (err) {
-    alert(t('setup.openrouter.failed', { error: err?.message || err }));
+    setupError(t('setup.openrouter.failed', { error: err?.message || err }));
   } finally {
     openRouterPending = false;
     title.textContent = label;
@@ -218,15 +226,26 @@ let running = false;
 let turn = null; // DOM state for the in-progress assistant reply
 let runId = 0; // events from older runs (after Stop or New chat) are ignored
 
-function scrollToBottom() {
-  const nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 120;
-  if (nearBottom) messages.scrollTop = messages.scrollHeight;
+// Following the conversation: while the view sits at the bottom it stays there as replies stream in; scrolled up
+// to read, it stays put and a "Jump to latest" button offers the way back.
+let stuck = true;
+const atBottom = () => messages.scrollHeight - messages.scrollTop - messages.clientHeight < 48;
+const jump = Object.assign(document.createElement('button'), { type: 'button', className: 'jump-latest', hidden: true, textContent: '↓' });
+jump.setAttribute('aria-label', t('chat.jumpLatest'));
+jump.title = t('chat.jumpLatest');
+jump.addEventListener('click', () => { stuck = true; messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' }); jump.hidden = true; });
+messages.after(jump);
+messages.addEventListener('scroll', () => { stuck = atBottom(); jump.hidden = stuck || !messages.querySelector('.msg'); }, { passive: true });
+function scrollToBottom(force = false) {
+  if (force) stuck = true;
+  if (stuck) messages.scrollTop = messages.scrollHeight;
+  jump.hidden = stuck || !messages.querySelector('.msg');
 }
 
-function append(el) {
+function append(el, { force = false } = {}) {
   $('empty').hidden = true;
   messages.append(el);
-  scrollToBottom();
+  scrollToBottom(force);
   return el;
 }
 
@@ -402,10 +421,24 @@ function ask(text, images = [], tabs = null) {
     return;
   }
   if (tabs?.gone?.length) append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('tabs.gone', { names: tabs.gone.join(', ') }) }));
+  lastAsk = { text, images, tabs };
   startTurn(text, images, tabs);
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
   window.assistant.ask(text, runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
+}
+
+// Retry (after an error) and Regenerate (the latest reply): the last exchange is taken back in main and on screen,
+// then asked again, as if it had never been sent.
+let lastAsk = null;
+async function askAgain() {
+  if (running || !lastAsk) return;
+  const again = lastAsk;
+  if (!(await window.assistant.rewind?.())) return;
+  const users = messages.querySelectorAll('.msg.user');
+  const from = users[users.length - 1];
+  if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
+  ask(again.text, again.images, again.tabs);
 }
 
 // The user's bubble and the working line for a turn that is now running.
@@ -425,7 +458,8 @@ function startTurn(text, images, tabs = null) {
   }
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
-  append(bubble);
+  for (const b of messages.querySelectorAll('.reply-regen')) b.remove(); // only the latest reply can be regenerated
+  append(bubble, { force: true }); // your own message always comes into view
   beginTurn();
 }
 
@@ -549,6 +583,19 @@ function flushStreaming(el) {
   el.renderPending = false;
   el.flushed = true;
   el.innerHTML = window.renderMarkdown(el.source);
+  decorateCode(el);
+}
+// Each code block in a finished reply: its language, and a Copy button for just that code.
+function decorateCode(root) {
+  for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
+    pre.classList.add('code-ready');
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'code-copy', textContent: t('chat.copyCode') });
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(pre.querySelector('code')?.textContent ?? pre.textContent); b.textContent = t('chat.copied'); } catch { b.textContent = t('chat.copyFailed'); }
+      setTimeout(() => { b.textContent = t('chat.copyCode'); }, 1400);
+    });
+    pre.append(b);
+  }
 }
 
 function endStream() {
@@ -649,12 +696,17 @@ window.assistant.onEvent((event) => {
         const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: t('chat.setupAi') });
         button.onclick = openAiSettings;
         error.append(button);
+      } else if (lastAsk) {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.retry') });
+        button.onclick = () => { button.disabled = true; askAgain(); };
+        error.append(button);
       }
       break;
     }
     case 'done':
-      finishReply(turn.text, turn.textSource);
+      finishReply(turn.text, turn.textSource, { latest: true });
       labelReply(turn.text, event.model);
+      scrollToBottom(); // (the reply's copy button and label were added below its end)
       endStream();
       for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
       turn.working.remove();
@@ -697,11 +749,20 @@ function labelReply(bubble, modelId) {
 // ---------- copy a reply ----------
 
 const COPY_ICON = '<svg viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>';
+const REGEN_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>';
 const CHECK_ICON = '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></svg>';
 
-function finishReply(bubble, source) {
+function finishReply(bubble, source, { latest = false } = {}) {
   flushStreaming(bubble);
   if (!bubble || !source || !source.trim() || bubble.querySelector('.reply-copy')) return;
+  // The latest reply can be asked for again (a different answer to the same message).
+  if (latest && lastAsk) {
+    const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen', title: t('chat.regenerate') });
+    regen.setAttribute('aria-label', t('chat.regenerate'));
+    regen.innerHTML = REGEN_ICON;
+    regen.onclick = () => askAgain();
+    bubble.append(regen);
+  }
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'reply-copy';
@@ -744,7 +805,22 @@ async function setAutoAllow(on) {
   autoAllow = Boolean(await window.assistant.autoAllow?.(on));
   renderAutoAllow();
 }
-$('auto-allow').onclick = () => setAutoAllow(!autoAllow);
+// Turning on "act on any site without asking" takes a second click within 4 s (turning it off takes one).
+let autoArmed = 0;
+$('auto-allow').onclick = () => {
+  const btn = $('auto-allow');
+  if (autoAllow) { setAutoAllow(false); return; }
+  if (!autoArmed) {
+    btn.classList.add('armed');
+    btn.title = t('sidebar.autoAllow.confirm');
+    autoArmed = setTimeout(() => { autoArmed = 0; btn.classList.remove('armed'); renderAutoAllow(); }, 4000);
+    return;
+  }
+  clearTimeout(autoArmed);
+  autoArmed = 0;
+  btn.classList.remove('armed');
+  setAutoAllow(true);
+};
 window.assistant.autoAllow?.().then((on) => { autoAllow = Boolean(on); renderAutoAllow(); });
 
 // ---------- inline approval before Claude acts on a new site ----------
@@ -940,6 +1016,7 @@ function showHistory(items) {
       }
       bubble.className = 'msg assistant';
       bubble.innerHTML = window.renderMarkdown(item.text);
+      decorateCode(bubble);
       finishReply(bubble, item.text);
     } else {
       continue;
@@ -986,6 +1063,7 @@ function autosize() {
 }
 prompt.addEventListener('input', () => { autosize(); updateSend(); });
 prompt.addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     $('composer').requestSubmit();

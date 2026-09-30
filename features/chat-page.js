@@ -27,7 +27,7 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 // What the page may ask main for, beyond the chat channels main.js already serves the sidebar:
 // the same handlers, opened to this page and nothing else. Anything not listed is refused.
 const CHAT_IPC = new Set([
-  'agent:ask', 'agent:stop', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo',
+  'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
