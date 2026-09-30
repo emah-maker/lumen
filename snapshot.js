@@ -260,7 +260,7 @@ const SCREENSHOT_EXTRA = {
 const NEW_TOOLS = [
   {
     name: 'find',
-    description: 'Search the active tab for text: returns matching controls as [id] refs and short text snippets with nearby refs. Much cheaper than reading the whole page; use it to locate a field, button, or fact.',
+    description: 'Search the active tab for text: returns matching controls as [id] refs and short text snippets with nearby refs. Far cheaper than read_page for one field, button or fact.',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string' }, max: { type: 'integer', description: 'Max results (default 8).' } },
