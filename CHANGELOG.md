@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Widget stacks on the new-tab page: in Edit layout, drop a widget onto another of the same size (or use the stack button on the card) and they share one place. A small arrow in the card's corner switches to the next one (Left and Right work too when it has focus), dots show where you are, and every new tab shows the one you left on. The stack button on a stacked card takes it out again. Layouts from before load unchanged.
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.
