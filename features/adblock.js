@@ -82,6 +82,17 @@ function createAdblock(deps) {
     });
   }
 
+  // Google sign-in on other sites: its One Tap iframe and container, and the scripts that draw the button.
+  const SIGN_IN = /^https:\/\/(accounts\.google\.com\/gsi\/|apis\.google\.com\/js\/(platform|api|client)[.:])/;
+  const SIGN_IN_EXCEPTIONS = [
+    '@@||accounts.google.com/gsi/^',
+    '@@||apis.google.com/js/platform.js^',
+    '@@||apis.google.com/js/api.js^',
+    '@@||apis.google.com/js/client.js^',
+    '#@##credential_picker_container',
+    '#@##credential_picker_iframe',
+    '#@#iframe[src^="https://accounts.google.com/gsi/"]',
+  ];
   async function setup() {
     const { ElectronBlocker, fromElectronDetails } = require('@ghostery/adblocker-electron');
     blocker = await ElectronBlocker.fromPrebuiltFull(fetch, {
@@ -90,10 +101,13 @@ function createAdblock(deps) {
       write: fs.promises.writeFile,
     });
     if (require('../test-mode').isTest()) global.__adblockEngine = blocker;
+    // Annoyance lists hide Google's One Tap prompt and block its sign-in script; signing in with Google on a site
+    // must keep working, so those are always let through.
+    try { blocker.updateFromDiff({ added: SIGN_IN_EXCEPTIONS }); } catch { /* the network check below still lets them through */ }
     blocker.onBeforeRequest = (details, callback) => {
       if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
       const page = details.webContents?.getURL() || details.referrer || '';
-      if (!on(page) || details.resourceType === 'mainFrame') return callback({});
+      if (!on(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url)) return callback({});
       const request = fromElectronDetails(details);
       if (request.type === 'other') request.guessTypeOfRequest();
       const { redirect, match } = blocker.match(request);

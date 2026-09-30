@@ -764,6 +764,10 @@ const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
   resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
+  // Private tabs present themselves as Chrome too (the same identity and request headers as normal tabs), or
+  // Google sign-in in a private window is refused as an unknown browser.
+  chromeIdentity: (wc) => applyChromeIdentity(wc),
+  chromeHintHeaders: UA_HINT_HEADERS,
 });
 if (TEST) global.__private = privateWindows;
 
@@ -1356,15 +1360,13 @@ function wireView(tab, url, history = null) {
     // extension page it liked (and whatever that page does with its privileges).
     if (target.startsWith('chrome-extension://') && extensionIdOf(target) !== extensionIdOf(wc.getURL())) return { action: 'deny' };
     if (disposition === 'new-window') {
-      // A real popup (sign-in, payment): it keeps window.opener so it can report back to the page.
+      // A real popup (sign-in, payment): it keeps window.opener so it can report back to the page. Lumen makes
+      // the window itself (createWindow) so it presents itself as Chrome before its first page loads: Google
+      // sign-in checks the browser on that very first page ("This browser or app may not be secure").
       return {
         action: 'allow',
-        overrideBrowserWindowOptions: {
-          autoHideMenuBar: true,
-          backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
-          icon: path.join(__dirname, 'assets', 'icon.png'),
-          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-        },
+        overrideBrowserWindowOptions: popupWindowOptions(),
+        createWindow: (options) => popupWindow(options, settings),
       };
     }
     withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id, partition: tab.isolated })); // a link from a research tab stays in its session
@@ -1530,9 +1532,7 @@ function wireView(tab, url, history = null) {
     siteSecurity.attachTab(wc); // mixed content, on the debugger session applyChromeIdentity opened
     safeBrowsing.attachTab(wc); // the warning page's "Visit this site" link
     if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
-    // A popup (sign-in, payment) presents itself as Chrome like the tab that opened it: Google
-    // sign-in and some payment pages refuse browsers they don't recognise.
-    wc.on('did-create-window', (child) => applyChromeIdentity(child.webContents));
+    // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
   if (history?.entries?.length) {
     wc.navigationHistory.restore({ entries: history.entries, index: history.index }).catch(() => wc.loadURL(url).catch(() => {}));
@@ -2719,6 +2719,26 @@ const UA_HINT_HEADERS = {
 // targets that would still say "Chromium", and Cloudflare's checkbox (an iframe from
 // challenges.cloudflare.com) fails a page whose frames disagree. So auto-attach to each one, paused
 // at start, give it the same identity, then let it run.
+// A sign-in or payment popup: its own small window that keeps window.opener, presents itself as Chrome from its
+// first request, and can itself open a further popup the same way (some sign-ins chain two).
+const popupWindowOptions = () => ({
+  autoHideMenuBar: true,
+  backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
+  icon: path.join(__dirname, 'assets', 'icon.png'),
+  webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+});
+function popupWindow(options, noIdentity = false) {
+  const child = new BrowserWindow({ ...options, ...popupWindowOptions(), webContents: options.webContents, webPreferences: { ...options.webPreferences, ...popupWindowOptions().webPreferences } });
+  const wc = child.webContents;
+  if (!noIdentity) applyChromeIdentity(wc);
+  wc.setWindowOpenHandler(({ url, disposition }) => {
+    if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
+    if (disposition === 'new-window') return { action: 'allow', overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity) };
+    openTab(url, { background: disposition === 'background-tab' });
+    return { action: 'deny' };
+  });
+  return wc;
+}
 const identified = new WeakSet();
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
@@ -3652,7 +3672,8 @@ function showDragCard(d, tab, cursor) {
     const favicon = icons.find((u) => typeof u === 'string' && (u.startsWith('https:') || u.startsWith('data:image/'))) || null;
     // A group dragged by its label is the group on the card too: its name and colour, as the slot shows it.
     const group = d.group ? { name: d.group.name, color: d.group.color } : null;
-    cardCall('show', { title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain(), shot: early });
+    const accent = settingsBackend.state().accent;
+    cardCall('show', { accent: nativeTheme.shouldUseDarkColors ? accent?.dark : accent?.light, title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain(), shot: early });
     card.win.showInactive();
   });
   const early = prepShot && prepShot.tabId === tab.id && Date.now() - prepShot.at < 4000 ? prepShot.src : null;
@@ -3860,7 +3881,11 @@ function finishCardDrag(d, reason, target) {
         } else {
           // One splice, landing exactly where the slot was: a group stays whole, a tab joins a group only
           // if the slot was inside it.
-          moveBlock(ids, before, d.group ? d.groupId : null);
+          // The group the slot showed (tinted between two of its tabs), or none: the same rule as a drag within the strip.
+          const rest = tabs.filter((t) => !ids.includes(t.id));
+          const k = before == null ? rest.length : Math.max(0, rest.findIndex((t) => t.id === before));
+          const join = rest[k - 1]?.groupId && rest[k - 1].groupId === rest[k]?.groupId ? rest[k - 1].groupId : null;
+          moveBlock(ids, before, d.group ? d.groupId : null, d.group ? undefined : join);
         }
         if (activeId !== d.tabId && tabs.some((t) => t.id === d.tabId)) switchTab(d.tabId);
       });
@@ -3886,7 +3911,7 @@ function finishCardDrag(d, reason, target) {
     if (dragCard?.owner === d) cardCall('wait'); // a window's UI is loading: the card shows it is opening
     const rec = createWindow({
       size: d.size, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src,
-      adopt: { src, tabId: d.tabId, ids, group: d.group, focus: false, done: (ok) => { settled(); if (ok) { wakeDeferredAside(d); revealNewWindow(rec, d.tabId, () => hideDragCard(d, 'drop')); } else hideDragCard(d, 'cancel'); } },
+      adopt: { src, tabId: d.tabId, ids, group: d.group, focus: false, done: (ok) => { settled(); if (ok) { wakeDeferredAside(d); revealNewWindow(rec, d.tabId, () => { hideDragCard(d, 'drop'); keepSelection(rec, ids); }); } else hideDragCard(d, 'cancel'); } },
     });
   };
   const landIn = (rec) => {
@@ -3894,7 +3919,7 @@ function finishCardDrag(d, reason, target) {
     if (!moveTabsBetween(src, rec, ids, 0, { focus: false, active: d.tabId, group: d.group })) { rec.win.close(); hideDragCard(d, 'cancel'); settled(); return; }
     wakeDeferredAside(d);
     settled();
-    revealNewWindow(rec, d.tabId, () => hideDragCard(d, 'drop'));
+    revealNewWindow(rec, d.tabId, () => { hideDragCard(d, 'drop'); keepSelection(rec, ids); });
   };
   const spare = takeSpare(d.size);
   if (spare) { landIn(spare); return; }
@@ -3930,7 +3955,7 @@ function beginTabDrag(src, tabId, grab) {
   if (moving?.ids.includes(tabId) && !single) { d.group = moving.group; d.groupId = grab.group; }
   // What a strip it hovers shows in the slot it opens: the tab itself (its icon and title), as it will be there.
   const entry = withWindow(src, () => tabState().tabs.find((t) => t.id === tabId));
-  d.ghost = entry && { group: d.group ? { name: d.group.name, color: d.group.color } : null, ownGroup: !d.group && d.ids.length === 1 ? tab.groupId || null : null, title: entry.title, favicons: entry.favicons || [], page: entry.page || null, sleeping: Boolean(entry.sleeping), pinned: Boolean(tab.pinned), count: single ? tabsOf(src).filter((t) => !t.closing).length : d.ids.length };
+  d.ghost = entry && { group: d.group ? { name: d.group.name, color: d.group.color } : null, title: entry.title, favicons: entry.favicons || [], page: entry.page || null, sleeping: Boolean(entry.sleeping), pinned: Boolean(tab.pinned), count: single ? tabsOf(src).filter((t) => !t.closing).length : d.ids.length };
   const w = src.win;
   if (single) {
     // The whole window follows the cursor, like its title bar; a maximized one is restored first.
@@ -4628,6 +4653,7 @@ const widgets = createWidgets({
   fetch: (url, options) => net.fetch(url, options),
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
+  canKeepSecrets: () => safeStorage.isEncryptionAvailable(), // checked before a sign-in starts, not after consent
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),

@@ -1433,12 +1433,16 @@ function createWidgets(deps) {
   // redirects to a one-shot listener on 127.0.0.1 (features/oauth.js). Only this process sees the code,
   // the tokens and the client secret; Settings gets a message, never a token.
   let signIn = null;
+  const GMAIL_BLOCKED_HINT = 'Still waiting. If Google showed “Access blocked” or an “unverified app” page, this account can’t use Lumen’s built-in sign-in yet: use your own Google Cloud client (Settings › Gmail › Advanced), or try again.';
   const staleGmail = () => { sessions.get('gmail')?.invalidate(); for (const w of list()) if (w.type === 'gmail') cache.delete(w.id); deps.onUpdate?.(); };
   // input: { clientId, clientSecret } from Settings' Advanced fields; both empty means Lumen's built-in
   // client ("Sign in with Google"). An own Client ID always wins over the built-in one.
   async function gmailConnect(input) {
     const { clientId, clientSecret } = gmailClient(input, OA.decodeCreds(deps.getSecret('gmail')), googleClient());
     if (!deps.openExternal) throw new Error('Lumen can’t open your browser here.');
+    // Checked before the consent page opens: finding out after the user has already said yes loses the sign-in.
+    if (deps.canKeepSecrets && !deps.canKeepSecrets()) throw new Error('This computer has no secure place for Lumen to keep the sign-in (the system keyring is off), so Gmail can’t be connected.');
+    const builtin = googleClient()?.clientId === clientId;
     const authBase = deps.endpoints?.().googleAuth || ENDPOINTS.googleAuth;
     signIn?.cancel(); // one sign-in at a time
     const flow = await OA.beginSignIn({
@@ -1448,7 +1452,15 @@ function createWidgets(deps) {
     });
     signIn = flow;
     try {
-      const t = await flow.done;
+      let t;
+      try {
+        t = await flow.done;
+      } catch (err) {
+        // Lumen's own client: the user typed no Client ID, so "check them in Settings" would point nowhere.
+        if (builtin && err?.kind === 'client') throw new Error('Lumen’s Google sign-in isn’t available right now. Update Lumen, or use your own Google Cloud client (Settings › Gmail › Advanced).');
+        if (builtin && err?.kind === 'timeout') throw new Error(GMAIL_BLOCKED_HINT);
+        throw err;
+      }
       deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh }));
       staleGmail();
       return { message: 'Gmail is connected.' };
@@ -1474,9 +1486,14 @@ function createWidgets(deps) {
     };
     const attempt = ++pageSignIns;
     show('Finish signing in, in your browser. Lumen is waiting…');
+    // Google never comes back when it blocks the sign-in ("Access blocked", an unverified-app page): after a minute,
+    // the card says what may have happened and what to do, instead of only waiting.
+    const hint = setTimeout(() => { if (attempt === pageSignIns && !sessionFor('gmail').connected()) show(GMAIL_BLOCKED_HINT); }, 60000);
+    hint.unref?.();
     gmailConnect({ clientId: w.clientId })
       .then(() => Promise.all(list().filter((x) => x.type === 'gmail').map((x) => refresh(x, { force: true }).catch(() => {}))))
-      .catch((err) => { if (attempt === pageSignIns) show(String(err?.message || err)); }); // a newer click's wait is not overwritten by the one it cancelled
+      .catch((err) => { if (attempt === pageSignIns) show(String(err?.message || err)); }) // a newer click's wait is not overwritten by the one it cancelled
+      .finally(() => clearTimeout(hint));
     return true;
   }
   // Best effort: tell Google the refresh token is no longer wanted.

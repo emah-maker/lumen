@@ -60,6 +60,17 @@ function createPrivateWindows(deps) {
 
   function setupSession(rec) {
     const ses = rec.ses;
+    // The Sec-CH-UA headers Chrome sends on secure requests (normal tabs get them from settings-backend.js).
+    if (deps.chromeHintHeaders) {
+      ses.webRequest.onBeforeSendHeaders((details, callback) => {
+        const headers = details.requestHeaders;
+        if (/^https:/.test(details.url)) {
+          for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];
+          Object.assign(headers, deps.chromeHintHeaders);
+        }
+        callback({ requestHeaders: headers });
+      });
+    }
     ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
       if (ALWAYS_ALLOWED.has(permission)) return callback(true);
       const reason = PROMPTABLE[permission];
@@ -88,11 +99,28 @@ function createPrivateWindows(deps) {
     wc.on('before-input-event', (event, input) => handleShortcut(rec, event, input));
     // Only web pages (and the private new-tab page) in a private tab.
     wc.on('will-navigate', (event) => { if (!isWebUrl(event.url) && !sameFile(event.url, NEWTAB_URL)) event.preventDefault(); });
-    wc.setWindowOpenHandler(({ url, disposition }) => {
-      if (isWebUrl(url)) openTab(rec, url, { background: disposition === 'background-tab' });
-      return { action: 'deny' };
-    });
+    deps.chromeIdentity?.(wc);
+    wc.setWindowOpenHandler(({ url, disposition }) => popupOrTab(rec, url, disposition));
     wc.on('destroyed', () => closeTab(rec, tab.id, { destroyed: true }));
+  }
+
+  // A sign-in or payment popup ("Sign in with Google" on a site) stays a popup, in this window's private session,
+  // with window.opener kept so it can report back to the page; a link that opens a tab opens a private tab.
+  function popupOrTab(rec, url, disposition) {
+    if (disposition === 'new-window' && (isWebUrl(url) || url === 'about:blank')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: '#1d1530', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } },
+        createWindow: (options) => {
+          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: '#1d1530', webContents: options.webContents });
+          deps.chromeIdentity?.(child.webContents);
+          child.webContents.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
+          return child.webContents;
+        },
+      };
+    }
+    if (isWebUrl(url)) openTab(rec, url, { background: disposition === 'background-tab' });
+    return { action: 'deny' };
   }
 
   function openTab(rec, url, { background = false } = {}) {

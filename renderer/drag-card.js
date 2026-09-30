@@ -11,6 +11,9 @@
     show(data) {
       clearTimeout(hideTimer);
       document.documentElement.classList.toggle('dark', Boolean(data.dark));
+      // Lumen's accent colour (a #rgb/#rrggbb value only), for the count badge and the like.
+      if (typeof data.accent === 'string' && /^#[0-9a-f]{3,8}$/i.test(data.accent)) document.documentElement.style.setProperty('--accent', data.accent);
+      else document.documentElement.style.removeProperty('--accent');
       $('title').textContent = String(data.title || 'New Tab');
       const count = Math.max(1, Math.min(999, Math.round(Number(data.count) || 1)));
       $('count').textContent = String(count);

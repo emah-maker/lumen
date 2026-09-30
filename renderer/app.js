@@ -666,7 +666,8 @@ function moveTabDrag(e) {
   drag.edge = bar.scrollWidth > bar.clientWidth + 1 ? (e.clientX < br.left + 28 ? -1 : e.clientX > br.right - 28 ? 1 : 0) : 0;
   if (drag.edge && !drag.edgeTimer) {
     const d = drag;
-    const tick = () => { if (drag !== d || !d.edge) { d.edgeTimer = 0; return; } bar.scrollLeft += 9 * d.edge; d.edgeTimer = requestAnimationFrame(tick); };
+    // The strip moves under a still pointer, so the slot is worked out again each frame (as Chrome does).
+    const tick = () => { if (drag !== d || !d.edge) { d.edgeTimer = 0; return; } bar.scrollLeft += 9 * d.edge; if (d.floated) retarget(d.lastX); d.edgeTimer = requestAnimationFrame(tick); };
     d.edgeTimer = requestAnimationFrame(tick);
   }
   const dx = Math.max(br.left - rects[from].left, Math.min(br.right - rects[from].right, drag.dx));
@@ -702,14 +703,21 @@ function moveTabDrag(e) {
     drag.el.classList.add('floating');
     drag.floated = true;
   }
-  const hit = tabDropBefore(e.clientX, skip, pinned);
-  if (!drag.slotShown || drag.slotKey !== targetKey(hit)) {
-    drag.slotShown = true;
-    drag.slotBefore = hit?.id ?? null;
-    drag.slotKey = targetKey(hit);
-    const tab = (lastTabState?.tabs || []).find((t) => t.id === drag.id);
-    showDropSlot({ beforeId: drag.slotBefore, outside: Boolean(hit?.outside), ghost: false, width: drag.rects[drag.from].width, tab: tab ? { pinned: Boolean(tab.pinned), ownGroup: tab.groupId || null } : { pinned } });
-  }
+  drag.lastX = e.clientX;
+  retarget(e.clientX);
+}
+// Where the floating tab (or selection) would land for pointer x: moves the slot there if that changed.
+function retarget(x) {
+  if (!drag) return;
+  const skip = drag.gathered || [drag.id];
+  const pinned = drag.el.classList.contains('pinned');
+  const hit = tabDropBefore(x, skip, pinned);
+  if (drag.slotShown && drag.slotKey === targetKey(hit)) return;
+  drag.slotShown = true;
+  drag.slotBefore = hit?.id ?? null;
+  drag.slotKey = targetKey(hit);
+  const tab = (lastTabState?.tabs || []).find((t) => t.id === drag.id);
+  showDropSlot({ beforeId: drag.slotBefore, outside: Boolean(hit?.outside), ghost: false, width: drag.rects[drag.from].width, tab: tab ? { pinned: Boolean(tab.pinned), ownGroup: tab.groupId || null } : { pinned } });
 }
 
 function endTabDrag(e) {
@@ -736,7 +744,7 @@ function endTabDrag(e) {
   window.removeEventListener('blur', dragBlur);
   $('tabs').classList.remove('reordering');
   $('tabs').querySelectorAll('.tab-gather-count').forEach((c) => c.remove());
-  const blockMove = moved && !handed && !escaped && (gathered || along);
+  const blockMove = moved && !handed && !escaped && (gathered || along) && !sameSpot; // released at its own place: everything unfolds where it was
   if (dropSlot && !settling) { closeSlot(dropSlot.el); dropSlot = null; trackIndicator(460); }
   [...$('tabs').children].forEach((t) => {
     t.style.transform = '';
