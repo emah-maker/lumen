@@ -1469,9 +1469,19 @@ function createWidgets(deps) {
         if (err?.kind === 'timeout') throw new Error(builtin && !googleClient()?.verified ? 'Sign-in timed out. If Google said Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen next time; if it said “Access blocked”, use your own Google Cloud client (Settings › Gmail › Advanced).' : 'Sign-in timed out. Try again.');
         throw err;
       }
-      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh }));
+      const old = OA.decodeCreds(deps.getSecret('gmail'));
+      // Which account this is (Gmail's profile: the read-only scope allows it), so Settings can say so.
+      let email = '';
+      try {
+        const res = await deps.fetch(`${deps.endpoints?.().gmail || ENDPOINTS.gmail}/users/me/profile`, { headers: { Authorization: `Bearer ${t.access}` } });
+        if (res.ok) email = String((await res.json())?.emailAddress || '').slice(0, 320);
+      } catch { /* shown as "a Google account" */ }
+      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh, email }));
+      // Signed in again: the grant it replaces is given back to Google, not left behind.
+      if (old?.refresh && old.refresh !== t.refresh) revokeGoogle(old);
       staleGmail();
-      return { message: 'Gmail is connected.' };
+      deps.focusApp?.(); // back from the browser's consent page to Lumen
+      return { message: email ? `Gmail is connected as ${email}.` : 'Gmail is connected.' };
     } finally {
       if (signIn === flow) signIn = null;
     }
@@ -1694,6 +1704,7 @@ function createWidgets(deps) {
       widgets: list().map((w) => ({ ...w, title: w.title || connector(w).title(w), customTitle: w.title, summary: connector(w).summary(w), label: connector(w).label, error: cache.get(w.id)?.error || null })),
       types: Object.entries(CONNECTORS).map(([type, c]) => ({ type, label: c.label })),
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
+      gmailAccount: OA.decodeCreds(deps.getSecret('gmail'))?.refresh ? OA.decodeCreds(deps.getSecret('gmail'))?.email || '' : '', // which one, when known
       gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified), revoked: lastRevoke }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),

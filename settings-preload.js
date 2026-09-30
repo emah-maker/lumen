@@ -25,6 +25,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       gmailConnect: call('prefs:widget-gmail-connect'),
       gmailCancel: call('prefs:widget-gmail-cancel'),
       gmailDisconnect: call('prefs:widget-gmail-disconnect'),
+      onChanged: (cb) => ipcRenderer.on('widgets:changed', () => cb()), // a connection changed elsewhere (the card, Google)
       slackStart: call('prefs:slack-start'),
       slackFinish: call('prefs:slack-finish'),
       slackCancel: call('prefs:slack-cancel'),

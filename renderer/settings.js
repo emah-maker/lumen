@@ -978,7 +978,7 @@ async function buildWidgets(card) {
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
       const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
-        h('span', { class: 'note', text: 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.' }),
+        h('span', { class: 'note', text: tr('settings.gmail.readOnly', 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.') }),
         // Said before the user tries, not after five silent minutes: until Google approves it, not every account can use it.
         builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', id: 'widget-gmail-unverified', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client under Advanced.') }) : null);
       const adv = advanced([
@@ -986,16 +986,19 @@ async function buildWidgets(card) {
         helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
         setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, 'From the same client. Stored encrypted by your system.'),
       ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !builtin && !g.clientId);
-      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : 'Advanced';
+      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : tr('settings.advanced', 'Advanced');
       inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = accountRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
       const draw = () => {
         disconnect.hidden = !connected();
         connect.textContent = connectLabel();
         connect.className = connected() ? '' : 'primary big';
-        if (!status.textContent) { status.textContent = connected() ? tr('settings.gmail.connected', 'A Google account is connected.') : tr('settings.gmail.notConnected', 'Not connected yet.'); status.className = `sp-status${connected() ? ' on' : ''}`; }
+        if (!status.textContent) {
+          status.textContent = connected() ? (ws.gmailAccount ? tr('settings.gmail.connectedAs', 'Connected as {email}.', { email: ws.gmailAccount }) : tr('settings.gmail.connected', 'A Google account is connected.')) : tr('settings.gmail.notConnected', 'Not connected yet.');
+          status.className = `sp-status${connected() ? ' on' : ''}`;
+        }
       };
       connect.addEventListener('click', async () => {
-        if (!builtin && !own()) { adv.open = true; flash(status, 'First add your Google Cloud Client ID and secret under Advanced.', 'warn'); inputs.clientId.focus(); return; }
+        if (!builtin && !own()) { adv.open = true; flash(status, tr('settings.gmail.needClient', 'First add your Google Cloud Client ID and secret under Advanced.'), 'warn'); inputs.clientId.focus(); return; }
         connect.disabled = true;
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
@@ -1017,7 +1020,17 @@ async function buildWidgets(card) {
         draw();
       });
       cancel.addEventListener('click', () => S.widgets.gmailCancel());
+      // Two steps: the first click asks, a second within 4 s disconnects.
+      let armed = 0;
       disconnect.addEventListener('click', async () => {
+        if (!armed) {
+          disconnect.textContent = tr('settings.gmail.disconnectConfirm', 'Disconnect? Click again');
+          armed = setTimeout(() => { armed = 0; disconnect.textContent = tr('settings.gmail.disconnect', 'Disconnect'); }, 4000);
+          return;
+        }
+        clearTimeout(armed);
+        armed = 0;
+        disconnect.textContent = tr('settings.gmail.disconnect', 'Disconnect');
         ws = await S.widgets.gmailDisconnect();
         status.textContent = '';
         flash(status, ws?.gmailClient?.revoked === false
@@ -1026,6 +1039,8 @@ async function buildWidgets(card) {
         draw();
       });
       draw();
+      // A connection that changed elsewhere (Google ended it, the card signed in) shows here at once.
+      S.widgets.onChanged?.(async () => { if (!accountRow.isConnected) return; ws = await S.widgets.state(); status.textContent = ''; draw(); });
       fields.replaceChildren(
         section(tr('settings.gmail.account', 'Account'), [accountRow]),
         section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]),

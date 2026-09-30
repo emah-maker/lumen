@@ -785,6 +785,11 @@ const privateWindows = createPrivateWindows({
   // Google sign-in in a private window is refused as an unknown browser.
   chromeIdentity: (wc) => applyChromeIdentity(wc),
   chromeHintHeaders: UA_HINT_HEADERS,
+  // Its sign-in popups behave as normal ones: page settings, an error page when a load fails, the "Google refused" note.
+  popupWebPreferences: () => settingsBackend.tabWebPreferences(false),
+  popupFailPage: (wc) => popupFailPage(wc),
+  googleRefusedGuard: (wc) => googleRefusedGuard(wc),
+  popupBackground: () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
 });
 if (TEST) global.__private = privateWindows;
 
@@ -1462,11 +1467,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
-  // Google's "This browser or app may not be secure" page: a note says what to try, instead of a dead end.
-  wc.on('did-navigate', (_e, navUrl) => {
-    if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl))) return;
-    withWindow(tab.rec, () => organizeNote('Google didn’t accept this sign-in. Try again in a new tab, or turn off a VPN or proxy if one is on. If Google still refuses, sign in once in Chrome on this computer, then try here again.'));
-  });
+  googleRefusedGuard(wc, () => withWindow(tab.rec, () => organizeNote(GOOGLE_REFUSED)));
   // A crashed page (or one out of memory) was left blank with no way back. Show a "This page
   // crashed" page with Reload instead; the crashed page's own entry stays in history behind it.
   wc.on('render-process-gone', (_e, details) => {
@@ -2780,22 +2781,40 @@ const popupWindowOptions = () => ({
   icon: path.join(__dirname, 'assets', 'icon.png'),
   webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) },
 });
+// Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
+// strip; for popups and private windows (no strip) a small dialog over the window.
+const GOOGLE_REFUSED = 'Google didn’t accept this sign-in. Try again in a moment; if a VPN or proxy is on, turn it off and try again. Keeping Lumen up to date helps too.';
+function googleRefusedGuard(wc, notify) {
+  let shown = 0;
+  wc.on('did-navigate', (_e, navUrl) => {
+    if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl)) || Date.now() - shown < 10000) return;
+    shown = Date.now();
+    if (notify) { notify(); return; }
+    const win = BrowserWindow.fromWebContents(wc);
+    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: 'Google didn’t accept this sign-in', detail: GOOGLE_REFUSED, buttons: ['OK'] }).catch(() => {});
+  });
+}
+// A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
+function popupFailPage(wc) {
+  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
+    if (!isMainFrame || code === -3) return;
+    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
+    wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
+  });
+}
 function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null) {
   const child = new BrowserWindow({ ...options, ...popupWindowOptions(), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
   const wc = child.webContents;
   popupPartition.set(wc, partition);
   if (!noIdentity) applyChromeIdentity(wc); // before anything loads
   if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet: it loads the address itself
-  // A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
-  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
-    if (!isMainFrame || code === -3) return;
-    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
-    wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
-  });
+  popupFailPage(wc);
+  googleRefusedGuard(wc);
   // While a sign-in popup is open, the tab that opened it doesn't go to sleep (it would lose the page it reports back to).
   if (openerTab) { openerTab.openPopups = (openerTab.openPopups || 0) + 1; child.on('closed', () => { openerTab.openPopups = Math.max(0, (openerTab.openPopups || 1) - 1); }); }
   // The title bar says which site this is (a popup has no address bar), with a lock when the connection is secure.
-  const titleFor = () => { try { const u = new URL(wc.getURL()); return `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host}${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`; } catch { return wc.getTitle() || 'Lumen'; } };
+  // (Lumen's own pages, such as an error page, have no host: their title alone.)
+  const titleFor = () => { try { const u = new URL(wc.getURL()); if (!u.host) return wc.getTitle() || 'Lumen'; return `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host}${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`; } catch { return wc.getTitle() || 'Lumen'; } };
   const retitle = () => { if (!child.isDestroyed()) child.setTitle(titleFor()); };
   wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });
   wc.on('did-navigate', retitle);
@@ -2820,6 +2839,7 @@ function applyChromeIdentity(wc) {
   try {
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
   } catch {
+    console.warn('[lumen] Chrome identity not applied (another debugger is attached to this page); Google may refuse sign-in here.');
     return; // Another debugger (e.g. an extension) is attached; keep Electron's defaults.
   }
   identified.add(wc);
@@ -4839,7 +4859,14 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
-  onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  onUpdate: () => {
+    clearTimeout(widgetRefreshTimer);
+    widgetRefreshTimer = setTimeout(() => {
+      refreshNewTabs();
+      for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); // Settings shows it too (a sign-in Google ended)
+    }, 60);
+  },
+  focusApp: () => { const w = BrowserWindow.getFocusedWindow() || winRecs.values().next().value?.win; if (w && !w.isDestroyed()) { if (w.isMinimized()) w.restore(); w.show(); w.focus(); app.focus?.({ steal: true }); } },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {
     const wc = tabs.find((t) => t.id === openSettingsPage('appearance'))?.view?.webContents;

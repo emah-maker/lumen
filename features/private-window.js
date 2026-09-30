@@ -102,6 +102,7 @@ function createPrivateWindows(deps) {
     // Only web pages (and the private new-tab page) in a private tab.
     wc.on('will-navigate', (event) => { if (!isWebUrl(event.url) && !sameFile(event.url, NEWTAB_URL)) event.preventDefault(); });
     deps.chromeIdentity?.(wc);
+    deps.googleRefusedGuard?.(wc);
     pageMenu(rec, wc);
     wc.setWindowOpenHandler(({ url, disposition }) => popupOrTab(rec, url, disposition));
     wc.on('destroyed', () => closeTab(rec, tab.id, { destroyed: true }));
@@ -125,13 +126,15 @@ function createPrivateWindows(deps) {
     if (disposition === 'new-window' && (isWebUrl(url) || url === 'about:blank')) {
       return {
         action: 'allow',
-        overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: '#1d1530', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } },
+        overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } },
         outlivesOpener: true,
         createWindow: (options) => {
-          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: '#1d1530', ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false } }) });
+          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } }) });
           const wc = child.webContents;
+          deps.chromeIdentity?.(wc); // before anything loads
           if (!options?.webContents) wc.loadURL(url).catch(() => {});
-          deps.chromeIdentity?.(wc);
+          deps.popupFailPage?.(wc);
+          deps.googleRefusedGuard?.(wc);
           // The title bar says which site this is (a popup has no address bar), private and with a lock when secure.
           const retitle = () => { if (child.isDestroyed()) return; try { const u = new URL(wc.getURL()); child.setTitle(`${u.protocol === 'https:' ? '🔒 ' : ''}${u.host} — Private${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`); } catch { child.setTitle('Lumen (Private)'); } };
           wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });

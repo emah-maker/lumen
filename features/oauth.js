@@ -115,14 +115,13 @@ function classifyTokenFailure(status, text, retryAfterHeader) {
   if (error === 'invalid_grant') return { kind: 'revoked', error, description };
   if (error === 'invalid_client' || error === 'unauthorized_client' || error === 'access_denied') return { kind: 'client', error, description };
   if (status >= 500) return { kind: 'server', error, description };
-  if (status === 400 || status === 401) return { kind: 'revoked', error, description };
-  return { kind: 'other', error, description };
+  return { kind: 'other', error, description }; // (a 400/401 for another reason, a proxy's page: tried again, the sign-in kept)
 }
 
 // ---- stored credentials: one small JSON blob per account, encrypted by the caller ----
 function encodeCreds(c) {
   const out = {};
-  for (const k of ['clientId', 'clientSecret', 'refresh']) if (typeof c?.[k] === 'string' && c[k]) out[k] = c[k].slice(0, 4096);
+  for (const k of ['clientId', 'clientSecret', 'refresh', 'email']) if (typeof c?.[k] === 'string' && c[k]) out[k] = c[k].slice(0, 4096);
   return JSON.stringify(out);
 }
 function decodeCreds(text) {
@@ -132,15 +131,18 @@ function decodeCreds(text) {
     if (!c || typeof c !== 'object') return null;
     const out = {};
     for (const k of ['clientId', 'clientSecret', 'refresh']) out[k] = typeof c[k] === 'string' ? c[k].slice(0, 4096) : '';
+    if (typeof c.email === 'string' && c.email) out.email = c.email.slice(0, 320); // the account's address, when known
     return out;
   } catch { return null; }
 }
 
 // ---- the loopback redirect ----
-const PAGE_CSS = 'body{font:16px system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 1em;color:#222}h1{font-size:1.3em}';
+const PAGE_CSS = ':root{color-scheme:light dark;--bg:#fff;--fg:#1d1d1f;--muted:#6e6e73;--accent:#007aff}@media (prefers-color-scheme:dark){:root{--bg:#1c1c1e;--fg:#f5f5f7;--muted:#98989d;--accent:#0a84ff}}'
+  + 'body{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);max-width:30em;margin:18vh auto;padding:0 1.5em;text-align:center}'
+  + '.mark{width:44px;height:44px;margin:0 auto 18px;border-radius:12px;background:linear-gradient(135deg,var(--accent),#5e5ce6);box-shadow:0 6px 18px -6px var(--accent)}h1{font-size:1.25em;margin:0 0 .4em}p{color:var(--muted);margin:0}';
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function resultPage(title, message) {
-  return `<!doctype html><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PAGE_CSS}</style><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>`;
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(title)}</title><style>${PAGE_CSS}</style><div class="mark" aria-hidden="true"></div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>`;
 }
 const sameText = (a, b) => {
   const x = Buffer.from(String(a)); const y = Buffer.from(String(b));
