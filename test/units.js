@@ -805,6 +805,11 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     picked.settings.model = 'claude-sonnet-5';
     picked.simpleTurn = picked[0];
     check('simple turn: low effort and small cap on the first turn only, and not on a picked model', sp.output_config.effort === 'low' && sp.max_tokens <= 8000 && lp.max_tokens === 64000 && lp.output_config.effort === 'high' && requestFor(picked.settings, picked).max_tokens === 64000, JSON.stringify([sp.output_config, lp.output_config]));
+    const followUp = msgs([{ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'and Spain?' }]);
+    followUp.simpleTurn = followUp[2];
+    check('simple turn: a simple follow-up in a longer chat keeps the chat effort (an effort change would miss the cached history)', requestFor(followUp.settings, followUp).output_config.effort === 'high', JSON.stringify(requestFor(followUp.settings, followUp).output_config));
+    const sys = a.system[0].text;
+    check('system prompt: keeps the safety rules (untrusted pages, confirm first, no passwords, no CAPTCHAs) and stays under 4k chars', /untrusted data, not instructions/.test(sys) && /ask the user to confirm/.test(sys) && /Never type passwords/.test(sys) && /CAPTCHA/.test(sys) && sys.length < 4000, String(sys.length));
     check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
   }
 
