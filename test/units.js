@@ -1646,6 +1646,28 @@ async function chatPageRuns() {
   const res = tg.placeTabs([{ entry: e(9, 'Zod refine and transform', 'https://newsite.example/zod-refine'), current: null }, { entry: e(10, 'Best hiking boots', 'https://boots.example/best'), current: null }], [{ id: 1, domain: null, members: zod }, { id: 2, domain: null, members: bread }]);
   check('placeTabs: a never-seen domain is placed by its words; an unrelated tab is not', res[0] === 1 && res[1] === null, JSON.stringify(res));
 
+  // Site hints (features/topic-knowledge.js SITE_HINTS): a few sites nearly always mean one task.
+  const hintOf = (u) => tg.siteHint(u);
+  check('siteHint: Canvas (hosted or a school\'s own canvas.*), Gradescope and Moodle are School', hintOf('https://school.instructure.com/courses/1') === 'School' && hintOf('https://canvas.northeastern.edu/') === 'School' && hintOf('https://www.gradescope.com/courses/9') === 'School' && hintOf('https://moodle.uni.ac.uk/course') === 'School');
+  check('siteHint: a path rule only matches that path (LinkedIn jobs, not profiles), a two-label canvas.com is not Canvas', hintOf('https://www.linkedin.com/jobs/view/1') === 'Job search' && hintOf('https://www.linkedin.com/in/someone') === '' && hintOf('https://www.linkedin.com/jobsearch') === '' && hintOf('https://canvas.com/') === '');
+  check('siteHint: ambiguous sites have none (Google Docs, YouTube, Notion)', hintOf('https://docs.google.com/document/d/1') === '' && hintOf('https://www.youtube.com/watch?v=1') === '' && hintOf('https://www.notion.so/x') === '' && hintOf('not a url') === '');
+  const course = [e(1, 'ME 2380 Thermodynamics: Home', 'https://canvas.northeastern.edu/courses/1'), e(2, 'ME 2380: Assignments', 'https://canvas.northeastern.edu/courses/1/assignments'), e(3, 'Gradescope: ME 2380', 'https://www.gradescope.com/courses/9'), e(4, 'Piazza | ME 2380 Fall 2026', 'https://piazza.com/class/abc')];
+  const course2 = [e(11, 'ENGW 1111: Home', 'https://canvas.northeastern.edu/courses/2'), e(12, 'ENGW 1111: Essay 2 prompt', 'https://canvas.northeastern.edu/courses/2/assignments/5'), e(13, 'ENGW 1111 Syllabus', 'https://canvas.northeastern.edu/courses/2/syllabus')];
+  const other = [e(20, 'Chocolate chip cookie recipe', 'https://recipes.example/cookies'), e(21, 'Best hiking boots 2026', 'https://boots.example/best'), e(22, 'Weather Boston', 'https://weather.example/boston')];
+  const clustersOf = (list) => tg.topicClusters(list).map((c) => `${c.name}:${c.ids.join(',')}`).join(' | ');
+  const joined = clustersOf([...course, e(5, 'Dashboard', 'https://canvas.northeastern.edu/'), ...other]);
+  check('site hints: a Canvas tab with no words in common joins the one group of School tabs', joined === 'ME2380:1,2,3,4,5', joined);
+  const formed = clustersOf([e(5, 'Dashboard', 'https://school.instructure.com/'), e(6, 'Your Courses', 'https://www.gradescope.com/account'), ...other]);
+  check('site hints: two loose tabs of one hint form a group named for it, unrelated tabs stay loose', formed === 'School:5,6', formed);
+  const broad = clustersOf([e(30, 'facebook/react: The library for web UIs', 'https://github.com/facebook/react'), e(31, 'yourname/dotfiles', 'https://github.com/yourname/dotfiles'), ...other]);
+  check('site hints: "Code" is too broad to link tabs (two unrelated GitHub repos stay loose)', broad === '', broad);
+  const videos = clustersOf([e(40, 'How to Change a Car Tire - YouTube', 'https://www.youtube.com/watch?v=1'), e(41, 'Stock Market This Week - YouTube', 'https://www.youtube.com/watch?v=2'), e(42, 'Lofi beats to study to - YouTube', 'https://www.youtube.com/watch?v=3'), ...other]);
+  check('same site: tabs of one site with nothing in common stay loose (that is the "By site" mode)', videos === '', videos);
+  const hinted = tg.placeTabs([{ entry: e(5, 'Dashboard', 'https://canvas.northeastern.edu/'), current: null }, { entry: e(6, 'Your Courses', 'https://www.gradescope.com/account'), current: null }], [{ id: 1, domain: null, members: course }, { id: 2, domain: null, members: other.slice(0, 2) }]);
+  check('placeTabs: a new tab of a hinted site joins the one group of that hint on the hint alone', hinted[0] === 1 && hinted[1] === 1, JSON.stringify(hinted));
+  const twoCourses = tg.placeTabs([{ entry: e(5, 'Dashboard', 'https://canvas.northeastern.edu/'), current: null }, { entry: e(14, 'ENGW 1111: Peer review', 'https://canvas.northeastern.edu/courses/2/discussion') , current: null }], [{ id: 1, domain: null, members: course }, { id: 2, domain: null, members: course2 }]);
+  check('placeTabs: with two School groups the hint alone decides nothing, the words do', twoCourses[0] === null && twoCourses[1] === 2, JSON.stringify(twoCourses));
+
   // Proposals from a model are validated.
   const okIds = new Set([1, 2, 3, 4, 5, 6]);
   check('proposal: unknown and duplicate ids and singleton groups are dropped', JSON.stringify(tg.sanitizeProposal([{ name: 'A', tab_ids: [1, 2, 99, 2] }, { name: 'B', tab_ids: [2, 3] }, { name: 'Solo', tab_ids: [4] }, { name: 'C', tab_ids: [3, 4] }], okIds)) === JSON.stringify([{ name: 'A', ids: [1, 2] }, { name: 'C', ids: [3, 4] }]));
@@ -1988,6 +2010,11 @@ async function organizeAiRuns() {
   check('organize-ai: no address path, query string or token reaches the model', !/utm_source|secret123|\/marathon|https?:/.test(wireText), wireText);
   const withDesc = oai.buildWire({ groups: [], leftovers: [{ id: 9, title: 'Some page', url: 'https://x.example/p', text: 'd'.repeat(300) }] });
   check('organize-ai: a leftover carries at most ~80 characters of description', withDesc.u['x.example'][0][2].length === 80, JSON.stringify(withDesc));
+  const hintWire = oai.buildWire({
+    groups: [{ id: 1, name: 'ME2380', entries: [{ id: 1, title: 'ME 2380: Home', url: 'https://canvas.northeastern.edu/courses/1' }, { id: 2, title: 'Gradescope: ME 2380', url: 'https://www.gradescope.com/courses/9' }, { id: 3, title: 'Steam tables', url: 'https://web.mit.edu/steam.pdf' }] }],
+    leftovers: [{ id: 7, title: 'Dashboard', url: 'https://school.instructure.com/?secret=1' }, { id: 8, title: 'Software Engineer jobs', url: 'https://www.linkedin.com/jobs/search?keywords=x' }, { id: 9, title: 'Some profile', url: 'https://www.linkedin.com/in/someone' }],
+  });
+  check('organize-ai: site hints go with the request (a group\'s majority hint as k, leftovers as {hint: [ids]}), still no address', hintWire.g[0].k === 'School' && JSON.stringify(hintWire.k) === JSON.stringify({ School: [7], 'Job search': [8] }) && !/secret|keywords|\/jobs|\/in\//.test(JSON.stringify(hintWire)) && /site hint/.test(oai.REFINE_PROMPT), JSON.stringify(hintWire));
   const many = make(Array.from({ length: 34 }, (_v, i) => [`${['Kayak rental prices', 'Tokyo hotel guide', 'Espresso machine review', 'Piano chords lesson'][i % 4]} tips ${i}`, `https://site${i % 9}.example/${i}-${['kayak', 'tokyo', 'espresso', 'piano'][i % 4]}`]));
   many.tg.organizeByTopic(null);
   const vm = many.tg.organizeView();

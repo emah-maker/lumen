@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Organize by topic and Organize with AI know what a few sites are for: Canvas, Gradescope, Piazza, Moodle and other course sites are School, Indeed, Greenhouse and LinkedIn Jobs are a job search, Airbnb, Booking and Kayak are travel, Amazon, eBay and Etsy are shopping. A course's Canvas "Dashboard" now joins that course's group, two loose school tabs form a "School" group, and the AI is told each tab's hint and that tabs of one site usually belong together (unless their titles are clearly different topics). Ambiguous sites (Google Docs, Notion, YouTube) get no hint, and unrelated tabs of one site still stay loose; grouping by site alone is still the By site mode. On the realistic sessions, accuracy went from 0.88 to 0.89 when organizing and from 0.89 to 0.91 as tabs open (the course session from 0.71 to 0.77 and 0.83), with no session worse.
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

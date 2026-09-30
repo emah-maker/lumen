@@ -62,10 +62,19 @@ function sample(entries, k) {
 
 const cleanTitle = (e) => clip(tg.stripSiteSegment(e.title || '', e.url || ''), TITLE_MAX);
 
+// The site hint most of these tabs have ("School" for Canvas, see features/topic-knowledge.js), or ''.
+// Worked out from the host and path only, so it tells the model nothing the host doesn't already.
+function majorHint(entries) {
+  const count = new Map();
+  for (const e of entries) { const h = tg.siteHint(e.url); if (h) count.set(h, (count.get(h) || 0) + 1); }
+  return [...count].find(([, n]) => n * 2 > entries.length)?.[0] || '';
+}
+
 function groupSummary(g) {
   const shown = sample(g.entries, g.entries.length <= 4 ? 4 : 3);
   const hosts = hostCounts(g.entries);
-  return { i: g.id, n: g.entries.length, x: g.name, h: hosts.slice(0, 2).join(','), w: topWords(g.entries).join(' '), ...(g.ctx ? {} : { t: shown.map((e) => [e.id, cleanTitle(e)]) }) };
+  const hint = majorHint(g.entries);
+  return { i: g.id, n: g.entries.length, x: g.name, h: hosts.slice(0, 2).join(','), ...(hint ? { k: hint } : {}), w: topWords(g.entries).join(' '), ...(g.ctx ? {} : { t: shown.map((e) => [e.id, cleanTitle(e)]) }) };
 }
 
 // Leftover tabs grouped by host (a host is written once), each [id, title, short description].
@@ -84,6 +93,10 @@ function leftoverSummary(entries) {
 function buildWire(view) {
   const wire = { g: view.groups.map(groupSummary) };
   if (view.leftovers.length) wire.u = leftoverSummary(view.leftovers);
+  // Site hints of the ungrouped tabs, written once per hint: { School: [tabIds] }.
+  const hints = {};
+  for (const e of view.leftovers) { const h = tg.siteHint(e.url); if (h) (hints[h] ||= []).push(e.id); }
+  if (Object.keys(hints).length) wire.k = hints;
   return wire;
 }
 
@@ -92,7 +105,7 @@ function legacyWire(entries, pathWords = tg.pathWords) {
   return entries.map((e) => ({ id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(pathWords(e.url) ? { path: pathWords(e.url) } : {}) }));
 }
 
-const REFINE_PROMPT = 'Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given.';
+const REFINE_PROMPT = 'Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, k site hint, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. k = site hints of ungrouped tabs: {hint: [tabIds]}. A site hint means the site is nearly always that task (Canvas and Gradescope are School, Indeed is Job search): tabs with one hint, and tabs of one host, usually belong together or in the group with that hint or host, unless their titles are clearly different topics (two courses, two projects). Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given.';
 
 const intItems = (props) => ({ type: 'array', items: { type: 'object', properties: props, required: Object.keys(props), additionalProperties: false } });
 const REFINE_SCHEMA = {
