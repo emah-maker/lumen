@@ -254,14 +254,21 @@ let runId = 0; // events from older runs (after Stop or New chat) are ignored
 // to read, it stays put and a "Jump to latest" button offers the way back.
 let stuck = true;
 const atBottom = () => messages.scrollHeight - messages.scrollTop - messages.clientHeight < 48;
-const jump = Object.assign(document.createElement('button'), { type: 'button', className: 'jump-latest', hidden: true, textContent: '↓' });
+const jump = Object.assign(document.createElement('button'), { type: 'button', className: 'jump-latest', hidden: true });
+jump.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3.5 8.5 8 13l4.5-4.5"/></svg>';
 jump.setAttribute('aria-label', t('chat.jumpLatest'));
 jump.title = t('chat.jumpLatest');
 let jumping = 0; // (a jump's own scroll events don't count as the user scrolling away)
-jump.addEventListener('click', () => { stuck = true; jumping = Date.now(); messages.scrollTop = messages.scrollHeight; jump.hidden = true; });
+jump.addEventListener('click', () => {
+  stuck = true;
+  jumping = Date.now();
+  const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches && messages.scrollHeight - messages.scrollTop - messages.clientHeight < messages.clientHeight * 6;
+  messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); // (a long way down: at once)
+  jump.hidden = true;
+});
 messages.after(jump);
 messages.addEventListener('scroll', () => {
-  if (Date.now() - jumping < 250) { stuck = true; return; }
+  if (Date.now() - jumping < 700) { stuck = true; return; } // (a smooth jump's own scrolling)
   stuck = atBottom();
   jump.hidden = stuck || !messages.querySelector('.msg');
 }, { passive: true });
@@ -273,7 +280,10 @@ function scrollToBottom(force = false) {
 
 function append(el, { force = false } = {}) {
   $('empty').hidden = true;
-  messages.append(el);
+  // Queued messages ("Sends when this reply finishes") stay at the very end, under the running reply.
+  const firstQueued = el.classList?.contains('queued') ? null : messages.querySelector(':scope > .notice.queued');
+  if (firstQueued) firstQueued.before(el);
+  else messages.append(el);
   scrollToBottom(force);
   return el;
 }
@@ -489,12 +499,12 @@ function settleThinking() {
 // then asked again, as if it had never been sent.
 let lastAsk = null;
 async function askAgain() {
-  if (running || !lastAsk) return;
+  if (running || !lastAsk) return false;
   const again = lastAsk;
   const result = await window.assistant.rewind?.(again.text);
   // 'absent': the message never reached the history (it failed first): nothing to take back there, so it is
   // simply asked again; anything else (a run going, no reply) changes nothing.
-  if (result !== 'rewound' && result !== 'absent') return;
+  if (result !== 'rewound' && result !== 'absent') return false;
   if (result === 'absent') { // only after a failure (Retry): a Regenerate that finds nothing to take back does nothing
     const us = messages.querySelectorAll('.msg.user');
     let failed = false;
@@ -502,13 +512,42 @@ async function askAgain() {
     if (!failed) {
       for (const b of messages.querySelectorAll('.reply-regen')) b.remove();
       append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.nothingToRegenerate') }));
-      return;
+      return false;
     }
   }
   const users = messages.querySelectorAll('.msg.user');
   const from = users[users.length - 1];
   if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
   ask(again.text, again.images, again.tabs);
+  return true;
+}
+
+// Edit (the latest message you sent, once its reply is done): takes that exchange back and puts the message,
+// with its images, in the box to change and send again.
+async function editLast() {
+  if (running || !lastAsk) return;
+  const again = lastAsk;
+  const result = await window.assistant.rewind?.(again.text);
+  if (result !== 'rewound' && result !== 'absent') return;
+  const users = messages.querySelectorAll('.msg.user');
+  const from = users[users.length - 1];
+  if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
+  lastAsk = null;
+  prompt.value = again.text;
+  if (again.images?.length) { attachments = [...again.images]; renderAttachments(); }
+  autosize();
+  updateSend();
+  prompt.focus();
+  prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+  if (!messages.querySelector('.msg')) refreshSetup?.();
+}
+function markEditable(bubble) {
+  for (const b of messages.querySelectorAll('.msg-edit')) b.remove(); // only the latest message
+  if (!bubble) return;
+  const b = Object.assign(document.createElement('button'), { type: 'button', className: 'msg-edit', textContent: t('chat.editMessage') });
+  b.title = t('chat.editMessage.title');
+  b.onclick = () => editLast();
+  bubble.append(b);
 }
 
 // The user's bubble and the working line for a turn that is now running.
@@ -530,6 +569,7 @@ function startTurn(text, images, tabs = null) {
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   for (const b of messages.querySelectorAll('.reply-regen')) b.remove(); // only the latest reply can be regenerated
   append(bubble, { force: true }); // your own message always comes into view
+  markEditable(bubble);
   beginTurn();
 }
 
@@ -560,7 +600,10 @@ function resumeLive(live) {
 // visible flicker on every streamed frame).
 function moveWorkingToEnd() {
   const w = turn?.working;
-  if (w && messages.lastElementChild !== w) messages.append(w);
+  if (!w) return;
+  const firstQueued = messages.querySelector(':scope > .notice.queued'); // (they stay under it)
+  if (firstQueued) { if (w.nextElementSibling !== firstQueued) firstQueued.before(w); }
+  else if (messages.lastElementChild !== w) messages.append(w);
 }
 
 // The working line shows while the AI works, not while it waits on the user's answer to an approval card.
@@ -645,6 +688,7 @@ function drawTail(el) {
   }
   const tail = settledMarkdown(source.slice(el.stableLen));
   if (tail) el.insertAdjacentHTML('beforeend', window.renderMarkdown(tail));
+  decorateCode(el); // (a block's header is there while it streams: nothing moves when the reply ends)
 }
 
 // The bubble's final draw, at once and with nothing held back, before a copy button or label goes in.
@@ -670,12 +714,17 @@ function decorateCode(root) {
     head.append(b);
     pre.replaceWith(box);
     box.append(head, pre);
+    const code = pre.querySelector('code');
+    if (code && window.highlightCode && !root.classList?.contains('streaming')) window.highlightCode(code, pre.dataset.lang);
   }
+  // A finished reply's blocks, decorated while they streamed, get their colours now.
+  if (window.highlightCode && !root?.classList?.contains('streaming')) for (const code of root?.querySelectorAll?.('.code-block pre:not(.math-src) > code:not([data-hl])') || []) window.highlightCode(code, code.parentElement.dataset.lang);
 }
 
 function endStream() {
   flushStreaming(turn?.text);
   turn?.text?.classList.remove('streaming');
+  if (turn?.text) decorateCode(turn.text); // its code blocks' colours, now that they are final
 }
 
 window.assistant.onEvent((event) => {
@@ -686,6 +735,7 @@ window.assistant.onEvent((event) => {
   switch (event.type) {
     case 'turn_start':
     case 'text_block':
+      settleThinking();
       endStream();
       turn.text = null; // next text starts a fresh block after any tool steps
       turn.textSource = '';
@@ -720,6 +770,7 @@ window.assistant.onEvent((event) => {
       turn.thinking = null;
       break;
     case 'tool': {
+      settleThinking(); // (it thought, then acted: "Thought for 3s", not "Thinking" for ever)
       finishReply(turn.text, turn.textSource);
       const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
       const step = document.createElement('div');
@@ -755,6 +806,7 @@ window.assistant.onEvent((event) => {
       break;
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
+      announce(event.title || t('chat.approvalWaiting'));
       showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways });
       moveWorkingToEnd();
       syncWorking();
@@ -776,13 +828,21 @@ window.assistant.onEvent((event) => {
         error.append(button);
       } else if (lastAsk) {
         const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.retry') });
-        button.onclick = () => { button.disabled = true; askAgain(); };
+        button.onclick = async () => { button.disabled = true; if (!(await askAgain())) button.disabled = false; };
         error.append(button);
       }
       break;
     }
     case 'done':
+      settleThinking();
       finishReply(turn.text, turn.textSource, { latest: true });
+      // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
+      if (!turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
+        const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only' });
+        row.append(regenButton());
+        turn.working.before(row);
+      }
+      announce([...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
       labelReply(turn.text, event.model);
       scrollToBottom(); // (the reply's copy button and label were added below its end)
       endStream();
@@ -824,38 +884,54 @@ function labelReply(bubble, modelId) {
   bubble.append(Object.assign(document.createElement('span'), { className: 'reply-model', textContent: name }));
 }
 
+// Screen readers: the messages list itself is quiet (streamed text would be read out piece by piece), so the
+// moments that matter are said once here: a reply finished, or the task waits on an approval.
+const liveNote = Object.assign(document.createElement('div'), { className: 'sr-only' });
+liveNote.setAttribute('role', 'status');
+liveNote.setAttribute('aria-live', 'polite');
+liveNote.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap';
+document.body.append(liveNote);
+function announce(text) {
+  liveNote.textContent = '';
+  setTimeout(() => { liveNote.textContent = text; }, 50); // (a repeat of the same words is still read)
+}
+
 // ---------- copy a reply ----------
 
 const COPY_ICON = '<svg viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>';
 const REGEN_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>';
 const CHECK_ICON = '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></svg>';
 
+// Regenerate: asks the latest message again. A turn that acted on pages (clicks, typing) would do so again:
+// the first click says so, the second runs it.
+function regenButton() {
+  const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen', title: t('chat.regenerate') });
+  regen.setAttribute('aria-label', t('chat.regenerate'));
+  regen.innerHTML = REGEN_ICON;
+  // A turn that acted on pages (clicks, typing) would do so again: the first click says so, the second runs it.
+  regen.onclick = () => {
+    const users = messages.querySelectorAll('.msg.user');
+    let acted = false;
+    for (let n = users[users.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.dataset?.acts) { acted = true; break; }
+    if (acted && !regen.dataset.armed) {
+      regen.dataset.armed = '1';
+      regen.classList.add('armed');
+      regen.title = t('chat.regenerateActs');
+      regen.dataset.confirm = t('chat.regenerateActs'); // shown beside it (not only on hover)
+      regen.setAttribute('aria-label', t('chat.regenerateActs'));
+      setTimeout(() => { delete regen.dataset.armed; regen.classList.remove('armed'); regen.title = t('chat.regenerate'); regen.setAttribute('aria-label', t('chat.regenerate')); }, 4000);
+      return;
+    }
+    askAgain();
+  };
+  return regen;
+}
+
 function finishReply(bubble, source, { latest = false } = {}) {
   flushStreaming(bubble);
   if (!bubble || !source || !source.trim() || bubble.querySelector('.reply-copy')) return;
   // The latest reply can be asked for again (a different answer to the same message).
-  if (latest && lastAsk) {
-    const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen', title: t('chat.regenerate') });
-    regen.setAttribute('aria-label', t('chat.regenerate'));
-    regen.innerHTML = REGEN_ICON;
-    // A turn that acted on pages (clicks, typing) would do so again: the first click says so, the second runs it.
-    regen.onclick = () => {
-      const users = messages.querySelectorAll('.msg.user');
-      let acted = false;
-      for (let n = users[users.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.dataset?.acts) { acted = true; break; }
-      if (acted && !regen.dataset.armed) {
-        regen.dataset.armed = '1';
-        regen.classList.add('armed');
-        regen.title = t('chat.regenerateActs');
-        regen.dataset.confirm = t('chat.regenerateActs'); // shown beside it (not only on hover)
-        regen.setAttribute('aria-label', t('chat.regenerateActs'));
-        setTimeout(() => { delete regen.dataset.armed; regen.classList.remove('armed'); regen.title = t('chat.regenerate'); regen.setAttribute('aria-label', t('chat.regenerate')); }, 4000);
-        return;
-      }
-      askAgain();
-    };
-    bubble.append(regen);
-  }
+  if (latest && lastAsk) bubble.append(regenButton());
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'reply-copy';
@@ -999,15 +1075,15 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
-  card.setAttribute('aria-label', heading || `Use ${host}?`);
-  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || `Use ${host}?` });
+  card.setAttribute('aria-label', heading || t('approval.tool.use', { host }));
+  const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
     textContent: terminal
-      ? 'This runs for real on your computer, with your permissions:'
+      ? t('approval.tool.terminal')
       : tainted
-        ? 'It has read page content in this chat. Check that these details are what you want to send to this server:'
-        : 'This server gets these details:',
+        ? t('approval.tool.tainted')
+        : t('approval.tool.details'),
   });
   const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
   const actions = document.createElement('div');
@@ -1138,6 +1214,7 @@ function showHistory(items) {
     if (items[lastIndex].acted) { const step = document.createElement('div'); step.className = 'step done restored'; step.dataset.acts = '1'; step.hidden = true; lastReply.before(step); }
     lastReply.querySelector('.reply-copy')?.remove();
     finishReply(lastReply, items[items.length - 1].text, { latest: true });
+    markEditable([...messages.querySelectorAll('.msg.user')].pop());
   }
   messages.scrollTop = messages.scrollHeight;
 }

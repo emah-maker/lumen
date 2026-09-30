@@ -1055,5 +1055,15 @@
   "context.offOn": "AI is off on:",
   "context.offOn.title": "You turned off AI on {site}. The AI can’t see or act on its tabs.",
   "chat.nothingToRegenerate": "Nothing to regenerate: this reply changed since.",
-  "shortcut.ctrlShiftL": "Ctrl+Shift+L"
+  "shortcut.ctrlShiftL": "Ctrl+Shift+L",
+  "approval.tool.use": "Use {host}?",
+  "approval.tool.terminal": "This runs for real on your computer, with your permissions:",
+  "approval.tool.tainted": "It has read page content in this chat. Check that these details are what you want to send to this server:",
+  "approval.tool.details": "This server gets these details:",
+  "chat.approvalWaiting": "Waiting for your approval",
+  "chat.replyDone": "Reply finished",
+  "chat.replyStopped": "Reply stopped",
+  "chat.editMessage": "Edit",
+  "chat.editMessage.title": "Change this message and send it again",
+  "chats.deleteConfirm": "Delete?"
 }

@@ -49,7 +49,9 @@
 .chat-actions { display: flex; opacity: 0; transition: opacity var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; }
 .chat-actions .icon-btn { width: 26px; height: 26px; }
-.chat-actions .chat-delete.armed { color: var(--danger); background: var(--danger-soft); }
+.chat-actions .chat-delete.armed { width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
+.chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
+.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 .chat-badge { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: var(--accent); }

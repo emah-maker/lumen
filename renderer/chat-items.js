@@ -144,9 +144,10 @@
         if (!armed) { // two clicks: the first asks, the second deletes
           const again = tr('chats.deleteAgain', 'Click again to delete');
           del.classList.add('armed');
+          del.dataset.confirm = tr('chats.deleteConfirm', 'Delete?');
           del.title = again;
           del.setAttribute('aria-label', again);
-          armed = setTimeout(() => { armed = null; del.classList.remove('armed'); del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete')); }, 3000);
+          armed = setTimeout(() => { armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete')); }, 3000);
           return;
         }
         clearTimeout(armed);

@@ -2177,9 +2177,13 @@ window.browser.onTabs(watchFullChatTab);
 
 $('dock-to-side').onclick = () => exitFull();
 // Escape anywhere in the chat docks a full-page chat back, except inside the model picker's own
-// search popup, which handles Escape itself (closing the popup, not the chat).
+// search popup, which handles Escape itself (closing the popup, not the chat), and any menu, list or card
+// that already used this Escape (closing itself: it prevented the default).
 $('sidebar').addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && chatFull && !e.target.closest('.model-picker')) { e.preventDefault(); exitFull(); }
+  if (e.key !== 'Escape' || !chatFull || e.defaultPrevented) return;
+  if (e.target.closest('.model-picker, .more-menu, .chats-panel, .approval, [role="menu"], [role="dialog"]')) return;
+  e.preventDefault();
+  exitFull();
 });
 
 // "Ask AI" on the new-tab page: that tab's chat opens full-page instead of docking to the side.

@@ -28,6 +28,9 @@
   let query = '';
   let searchBox = null;
   async function render() {
+    const focusedRow = document.activeElement?.closest?.('.chat-item');
+    const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
+    const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
     const { current, chats } = await api.list();
     const head = document.createElement('div');
     head.className = 'chat-list-head';
@@ -53,6 +56,11 @@
     drawList();
     panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), list);
     if (typing && searchBox) searchBox.focus();
+    else if (focusedId) { // the same row, or after a delete the one now in its place
+      const rows = [...list.querySelectorAll('.chat-item')];
+      const row = rows.find((r) => r.dataset.id === focusedId) || rows[Math.min(focusedAt, rows.length - 1)];
+      (row?.querySelector('.chat-open') || searchBox || close).focus();
+    }
     if (!chats.length) panel.append(Object.assign(document.createElement('p'), { className: 'chat-list-empty', textContent: window.chatTr('chats.empty', 'No saved chats yet. Chats appear here after the first reply.') }));
   }
   tools.arrows(panel);

@@ -890,3 +890,20 @@ body.mcp-active .agent-pill { display: flex; }
 #toggle-sidebar[data-attention]::before { content: ""; position: absolute; top: 5px; left: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
 #toggle-sidebar[data-attention="approval"]::before { background: var(--warning); }
 body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { display: none; }
+
+/* Code colours (renderer/highlight.js): quiet, readable on both themes. */
+:root { --tk-kw: #a626a4; --tk-str: #50a14f; --tk-num: #986801; --tk-com: #8a8f98; --tk-fn: #4078f2; --tk-type: #c18401; --tk-key: #e45649; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --tk-kw: #c792ea; --tk-str: #a5d6a7; --tk-num: #f78c6c; --tk-com: #7f848e; --tk-fn: #82aaff; --tk-type: #ffcb6b; --tk-key: #f07178; } }
+:root[data-theme="dark"] { --tk-kw: #c792ea; --tk-str: #a5d6a7; --tk-num: #f78c6c; --tk-com: #7f848e; --tk-fn: #82aaff; --tk-type: #ffcb6b; --tk-key: #f07178; }
+.tk-kw { color: var(--tk-kw); } .tk-str { color: var(--tk-str); } .tk-num { color: var(--tk-num); } .tk-fn { color: var(--tk-fn); }
+.tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
+
+/* Edit on the latest message you sent: under its corner, on hover or focus; not while its reply runs. */
+.msg.user { position: relative; }
+.msg.user .msg-edit { position: absolute; right: 2px; bottom: -21px; height: 20px; padding: 0 7px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; white-space: nowrap; opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.msg.user:hover .msg-edit, .msg.user .msg-edit:focus-visible { opacity: 1; }
+.msg.user .msg-edit:hover { background: var(--field); color: var(--text); }
+body.agent-active .msg.user .msg-edit { display: none; }
+/* A reply that ended without text (stopped, or on a step): only its Regenerate. */
+.msg.assistant.reply-actions-only { height: 22px; margin: 4px 0 16px; }
+.msg.assistant.reply-actions-only .reply-regen { position: static; opacity: 0.75; }
