@@ -29,19 +29,21 @@
     const own = u.canSelfUpdate || Boolean(u.relocate);
     const ready = u.status === 'downloaded' && own;
     const busy = u.status === 'downloading' && own;
-    const failed = u.status === 'error' && own && Boolean(u.version);
+    const failed = u.status === 'error' && own && (Boolean(u.version) || Boolean(u.installFailed)); // a swap that failed without naming its version counts
     const moveFailed = Boolean(u.moveError) && Boolean(u.relocate); // the move or install couldn't go ahead: say why
     // A copy with automatic downloads on says nothing until the update is downloading or ready; a relocating
     // copy says so quietly as soon as there is one (it downloads only once the user clicks).
     const offer = u.status === 'available' && (u.relocate || !u.canSelfUpdate || !u.autoDownload);
     pill.hidden = Boolean(u.disabled) || (u.dismissed && !moveFailed) || !(ready || busy || failed || offer || moveFailed);
     if (pill.hidden) return;
-    const key = moveFailed ? '' : ready ? 'updates.ready' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? 'updates.failed'
+    const key = moveFailed ? '' : ready ? 'updates.ready' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.version ? 'updates.failed' : 'updates.installFailed')
       : u.relocate === 'user' ? 'updates.moveToUserApps' : u.relocate ? 'updates.moveToUpdate' : 'updates.available';
     text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: u.progress || 0 });
+    pill.title = failed && u.error ? window.t('updates.failedWhy', { reason: u.error }) : ''; // the short reason on hover
     action.hidden = busy && u.queued; // queued: nothing left to click
-    action.textContent = ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
-    action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
+    action.disabled = Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
+    action.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
+    action.title = ready || busy ? window.t(u.blocked ? 'updates.restart.titleBlocked' : 'updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => render(await api.apply()));
   close.addEventListener('click', async () => render(await api.dismiss()));

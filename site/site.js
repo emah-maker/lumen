@@ -111,7 +111,7 @@
   if (os === 'win') {
     btn.href = links.win;
     // the zip needs no installer: for PCs where Smart App Control blocks the setup
-    btn.insertAdjacentHTML('afterend', `<a class="btn ghost" href="${links.winzip}">Zip</a>`);
+    btn.insertAdjacentHTML('afterend', `<a class="btn ghost" href="${links.winzip}" title="A plain zip: unzip it and run Lumen.exe, no installer (for PCs where Smart App Control blocks the setup)">Zip, no installer</a>`);
   }
   if (os === 'mac') {
     btn.href = links[chip.arch];
