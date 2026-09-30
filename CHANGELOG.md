@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The sidebar AI keeps working on its own. It stays in the tab it started in while you use another tab or window, and screenshots, scrolling, hovering and waiting still work in that tab while it is out of sight. Closing the sidebar no longer interrupts it, and starting a new chat or opening another one no longer stops it: the task goes on in its own chat, and two chats can run at once, each in its own tab. The chat list marks chats that are working, waiting for your OK or have a reply you have not seen. When a reply finishes or fails, or a step needs your OK, and you are not watching it, you get a system notification ("Lumen finished: …"). Click it to return to that chat. A dot on the AI button also shows a reply that finished while the sidebar was closed. These notifications follow the Background tasks setting.
+
 ## 0.3.2 (2026-09-29)
 
 - Security fix: AI research tabs now open only after a page was read, and only at an address the AI was allowed to load, so a redirect to a site you did not approve never loads in a tab. Research tabs are also kept away from extensions.

@@ -45,6 +45,7 @@
     if (!view) { await renderList(); return; } // gone (deleted, or unreadable on this machine)
     clearChatView();
     showHistory(view.items);
+    resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);
     await renderList();
     prompt.focus();
@@ -61,6 +62,7 @@
   });
   // New chat is the shared #new-chat button (chat-core.js resets the chat and empties the view).
   $('new-chat').addEventListener('click', () => setTimeout(renderList, 50));
+  api.onChanged?.(() => { if (!items.querySelector('.chat-rename-input')) renderList(); }); // running, needs an OK, finished unseen
 
   // ---- the tab the AI works in
   function showTarget(info) {
@@ -97,14 +99,13 @@
   // ---- start: what main holds now (the sidebar's chat, a run in progress)
   chatHost.identity = () => {};
   startChat();
-  window.assistant.state().then(({ view, run, target }) => {
+  window.assistant.state().then(({ view, target }) => {
     showHistory(view?.items);
     refreshUsage(view?.usage || '');
     showTarget(target);
-    if (run && !turn) { // opened mid-reply: the events that follow belong to it
-      beginTurn();
-      runId = run.runId;
-    }
+    // Opened mid-reply: the events that follow belong to it. `view.live` is the open chat's own run
+    // (a chat left running elsewhere is not this one).
+    resumeLive(view?.live);
   }).catch(() => {}).finally(renderList);
   prompt.focus();
 })();

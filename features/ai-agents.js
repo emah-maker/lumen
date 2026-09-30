@@ -206,7 +206,7 @@ function setupAiAgents(deps) {
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
     const allow = engineRun
-      ? { hosts: runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : 'Claude', input: args, run: scope || engineRun }
+      ? { hosts: scope?.hosts || runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : 'Claude', input: args, run: scope || engineRun }
       : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.

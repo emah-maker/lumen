@@ -764,3 +764,10 @@ body.mcp-active .agent-pill { display: flex; }
 
 /* macOS: traffic lights sit at the top-left of the tab strip; no Windows controls on the right. */
 .platform-darwin .tabstrip { padding-left: 80px; padding-right: 8px; }
+
+/* The sidebar's AI working on its own (features/chat-runs.js): a reply finished while the sidebar was
+   closed (accent dot), or a run waits for an OK (warning dot, shown even while the sidebar is open). */
+#toggle-sidebar[data-attention] { position: relative; }
+#toggle-sidebar[data-attention]::before { content: ""; position: absolute; top: 5px; left: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+#toggle-sidebar[data-attention="approval"]::before { background: var(--warning); }
+body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { display: none; }

@@ -10,6 +10,7 @@ const modelRoute = require('./features/model-route'); // [model route]
 const { addUsage } = require('./features/chat-usage');
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, trimToolResults, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('./features/pdf-text');
+const { captureTab } = require('./features/tab-capture');
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -17,6 +18,8 @@ const pdfText = require('./features/pdf-text');
 const taskScope = new AsyncLocalStorage();
 const nestedCall = new AsyncLocalStorage(); // [ai controls] set inside execute(): tools a tool runs
 const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user what to do next.';
+// Two chats' runs never drive one tab (see tabBusyElsewhere).
+const TAB_BUSY = 'That tab is in use by a task running in another chat. Open a new tab with open_tab (or switch_tab to another tab) to work here.';
 
 // Models the user can pick. Request shapes differ: Haiku 4.5 predates adaptive thinking and the
 // dynamic-filtering web search; Opus 5.5 defaults to medium effort, so ask for high explicitly.
@@ -768,24 +771,37 @@ class Agent {
     this.approvalSeq = 0;
     this.redirectGuards = new Map(); // webContents -> its redirect check while a tool runs (guardRedirects)
     this.openAsks = new WeakMap(); // approved-hosts set -> host -> the "wants to open" card showing for it
-    this.controller = null;
+    this.controller = null; // the latest run's controller
     this.current = null;
+    this.runs = new Map(); // a chat's messages array -> its live run { controller, promise, hosts } (a chat left mid-run keeps going: detach())
     this.nextModel = null;
     this.scopes = new Set(); // live task scopes (see taskScope), for usingTab()
     this.actionLogs = new Map(); // [ai controls] run id -> what that sidebar run changed (Undo)
     this.actionLogSeq = 0;
   }
 
+  // Is the open chat's reply running? (A chat the user left mid-run may still be running: busyCount.)
   get running() {
-    return this.current !== null;
+    return this.runs.has(this.messages);
+  }
+
+  // Sidebar runs going on right now, in the open chat and in chats the user left (detach).
+  get busyCount() {
+    return this.runs.size;
+  }
+
+  // Is this chat's messages array still being worked on?
+  runningFor(messages) {
+    return this.runs.has(messages);
   }
 
   // Runs fn with its tools pinned to tab `tabId` (see taskScope). `scope.signal` lets long waits
   // (wait_for, wait) end as soon as the task is stopped.
   // `chat` (the conversation's messages array, for sidebar runs) holds the exfiltration taint.
   // `log` (sidebar runs) collects what the run changed, for Undo (see recordActions).
-  inTask(tabId, signal, fn, chat = null, log = null) {
-    const scope = { tabId: tabId ?? null, signal, chat, log };
+  // `meta` rides on the scope (a sidebar run's approved sites, skill and window: see run()).
+  inTask(tabId, signal, fn, chat = null, log = null, meta = null) {
+    const scope = { ...(meta || {}), tabId: tabId ?? null, signal, chat, log };
     this.scopes.add(scope);
     if (chat) this.runScope = scope; // the sidebar run (runTabId): only one runs at a time
     return taskScope.run(scope, fn).finally(() => {
@@ -797,8 +813,33 @@ class Agent {
 
   // The tab the sidebar's running task works in (null: none running, or no tab yet). The sidebar shows it
   // ("Working in: …") so the user can tell which tab the AI is using after switching away.
+  // With a chat left running in the background (detach), this is the open chat's run.
   runTabId() {
-    return this.runScope ? this.runScope.tabId : null;
+    const open = [...this.scopes].find((s) => s.chat && s.chat === this.messages);
+    if (open) return open.tabId;
+    return this.runScope && this.runs.size === 0 ? this.runScope.tabId : null;
+  }
+
+  // The tab the run of chat `messages` works in right now (null: not running, or no tab yet).
+  runTabIdFor(messages) {
+    const scope = [...this.scopes].find((s) => s.chat && s.chat === messages);
+    return scope ? scope.tabId : null;
+  }
+
+  // The tabs every sidebar run (the open chat's and any left running) works in right now.
+  runTabIds() {
+    return [...this.scopes].filter((s) => s.chat && s.tabId != null).map((s) => s.tabId);
+  }
+
+  // The scope of the tool call running now (main.js reads the run's window from it).
+  currentScope() {
+    return taskScope.getStore() || null;
+  }
+
+  // Is tab `id` worked in by another chat's run than the calling one? Two runs never drive one tab.
+  tabBusyElsewhere(id, scope = taskScope.getStore()) {
+    if (id == null || !scope?.chat) return false;
+    return [...this.scopes].some((s) => s !== scope && s.chat && s.chat !== scope.chat && s.tabId === id);
   }
 
   // Is a task working in this tab right now (so tab sleeping must leave it alone)?
@@ -810,9 +851,14 @@ class Agent {
   // has any tab). A pinned tab that has closed ends the task's use of it with a clear message.
   taskTab() {
     const scope = taskScope.getStore();
-    if (!scope || scope.tabId === null) return this.browser.activeTab();
+    if (!scope || scope.tabId === null) {
+      const front = this.browser.activeTab();
+      if (front && this.tabBusyElsewhere(front.id, scope)) throw new Error(TAB_BUSY);
+      return front;
+    }
     const tab = this.browser.tabById ? this.browser.tabById(scope.tabId) : this.browser.activeTab();
     if (!tab) throw new Error(TAB_CLOSED);
+    if (this.tabBusyElsewhere(scope.tabId, scope)) throw new Error(TAB_BUSY);
     return tab;
   }
 
@@ -830,15 +876,21 @@ class Agent {
     return !scope || scope.tabId === null || this.browser.activeTab()?.id === scope.tabId;
   }
 
+  // The prepared skill of the sidebar run calling (features/skills.js), or null.
+  get skillRun() {
+    return taskScope.getStore()?.skill || null;
+  }
+
   signalAborted() {
     return Boolean(taskScope.getStore()?.signal?.aborted);
   }
 
   // Serializable copy of the conversation, for saving between app launches.
-  snapshot() {
+  // `messages`: another chat's array (one left running, see detach), or the open chat's.
+  snapshot(messages = this.messages) {
     return {
-      settings: this.messages.settings || null,
-      messages: this.messages.map((m) => ({ role: m.role, content: m.content, author: producedBy.get(m) || null })),
+      settings: messages.settings || null,
+      messages: messages.map((m) => ({ role: m.role, content: m.content, author: producedBy.get(m) || null })),
     };
   }
 
@@ -877,41 +929,73 @@ class Agent {
 
   reset() {
     this.stop();
+    this.detach();
+  }
+
+  // Leaves the open chat for an empty one without stopping its reply: that run keeps its own messages
+  // array, approved sites and tab, and main.js saves it into its own chat (switchChat).
+  detach() {
     this.messages = [];
     this.approvedHosts = new Set();
     this.lastPageContext = null;
+    this.nextModel = null;
   }
 
+  // Makes a chat that is still running (left with detach) the open one again: the same array, so its
+  // run's next steps show here.
+  attach(messages, hosts) {
+    this.messages = messages;
+    if (hosts) this.approvedHosts = hosts;
+    this.lastPageContext = null;
+  }
+
+  // Stops the open chat's reply (a chat left running is stopped by opening it, or with stopFor).
+  // (A run started outside run(), such as a background task's CLI run, sets this.controller itself.)
   stop() {
-    if (this.controller) this.controller.abort();
+    const rec = this.runs.get(this.messages);
+    if (rec) rec.controller.abort();
+    else if (this.controller && this.runs.size === 0) this.controller.abort();
+  }
+
+  stopFor(messages) {
+    this.runs.get(messages)?.controller.abort();
   }
 
   // A new run waits for any previous run to finish stopping, so runs never overlap.
   // `extra.tabs`: ids of open tabs whose text the user attached to this message (features/tabs-ask.js).
   // `skill`: options of a prepared skill run { mode, model, tainted } (features/skills.js), or null.
+  // Runs in the open chat wait for each other; a chat the user left keeps its own run (detach).
   run(userText, emit, images = [], extra = {}, skill = null) {
-    const previous = this.current;
+    const messages = this.messages;
+    const previous = this.runs.get(messages);
+    const rec = { controller: new AbortController(), promise: null, hosts: this.approvedHosts };
     const next = (async () => {
       if (previous) {
-        this.stop();
-        await previous.catch(() => {});
+        previous.controller.abort();
+        await previous.promise.catch(() => {});
       }
-      await this.runOnce(userText, emit, images, extra, skill);
+      await this.runOnce(userText, emit, images, extra, skill, messages, rec);
     })();
+    rec.promise = next;
+    this.runs.set(messages, rec);
     this.current = next;
-    const clear = () => { if (this.current === next) this.current = null; };
+    const clear = () => {
+      if (this.runs.get(messages) === rec) this.runs.delete(messages);
+      if (this.current === next) this.current = null;
+    };
     next.then(clear, clear);
     return next;
   }
 
   // Never throws, and always ends with a 'done' event: anything that goes wrong before the model is
   // even asked (a tab destroyed mid-read, say) used to leave the sidebar "running" forever.
-  async runOnce(userText, emit, images = [], extra = {}, skill = null) {
-    this.skillRun = skill; // read by runTask and loop; cleared below
+  async runOnce(userText, emit, images = [], extra = {}, skill = null, messages = this.messages, rec = null) {
     let modelBefore = null; // a skill's own model applies to this run only
-    const controller = new AbortController();
+    const controller = rec?.controller || new AbortController();
     this.controller = controller;
-    const messages = this.messages; // reset() swaps in a new array; this run keeps writing to its own
+    // reset() and detach() swap in a new array; this run keeps writing to its own, with its own approved
+    // sites and skill (on its task scope, see skillRun), so another chat's run can go on meanwhile.
+    const hosts = rec?.hosts || this.approvedHosts;
     const log = this.newActionLog();
     try {
       // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
@@ -924,7 +1008,7 @@ class Agent {
       if (skill?.model && this.browser.effectiveModel?.(skill.model) === skill.model) { modelBefore = messages.settings.model; messages.settings.model = skill.model; }
 
       const tab = this.browser.activeTab();
-      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log);
+      await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill });
     } catch (err) {
       if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
@@ -933,7 +1017,6 @@ class Agent {
       if (this.controller === controller) this.controller = null;
       const undo = this.undoSummary(log);
       emit({ type: 'done', model: messages.settings?.model, ...(undo ? { undo } : {}) });
-      this.skillRun = null;
       if (modelBefore && messages.settings) messages.settings.model = modelBefore;
     }
   }
@@ -980,6 +1063,8 @@ class Agent {
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
     // Its tool calls arrive over MCP, outside this async context: engineScope() hands them this pin.
     if (viaClaudeCode || viaGrokBuild) {
+      // One engine run at a time: its MCP tool calls find their run through engineScope().
+      if (this.engineRunScope) throw new Error(`${viaClaudeCode ? 'Claude Code' : 'Grok Build'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
       this.engineRunScope = taskScope.getStore();
       try {
         if (viaClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, emit, { userText, tabCount: attached.tabs.length });
@@ -1058,7 +1143,7 @@ class Agent {
       // Switched to Claude Code mid-chat: hand it the conversation so far. There's no CLI session
       // yet to carry earlier pictures (that's what --resume is for on later turns), so any images
       // from earlier user turns ride along as image blocks on this first message too.
-      const priorItems = this.transcript().slice(0, -1);
+      const priorItems = transcriptFor(messages).slice(0, -1);
       const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       const priorImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
@@ -1100,7 +1185,7 @@ class Agent {
     let historyImages = [];
     if (!resume && messages.length > 1) {
       // Switched to Grok Build mid-chat: hand it the conversation so far, same as claudeCodeTurn.
-      const priorItems = this.transcript().slice(0, -1);
+      const priorItems = transcriptFor(messages).slice(0, -1);
       const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
@@ -1413,7 +1498,7 @@ class Agent {
   // against the same hosts (guardRedirects), so the call's context is kept on the task scope.
   // run_script in a tainted run has its own card per site ("<who> wants to run a script on <host>"):
   // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
-  async ensureAllowed(name, emit, signal, { hosts = this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
+  async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
     const gate = { emit, signal, hosts, who, external, run };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
@@ -1961,7 +2046,7 @@ ${same}
       }
       case 'screenshot': {
         const wc = this.requireTab();
-        let image = await wc.capturePage();
+        let image = await captureTab(wc); // works on a tab behind another one too (features/tab-capture.js)
         if (image.getSize().width > 1280) image = image.resize({ width: 1280 });
         const size = image.getSize();
         // click_at maps screenshot pixels back to view pixels with this ratio.
@@ -2129,7 +2214,9 @@ ${same}
         const target = await runScript(wc, scripts.locate(input.element_id));
         if (!target) throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
         const zoom = wc.getZoomFactor();
-        wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
+        // A tab behind another one gets no real mouse: its hover events are sent to the element instead.
+        if (!this.taskTabInFront()) await runScript(wc, scripts.domHover(input.element_id));
+        else wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
         await sleep(500);
         return `Hovering over element ${input.element_id}. Call read_page to see any menu that opened.`;
       }
@@ -2157,6 +2244,7 @@ ${same}
       case 'close_tab': {
         const id = input.tab_id;
         if (!this.browser.listTabs().some((t) => t.id === id)) throw new Error(`No tab with id ${id}.`);
+        if (this.tabBusyElsewhere(id)) throw new Error('That tab is in use by a task running in another chat, so it can\'t be closed now.');
         // Same care as the user's own close: text typed into a form isn't thrown away without asking,
         // and a page's own "Leave site?" check still runs (requestCloseTab).
         if (await this.browser.hasUnsavedInput?.(id)) throw new Error(`Tab ${id} has text typed into a form that closing it would lose. Ask the user before closing it.`);
@@ -2207,6 +2295,7 @@ ${same}
       case 'switch_tab': {
         // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.
         const listed = agentTabList(this.browser.listTabs()).find((t) => t.id === input.tab_id);
+        if (listed && this.tabBusyElsewhere(input.tab_id)) throw new Error(TAB_BUSY);
         if (!listed || !this.browser.switchTab(input.tab_id)) throw new Error(`No tab with id ${input.tab_id}.`);
         this.pinTab(input.tab_id);
         const wc = this.requireTab();

@@ -50,3 +50,14 @@
 .chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; }
 .chat-actions .icon-btn { width: 26px; height: 26px; }
 .chat-actions .chat-delete.armed { color: var(--danger); background: var(--danger-soft); }
+
+/* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
+.chat-badge { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: var(--accent); }
+.chat-badge.running { animation: chat-badge-pulse 1.4s ease-in-out infinite; }
+.chat-badge.approval { background: var(--warning); }
+@keyframes chat-badge-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .chat-badge.running { animation: none; } }
+/* The Chats button: another chat needs an OK or has a reply not seen yet. */
+#chat-history[data-attention] { position: relative; }
+#chat-history[data-attention]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+#chat-history[data-attention="approval"]::after { background: var(--warning); }

@@ -415,7 +415,9 @@ function ask(text, images = [], tabs = null) {
   }
   if (tabs?.gone?.length) append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('tabs.gone', { names: tabs.gone.join(', ') }) }));
   startTurn(text, images, tabs);
-  window.assistant.ask(text, ++runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
+  // Run ids stay unique across chats: a chat left running still sends events under its own id.
+  runId = Math.max(runId + 1, Date.now());
+  window.assistant.ask(text, runId, images.map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined);
 }
 
 // The user's bubble and the working line for a turn that is now running.
@@ -447,6 +449,18 @@ function beginTurn() {
   working.setAttribute('aria-label', t('chat.thinking'));
   turn = { text: null, textSource: '', thinking: null, working: append(working), steps: new Map() };
   setRunning(true);
+}
+
+// A chat opened while its reply is still running (it was left mid-run, features/chat-runs.js): the
+// events that follow belong to it, and any approval card it waits on shows again.
+function resumeLive(live) {
+  if (!live || turn) return;
+  beginTurn();
+  runId = live.runId;
+  if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted });
+  moveWorkingToEnd();
+  syncWorking();
 }
 
 // Keeps the working line last in the turn. Only moves it when something landed after it: re-appending
@@ -917,6 +931,7 @@ window.assistant.onRunStart?.(({ text, runId: id, images } = {}) => {
 window.assistant.onSync?.(({ view } = {}) => {
   clearChatView();
   showHistory(view?.items);
+  resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.chatChanged?.();
 });
