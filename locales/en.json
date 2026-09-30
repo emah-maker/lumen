@@ -1084,5 +1084,8 @@
   "welcome.default.done": "Lumen is your default browser.",
   "welcome.default.windows": "In the Windows Settings window that opened, set Lumen as the default for HTTP and HTTPS links.",
   "welcome.default.windowsManual": "In Windows Settings → Default apps, choose Lumen for HTTP and HTTPS links.",
-  "welcome.done": "Start browsing"
+  "welcome.done": "Start browsing",
+  "chat.editMessage.send": "Send",
+  "chat.editMessage.cancel": "Cancel",
+  "chat.stopped": "Stopped."
 }

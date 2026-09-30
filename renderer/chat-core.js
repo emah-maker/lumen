@@ -362,7 +362,7 @@ messages.addEventListener('scroll', () => {
 }, { passive: true });
 function scrollToBottom(force = false) {
   if (force) stuck = true;
-  if (stuck) messages.scrollTop = messages.scrollHeight;
+  if (stuck && Date.now() - jumping >= 700) messages.scrollTop = messages.scrollHeight; // (a smooth jump finishes first)
   jump.hidden = stuck || !messages.querySelector('.msg');
 }
 
@@ -604,7 +604,7 @@ async function askAgain() {
   if (result === 'absent') { // only after a failure (Retry): a Regenerate that finds nothing to take back does nothing
     const us = messages.querySelectorAll('.msg.user');
     let failed = false;
-    for (let n = us[us.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.querySelector?.('.error') || n.classList.contains('error')) { failed = true; break; }
+    for (let n = us[us.length - 1]?.nextElementSibling; n; n = n.nextElementSibling) if (n.querySelector?.('.error, .notice.stopped') || n.classList.contains('error') || n.classList.contains('stopped') || n.classList.contains('reply-actions-only')) { failed = true; break; }
     if (!failed) {
       for (const b of messages.querySelectorAll('.reply-regen')) b.remove();
       append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.nothingToRegenerate') }));
@@ -618,32 +618,69 @@ async function askAgain() {
   return true;
 }
 
-// Edit (the latest message you sent, once its reply is done): takes that exchange back and puts the message,
-// with its images, in the box to change and send again.
-async function editLast() {
+// Edit (the latest message you sent, once its reply is done): the bubble becomes a text box in place, as in
+// Claude.ai and ChatGPT. Nothing is taken back until Send; Cancel or Esc leaves everything as it was. The composer
+// (and whatever is typed there) is untouched.
+function editLast() {
   if (running || !lastAsk) return;
+  const bubble = [...messages.querySelectorAll('.msg.user')].pop();
+  if (!bubble || bubble.classList.contains('editing')) return;
   const again = lastAsk;
-  const result = await window.assistant.rewind?.(again.text);
-  if (result !== 'rewound' && result !== 'absent') return;
-  const users = messages.querySelectorAll('.msg.user');
-  const from = users[users.length - 1];
-  if (from) { while (from.nextSibling) from.nextSibling.remove(); from.remove(); }
-  lastAsk = null;
-  prompt.value = again.text;
-  if (again.images?.length) { attachments = [...again.images]; renderAttachments(); }
-  autosize();
-  updateSend();
-  prompt.focus();
-  prompt.setSelectionRange(prompt.value.length, prompt.value.length);
-  if (!messages.querySelector('.msg')) refreshSetup?.();
+  const kept = [...bubble.childNodes];
+  const box = Object.assign(document.createElement('textarea'), { className: 'msg-edit-box', value: again.text, rows: 1 });
+  box.setAttribute('aria-label', t('chat.editMessage.title'));
+  const fit = () => { box.style.height = 'auto'; box.style.height = `${Math.min(box.scrollHeight, 240)}px`; };
+  const send = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: t('chat.editMessage.send') });
+  const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.editMessage.cancel') });
+  const row = Object.assign(document.createElement('div'), { className: 'msg-edit-actions' });
+  row.append(cancel, send);
+  const actions = bubble.nextElementSibling?.classList.contains('msg-user-actions') ? bubble.nextElementSibling : null;
+  const restore = () => {
+    bubble.classList.remove('editing');
+    bubble.replaceChildren(...kept);
+    if (actions) actions.hidden = false;
+    bubble.cancelEdit = null;
+  };
+  bubble.cancelEdit = restore;
+  bubble.classList.add('editing');
+  bubble.replaceChildren(box, row);
+  if (actions) actions.hidden = true;
+  fit();
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+  box.addEventListener('input', () => { fit(); send.disabled = !box.value.trim() && !again.images?.length; });
+  cancel.onclick = () => { restore(); prompt.focus(); };
+  send.onclick = async () => {
+    const text = box.value.trim();
+    if ((!text && !again.images?.length) || running) return;
+    send.disabled = true;
+    const result = await window.assistant.rewind?.(again.text);
+    if (result !== 'rewound' && result !== 'absent') { restore(); return; }
+    while (bubble.nextSibling) bubble.nextSibling.remove();
+    bubble.remove();
+    ask(text, again.images || [], again.tabs);
+  };
+  box.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.onclick(); }
+    else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.onclick(); }
+  });
 }
+// The latest message you sent: Edit, in a row under the bubble (not inside it, so it's no part of its text).
 function markEditable(bubble) {
-  for (const b of messages.querySelectorAll('.msg-edit')) b.remove(); // only the latest message
+  for (const b of messages.querySelectorAll('.msg-user-actions')) b.remove(); // only the latest message
   if (!bubble) return;
+  const row = Object.assign(document.createElement('div'), { className: 'msg-user-actions' });
   const b = Object.assign(document.createElement('button'), { type: 'button', className: 'msg-edit', textContent: t('chat.editMessage') });
   b.title = t('chat.editMessage.title');
   b.onclick = () => editLast();
-  bubble.append(b);
+  row.append(b);
+  bubble.after(row);
+}
+// What a user bubble asked (for Regenerate and Edit after a restore or a chat switch).
+const bubbleAsks = new WeakMap();
+function askOf(bubble) {
+  return bubble ? bubbleAsks.get(bubble) || null : null;
 }
 
 // The user's bubble and the working line for a turn that is now running.
@@ -663,7 +700,9 @@ function startTurn(text, images, tabs = null) {
   }
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
-  for (const b of messages.querySelectorAll('.reply-regen')) b.remove(); // only the latest reply can be regenerated
+  bubbleAsks.set(bubble, { text, images, tabs });
+  for (const b of messages.querySelectorAll('.reply-regen, .reply-actions-only')) b.remove(); // only the latest reply can be regenerated
+  for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (an edit left open)
   append(bubble, { force: true }); // your own message always comes into view
   markEditable(bubble);
   beginTurn();
@@ -683,6 +722,8 @@ function beginTurn() {
 // events that follow belong to it, and any approval card it waits on shows again.
 function resumeLive(live) {
   if (!live || turn) return;
+  const lastUser = [...messages.querySelectorAll('.msg.user')].pop();
+  if (askOf(lastUser)) lastAsk = askOf(lastUser);
   beginTurn();
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
@@ -780,6 +821,7 @@ function drawTail(el) {
   if (stable > el.stableLen) {
     el.insertAdjacentHTML('beforeend', window.renderMarkdown(source.slice(el.stableLen, stable)));
     el.stableLen = stable;
+    decorateCode(el, { colour: true }); // (finished blocks: coloured now, not when the reply ends)
     el.headNodes = el.childNodes.length;
   }
   const tail = settledMarkdown(source.slice(el.stableLen));
@@ -796,7 +838,8 @@ function flushStreaming(el) {
   decorateCode(el);
 }
 // Each code block in a finished reply: its language, and a Copy button for just that code.
-function decorateCode(root) {
+// `colour`: colour these blocks even while the reply streams (they're finished: the stable part of the reply).
+function decorateCode(root, { colour = false } = {}) {
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -811,7 +854,7 @@ function decorateCode(root) {
     pre.replaceWith(box);
     box.append(head, pre);
     const code = pre.querySelector('code');
-    if (code && window.highlightCode && !root.classList?.contains('streaming')) window.highlightCode(code, pre.dataset.lang);
+    if (code && window.highlightCode && (colour || !root.classList?.contains('streaming'))) window.highlightCode(code, pre.dataset.lang);
   }
   // A finished reply's blocks, decorated while they streamed, get their colours now.
   if (window.highlightCode && !root?.classList?.contains('streaming')) for (const code of root?.querySelectorAll?.('.code-block pre:not(.math-src) > code:not([data-hl])') || []) window.highlightCode(code, code.parentElement.dataset.lang);
@@ -911,7 +954,8 @@ window.assistant.onEvent((event) => {
       syncWorking();
       break;
     case 'notice': {
-      const notice = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice', textContent: event.text }));
+      if (event.stopped) turn.stopped = true;
+      const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t('chat.stopped') : event.text }));
       if (event.action === 'continue') {
         const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
         button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
@@ -921,6 +965,8 @@ window.assistant.onEvent((event) => {
     }
     case 'error': {
       const error = appendToTurn(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
+      error.setAttribute('role', 'alert');
+      turn.failed = true;
       if (event.action === 'settings') {
         const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: t('chat.setupAi') });
         button.onclick = openAiSettings;
@@ -936,12 +982,12 @@ window.assistant.onEvent((event) => {
       settleThinking();
       finishReply(turn.text, turn.textSource, { latest: true });
       // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
-      if (!turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
+      if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
         const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only' });
         row.append(regenButton());
         turn.working.before(row);
       }
-      announce([...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
+      if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
       labelReply(turn.text, event.model);
       scrollToBottom(); // (the reply's copy button and label were added below its end)
       endStream();
@@ -1280,6 +1326,7 @@ function showHistory(items) {
         bubble.append(row);
       }
       if (item.text) bubble.append(document.createTextNode(item.text));
+      bubbleAsks.set(bubble, { text: item.text || '', images: images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), tabs: null });
     } else if (item.role === 'assistant' && item.text) {
       if (item.steps) {
         const summary = document.createElement('div');
@@ -1314,6 +1361,16 @@ function showHistory(items) {
     lastReply.querySelector('.reply-copy')?.remove();
     finishReply(lastReply, items[items.length - 1].text, { latest: true });
     markEditable([...messages.querySelectorAll('.msg.user')].pop());
+  } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length)) {
+    // It ends on your message: its reply stopped before saying anything. Regenerate and Edit still work.
+    const lastBubble = [...messages.querySelectorAll('.msg.user')].pop();
+    lastAsk = askOf(lastBubble);
+    if (lastAsk) {
+      markEditable(lastBubble);
+      const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only restored' });
+      row.append(regenButton());
+      append(row);
+    }
   }
   messages.scrollTop = messages.scrollHeight;
 }
@@ -1426,7 +1483,17 @@ function clearChatView() {
   lastAsk = null; // another chat: its last message isn't known here
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
-  for (const q of queued.splice(0)) q.notice.remove();
+  const unsent = queued.splice(0);
+  for (const q of unsent) q.notice.remove();
+  // Messages still waiting for the other chat's reply aren't lost: they come back to the box, to send here or not.
+  if (unsent.some((q) => q.text || q.images?.length)) {
+    const texts = unsent.map((q) => q.text).filter(Boolean);
+    if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
+    const images = unsent.flatMap((q) => q.images || []);
+    if (images.length) { attachments = [...attachments, ...images]; renderAttachments(); }
+    autosize();
+    updateSend();
+  }
   messages.querySelectorAll(':scope > :not(#empty)').forEach((el) => el.remove());
   window.tabsAsk?.reset(); // "@" chips and the once-per-chat "all tabs" confirm start over
   $('empty').hidden = false;

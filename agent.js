@@ -1158,7 +1158,7 @@ class Agent {
       const tab = this.browser.activeTab();
       await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill });
     } catch (err) {
-      if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.' });
+      if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.', stopped: true });
       else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
       repairHistory(messages);
     } finally {
@@ -1331,7 +1331,7 @@ class Agent {
     this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
-    if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
+    if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
@@ -1382,7 +1382,7 @@ class Agent {
     if (logged?.notice) emit({ type: 'notice', text: logged.notice });
     if (out.sessionId === null) { delete settings.gbSession; delete settings.gbModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.gbSession = out.sessionId; settings.gbModel = settings.model; }
-    if (out.stopped) emit({ type: 'notice', text: 'Stopped.' });
+    if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
       const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
