@@ -146,15 +146,17 @@ function startTabDrag(e, el, id) {
   drag = { el, id, startX: e.clientX, startY: e.clientY, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
-  // Losing the pointer (another app took it) ends the drag as a release would, never leaving it hanging.
-  el.addEventListener('lostpointercapture', () => { if (drag?.el === el) endTabDrag({ type: 'pointerup' }); }, { once: true });
+  // Losing the pointer (another app or the system took it) cancels the drag: nothing moves on a guess.
+  el.addEventListener('lostpointercapture', () => { if (drag?.el === el) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   // Once the tab has left for a window of its own this page may lose the pointer, so the release and
   // Escape are also watched on the window (main.js has its own fallbacks: see "dragging a tab out").
   window.addEventListener('pointerup', endTabDrag, true);
   window.addEventListener('pointercancel', endTabDrag, true);
   window.addEventListener('keydown', dragKey, true);
 }
-// A group label pressed: it only moves once pulled out of the strip (groups aren't reordered along it).
+// A group label pressed: dragged along the strip it moves the whole group there (the group's tabs gather
+// under it and a slot shows where it will land); pulled out of the strip, it takes the group to another
+// window or a new one.
 function startGroupDrag(e, label, groupId) {
   if (e.button !== 0 || !window.browser.dragTabStart || renamingGroup !== null) return;
   const members = (lastTabState?.tabs || []).filter((t) => t.groupId === groupId).map((t) => t.id);
@@ -163,7 +165,7 @@ function startGroupDrag(e, label, groupId) {
   const first = $('tabs').querySelector('.tab, .group-label');
   drag = { el: label, id: lead, startX: e.clientX, startY: e.clientY, dx: 0, moved: false, ids: [], rects: [first.getBoundingClientRect()], from: 0, to: 0, groupId, members, labelRect: label.getBoundingClientRect() };
   label.setPointerCapture(e.pointerId);
-  label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'pointerup' }); }, { once: true });
+  label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   window.addEventListener('pointerup', endTabDrag, true);
   window.addEventListener('pointercancel', endTabDrag, true);
   window.addEventListener('keydown', dragKey, true);
@@ -171,12 +173,28 @@ function startGroupDrag(e, label, groupId) {
 function moveGroupDrag(e) {
   const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
   if (!drag.moved && Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
-  if (!drag.moved) { drag.moved = true; hideHoverCard(); drag.el.classList.add('dragging'); }
+  if (!drag.moved) { drag.moved = true; hideHoverCard(); drag.el.classList.add('dragging'); $('tabs').classList.add('reordering'); }
   const lift = Math.sign(dy) * Math.min(12, Math.abs(dy) * 0.3);
-  drag.el.style.transform = `translate(${Math.sign(dx) * Math.min(12, Math.abs(dx) * 0.3)}px, ${lift}px)`;
+  if (!drag.along && Math.abs(dx) > 12 && Math.abs(dy) < 14) {
+    drag.along = true;
+    gatherTabs(drag.members, null);
+  }
+  drag.el.style.transform = drag.along ? `translate(${dx}px, ${lift}px)` : `translate(${Math.sign(dx) * Math.min(12, Math.abs(dx) * 0.3)}px, ${lift}px)`;
   drag.el.classList.toggle('tearing', Math.abs(dy) > 14);
   if (!drag.prepped && window.browser.dragTabPrep && nearEdge(e)) { drag.prepped = true; window.browser.dragTabPrep(); }
-  if (!draggedOut(e)) return;
+  if (!draggedOut(e)) {
+    if (drag.along) {
+      const beforeId = groupDropBefore(e.clientX, drag.members);
+      if (!drag.slotShown || drag.slotBefore !== beforeId) {
+        drag.slotShown = true;
+        drag.slotBefore = beforeId;
+        const group = (lastTabState?.groups || []).find((g) => g.id === drag.groupId);
+        showDropSlot({ beforeId, tab: { title: group?.name || '', count: drag.members.length, group: group ? { name: group.name, color: group.color } : null } });
+      }
+    }
+    return;
+  }
+  if (dropSlot) { closeSlot(dropSlot.el); dropSlot = null; } // on its way out of the strip: no slot here
   drag.handed = true;
   drag.group = drag.members;
   drag.el.style.transform = '';
@@ -186,6 +204,32 @@ function moveGroupDrag(e) {
   trackIndicator(320);
   const stripX = drag.rects[0].left + (drag.startX - drag.labelRect.left);
   window.browser.dragTabStart(drag.id, { x: e.clientX, y: e.clientY, stripX, pressY: drag.startY, ids: drag.members, group: drag.groupId });
+}
+// Where a group dragged along the strip would land: before the first other tab whose middle is right of
+// the cursor, never inside another group (it goes after that group instead). null: at the end.
+function groupDropBefore(x, members) {
+  const order = (lastTabState?.tabs || []).filter((t) => !members.includes(t.id) && !t.pinned);
+  const els = new Map([...$('tabs').querySelectorAll('.tab:not(.gathered):not(.handed)')].map((el) => [Number(el.dataset.id), el]));
+  let i = order.findIndex((t) => { const el = els.get(t.id); if (!el) return false; const r = el.getBoundingClientRect(); return x < r.left + r.width / 2; });
+  if (i === -1) return null;
+  while (i > 0 && i < order.length && order[i].groupId && order[i - 1].groupId === order[i].groupId) i++;
+  return i < order.length ? order[i].id : null;
+}
+// Tabs travelling with the dragged one (a multi-selection, a group's tabs) fold into it: they give up
+// their room, and the tabs beside them slide over (FLIP), leaving the dragged tab with a count.
+function gatherTabs(ids, keep) {
+  const strip = $('tabs');
+  const all = [...strip.querySelectorAll('.tab, .group-label')];
+  const before = new Map(all.map((el) => [el, el.getBoundingClientRect().left]));
+  for (const t of strip.querySelectorAll('.tab')) if (t !== keep && ids.includes(Number(t.dataset.id))) t.classList.add('gathered');
+  if (!motionReduced()) {
+    for (const el of all) {
+      if (el.classList.contains('gathered') || el === keep || el === drag?.el) continue;
+      const d = before.get(el) - el.getBoundingClientRect().left;
+      if (Math.abs(d) > 0.5) el.animate([{ translate: `${d}px 0` }, { translate: '0 0' }], { duration: 300, easing: SPRING_SMOOTH });
+    }
+  }
+  trackIndicator(320);
 }
 function dragKey(e) {
   if (e.key === 'Escape' && drag) { e.preventDefault(); e.stopPropagation(); endTabDrag(e); }
@@ -234,7 +278,14 @@ function createGhostTab(tab) {
     icon.onerror = () => { if (++i < urls.length) icon.src = urls[i]; else icon.replaceWith(globeIcon()); };
     icon.src = urls[0];
   }
-  inner.append(icon, Object.assign(document.createElement('span'), { className: 'tab-title', textContent: String(tab.title || 'New Tab') }));
+  if (tab.group) {
+    // A whole group: its colour and name, as its label shows them.
+    el.classList.add('group');
+    el.style.setProperty('--group-color', `var(--g-${String(tab.group.color || 'gray').replace(/[^a-z]/g, '')})`);
+    inner.append(Object.assign(document.createElement('span'), { className: 'tab-drop-group-dot' }), Object.assign(document.createElement('span'), { className: 'tab-title', textContent: String(tab.group.name || '') }));
+  } else {
+    inner.append(icon, Object.assign(document.createElement('span'), { className: 'tab-title', textContent: String(tab.title || 'New Tab') }));
+  }
   el.append(inner);
   return el;
 }
@@ -249,7 +300,7 @@ function clearLandingSlot() {
   closeSlot(landingSlot.el);
   landingSlot = null;
 }
-window.browser.onTabDropAt?.((at) => {
+function showDropSlot(at) {
   const strip = $('tabs');
   if (!at) {
     if (!dropSlot) return;
@@ -264,7 +315,10 @@ window.browser.onTabDropAt?.((at) => {
   if (dropSlot && dropSlot.beforeId === at.beforeId && dropSlot.el.isConnected) return;
   const before = at.beforeId == null ? null : strip.querySelector(`.tab[data-id="${at.beforeId}"]`);
   const pinnedEnd = [...strip.querySelectorAll('.tab.pinned')].pop();
-  const ref = before || null;
+  let ref = before || null;
+  // Before a group's first tab means before the group: the slot goes ahead of its label, outside it.
+  const label = ref?.previousElementSibling;
+  if (label?.classList.contains('group-label') && (lastTabState?.tabs || []).find((t) => t.id === at.beforeId)?.groupId === Number(label.dataset.group)) ref = label;
   if (dropSlot) closeSlot(dropSlot.el);
   const el = document.createElement('div');
   const pinned = Boolean(at.tab?.pinned);
@@ -275,6 +329,7 @@ window.browser.onTabDropAt?.((at) => {
   if (at.tab) {
     const ghost = createGhostTab(at.tab);
     if (at.tab.count > 1) ghost.querySelector('.tab-inner').append(Object.assign(document.createElement('span'), { className: 'tab-drop-count', textContent: String(at.tab.count) }));
+    if (at.tab.group) el.style.setProperty('--group-color', ghost.style.getPropertyValue('--group-color'));
     el.append(ghost);
   }
   // A pinned tab lands among the pinned ones; any other tab never goes in among them.
@@ -287,7 +342,8 @@ window.browser.onTabDropAt?.((at) => {
   else requestAnimationFrame(() => el.classList.add('open'));
   trackIndicator(460);
   el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-});
+}
+window.browser.onTabDropAt?.(showDropSlot);
 
 // Dragged this far outside the strip (or out of the window), releasing the tab hands it to main.js:
 // into another window's strip if the cursor is over one, else into a new window of its own.
@@ -330,6 +386,19 @@ function moveTabDrag(e) {
     hideHoverCard();
     drag.el.classList.add('dragging');
     $('tabs').classList.add('reordering');
+    // Part of a multi-selection: the selected tabs gather into this one and move along the strip together.
+    if (selectedTabs.size > 1 && selectedTabs.has(drag.id)) {
+      const was = drag.el.getBoundingClientRect().left;
+      drag.gathered = stripOrder().filter((x) => selectedTabs.has(x));
+      gatherTabs(drag.gathered, drag.el);
+      const tabs = [...$('tabs').querySelectorAll('.tab:not(.gathered)')];
+      drag.ids = tabs.map((t) => Number(t.dataset.id));
+      drag.rects = tabs.map((t) => t.getBoundingClientRect());
+      drag.from = drag.to = tabs.indexOf(drag.el);
+      drag.startX += drag.rects[drag.from].left - was; // it stays under the cursor
+      drag.dx = e.clientX - drag.startX;
+      drag.el.querySelector('.tab-inner')?.append(Object.assign(document.createElement('span'), { className: 'tab-drop-count tab-gather-count', textContent: String(drag.gathered.length) }));
+    }
   }
   const { rects, from } = drag;
   const first = rects[0].left, last = rects[rects.length - 1].right;
@@ -348,7 +417,7 @@ function moveTabDrag(e) {
   drag.to = to;
   // Neighbours slide aside to show where the tab will land.
   const shift = rects[from].width + 2;
-  [...$('tabs').querySelectorAll('.tab')].forEach((t, i) => {
+  [...$('tabs').querySelectorAll('.tab:not(.gathered)')].forEach((t, i) => {
     if (t === drag.el) return;
     const offset = from < to && i > from && i <= to ? -shift : from > to && i >= to && i < from ? shift : 0;
     t.style.transform = offset ? `translateX(${offset}px)` : '';
@@ -357,24 +426,43 @@ function moveTabDrag(e) {
 
 function endTabDrag(e) {
   if (!drag) return;
-  const { moved, from, to, id, ids, handed, group, groupId, el: dragEl } = drag;
-  const escaped = e?.type === 'keydown'; // a cancelled pointer just ends the drag where it is
+  const { moved, from, to, id, ids, handed, group, groupId, el: dragEl, gathered, along, slotBefore, members } = drag;
+  // Escape, a cancelled pointer or a lost one: nothing moves.
+  const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
   drag = null;
   window.removeEventListener('pointerup', endTabDrag, true);
   window.removeEventListener('pointercancel', endTabDrag, true);
   window.removeEventListener('keydown', dragKey, true);
   $('tabs').classList.remove('reordering');
-  [...$('tabs').children].forEach((t) => { t.style.transform = ''; t.classList.remove('dragging', 'tearing', 'handed'); });
+  $('tabs').querySelectorAll('.tab-gather-count').forEach((c) => c.remove());
+  const blockMove = moved && !handed && !escaped && (gathered || along);
+  if (!blockMove && along && dropSlot) { closeSlot(dropSlot.el); dropSlot = null; trackIndicator(460); }
+  [...$('tabs').children].forEach((t) => {
+    t.style.transform = '';
+    t.classList.remove('dragging', 'tearing', 'handed');
+    if (!blockMove) t.classList.remove('gathered');
+  });
   // Released outside the strip: the tab stays hidden until main has put it where it was dropped
   // ('tab:dragdone'), so it doesn't flash back here first. Escape shows it again at once.
   if (handed && !escaped) { holdDroppedTab(id, group); if (groupId != null) dragEl.classList.add('held'); }
+  let heldUntilState = null;
   if (moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
     if (handed) {
       if (escaped) window.browser.dragTabCancel?.(); else window.browser.dragTabEnd?.();
-    } else if (e?.type === 'keydown') {
+    } else if (escaped) {
       // Escape before the tab left the strip: it stays where it was.
+    } else if (along) {
+      // A group dragged along its strip: it lands in the slot, still a group.
+      showDropSlot(null);
+      window.browser.moveTabs?.(members, slotBefore ?? null, groupId);
+      heldUntilState = members;
+    } else if (gathered) {
+      // A multi-selection: the tabs land together where the dragged one was dropped.
+      const without = ids.filter((x) => x !== id);
+      window.browser.moveTabs?.(gathered, without[to] ?? null, null);
+      heldUntilState = gathered.filter((x) => x !== id);
     } else if (from !== to) {
       // Collapsed groups hide tabs, so the strip's order isn't the full order: land next to the tab we dropped on.
       const without = (lastTabState?.tabs || []).map((t) => t.id).filter((x) => x !== id);
@@ -386,6 +474,13 @@ function endTabDrag(e) {
     const state = pendingState;
     pendingState = null;
     renderTabs(state);
+  }
+  // The moved tabs stay folded away until main's update puts them in their new places (no flash back).
+  if (heldUntilState) {
+    $('tabs').querySelectorAll('.gathered').forEach((t) => t.classList.remove('gathered'));
+    holdDroppedTab(heldUntilState[0], heldUntilState);
+    heldTab.untilState = true;
+    if (along) dragEl.classList.add('held');
   }
 }
 
@@ -406,15 +501,15 @@ function placeIndicator(animate) {
 new ResizeObserver(() => placeIndicator(false)).observe($('tabs'));
 
 // Tabs are rebuilt on every state change; FLIP makes that read as tabs moving, arriving and leaving.
-// `landed`: the tab that was just dropped into this strip, filling the slot that was open for it.
-function animateTabs(before, container, landed = null) {
+// `landed`: the tabs just dropped into this strip, filling the slot that was open for them.
+function animateTabs(before, container, landed = new Set()) {
   const animate = tabsRendered && !motionReduced();
   const seen = new Set();
   for (const el of container.querySelectorAll('.tab, .group-label')) {
     seen.add(el.dataset.id);
     if (!animate) continue;
     const prev = before.get(el.dataset.id);
-    if (el === landed) {
+    if (landed.has(el)) {
       el.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
     } else if (prev) {
       const dx = prev.rect.left - el.getBoundingClientRect().left;
@@ -460,7 +555,7 @@ function groupLabel(group, count, crowded, label = null) {
     label.addEventListener('pointercancel', endTabDrag);
     label.oncontextmenu = (e) => { e.preventDefault(); window.browser.groupMenu(group.id, { x: e.clientX, y: e.clientY }); };
   }
-  label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '');
+  label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '');
   label.style.setProperty('--group-color', `var(--g-${group.color})`);
   label.setAttribute('aria-expanded', String(!group.collapsed));
   label.setAttribute('aria-label', t(count === 1 ? 'tabs.group.label.one' : 'tabs.group.label.other', { name: group.name, count }));
@@ -539,7 +634,7 @@ function faviconImg(el, key, urls, retried = false) {
 
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
-  el.className = 'tab' + (heldTab?.id === tab.id ? ' held' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
+  el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
     + (selectedTabs.has(tab.id) && !active ? ' selected' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
@@ -954,9 +1049,10 @@ function renderTabs(state) {
   // that was held hidden) takes its place.
   const landing = landingSlot;
   if (landing) { clearTimeout(landing.timer); landing.el.remove(); landingSlot = null; }
-  let landedId = null;
-  if (landing && heldTab && state.tabs.some((t) => t.id === heldTab.id)) { landedId = String(heldTab.id); releaseHeldTab(); }
-  else if (landing) landedId = String(state.tabs.find((t) => !before.has(String(t.id)))?.id ?? '');
+  let landedIds = [];
+  if (landing && heldTab && state.tabs.some((t) => heldTab.ids.includes(t.id))) { landedIds = heldTab.ids.filter((x) => state.tabs.some((t) => t.id === x)).map(String); releaseHeldTab(); }
+  else if (landing) landedIds = state.tabs.filter((t) => !before.has(String(t.id))).map((t) => String(t.id));
+  else if (heldTab?.untilState) releaseHeldTab(); // a block move along this strip: main's update has come
   const switched = state.activeId !== lastActiveId;
   const groupsById = new Map((state.groups || []).map((g) => [g.id, g]));
   const crowded = state.tabs.length > 12;
@@ -983,22 +1079,34 @@ function renderTabs(state) {
   }
   const keep = new Set(wanted);
   for (const { el } of before.values()) if (!keep.has(el)) el.remove();
+  // Drop slots aren't tabs: they step out while the tabs are put in order (or they'd end up last), and the
+  // open one goes back in front of the same tab. A closing one is simply gone.
+  const openSlot = dropSlot?.el?.isConnected ? dropSlot.el : null;
+  let slotAnchor = openSlot?.nextElementSibling;
+  while (slotAnchor?.classList.contains('tab-drop-slot')) slotAnchor = slotAnchor.nextElementSibling;
+  container.querySelectorAll('.tab-drop-slot').forEach((el) => el.remove());
   // Only elements out of place move, so the rest aren't detached mid-click.
   let cursor = tabIndicator.nextSibling;
   for (const el of wanted) {
     if (el === cursor) cursor = el.nextSibling;
     else container.insertBefore(el, cursor);
   }
+  if (openSlot) container.insertBefore(openSlot, slotAnchor?.parentNode === container ? slotAnchor : null);
 
   // A tab arriving while widths are held (see holdTabWidths) would be squeezed in beside them.
   if (widthsHeld && wanted.some((el) => el.classList.contains('tab') && !before.has(el.dataset.id))) releaseTabWidths(false);
-  const landedEl = landedId ? container.querySelector(`.tab[data-id="${landedId}"]`) : null;
-  animateTabs(before, container, landedEl);
-  if (landedEl) {
-    landedEl.classList.add('landed');
-    setTimeout(() => landedEl.classList.remove('landed'), 900);
+  const landed = new Set(landedIds.map((x) => container.querySelector(`.tab[data-id="${x}"]`)).filter(Boolean));
+  animateTabs(before, container, landed);
+  if (landed.size) {
+    for (const el of landed) {
+      el.classList.remove('landed');
+      void el.offsetWidth; // restart the ring if it was still showing
+      el.classList.add('landed');
+      setTimeout(() => el.classList.remove('landed'), 1000);
+    }
     const live = $('tab-live');
-    if (live) live.textContent = t('tabs.movedHere', { title: state.tabs.find((x) => String(x.id) === landedId)?.title || '' });
+    const first = state.tabs.find((x) => String(x.id) === landedIds[0]);
+    if (live) live.textContent = landedIds.length > 1 ? t('tabs.movedHereMany', { n: landedIds.length }) : t('tabs.movedHere', { title: first?.title || '' });
   }
   updateHoverCard();
   const activeId = container.querySelector('.tab.active')?.dataset.id;

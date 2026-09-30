@@ -281,12 +281,86 @@ const http = require('http');
       await emit(donor.windowId, 'tab:dragstart', donor.tabs[0].id, { x: 100, y: 10, stripX: 50 });
       check('a drag whose release never arrives is running', Boolean(await dragState()));
       const ended = await waitFor(async () => (await dragState()) === null, 5000);
-      const after = await waitFor(async () => { const l = await windows(); return l.length === tabsNow.length + 1 ? l : null; });
-      check('it ends by itself after the timeout, as a drop where the cursor is', Boolean(ended) && Boolean(after), JSON.stringify(await windows()));
+      await sleep(400);
+      check('it ends by itself after the timeout and moves nothing (no new window on a guess)', Boolean(ended) && (await windows()).length === tabsNow.length, JSON.stringify(await windows()));
     } else {
       check('a window with two tabs to use for the timeout check', false, JSON.stringify(tabsNow));
     }
     await app.evaluate(() => { global.__windows.setDragTimeout(60000); global.__windows.setCursor(null); });
+
+    // ---- a multi-selection travels together: dragged into another window, all of it goes, in order
+    {
+      const list0 = await windows();
+      const home = list0.find((w) => w.windowId === win1) || list0[0];
+      const away = list0.find((w) => w.windowId !== home.windowId);
+      const m1 = await openTab(`${base}/m1`);
+      const m2 = await openTab(`${base}/m2`);
+      const homeNow = winOf(await windows(), home.windowId);
+      if (away && homeNow && homeNow.tabs.some((t) => t.id === m1.id)) {
+        await app.evaluate((_e, [w, ids]) => global.__windows.setSelection(w, ids), [home.windowId, [m1.id, m2.id]]);
+        await app.evaluate(({ BrowserWindow }, [a, b]) => { BrowserWindow.fromId(a).setBounds({ x: 100, y: 100, width: 1000, height: 700 }); BrowserWindow.fromId(b).setBounds({ x: 1150, y: 150, width: 800, height: 600 }); }, [home.windowId, away.windowId]);
+        await cursor({ x: 700, y: 500 });
+        await emit(home.windowId, 'tab:dragstart', m2.id, { x: 300, y: 15, stripX: 150, pressY: 15, ids: [m1.id, m2.id] });
+        check('dragging a selected tab takes the whole selection', JSON.stringify((await dragState())?.ids) === JSON.stringify([m1.id, m2.id]), JSON.stringify(await dragState()));
+        await cursor({ x: 1150 + 790, y: 150 + 15 });
+        await waitFor(async () => (await dragState())?.hover?.windowId === away.windowId);
+        check('the strip it is over shows one slot for them', Boolean(await waitFor(async () => (await uiCount(away.windowId, '.tab-drop-slot.open')) === 1)));
+        await emit(home.windowId, 'tab:dragend');
+        const landed = await waitFor(async () => { const w = winOf(await windows(), away.windowId); const ids = w?.tabs.map((t) => t.id) || []; return ids.includes(m1.id) && ids.includes(m2.id) ? w : null; });
+        const order = landed?.tabs.map((t) => t.id) || [];
+        check('both tabs land in that window, next to each other, in order, the dragged one shown', Boolean(landed) && order.indexOf(m2.id) === order.indexOf(m1.id) + 1 && landed.activeId === m2.id, JSON.stringify(landed));
+        check('no slot is left behind there', Boolean(await waitFor(async () => (await uiCount(away.windowId, '.tab-drop-slot')) === 0)));
+      } else {
+        check('(two windows for the multi-selection check)', false, JSON.stringify(await windows()));
+      }
+    }
+
+    // ---- a group dragged by its label back into its own strip, somewhere else, stays one whole group
+    {
+      const list0 = await windows();
+      const home = list0[0];
+      const g1 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g1`);
+      const g2 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g2`);
+      const w = winOf(await windows(), home.windowId);
+      const inHome = w && w.tabs.some((t) => t.id === g1) && w.tabs.some((t) => t.id === g2);
+      if (inHome && w.tabs.length >= 4) {
+        const gid = await app.evaluate((_e, [win, ids]) => global.__windows.group(win, ids, 'Pair'), [home.windowId, [g1, g2]]);
+        const first = winOf(await windows(), home.windowId).tabs.find((t) => t.id !== g1 && t.id !== g2 && !t.pinned);
+        await cursor({ x: 700, y: 500 });
+        await emit(home.windowId, 'tab:dragstart', g1, { x: 300, y: 15, stripX: 150, pressY: 15, ids: [g1, g2], group: gid });
+        check('a group label drag carries every tab of the group', JSON.stringify((await dragState())?.ids) === JSON.stringify([g1, g2]), JSON.stringify(await dragState()));
+        const hb = await winBounds(home.windowId);
+        await cursor({ x: hb.x + 3, y: hb.y + 15 });
+        await waitFor(async () => (await dragState())?.hover?.windowId === home.windowId);
+        await emit(home.windowId, 'tab:dragend');
+        const after = await waitFor(async () => { const l = winOf(await windows(), home.windowId); return l && (await dragState()) === null ? l : null; });
+        const t1 = after?.tabs.find((t) => t.id === g1), t2 = after?.tabs.find((t) => t.id === g2);
+        const order = after?.tabs.map((t) => t.id) || [];
+        check('both tabs are still in one group, side by side', Boolean(t1?.groupId) && t1.groupId === t2?.groupId && order.indexOf(g2) === order.indexOf(g1) + 1, JSON.stringify(after));
+        check('...and it moved to the front of the loose tabs', Boolean(first) && order.indexOf(g1) < order.indexOf(first.id), JSON.stringify([first, order]));
+      } else {
+        check('(a window with room for the group check)', false, JSON.stringify(await windows()));
+      }
+    }
+
+    // ---- the dragged window closing mid-drag leaves nothing behind in the strip it was over
+    {
+      const l0 = await windows();
+      if (l0.length >= 2) {
+        const [a0, b0] = l0;
+        const donorTab = await app.evaluate(async (_e, u) => global.__agent.browser.openTab(u).id, `${base}/z`);
+        const donorWin = (await windows()).find((w) => w.tabs.some((t) => t.id === donorTab));
+        const other = donorWin.windowId === a0.windowId ? b0 : a0;
+        await app.evaluate(({ BrowserWindow }, [a, b]) => { BrowserWindow.fromId(a).setBounds({ x: 100, y: 100, width: 1000, height: 700 }); BrowserWindow.fromId(b).setBounds({ x: 1150, y: 150, width: 800, height: 600 }); }, [donorWin.windowId, other.windowId]);
+        await cursor({ x: 700, y: 500 });
+        await emit(donorWin.windowId, 'tab:dragstart', donorTab, { x: 300, y: 15, stripX: 150, pressY: 15 });
+        await cursor({ x: 1150 + 790, y: 150 + 15 });
+        await waitFor(async () => (await uiCount(other.windowId, '.tab-drop-slot.open')) === 1);
+        await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).destroy(), donorWin.windowId);
+        check('the drag ends', Boolean(await waitFor(async () => (await dragState()) === null)));
+        check("the other window's slot closes", Boolean(await waitFor(async () => (await uiCount(other.windowId, '.tab-drop-slot')) === 0)));
+      }
+    }
 
     // ---- every normal window comes back after a restart
     const before2 = await windows();

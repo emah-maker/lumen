@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('browser', {
   closeTab: (id) => ipcRenderer.send('tab:close', id),
   switchTab: (id) => ipcRenderer.send('tab:switch', id),
   moveTab: (id, toIndex) => ipcRenderer.send('tab:move', id, toIndex),
+  moveTabs: (ids, beforeId, groupId) => ipcRenderer.send('tab:move-block', ids, beforeId, groupId), // several tabs (a selection, a group) as one block
   // A tab dragged out of the strip: main.js moves it into a window that follows the cursor.
   dragTabPrep: () => ipcRenderer.send('tab:dragprep'), // a tab is heading out of the strip: a tear-off may follow
   onTabDragDone: on('tab:dragdone'), // a dropped tab has been placed: show it again if it stayed here
