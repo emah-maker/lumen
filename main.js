@@ -5570,8 +5570,10 @@ ipcMain.handle('settings:get', () => {
     // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
+    grokBuild: aiAgents.cliStatus().grokbuild, // { installed, signedIn, enabled }: the setup card offers it once found
   };
 });
+ipcMain.handle('settings:use-grok-build', () => aiAgents.useGrokBuild());
 // A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
 // the first message. Offline (can't check), it's saved anyway, and the caller is told so.
 // Safe Browsing's status and key, for the settings page's Privacy section. The key is kept

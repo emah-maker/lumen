@@ -599,6 +599,7 @@ contextBridge.exposeInMainWorld('assistant', {
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
+  useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card
   openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
   openRouterSignIn: () => ipcRenderer.invoke('openrouter:sign-in'),
   cancelOpenRouterSignIn: () => ipcRenderer.invoke('openrouter:cancel'),

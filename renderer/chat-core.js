@@ -42,6 +42,10 @@ async function refreshSetup() {
       : t('setup.claudeCode.ready');
   optional('setup-claude-code').classList.toggle('missing', !s.claudeCode); // (still clickable: it looks again)
   optional('setup-claude-code-get').hidden = Boolean(s.claudeCode);
+  // Grok Build, once it's found on this computer (the sidebar only: the full-page chat can't switch it on).
+  const grok = s.grokBuild || {};
+  optional('setup-grok').hidden = !grok.installed || !window.assistant.useGrokBuild;
+  optional('setup-grok-detail').textContent = grok.signedIn === false ? t('setup.grok.signedOut') : t('setup.grok.detail');
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -139,6 +143,13 @@ optional('setup-claude-code').onclick = async () => {
   const status = await window.lumenExtras?.claudeCodeStatus?.(true).catch(() => null);
   if (status && !status.installed) { setupError(t('setup.claudeCode.notFound')); return; }
   if (status?.signedIn !== false && await window.assistant.setModel('claudecode:default')) await loadModels();
+  refreshSetup();
+};
+optional('setup-grok').onclick = async () => {
+  const r = await window.assistant.useGrokBuild?.().catch(() => null);
+  if (!r?.installed) { setupError(t('setup.grok.notFound')); return; }
+  if (!r.signedIn) { setupError(t('setup.grok.signedOut')); return; }
+  if (await window.assistant.setModel('grokbuild:default')) await loadModels();
   refreshSetup();
 };
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)

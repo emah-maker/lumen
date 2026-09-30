@@ -512,13 +512,21 @@ function setupAiAgents(deps) {
       startAutomation();
       // Looking for the CLIs (and loading claude-code.js/grok-build.js) waits until the window is up.
       setTimeout(() => {
-        Promise.allSettled([refreshClaudeCodeStatus(false), grokSidebar() ? refreshGrokBuildStatus(false) : null])
+        // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
+        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false)])
           .then(() => { detecting = false; ui()?.send('models-updated'); });
       }, 300);
     },
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild):/.test(String(id)),
     mcpServer: () => mcpServer,
+    // The setup card's "Use your own Grok Build": on in the sidebar, looked for again (just installed or signed in).
+    async useGrokBuild() {
+      if (readSettings().grokSidebar !== true) writeSettings({ ...readSettings(), grokSidebar: true });
+      const s = await refreshGrokBuildStatus(true).catch(() => ({ installed: false, signedIn: false }));
+      ui()?.send('models-updated');
+      return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
+    },
     // Are the local CLIs there, and signed in (background tasks list them, or say why not).
     cliStatus: () => ({
       claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },

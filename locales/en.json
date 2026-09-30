@@ -1100,5 +1100,9 @@
   "settings.default.title": "Default browser",
   "settings.default.desc": "Links you open in other apps (mail, chat, documents) open in your default browser.",
   "settings.default.not": "Lumen isn’t your default browser. Links from other apps open elsewhere.",
-  "chat.editFailed": "That message couldn’t be changed: the chat moved on. Nothing was sent."
+  "chat.editFailed": "That message couldn’t be changed: the chat moved on. Nothing was sent.",
+  "setup.grok": "Use your own Grok Build",
+  "setup.grok.detail": "Found on this computer: xAI’s agent, with your own Grok sign-in.",
+  "setup.grok.signedOut": "Not signed in yet: open a terminal, run grok and sign in. Then click here.",
+  "setup.grok.notFound": "Grok Build isn’t found any more. Install it again, then click here."
 }
