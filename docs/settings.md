@@ -30,6 +30,7 @@ The tables below give each setting's key in `settings.json` and its default. Edi
 |---|---|---|---|
 | Model | `model` | Claude Opus 5 (`claude-opus-5`) | The model the sidebar AI uses. The same picker is in the sidebar. |
 | Short, focused answers | `adhdMode` | off | Answers lead with the next step and stay brief. Applies to new chats. |
+| Warm up Grok Build when Lumen starts | `grokWarmup` | on | Starts Grok Build's setup in the background so your first message starts faster: once the first tab has loaded, Lumen finds the `grok` program, starts its local tool gate and prepares its folders and sign-in link (again after the computer wakes). It happens only while Grok Build is connected to Lumen or chosen as the model, sends nothing to Grok and never makes a model request. Off: that setup happens when you send the first message. Takes effect without a restart. |
 | Group tabs automatically | `tabGrouping` | `site` | `off`, `site` (3 or more tabs from one site) or `topic` (related tabs, once 4 or more are loose). Tabs you group or move by hand stay put. |
 | Use AI to name and group topics | `topicAi` | off | Only with **By topic**. Sends tab titles and site names (never full addresses) to the cheapest model of your chat's provider. Off: topics are found on this computer. |
 | API keys | `keys` | none | One per provider: Anthropic, OpenAI, xAI (Grok), Google (Gemini), OpenRouter. Stored encrypted. Environment variables also work. |
