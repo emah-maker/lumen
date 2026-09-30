@@ -4,6 +4,13 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.4.2 (2026-09-30)
+
+- Faster AI agents: Claude Code now stays warm between messages, so a chat's first reply no longer waits on a cold start, and it gets ready for the model your message will use while you type. Actions wait for the page to settle instead of a fixed pause, and a page that never stops animating costs a fraction of a second, not more. Stop interrupts the agent right away and keeps it ready for the next message. A stuck Claude Code or Grok Build turn now gives up on its own after 90 seconds (time spent on tool calls and approvals does not count), and steps show up as soon as they start with their specific label.
+- First-run welcome: the default-browser step is now one quiet line under the welcome (hidden when Lumen is already your default), and Make default always says what happened on Windows and macOS. Claude Code and Grok Build are looked for again when you click, without a restart, and Use your own Grok Build appears once it is found. Sign-in, import and locked-profile messages are clearer and translated.
+- Sidebar chat: Edit your latest message in place (Cancel or Esc keeps everything), including in restored and resumed chats, with no jumps when a reply ends. Jumping to the latest message lands at the very end and never fights your own scrolling, errors are announced to screen readers, messages queued while you switch chats come back to the box, and code blocks are coloured while a reply streams.
+- Startup and new tabs: a spare new-tab page is ready sooner and paints your theme's background with no white flash, the tab strip updates once per frame while a page loads, settings changes always reach disk when you quit, the ad blocker checks requests with less work, and filter lists refresh daily while Lumen stays open.
+
 ## 0.4.1 (2026-09-30)
 
 - 0.4.0 was tagged but never published: Lumen stopped at start-up before opening a window. That is fixed, and this release has everything listed under 0.4.0.
