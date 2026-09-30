@@ -131,7 +131,14 @@ function tickClock() {
   lastClock = key;
   const span = (cls, text) => Object.assign(document.createElement('span'), { className: cls, textContent: text });
   el.replaceChildren(span('clock-h', h), span('clock-sep', t.sep), span('clock-m', t.m), ...(t.s ? [span('clock-s', `${t.ssep}${t.s}`)] : []));
+  // 9:59 -> 10:00 (or proportional digits) can widen the clock past the column: fitted again when its width changes.
+  clockRange.selectNodeContents(el);
+  const w = Math.round(clockRange.getBoundingClientRect().width);
+  if (lastClockW && w !== lastClockW) window.newtabSize?.fitNow?.();
+  lastClockW = w;
 }
+const clockRange = document.createRange();
+let lastClockW = 0;
 // Minutes only: wake every 10 s. With seconds: just after each second turns. Never draws while the tab is hidden.
 let clockTimer = 0;
 function scheduleClock() {

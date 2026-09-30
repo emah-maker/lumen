@@ -86,7 +86,8 @@
     #w-sizers { position: absolute; top: 0; left: 0; width: 100%; height: 0; z-index: 2; pointer-events: none; }
     #w-sizers[hidden] { display: none; }
     .w-sz-frame.w-sz-smaller::after { content: attr(data-tag); position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%); white-space: nowrap; font-size: 11px; line-height: 1; padding: 5px 9px; border-radius: 999px; color: var(--text); background: color-mix(in srgb, var(--bg, #fff) 88%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 0 0 0.5px rgba(0,0,0,.08); pointer-events: none; }
-    .w-sz-frame.w-sz-clock.w-sz-smaller::after { top: auto; bottom: calc(100% + 8px); } /* the clock's above it: below are the date and greeting */
+    .w-sz-frame.w-sz-clock.w-sz-smaller::after { top: auto; bottom: calc(100% + 8px); }
+    .w-sz-frame.w-sz-clock.w-sz-tag-side::after { bottom: auto; top: 50%; left: calc(100% + 28px); transform: translateY(-50%); } /* the clock's above it: below are the date and greeting */
     .w-sz-frame { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 12px; pointer-events: none; }
     .w-sz-grip { position: absolute; left: 0; top: 0; box-sizing: border-box; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); pointer-events: auto; touch-action: none; outline: none; }
     .w-sz-grip::after { content: ""; position: absolute; inset: -10px; }
@@ -193,7 +194,7 @@
     toggle.title = T('newtab.edit.toggle.title');
     addBtn.hidden = !(editing || real === 0) || stacked;
     undoBtn.hidden = !editing;
-    undoBtn.disabled = history.size === 0;
+    undoBtn.disabled = !history.some((e) => !staleEntry(e)); // only steps that would still do something
     resetBtn.hidden = !editing;
     hint.hidden = !editing;
     first.hidden = editing || real > 0 || stacked || store.get('lumen.home.editHint') === '1';
@@ -288,11 +289,12 @@
     document.body.append(toast);
     toastTimer = setTimeout(hideToast, 8000);
   }
+  // Passed over by Undo: a removal the browser let go of, and a size changed again since (in Settings, another tab).
+  const staleEntry = (e) => (e.kind === 'remove' && Date.now() - e.at > REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
   function undo() {
     let entry = history.pop();
     // Passed over: a removal the browser let go of, and a size changed again since (in Settings, another tab).
-    const stale = (e) => (e.kind === 'remove' && Date.now() - e.at > REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
-    while (entry && stale(entry)) entry = history.pop();
+    while (entry && staleEntry(entry)) entry = history.pop();
     hideToast();
     if (!entry) { say(T('newtab.edit.nothing')); update(); return false; }
     let ok = true;
@@ -387,6 +389,7 @@
       const savedClock = SZ().get().clock;
       const tagClock = now !== savedClock && !SZ().held() ? T('newtab.edit.drawnSmaller', { size: clockName(savedClock) }) : '';
       frameClock.classList.toggle('w-sz-smaller', Boolean(tagClock));
+      frameClock.classList.toggle('w-sz-tag-side', Boolean(tagClock) && r.top - 34 < 8); // no room above: beside it
       frameClock.dataset.tag = tagClock;
       gripClock.setAttribute('aria-valuenow', String(WS.CLOCK_STEPS.indexOf(now)));
       gripClock.setAttribute('aria-valuetext', tagClock ? `${clockName(now)}. ${tagClock}` : clockName(now));
@@ -493,12 +496,12 @@
   }
   const unblock = (grip) => grip?.classList.remove('w-sz-blocked');
   // A wanted size -> the size it gets: itself, or (growing into a card) the largest that fits. Previewed.
-  function fitted(key, from, want, grip) {
+  function fitted(key, from, want, grip, quiet = false) {
     previewLook(key, want);
     if (!bigger(key, want, from) || fits()) { unblock(grip); return want; }
-    grid()?.flashBlockers?.(); // the cards this size ran into (measured by the probe that just failed)
+    if (!quiet) grid()?.flashBlockers?.(); // the cards this size ran into (measured by the probe that just failed)
     const got = largestFit(key, from, want);
-    blocked(grip, key, got);
+    if (!quiet) blocked(grip, key, got);
     return got;
   }
   // Set a clock step or search width now, save it (do=look) and, when `record`, put it on the Undo stack.
@@ -560,7 +563,20 @@
       placeSoon();
     };
     const move = (ev) => { pending = ev; if (!frame) frame = requestAnimationFrame(step); };
-    const onResize = () => { if (!latest) return; latest.value = fitted(latest.key, startDrawn[latest.key], latest.wanted, grip); latest.limit = null; placeSoon(); };
+    // The window resized mid-drag: the size being dragged is fitted to the new width (against its own smallest column),
+    // once a frame, quietly (the window moving isn't the user running into a card).
+    let rz = 0;
+    const onResize = () => {
+      if (!latest || rz) return;
+      rz = requestAnimationFrame(() => {
+        rz = 0;
+        if (done || !latest) return;
+        SZ().floor();
+        latest.value = fitted(latest.key, Math.min(startDrawn[latest.key], latest.value), latest.wanted, null, true);
+        latest.limit = null;
+        placeSoon();
+      });
+    };
     addEventListener('resize', onResize);
     let done = false;
     const finish = () => {
@@ -605,7 +621,9 @@
     grip.addEventListener('pointerdown', (e) => {
       const base = drawnSearch();
       const cap = Math.floor(window.innerWidth * 0.88); // the bar's own limit in this window
-      dragSizer(grip, e, (dx) => ({ key: 'search', value: Math.min(WS.snapSearchWidth(base + 2 * dir * dx, gridInfo()), Math.max(WS.SEARCH_MIN, cap)) }));
+      const top = Math.max(WS.SEARCH_MIN, Math.floor(cap / WS.SEARCH_STEP) * WS.SEARCH_STEP); // on a step, as the keys go
+      const clampW = (w) => { const v = Math.min(w, top); return v === WS.SEARCH_DEFAULT ? v - WS.SEARCH_STEP : v; }; // 640 means Automatic
+      dragSizer(grip, e, (dx) => ({ key: 'search', value: clampW(WS.snapSearchWidth(base + 2 * dir * dx, gridInfo())) }));
     });
   }
   // Double-click a grip, or press Delete or Backspace on it: back to the default (Medium clock, Automatic width).
@@ -646,7 +664,7 @@
       e.stopPropagation();
       let next = WS.cleanSearchWidth(Math.round(to / WS.SEARCH_STEP) * WS.SEARCH_STEP);
       if (next > cap) next = Math.floor(cap / WS.SEARCH_STEP) * WS.SEARCH_STEP; // rounded down, never past what this window draws
-      if (next === WS.SEARCH_DEFAULT) next += to > cur ? WS.SEARCH_STEP : -WS.SEARCH_STEP; // 640 is kept for "Automatic"
+      if (next === WS.SEARCH_DEFAULT) next += to > cur && next + WS.SEARCH_STEP <= cap ? WS.SEARCH_STEP : -WS.SEARCH_STEP; // 640 is kept for "Automatic"
       if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
       else setLook('search', next, { grip, from: cur });
     });

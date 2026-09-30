@@ -128,6 +128,7 @@ function createHistory(limit = 20) {
     peek() { return stack[stack.length - 1] || null; },
     clear() { stack.length = 0; },
     get size() { return stack.length; },
+    some(test) { return stack.some(test); },
   };
 }
 const rectKey = (it) => `${it.x},${it.y},${it.w},${it.h},${it.snap || ''}`;
