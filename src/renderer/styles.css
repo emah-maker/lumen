@@ -510,8 +510,8 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant .reply-regen:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 #auto-allow.armed { color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
 /* The header toggle, armed: says what a second click does, visibly. */
-#auto-allow.armed::after { content: attr(data-confirm); position: absolute; top: calc(100% + 8px); left: -6px; z-index: var(--z-tip); white-space: normal; width: max-content; max-width: 180px; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
-/* (relative: the armed tip hangs off the button and opens rightward; the sidebar edge is ~190px away even at the 300px minimum width, so max-width 180px keeps it inside) */
+#auto-allow.armed::after { content: attr(data-confirm); position: absolute; top: calc(100% + 8px); left: -6px; z-index: var(--z-tip); white-space: normal; width: max-content; max-width: 150px; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+/* (relative: the armed tip hangs off the button and opens rightward; the button's left edge is ~133px into a 300px sidebar at its narrowest (~193px of 359px by default), so 150px wide keeps the box, its corners and shadow inside) */
 #auto-allow.armed::before { content: ""; position: absolute; top: calc(100% + 4px); left: 11px; z-index: var(--z-tip); width: 8px; height: 8px; background: var(--card, var(--field)); transform: rotate(45deg); box-shadow: -0.5px -0.5px 0 0 var(--border); pointer-events: none; }
 #auto-allow { position: relative; }
 .approval-always.armed { color: var(--warn, #d97706); }
