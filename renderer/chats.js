@@ -13,7 +13,7 @@
   function refreshUsage(text) {
     usageLine.textContent = text || '';
     usageLine.hidden = !text;
-    usageLine.title = text ? 'Tokens and estimated cost of this chat' : '';
+    usageLine.title = text ? window.chatTr('chats.usage.title', 'Tokens and estimated cost of this chat') : '';
   }
 
   const iconButton = window.chatIconButton;
@@ -24,21 +24,46 @@
     cleared: () => { clearChatView(); refreshUsage(''); },
   });
 
+  const tools = window.chatListTools;
+  let query = '';
+  let searchBox = null;
   async function render() {
+    const focusedRow = document.activeElement?.closest?.('.chat-item');
+    const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
+    const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
     const { current, chats } = await api.list();
     const head = document.createElement('div');
     head.className = 'chat-list-head';
-    const title = Object.assign(document.createElement('h2'), { textContent: 'Chats' });
-    const close = iconButton('close', 'Close');
+    const title = Object.assign(document.createElement('h2'), { textContent: window.chatTr('chats.title', 'Chats') });
+    const close = iconButton('close', window.chatTr('chats.close', 'Close'));
     close.onclick = () => closePanel(true);
     head.append(title, close);
 
+    // A search once there are enough chats to need one; what was typed survives a redraw.
+    const typing = document.activeElement === searchBox;
+    searchBox = chats.length > 6 ? tools.search((q) => { query = q; drawList(); }) : null;
+    if (!searchBox) query = ''; // (few chats left: no box, so no filter either)
+    if (searchBox) searchBox.value = query;
     const list = document.createElement('ul');
     list.className = 'chat-items';
-    for (const chat of chats) list.append(item(chat, chat.id === current));
-    panel.replaceChildren(head, list);
-    if (!chats.length) panel.append(Object.assign(document.createElement('p'), { className: 'chat-list-empty', textContent: 'No saved chats yet. Chats appear here after the first reply.' }));
+    function drawList() {
+      const shown = chats.filter((c) => tools.matches(c, query));
+      const rows = [];
+      for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
+      list.replaceChildren(...rows);
+      if (query && !shown.length) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: window.chatTr('chats.noMatch', 'No chats match') }));
+    }
+    drawList();
+    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), list);
+    if (typing && searchBox) searchBox.focus();
+    else if (focusedId) { // the same row, or after a delete the one now in its place
+      const rows = [...list.querySelectorAll('.chat-item')];
+      const row = rows.find((r) => r.dataset.id === focusedId) || rows[Math.min(focusedAt, rows.length - 1)];
+      (row?.querySelector('.chat-open') || searchBox || close).focus();
+    }
+    if (!chats.length) panel.append(Object.assign(document.createElement('p'), { className: 'chat-list-empty', textContent: window.chatTr('chats.empty', 'No saved chats yet. Chats appear here after the first reply.') }));
   }
+  tools.arrows(panel);
 
   async function openChat(id) {
     const view = await api.open(id);

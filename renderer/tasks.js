@@ -258,7 +258,7 @@
       h('p', { className: 'task-meta', textContent: T('tasks.create.mayVisit', { sites: task.allowedSites.join(', ') || '-' }) }));
 
     body.append(h('h3', { textContent: T('tasks.detail.result') }));
-    if (task.result && task.resultOld) body.push(h('p', { className: 'task-notice', textContent: T('tasks.detail.resultOld') }));
+    if (task.result && task.resultOld) body.append(h('p', { className: 'task-notice', textContent: T('tasks.detail.resultOld') }));
     if (task.result) {
       const result = h('div', { className: 'msg assistant task-result' });
       result.innerHTML = window.renderMarkdown(task.result);

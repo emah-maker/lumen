@@ -13,7 +13,7 @@ const PROVIDERS = {
     label: 'OpenAI',
     baseURL: undefined,
     defaults: ['gpt-5.6', 'gpt-5.6-mini'],
-    include: (id) => /^(gpt-|o\d)/.test(id) && !/(audio|realtime|tts|transcribe|image|search|embedding|instruct|moderation|codex)/.test(id),
+    include: (id) => /^(gpt-|o\d)/.test(id) && !/(audio|realtime|tts|transcribe|image|search|embedding|instruct|moderation|codex|deep-research|computer-use)/.test(id) && !/-pro(-|$)/.test(id), // -pro: Responses API only
   },
   xai: {
     label: 'Grok',
@@ -25,7 +25,7 @@ const PROVIDERS = {
     label: 'Gemini',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     defaults: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-    include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live)/.test(id),
+    include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live|audio|computer-use|robotics)/.test(id),
   },
   // One key for many companies' models. Ids look like "anthropic/claude-opus-5.5".
   openrouter: {
@@ -40,25 +40,54 @@ const PROVIDERS = {
 // ---------- OpenRouter's model catalog (GET /models, kept for 24 hours) ----------
 
 const CATALOG_TTL = 24 * 60 * 60 * 1000;
+const CATALOG_TIMEOUT_MS = 10000;
 const CURATED = [/^anthropic\/claude/, /^openai\/gpt/, /^google\/gemini/, /^meta-llama\/llama/, /^deepseek\/deepseek/, /^x-ai\/grok/];
 let catalog = null; // { fetchedAt, models: [{ id, name, tools, created }] }
+let refreshing = null; // the background refresh under way, if any
 
-async function openRouterCatalog({ cacheFile, fetchImpl = netFetch() } = {}) {
+// onRefresh: an old copy is returned at once and a fresh one fetched behind it; this runs when it has arrived.
+async function openRouterCatalog({ cacheFile, fetchImpl = netFetch(), onRefresh = null } = {}) {
   const fs = require('fs');
   if (!catalog && cacheFile) { try { catalog = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch {} }
   if (catalog && Date.now() - catalog.fetchedAt < CATALOG_TTL) return catalog;
-  const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/models`, { headers: PROVIDERS.openrouter.headers });
-  if (!res.ok) throw new Error(`OpenRouter models: HTTP ${res.status}`);
-  catalog = { fetchedAt: Date.now(), models: parseOpenRouterModels(await res.json()) };
-  if (cacheFile) { try { fs.writeFileSync(cacheFile, JSON.stringify(catalog)); } catch {} }
+  // A copy over a day old: shown at once, and a fresh one fetched behind it (onRefresh runs when it has arrived).
+  if (catalog?.models?.length && onRefresh) {
+    if (!refreshing) {
+      refreshing = fetchCatalog({ cacheFile, fetchImpl }).then(onRefresh, () => {}).finally(() => { refreshing = null; });
+    }
+    return catalog;
+  }
+  try { return await fetchCatalog({ cacheFile, fetchImpl }); } catch (err) {
+    if (catalog?.models?.length) return catalog; // offline, slow or failing: the last copy (however old) rather than no list
+    throw err;
+  }
+}
+// GET /models (giving up after 10 s), kept in memory and in cacheFile.
+async function fetchCatalog({ cacheFile, fetchImpl }) {
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctrl && setTimeout(() => ctrl.abort(), CATALOG_TIMEOUT_MS);
+  let fresh;
+  try {
+    const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/models`, { headers: PROVIDERS.openrouter.headers, ...(ctrl ? { signal: ctrl.signal } : {}) });
+    if (!res.ok) throw new Error(`OpenRouter models: HTTP ${res.status}`);
+    fresh = parseOpenRouterModels(await res.json());
+  } finally { clearTimeout(timer); }
+  catalog = { fetchedAt: Date.now(), models: fresh };
+  if (cacheFile) { try { require('fs').writeFileSync(cacheFile, JSON.stringify(catalog)); } catch {} }
   return catalog;
 }
 
 // The API's list -> text models, with whether they can call tools (needed to act in tabs).
 function parseOpenRouterModels(json) {
   return (json?.data || [])
-    .filter((m) => m?.id && !String(m.id).includes(':') && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
-    .map((m) => ({ id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0 }));
+    // Plain ids, and OpenRouter's ":free" variants (one of the things people look for most there).
+    .filter((m) => m?.id && (!String(m.id).includes(':') || /:free$/.test(String(m.id))) && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
+    .map((m) => ({
+      id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0,
+      context: Number(m.context_length) || 0, // for the picker's detail line
+      free: /:free$/.test(String(m.id)),
+      pricePerM: Number.isFinite(Number(m.pricing?.prompt)) ? Number(m.pricing.prompt) * 1e6 : undefined, // $ per million input tokens
+    }));
 }
 
 // A short list for the picker: the newest tool-capable model of a few families.
@@ -112,14 +141,15 @@ async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
 }
 
 // Lists chat models the key can use (newest-looking first); falls back to defaults on error.
-async function listModels(provider, apiKey, { cacheFile } = {}) {
+async function listModels(provider, apiKey, { cacheFile, onRefresh = null } = {}) {
   try {
-    if (provider === 'openrouter') return curatedOpenRouter((await openRouterCatalog({ cacheFile })).models);
+    if (provider === 'openrouter') return curatedOpenRouter((await openRouterCatalog({ cacheFile, onRefresh })).models); // (a day-old copy at once, refreshed behind)
     const page = await clientFor(provider, apiKey).models.list();
     const ids = [];
     for await (const m of page) ids.push(String(m.id).replace(/^models\//, ''));
-    const chat = ids.filter(PROVIDERS[provider].include).sort().reverse();
-    return chat.length ? chat.slice(0, 12) : PROVIDERS[provider].defaults;
+    // Newest families first and no dated duplicates (an alphabetical cut used to drop every gpt-* model behind o-series ids).
+    const chat = require('./features/model-names').rankModels(ids.filter(PROVIDERS[provider].include), 16);
+    return chat.length ? chat : PROVIDERS[provider].defaults;
   } catch {
     return PROVIDERS[provider].defaults;
   }
@@ -270,4 +300,17 @@ function describeProviderError(err, provider) {
   return { text: err.status ? `${label} error ${err.status}: ${err.message}` : `${label} error: ${err.message}` };
 }
 
-module.exports = { PROVIDERS, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+// OpenRouter's own name for a model, without its vendor ("Anthropic: Claude Opus 5.5" -> "Claude Opus 5.5"), if known.
+// What the catalog knows of a model: its context size, price per million input tokens and whether it is free.
+function openRouterInfo(model) {
+  const m = catalog?.models?.find((x) => x.id === model);
+  return m ? { context: m.context || 0, pricePerM: m.pricePerM, free: Boolean(m.free) } : null;
+}
+function openRouterName(model) {
+  const m = catalog?.models?.find((x) => x.id === model);
+  if (!m?.name) return null;
+  const bare = String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : String(m.name);
+  return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
+}
+
+module.exports = { PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

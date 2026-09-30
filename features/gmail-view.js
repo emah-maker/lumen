@@ -127,6 +127,7 @@ function apiError(status, text) {
   if (status === 403 && /accessnotconfigured|servicedisabled/i.test(reason)) return { message: 'The Gmail API is not turned on for that Google Cloud project. Enable it in the Cloud console, then try again.' };
   if (status === 403) return { message: 'Google refused access to Gmail. Connect Gmail again in Settings.', reconnect: true };
   if (status >= 500) return { message: 'Gmail is having trouble. Lumen will try again shortly.' };
+  if (status === 400 && /failedprecondition|mailbox/i.test(`${reason} ${text}`)) return { message: 'This Google account has no Gmail inbox. Sign in with an account that uses Gmail.', reconnect: true };
   return { message: `Gmail answered ${status}.` };
 }
 

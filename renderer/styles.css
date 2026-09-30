@@ -134,9 +134,12 @@ button:active:not(:disabled) { transform: scale(0.94); }
   width: 200px; min-width: 40px; flex: 0 1 200px; height: 28px;
   border-radius: 9px; color: var(--muted);
   background: var(--tab-idle);
-  cursor: default; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
+  cursor: default; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out, opacity 140ms ease-out;
 }
-.tab.active, .tab.dragging, .tabs.reordering .tab { background-color: transparent; }
+.tab.active, .tab.dragging { background-color: transparent; }
+/* While tabs are dragged the gliding surface steps aside (it can't follow transforms): the active tab
+   carries its own, and the other tabs keep their usual fill, so the strip looks the same throughout. */
+.tabs.reordering .tab.active:not(.dragging) { background-color: var(--surface-raised); box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 0.5px var(--hairline); }
 .tab-inner { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 8px 0 10px; font-size: 12.5px; }
 .tab.active .tab-inner { font-weight: 500; }
 /* Narrow tabs: icon only, centered; the active tab keeps its close button. */
@@ -147,14 +150,63 @@ button:active:not(:disabled) { transform: scale(0.94); }
   .tab.active .tab-close { position: static; margin: 0; }
 }
 .tab.dragging { position: relative; z-index: 3; background: var(--surface-raised); color: var(--text); box-shadow: inset 0 1px 0 var(--highlight), 0 10px 24px -6px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); transition: none; scale: 1.03; }
-.tab.dragging.tearing { opacity: 0.6; scale: 0.96; }
+/* In-strip reorder: the tab follows the pointer and leaves the flow, so the drop slot — which
+   sits in the real order, group labels included — is the only gap. It keeps the width it had;
+   a fixed tab no longer gets one from the strip. */
+.tab.dragging.floating { position: fixed; z-index: 6; flex: none; margin: 0; }
+/* Pulled away from the strip, not yet out: it lifts off, a hint that letting go further out opens a window. */
+.tab.dragging.tearing { opacity: 0.82; scale: 0.97; box-shadow: inset 0 1px 0 var(--highlight), 0 14px 30px -6px rgb(0 0 0 / calc(0.9 * var(--shadow-k))); transition: opacity var(--t-fast) ease-out, scale var(--t-fast) ease-out, box-shadow var(--t-fast) ease-out; }
 /* The tab has left for a window of its own (main.js drives that drag): it keeps its DOM node, which holds
    the pointer, but takes no room. */
-.tab.dragging.handed, .tab.held { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
-/* Another window's tab is being dragged over this strip: where it would land. */
-.tab.drop-before::before, .tab.drop-end::after { content: ''; position: absolute; top: 2px; bottom: 2px; width: 3px; border-radius: 2px; background: var(--accent); z-index: 4; }
-.tab.drop-before::before { left: -3px; }
-.tab.drop-end::after { right: -3px; }
+.group-label.handed, .group-label.held, .group-label.gathered { width: 0; min-width: 0; padding: 0; margin: 0 -2px; border: 0; overflow: hidden; opacity: 0; pointer-events: none; }
+.group-label.handed { transition: width 280ms var(--spring-smooth), padding 280ms var(--spring-smooth), margin 280ms var(--spring-smooth), opacity 90ms ease-out; }
+/* Cancelled: the tab (or group label) opens back up in its place. */
+.tab.returning, .group-label.returning { transition: flex-basis 300ms var(--spring-smooth), width 300ms var(--spring-smooth), min-width 300ms var(--spring-smooth), padding 300ms var(--spring-smooth), margin 300ms var(--spring-smooth), opacity 180ms ease-out; }
+.tab-drop-slot.in-group { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1.5px var(--group-color), 0 6px 16px -6px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
+.group-label.dragging { position: relative; z-index: 3; transition: none; }
+.group-label.dragging.tearing { opacity: 0.82; scale: 0.97; }
+.tab.dragging.handed, .tab.handed, .tab.held { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -2px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
+/* ...and the tabs close up over the space it leaves, rather than snapping shut. */
+.tab.dragging.handed, .tab.handed { transition: flex-basis 280ms var(--spring-smooth), width 280ms var(--spring-smooth), min-width 280ms var(--spring-smooth), margin 280ms var(--spring-smooth), opacity 90ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .tab.dragging.handed, .tab.handed { transition: none; } }
+:root.pref-reduce-motion .tab.dragging.handed, :root.pref-reduce-motion .tab.handed { transition: none; }
+/* A dragged tab is over this strip: the tabs part and the tab itself appears in the gap, where it would
+   land (app.js onTabDropAt), as in Chrome and Safari; the card that followed the cursor steps aside. It
+   opens with the same spring the tabs move with, and a closing slot shrinks as the next one opens. */
+.tab-drop-slot {
+  position: relative; z-index: 2; flex: 0 0 0; width: 0; height: 28px; margin: 0 -2px; border-radius: 9px; overflow: hidden;
+  background: var(--surface-raised); color: var(--text);
+  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px rgb(var(--accent-rgb) / 0.45), 0 6px 16px -6px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+  opacity: 0; scale: 0.94; pointer-events: none; -webkit-app-region: no-drag;
+  transition: flex-basis var(--t-smooth) var(--spring-smooth), width var(--t-smooth) var(--spring-smooth), margin var(--t-smooth) var(--spring-smooth), opacity 140ms ease-out, scale var(--t-smooth) var(--spring-snappy);
+}
+.tab-drop-slot.open { flex-basis: var(--slot-w, 200px); width: var(--slot-w, 200px); margin: 0; opacity: 1; scale: 1; }
+.tab-drop-slot.instant { transition: none; }
+.tab-drop-ghost { width: var(--slot-w, 200px); height: 100%; }
+.tab-drop-ghost .tab-inner { font-weight: 500; }
+.tab-drop-ghost .tab-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-drop-slot.pinned .tab-inner { justify-content: center; padding: 0; }
+.tab-drop-slot.pinned .tab-title, .tab-drop-slot.pinned .tab-drop-count { display: none; }
+.tab-drop-count { flex: none; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .tab-drop-slot { transition: opacity 1ms; } }
+:root.pref-reduce-motion .tab-drop-slot { transition: opacity 1ms; }
+/* The tab that just arrived by a drag: a brief accent ring, so the eye finds where it went. */
+.tab.landed { animation: landed-ring 1s ease-out; }
+@keyframes landed-ring { 0%, 25% { box-shadow: 0 0 0 1.5px rgb(var(--accent-rgb) / 0.6); } 100% { box-shadow: 0 0 0 1.5px rgb(var(--accent-rgb) / 0); } }
+@media (prefers-reduced-motion: reduce) { .tab.landed { animation: none; } }
+:root.pref-reduce-motion .tab.landed { animation: none; }
+/* Travelling with the dragged tab (a multi-selection, a group's tabs): folded into it. */
+.tab.gathered { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -2px; overflow: hidden; opacity: 0; pointer-events: none; transition: none; }
+/* Folded away (out on the card, waiting to land, gathered into another tab): no width at all, whatever
+   the tab is otherwise (the active tab's min-width and a pinned tab's fixed width would leave a hole). */
+.tab.handed, .tab.held, .tab.gathered { width: 0 !important; min-width: 0 !important; flex: 0 0 0 !important; padding: 0 !important; }
+/* A group label dragged along its strip follows the pointer, like a tab. */
+.group-label.dragging.floating { position: fixed; z-index: 6; flex: none; margin: 0; }
+.tab-gather-count { margin-left: auto; }
+/* A whole group in a drop slot: its colour and name. */
+.tab-drop-ghost.group .tab-inner { gap: 7px; }
+.tab-drop-group-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--group-color, var(--g-gray)); }
+.tab-drop-slot:has(.tab-drop-ghost.group) { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1.5px var(--group-color, rgb(var(--accent-rgb) / 0.45)), 0 6px 16px -6px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
 .tabs.reordering .tab:not(.dragging) { transition: transform var(--t-smooth) var(--spring-smooth), background-color var(--t-fast) ease-out; }
 .tab:hover:not(.active) { background-color: var(--hover); color: var(--text); }
 .tab.active { min-width: 52px; color: var(--text); }
@@ -172,6 +224,8 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tabs.more-left { mask-image: linear-gradient(90deg, transparent, #000 28px); }
 .tabs.more-right { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 .tabs.more-left.more-right { mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+.tabs.reordering { mask-image: none; } /* the dragged tab, held at the edge, never fades into it */
+.tab.arriving, .group-label.arriving { opacity: 0 !important; transition: none; } /* carried in by the chip: shows as it lands (tab:landed) */
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; object-fit: contain; }
 /* Dark icons (GitHub, Apple, X) vanish on a dark strip: a faint light outline keeps them visible. */
@@ -398,7 +452,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* The model name gives way to the buttons, not the other way round: at the 300px minimum width six
    buttons take ~190px, and a long name (up to 220px) used to push Settings and New chat out of the
    sidebar, which clips. The picker button ellipsizes (styles below). */
-.sidebar-head .model-picker { min-width: 0; margin-right: 8px; }
+.sidebar-head .model-picker { min-width: 78px; margin-right: 8px; } /* the name keeps room to be read, and the buttons still fit at 300 px */
 .sidebar-head .model-picker .picker-button { max-width: min(220px, 100%); }
 #dock-to-side { display: none; } /* only meaningful, and only shown, while chat-full (below) */
 
@@ -417,7 +471,48 @@ body.chat-full .composer { left: 50%; right: auto; transform: translateX(-50%); 
 /* No AI connected: center the setup card instead of the usual empty-state title and chips. */
 body.chat-full .messages:has(#setup:not([hidden])) { display: flex; align-items: center; justify-content: center; }
 body.chat-full .messages:has(#setup:not([hidden])) .empty { margin: 0; width: min(340px, 100%); text-align: center; }
+.messages:has(#setup:not([hidden])) .chips { display: none; } /* nothing connected: starters that can't answer aren't offered */
 body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full .messages:has(#setup:not([hidden])) .chips { display: none; }
+/* Scrolled up while a reply streams: the way back down. */
+.jump-latest { position: absolute; left: 50%; bottom: calc(var(--composer-h, 64px) + 14px); transform: translateX(-50%); z-index: 3; width: 32px !important; max-width: 32px; height: 32px; padding: 0; border: none; border-radius: 50%; background: var(--card, var(--field)); color: var(--text); box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); font-size: 15px; cursor: pointer; transition: opacity var(--t-fast) ease-out, transform var(--t-fast) ease-out; }
+.jump-latest[hidden] { display: none; }
+.jump-latest:hover { transform: translateX(-50%) translateY(-1px); }
+/* Code blocks: a header bar (the language, Copy) above the code, which scrolls on its own. */
+.msg.assistant .code-block { margin: 0 0 8px; border-radius: 8px; background: var(--field); box-shadow: inset 0 1px 0 var(--highlight); overflow: hidden; }
+.msg.assistant .code-block pre { margin: 0; border-radius: 0; box-shadow: none; background: none; }
+.msg.assistant .code-head { display: flex; align-items: center; justify-content: space-between; height: 26px; padding: 0 4px 0 10px; border-bottom: 1px solid var(--hairline); }
+.msg.assistant .code-lang { font: 500 10.5px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
+.msg.assistant .code-copy { height: 20px; padding: 0 8px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
+.msg.assistant .code-copy:hover, .msg.assistant .code-copy:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+/* Regenerate, beside Copy on the latest reply. */
+.msg.assistant .reply-regen { position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.msg.assistant:hover .reply-regen, .msg.assistant .reply-regen:focus-visible { opacity: 1; }
+.msg.assistant:has(> .reply-regen) .reply-regen, .msg.assistant:has(> .reply-regen) .reply-copy { opacity: 0.75; transform: none; } /* the latest reply: its actions always there */
+.msg.assistant:has(> .reply-regen):hover .reply-regen, .msg.assistant:has(> .reply-regen):hover .reply-copy { opacity: 1; }
+.msg.assistant .reply-regen:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+#auto-allow.armed { color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
+/* The header toggle, armed: says what a second click does, visibly. */
+#auto-allow.armed::after { content: attr(data-confirm); position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; white-space: nowrap; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+#auto-allow { position: relative; }
+.approval-always.armed { color: var(--warn, #d97706); }
+.approval-actions { flex-wrap: wrap; row-gap: 6px; }
+.approval-actions .btn { white-space: nowrap; }
+.msg.assistant .reply-regen.armed::after { content: attr(data-confirm); position: absolute; bottom: calc(100% + 6px); right: -4px; z-index: 5; white-space: normal; width: max-content; max-width: 220px; text-align: right; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+.msg.assistant .reply-model { max-width: calc(100% - 60px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The header's More menu. */
+.more-wrap { position: relative; display: inline-flex; }
+.more-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 190px; padding: 4px; border-radius: 10px; background: var(--card, var(--surface-raised, var(--field))); box-shadow: 0 10px 28px -8px rgba(0,0,0,.32), 0 0 0 0.5px var(--border); }
+.more-menu[hidden] { display: none; }
+.more-menu .menu-item { display: flex !important; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 10px; border-radius: 7px; justify-content: flex-start; }
+.more-menu .menu-item::after { content: attr(aria-label); font-size: 12.5px; color: var(--text); white-space: nowrap; }
+.more-menu .menu-item svg { flex: none; }
+.more-menu .menu-item[data-shortcut]::before { content: attr(data-shortcut); order: 3; margin-left: auto; font-size: 11px; color: var(--muted); }
+.more-menu .menu-item:hover, .more-menu .menu-item:focus-visible { background: var(--hover, rgba(127,127,127,.12)); outline: none; }
+body:not(.chat-full) .more-menu #dock-to-side { display: none !important; }
+.queue-btn { margin-left: 4px; height: 20px; padding: 0 6px; border: none; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.queue-btn:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
+.msg.assistant .reply-regen.armed { opacity: 1; color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
+.setup-error { margin-top: 10px; }
 body.chat-full .setup { text-align: left; }
 
 .btn { height: 28px; padding: 0 12px; border: none; border-radius: 8px; background: var(--field); font-weight: 500; transition: background-color var(--t-fast) ease-out, filter var(--t-fast) ease-out, transform var(--t-press) ease-out, opacity var(--t-base) ease-out; }
@@ -462,10 +557,22 @@ body.chat-full .setup { text-align: left; }
 .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px; padding-left: 20px; }
 .msg.assistant li::marker { color: var(--muted); }
 .msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4 { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; margin: 14px 0 4px; }
+.msg.assistant h1 { font-size: 16px; } .msg.assistant h2 { font-size: 15px; } .msg.assistant h3 { font-size: 14px; } /* a long answer shows its structure */
+.msg.assistant > :first-child:is(h1, h2, h3, h4) { margin-top: 0; }
 .msg.assistant code { font: 12px ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; background: var(--field); padding: 1px 4px; border-radius: 4px; }
 .msg.assistant pre { background: var(--field); border-radius: 8px; padding: 8px 10px; overflow-x: auto; box-shadow: inset 0 1px 0 var(--highlight); }
 .msg.assistant pre code { background: none; padding: 0; }
 .msg.assistant a { color: var(--accent); text-decoration: none; transition: color var(--t-fast) ease-out; }
+/* Math (typeset by Temml as MathML, see markdown.js): a touch larger than the text, as in print; a wide display
+   formula scrolls sideways on its own instead of widening the bubble. */
+.msg.assistant math { font-size: 1.1em; }
+.msg.assistant { counter-reset: tmlEqnNo; } /* equation numbers start at (1) in each reply */
+.msg.assistant .math-block { overflow-x: auto; overflow-y: hidden; margin: 6px 0 10px; padding: 2px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .math-block:last-child { margin-bottom: 0; }
+.msg.assistant .math-inline { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; baseline-source: first; vertical-align: baseline; padding-block: 2px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .math-block math { font-size: 1.18em; }
+.msg.assistant code.math-src { background: none; padding: 0; font-style: italic; color: var(--text); }
+.msg.assistant pre.math-src { background: none; box-shadow: none; text-align: center; font: italic 13px ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
 .msg.assistant .table-wrap { overflow-x: auto; margin: 0 0 8px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .msg.assistant table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 .msg.assistant th, .msg.assistant td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
@@ -585,10 +692,10 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .sidebar.dropping .composer { box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-soft); transform: scale(1.02); }
 
 .model-picker { position: relative; display: inline-flex; align-items: center; border-radius: 7px; transition: background-color var(--t-fast) ease-out; }
-.model-picker:hover { background: var(--hover); }
-.model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; margin-left: -6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker:hover:not(:has(.picker-menu:hover)) { background: var(--hover); } /* not while the pointer is in its (child) menu */
+.model-picker { margin-left: -6px; } /* the hover area reaches past the text; the button itself isn't squeezed */
+.model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-picker .picker-button:focus-visible { outline: 2px solid var(--accent); }
-.model-picker .picker-menu { left: -6px; top: calc(100% + 4px); }
 .model-picker svg { position: absolute; right: 4px; width: 12px; height: 12px; color: var(--muted); pointer-events: none; }
 
 /* ---------- downloads indicator ---------- */
@@ -687,7 +794,7 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
   border: none; border-radius: 11px; font: inherit; font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
   background: color-mix(in srgb, var(--group-color) 15%, transparent);
   color: color-mix(in srgb, var(--group-color) 72%, var(--text));
-  transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
+  transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out, opacity 140ms ease-out;
 }
 .group-label:hover { background: color-mix(in srgb, var(--group-color) 24%, transparent); }
 .group-label:active { transform: scale(0.95); }
@@ -761,13 +868,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 /* Only Claude's spark turns when the sidebar opens; other marks (an X would become "+") stay upright. */
 #toggle-sidebar[aria-pressed="true"]:not([data-assistant="Claude"]) svg { transform: none; }
 
-/* Themed menus for the model pickers (renderer/picker.js): drawn in the page, so they follow Lumen's theme. */
-.picker-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.picker-menu {
-  position: absolute; z-index: 20; min-width: 220px; max-width: min(320px, calc(var(--sidebar-width, 360px) - 24px)); max-height: min(520px, calc(100vh - 140px)); overflow-y: auto; padding: 4px;
-  border-radius: 10px; background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 12px 32px -8px rgb(0 0 0 / calc(0.6 * var(--shadow-k)));
-  scrollbar-width: thin; scrollbar-color: var(--border) transparent; animation: fade-in 120ms ease-out;
-}
 .setup { margin: 14px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .setup-title { margin: 0 0 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
 .setup-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 12px; border: none; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: default; transition: background-color var(--t-fast) ease-out; }
@@ -775,16 +875,6 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .setup-option:disabled { opacity: 0.7; }
 .setup-name { font-weight: 500; }
 .setup-detail { color: var(--muted); font-size: 12px; }
-/* Fits the sidebar at its 300px minimum (the sidebar clips whatever runs past its edge). */
-.model-search { width: min(300px, calc(var(--sidebar-width, 360px) - 28px)); left: -6px; top: calc(100% + 4px); }
-.model-search-input { width: 100%; height: 28px; margin-bottom: 4px; padding: 0 8px; border: none; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; outline: none; }
-.model-search-list { max-height: 320px; overflow-y: auto; color: var(--muted); }
-.model-search-list .picker-item { color: var(--text); padding-left: 10px; }
-.picker-group { padding: 8px 10px 3px; color: var(--muted); font-size: 11px; font-weight: 600; }
-.picker-item { position: relative; padding: 5px 10px 5px 26px; border-radius: 6px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; outline: none; }
-.picker-item:hover, .picker-item:focus { background: var(--hover); }
-.picker-item[aria-selected="true"] { font-weight: 500; }
-.picker-item[aria-selected="true"]::before { content: ""; position: absolute; left: 10px; top: 50%; width: 8px; height: 4px; margin-top: -4px; border-left: 1.5px solid var(--text); border-bottom: 1.5px solid var(--text); transform: rotate(-45deg); }
 
 
 /* ---------- AI agents over MCP (session B) ---------- */
@@ -800,3 +890,47 @@ body.mcp-active .agent-pill { display: flex; }
 #toggle-sidebar[data-attention]::before { content: ""; position: absolute; top: 5px; left: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
 #toggle-sidebar[data-attention="approval"]::before { background: var(--warning); }
 body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { display: none; }
+
+/* Code colours (renderer/highlight.js): quiet, readable on both themes. */
+:root { --tk-kw: #a626a4; --tk-str: #50a14f; --tk-num: #986801; --tk-com: #8a8f98; --tk-fn: #4078f2; --tk-type: #c18401; --tk-key: #e45649; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --tk-kw: #c792ea; --tk-str: #a5d6a7; --tk-num: #f78c6c; --tk-com: #7f848e; --tk-fn: #82aaff; --tk-type: #ffcb6b; --tk-key: #f07178; } }
+:root[data-theme="dark"] { --tk-kw: #c792ea; --tk-str: #a5d6a7; --tk-num: #f78c6c; --tk-com: #7f848e; --tk-fn: #82aaff; --tk-type: #ffcb6b; --tk-key: #f07178; }
+.tk-kw { color: var(--tk-kw); } .tk-str { color: var(--tk-str); } .tk-num { color: var(--tk-num); } .tk-fn { color: var(--tk-fn); }
+.tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
+
+/* Edit on the latest message you sent: under its corner, on hover or focus; not while its reply runs. */
+.msg.user { position: relative; }
+.msg.user .msg-edit { position: absolute; right: 2px; bottom: -21px; height: 20px; padding: 0 7px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; white-space: nowrap; opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
+.msg.user:hover .msg-edit, .msg.user .msg-edit:focus-visible { opacity: 1; }
+.msg.user .msg-edit:hover { background: var(--field); color: var(--text); }
+body.agent-active .msg.user .msg-edit { display: none; }
+/* A reply that ended without text (stopped, or on a step): only its Regenerate. */
+.msg.assistant.reply-actions-only { height: 22px; margin: 4px 0 16px; }
+.msg.assistant.reply-actions-only .reply-regen { position: static; opacity: 0.75; }
+
+/* First-run welcome (renderer/chat-core.js showWelcome): three steps, each can be skipped. */
+.empty.welcoming .empty-title, .empty.welcoming > .chips { display: none; }
+.welcome { text-align: left; margin: 4px 0 8px; }
+.welcome-title { margin: 0 0 6px; font-size: 20px; font-weight: 650; letter-spacing: -0.02em; color: var(--text); }
+.welcome-lead { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.welcome-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.welcome-step { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; }
+.welcome-num { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--field); color: var(--muted); font-size: 12px; font-weight: 600; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
+.welcome-step.done .welcome-num { background: var(--accent); color: #fff; font-size: 0; }
+.welcome-step.done .welcome-num::before { content: '✓'; font-size: 13px; }
+.welcome-step-title { margin: 2px 0 2px; font-weight: 600; color: var(--text); }
+.welcome-step-detail { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.welcome-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.welcome-actions:empty { display: none; }
+.welcome-note { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.welcome-note:empty { display: none; }
+.welcome-note.err { color: var(--danger); }
+.welcome .setup { margin-top: 8px; }
+.welcome .setup-title { display: none; } /* (the step already says it) */
+.welcome-foot { display: flex; justify-content: flex-end; margin-top: 18px; }
+/* The setup card: its title reads as a heading, and it asks for attention when a question waits on it. */
+.setup-title { font-size: 13px; color: var(--text); }
+.setup-pending { margin: 0 0 4px; padding: 7px 10px; border-radius: 8px; background: var(--accent-soft, var(--field)); color: var(--text); font-size: 12px; }
+.setup.attention .setup-option { animation: setup-attention 900ms var(--ease-out, ease-out) 1; }
+@keyframes setup-attention { 30% { box-shadow: 0 0 0 2px var(--accent); } }
+:root.pref-reduce-motion .setup.attention .setup-option { animation: none; }

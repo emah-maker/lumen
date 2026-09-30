@@ -18,6 +18,44 @@ const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 module.exports = async function widgetEditUnits(check) {
   const it = (id, type, x, y, w, h, extra) => ({ id, type, x, y, w, h, ...extra });
   const enc = WL.encode;
+
+  // ---- fitting the centre column to the cards (WS.fitSizes): only what collides shrinks ----
+  {
+    // which cards a column moves: compared with the smallest column, packed or not
+    const cards = [it('a', 'notes', 0, 0, 4, 3), it('b', 'notes', 4, 0, 4, 3), it('c', 'notes', 4, 3, 4, 3)];
+    for (const packed of [true, false]) {
+      const o = { cols: 24, packed, rows: 30 };
+      const small = { x: 8, y: 0, w: 8, h: 4 };
+      check(`movedBy (${packed ? 'packed' : 'unpacked'}): the smallest column moves nothing`, WL.movedBy(cards, o, small, small).length === 0);
+      const moved = WL.movedBy(cards, o, { x: 6, y: 0, w: 12, h: 4 }, small);
+      check(`movedBy (${packed ? 'packed' : 'unpacked'}): a wider column that reaches a card moves it (and what it knocks)`, moved.includes('b'), JSON.stringify(moved));
+      check(`movedBy (${packed ? 'packed' : 'unpacked'}): a card out of reach is not counted`, !moved.includes('a'));
+    }
+    // A dock squeezed below its minimum width loses its dock: that is a move.
+    {
+      const dock = [it('d', 'weather', 0, 0, 3, 10, { snap: 'left' })];
+      const o = { cols: 24, packed: true, rows: 30 };
+      const lost = WL.movedBy(dock, o, { x: 2, y: 0, w: 20, h: 4 }, { x: 8, y: 0, w: 8, h: 4 });
+      const kept = WL.resolve(dock, { ...o, obstacle: { x: 2, y: 0, w: 20, h: 4 } })[0];
+      check('movedBy: a dock squeezed out of its place counts', lost.includes('d') || (kept.y === 0 && kept.h >= 10), JSON.stringify({ lost, kept }));
+    }
+    check('movedBy: docked cards never count', WL.movedBy([it('d', 'notes', 0, 0, 4, 6, { snap: 'left' })], { cols: 24, packed: true, rows: 30 }, { x: 2, y: 0, w: 20, h: 4 }, { x: 8, y: 0, w: 8, h: 4 }).length === 0);
+    const widths = WS.fitWidths(800, [760, 700]);
+    check('fit: nothing collides -> drawn as saved', JSON.stringify(WS.fitSizes({ clock: 'xl', search: 800, widths }, () => true)) === '{"clock":null,"search":null}');
+    // the clock is the culprit: a smaller clock fits at the saved width, which is kept
+    const clockOnly = WS.fitSizes({ clock: 'xl', search: 800, widths }, (c) => c === 'm' || c === 's');
+    check('fit: the clock collides -> only the clock shrinks', clockOnly.clock === 'm' && clockOnly.search === null, JSON.stringify(clockOnly));
+    // the width is the culprit: the widest that fits, found by binary search in few probes
+    let probes = 0;
+    const widthOnly = WS.fitSizes({ clock: 'l', search: 800, widths }, (_c, w) => { probes++; return w <= 744; });
+    check('fit: the width collides -> the widest width that fits, clock kept', widthOnly.clock === null && widthOnly.search === 744, JSON.stringify(widthOnly));
+    check('fit: binary search, not a scan', probes <= 12, `probes ${probes}`);
+    check('fit: a grid-line width is a candidate', WS.fitSizes({ clock: 'm', search: 800, widths }, (_c, w) => w <= 760).search === 760);
+    const both = WS.fitSizes({ clock: 'xl', search: 800, widths }, (c, w) => c === 's' && w <= 600);
+    check('fit: both collide -> both shrink', both.clock === 's' && both.search === 600, JSON.stringify(both));
+    check('fit: nothing helps -> drawn as saved (not our doing)', JSON.stringify(WS.fitSizes({ clock: 'l', search: 800, widths }, () => false)) === '{"clock":null,"search":null}');
+    check('fit: 640 (Automatic) is never a drawn width', !WS.fitWidths(700).includes(640) || WS.fitSizes({ clock: 's', search: 700, widths: WS.fitWidths(700) }, (_c, w) => w <= 640).search !== 640);
+  }
   const noOverlap = (items) => items.every((a, i) => items.every((b, j) => i === j || !WL.overlap(a, b)));
   const todo = (id, extra) => ({ id, type: 'todoist', ...extra });
 
@@ -170,7 +208,7 @@ module.exports = async function widgetEditUnits(check) {
   check('size: the search width is rounded and clamped to 480-960, junk is refused', WS.cleanSearchWidth(100) === 480 && WS.cleanSearchWidth(5000) === 960 && WS.cleanSearchWidth('700') === 700 && WS.cleanSearchWidth(600.6) === 601 && WS.cleanSearchWidth('x') === null && WS.cleanSearchWidth(null) === null && WS.cleanSearchWidth('') === null && WS.cleanSearchWidth(true) === null && WS.cleanSearchWidth(NaN) === null, '');
   check('size: a dragged clock height snaps to the nearest step', WS.clockStepFromPx(10) === 's' && WS.clockStepFromPx(70) === 's' && WS.clockStepFromPx(80) === 'm' && WS.clockStepFromPx(103) === 'm' && WS.clockStepFromPx(105) === 'l' && WS.clockStepFromPx(139) === 'l' && WS.clockStepFromPx(141) === 'xl' && WS.clockStepFromPx(999) === 'xl' && WS.clockStepFromPx(NaN) === 'm', '');
   check('size: keyboard steps stop at both ends', WS.stepClock('m', 1) === 'l' && WS.stepClock('xl', 1) === 'xl' && WS.stepClock('s', -1) === 's' && WS.stepClock('m', -5) === 's' && WS.stepClock('bogus', 1) === 'l', '');
-  check('size: a dragged search width snaps to 8 px and stays inside 480-960', WS.snapSearchWidth(643) === 640 && WS.snapSearchWidth(645) === 648 && WS.snapSearchWidth(100) === 480 && WS.snapSearchWidth(2000) === 960 && WS.snapSearchWidth(NaN) === 640 && WS.snapSearchWidth(803) % 8 === 0, '');
+  check('size: a dragged search width snaps to 8 px and stays inside 480-960 (never exactly 640, which means Automatic)', WS.snapSearchWidth(643) === 648 && WS.snapSearchWidth(645) === 648 && WS.snapSearchWidth(637) !== 640 && WS.snapSearchWidth(100) === 480 && WS.snapSearchWidth(2000) === 960 && WS.snapSearchWidth(NaN) === 640 && WS.snapSearchWidth(803) % 8 === 0, '');
   const gridPx = { pitch: 100, pad: 40, width: 1000 }; // edges on x = 40 + k * 100 -> widths 1000 - 2 * (40 + k * 100) = 920, 720, 520
   check('size: near a grid line the width snaps onto it (edges on the columns), else to 8 px', WS.snapSearchWidth(716, gridPx) === 720 && WS.snapSearchWidth(922, gridPx) === 920 && WS.snapSearchWidth(660, gridPx) === 664 && WS.snapSearchWidth(600, { pitch: 0, pad: 0, width: 0 }) === 600, [716, 922, 660].map((n) => WS.snapSearchWidth(n, gridPx)).join());
   check('size: do=look accepts a clock step or a width and nothing else', parse('widget=wlook&do=look&k=clock&v=l').value === 'l' && parse('widget=wlook&do=look&k=clock&v=l').key === 'newTabClockSize'

@@ -202,6 +202,7 @@
   }, true);
   // The send button: with a chip (or the menu open) it does what Enter does.
   composer.addEventListener('submit', (e) => {
+    if (document.body.classList.contains('agent-active')) return; // a reply is running: the button is Stop
     if (active) { e.preventDefault(); e.stopImmediatePropagation(); execute(active.cmd, promptEl.value.trim(), active.extra); }
     else if (open) { e.preventDefault(); e.stopImmediatePropagation(); pick(false); }
   }, true);

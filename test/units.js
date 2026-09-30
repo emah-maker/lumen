@@ -537,7 +537,8 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('picker: signed-out Claude Code says how to sign in on every entry', claudeCodeOptions({ signedIn: false }).every((o) => o.signedIn === false && /\/login/.test(o.detail)), 'detail');
   const gbOpts = grokBuildOptions({ signedIn: true, accountDetail: 'grok-4.7', models: parsed.models });
   check('picker: Grok Build default first, then each listed model', JSON.stringify(gbOpts.map((o) => o.id)) === '["grokbuild:default","grokbuild:grok-4.7","grokbuild:grok-4.7-build-fast","grokbuild:grok-4.6","grokbuild:grok-4.5"]', JSON.stringify(gbOpts.map((o) => o.id)));
-  check('picker: every Grok Build entry is labelled experimental and names Lumen\'s tool check', gbOpts.every((o) => /\(experimental\)$/.test(o.label) && /experimental: Grok asks Lumen before every tool call/.test(o.detail) && o.group === 'Your Grok account') && gbOpts[0].label === 'Grok Build (experimental)' && gbOpts[3].label === 'Grok Build · grok-4.6 (experimental)', JSON.stringify(gbOpts.map((o) => o.label)));
+  // The tool-check note is said once, on the group's first row (repeating it on every row made them unreadable).
+  check('picker: every Grok Build entry is labelled experimental and the group names Lumen\'s tool check', gbOpts.every((o) => /\(experimental\)$/.test(o.label) && o.group === 'Your Grok account') && /xperimental: Grok asks Lumen before every tool call/.test(gbOpts[0].detail) && gbOpts[0].label === 'Grok Build (experimental)' && gbOpts[3].label === 'Grok Build · grok-4.6 (experimental)', JSON.stringify(gbOpts.map((o) => o.label)));
   const kept = grokBuildOptions({ signedIn: 'unknown', models: [], saved: 'grokbuild:grok-4.6' });
   check('picker: a saved Grok Build model stays offered when grok models gave no list', JSON.stringify(kept.map((o) => o.id)) === '["grokbuild:default","grokbuild:grok-4.6"]', JSON.stringify(kept.map((o) => o.id)));
   check('picker: only the default when nothing is listed or saved (old settings keep working)', JSON.stringify(grokBuildOptions({ saved: 'grokbuild:default' }).map((o) => o.id)) === '["grokbuild:default"]' && grokBuildOptions({ saved: 'grokbuild:--x' }).length === 1 && grokBuildOptions({ saved: 'claude-opus-5' }).length === 1, 'options');
@@ -2468,9 +2469,40 @@ async function swapHelperRuns() {
   const { DEFAULTS } = require('../settings-backend');
   check('translate: settings defaults: offer on, no consent, no sites, Lumen\'s language', DEFAULTS.translateOffer === true && DEFAULTS.translateConsent.length === 0 && DEFAULTS.translateNever.length === 0 && DEFAULTS.translateTarget === '', '');
 })();
+// ---- model names for the picker (features/model-names.js)
+{
+  const MN = require('../features/model-names');
+  const names = ['gpt-5.6', 'gpt-5.6-mini', 'o3-pro-2025-06-10', 'gemini-2.5-flash-lite-preview-06-17', 'grok-4.7', 'anthropic/claude-opus-5.5'].map(MN.prettyModel);
+  check('model names: readable names, OpenAI style kept, dates and vendors dropped', names.join('|') === 'GPT-5.6|GPT-5.6 mini|o3 pro|Gemini 2.5 Flash-Lite|Grok 4.7|Claude Opus 5.5', names.join('|'));
+  check('model names: preview and chat-only become badges', MN.badgesFor('gemini-2.5-pro-preview-05-06', { chatOnly: true }).join() === 'chat only,preview', MN.badgesFor('gemini-2.5-pro-preview-05-06', { chatOnly: true }).join());
+  const ranked = MN.rankModels(['o1', 'o3', 'o3-pro', 'o3-pro-2025-06-10', 'o4-mini', 'o1-mini', 'o3-mini', 'o1-pro', 'o3-deep', 'o4-deep', 'o1-preview', 'o3-2025-04-16', 'gpt-5.6', 'gpt-5.6-mini', 'gpt-4o', 'gpt-4o-2024-08-06'], 12);
+  const both = MN.rankModels(['gpt-5.6', 'gpt-5.6-mini', 'gpt-5.6-nano', 'gpt-5', 'gpt-5-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo', 'o3', 'o3-pro', 'o3-mini', 'o1', 'o1-pro', 'o4-mini', 'gpt-4-turbo', 'gpt-4'], 16);
+  check('model names: a long GPT list does not crowd out the o-series either', ['o3', 'o3-pro', 'o4-mini', 'o1'].every((id) => both.includes(id)) && both.includes('gpt-5.6'), both.join());
+  check('model names: dashed versions and bare stamps read well', MN.prettyModel('grok-4-1-fast-reasoning') === 'Grok 4.1 Fast Reasoning' && MN.prettyModel('gemini-exp-1206') === 'Gemini Experimental 1206' && MN.prettyModel('gemini-2.0-flash-001') === 'Gemini 2.0 Flash', [MN.prettyModel('grok-4-1-fast-reasoning'), MN.prettyModel('gemini-exp-1206'), MN.prettyModel('gemini-2.0-flash-001')].join('|'));
+  check('model names: the newest GPT models survive a long o-series list, and dated duplicates go', ranked[0] === 'gpt-5.6' && ranked.includes('gpt-5.6-mini') && !ranked.includes('o3-pro-2025-06-10') && !ranked.includes('gpt-4o-2024-08-06') && ranked.length === 12, ranked.join());
+}
+// ---- the model picker's search (renderer/picker-match.js)
+{
+  const PM = require('../renderer/picker-match');
+  const f = (name, id, group = '') => ({ name, id, group, badges: '' });
+  const hit = (q, fields) => PM.score(fields, q) > 0;
+  check('picker format: prices and sizes as people say them', PM.format.money(1.25) === '1.25' && PM.format.money(3) === '3' && PM.format.money(0.075) === '0.075' && PM.format.money(0.3) === '0.30' && PM.format.size(131072) === '128K' && PM.format.size(32768) === '32K' && PM.format.size(128000) === '128K' && PM.format.size(1048576) === '1M', '');
+  check('picker search: price and size words match by value', PM.unitMatches('$1.25', { price: 1.25 }) && PM.unitMatches('$0.3', { price: 0.3 }) && !PM.unitMatches('$3', { price: 0.25 }) && PM.unitMatches('128k', { context: 131072 }) && PM.unitMatches('128k', { context: 128000 }) && PM.unitMatches('32k', { context: 32768 }) && !PM.unitMatches('32k', { context: 65536 }) && PM.unitMatches('$0', { free: true }) && PM.unitMatches('$0.', { price: 0.075 }), '');
+  check('picker search: versions and sizes are found', hit('2.5', f('Gemini 2.5 Flash', 'gemini-2.5-flash')) && hit('gemini 2.5', f('Gemini 2.5 Flash', 'gemini-2.5-flash')) && hit('4o', f('GPT-4o mini', 'gpt-4o-mini')) && hit('opus 5.5', f('Opus 5.5', 'claude-opus-5-5')) && hit('gpt 5.6', f('GPT-5.6', 'gpt-5.6')) && hit('gpt5', f('GPT-5.6', 'gpt-5.6')) && hit('70b', f('Llama 3.3 70B', 'meta-llama/llama-3.3-70b')) && hit('k2', f('Kimi K2', 'moonshotai/kimi-k2')), '');
+  check('picker search: a version ends where its number does', !hit('2.5', f('Qwen3 235B A22B Instruct 2507', 'qwen/qwen3-235b-a22b-2507')) && !hit('2.5', f('Model 256K', 'x/model-256k')) && hit('2.5', f('Gemini 2.5 Pro', 'gemini-2.5-pro')) && !hit('4.1', f('GPT-4.15', 'gpt-4.15')), '');
+  check('picker search: a group ranks first only when named outright', PM.score(f('MiniMax M2', 'minimax/m2', 'MiniMax'), 'mini') < PM.score(f('GPT-4o mini', 'openai/gpt-4o-mini', 'OpenAI'), 'mini'), '');
+  check('picker search: the note line is searched too (free models)', PM.score({ name: 'DeepSeek R1', id: 'deepseek/r1:free', group: 'DeepSeek', badges: 'free', detail: '64K context · Free' }, 'free') > 0, '');
+  check('picker search: no mid-word matches', !hit('mini', f('Gemini 2.5 Pro', 'gemini-2.5-pro')) && !hit('5', f('Gemini Pro', 'gemini-pro-15x')) && hit('mini', f('GPT-5.6 mini', 'gpt-5.6-mini')), '');
+  check('picker search: a provider name puts its group first', PM.score(f('Opus 5.5', 'claude-opus-5-5', 'Claude'), 'claude') > PM.score(f('Claude Sonnet 5', 'anthropic/claude-sonnet-5', 'OpenRouter'), 'claude'), '');
+  const MN = require('../features/model-names');
+  check('model names: Non-Reasoning, GPT-OSS, o1 preview as a badge only', MN.prettyModel('grok-4-fast-non-reasoning') === 'Grok 4 Fast Non-Reasoning' && MN.prettyModel('gpt-oss-120b') === 'GPT-OSS 120B' && MN.prettyModel('o1-preview') === 'o1', [MN.prettyModel('grok-4-fast-non-reasoning'), MN.prettyModel('gpt-oss-120b'), MN.prettyModel('o1-preview')].join('|'));
+  check('model names: -chat-latest, -exp and -preview twins of a listed model go', (() => { const r = MN.rankModels(['gpt-5.6', 'gpt-5.6-chat-latest', 'o1', 'o1-preview', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'], 12); return !r.includes('gpt-5.6-chat-latest') && !r.includes('o1-preview') && !r.includes('gemini-2.0-flash-exp') && r.includes('gpt-5.6') && r.includes('o1'); })(), '');
+  check('model names: OpenAI writes GPT-4 Turbo', MN.prettyModel('gpt-4-turbo') === 'GPT-4 Turbo' && MN.prettyModel('learnlm-2.0-flash') === 'LearnLM 2.0 Flash', MN.prettyModel('gpt-4-turbo'));
+  check('model names: a dated preview of a listed model is dropped', !MN.rankModels(['gemini-2.5-flash', 'gemini-2.5-flash-preview-09-2025', 'gemini-2.5-pro'], 12).includes('gemini-2.5-flash-preview-09-2025'), '');
+}
 // ---- tab drag geometry (features/tab-drag-math.js)
 {
-  const { clampToDisplay, windowBoundsFor, stripHit } = require('../features/tab-drag-math');
+  const { clampToDisplay, windowBoundsFor, stripHit, grabPoint, placeOnWorkArea } = require('../features/tab-drag-math');
   const area = { x: 0, y: 0, width: 1920, height: 1040 };
   const strip = { key: 'w', bounds: { x: 100, y: 100, width: 800, height: 600 }, bottom: 40, tabs: [{ id: 1, mid: 100 }, { id: 2, mid: 300 }, { id: 3, mid: 500 }] };
   check('drag: the grabbed spot lands under the cursor', JSON.stringify(windowBoundsFor({ x: 500, y: 300 }, { x: 60, y: 14 }, { width: 900, height: 700 })) === JSON.stringify({ x: 440, y: 286, width: 900, height: 700 }));
@@ -2488,6 +2520,28 @@ async function swapHelperRuns() {
   const other = { ...strip, key: 'v', bounds: { x: 1000, y: 100, width: 800, height: 600 } };
   check('drag: the first strip under the cursor wins', stripHit({ x: 1100, y: 120 }, [strip, other])?.key === 'v');
   check('drag: no strips, no hit', stripHit({ x: 1, y: 1 }, []) === null);
+{
+  const TDM = require('../features/tab-drag-math');
+  const win = [{ key: 'w', bounds: { x: 0, y: 0, width: 800, height: 600 }, bottom: 40, tabs: [{ id: 1, mid: 100 }] }];
+  check('stripHit: reached 6 px below the strip', Boolean(TDM.stripHit({ x: 50, y: 45 }, win)) && !TDM.stripHit({ x: 50, y: 50 }, win));
+  check('stripHit: the hovered strip lets go only ~30 px below it (no flicker along its edge)', Boolean(TDM.stripHit({ x: 50, y: 65 }, win, 6, 'w')) && !TDM.stripHit({ x: 50, y: 75 }, win, 6, 'w'));
+}
+  const front = { ...strip, key: 'f', bounds: { x: 50, y: 110, width: 800, height: 600 } };
+  check("drag: a front window's page hides the strip behind it", stripHit({ x: 300, y: 115 + 60 }, [front, strip]) === null && stripHit({ x: 300, y: 112 }, [front, strip])?.key === 'f', JSON.stringify(stripHit({ x: 300, y: 175 }, [front, strip])));
+  check('drag: a window that takes no tabs (private) blocks the strip behind it', stripHit({ x: 300, y: 120 }, [{ bounds: { x: 0, y: 0, width: 500, height: 500 }, occluder: true }, strip]) === null);
+  const { fitToDisplay } = require('../features/tab-drag-math');
+  check('drag: a torn-off window shrinks to fit a smaller display', JSON.stringify(fitToDisplay({ width: 2400, height: 900 }, area)) === JSON.stringify({ width: 1920, height: 900 }));
+  // A new window's grab point: unscrolled origin, plus every tab that will sit left of the one grabbed.
+  const origin = 80;
+  check('drag: one tab opens with the grabbed point at the strip origin plus the press offset', grabPoint({ origin, into: 36, room: 900, gap: 4, items: [{ pinned: false }], index: 0 }) === origin + 36);
+  check('drag: tabs that will sit left of the grabbed one count, at the width they will have there', grabPoint({ origin, into: 10, room: 900, gap: 4, items: [{}, {}], index: 1 }) === origin + 200 + 4 + 10);
+  check('drag: pinned tabs land first, at their own width, ahead of a loose tab grabbed with them', grabPoint({ origin, into: 20, room: 900, gap: 4, items: [{ pinned: true }, { pinned: true }, {}], index: 2 }) === origin + 40 + 4 + 40 + 4 + 20);
+  check('drag: a crowded new strip shares the room instead of using the 200px tab width', grabPoint({ origin, into: 0, room: 100, gap: 4, items: [{}, {}], index: 1 }) === origin + 48 + 4);
+  check('drag: a group label is the first thing in the new strip, inset by its margin', grabPoint({ origin, into: 12, labelInset: 5, items: [] }) === origin + 5 + 12);
+  check('drag: the press offset is kept inside the tab it will have in the new window', grabPoint({ origin, into: 180, room: 100, gap: 4, items: [{}, {}], index: 0 }) === origin + 48);
+  const hung = placeOnWorkArea({ x: area.x + area.width - 100, y: area.y + area.height - 40, width: 1200, height: 800 }, area);
+  check('drag: a menu tear-off stays fully on the work area', hung.x === area.x + area.width - 1200 && hung.y === area.y + area.height - 800 && hung.width === 1200 && hung.height === 800, JSON.stringify(hung));
+  check('drag: a menu tear-off that already fits is not moved', JSON.stringify(placeOnWorkArea({ x: 40, y: 50, width: 800, height: 600 }, area)) === JSON.stringify({ x: 40, y: 50, width: 800, height: 600 }));
 }
 
 // ---- ask across open tabs (features/tabs-ask.js, renderer/tabs-ask-core.js, read_tabs in agent.js)

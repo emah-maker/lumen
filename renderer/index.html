@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data: crx:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data: crx: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>Lumen</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="picker.css" />
   <link rel="stylesheet" href="extras.css" /><!-- Claude Code engine, page context chip -->
   <link rel="stylesheet" href="prefs.css" /><!-- [settings] -->
   <link rel="stylesheet" href="tab-search.css" />
@@ -111,12 +112,6 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
         </div>
         <div class="sidebar-actions">
-          <button class="icon-btn" id="dock-to-side" title="Dock to side" aria-label="Dock to side" data-i18n-title="sidebar.dock" data-i18n-aria-label="sidebar.dock">
-            <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
-          </button>
-          <button class="icon-btn" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
-            <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
-          </button>
           <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
           </button>
@@ -130,9 +125,22 @@
           <button class="icon-btn" id="new-chat" title="New chat (Ctrl+Shift+K)" aria-keyshortcuts="Control+Shift+K Meta+Shift+K" aria-label="New chat" data-i18n-title="sidebar.newChat.title" data-i18n-aria-label="sidebar.newChat">
             <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
           </button>
-          <button class="icon-btn" id="open-settings" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
+          <div class="more-wrap">
+            <button class="icon-btn" id="more-actions" type="button" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu" data-i18n-title="sidebar.more" data-i18n-aria-label="sidebar.more">
+              <svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1" class="knob"/><circle cx="8" cy="8" r="1" class="knob"/><circle cx="12.5" cy="8" r="1" class="knob"/></svg>
+            </button>
+            <div class="more-menu" id="more-menu" role="menu" hidden>
+            <button class="icon-btn menu-item" role="menuitem" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" aria-keyshortcuts="Control+Shift+L Meta+Shift+L" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
+            <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
+          </button>
+            <button class="icon-btn menu-item" role="menuitem" id="dock-to-side" title="Dock to side" aria-label="Dock to side" data-i18n-title="sidebar.dock" data-i18n-aria-label="sidebar.dock">
+            <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
+          </button>
+            <button class="icon-btn menu-item" role="menuitem" id="open-settings" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
             <svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.75" class="knob"/><circle cx="5.5" cy="11.5" r="1.75" class="knob"/></svg>
           </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -140,22 +148,59 @@
       <div id="chat-list" class="chat-list" role="dialog" aria-label="Chats" data-i18n-aria-label="sidebar.chats" hidden></div>
       <div id="task-panel" class="chat-list task-panel" role="dialog" aria-label="Background tasks" data-i18n-aria-label="tasks.title" hidden></div>
       <div id="task-live" class="sr-only" role="status" aria-live="polite"></div>
-      <div id="messages" class="messages" aria-live="polite">
+      <div id="tab-live" class="sr-only" role="status" aria-live="polite"></div>
+      <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
         <div class="empty" id="empty">
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>
+          <section class="welcome" id="welcome" hidden aria-labelledby="welcome-title">
+            <h2 class="welcome-title" id="welcome-title" data-i18n="welcome.title">Welcome to Lumen</h2>
+            <p class="welcome-lead" data-i18n="welcome.lead">A browser with an AI that reads and works in your tabs, and asks before it acts. Three quick steps; skip any of them.</p>
+            <ol class="welcome-steps">
+              <li class="welcome-step" id="welcome-step-ai">
+                <span class="welcome-num" aria-hidden="true">1</span>
+                <div class="welcome-body">
+                  <p class="welcome-step-title" data-i18n="welcome.ai">Connect an AI</p>
+                  <p class="welcome-step-detail" id="welcome-ai-detail" data-i18n="welcome.ai.detail">Pick one way in. You can add others later in Settings.</p>
+                  <div id="welcome-ai-slot"></div>
+                </div>
+              </li>
+              <li class="welcome-step" id="welcome-step-import">
+                <span class="welcome-num" aria-hidden="true">2</span>
+                <div class="welcome-body">
+                  <p class="welcome-step-title" data-i18n="welcome.import">Bring your bookmarks and history</p>
+                  <p class="welcome-step-detail" data-i18n="welcome.import.detail">From another browser on this computer. Passwords and cookies stay there.</p>
+                  <div class="welcome-actions" id="welcome-import-actions"></div>
+                  <p class="welcome-note" id="welcome-import-note" role="status"></p>
+                </div>
+              </li>
+              <li class="welcome-step" id="welcome-step-default">
+                <span class="welcome-num" aria-hidden="true">3</span>
+                <div class="welcome-body">
+                  <p class="welcome-step-title" data-i18n="welcome.default">Make Lumen your default browser</p>
+                  <p class="welcome-step-detail" data-i18n="welcome.default.detail">Links from other apps (mail, chat, documents) then open here.</p>
+                  <div class="welcome-actions"><button class="btn" type="button" id="welcome-make-default" data-i18n="welcome.default.button">Make default</button></div>
+                  <p class="welcome-note" id="welcome-default-note" role="status"></p>
+                </div>
+              </li>
+            </ol>
+            <div class="welcome-foot">
+              <button class="btn primary" type="button" id="welcome-done" data-i18n="welcome.done">Start browsing</button>
+            </div>
+          </section>
           <div class="setup" id="setup" hidden>
             <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
-            <button class="setup-option" type="button" id="setup-keys">
-              <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
-              <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
+            <p class="setup-pending" id="setup-pending" role="status" hidden></p>
+            <button class="setup-option" type="button" id="setup-claude-code">
+              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
+              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
             </button>
             <button class="setup-option" type="button" id="setup-openrouter">
               <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
               <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
             </button>
-            <button class="setup-option" type="button" id="setup-claude-code">
-              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
-              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
+            <button class="setup-option" type="button" id="setup-keys">
+              <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
+              <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
             </button>
           </div>
           <div class="chips">
@@ -187,8 +232,11 @@
 
   <script src="i18n.js"></script>
   <script src="markdown.js"></script>
+  <script src="picker-match.js"></script>
   <script src="picker.js"></script>
+  <script src="model-catalog.js"></script>
   <script src="chat-topic.js"></script>
+  <script src="highlight.js"></script>
   <script src="chat-core.js"></script>
   <script src="tabs-ask-core.js"></script>
   <script src="tabs-ask.js"></script>
@@ -201,6 +249,7 @@
   <script src="slash-match.js"></script>
   <script src="slash.js"></script>
   <script src="skills.js"></script>
+  <script src="chat-commands.js"></script>
   <script src="ui-prefs.js"></script>
   <script src="tab-search-match.js"></script>
   <script src="tab-search.js"></script>

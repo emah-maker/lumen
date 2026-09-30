@@ -26,6 +26,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       gmailConnect: call('prefs:widget-gmail-connect'),
       gmailCancel: call('prefs:widget-gmail-cancel'),
       gmailDisconnect: call('prefs:widget-gmail-disconnect'),
+      onChanged: (cb) => ipcRenderer.on('widgets:changed', () => cb()), // a connection changed elsewhere (the card, Google)
       slackStart: call('prefs:slack-start'),
       slackFinish: call('prefs:slack-finish'),
       slackCancel: call('prefs:slack-cancel'),
@@ -96,6 +97,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     // "You and AI" reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),
+      onModelsUpdated: (cb) => ipcRenderer.on('models-updated', () => cb()), // the model was changed elsewhere (the sidebar)
       setKey: call('settings:set-key'),
       setProviderKey: call('settings:set-provider-key'),
       safeBrowsing: call('settings:safe-browsing'),
@@ -103,6 +105,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),
       setModel: call('settings:set-model'),
+      openRouterModels: call('openrouter:models'), // OpenRouter's whole catalog, for "More models…"
       setAdhdMode: call('settings:set-adhd'),
       setAutoGroup: call('settings:set-auto-group'),
       setTabGrouping: call('settings:set-tab-grouping'),
@@ -136,6 +139,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       setAutomation: call('automation:set'),
       importBrowsers: call('import:browsers'),
       importFrom: call('import:run'),
+      importQuiet: call('import:quiet'), // the result back to the page, no dialog
+      isDefaultBrowser: call('settings:default-browser'),
+      makeDefaultBrowser: call('settings:make-default'),
       onCliProgress: (cb) => ipcRenderer.on('cli:progress', (_e, text) => cb(text)),
     },
   });

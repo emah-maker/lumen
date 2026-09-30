@@ -68,6 +68,15 @@ function select(key, label, desc, options, { number = false, after } = {}) {
   return row(label, desc, el);
 }
 const status = (id) => h('span', { class: 'note', id });
+// Where each provider hands out API keys (Settings → AI and agents → API keys, "Get a key").
+const KEY_PAGES = {
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  openai: 'https://platform.openai.com/api-keys',
+  xai: 'https://console.x.ai/',
+  gemini: 'https://aistudio.google.com/apikey',
+  openrouter: 'https://openrouter.ai/keys',
+};
+const importSummary = (r) => `Imported from ${r.label}: ${r.bookmarks === 1 ? '1 bookmark' : `${r.bookmarks.toLocaleString()} bookmarks`} and ${r.history === 1 ? '1 history entry' : `${r.history.toLocaleString()} history entries`}.`;
 const flash = (el, text, cls = 'ok') => { el.textContent = text; el.className = `note ${cls}`; };
 const langName = (() => {
   let names;
@@ -81,7 +90,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['startup', 'On startup'], ['languages', 'Language'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['languages', 'Language'], ['import', 'Import'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
@@ -110,7 +119,8 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
+  'you-and-ai': { cat: 'ai' }, 'ai-keys': { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' },
+  'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
 };
@@ -164,11 +174,13 @@ class Slot {
 }
 const visibleNow = (el) => el.offsetParent !== null; // on screen now (not in a hidden category or filtered out)
 
+let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
+let gmailWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g && !m.id.endsWith(':__more')).map((m) => h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }))));
+    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
   card.append(
     row('Model', 'The model the assistant in the sidebar uses.', h('select', {
       id: 'ai-model',
@@ -178,13 +190,29 @@ async function buildAi(card) {
   );
   const modelPicker = card.querySelector('#ai-model');
   modelPicker.parentElement.classList.add('picker-host');
-  window.lumenPicker(modelPicker, { label: (o) => (o.parentElement.label ? `${o.parentElement.label} · ${o.textContent}` : o.textContent) });
+  // "More models…" opens OpenRouter's whole catalog here too (renderer/model-catalog.js).
+  let catalog = null;
+  const openCatalog = (q = '') => {
+    catalog ||= window.lumenModelCatalog({ mainSelect: modelPicker, anchor: settingsPicker.button, host: modelPicker.parentElement, fetchModels: () => S.ai.openRouterModels(), onBack: (q) => settingsPicker.open(q || ''), onFail: (text) => { const n = modelPicker.parentElement.querySelector('.catalog-fail') || modelPicker.parentElement.appendChild(h('span', { class: 'catalog-fail', role: 'status' })); flash(n, text, 'err'); } });
+    catalog.open(q);
+  };
+  const settingsPicker = window.lumenPicker(modelPicker, {
+    recentKey: 'model',
+    extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
+    onMore: () => openCatalog(),
+  });
+  const noModels = h('p', { class: 'note', id: 'ai-model-empty', text: 'No AI connected yet. Add a key or sign in under Accounts and keys below.' });
+  modelPicker.parentElement.append(noModels);
+  const showEmpty = () => { noModels.hidden = ai.models.length > 0; modelPicker.hidden = !ai.models.length; settingsPicker.button?.toggleAttribute('hidden', !ai.models.length); };
   const refreshModels = async () => {
     ai = await S.ai.get();
+    showEmpty();
     modelPicker.replaceChildren(...modelOptions());
     if (ai.model) modelPicker.value = ai.model;
     modelPicker.pickerSync?.();
   };
+  showEmpty();
+  S.ai.onModelsUpdated?.(() => { refreshModels(); catalog?.refreshOpen(); }); // picked in the sidebar, or a fresher catalog: Settings shows it too
   const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role: 'switch', 'aria-label': 'Short, focused answers', checked: ai.adhdMode, onchange: (e) => S.ai.setAdhdMode(e.target.checked) });
   const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
     [['off', 'Off'], ['site', 'By site'], ['topic', 'By topic']].map(([value, text]) => h('option', { value, text, selected: ai.tabGrouping === value })));
@@ -253,8 +281,9 @@ async function buildAi(card) {
     keys.replaceChildren(...entries.map(([provider, info]) => {
       const line = h('div', { class: 'item key', 'data-provider': provider });
       const state = info.stored ? 'Saved' : info.env ? 'From environment' : 'Not set';
-      const view = () => line.replaceChildren(...[
-        h('span', { class: 'grow', text: info.label }),
+      const rowNote = status();
+      const view = (message = '', cls = 'ok') => { line.replaceChildren(...[
+        h('span', { class: 'grow' }, info.label, KEY_PAGES[provider] && !info.stored && !info.env ? h('a', { class: 'key-get', href: KEY_PAGES[provider], text: 'Get a key', onclick: (e) => { e.preventDefault(); S.openUrl(KEY_PAGES[provider]); } }) : null),
         h('span', { class: `note key-state${info.stored || info.env ? ' set' : ''}`, text: state }),
         h('button', { text: info.stored ? 'Change' : 'Add', 'aria-label': `${info.stored ? 'Change' : 'Add'} ${info.label} key`, onclick: edit }),
         provider === 'openrouter' && !info.stored ? h('button', {
@@ -270,10 +299,12 @@ async function buildAi(card) {
             try { r = await S.ai.openRouterSignIn(); } catch (err) { r = { ok: false, message: `OpenRouter sign-in failed: ${err.message}` }; }
             await refreshModels();
             renderKeys();
-            if (!r.ok && !r.cancelled) alert(r.message);
+            if (!r.ok && !r.cancelled) keys.querySelector(`[data-provider="openrouter"]`)?.showMessage?.(r.message, 'err');
           },
         }) : null,
-      ].filter(Boolean));
+        message ? (flash(rowNote, message, cls), rowNote) : null,
+      ].filter(Boolean)); };
+      line.showMessage = (text, cls) => view(text, cls);
       const edit = () => {
         const input = h('input', { type: 'password', class: 'grow', autocomplete: 'off', placeholder: `${info.label} API key`, 'aria-label': `${info.label} API key` });
         const note = status();
@@ -283,7 +314,7 @@ async function buildAi(card) {
             const r = provider === 'anthropic' ? await S.ai.setKey(value) : await S.ai.setProviderKey(provider, value);
             await refreshModels();
             renderKeys();
-            if (r?.unverified) alert(`Saved. ${info.label} couldn't be reached to check the key, so it will be checked on your first message.`);
+            if (r?.unverified) keys.querySelector(`[data-provider="${provider}"]`)?.showMessage?.(`Saved. ${info.label} couldn’t be reached to check the key, so it’s checked on your first message.`, 'warn');
           } catch (err) { flash(note, String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
         };
         const saveKey = () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); };
@@ -292,7 +323,7 @@ async function buildAi(card) {
           h('span', { class: 'key-name', text: info.label }), input,
           h('button', { text: 'Save', onclick: saveKey }),
           info.stored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put('') }) : null,
-          h('button', { class: 'plain', text: 'Cancel', onclick: view }),
+          h('button', { class: 'plain', text: 'Cancel', onclick: () => view() }),
           note,
         ].filter(Boolean));
         input.focus();
@@ -302,7 +333,7 @@ async function buildAi(card) {
     }));
   };
   renderKeys();
-  card.at('ai-accounts').append(stackRow('API keys', 'Encrypted with your OS keychain. Anthropic’s key runs the agent (clicking and typing for you); the others add their models to the picker.', keys));
+  card.at('ai-accounts').append(stackRow('API keys', 'Any one is enough: every provider’s models can chat and use the browser tools (reading, clicking and typing, with your approval). Keys are encrypted with your OS keychain and sent only to their provider.', keys));
 
   // Anthropic CLI sign-in: status sits under the description, the button on the right.
   const cliNote = status('ai-cli-status');
@@ -413,11 +444,40 @@ async function buildAi(card) {
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
+    const note = status('import-status');
+    note.setAttribute('role', 'status');
     importRow.replaceChildren(...(found.length ? found.map((b) => h('button', {
       text: b.label,
-      onclick: async (e) => { e.target.disabled = true; await S.ai.importFrom(b.id); e.target.disabled = false; },
-    })) : [h('span', { class: 'note', text: 'No other browsers found.' })]));
+      onclick: async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        flash(note, `Importing from ${b.label}…`, '');
+        const r = S.ai.importQuiet ? await S.ai.importQuiet(b.id) : (await S.ai.importFrom(b.id), null);
+        btn.disabled = false;
+        if (r) flash(note, r.ok ? importSummary(r) : `Couldn’t import from ${b.label}: ${r.error}`, r.ok ? 'ok' : 'err');
+        else note.textContent = '';
+      },
+    })) : [h('span', { class: 'note', text: 'No other browsers found.' })]), found.length ? note : '');
   }).catch(() => {});
+
+  // Default browser (features/setup.js): what the system says now, and a button that asks it.
+  const defaultNote = status('default-browser-status');
+  const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: 'Make default' });
+  const renderDefault = async () => {
+    const yes = await S.ai.isDefaultBrowser?.().catch(() => null);
+    defaultButton.hidden = yes === true;
+    flash(defaultNote, yes ? 'Lumen is your default browser.' : 'Lumen isn’t your default browser. Links from other apps open elsewhere.', yes ? 'ok' : '');
+  };
+  defaultButton.onclick = async () => {
+    const r = await S.ai.makeDefaultBrowser?.().catch(() => null);
+    if (r?.opened === 'windows-settings') flash(defaultNote, 'In the Windows Settings window that opened, set Lumen as the default for web links (HTTP and HTTPS).', '');
+    else renderDefault();
+  };
+  window.addEventListener('focus', renderDefault); // (back from the system's settings)
+  const defaultRow = row('Default browser', 'Links you open in other apps (mail, chat, documents) open in your default browser.', defaultButton);
+  defaultRow.querySelector('.text').append(defaultNote);
+  card.at('default-browser').append(defaultRow);
+  renderDefault();
 }
 
 // A Relaunch button in the row of a setting that only takes effect at launch; shown while that
@@ -594,10 +654,10 @@ async function buildHome(card) {
   const clockStyle = buildClockStyle();
   card.append(
     toggle('newTabClock', 'Show a clock on the new-tab page', null),
-    select('newTabClockSize', 'Clock size', 'How big the clock is. In Edit layout on the new-tab page you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
+    select('newTabClockSize', 'Clock size', 'How big the clock is. It grows into the space above it, so the search box and your cards stay put; where cards leave no room, it is drawn a step smaller. In Edit layout you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
     ...clockStyle.clock, // [look]
-    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => x - y).map((w) => [w, `${w} px`]), { number: true }),
-    toggle('newTabHeader', 'Show the date and greeting', 'Turn off to hide the date and “Good evening” line. In Edit layout on the new-tab page, the ✕ on a section does the same.'),
+    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. Automatic fills the column. A wider bar is drawn only as wide as the cards beside it allow (the setting is kept for wider windows). In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => (x === 640 ? -1 : y === 640 ? 1 : x - y)).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
+    toggle('newTabHeader', 'Show the clock, date and greeting', 'Turn off to hide the whole top of the page: the clock, the date and the “Good evening” line.'),
     row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
     ...clockStyle.greeting, // [look]
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
@@ -971,30 +1031,39 @@ async function buildWidgets(card) {
       // the user's own Google Cloud client moves under Advanced (it still wins when its Client ID is filled in).
       const builtin = Boolean(ws.gmailClient?.builtin);
       const own = () => Boolean(inputs.clientId.value.trim());
-      const connectLabel = () => (builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
+      // Connected, it stays: "Sign in again" switches account or mends a sign-in Google ended.
+      const connectLabel = () => (connected() || ws.gmailSignedOut ? tr('settings.gmail.signInAgain', 'Sign in again') : builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
       const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: connectLabel() });
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
       const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
-        h('span', { class: 'note', text: 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.' }));
+        h('span', { class: 'note', text: tr('settings.gmail.readOnly', 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.') }),
+        // Said before the user tries, not after five silent minutes: until Google approves it, not every account can use it.
+        builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', id: 'widget-gmail-unverified', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client under Advanced.') }) : null);
       const adv = advanced([
         builtin ? h('div', { class: 'row stack' }, h('span', { class: 'note', text: tr('settings.gmail.ownHint', 'Optional. Sign in with Google works without this. To use a Google Cloud project of your own instead, paste its Desktop app client here; it is then used instead of Lumen’s.') })) : null,
         helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
         setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, 'From the same client. Stored encrypted by your system.'),
       ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !builtin && !g.clientId);
-      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : 'Advanced';
-      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); });
+      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : tr('settings.advanced', 'Advanced');
+      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = accountRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
       const draw = () => {
         disconnect.hidden = !connected();
-        connect.hidden = connected();
         connect.textContent = connectLabel();
-        if (!status.textContent) { status.textContent = connected() ? tr('settings.gmail.connected', 'A Google account is connected.') : tr('settings.gmail.notConnected', 'Not connected yet.'); status.className = `sp-status${connected() ? ' on' : ''}`; }
+        connect.className = connected() ? '' : 'primary big';
+        if (!status.textContent) {
+          status.textContent = connected() ? (ws.gmailAccount ? tr('settings.gmail.connectedAs', 'Connected as {email}.', { email: ws.gmailAccount }) : tr('settings.gmail.connected', 'A Google account is connected.'))
+            : ws.gmailSignedOut ? tr('settings.gmail.signedOut', 'Google signed Lumen out of {email}. Sign in again to see your inbox.', { email: ws.gmailSignedOut }) : tr('settings.gmail.notConnected', 'Not connected yet.');
+          status.className = `sp-status${connected() ? ' on' : ''}`;
+        }
       };
       connect.addEventListener('click', async () => {
-        if (!builtin && !own()) { adv.open = true; flash(status, 'First add your Google Cloud Client ID and secret under Advanced.', 'warn'); inputs.clientId.focus(); return; }
+        if (!builtin && !own()) { adv.open = true; flash(status, tr('settings.gmail.needClient', 'First add your Google Cloud Client ID and secret under Advanced.'), 'warn'); inputs.clientId.focus(); return; }
         connect.disabled = true;
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
+        // After a minute, what may have happened (Google never comes back when it blocks the sign-in).
+        const hint = setTimeout(() => flash(status, builtin && !own() && !ws.gmailClient?.verified ? tr('settings.gmail.stillWaiting', 'Still waiting. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client under Advanced.') : tr('settings.gmail.stillWaitingOwn', 'Still waiting. Finish signing in, in your browser, or Cancel and try again.'), 'warn'), 60000);
         try {
           const r = await S.widgets.gmailConnect({ clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value });
           ws = r.state;
@@ -1003,20 +1072,46 @@ async function buildWidgets(card) {
           status.textContent = '';
           flash(status, r.message, 'ok');
         } catch (err) {
-          flash(status, clean(err), 'err');
+          if (/cancel/i.test(clean(err))) status.textContent = ''; // the user's own Cancel: back to how it was
+          else flash(status, clean(err), 'err');
         }
+        clearTimeout(hint);
         connect.disabled = false;
         cancel.hidden = true;
         draw();
       });
       cancel.addEventListener('click', () => S.widgets.gmailCancel());
+      // Two steps: the first click asks, a second within 4 s disconnects.
+      let armed = 0;
       disconnect.addEventListener('click', async () => {
+        if (!armed) {
+          disconnect.textContent = tr('settings.gmail.disconnectConfirm', 'Disconnect? Click again');
+          armed = setTimeout(() => { armed = 0; disconnect.textContent = tr('settings.gmail.disconnect', 'Disconnect'); }, 4000);
+          return;
+        }
+        clearTimeout(armed);
+        armed = 0;
+        disconnect.textContent = tr('settings.gmail.disconnect', 'Disconnect');
         ws = await S.widgets.gmailDisconnect();
         status.textContent = '';
-        flash(status, tr('settings.gmail.disconnected', 'Disconnected. Lumen also asked Google to revoke access.'), 'ok');
+        flash(status, ws?.gmailClient?.revoked === false
+          ? tr('settings.gmail.disconnectedLocal', 'Disconnected on this computer. Google didn’t confirm the revoke; remove Lumen at myaccount.google.com/permissions to be sure.')
+          : tr('settings.gmail.disconnected', 'Disconnected. Google confirmed Lumen no longer has access.'), 'ok');
         draw();
       });
       draw();
+      // A connection that changed elsewhere (Google ended it, the card signed in) shows here at once.
+      gmailWatch = async () => {
+        if (!accountRow.isConnected || connect.disabled || armed) return; // a sign-in or a confirm is under way
+        const next = await S.widgets.state();
+        const was = `${Boolean(ws.connections?.gmail)}|${ws.gmailAccount || ''}|${ws.gmailSignedOut || ''}`;
+        const now = `${Boolean(next.connections?.gmail)}|${next.gmailAccount || ''}|${next.gmailSignedOut || ''}`;
+        ws = next;
+        if (was === now) return; // nothing about this account changed: its message stays
+        status.textContent = '';
+        draw();
+      };
+      if (!gmailWatchOn) { gmailWatchOn = true; S.widgets.onChanged?.(() => gmailWatch?.()); } // one listener per page, whatever editor is open
       fields.replaceChildren(
         section(tr('settings.gmail.account', 'Account'), [accountRow]),
         section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]),
@@ -2074,12 +2169,13 @@ function show() {
 function route() {
   let id = location.hash.slice(1);
   let focus = null;
+  let focusEl = null;
   if (forceRoute && (!id || id === 'appearance' || id === 'home')) id = forceRoute;
   forceRoute = null;
   const sub = slots.get(id);
   if (sub?.isSub) view = { cat: sub.cat, sub: id };
   else if (categories.has(id)) view = { cat: id, sub: null };
-  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: null }; focus = ALIASES[id].focus; }
+  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
   else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null };
   remember(view.cat);
   if (query()) $('search').value = '';
@@ -2088,6 +2184,8 @@ function route() {
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const target = focus && $(`sec-${focus}`);
   if (target) target.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
+  // (Its row may still be loading: looked for over the next second.)
+  if (focusEl) for (let i = 0, tries = 10; i < tries; i++) setTimeout(() => { const el = document.querySelector(focusEl); if (el && document.activeElement !== el && !el.dataset.routed) { el.dataset.routed = '1'; el.focus(); el.scrollIntoView({ block: 'center' }); } }, i * 100);
 }
 
 async function init() {

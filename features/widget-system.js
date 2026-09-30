@@ -132,10 +132,41 @@ function snapSearchWidth(px, grid) {
     const line = grid.width - 2 * (grid.pad + Math.round(k) * grid.pitch);
     if (Math.abs(line - px) <= 6) best = Math.round(line);
   }
-  return Math.min(SEARCH_MAX, Math.max(SEARCH_MIN, best));
+  best = Math.min(SEARCH_MAX, Math.max(SEARCH_MIN, best));
+  return best === SEARCH_DEFAULT ? best + SEARCH_STEP : best; // 640 is stored for "Automatic"; a dragged width is never it
 }
 
-const api = { CLOCK_STEPS, CLOCK_PX, CLOCK_DEFAULT, SEARCH_MIN, SEARCH_MAX, SEARCH_DEFAULT, SEARCH_STEP, cleanClockSize, cleanSearchWidth, clockStepFromPx, stepClock, snapSearchWidth, SYSTEM, IDS, isSystemId, isSystem, typeOf, labelOf, prefOf, visible, clean, cleanAll, capReal, split, applyLayout, forPage, cellsFromBox };
+// What to draw when the saved clock size and search width (`clock`, `search` in px) run into the cards: the view sizes
+// { clock, search } (null: drawn as saved). fits(clock, searchPx) says whether a pair leaves every card in place.
+// Only what collides shrinks: the clock alone first (it is the culprit if a smaller one fits at the saved width),
+// then the width alone (the largest of `widths`, px below the saved width, that fits: a binary search, fitting being
+// monotonic in width), then both. Nothing helps: drawn as saved (the cards were pushed by something else).
+function fitSizes({ clock, search, widths = [] }, fits) {
+  if (fits(clock, search)) return { clock: null, search: null };
+  const smaller = CLOCK_STEPS.slice(0, Math.max(0, CLOCK_STEPS.indexOf(clock))).reverse();
+  for (const c of smaller) if (fits(c, search)) return { clock: c, search: null };
+  const list = [...new Set(widths.filter((w) => Number.isFinite(w) && w < search && w !== SEARCH_DEFAULT))].sort((a, b) => b - a);
+  const widest = (c) => {
+    let lo = 0, hi = list.length - 1, got = null;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (fits(c, list[mid])) { got = list[mid]; hi = mid - 1; } else lo = mid + 1;
+    }
+    return got;
+  };
+  const w = widest(clock);
+  if (w !== null) return { clock: null, search: w };
+  for (const c of smaller) { const w2 = widest(c); if (w2 !== null) return { clock: c, search: w2 }; }
+  return { clock: null, search: null };
+}
+// The widths to try below `from` px: every 8 px step down to the minimum, and the grid-line widths (`lines`).
+function fitWidths(from, lines = []) {
+  const out = [...lines];
+  for (let w = Math.floor(from / SEARCH_STEP) * SEARCH_STEP; w >= SEARCH_MIN; w -= SEARCH_STEP) out.push(w);
+  return out.filter((w) => w < from && w >= SEARCH_MIN);
+}
+
+const api = { fitSizes, fitWidths, CLOCK_STEPS, CLOCK_PX, CLOCK_DEFAULT, SEARCH_MIN, SEARCH_MAX, SEARCH_DEFAULT, SEARCH_STEP, cleanClockSize, cleanSearchWidth, clockStepFromPx, stepClock, snapSearchWidth, SYSTEM, IDS, isSystemId, isSystem, typeOf, labelOf, prefOf, visible, clean, cleanAll, capReal, split, applyLayout, forPage, cellsFromBox };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetSystem = api;
 })();

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, systemPreferences, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components, systemPreferences } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
@@ -103,6 +103,9 @@ const isWebUrl = (url) => /^https?:\/\//i.test(url);
 // Look like stock Chrome; sites (notably Google) treat unknown browser tokens as bots.
 const UA_PLATFORM = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; Intel Mac OS X 10_15_7' }[process.platform] || 'X11; Linux x86_64';
 app.userAgentFallback = `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
+// Google's sign-in on other sites (One Tap, "Sign in with Google") uses FedCM when the browser says it is Chrome.
+// Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
+app.commandLine.appendSwitch('disable-features', 'FedCm');
 
 // Test runs get a throwaway profile so they never touch the real session or key.
 const APP_ID = 'com.lumen.browser';
@@ -160,7 +163,7 @@ const UI_ONLY_IPC = new Set([
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
@@ -232,13 +235,28 @@ const tabTools = require('./features/tab-tools').create({ onChange: () => sendTa
 let settingsCache = null;
 const settingsFile = require('./settings-file'); // crash-safe read/write (see settings-file.js)
 
+let settingsFileExisted = null; // (at this launch's first read: a fresh install has none, see features/setup.js)
 function readSettings() {
-  if (!settingsCache) settingsCache = settingsFile.loadJson(SETTINGS_FILE());
+  if (!settingsCache) {
+    if (settingsFileExisted === null) settingsFileExisted = fs.existsSync(SETTINGS_FILE());
+    settingsCache = settingsFile.loadJson(SETTINGS_FILE());
+  }
   return { ...settingsCache };
 }
 
+let settingsGen = 0; // bumped by every write: an async write that is no longer the latest doesn't land
+// Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
+// with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
 function writeSettings(settings) {
   settingsCache = { ...settings };
+  const gen = ++settingsGen;
+  settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen);
+}
+const writeSettingsAsync = writeSettings; // (the periodic session save)
+// Closing a window and quitting: on disk before the process can go away.
+function writeSettingsNow(settings) {
+  settingsCache = { ...settings };
+  settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
 }
 const aiSites = createAiSites({ readSettings, writeSettings });
@@ -344,9 +362,9 @@ async function refreshModels(provider) {
   if (!key) {
     delete providerModels[provider];
   } else {
-    providerModels[provider] = await providers.listModels(provider, key, { cacheFile: provider === 'openrouter' ? OPENROUTER_CACHE() : undefined });
+    providerModels[provider] = await providers.listModels(provider, key, { cacheFile: provider === 'openrouter' ? OPENROUTER_CACHE() : undefined, onRefresh: () => refreshModels(provider) });
   }
-  ui()?.send('models-updated');
+  modelsChanged(); // every sidebar, chat page and Settings
 }
 
 // Is the Anthropic API itself usable: a saved key, an env key, or an `ant auth login` profile.
@@ -362,20 +380,36 @@ let cliLoginValid = null;
 // The picker: a model appears only if its provider is actually connected. No provider is
 // privileged — connected API providers sort alphabetically by label, then local agent engines
 // (Claude Code) last, so the list reads the same regardless of which one the user set up.
+const modelNames = require('./features/model-names');
 function modelOptions() {
   const groups = [];
-  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, detail })) });
+  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).sort(([a], [b]) => (b === DEFAULT_MODEL) - (a === DEFAULT_MODEL)).map(([id, { label, detail }]) => ({ id, label, name: label, provider: 'Claude', detail })) }); // the default first
   for (const [provider, info] of Object.entries(providers.PROVIDERS)) {
     if (!providerKey(provider)) continue;
     const list = [...(providerModels[provider] || info.defaults)];
-    // OpenRouter: a model picked from "More models…" joins the short list.
+    // OpenRouter: models picked from "More models…" (the last few) join the short list.
     const saved = providers.splitModel(readSettings().model || '');
-    if (provider === 'openrouter' && saved.provider === 'openrouter' && !list.includes(saved.model)) list.push(saved.model);
+    const recentOR = new Set();
+    if (provider === 'openrouter') {
+      // The model in use first (never folded away); catalog picks made lately after the curated ones (the picker's
+      // own Recent section shows them at the top, so they aren't listed twice up there).
+      if (saved.provider === 'openrouter' && typeof saved.model === 'string' && !list.includes(saved.model)) list.unshift(saved.model);
+      for (const m of readSettings().recentOpenRouter || []) if (typeof m === 'string' && !list.includes(m)) { list.push(m); recentOR.add(m); }
+    }
     const entries = list.map((model) => {
       const chatOnly = !providers.canUseTools(provider, model);
-      return { id: `${provider}:${model}`, label: chatOnly ? `${model} (chat only)` : model, detail: `${info.label} · ${model}${chatOnly ? ' · chat only: can’t act in your tabs' : ''}` };
+      // name: the readable model name the picker shows; badges: what it can't do or how settled it is. The raw id is the detail.
+      // OpenRouter rows are named as OpenRouter names them (as its catalog shows them); the others from their id.
+      const name = (provider === 'openrouter' && providers.openRouterName(model)) || modelNames.prettyModel(model) || model;
+      const snap = modelNames.snapshotOf(model);
+      const isFree = provider === 'openrouter' && (/:free$/.test(model) || providers.openRouterInfo(model)?.free || providers.openRouterInfo(model)?.pricePerM === 0);
+      const badges = [...new Set([...(isFree ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
+      const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
+      const fmt = require('./renderer/picker-match').format; // the catalog's own rules ($1.25, 128K)
+      const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: fmt.size(orInfo.context) }) : '', orInfo.pricePerM < 0 ? t('models.priceVaries') : orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: fmt.money(orInfo.pricePerM) })) : ''].filter(Boolean).join(' · ') : '';
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
     });
-    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), detail: t('models.more.detail') });
+    if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });
   }
   groups.sort((a, b) => a.label.localeCompare(b.label));
@@ -769,6 +803,18 @@ const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
   resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
+  // Private sessions get the profile's proxy, Do Not Track / Global Privacy Control, languages and Chrome hints.
+  mirrorSession: (ses) => settingsBackend.mirrorSession(ses),
+  Menu,
+  // Private tabs present themselves as Chrome too (the same identity and request headers as normal tabs), or
+  // Google sign-in in a private window is refused as an unknown browser.
+  chromeIdentity: (wc) => applyChromeIdentity(wc),
+  chromeHintHeaders: UA_HINT_HEADERS,
+  // Its sign-in popups behave as normal ones: page settings, an error page when a load fails, the "Google refused" note.
+  popupWebPreferences: () => settingsBackend.tabWebPreferences(false),
+  popupFailPage: (wc) => popupFailPage(wc),
+  googleRefusedGuard: (wc, opts) => googleRefusedGuard(wc, opts),
+  popupBackground: () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
 });
 if (TEST) global.__private = privateWindows;
 
@@ -1001,6 +1047,7 @@ function recordVisit(url, title) {
   entry.last = Date.now();
   if (title) entry.title = title;
   history.set(url, entry);
+  historyVersion++;
   saveHistorySoon();
 }
 
@@ -1207,14 +1254,43 @@ function tabState() {
 }
 
 let sessionTimer = null;
+let sessionDirtySince = 0; // when the first unsaved tab change came
 let agentTargetHook = null; // set where the agent exists: tells the sidebar which tab its task works in
+// Tab moves made as one (several tabs going to another window) send each window's strip one update at the
+// end, instead of one per step, so the strips never show the halfway states.
+let tabsBatch = 0;
+const tabsBatched = new Set();
+function batchTabs(fn) {
+  tabsBatch++;
+  try { return fn(); } finally {
+    if (--tabsBatch === 0) {
+      const recs = [...tabsBatched];
+      tabsBatched.clear();
+      for (const rec of recs) if (winRecs.has(rec) && rcAlive(rec)) withWindow(rec, sendTabs);
+    }
+  }
+}
 function sendTabs() {
+  if (tabsBatch && curRec) { tabsBatched.add(curRec); return; }
   keepPinnedFirst();
   ui()?.send('tabs', tabState());
   agentTargetHook?.();
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
+  // Saved 3 s after the tabs settle, and at least every 15 s while they don't (a page whose title ticks).
   clearTimeout(sessionTimer);
-  sessionTimer = setTimeout(() => { if (win && !win.isDestroyed()) saveSession(); }, 3000);
+  if (!sessionDirtySince) sessionDirtySince = Date.now();
+  sessionTimer = setTimeout(() => { sessionDirtySince = 0; if (win && !win.isDestroyed()) saveSession({ background: true }); }, Math.max(0, Math.min(3000, sessionDirtySince + 15000 - Date.now())));
+}
+
+// A page's own busy events (loading, title, favicon, in-page navigations) arrive in bursts: they send the strip
+// one state per turn of the event loop, per window. Moves, opens and closes still send at once (sendTabs).
+const tabsSoon = new Set();
+function sendTabsSoon() {
+  const rec = curRec;
+  if (!rec) { sendTabs(); return; }
+  if (tabsSoon.has(rec)) return;
+  tabsSoon.add(rec);
+  setImmediate(() => { tabsSoon.delete(rec); if (rcAlive(rec)) withWindow(rec, sendTabs); });
 }
 
 function activeTab() {
@@ -1239,7 +1315,7 @@ function layout() {
   const uiHadFocus = Boolean(ui()?.isFocused());
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
-    const show = visible && !viewFrozen && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
+    const show = visible && !viewFrozen && !tab.spareFilling && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
@@ -1297,10 +1373,38 @@ function researchSession() {
 }
 const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null } = {}) {
+// `view`: a page that already exists (a window a page opened with window.open), adopted as this tab as it is.
+// ---- a new-tab page made ready before it is asked for: Ctrl+T shows one at once, as Chrome's spare renderer does.
+// One hidden page, loaded in the background; a new tab takes it and hands it its fresh data (the address's hash,
+// as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
+let spareNewTab = null; // { view, prefs, ready, at }
+function makeSpareNewTab() {
+  if (TEST || spareNewTab || !app.isReady()) return;
+  const prefs = settingsBackend.tabWebPreferences(false);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
+  const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
+  view.webContents.once('did-finish-load', () => { s.ready = true; });
+  view.webContents.loadURL(newTabUrl()).catch(() => {});
+  spareNewTab = s;
+}
+function takeSpareNewTab() {
+  const s = spareNewTab;
+  if (!s) return null;
+  spareNewTab = null;
+  const fresh = s.ready && !s.view.webContents.isDestroyed() && !s.view.webContents.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)); // (no age limit: its data comes with the tab)
+  if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
+  return s.view;
+}
+const spareSoon = () => setTimeout(makeSpareNewTab, 400).unref?.();
+
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
-  const view = new WebContentsView({
+  const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
+  const spare = plainNewTab ? takeSpareNewTab() : null;
+  if (plainNewTab) spareSoon();
+  const view = adopted || spare || new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
     webPreferences: {
@@ -1315,7 +1419,17 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
-  const wc = wireView(tab, url, history); // `history`: Duplicate's copy of back/forward
+  const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
+  // The spare page gets this tab's data in place (no reload, no extra history entry).
+  if (spare) {
+    // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
+    tab.spareFilling = true;
+    // (At most 100 ms: an occluded or minimized window draws no frames, and the tab must not stay blank.)
+    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
+      .catch(() => wc.loadURL(url).catch(() => {}));
+    Promise.race([filled, new Promise((r) => setTimeout(r, 100))])
+      .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
+  }
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
@@ -1336,7 +1450,7 @@ const extensionIdOf = (url) => /^chrome-extension:\/\/([a-p]{32})\//.exec(url ||
 // Wires a tab's WebContentsView (navigation, zoom, favicon/title tracking, close-on-destroy,
 // extensions, HTTPS-only/zoom defaults) and loads `url`. Split out of openTab() so wakeTab() (tab
 // sleeping, below) can rebuild a woken tab's view identically instead of duplicating all of this.
-function wireView(tab, url, history = null) {
+function wireView(tab, url, history = null, { loaded = false } = {}) {
   const { id, settings } = tab;
   const wc = tab.view.webContents;
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
@@ -1348,14 +1462,36 @@ function wireView(tab, url, history = null) {
     // extension page it liked (and whatever that page does with its privileges).
     if (target.startsWith('chrome-extension://') && extensionIdOf(target) !== extensionIdOf(wc.getURL())) return { action: 'deny' };
     if (disposition === 'new-window') {
-      // A real popup (sign-in, payment): it keeps window.opener so it can report back to the page.
+      // A real popup (sign-in, payment): it keeps window.opener so it can report back to the page. Lumen makes
+      // the window itself (createWindow) so it presents itself as Chrome before its first page loads: Google
+      // sign-in checks the browser on that very first page ("This browser or app may not be secure").
       return {
         action: 'allow',
-        overrideBrowserWindowOptions: {
-          autoHideMenuBar: true,
-          backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
-          icon: path.join(__dirname, 'assets', 'icon.png'),
-          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+        overrideBrowserWindowOptions: popupWindowOptions(),
+        outlivesOpener: true,
+        // No page yet means a person's Shift+click on a link, not a page's sign-in popup: it opens as a normal tab.
+        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tab.isolated, target, tab) : withWindow(tab.rec, () => openTab(target, { openerId: id, partition: tab.isolated })).webContents),
+      };
+    }
+    // A tab. When a page's script asked for it (window.open), the page gets that new window back and it keeps
+    // window.opener, as in Chrome: sign-in code that opens a window and watches or redirects it keeps working.
+    // Lumen adopts the new window's page into a tab instead of making a window for it.
+    // A tab opened this way outlives the page that opened it (outlivesOpener): closing or sleeping that page never
+    // closes it. When there is no page yet (Ctrl+click, a middle-click: Electron hands over only the address), the
+    // tab is opened the usual way, loading the address, and its page is what Electron gets back.
+    // (about:blank too: a page may open a blank window and set its address after an async step, as payments do.)
+    if (WebContentsView && (isWebUrl(target) || target === 'about:blank')) {
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        // The user's page settings (font sizes, spell check, plugins for protected video), as every tab has.
+        overrideBrowserWindowOptions: { webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) } },
+        createWindow: (options) => {
+          const background = disposition === 'background-tab';
+          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id, partition: tab.isolated })).webContents;
+          const view = new WebContentsView({ webContents: options.webContents });
+          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view, partition: tab.isolated }));
+          return options.webContents;
         },
       };
     }
@@ -1386,10 +1522,12 @@ function wireView(tab, url, history = null) {
   // afresh; until it does, the woken tab keeps showing the ones from before it slept.
   tab.faviconUrls = tab.favicons || [];
   wc.on('page-favicon-updated', (_e, favicons) => {
-    tab.faviconUrls = favicons.filter((u) => typeof u === 'string' && u);
+    const next = favicons.filter((u) => typeof u === 'string' && u);
+    if (next.join('\n') === (tab.favicons || []).join('\n')) { if (next.length && !tab.isolated) cacheFavicon(wc.getURL(), next); return; } // the same icons: nothing to redraw (but this host's icon is kept)
+    tab.faviconUrls = next;
     tab.favicons = tab.faviconUrls;
     tab.favicon = tab.favicons[0] || null;
-    sendTabs();
+    sendTabsSoon();
     if (tab.favicons.length && !tab.isolated) cacheFavicon(wc.getURL(), tab.favicons);
   });
   wc.on('did-navigate', (_e, url) => {
@@ -1410,6 +1548,7 @@ function wireView(tab, url, history = null) {
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
+  googleRefusedGuard(wc, { inTab: true, win: () => (rcAlive(tab.rec) ? tab.rec.win : null) });
   // A crashed page (or one out of memory) was left blank with no way back. Show a "This page
   // crashed" page with Reload instead; the crashed page's own entry stays in history behind it.
   wc.on('render-process-gone', (_e, details) => {
@@ -1472,7 +1611,7 @@ function wireView(tab, url, history = null) {
   });
   wc.on('context-menu', (_e, params) => showContextMenu(wc, params));
   for (const event of ['did-start-loading', 'did-stop-loading', 'page-title-updated', 'did-navigate', 'did-navigate-in-page']) {
-    wc.on(event, sendTabs);
+    wc.on(event, sendTabsSoon);
   }
   wc.on('before-input-event', (event, input) => handleShortcut(event, input));
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
@@ -1523,13 +1662,11 @@ function wireView(tab, url, history = null) {
     siteSecurity.attachTab(wc); // mixed content, on the debugger session applyChromeIdentity opened
     safeBrowsing.attachTab(wc); // the warning page's "Visit this site" link
     if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
-    // A popup (sign-in, payment) presents itself as Chrome like the tab that opened it: Google
-    // sign-in and some payment pages refuse browsers they don't recognise.
-    wc.on('did-create-window', (child) => applyChromeIdentity(child.webContents));
+    // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
   if (history?.entries?.length) {
     wc.navigationHistory.restore({ entries: history.entries, index: history.index }).catch(() => wc.loadURL(url).catch(() => {}));
-  } else {
+  } else if (!loaded) { // an adopted page is already on its way to its address
     wc.loadURL(url).catch(() => {});
   }
   return wc;
@@ -1605,7 +1742,10 @@ function wakeTab(tab) {
 function addRestoredTab(url, title, favicon = null) {
   // The new-tab page's cached copy (offline-safe, but kept only for favorites and frequent sites),
   // else the icon the tab showed when the session was saved.
-  const icon = faviconStore.get(hostOf(url)) || (/^(https?|data):/.test(favicon || '') ? favicon : null);
+  // (As a file in favicon-cache, not a data: address: that would ride along in every tab-strip update and save.)
+  const saved = typeof favicon === 'string' ? favicon : '';
+  const icon = faviconFile(faviconStore.get(hostOf(url)))
+    || (saved.startsWith('data:image/') ? faviconFile(saved) : /^https?:/.test(saved) || FAVICON_FILE_URL.test(saved) ? saved : null);
   const tab = {
     id: nextTabId++, view: null, rec: curRec, favicon: icon, favicons: icon ? [icon] : [], groupId: null,
     userRemoved: false, settings: false, lastActiveAt: Date.now(),
@@ -1634,7 +1774,7 @@ async function hasUnsavedInput(wc) {
 // away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with
 // typed form input. On any doubt this returns false and the tab is left alone.
 async function canSleep(tab) {
-  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing || agent.usingTab(tab.id)) return false;
+  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing || tab.openPopups > 0 || agent.usingTab(tab.id)) return false;
   const wc = tab.view.webContents;
   if (!isWebUrl(realUrl(wc)) || wc.isLoading() || wc.isCurrentlyAudible()) return false;
   return !(await hasUnsavedInput(wc));
@@ -1712,13 +1852,21 @@ function guardFirstLoadFocus(tab, url) {
   });
 }
 
-function switchTab(id) {
+function switchTab(id, { wake = true } = {}) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return false;
   if (id !== activeId) {
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
     activeTab()?.webContents.stopFindInPage('clearSelection');
+  }
+  // Shown in the strip only. Waking a sleeping tab reloads it, and a drag that is then cancelled
+  // (Escape) has no way to put that page back to sleep. It loads later, if it is still in front.
+  if (tab.sleeping && !wake) {
+    activeId = id;
+    layout();
+    sendTabs();
+    return true;
   }
   if (tab.sleeping) wakeTab(tab);
   activeId = id;
@@ -1731,7 +1879,9 @@ function switchTab(id) {
   return true;
 }
 
-function closeTab(id, { destroyed = false } = {}) {
+// `user`: the user closed it (a sleeping tab's ✕, Close group); a tab closed by code (a sign-in tab closing
+// itself, an extension) never takes its window with it.
+function closeTab(id, { destroyed = false, user = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
   if (chatFullTab === id) chatFullTab = null;
@@ -1750,6 +1900,16 @@ function closeTab(id, { destroyed = false } = {}) {
   if (tab.view) win.contentView.removeChildView(tab.view); // no view to remove if it was sleeping
   if (!destroyed && alive(tab)) tab.view.webContents.close();
   if (tabs.length === 0) {
+    // Closing a window's last tab (Ctrl+W, its ✕, the tab menu: `closing`, set by requestCloseTab) closes the
+    // window, as in Chrome: hidden at once (no frame of an empty strip over the page), then closed. A page that
+    // went away on its own, or a tab closed by code, leaves a fresh tab instead: the window is never lost to that.
+    if (user || tab.closing) {
+      const rec = curRec;
+      sendTabs();
+      try { rec.win.hide(); } catch {}
+      setImmediate(() => { if (rcAlive(rec)) rec.win.close(); });
+      return;
+    }
     openTab();
     return;
   }
@@ -1765,7 +1925,7 @@ function closeTab(id, { destroyed = false } = {}) {
 // closeTab({ destroyed: true }), already wired to every tab's 'destroyed' event, finishes the job.
 function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
-  if (!alive(tab)) { closeTab(id); return; }
+  if (!alive(tab)) { closeTab(id, { user: true }); return; }
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
@@ -2219,17 +2379,25 @@ function tabMenuTemplate(id) {
   return items;
 }
 
+// A step down-right of the window the menu was opened on. A maximized window's current bounds fill
+// the screen, so the step is taken from the size it will return to, which still fits.
+function cascadedWindowPoint(win) {
+  const b = win.isMaximized() ? win.getNormalBounds() : win.getBounds();
+  return { x: Math.round(b.x + 32), y: Math.round(b.y + 32) };
+}
 // "Move Tab to New Window" (not for a window's only tab) and "Move Tab to Window", one entry per
 // other normal window. Private windows never appear: a tab can't move in or out of one.
 function moveWindowItems(id) {
   const src = curRec;
   const items = [];
-  const b = src?.win.getBounds();
-  if (src && tabs.filter((x) => !x.closing).length > 1) {
-    items.push({ label: t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, { x: b.x + 60, y: b.y + 40 }) });
+  if (!src) return items;
+  const ids = tabsActedOn(src, id); // the whole multi-selection, when the menu is opened on one of its tabs
+  const n = ids.length;
+  if (tabs.filter((x) => !x.closing).length - n >= 1) {
+    items.push({ label: n > 1 ? t('menu.moveTabsToNewWindow', { n }) : t('menu.moveToNewWindow'), click: () => tearOffTab(src, id, cascadedWindowPoint(src.win), ids) });
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
-  if (others.length) items.push({ label: t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => moveTabBetween(src, r, id) })) });
+  if (others.length) items.push({ label: n > 1 ? t('menu.moveTabsToWindow', { n }) : t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => { if (moveTabsBetween(src, r, ids, undefined, { active: id })) arrivedFromMenu(r, ids); } })) });
   return items;
 }
 
@@ -2322,10 +2490,26 @@ function groupMenu(groupId, { x, y }) {
     { label: t('menu.rename'), click: () => ui()?.send('group:rename-start', groupId) },
     { label: t('menu.colour'), submenu: tabGroups.GROUP_COLORS.map((c) => ({ label: colorLabel(c), type: 'radio', checked: group.color === c, click: () => { group.color = c; group.colorLocked = true; sendTabs(); } })) },
     { label: t('menu.newTabInGroup'), click: () => openTab(undefined, { groupId }) },
+    ...moveGroupItems(groupId),
     { type: 'separator' },
     { label: t('menu.ungroup'), click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
-    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id)) },
+    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id, { user: true })) },
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
+}
+
+// "Move Group to New Window" / "Move Group to Window": the whole group goes, and stays a group there.
+function moveGroupItems(groupId) {
+  const src = curRec;
+  const moving = src && groupForMove(src, groupId);
+  if (!moving) return [];
+  const lead = moving.ids.includes(activeId) ? activeId : moving.ids[0];
+  const items = [];
+  if (tabs.filter((x) => !x.closing).length - moving.ids.length >= 1) {
+    items.push({ label: t('menu.moveGroupToNewWindow'), click: () => tearOffTab(src, lead, cascadedWindowPoint(src.win), moving.ids, moving.group) });
+  }
+  const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
+  if (others.length) items.push({ label: t('menu.moveGroupToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => { if (moveTabsBetween(src, r, moving.ids, undefined, { active: lead, group: moving.group })) arrivedFromMenu(r, moving.ids); } })) });
+  return items;
 }
 
 function tabGroupsMenu() {
@@ -2388,9 +2572,11 @@ function importBrowser(id, profilePath) {
       entry.visits = Math.max(entry.visits, h.visits);
       entry.last = Math.max(entry.last, h.last);
       if (!entry.title && h.title) entry.title = h.title;
+      historyVersion++;
     } else {
       history.set(h.url, { url: h.url, title: h.title, visits: h.visits, last: h.last });
       addedHistory++;
+      historyVersion++;
     }
   }
   saveHistorySoon();
@@ -2413,6 +2599,16 @@ async function runImport(id) {
     await dialog.showMessageBox(win, { type: 'warning', message: t('import.failed'), detail: err.message });
   }
 }
+
+// First run, import without a dialog, and the default browser (features/setup.js).
+const setup = require('./features/setup').create({
+  app, shell, readSettings, writeSettings, importer, importBrowser: (id) => importBrowser(id), freshInstall: () => settingsFileExisted === false,
+});
+ipcMain.handle('settings:setup-state', () => setup.state());
+ipcMain.handle('settings:setup-done', () => { setup.welcomeDone(); return true; });
+ipcMain.handle('settings:default-browser', () => setup.isDefault());
+ipcMain.handle('settings:make-default', () => setup.makeDefault());
+ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 
 function importMenu() {
   const found = importer.detectBrowsers();
@@ -2466,7 +2662,17 @@ function bookmarks() {
 }
 
 // Sites visited often (at least 3 times), one per host, skipping favorites and CAPTCHA pages.
+let historyVersion = 0; // bumped on every visit or import: frequentSites is remembered until it changes
+let frequentMemo = null;
 function frequentSites(limit = 6) {
+  // One memo at the largest size asked for (the new-tab page asks for 6, the favicon cache for 12): the two
+  // never evict each other.
+  const size = Math.max(limit, 12);
+  const key = `${historyVersion}|${history.size}|${size}|${bookmarks().map((b) => b.url).join(' ')}`;
+  if (frequentMemo?.key !== key) frequentMemo = { key, out: frequentSitesNow(size) };
+  return frequentMemo.out.slice(0, limit);
+}
+function frequentSitesNow(limit) {
   const favoriteHosts = new Set(bookmarks().map((b) => hostOf(b.url)));
   const seen = new Set();
   const out = [];
@@ -2480,8 +2686,27 @@ function frequentSites(limit = 6) {
   return out;
 }
 
+// A cached favicon (a data: URL) as a file the new-tab page loads (its CSP allows file: images), written once.
+const faviconFiles = new Map(); // data URL hash -> file URL
+const FAVICON_FILE_URL = /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z0-9]+$/i;
+function faviconFile(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+  const key = require('crypto').createHash('sha1').update(dataUrl).digest('hex').slice(0, 20);
+  if (faviconFiles.has(key)) return faviconFiles.get(key);
+  const m = dataUrl.match(/^data:image\/([a-z+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
+  if (!m) return dataUrl; // (not base64: passed as it is)
+  const dir = path.join(app.getPath('userData'), 'favicon-cache');
+  const ext = { 'x-icon': 'ico', 'vnd.microsoft.icon': 'ico', 'svg+xml': 'svg', jpeg: 'jpg' }[m[1].toLowerCase()] || m[1].toLowerCase().replace(/[^a-z0-9]/g, '');
+  const file = path.join(dir, `${key}.${ext}`);
+  try {
+    if (!fs.existsSync(file)) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, Buffer.from(m[2], 'base64')); }
+  } catch { return dataUrl; }
+  const url = pathToFileURL(file).href;
+  faviconFiles.set(key, url);
+  return url;
+}
 function newTabUrl() {
-  const withIcon = (b) => { const icon = faviconStore.get(hostOf(b.url)); return icon ? { ...b, icon } : b; };
+  const withIcon = (b) => { const icon = faviconFile(faviconStore.get(hostOf(b.url))); return icon ? { ...b, icon } : b; };
   const data = {
     favorites: bookmarks().filter((b) => !b.folder).slice(0, 12).map(withIcon),
     frequent: frequentSites().map(withIcon),
@@ -2663,12 +2888,18 @@ function chromeBrands(full) {
   list.forEach((b, i) => { shuffled[order[i]] = b; });
   return shuffled;
 }
+// What Chrome reports as Windows' platformVersion (the UniversalApiContract version, not "10.0"): 10.0.0 or lower on
+// Windows 10, 13-14 on Windows 11 21H2, 15 on 22H2/23H2, 19 on 24H2 and later. Read from the build number.
+function windowsPlatformVersion() {
+  const build = Number(String(require('os').release()).split('.')[2]) || 0;
+  return build >= 26100 ? '19.0.0' : build >= 22621 ? '15.0.0' : build >= 22000 ? '14.0.0' : '10.0.0';
+}
 const UA_METADATA = {
   brands: chromeBrands(false),
   fullVersionList: chromeBrands(true),
   platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux',
   // Chrome on a Mac reports the real macOS version (26.0.0), not an empty string.
-  platformVersion: process.platform === 'win32' ? '15.0.0' : process.platform === 'darwin' ? process.getSystemVersion() : '',
+  platformVersion: process.platform === 'win32' ? windowsPlatformVersion() : process.platform === 'darwin' ? process.getSystemVersion() : '',
   architecture: process.arch === 'arm64' ? 'arm' : 'x86', // Chrome on Apple Silicon says "arm"
   bitness: '64',
   model: '',
@@ -2686,12 +2917,77 @@ const UA_HINT_HEADERS = {
 // targets that would still say "Chromium", and Cloudflare's checkbox (an iframe from
 // challenges.cloudflare.com) fails a page whose frames disagree. So auto-attach to each one, paused
 // at start, give it the same identity, then let it run.
+// A sign-in or payment popup: its own small window that keeps window.opener, presents itself as Chrome from its
+// first request, and can itself open a further popup the same way (some sign-ins chain two).
+const popupWindowOptions = () => ({
+  autoHideMenuBar: true,
+  backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
+  icon: path.join(__dirname, 'assets', 'icon.png'),
+  webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) },
+});
+// Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
+// strip; for popups and private windows (no strip) a small dialog over the window.
+const googleRefusedText = (wc, inTab) => (!identified.has(wc)
+  ? t('google.refused.debugger') // Lumen couldn't present itself as Chrome here: another debugger holds the page
+  : t(inTab ? 'google.refused.tipsTab' : 'google.refused.tips'));
+// win: the window to show the dialog over (a tab's browser window); by default the popup's own.
+function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
+  let shown = 0;
+  const check = (_e, navUrl) => {
+    if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl)) || Date.now() - shown < 10000) return;
+    shown = Date.now();
+    const win = winOf?.() || BrowserWindow.fromWebContents(wc);
+    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc, inTab), buttons: ['OK'] }).catch(() => {});
+  };
+  wc.on('did-navigate', check);
+  wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads
+}
+// A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
+function popupFailPage(wc) {
+  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
+    if (!isMainFrame || code === -3) return;
+    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
+    wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
+  });
+}
+function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null) {
+  const child = new BrowserWindow({ ...options, ...popupWindowOptions(), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
+  const wc = child.webContents;
+  popupPartition.set(wc, partition);
+  if (!noIdentity) applyChromeIdentity(wc); // before anything loads
+  if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet: it loads the address itself
+  popupFailPage(wc);
+  googleRefusedGuard(wc);
+  // While a sign-in popup is open, the tab that opened it doesn't go to sleep (it would lose the page it reports back to).
+  if (openerTab) { openerTab.openPopups = (openerTab.openPopups || 0) + 1; child.on('closed', () => { openerTab.openPopups = Math.max(0, (openerTab.openPopups || 1) - 1); }); }
+  // The title bar says which site this is (a popup has no address bar), with a lock when the connection is secure.
+  // (Lumen's own pages, such as an error page, have no host: their title alone.)
+  const titleFor = () => { try { const u = new URL(wc.getURL()); if (!u.host) return wc.getTitle() || 'Lumen'; return `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host}${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}`; } catch { return wc.getTitle() || 'Lumen'; } };
+  const retitle = () => { if (!child.isDestroyed()) child.setTitle(titleFor()); };
+  wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });
+  wc.on('did-navigate', retitle);
+  wc.on('did-navigate-in-page', retitle);
+  wc.on('context-menu', (_e, p) => showContextMenu(wc, p)); // paste into a password field, spelling, copy
+  wc.on('before-input-event', (e, input) => { // Ctrl+W (Cmd+W) closes it, as it would a tab
+    if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); }
+  });
+  if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
+  wc.setWindowOpenHandler(({ url, disposition }) => {
+    if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
+    if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url) };
+    withWindow(curRec, () => openTab(url, { background: disposition === 'background-tab', partition })); // a research tab's popup keeps to its session
+    return { action: 'deny' };
+  });
+  return wc;
+}
+const popupPartition = new WeakMap(); // a popup's page -> the research session it belongs to (null: the profile's)
 const identified = new WeakSet();
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
   try {
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
   } catch {
+    console.warn('[lumen] Chrome identity not applied (another debugger is attached to this page); Google may refuse sign-in here.');
     return; // Another debugger (e.g. an extension) is attached; keep Electron's defaults.
   }
   identified.add(wc);
@@ -2724,16 +3020,16 @@ function showContextMenu(wc, p) {
   const selection = p.selectionText.trim();
   if (p.linkURL && isWebUrl(p.linkURL)) {
     items.push(
-      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: isolatedOf(wc) }) },
+      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) },
       { label: t('menu.copyLink'), click: () => clipboard.writeText(p.linkURL) },
       { type: 'separator' },
     );
   }
   if (p.mediaType === 'image' && p.srcURL) {
-    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) }) });
+    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) });
     items.push({ label: t('menu.copyImage'), click: () => wc.copyImageAt(p.x, p.y) }, { type: 'separator' });
   }
-  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) }), copy: (text) => clipboard.writeText(text) }));
+  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
     if (passwordsRt) items.push(...passwordsRt.contextMenuItems(tabByContents(wc), p)); // [passwords] Fill <username>, on a site with saved logins
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
@@ -3084,11 +3380,12 @@ function sessionEntry() {
 
 // Every normal window is saved: the first one in the session's own fields (as before, so older
 // versions still read it), the others under `more`. Private windows are never here.
-function saveSession({ excluding = null } = {}) {
+function saveSession({ excluding = null, background = false } = {}) {
   const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r));
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
-  writeSettings({ ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } });
+  const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
+  if (background) writeSettingsAsync(next); else writeSettingsNow(next); // (closing and quitting write at once)
 }
 
 function restoreSession(entry = null) {
@@ -3270,7 +3567,8 @@ const activeIdOf = (rec) => (rec === curRec ? activeId : rec.activeId);
 
 // ---- moving tabs between windows (tab strip drag, the tab menu)
 // The tab's WebContentsView is re-parented, never recreated: the page keeps its state, scroll,
-// media and typed input. Groups are dropped and a pinned tab arrives unpinned. Runs in the tab's
+// media and typed input. A pinned tab stays pinned; a tab leaves its group, and joins one in the new
+// window if it is dropped between two of its tabs. Runs in the tab's
 // current window and leaves the tab alive but held by no window.
 function releaseTab(tab) {
   const index = tabs.indexOf(tab);
@@ -3278,7 +3576,6 @@ function releaseTab(tab) {
   if (chatFullTab === tab.id) chatFullTab = null;
   tabs.splice(index, 1);
   tab.groupId = null;
-  tab.pinned = false;
   tab.userRemoved = true; // placed by hand: automatic grouping leaves it alone
   tabGroups.cleanup();
   if (tab.view) win.contentView.removeChildView(tab.view);
@@ -3287,31 +3584,177 @@ function releaseTab(tab) {
   else activeId = null;
   return true;
 }
-// Runs in the receiving window: puts the tab at `index` (after any pinned tabs) and shows it.
-function adoptTab(tab, index) {
+// Runs in the receiving window: puts the tab at `index` (after any pinned tabs) and shows it (`show`:
+// false leaves it in the background, for a batch whose caller picks the tab to show at the end).
+function adoptTab(tab, index, show = true) {
   tab.rec = curRec;
   const pinned = tabs.filter((t) => t.pinned).length;
-  tabs.splice(Math.max(pinned, Math.min(Number.isInteger(index) ? index : tabs.length, tabs.length)), 0, tab);
+  const want = Number.isInteger(index) ? index : tabs.length;
+  // Pinned tabs stay among the pinned ones at the start; the others never go in among them.
+  const at = tab.pinned ? Math.max(0, Math.min(want, pinned)) : Math.max(pinned, Math.min(want, tabs.length));
+  tabs.splice(at, 0, tab);
+  const prev = tabs[at - 1], next = tabs[at + 1];
+  if (!tab.pinned && prev?.groupId && prev.groupId === next?.groupId) { tab.groupId = prev.groupId; tab.userRemoved = false; }
   if (tab.view) {
     win.contentView.addChildView(tab.view);
     tab.view.setVisible(false);
     if (!tab.isolated) syncExtensions(() => { try { extensions?.addTab(tab.view.webContents, win); } catch {} });
   }
+  if (!show) { sendTabs(); return; }
   switchTab(tab.id);
   tab.view?.webContents.focus();
 }
 const closableTabCount = (rec) => withWindow(rec, () => tabs.filter((t) => !t.closing).length);
-function moveTabBetween(src, dst, tabId, index, { focus = true } = {}) {
+function moveTabBetween(src, dst, tabId, index, { focus = true, keepSrc = false, show = true } = {}) {
   if (!src || !dst || src === dst || !winRecs.has(src) || !winRecs.has(dst) || !rcAlive(src) || !rcAlive(dst)) return false;
   const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
   if (!tab) return false;
   if (!withWindow(src, () => releaseTab(tab))) return false;
-  withWindow(dst, () => adoptTab(tab, index));
+  withWindow(dst, () => adoptTab(tab, index, show));
   enterWindow(dst);
   if (focus) dst.win.focus(); // a drag in progress keeps the focus where the mouse is captured
-  if (!tabsOf(src).length) src.win.close(); // it just lost its last tab
+  if (!keepSrc && !tabsOf(src).length) src.win.close(); // it just lost its last tab
   return true;
 }
+// Several tabs at once (a multi-selection, a group), in the order given, from `index` on (the end if none);
+// `active` is the one shown afterwards; `group` ({ name, color, userNamed }) makes them a group again in
+// `dst`. The source closes if it is left empty.
+function moveTabsBetween(src, dst, ids, index, { focus = true, active = ids[0], group = null } = {}) {
+  if (ids.length === 1 && !group) return moveTabBetween(src, dst, ids[0], index, { focus });
+  if (!src || !dst || src === dst || !rcAlive(src) || !rcAlive(dst)) return false;
+  const moved = batchTabs(() => {
+    // The source shows a tab that stays, once, rather than stepping through the ones that are leaving.
+    withWindow(src, () => {
+      if (!ids.includes(activeId)) return;
+      const i = tabs.findIndex((t) => t.id === activeId);
+      const stay = tabs.slice(i).find((t) => !ids.includes(t.id) && !t.closing) || tabs.slice(0, i).reverse().find((t) => !ids.includes(t.id) && !t.closing);
+      if (stay) switchTab(stay.id);
+    });
+    let at = Number.isInteger(index) ? index : undefined;
+    if (group && at !== undefined) at = withWindow(dst, () => outsideGroups(at)); // a group never lands inside another
+    const done = [];
+    // Pinned tabs go to the end of the pinned run; the others where they were dropped, in order after each other.
+    const isPinned = (id) => Boolean(tabsOf(src).find((t) => t.id === id)?.pinned);
+    for (const id of ids.filter(isPinned)) {
+      const end = tabsOf(dst).filter((t) => t.pinned).length;
+      if (!moveTabBetween(src, dst, id, end, { focus: false, keepSrc: true, show: false })) continue;
+      done.push(id);
+      if (at !== undefined) at++; // one more tab ahead of the drop point
+    }
+    for (const id of ids.filter((x) => !isPinned(x))) {
+      if (!moveTabBetween(src, dst, id, at, { focus: false, keepSrc: true, show: false })) continue;
+      done.push(id);
+      if (at !== undefined) at = tabsOf(dst).findIndex((t) => t.id === id) + 1;
+    }
+    if (!done.length) return done;
+    if (group) regroup(dst, done, group);
+    withWindow(dst, () => {
+      const show = tabs.find((t) => t.id === (done.includes(active) ? active : done[0]));
+      if (show) { switchTab(show.id); show.view?.webContents.focus(); }
+    });
+    return done;
+  });
+  if (!moved.length) return false;
+  enterWindow(dst);
+  if (focus) dst.win.focus();
+  if (rcAlive(src) && !tabsOf(src).length) src.win.close();
+  return true;
+}
+// The first index at or after `at` that isn't between two tabs of one group (in the current window).
+function outsideGroups(at) {
+  while (at > 0 && at < tabs.length && tabs[at - 1].groupId && tabs[at - 1].groupId === tabs[at].groupId) at++;
+  return at;
+}
+// Several tabs of this window moved as one block, before `beforeId` (the end if null), in the order given:
+// a multi-selection or a group dragged along its own strip. `groupId`: they are that group and stay it
+// (and never land inside another group); otherwise they join a group only if dropped inside one. One
+// update, and nothing is learned for automatic grouping (tabs were moved, not regrouped).
+// `join` (from a drag in this strip): the group the drop slot showed them joining, or null for none; left out,
+// they join a group only if dropped between two of its tabs (or, all from one group, at its edge).
+function moveBlock(ids, beforeId, groupId = null, join = undefined) {
+  const keep = groupId != null && tabGroups.groups.has(groupId) ? groupId : null;
+  // Pinned tabs move as well, but only inside the pinned run (they stay first). The others move
+  // as one block to the drop. Each run keeps the order the selection had in the strip, which is
+  // the order the count on the dragged tab was showing.
+  const moving = ids.map((id) => tabs.find((t) => t.id === id && !t.closing)).filter(Boolean);
+  if (!moving.length) return false;
+  const pinnedMoving = moving.filter((t) => t.pinned);
+  const looseMoving = moving.filter((t) => !t.pinned);
+  const own = looseMoving.length && looseMoving.every((t) => t.groupId && t.groupId === looseMoving[0].groupId) ? looseMoving[0].groupId : null; // dropped at the edge of their own group, they stay in it
+  for (const t of moving) tabs.splice(tabs.indexOf(t), 1);
+  const pinnedCount = tabs.filter((t) => t.pinned).length;
+  let at = beforeId == null ? tabs.length : tabs.findIndex((t) => t.id === beforeId);
+  if (at === -1) at = tabs.length;
+  // A drop among loose tabs puts the pinned block at the end of the pinned run, the nearest
+  // place they can land. A drop on a pinned tab puts them there.
+  if (pinnedMoving.length) tabs.splice(Math.min(at, pinnedCount), 0, ...pinnedMoving);
+  if (looseMoving.length) {
+    const pinnedNow = tabs.filter((t) => t.pinned).length;
+    let looseAt = beforeId == null ? tabs.length : tabs.findIndex((t) => t.id === beforeId);
+    if (looseAt === -1) looseAt = tabs.length;
+    looseAt = Math.max(pinnedNow, looseAt); // loose tabs never go in among the pinned ones
+    if (keep) looseAt = outsideGroups(looseAt); // a group never lands inside another
+    tabs.splice(looseAt, 0, ...looseMoving);
+    const prev = tabs[looseAt - 1], next = tabs[looseAt + looseMoving.length];
+    const into = keep || (join !== undefined ? (join != null && tabGroups.groups.has(join) ? join : null)
+      : (prev?.groupId && prev.groupId === next?.groupId ? prev.groupId : null) || (own && (prev?.groupId === own || next?.groupId === own) ? own : null));
+    for (const t of looseMoving) { t.groupId = into; t.userRemoved = !into; t.userMoved = true; }
+  }
+  for (const t of pinnedMoving) t.userMoved = true;
+  tabGroups.cleanup();
+  sendTabs();
+  return true;
+}
+ipcMain.on('tab:move-block', (event, ids, beforeId, groupId, join) => {
+  const rec = recOfSender(event.sender);
+  if (!rec || !Array.isArray(ids)) return;
+  const list = ids.filter(Number.isInteger).slice(0, 1000);
+  withWindow(rec, () => moveBlock(list, Number.isInteger(beforeId) ? beforeId : null, Number.isInteger(groupId) ? groupId : null, Number.isInteger(join) ? join : join === null ? null : undefined));
+  event.sender.send('tab:dragdone'); // after the tabs update: the strip shows the moved tabs in their new places
+});
+function regroup(rec, ids, group) {
+  withWindow(rec, () => {
+    const here = ids.filter((id) => tabs.some((t) => t.id === id && !t.pinned));
+    if (!here.length) return;
+    const g = tabGroups.create(group.name, here, { color: group.color });
+    if (group.userNamed) g.userNamed = true;
+    if (group.colorLocked) g.colorLocked = true;
+    if (group.collapsed) g.collapsed = true;
+    sendTabs();
+  });
+}
+// A group's tabs, in strip order, and what it takes to make it again elsewhere.
+function groupForMove(rec, groupId) {
+  return withWindow(rec, () => {
+    const g = tabGroups.groups.get(groupId);
+    if (!g) return null;
+    const ids = tabs.filter((t) => t.groupId === groupId && !t.closing).map((t) => t.id);
+    return ids.length ? { ids, group: { name: g.name, color: g.color, userNamed: Boolean(g.userNamed), colorLocked: Boolean(g.colorLocked), collapsed: Boolean(g.collapsed) } } : null;
+  });
+}
+// Tabs moved into `rec` from the menu (no drag, no slot): its strip says so to screen readers, and a
+// multi-selection stays selected there, as in Chrome.
+// A multi-selection moved into a new window from the menu stays selected there (the window announces itself).
+function keepSelection(rec, ids) {
+  if (ids.length > 1 && rcAlive(rec)) rec.win.webContents.send('tab:moved-here', { ids, quiet: true });
+}
+function arrivedFromMenu(rec, ids) {
+  if (!rcAlive(rec)) return;
+  const title = withWindow(rec, () => { const t0 = tabs.find((t) => t.id === ids[0]); return t0 ? tabTitle(t0) : ''; });
+  rec.win.webContents.send('tab:moved-here', { ids, title });
+}
+// The tabs a drag or the tab menu acts on: the window's multi-selection (as the strip last reported it,
+// 'tab:selection') when `id` is part of it, in strip order; otherwise just `id`.
+function tabsActedOn(rec, id, hint = null) {
+  const live = tabsOf(rec).filter((t) => !t.closing);
+  const chosen = new Set(Array.isArray(hint) && hint.length ? hint : rec.selection || []);
+  if (chosen.size < 2 || !chosen.has(id) || !live.some((t) => t.id === id)) return [id];
+  return live.filter((t) => chosen.has(t.id)).map((t) => t.id);
+}
+ipcMain.on('tab:selection', (event, ids) => {
+  const rec = recOfSender(event.sender);
+  if (rec) rec.selection = Array.isArray(ids) ? ids.filter(Number.isInteger).slice(0, 1000) : [];
+});
 // A tab can only move into a normal window: a private window's id is not in winRecs.
 function moveTabToWindowId(src, tabId, windowId, index) {
   const dst = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win.id === windowId);
@@ -3328,19 +3771,35 @@ function moveTabToWindowId(src, tabId, windowId, index) {
 // itself, like its title bar. Main polls the cursor; the renderer that holds the pointer reports the
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
 const tabDragMath = require('./features/tab-drag-math');
-let tabDragTimeoutMs = 60000;
+let tabDragTimeoutMs = 120000; // with the mouse still and no release seen (see tickTabDrag)
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
-const DRAG_OVER_STRIP_OPACITY = 0.35; // an only-tab window being dragged: see through it to the strip it is over
+// Windows front first, as far as Lumen can tell: the order they were last focused in (Electron has no
+// z-order query). A drop only counts on the strip of the front-most window under the cursor.
+const focusOrder = []; // BrowserWindow ids, most recently focused first
+app.on('browser-window-focus', (_e, w) => {
+  const i = focusOrder.indexOf(w.id);
+  if (i !== -1) focusOrder.splice(i, 1);
+  focusOrder.unshift(w.id);
+});
+const frontRank = (w) => { const i = focusOrder.indexOf(w.id); return i === -1 ? focusOrder.length + w.id : i; };
+const DRAG_OVER_STRIP_OPACITY = 0; // all but gone over a strip: the slot and ghost there are what you see (Chrome hides it) // an only-tab window being dragged: see through it to the strip it is over
 
 // Where each window's tabs sit (client coordinates); refreshed while dragging, off the hot path. The
 // window being dragged (only-tab drags) is not a target; the window a card came from is.
 async function stripGeometry(rec) {
   const info = await rec.win.webContents.executeJavaScript(`(() => {
     const strip = document.getElementById('tabs').getBoundingClientRect();
-    return { bottom: strip.bottom, tabs: [...document.querySelectorAll('#tabs .tab')].filter((el) => !el.classList.contains('handed')).map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; }) };
+    // stripDropTargets (app.js): tabs and group labels on show, a label standing for its group's first tab.
+    const tabs = typeof stripDropTargets === 'function' ? stripDropTargets()
+      : [...document.querySelectorAll('#tabs .tab')].filter((el) => !el.matches('.handed, .held, .gathered')).map((el) => { const r = el.getBoundingClientRect(); return { id: Number(el.dataset.id), mid: r.left + r.width / 2 }; });
+    const el = document.getElementById('tabs');
+    const slotEl = document.querySelector('#tabs .tab-drop-slot');
+    const s = slotEl && slotEl.getBoundingClientRect();
+    return { hidden: document.visibilityState === 'hidden', bottom: strip.bottom, left: strip.left, right: strip.right, overflows: el.scrollWidth > el.clientWidth + 1, tabs, slot: s ? { x: s.left, y: s.top, h: s.height } : null };
   })()`).catch(() => null);
-  return info && { rec, bottom: info.bottom, tabs: info.tabs };
+  // Chromium marks a window 'hidden' when other windows (any app's) cover it completely: not a target.
+  return info && !info.hidden && { rec, bottom: info.bottom, left: info.left, right: info.right, overflows: info.overflows, tabs: info.tabs, slot: info.slot };
 }
 async function refreshDragStrips(d) {
   if (d.refreshing) return;
@@ -3349,11 +3808,9 @@ async function refreshDragStrips(d) {
     const next = new Map();
     // The window the card came from first: it is the one under the cursor most of the time.
     const recs = [...winRecs].sort((a, b) => (b === d.rec) - (a === d.rec));
-    for (const rec of recs) {
-      if ((d.single && rec === d.rec) || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized()) continue;
-      const g = await stripGeometry(rec);
-      if (g) next.set(rec, g);
-    }
+    // All at once, not one after another: a quick drop onto another window's strip finds it measured.
+    const found = await Promise.all(recs.filter((rec) => !((d.single && rec === d.rec) || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized())).map((rec) => stripGeometry(rec)));
+    for (const g of found) if (g) next.set(g.rec, g);
     if (tabDrag === d) d.strips = next;
   } finally { d.refreshing = false; }
 }
@@ -3366,7 +3823,8 @@ function whenPainted(rec, tab, then) {
   const waits = [rec.win.webContents.executeJavaScript(frames, true).catch(() => {})];
   if (tab && alive(tab)) {
     try { tab.view.webContents.invalidate(); } catch {}
-    waits.push(tab.view.webContents.executeJavaScript(frames, true).catch(() => {}));
+    // In an isolated world: the page's own requestAnimationFrame (which a site may have replaced) isn't used.
+    waits.push(tab.view.webContents.executeJavaScriptInIsolatedWorld(1003, [{ code: frames }], true).catch(() => {}));
   }
   let done = false;
   const go = () => { if (!done) { done = true; if (rcAlive(rec)) then(); } };
@@ -3375,12 +3833,20 @@ function whenPainted(rec, tab, then) {
 }
 const tabById = (rec, id) => tabsOf(rec).find((t) => t.id === id);
 // Shows a window that has just been given a tab, faded in once it has painted, and focuses it.
+// Lumen's own Reduce motion setting, Performance mode, or the system's (Windows: animations off).
+const motionReducedMain = () => Boolean(settingsBackend.prefs().reduceMotion) || Boolean(perfMode.active?.())
+  || systemPreferences?.getAnimationSettings?.().shouldRenderRichAnimation === false;
 function revealNewWindow(rec, tabId, then = () => {}) {
-  if (TEST_BACKGROUND) { then(); return; }
+  const count = tabsOf(rec).filter((t) => !t.closing).length;
+  const announce = () => { if (rcAlive(rec)) rec.win.webContents.send('tab:arrived', { count }); }; // for screen readers
+  if (TEST_BACKGROUND) { announce(); then(); return; }
   rec.win.setOpacity(0);
   rec.win.showInactive();
   whenPainted(rec, tabById(rec, tabId), () => {
     const w = rec.win;
+    announce();
+    const focus = () => { if (!tabDrag) w.focus(); }; // a new drag already under way keeps its window focused
+    if (motionReducedMain()) { w.setOpacity(1); focus(); then(); return; }
     const start = Date.now();
     const FADE_MS = 150;
     const step = setInterval(() => {
@@ -3389,7 +3855,7 @@ function revealNewWindow(rec, tabId, then = () => {}) {
       w.setOpacity(1 - (1 - k) ** 3);
       if (k === 1) clearInterval(step);
     }, 16);
-    w.focus();
+    focus();
     then();
   });
 }
@@ -3425,35 +3891,121 @@ const cardCall = (fn, ...args) => {
   if (!dragCard || dragCard.win.isDestroyed()) return;
   dragCard.win.webContents.executeJavaScript(`window.lumenCard && window.lumenCard.${fn}(...${JSON.stringify(args)})`).catch(() => {});
 };
-function showDragCard(d, tab, cursor) {
+// Resolves once the page's snapshot has been taken (or couldn't be): the tab's window may show another tab after that.
+// The page snapshot for the card, taken when a tab is first pulled towards the edge ('tab:dragprep'), so
+// the card shows the page from its first frame instead of an empty panel that fills in a moment later.
+let prepShot = null; // { tabId, src, at }
+function snapshotFor(tab) {
+  if (!alive(tab)) return Promise.resolve(null);
+  const scale = Math.max(1, ...screen.getAllDisplays().map((x) => x.scaleFactor || 1)); // sharp on any display it is dragged to
+  return tab.view.webContents.capturePage().then((image) => {
+    if (image.isEmpty()) return null;
+    return `data:image/jpeg;base64,${image.resize({ width: Math.round(CARD_WIDTH * scale), quality: 'good' }).toJPEG(82).toString('base64')}`;
+  }).catch(() => null);
+}
+function showDragCard(d, tab, cursor, { compact = false, count = null } = {}) {
   d.cardAt = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
-  if (TEST_BACKGROUND) return;
+  if (TEST_BACKGROUND) return Promise.resolve();
   const card = dragCardWindow();
   clearTimeout(card.hideTimer);
+  card.owner = d;
   const page = withWindow(d.rec, () => ({ ...contentBounds }));
   const shotHeight = Math.round(CARD_WIDTH * Math.min(0.75, Math.max(0.45, (page.height || 600) / (page.width || 800))));
   card.win.setBounds({ ...d.cardAt, width: CARD_WIDTH + CARD_PAD * 2, height: CARD_HEAD + shotHeight + CARD_PAD * 2 });
   card.loaded.then(() => {
-    if (tabDrag !== d) return;
-    cardCall('show', { title: tabTitle(tab) || 'New Tab', favicon: tab.favicon || null, dark: nativeTheme.shouldUseDarkColors, shotHeight });
+    if (tabDrag !== d || !(d.card || d.chip)) return; // put away (the strip left) before the card was ready
+    const icons = d.ghost?.favicons?.length ? d.ghost.favicons : tab.favicon ? [tab.favicon] : [];
+    const favicon = icons.find((u) => typeof u === 'string' && (u.startsWith('https:') || u.startsWith('data:image/'))) || null;
+    // A group dragged by its label is the group on the card too: its name and colour, as the slot shows it.
+    const g = d.group || d.chipGroup;
+    const group = g ? { name: g.name, color: g.color } : null;
+    const accent = settingsBackend.state().accent;
+    cardCall('show', { accent: nativeTheme.shouldUseDarkColors ? accent?.dark : accent?.light, title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: count || d.ids.length, still: motionReducedMain(), shot: early, compact, bare: !alive(tab) && !early });
     card.win.showInactive();
   });
-  // The page as it looks now, scaled for the card (at the screen's pixel density).
-  if (alive(tab)) {
-    const scale = screen.getDisplayNearestPoint(cursor).scaleFactor || 1;
-    tab.view.webContents.capturePage().then((image) => {
-      if (tabDrag !== d || image.isEmpty()) return null;
-      const small = image.resize({ width: Math.round(CARD_WIDTH * scale), quality: 'good' });
-      return card.loaded.then(() => { if (tabDrag === d) cardCall('shot', `data:image/jpeg;base64,${small.toJPEG(82).toString('base64')}`); });
-    }).catch(() => {});
-  }
+  const early = prepShot && prepShot.tabId === tab.id && Date.now() - prepShot.at < 4000 ? prepShot.src : null;
+  prepShot = null;
+  // A fresh snapshot anyway (the page may have changed since the hint); the card swaps it in quietly.
+  // (No picture at all, a sleeping tab say: the card folds to its title bar instead of an empty panel.)
+  const shot = compact ? Promise.resolve() : snapshotFor(tab).then((src) => { if (tabDrag === d) card.loaded.then(() => { if (tabDrag === d) cardCall(src ? 'shot' : 'bare', src); }); });
+  return Promise.race([shot, new Promise((r) => setTimeout(r, early ? 0 : 250))]);
 }
-function hideDragCard(kind) {
-  if (!dragCard || dragCard.win.isDestroyed()) return;
+// While its tab is out on the card, a window shows the tab beside it (as Chrome does), not a page whose tab
+// has left the strip; Escape brings the dragged tab back to the front.
+function stepAside(d) {
+  if (tabDrag !== d || !rcAlive(d.rec)) return;
+  withWindow(d.rec, () => {
+    if (!d.ids.includes(activeId)) return;
+    const i = tabs.findIndex((t) => t.id === activeId);
+    // A neighbour the strip shows: one hidden in a collapsed group would come to the front unseen.
+    const ok = (t) => !d.ids.includes(t.id) && !t.closing;
+    const shown = (t) => ok(t) && !(t.groupId && tabGroups.groups.get(t.groupId)?.collapsed);
+    const near = (test) => tabs.slice(i).find(test) || tabs.slice(0, i).reverse().find(test);
+    const stay = near(shown) || near(ok);
+    if (!stay) return;
+    d.origActive = activeId;
+    // A sleeping neighbour is only brought to the front of the strip. Waking it would reload the
+    // page, and cancelling the drag would leave it loaded. It wakes after the drop if it is still
+    // the tab in front (wakeDeferredAside).
+    if (stay.sleeping) { d.asideAsleep = stay.id; switchTab(stay.id, { wake: false }); }
+    else switchTab(stay.id);
+  });
+}
+function wakeDeferredAside(d) {
+  if (!d?.asideAsleep || !rcAlive(d.rec)) return;
+  withWindow(d.rec, () => {
+    const front = tabs.find((t) => t.id === activeId);
+    if (front?.sleeping && front.id === d.asideAsleep) switchTab(front.id);
+  });
+}
+// Puts away the card of drag `d`: never the card of a newer drag that has taken it over meanwhile (a
+// drop's window can take a moment to show, and a quick second drag reuses the one card window).
+function hideDragCard(d, kind, landing = null) {
+  if (!dragCard || dragCard.win.isDestroyed() || dragCard.owner !== d) return;
+  if (kind === 'join' && landing && rcAlive(landing.rec) && !motionReducedMain() && !TEST_BACKGROUND) {
+    const rec = landing.rec;
+    const ids = JSON.stringify(landing.ids || [d.tabId]);
+    // Where it lands, measured now: the tab itself (placed, still invisible) or else the slot kept open for it.
+    rec.win.webContents.executeJavaScript(`typeof landingRect === 'function' ? landingRect(${ids}) : null`, true).catch(() => null).then((slot) => {
+      if (dragCard?.owner !== d) return;
+      if (slot) glideCard(d, rec, slot, landing.ids);
+      else { cardCall('hide', 'join'); if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); }
+    });
+    return;
+  }
   cardCall('hide', kind);
   const card = dragCard;
   clearTimeout(card.hideTimer);
-  card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && !tabDrag?.card) card.win.hide(); }, 220);
+  card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && card.owner === d) card.win.hide(); }, 220);
+}
+
+// A drop into a strip: the card (as the tab chip) slides into the slot over about 120 ms, then fades as the real tab
+// takes its place, instead of shrinking away where the cursor let go (as Chrome and Arc land a tab).
+function glideCard(d, rec, slot) {
+  const card = dragCard;
+  const content = rec.win.getContentBounds();
+  const to = { x: Math.round(content.x + slot.x - CARD_PAD), y: Math.round(content.y + slot.y - CARD_PAD) };
+  const [x0, y0] = card.win.getPosition();
+  // Room for a landing wider than the card (two tabs, a group): the window grows to the right, its left edge kept.
+  const [cw, ch] = card.win.getSize();
+  const need = Math.max(CARD_WIDTH, Math.round(slot.w || 0)) + CARD_PAD * 2;
+  if (need > cw) card.win.setSize(need, ch);
+  cardCall('compact', true);
+  cardCall('land', Math.round(slot.w || 0), Math.round(slot.h || 0)); // and takes the tab's width, height and corners on the way
+  const t0 = Date.now();
+  const ease = (t) => 1 - (1 - t) ** 3;
+  clearInterval(card.glide);
+  card.glide = setInterval(() => {
+    if (card.win.isDestroyed() || card.owner !== d) { clearInterval(card.glide); return; }
+    const t = Math.min(1, (Date.now() - t0) / 120);
+    card.win.setPosition(Math.round(x0 + (to.x - x0) * ease(t)), Math.round(y0 + (to.y - y0) * ease(t)));
+    if (t < 1) return;
+    clearInterval(card.glide);
+    cardCall('hide', 'land');
+    if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); // the real tab shows as the chip fades over it
+    clearTimeout(card.hideTimer);
+    card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && card.owner === d) card.win.hide(); }, 160);
+  }, 16);
 }
 
 // ---- a window made ready for a tear-off before it happens
@@ -3463,7 +4015,7 @@ function hideDragCard(kind) {
 // closes after a while unused or with the last window.
 let spareRec = null;
 let spareIdle = null;
-const SPARE_IDLE_MS = 30000;
+const SPARE_IDLE_MS = 60000; // kept warm a minute: a quick flick-and-drop finds it ready, without holding memory for long
 function closeSpare() {
   clearTimeout(spareIdle);
   const rec = spareRec;
@@ -3495,22 +4047,40 @@ function takeSpare(size) {
 }
 const isSpare = (rec) => Boolean(rec?.prepared);
 
-function setDragHover(d, hit) {
-  const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId;
+function setDragHover(d, hit, { cancel = false, chipAs = 'cancel', dropping = false } = {}) {
+  const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId && Boolean(d.hover?.outside) === Boolean(hit?.outside) && (d.hover?.edge || 0) === (hit?.edge || 0);
   if (same) return;
-  if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', null);
+  if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', cancel || !dropping ? { cancel: true } : null);
   const wasOver = Boolean(d.hover);
+  d.hover0 = d.hover; // (the strip a drop lands in: the chip glides into its slot)
   d.hover = hit;
-  if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId });
+  // The tab itself is the chip under the cursor, so the slot is only the room it will take (ghost: false), as wide as
+  // the tabs that come with it.
+  if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId, outside: Boolean(hit.outside), edge: hit.edge || 0, tab: d.ghost, ghost: false });
   if (d.card) { if (wasOver !== Boolean(hit)) cardCall('compact', Boolean(hit)); return; }
-  if (!TEST_BACKGROUND && rcAlive(d.rec)) { try { d.rec.win.setOpacity(hit ? DRAG_OVER_STRIP_OPACITY : 1); } catch {} }
+  if (!TEST_BACKGROUND && rcAlive(d.rec)) {
+    try { d.rec.win.setOpacity(hit ? DRAG_OVER_STRIP_OPACITY : 1); } catch {}
+    // The window is out of sight over a strip, so the tab itself, as a small chip, stays under the cursor (as in Chrome).
+    const tab = tabsOf(d.rec).find((t) => t.id === (d.tabId ?? d.ids?.[0]));
+    if (hit && !d.chip && tab) { d.chip = true; showDragCard(d, tab, cursorPoint(), { compact: true, count: d.ghost?.count }); }
+    else if (!hit && d.chip) { d.chip = false; if (chipAs !== 'join') hideDragCard(d, chipAs); } // a merge lands its chip once the tabs are placed
+  }
 }
 function tickTabDrag() {
   const d = tabDrag;
   if (!d) return;
   if (!rcAlive(d.rec)) { endDragQuietly(d); return; } // the window was closed under the drag
-  if (Date.now() - d.started > tabDragTimeoutMs) { finishTabDrag('commit'); return; }
+  // A release that never came (the mouse-up went somewhere Lumen can't see): nothing is moved on a guess.
+  // A card drag is dropped; a dragged window stays where it is, without joining a strip.
   const cursor = cursorPoint();
+  if (!d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y) { d.lastCursor = cursor; d.movedAt = Date.now(); }
+  // Measured from the last time the mouse moved: someone holding still over a strip isn't cut off.
+  if (Date.now() - (d.movedAt || d.started) > (!d.hover ? Math.min(tabDragTimeoutMs, 30000) : tabDragTimeoutMs)) {
+    d.rec.win.webContents.send('tab:dragabort'); // the strip lets go of its drag, and shows the tab again
+    setDragHover(d, null);
+    finishTabDrag(d.card ? 'cancel' : 'commit');
+    return;
+  }
   if (d.card) {
     const at = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
     if (at.x !== d.cardAt.x || at.y !== d.cardAt.y) {
@@ -3520,18 +4090,50 @@ function tickTabDrag() {
   } else {
     const area = screen.getDisplayNearestPoint(cursor).workArea;
     const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
-    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setBounds(b); d.last = b; }
+    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setPosition(b.x, b.y); d.last = b; } // position only: no size drift across displays
+    if (d.chip && dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(cursor.x - CARD_HOLD.x, cursor.y - CARD_HOLD.y);
   }
-  if (Date.now() - d.stripsAt > 250) { d.stripsAt = Date.now(); refreshDragStrips(d); }
-  const strips = [...d.strips.values()].filter((g) => rcAlive(g.rec) && !g.rec.win.isMinimized())
-    .map((g) => ({ key: g.rec, bounds: g.rec.win.getContentBounds(), bottom: g.bottom, tabs: g.tabs }));
-  const hit = tabDragMath.stripHit(cursor, strips);
-  setDragHover(d, hit && { rec: hit.key, beforeId: hit.beforeId });
+  if (Date.now() - d.stripsAt > 120) { d.stripsAt = Date.now(); refreshDragStrips(d); }
+  const hit = tabDragMath.stripHit(cursor, dropTargets(d), 6, d.hover?.rec ?? null);
+  // A group is shown (and lands) after a group it is over, never inside it.
+  const groupsAlong = d.group || (d.single && tabsOf(d.rec).some((t) => t.groupId)); // groups never land inside another group
+  const beforeId = hit && groupsAlong ? withWindow(hit.key, () => {
+    const rest = tabs.filter((t) => !d.ids.includes(t.id)); // the dragged group's own tabs are not where it lands
+    let i = rest.findIndex((t) => t.id === hit.beforeId);
+    if (i === -1) return null;
+    while (i > 0 && i < rest.length && rest[i - 1].groupId && rest[i - 1].groupId === rest[i].groupId) i++;
+    return rest[i]?.id ?? null;
+  }) : hit?.beforeId;
+  // Near the edge of an overflowing strip it is over, that strip scrolls (as it does for a drag within it).
+  let edge = 0;
+  const g = hit && d.strips.get(hit.key);
+  if (g?.overflows) {
+    const x = cursor.x - hit.key.win.getContentBounds().x;
+    edge = x < g.left + 28 ? -1 : x > g.right - 28 ? 1 : 0;
+  }
+  setDragHover(d, hit && { rec: hit.key, beforeId: beforeId ?? null, outside: groupsAlong ? true : Boolean(hit.outside), edge });
+  if (edge) d.stripsAt = 0; // the tabs are moving under it: measure again at once
+}
+// Every window that could be under the cursor, front first: the strips a tab can join, and the windows that
+// only get in the way (private windows, a normal window whose strip hasn't been measured yet).
+function dropTargets(d) {
+  const out = [];
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed() || !w.isVisible() || w.isMinimized() || (dragCard && w === dragCard.win)) continue;
+    if (d.single && w === d.rec.win) continue; // the window being dragged is under the cursor by definition
+    const rec = [...winRecs].find((r) => r.win === w);
+    if (rec && isSpare(rec)) continue;
+    const g = rec && d.strips.get(rec);
+    out.push(g ? { key: rec, win: w, bounds: w.getContentBounds(), bottom: g.bottom, tabs: g.tabs } : { win: w, bounds: w.getBounds(), occluder: true });
+  }
+  return out.sort((a, b) => frontRank(a.win) - frontRank(b.win));
 }
 function endDragQuietly(d) {
   clearInterval(d.timer);
   if (tabDrag === d) tabDrag = null;
-  if (d.card) hideDragCard('cancel');
+  setDragHover(d, null); // the strip it was over closes its slot
+  if (rcAlive(d.rec)) d.rec.win.webContents.removeListener('before-input-event', d.escape);
+  if (d.card || d.chip) hideDragCard(d, 'cancel');
 }
 function finishTabDrag(reason) {
   const d = tabDrag;
@@ -3541,15 +4143,41 @@ function finishTabDrag(reason) {
   const rec = d.rec;
   const target = d.hover;
   if (rcAlive(rec)) rec.win.webContents.removeListener('before-input-event', d.escape);
-  setDragHover(d, null);
-  if (!rcAlive(rec)) { if (d.card) hideDragCard('cancel'); return; }
+  const merging = !d.card && reason === 'commit' && target && rcAlive(target.rec) && rcAlive(rec);
+  const hadChip = Boolean(d.chip);
+  if (merging) { try { rec.win.hide(); } catch {} } // it goes as it merges (closing takes a moment): no flash back to full opacity
+  setDragHover(d, null, { cancel: reason !== 'commit', chipAs: merging ? 'join' : 'cancel', dropping: reason === 'commit' }); // a cancel closes the hovered strip's slot at once
+  if (!rcAlive(rec)) { if (d.card || d.chip) hideDragCard(d, 'cancel'); return; }
   if (d.card) { finishCardDrag(d, reason, target); return; }
   // An only-tab window: it stays where it was dropped, joins the strip it is over, or goes back (Escape).
-  if (!TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
+  if (!merging && !TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
+  rec.win.webContents.send('tab:dragdone'); // its strip shows the tab again, however the drag ended
   if (reason === 'commit') {
-    if (target && rcAlive(target.rec)) {
+    if (merging) {
+      // The whole window merges into that strip: every tab it holds, the dragged one shown, and its groups
+      // still groups there.
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
-      moveTabBetween(rec, target.rec, d.tabId, at === -1 ? undefined : at);
+      const all = tabsOf(rec).filter((t) => !t.closing).map((t) => t.id);
+      const groups = [...new Set(tabsOf(rec).map((t) => t.groupId).filter(Boolean))].map((g) => groupForMove(rec, g)).filter(Boolean);
+      const dst = target.rec;
+      if (hadChip && !motionReducedMain() && !TEST_BACKGROUND) dst.win.webContents.send('tab:arriving', { ids: [d.tabId, ...all.filter((x) => x !== d.tabId)] });
+      d.mergeIds = all;
+      let index = at === -1 ? undefined : at;
+      if (groups.length && index !== undefined) index = withWindow(dst, () => outsideGroups(index)); // its groups don't split one there
+      const merged = batchTabs(() => {
+        const ok = moveTabsBetween(rec, dst, all, index, { active: d.tabId });
+        if (ok) for (const g of groups) regroup(dst, g.ids, g.group);
+        // No groups of its own and dropped right after a group's label: into that group, as the slot showed.
+        if (ok && !groups.length && !target.outside && target.beforeId != null) withWindow(dst, () => {
+          const g = tabs.find((t) => t.id === target.beforeId)?.groupId;
+          if (g && tabGroups.groups.has(g)) { for (const t of tabs) if (all.includes(t.id) && !t.pinned) { t.groupId = g; t.userRemoved = false; } sendTabs(); }
+        });
+        return ok;
+      }); // one update
+      if (!merged && rcAlive(rec)) { try { rec.win.setOpacity(1); rec.win.show(); rec.win.focus(); } catch {} } // it didn't happen: the window comes back
+      // The chip lands in the tabs' place (they show as it arrives), or goes if the merge didn't happen.
+      if (merged) hideDragCard(d, 'join', { rec: dst, ids: [d.tabId, ...all.filter((x) => x !== d.tabId)] });
+      else { hideDragCard(d, 'cancel'); if (rcAlive(dst)) dst.win.webContents.send('tab:landed'); }
     } else {
       rec.win.focus();
     }
@@ -3563,54 +4191,96 @@ function finishTabDrag(reason) {
 function finishCardDrag(d, reason, target) {
   const src = d.rec;
   const settled = () => { if (rcAlive(src)) src.win.webContents.send('tab:dragdone'); };
-  if (reason !== 'commit' || !tabById(src, d.tabId)) { hideDragCard('cancel'); settled(); return; }
+  const ids = d.ids.filter((id) => tabById(src, id) && !tabById(src, id).closing);
+  const putBack = () => { if (d.origActive && tabById(src, d.origActive)) withWindow(src, () => switchTab(d.origActive)); };
+  if (reason !== 'commit' || !ids.includes(d.tabId)) { putBack(); hideDragCard(d, 'cancel'); settled(); return; }
   if (target && rcAlive(target.rec)) {
     if (target.rec === src) {
-      // Along its own strip: the index among the other tabs, as the marker showed it.
-      withWindow(src, () => {
-        const others = tabs.filter((t) => t.id !== d.tabId);
-        const at = target.beforeId == null ? others.length : others.findIndex((t) => t.id === target.beforeId);
-        moveTab(d.tabId, at === -1 ? others.length : at);
-      });
+      // Along its own strip, before the tab the slot was opened in front of (the end if none).
+      // One strip update with the dragged tab already in front (an update showing the stepped-aside neighbour
+      // active would end the multi-selection), and the selection kept.
+      batchTabs(() => withWindow(src, () => {
+        const before = target.beforeId != null && !ids.includes(target.beforeId) ? target.beforeId : null;
+        if (ids.length === 1 && !d.group && tabs.find((t) => t.id === ids[0])?.pinned) {
+          const others = tabs.filter((t) => t.id !== ids[0]);
+          const at = before == null ? others.length : others.findIndex((t) => t.id === before);
+          moveTab(ids[0], at === -1 ? others.length : at);
+        } else {
+          // One splice, landing exactly where the slot was: a group stays whole, a tab joins a group only
+          // if the slot was inside it.
+          // The group the slot showed (tinted between two of its tabs), or none: the same rule as a drag within the strip.
+          const rest = tabs.filter((t) => !ids.includes(t.id));
+          const k = before == null ? rest.length : Math.max(0, rest.findIndex((t) => t.id === before));
+          // Right after a group's label (not outside it) joins that group, as between two of its tabs does.
+          const join = rest[k - 1]?.groupId && rest[k - 1].groupId === rest[k]?.groupId ? rest[k - 1].groupId : !target.outside && rest[k]?.groupId && rest[k - 1]?.groupId !== rest[k].groupId ? rest[k].groupId : null;
+          const would = [...rest.slice(0, k).map((t) => t.id), ...ids, ...rest.slice(k).map((t) => t.id)];
+          const home = would.join() === tabs.map((t) => t.id).join() && ids.every((id) => (tabs.find((t) => t.id === id)?.groupId || null) === (d.group ? tabs.find((t) => t.id === id)?.groupId || null : join));
+          if (!home) moveBlock(ids, before, d.group ? d.groupId : null, d.group ? undefined : join); // dropped back at its own place: nothing to do
+        }
+        if (activeId !== d.tabId && tabs.some((t) => t.id === d.tabId)) switchTab(d.tabId);
+      }));
+      keepSelection(src, ids);
+      wakeDeferredAside(d); // the neighbour loads only if the dragged tab did not come back to the front
+      if (!motionReducedMain() && !TEST_BACKGROUND && dragCard?.owner === d && rcAlive(src)) src.win.webContents.send('tab:arriving', { ids: [d.tabId, ...ids.filter((x) => x !== d.tabId)] });
     } else {
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
-      moveTabBetween(src, target.rec, d.tabId, at === -1 ? undefined : at);
+      const gliding = !motionReducedMain() && !TEST_BACKGROUND && dragCard?.owner === d;
+      if (gliding) target.rec.win.webContents.send('tab:arriving', { ids: [d.tabId, ...ids.filter((x) => x !== d.tabId)] });
+      d.landed = moveTabsBetween(src, target.rec, ids, at === -1 ? undefined : at, { active: d.tabId, group: d.group });
+      if (!d.landed && rcAlive(target.rec)) target.rec.win.webContents.send('tab:dropat', { cancel: true });
+      if (!d.landed && gliding) target.rec.win.webContents.send('tab:landed');
+      if (d.landed) {
+        // Dropped right after a group's label in the other window: into that group (the slot showed it inside).
+        if (!d.group && !target.outside && target.beforeId != null) withWindow(target.rec, () => {
+          const g = tabs.find((t) => t.id === target.beforeId)?.groupId;
+          if (g && tabGroups.groups.has(g)) { for (const t of tabs) if (ids.includes(t.id) && !t.pinned) { t.groupId = g; t.userRemoved = false; } sendTabs(); }
+        });
+        keepSelection(target.rec, ids);
+      }
+      wakeDeferredAside(d);
     }
-    hideDragCard('join');
+    hideDragCard(d, d.landed === false ? 'cancel' : 'join', d.landed === false ? null : { rec: target.rec, ids: [d.tabId, ...ids.filter((x) => x !== d.tabId)] });
     settled();
     return;
   }
-  if (closableTabCount(src) < 2) { hideDragCard('cancel'); settled(); return; } // its other tabs closed meanwhile
-  // A window of its own, placed so the tab sits under the cursor as it will in the new strip.
+  if (closableTabCount(src) - ids.length < 1) { putBack(); hideDragCard(d, 'cancel'); settled(); return; } // its other tabs closed meanwhile
+  // A window of its own, placed so the tab sits under the cursor as it will in the new strip, and no
+  // bigger than the display it opens on.
   const cursor = cursorPoint();
-  const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), screen.getDisplayNearestPoint(cursor).workArea);
+  const area = screen.getDisplayNearestPoint(cursor).workArea;
+  d.size = tabDragMath.fitToDisplay(d.size, area);
+  const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
   const newWindowFor = () => {
-    if (!rcAlive(src) || !tabById(src, d.tabId)) { hideDragCard('cancel'); settled(); return; }
+    if (!rcAlive(src) || !tabById(src, d.tabId)) { hideDragCard(d, 'cancel'); settled(); return; }
+    if (dragCard?.owner === d) cardCall('wait'); // a window's UI is loading: the card shows it is opening
     const rec = createWindow({
       size: d.size, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src,
-      adopt: { src, tabId: d.tabId, focus: false, done: (ok) => { settled(); if (ok) revealNewWindow(rec, d.tabId, () => hideDragCard('drop')); else hideDragCard('cancel'); } },
+      adopt: { src, tabId: d.tabId, ids, group: d.group, focus: false, done: (ok) => { settled(); if (ok) { wakeDeferredAside(d); revealNewWindow(rec, d.tabId, () => { hideDragCard(d, 'drop'); keepSelection(rec, ids); }); } else hideDragCard(d, 'cancel'); } },
     });
   };
   const landIn = (rec) => {
-    rec.win.setPosition(at.x, at.y);
-    if (!moveTabBetween(src, rec, d.tabId, 0, { focus: false })) { rec.win.close(); hideDragCard('cancel'); settled(); return; }
+    rec.win.setBounds({ x: at.x, y: at.y, width: d.size.width, height: d.size.height }); // one call: no size drift on mixed-DPI setups
+    if (!moveTabsBetween(src, rec, ids, 0, { focus: false, active: d.tabId, group: d.group })) { rec.win.close(); hideDragCard(d, 'cancel'); settled(); return; }
+    wakeDeferredAside(d);
     settled();
-    revealNewWindow(rec, d.tabId, () => hideDragCard('drop'));
+    revealNewWindow(rec, d.tabId, () => { hideDragCard(d, 'drop'); keepSelection(rec, ids); });
   };
   const spare = takeSpare(d.size);
   if (spare) { landIn(spare); return; }
   if (rcAlive(spareRec) && spareRec.prepared) {
-    // Still loading: the card waits where it was dropped, then the window takes its place.
+    // Still loading: the card waits where it was dropped (showing that it is opening), then the window takes its place.
     const waiting = spareRec;
     let done = false;
-    const fallback = setTimeout(() => { if (!done) { done = true; waiting.whenPrepared = null; newWindowFor(); } }, 4000);
-    waiting.whenPrepared = () => {
+    cardCall('wait');
+    const ready = () => {
       if (done) return;
       done = true;
       clearTimeout(fallback);
-      const r = takeSpare(d.size);
+      const r = takeSpare(d.size); // a second drop that waited too gets a window of its own
       if (r) landIn(r); else newWindowFor();
     };
+    const fallback = setTimeout(() => { if (!done) { done = true; waiting.whenPrepared = (waiting.whenPrepared || []).filter((f) => f !== ready); newWindowFor(); } }, 1500);
+    waiting.whenPrepared = [...(waiting.whenPrepared || []), ready];
     return;
   }
   newWindowFor();
@@ -3620,10 +4290,21 @@ function beginTabDrag(src, tabId, grab) {
   const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
   if (!tab || !rcAlive(src)) return false;
   const cursor = cursorPoint();
-  const single = closableTabCount(src) < 2;
-  const d = tabDrag = { started: Date.now(), tabId, single, card: !single, rec: src, strips: new Map(), stripsAt: Date.now(), hover: null, last: null };
+  // A multi-selection travels together, and so does a group dragged by its label; dragging every tab of a
+  // window drags the window.
+  const moving = Number.isInteger(grab.group) ? groupForMove(src, grab.group) : null;
+  const ids = moving?.ids.includes(tabId) ? moving.ids : tabsActedOn(src, tabId, grab.ids);
+  const single = closableTabCount(src) - ids.length < 1;
+  const d = tabDrag = { started: Date.now(), tabId, ids: single ? [tabId] : ids, single, card: !single, rec: src, strips: new Map(), stripsAt: Date.now(), hover: null, last: null };
+  if (moving?.ids.includes(tabId) && !single) { d.group = moving.group; d.groupId = grab.group; }
+  if (moving?.ids.includes(tabId) && single) d.chipGroup = moving.group; // the whole window is that group: its chip says so
+  // What a strip it hovers shows in the slot it opens: the tab itself (its icon and title), as it will be there.
+  const entry = withWindow(src, () => tabState().tabs.find((t) => t.id === tabId));
+  const ghostGroup = d.group || d.chipGroup;
+  d.ghost = entry && { group: ghostGroup ? { name: ghostGroup.name, color: ghostGroup.color } : null, title: entry.title, favicons: entry.favicons || [], page: entry.page || null, sleeping: Boolean(entry.sleeping), pinned: (single ? tabsOf(src).filter((t) => !t.closing) : tabsOf(src).filter((t) => d.ids.includes(t.id))).every((t) => t.pinned), count: single ? tabsOf(src).filter((t) => !t.closing).length : d.ids.length };
   const w = src.win;
   if (single) {
+    if (!TEST_BACKGROUND) dragCardWindow(); // loaded now, so the chip shows the moment a strip is reached
     // The whole window follows the cursor, like its title bar; a maximized one is restored first.
     const before = w.getBounds();
     d.origin = { bounds: before, maximized: w.isMaximized() };
@@ -3636,8 +4317,12 @@ function beginTabDrag(src, tabId, grab) {
     // tab under the cursor as it sits in the strip.
     const size = w.isMaximized() ? w.getNormalBounds() : w.getBounds();
     d.size = { width: size.width, height: size.height };
-    d.grab = { x: grab.stripX, y: grab.y };
-    showDragCard(d, tab, cursor);
+    // layout: where the grabbed point will sit in the new strip (unscrolled, with the tabs that
+    // will be to its left). stripX is the same number when the renderer already worked it out,
+    // and what tests pass when they don't send a layout.
+    const laid = grab.layout ? tabDragMath.grabPoint(grab.layout) : null;
+    d.grab = { x: Number.isFinite(laid) ? laid : grab.stripX, y: grab.pressY || grab.y };
+    showDragCard(d, tab, cursor).then(() => stepAside(d));
     prepareDragWindow(src); // if the renderer's early hint didn't come
   }
   d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
@@ -3650,12 +4335,21 @@ const num = (v) => (Number.isFinite(v) ? v : 0);
 ipcMain.on('tab:dragstart', (event, id, grab) => {
   const src = recOfSender(event.sender); // a private window's UI is not in winRecs: refused
   if (!src || isSpare(src) || !Number.isInteger(id)) return;
-  beginTabDrag(src, id, { x: num(grab?.x), y: num(grab?.y), stripX: num(grab?.stripX) });
+  const ids = Array.isArray(grab?.ids) ? grab.ids.filter(Number.isInteger).slice(0, 1000) : null;
+  beginTabDrag(src, id, { x: num(grab?.x), y: num(grab?.y), stripX: num(grab?.stripX), pressY: num(grab?.pressY), ids, group: Number.isInteger(grab?.group) ? grab.group : null, layout: grab?.layout && typeof grab.layout === 'object' ? grab.layout : null });
+});
+// The pointer moved (the page holding it reports every move): the card or window follows at once, on the
+// mouse's own rhythm, instead of waiting for the next poll.
+ipcMain.on('tab:dragmove', (event) => {
+  if (tabDrag && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
 });
 // A tab is being pulled towards the edge of the strip: it may come out next, so have a window ready.
-ipcMain.on('tab:dragprep', (event) => {
+ipcMain.on('tab:dragprep', (event, tabId) => {
   const src = recOfSender(event.sender);
-  if (src && !isSpare(src) && !tabDrag) prepareDragWindow(src);
+  if (!src || isSpare(src) || tabDrag) return;
+  prepareDragWindow(src);
+  const tab = Number.isInteger(tabId) && !TEST_BACKGROUND ? tabById(src, tabId) : null;
+  if (tab) snapshotFor(tab).then((shot) => { if (shot && !tabDrag) prepShot = { tabId, src: shot, at: Date.now() }; });
 });
 // The release (or Escape) as seen by the window the tab is dragged from (or, for an only-tab drag, the
 // window being dragged).
@@ -3665,23 +4359,30 @@ const dragEnder = (reason) => (event) => {
 };
 ipcMain.on('tab:dragend', dragEnder('commit'));
 ipcMain.on('tab:dragcancel', dragEnder('cancel'));
-function tearOffTab(src, tabId, point) {
+function tearOffTab(src, tabId, point, ids = [tabId], group = null) {
   const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
-  if (!tab || closableTabCount(src) < 2) return false; // the only tab of a window stays where it is
-  const size = src.win.getSize();
-  const area = screen.getDisplayNearestPoint(point).workArea;
-  const position = { x: Math.max(area.x, Math.round(point.x - 120)), y: Math.max(area.y, Math.round(point.y - 16)) };
+  ids = ids.filter((id) => tabsOf(src).some((t) => t.id === id && !t.closing));
+  if (!ids.includes(tabId)) ids = [tabId];
+  if (!tab || closableTabCount(src) - ids.length < 1) return false; // a window's last tabs stay where they are
+  const anchor = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : { x: 0, y: 0 };
+  const area = screen.getDisplayNearestPoint(anchor).workArea;
+  // getSize() on a maximized window is the maximized size, so the new window covered the old one
+  // and hung off the work area. The restored size is what the drag path uses, and the window is
+  // kept fully on the work area (it is not being dragged, so it should not slide off).
+  const normal = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+  const fit = tabDragMath.fitToDisplay({ width: normal.width, height: normal.height }, area);
+  const at = tabDragMath.placeOnWorkArea({ x: anchor.x, y: anchor.y, width: fit.width, height: fit.height }, area);
   // Hidden until the tab has arrived and painted, then faded in and focused (revealNewWindow).
-  const spare = takeSpare({ width: size[0], height: size[1] });
+  const spare = takeSpare({ width: at.width, height: at.height });
   if (spare) {
-    spare.win.setPosition(position.x, position.y);
-    if (moveTabBetween(src, spare, tabId, 0, { focus: false })) revealNewWindow(spare, tabId);
+    spare.win.setBounds({ x: at.x, y: at.y, width: at.width, height: at.height }); // one call: no size drift on mixed-DPI setups
+    if (moveTabsBetween(src, spare, ids, 0, { focus: false, active: tabId, group })) revealNewWindow(spare, tabId, () => keepSelection(spare, ids));
     else spare.win.close();
     return true;
   }
   const rec = createWindow({
-    size: { width: size[0], height: size[1] }, position, hidden: true, boundsFrom: src,
-    adopt: { src, tabId, focus: false, done: () => { if (rcAlive(rec)) revealNewWindow(rec, tabId); } },
+    size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: src,
+    adopt: { src, tabId, ids, group, focus: false, done: (ok) => { if (ok && rcAlive(rec)) revealNewWindow(rec, tabId, () => keepSelection(rec, ids)); } },
   });
   return true;
 }
@@ -3704,13 +4405,16 @@ if (TEST) {
     setDragTimeout: (ms) => { tabDragTimeoutMs = ms; },
     spare: () => (rcAlive(spareRec) && spareRec.preparedReady ? spareRec.win.id : null), // prepareDragWindow's window, once loaded
     dragState: () => tabDrag && {
-      windowId: tabDrag.rec.win.id, ready: true, single: tabDrag.single, card: tabDrag.card,
+      windowId: tabDrag.rec.win.id, ready: true, single: tabDrag.single, card: tabDrag.card, ids: [...tabDrag.ids],
       cardAt: tabDrag.cardAt || null, // where the card's window is (a card drag), shown or not
       hover: tabDrag.hover && { windowId: tabDrag.hover.rec.win.id, beforeId: tabDrag.hover.beforeId },
       bounds: rcAlive(tabDrag.rec) ? tabDrag.rec.win.getBounds() : null,
     },
     cardHold: () => ({ ...CARD_HOLD }),
-    tearOff: (srcWindowId, tabId, point) => tearOffTab([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, point),
+    tearOff: (srcWindowId, tabId, point, ids) => tearOffTab([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, point, ids),
+    group: (windowId, ids, name) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => { const g = tabGroups.create(name, ids); sendTabs(); return g.id; }),
+    pin: (windowId, tabId, on) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => pinTab(tabId, on)),
+    setSelection: (windowId, ids) => { const rec = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId); if (rec) rec.selection = ids; },
     tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => (tabMenuTemplate(tabId) || []).map((i) => ({ label: i.label, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
   };
 }
@@ -3723,6 +4427,10 @@ const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // `prepared`: a hidden window for a tear-off that may come (prepareDragWindow): it loads its UI and waits.
 // `boundsFrom`: a window of the same size whose page area this one starts with, so the tab's page is at
 // its place from the first frame instead of jumping there once this window's UI reports its own.
+// Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
+let tabsGateOpen = false;
+let openTabsGate = () => {};
+const tabsGate = new Promise((resolve) => { openTabsGate = () => { tabsGateOpen = true; resolve(); }; });
 function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
@@ -3830,14 +4538,29 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       rec.preparedReady = true;
       const waiting = rec.whenPrepared; // a drop that came while this window was loading (finishCardDrag)
       rec.whenPrepared = null;
-      if (waiting) setImmediate(waiting);
+      if (waiting) setImmediate(() => waiting.forEach((f) => f()));
       return;
     }
+    // A window's first tabs wait for extensions and the filter lists (every tab is registered with chrome.tabs and
+    // filtered from its first request); the window and its UI load meanwhile (see tabsGate at start-up).
+    if (!adopt && !tabsGateOpen) { tabsGate.then(() => { if (rcAlive(rec)) withWindow(rec, () => settle()); }); return; }
+    settle();
+  });
+  function settle() {
     if (adopt) {
       // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
-      const adopted = moveTabBetween(adopt.src, rec, adopt.tabId, 0, { focus: adopt.focus !== false });
-      if (!adopted && !tabs.length) openTab();
-      adopt.done?.(adopted);
+      const adopted = moveTabsBetween(adopt.src, rec, adopt.ids || [adopt.tabId], 0, { focus: adopt.focus !== false, active: adopt.tabId, group: adopt.group || null });
+      if (!adopted) {
+        // The tab is gone (closed, or its window closed) while this window was loading. It isn't wanted then,
+        // unless it is the only window left: that one gets a new tab rather than leaving no window at all.
+        const others = [...winRecs].some((r) => r !== rec && rcAlive(r) && !isSpare(r));
+        adopt.done?.(false);
+        if (others) { setImmediate(() => { if (rcAlive(rec)) rec.win.close(); }); return; }
+        if (!tabs.length) openTab();
+        if (!rec.win.isVisible()) rec.win.show();
+      } else {
+        adopt.done?.(true);
+      }
     } else {
       restoreSession(restore);
     }
@@ -3851,12 +4574,16 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     // After an update, the release notes come up once, a moment after the restored tabs (only the
     // first normal window asks; whatsNew.check runs once per launch).
     if (firstWindow) setTimeout(() => { if (!w.isDestroyed()) whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message)); }, 1200);
-  });
+    // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
+    if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
+    if (firstWindow) setTimeout(() => setup.isDefault().catch(() => {}), 2000).unref?.(); // (for the app menu's item)
+  }
   return rec;
 }
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
+  else if (settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
   quitting = true;
 });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -3907,13 +4634,10 @@ async function openFileDialog() {
 }
 // Registering is the user's choice (the ⋯ menu), never done silently. Windows then needs its own
 // Default apps page to confirm; macOS asks by itself.
-function makeDefaultBrowser() {
-  // Run from source (`electron .`), the registered command must include the app folder.
-  const args = process.defaultApp ? [process.execPath, [path.resolve(process.argv[1] || '.')]] : [];
-  for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme, ...args);
-  if (process.platform === 'win32') shell.openExternal('ms-settings:defaultapps').catch(() => {});
-}
-const isDefaultBrowser = () => app.isDefaultProtocolClient('https');
+// (features/setup.js: on Windows Lumen registers as a browser so Default apps can offer it, and the user's real
+// choice is read back, not the protocol handler.)
+function makeDefaultBrowser() { setup.makeDefault().catch(() => {}); }
+const isDefaultBrowser = () => setup.lastDefault() ?? false;
 
 function groupTabsFor(name, ids) {
   const known = ids.filter((id) => tabs.some((t) => t.id === id));
@@ -4285,6 +5009,11 @@ const skillPageScripts = require('./page-scripts');
 const SKILL_WORLD = 1002; // a JavaScript world of our own, apart from the page's and the agent's
 const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
+// The model list or the chosen model changed: every window's sidebar, every chat page and Settings reload theirs.
+function modelsChanged() {
+  for (const rec of winRecs) if (rcAlive(rec) && !isSpare(rec)) rec.win.webContents.send('models-updated');
+  for (const wc of [...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)]) if (wc && !wc.isDestroyed()) wc.send('models-updated');
+}
 const skillSurfaces = () => [ui(), ...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)].filter((wc) => wc && !wc.isDestroyed());
 // One model call outside the chat (the proposal for "Create a skill from this chat"): same routes as tab grouping.
 async function completeSkillJson({ system, user, schema }) {
@@ -4357,11 +5086,20 @@ const widgets = createWidgets({
   fetch: (url, options) => net.fetch(url, options),
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
+  canKeepSecrets: () => safeStorage.isEncryptionAvailable(), // checked before a sign-in starts, not after consent
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
-  onUpdate: () => { clearTimeout(widgetRefreshTimer); widgetRefreshTimer = setTimeout(refreshNewTabs, 60); },
+  onUpdate: () => {
+    clearTimeout(widgetRefreshTimer);
+    widgetRefreshTimer = setTimeout(() => {
+      refreshNewTabs();
+      for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); // Settings shows it too (a sign-in Google ended)
+    }, 60);
+  },
+  t: (key) => t(key),
+  focusApp: () => { const w = BrowserWindow.getFocusedWindow() || winRecs.values().next().value?.win; if (w && !w.isDestroyed()) { if (w.isMinimized()) w.restore(); w.show(); w.focus(); app.focus?.({ steal: true }); } },
   // A card's gear (edit mode on the new-tab page): Settings → Appearance opens that widget's editor.
   onConfigure: () => {
     const wc = tabs.find((t) => t.id === openSettingsPage('appearance'))?.view?.webContents;
@@ -4541,7 +5279,11 @@ ipcMain.handle('settings:strings', () => ({ locale: i18n().locale, strings: i18n
 if (TEST) global.__i18n = () => i18n(); // test/a11y.js
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id) => switchTab(id));
-ipcMain.on('tab:move', (_e, id, toIndex) => moveTab(id, toIndex));
+ipcMain.on('tab:move', (event, id, toIndex, done) => {
+  moveTab(id, toIndex);
+  // An in-strip drag holds its tab hidden until this: the strip shows it in the slot it landed in.
+  if (done) event.sender.send('tab:dragdone');
+});
 function moveTab(id, toIndex) {
   const from = tabs.findIndex((t) => t.id === id);
   if (from === -1) return;
@@ -4701,6 +5443,12 @@ ipcMain.on('agent:stop', () => agent.stop());
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.
+ipcMain.handle('agent:rewind', (_e, expected) => {
+  if (agent.runningFor(agent.messages)) return false; // never mid-run
+  const result = agent.rewindLast(typeof expected === 'string' ? expected : '');
+  if (result === 'rewound') { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); } // the other view drops it too
+  return result;
+});
 ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });
 
 // ---- the sidebar's chat history list (features/chat-store.js)
@@ -4845,8 +5593,8 @@ ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
 // openrouter.ai asks the user, then redirects to a one-time loopback address with a code that is
 // exchanged for a key; the key is stored encrypted like a pasted one).
 ipcMain.handle('openrouter:models', async () => {
-  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE() });
-  return models.map(({ id, name, tools }) => ({ id, name, tools }));
+  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE(), onRefresh: () => refreshModels('openrouter') });
+  return models.map(({ id, name, tools, context, pricePerM, free }) => ({ id, name, tools, context, pricePerM, free }));
 });
 function saveProviderKey(provider, key) {
   const settings = readSettings();
@@ -5012,7 +5760,12 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   // Any OpenRouter model can be picked from "More models…" once there is a key.
   const pickedFromMore = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(id)) && Boolean(providerKey('openrouter'));
   if (id === 'openrouter:__more' || (!pickedFromMore && !modelOptions().some((o) => o.id === id))) return false;
-  writeSettings({ ...readSettings(), model: id });
+  const s = readSettings();
+  // The last few OpenRouter models picked from its catalog stay in the short list, so switching between them is one click.
+  const curatedPick = modelOptions().some((o) => o.id === id && !o.recent);
+  const recentOpenRouter = pickedFromMore && !curatedPick ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
+  writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
+  modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
   return agent.setModel(id) ? 'next-message' : true;
 });
@@ -5076,6 +5829,8 @@ app.on('second-instance', (_e, argv) => { focusWindow(); openLinksFromOtherApps(
 
 app.whenReady().then(async () => {
   perf.mark('ready');
+  // The drag card's window, made once things are quiet, so the first tear-off of a session shows it at once.
+  setTimeout(() => { if (!TEST_BACKGROUND) dragCardWindow(); }, 8000);
   if (process.argv.includes('--install-shortcuts')) {
     instance.installShortcuts(app, shell, APP_ID);
     app.quit();
@@ -5101,21 +5856,27 @@ app.whenReady().then(async () => {
   siteActivity.watch(session.defaultSession);
   loadChat();
   loadHistory();
-  // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs.
-  await setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
-  // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
-  // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
-  // doesn't hold up the window.
   // Until the ad blocker takes over onBeforeRequest (it sends pages to the same gate), or if it
   // fails to start, pages still go through Safe Browsing's check.
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
   safeBrowsing.refresh().catch(() => {});
+  // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
+  // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
+  // doesn't hold up the window. They load while the extensions start (the two don't depend on each other).
+  // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs; the window itself
+  // (its UI, ~0.5 MB of scripts) loads meanwhile, and its tabs come once both are ready (tabsGate).
+  const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
-  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
-  perf.mark('adblockReady');
-  perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
+  // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
+  const atMost = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 3000))]);
+  await atMost(extending);
+  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await atMost(blocking);
+  perf.mark('adblockReady');
+  openTabsGate();
+  perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
+  setTimeout(makeSpareNewTab, 4000).unref?.(); // a new-tab page ready for the first Ctrl+T
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours

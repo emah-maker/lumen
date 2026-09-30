@@ -32,15 +32,15 @@
     if (siteState.url !== tab.url || siteStale) { siteStale = false; refreshSite(tab.url); }
     chip.classList.toggle('ai-off', aiOff);
     siteToggle.hidden = siteState.url !== tab.url || !siteState.site;
-    siteToggle.textContent = aiOff ? 'Turn on AI' : 'AI off here';
-    siteToggle.title = aiOff ? `Let the AI read and act on ${siteState.site} again` : `Turn off AI on ${siteState.site}: the AI can't see or act on this site's tabs, and they aren't sent with messages`;
+    siteToggle.textContent = aiOff ? window.t('context.aiOn') : window.t('context.aiOff');
+    siteToggle.title = aiOff ? window.t('context.aiOn.title', { site: siteState.site }) : window.t('context.aiOff.title', { site: siteState.site });
     siteToggle.setAttribute('aria-pressed', String(aiOff));
     toggle.hidden = aiOff;
     if (aiOff) {
       chip.classList.remove('excluded');
-      label.textContent = 'AI is off on:';
+      label.textContent = window.t('context.offOn');
       title.textContent = siteState.site;
-      chip.title = `You turned off AI on ${siteState.site}. The AI can't see or act on its tabs.`;
+      chip.title = window.t('context.offOn.title', { site: siteState.site });
       icon.hidden = true;
       return;
     }

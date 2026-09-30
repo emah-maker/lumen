@@ -15,6 +15,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs
     stop: () => ipcRenderer.send('agent:stop'),
     reset: () => ipcRenderer.send('agent:reset'),
+    rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),
     chats: {
       list: () => ipcRenderer.invoke('chats:list'),
       open: (id) => ipcRenderer.invoke('chats:open', id),

@@ -283,6 +283,18 @@ function resolve(items, o = {}) {
   if (packed) out = compact(out, { cols, obstacle: ob });
   return inOrder(items, out);
 }
+// The cards a centre column (obstacle `ob`) moves, compared with where they are with the smallest column (`floor`):
+// laid out both ways (packed or not, as `o` says), any card not snapped to a side that lands elsewhere. A card pushed
+// even by the smallest column is where it is either way (it doesn't count); a card it knocks further does.
+function movedBy(items, o, ob, floor) {
+  const at = resolve(items, { ...o, obstacle: ob });
+  const base = resolve(items, { ...o, obstacle: floor });
+  const byId = new Map(base.map((it) => [it.id, it]));
+  // A docked card fills the room beside the column (its width follows it), but losing its dock (too little room
+  // left: a new row or height) is a move like any other.
+  const moved = (it) => { const b = byId.get(it.id) || it; return it.snap ? it.y !== b.y || it.h !== b.h : !same(it, b); };
+  return at.filter(moved).map((it) => it.id);
+}
 // One column, in reading order, below the obstacle. Saved positions are untouched (this is a view).
 function stack(items, { obstacle = null } = {}) {
   let y = obstacle ? obstacle.y + obstacle.h : 0;
@@ -441,7 +453,7 @@ const spanPx = (m, span) => span * m.cw + (span - 1) * GAP;
 function centreSpan(m, boxWidth) {
   if (m.cols === 1) return 1;
   let s = 4;
-  while (s < 10 && (spanPx(m, s) < MIN_CENTRE || spanPx(m, s) < (Number.isFinite(boxWidth) ? boxWidth : 0) - 0.5)) s += 2;
+  while (s < 10 && (spanPx(m, s) < MIN_CENTRE || spanPx(m, s) < (Number.isFinite(boxWidth) ? boxWidth : 0) - 1)) s += 2; // a pixel of rounding (639.3 px for 640) never costs two columns
   return s;
 }
 // The centre column (page px: `bottom` of its lowest block) -> one clean rectangle of cells, centred, whole
@@ -473,7 +485,7 @@ function decode(text) {
 const api = {
   COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, SIDE_DEFAULT, defaultSize, PRESETS, SPANS, SNAPS, FRAME_PX,
   limitsOf, cleanRect, cleanSnap, sizeFromLegacy, mirror, fromLegacy, flowPack, overlap, rectOf, same,
-  resolve, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
+  resolve, movedBy, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
   MARGIN, MARGIN_WIDE, WIDE_AT, MIN_CENTRE, metrics, centreSpan, spanPx, obstacleFor, cellToPx, encode, decode,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

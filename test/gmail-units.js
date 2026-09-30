@@ -39,6 +39,7 @@ module.exports = async function gmailUnits(check) {
     OA.classifyTokenFailure(400, '{"error":"invalid_grant"}').kind === 'revoked' && OA.classifyTokenFailure(401, '{"error":"invalid_client"}').kind === 'client'
     && OA.classifyTokenFailure(429, '', '7').retryAfter === 7000 && OA.classifyTokenFailure(429, '', undefined).retryAfter === 60e3 && OA.classifyTokenFailure(503, '').kind === 'server'
     && OA.classifyTokenFailure(429, '', '99999').retryAfter === 120e3, '');
+  check('oauth: a 400/401 that is not a revoked grant (a proxy page, invalid_request) keeps the sign-in', OA.classifyTokenFailure(400, '{"error":"invalid_request"}').kind === 'other' && OA.classifyTokenFailure(401, '<html>proxy</html>').kind === 'other', '');
   const blob = OA.encodeCreds({ clientId: 'a', clientSecret: 'b', refresh: 'c', extra: 'nope' });
   check('oauth: stored credentials round-trip, unknown fields are dropped, garbage is null', JSON.stringify(OA.decodeCreds(blob)) === '{"clientId":"a","clientSecret":"b","refresh":"c"}' && OA.decodeCreds('x') === null && OA.decodeCreds('') === null && OA.decodeCreds('[1]').refresh === '' && OA.encodeCreds({ clientId: 'a', refresh: '' }) === '{"clientId":"a"}', blob);
 
@@ -169,7 +170,8 @@ async function builtinRuns(check) {
   const OWN = '4242-ownclient.apps.googleusercontent.com';
   const env = (id, secret) => ({ LUMEN_GOOGLE_CLIENT_ID: id, LUMEN_GOOGLE_CLIENT_SECRET: secret });
   check('google client: the environment\'s pair beats the build file\'s, and a half pair or garbage is no client',
-    JSON.stringify(GC.builtinClient({ env: env(BUILT.clientId, BUILT.clientSecret), file: { clientId: OWN, clientSecret: 'GOCSPX-file-secret' } })) === JSON.stringify(BUILT)
+    JSON.stringify(GC.builtinClient({ env: env(BUILT.clientId, BUILT.clientSecret), file: { clientId: OWN, clientSecret: 'GOCSPX-file-secret' } })) === JSON.stringify({ ...BUILT, verified: false })
+    && GC.builtinClient({ env: { ...env(BUILT.clientId, BUILT.clientSecret), LUMEN_GOOGLE_VERIFIED: '1' }, file: {} }).verified === true
     && GC.builtinClient({ env: {}, file: BUILT }).clientId === BUILT.clientId
     && GC.builtinClient({ env: env(BUILT.clientId, ''), file: {} }) === null
     && GC.builtinClient({ env: env('nope', BUILT.clientSecret), file: {} }) === null

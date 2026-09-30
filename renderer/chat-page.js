@@ -33,10 +33,27 @@
     rerender: () => renderList(),
     cleared: () => { clearChatView(); refreshUsage(''); },
   });
+  const tools = window.chatListTools;
+  let query = '';
+  let searchBox = null;
+  let lastChats = [];
+  let lastCurrent = null;
+  function drawItems() {
+    const shown = lastChats.filter((c) => tools.matches(c, query));
+    const rows = [];
+    for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
+    items.replaceChildren(...rows);
+    if (query && !shown.length) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: t('chats.noMatch') }));
+  }
   async function renderList() {
     const focused = document.activeElement?.closest?.('.chat-item')?.dataset.id;
     const { current, chats } = await api.list();
-    items.replaceChildren(...chats.map((chat) => makeItem(chat, chat.id === current)));
+    lastChats = chats;
+    lastCurrent = current;
+    if (chats.length > 6 && !searchBox) { searchBox = tools.search((q) => { query = q; drawItems(); }); items.before(searchBox); }
+    if (searchBox) searchBox.hidden = chats.length <= 6;
+    if (searchBox?.hidden) { query = ''; searchBox.value = ''; }
+    drawItems();
     empty.hidden = chats.length > 0;
     if (focused) items.querySelector(`.chat-item[data-id="${CSS.escape(focused)}"] .chat-open`)?.focus();
   }
@@ -50,16 +67,7 @@
     await renderList();
     prompt.focus();
   }
-  // Up and Down move between chats, Home and End jump to the ends; Tab still leaves the list.
-  items.addEventListener('keydown', (e) => {
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) || e.target.closest('input')) return;
-    const rows = [...items.querySelectorAll('.chat-open')];
-    if (!rows.length) return;
-    const at = rows.indexOf(e.target.closest('.chat-item')?.querySelector('.chat-open'));
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
-    e.preventDefault();
-    rows[next].focus();
-  });
+  tools.arrows(items); // Up/Down between chats, Home/End to the ends
   // New chat is the shared #new-chat button (chat-core.js resets the chat and empties the view).
   $('new-chat').addEventListener('click', () => setTimeout(renderList, 50));
   api.onChanged?.(() => { if (!items.querySelector('.chat-rename-input')) renderList(); }); // running, needs an OK, finished unseen

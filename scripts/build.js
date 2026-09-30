@@ -63,7 +63,7 @@ if (googleId && googleSecret) {
     console.error('LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET are set but do not look like a Google Desktop OAuth client');
     process.exit(1);
   }
-  fs.writeFileSync(googleFile, `${JSON.stringify({ clientId: googleId, clientSecret: googleSecret })}\n`);
+  fs.writeFileSync(googleFile, `${JSON.stringify({ clientId: googleId, clientSecret: googleSecret, verified: process.env.LUMEN_GOOGLE_VERIFIED === '1' })}\n`);
   wroteGoogle = true;
   console.log('Built-in Google client: included (one-click Gmail sign-in)');
 } else {

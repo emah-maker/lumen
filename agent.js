@@ -35,15 +35,26 @@ const DEFAULT_MODEL = 'claude-opus-5-5'; // the newest Opus
 // ADHD-friendly answer shape (from the i-have-adhd skill), adapted to a browser sidebar.
 const ADHD_STYLE = `
 
-Answer style (the user has ADHD; follow this for every reply):
-- First line is the answer or the next action. No preamble ("Sure!", "Let me…"), recap, or closing pleasantries ("Hope this helps").
-- Steps go in a numbered list, one bounded action each, fewest that work. Lists: 5 items or fewer, most useful first; say how many you cut.
-- One topic per reply. Raise a second issue only as a one-line question at the end.
-- After a task, say concretely what changed ("Added to cart: 2× AA batteries, $8.99").
-- Specific estimates ("about 10 minutes"), never "a bit of work". Errors: cause, then fix, stated flatly.
-- If anything is left open, end with ONE concrete next step the user can do in under two minutes.
-- No idioms or filler hedges; hedge only for real uncertainty.
-- Exceptions: asked to explain or walk through something, explain fully with short headers (still no preamble). Before a destructive or irreversible action, confirmation comes first.`;
+Answer style (the user turned on short, focused answers; follow this for every reply and never mention the setting):
+- Lead with it. The first line is the answer, the result, or the next action: never a restatement of the question, "Sure!", "Great question", "Let me…", or a plan of what you will do.
+- Fit the length to the question:
+  - a fact or a yes/no: one or two sentences, with the key fact (number, date, name, price) in **bold**
+  - a how-to: numbered steps, one action each, the fewest that work. Steps are never cut; past 7, split them into stages: a bold stage label on its own line, then that stage's numbered steps.
+  - a comparison or a choice: the recommendation first, then at most 5 bullets or a small table (3 columns at most)
+  - a summary of a page, video or thread: the main takeaway in one bold line, then at most 5 bullets
+  - a draft or rewrite (email, message, post): the full text first, ready to paste, as normal paragraphs (not a code block), then at most one line of notes
+  - "explain" or "walk me through": explain fully, in short paragraphs under a few plain headers
+- Built for a narrow sidebar: paragraphs of 2–3 sentences (about 50 words), no nested bullets, headers only for "explain" replies. Commands and code go in code blocks, complete and ready to copy, before any explanation of them. Key facts go in bold, not in code blocks.
+- Bullet lists of options or points hold at most 5 items, most useful first (numbered steps follow the how-to rule).
+- Math is written in LaTeX, which Lumen typesets: $…$ inside a sentence, $$…$$ on lines of their own for an equation that stands alone (environments such as aligned or cases go inside the $$). Not \\( \\) or \\[ \\], never in code blocks, never as plain-text ASCII (x^2, sqrt(x)). Keep a displayed equation short enough for a narrow sidebar: split a long one over lines with aligned. Money stays plain ($5); price tiers are words ("mid-priced"), not $$.
+- Cite a web source as a short link at the end of the sentence it supports, not on its own line. When the question is about the current page, don't cite it (this replaces the general citation rule).
+- Never cut what changes the outcome: a warning, a cost, a deadline, or a condition the answer depends on goes in, in one plain line.
+- After doing something in the browser, say concretely what changed and where ("Added to cart: 2× AA batteries, **$8.99**, amazon.com"), and anything that didn't work.
+- Estimates in real units ("about 10 minutes", "3 steps"), never "a bit of work". Errors: the cause, then the fix, stated flatly, with no apology.
+- If a question is ambiguous, answer the likeliest reading (the other can go in the final line). If an action is ambiguous and the readings lead to different actions, ask one short question first.
+- No closers ("Hope this helps", "Let me know if…", "Want me to…?"), no filler, no idioms. Hedge only where there is real uncertainty, and say what it hinges on.
+- End with at most one extra line, the first that applies: the other reading of an ambiguous request; the user's next concrete action; how many options you left out ("3 more options, just ask."); one side issue. State it plainly, never as an offer.
+- Exceptions: before a sensitive action, state exactly what you will do (item, amount, recipient, site) in one line, then end with a direct yes/no question; a needed clarifying question also ends the reply. Detail the user asks for overrides these length limits.`;
 
 const SYSTEM = `You are Claude, the assistant built into a web browser. You sit in a sidebar next to the user's current tab and can see and operate their browser with tools.
 
@@ -739,9 +750,11 @@ async function searchWeb(query) {
 
 // What the sidebar shows for a restored chat: user/assistant text and pasted images, no tool steps.
 // Also used for chats in the history list and for exporting one (main.js).
+const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
 function transcriptFor(chatMessages) {
   const items = [];
   let steps = 0;
+  let acted = false;
   for (const m of chatMessages) {
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'user') {
@@ -751,11 +764,13 @@ function transcriptFor(chatMessages) {
       else if (text || images.length) items.push({ role: 'user', text, images });
     } else {
       steps += blocks.filter((b) => b.type === 'tool_use' || b.type === 'server_tool_use').length;
+      acted ||= blocks.some((b) => b.type === 'tool_use' && ACTING_TOOL_NAMES.has(b.name));
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n').trim();
       const final = !blocks.some((b) => b.type === 'tool_use');
       if (text && final) {
-        items.push({ role: 'assistant', text, images: [], steps });
+        items.push({ role: 'assistant', text, images: [], steps, ...(acted ? { acted: true } : {}) });
         steps = 0;
+        acted = false;
       } else if (text) {
         items.push({ role: 'assistant', text, images: [] });
       }
@@ -916,6 +931,28 @@ class Agent {
     // A saved chat may hold page content from before the restart: treat it as having read some.
     if (messages.length) messages.tainted = true;
     this.messages = messages;
+  }
+
+  // Retry / Regenerate: the last exchange (from the user's last message on) is taken back, so asking again doesn't
+  // stack a second copy of it. True when there was one.
+  // expected: the user's text of that exchange. 'rewound' | 'absent' (that message never reached the history, e.g.
+  // it failed while the page was being read: nothing to take back) .
+  rewindLast(expected = '') {
+    const m = this.messages;
+    const want = String(expected || '').trim().slice(0, 200);
+    for (let i = m.length - 1; i >= 0; i--) {
+      const blocks = Array.isArray(m[i].content) ? m[i].content : [{ type: 'text', text: String(m[i].content || '') }];
+      if (m[i].role !== 'user' || !blocks.some((b) => b.type === 'text' || b.type === 'image')) continue;
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n');
+      if (want && !text.includes(want)) return 'absent'; // the last exchange is an earlier one: it stays
+      m.splice(i);
+      m.simpleTurn = null;
+      repairHistory(m);
+      // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
+      if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; }
+      return 'rewound';
+    }
+    return 'absent';
   }
 
   // What the sidebar shows for a restored chat (see transcriptFor).

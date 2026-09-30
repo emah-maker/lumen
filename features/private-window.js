@@ -60,6 +60,19 @@ function createPrivateWindows(deps) {
 
   function setupSession(rec) {
     const ses = rec.ses;
+    // The profile's proxy, Do Not Track / Global Privacy Control, languages and Chrome hints (settings-backend.js);
+    // without it, a private window would connect directly even when a proxy is set.
+    if (deps.mirrorSession) deps.mirrorSession(ses);
+    else if (deps.chromeHintHeaders) {
+      ses.webRequest.onBeforeSendHeaders((details, callback) => {
+        const headers = details.requestHeaders;
+        if (/^https:/.test(details.url)) {
+          for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];
+          Object.assign(headers, deps.chromeHintHeaders);
+        }
+        callback({ requestHeaders: headers });
+      });
+    }
     ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
       if (ALWAYS_ALLOWED.has(permission)) return callback(true);
       const reason = PROMPTABLE[permission];
@@ -88,23 +101,84 @@ function createPrivateWindows(deps) {
     wc.on('before-input-event', (event, input) => handleShortcut(rec, event, input));
     // Only web pages (and the private new-tab page) in a private tab.
     wc.on('will-navigate', (event) => { if (!isWebUrl(event.url) && !sameFile(event.url, NEWTAB_URL)) event.preventDefault(); });
-    wc.setWindowOpenHandler(({ url, disposition }) => {
-      if (isWebUrl(url)) openTab(rec, url, { background: disposition === 'background-tab' });
-      return { action: 'deny' };
-    });
+    deps.chromeIdentity?.(wc);
+    deps.googleRefusedGuard?.(wc, { inTab: true, win: () => rec.win });
+    pageMenu(rec, wc);
+    wc.setWindowOpenHandler(({ url, disposition }) => popupOrTab(rec, url, disposition));
     wc.on('destroyed', () => closeTab(rec, tab.id, { destroyed: true }));
   }
 
-  function openTab(rec, url, { background = false } = {}) {
+  // A sign-in or payment popup ("Sign in with Google" on a site) stays a popup, in this window's private session,
+  // with window.opener kept so it can report back to the page; a link that opens a tab opens a private tab.
+  // A right-click menu for private pages and popups: edit, and open a link in a new private tab.
+  function pageMenu(rec, wc) {
+    if (!deps.Menu) return;
+    wc.on('context-menu', (_e, p) => {
+      const items = [];
+      if (p.linkURL && isWebUrl(p.linkURL)) items.push({ label: 'Open Link in New Private Tab', click: () => openTab(rec, p.linkURL, { background: true }) }, { type: 'separator' });
+      if (p.isEditable) items.push({ role: 'cut', enabled: p.editFlags.canCut }, { role: 'copy', enabled: p.editFlags.canCopy }, { role: 'paste', enabled: p.editFlags.canPaste }, { type: 'separator' }, { role: 'selectAll' });
+      else if (p.selectionText) items.push({ role: 'copy' });
+      if (!items.length) return;
+      deps.Menu.buildFromTemplate(items).popup({ window: BrowserWindow.fromWebContents(wc) || rec.win });
+    });
+  }
+  function popupOrTab(rec, url, disposition) {
+    if (disposition === 'new-window' && (isWebUrl(url) || url === 'about:blank')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } },
+        outlivesOpener: true,
+        createWindow: (options) => {
+          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } }) });
+          const wc = child.webContents;
+          deps.chromeIdentity?.(wc); // before anything loads
+          if (!options?.webContents) wc.loadURL(url).catch(() => {});
+          deps.popupFailPage?.(wc);
+          deps.googleRefusedGuard?.(wc);
+          // The title bar says which site this is (a popup has no address bar), private and with a lock when secure.
+          const retitle = () => {
+            if (child.isDestroyed()) return;
+            try {
+              const u = new URL(wc.getURL());
+              child.setTitle(u.host ? `${u.protocol === 'https:' ? '🔒 ' : ''}${u.host} — Private${wc.getTitle() ? ` — ${wc.getTitle()}` : ''}` : `${wc.getTitle() || 'Lumen'} — Private`); // (an error page has no host)
+            } catch { child.setTitle('Lumen (Private)'); }
+          };
+          wc.on('page-title-updated', (e) => { e.preventDefault(); retitle(); });
+          wc.on('did-navigate', retitle);
+          wc.on('did-navigate-in-page', retitle);
+          pageMenu(rec, wc);
+          // It belongs to this private window: it closes with it (whose session is then cleared).
+          (rec.popups ||= new Set()).add(child);
+          child.on('closed', () => rec.popups?.delete(child));
+          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); } });
+          wc.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
+          return wc;
+        },
+      };
+    }
+    // A tab: a page's window.open gets that window back (it keeps window.opener), as in normal windows.
+    if (alive(rec) && (isWebUrl(url) || url === 'about:blank') && (disposition === 'foreground-tab' || disposition === 'background-tab')) {
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        createWindow: (options) => (options?.webContents ? openTab(rec, url, { background: disposition === 'background-tab', webContents: options.webContents }) : openTab(rec, url, { background: disposition === 'background-tab' }))?.view.webContents,
+      };
+    }
+    if (isWebUrl(url)) openTab(rec, url, { background: disposition === 'background-tab' });
+    return { action: 'deny' };
+  }
+
+  // webContents: a page that already exists (a window.open), adopted as this tab.
+  function openTab(rec, url, { background = false, webContents = null } = {}) {
     if (!alive(rec)) return null;
-    const view = new WebContentsView({ webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    const view = webContents ? new WebContentsView({ webContents }) : new WebContentsView({ webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false } });
     const tab = { id: nextId++, view };
     rec.tabs.push(tab);
     rec.win.contentView.addChildView(view);
     wireTab(rec, tab);
     if (!background || !rec.activeId) rec.activeId = tab.id;
     layout(rec);
-    if (url && isWebUrl(url)) view.webContents.loadURL(url).catch(() => {});
+    if (webContents) { /* adopted: already on its way to its address */ } else if (url && isWebUrl(url)) view.webContents.loadURL(url).catch(() => {});
     else view.webContents.loadFile(NEWTAB_HTML).catch(() => {});
     if (rec.activeId === tab.id && !url) rec.win.webContents.send('private:focus-address');
     sendState(rec);
@@ -182,6 +256,7 @@ function createPrivateWindows(deps) {
       windows.delete(rec);
       for (const t of rec.tabs.splice(0)) { try { t.view.webContents.close(); } catch {} }
       // Memory-only already; clear it now so nothing lingers until Lumen quits.
+      for (const p of rec.popups || []) if (!p.isDestroyed()) p.destroy(); // its sign-in popups go with it
       rec.ses.clearStorageData().catch(() => {});
       rec.ses.clearCache().catch(() => {});
       rec.ses.clearAuthCache?.().catch?.(() => {});

@@ -82,28 +82,84 @@ function createAdblock(deps) {
     });
   }
 
+  // Google sign-in on other sites: its One Tap iframe and container, and the scripts that draw the button.
+  const SIGN_IN = /^https:\/\/(accounts\.google\.com\/gsi\/|apis\.google\.com\/js\/(platform|api|client)[.:])/;
+  const SIGN_IN_EXCEPTIONS = [
+    '@@||accounts.google.com/gsi/^',
+    '@@||apis.google.com/js/platform.js^',
+    '@@||apis.google.com/js/api.js^',
+    '@@||apis.google.com/js/client.js^',
+    '#@##credential_picker_container',
+    '#@##credential_picker_iframe',
+    '#@#iframe[src^="https://accounts.google.com/gsi/"]',
+  ];
+  const LISTS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   async function setup() {
     const { ElectronBlocker, fromElectronDetails } = require('@ghostery/adblocker-electron');
-    blocker = await ElectronBlocker.fromPrebuiltFull(fetch, {
-      path: path.join(deps.app.getPath('userData'), 'adblock-engine.bin'),
-      read: fs.promises.readFile,
-      write: fs.promises.writeFile,
+    const base = path.join(deps.app.getPath('userData'), 'adblock-engine.bin');
+    const patched = path.join(deps.app.getPath('userData'), 'adblock-engine-signin.bin');
+    const PATCH = `1|${SIGN_IN_EXCEPTIONS.join('|')}`;
+    // Annoyance lists hide Google's One Tap prompt and block its sign-in script; signing in with Google on a site
+    // must keep working, so those are always let through. Patching the engine takes ~0.4 s, so the patched engine
+    // is kept (tagged with the lists it was built from) and a launch just loads it.
+    let baseStat = null;
+    try {
+      const meta = JSON.parse(await fs.promises.readFile(`${patched}.json`, 'utf8'));
+      baseStat = await fs.promises.stat(base);
+      if (meta.patch === PATCH && meta.baseMtime === baseStat.mtimeMs && meta.baseSize === baseStat.size) blocker = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(patched)));
+    } catch { blocker = null; }
+    const isTest = require('../test-mode').isTest();
+    // `blocker` is wired into the sessions once; `engine` is what matches requests and pages, and is swapped for a
+    // freshly built one (patched, or from new lists) without re-wiring anything.
+    const loadPatched = async () => {
+      const fresh = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(patched)));
+      engine = fresh;
+      cosmetics = fresh.onInjectCosmeticFilters;
+      headers = fresh.onHeadersReceived;
+      if (isTest) global.__adblockEngine = fresh;
+    };
+    // The slow jobs run in a worker thread (features/adblock-worker.js); `refresh` fetches new lists first.
+    const inWorker = (refresh) => new Promise((resolve) => {
+      let worker;
+      try {
+        worker = new (require('worker_threads').Worker)(path.join(__dirname, 'adblock-worker.js'), { workerData: { base, patched, exceptions: SIGN_IN_EXCEPTIONS, patch: PATCH, refresh } });
+      } catch { resolve(false); return; }
+      worker.once('message', (m) => resolve(Boolean(m?.ok)));
+      worker.once('error', () => resolve(false));
+      worker.once('exit', () => resolve(false));
+      worker.unref();
     });
-    if (require('../test-mode').isTest()) global.__adblockEngine = blocker;
+    if (!blocker) {
+      blocker = await ElectronBlocker.fromPrebuiltFull(fetch, { path: base, read: fs.promises.readFile, write: fs.promises.writeFile });
+      // Patched after the window is up (the network check below lets sign-in through meanwhile), then kept. Off the
+      // main thread; only if a worker can't run is it patched here, in the idle time a few seconds in.
+      setTimeout(async () => {
+        if (await inWorker(false)) { await loadPatched().catch(() => {}); return; }
+        try { engine.updateFromDiff({ added: SIGN_IN_EXCEPTIONS }); } catch { return; }
+        fs.promises.stat(base).then((st) => fs.promises.writeFile(patched, engine.serialize())
+          .then(() => fs.promises.writeFile(`${patched}.json`, JSON.stringify({ patch: PATCH, baseMtime: st.mtimeMs, baseSize: st.size }))))
+          .catch(() => {});
+      }, 3000).unref?.();
+    } else if (!isTest && baseStat && Date.now() - baseStat.mtimeMs > LISTS_MAX_AGE_MS) {
+      // Lists a day old: new ones are fetched and built in the background a minute in, and used from then on.
+      setTimeout(async () => { if (await inWorker(true)) await loadPatched().catch(() => {}); }, 60000).unref?.();
+    }
+    let engine = blocker;
+    if (isTest) global.__adblockEngine = blocker;
     blocker.onBeforeRequest = (details, callback) => {
       if (details.resourceType === 'mainFrame' && deps.mainFrameGate) return deps.mainFrameGate(details, callback); // Safe Browsing
       const page = details.webContents?.getURL() || details.referrer || '';
-      if (!on(page) || details.resourceType === 'mainFrame') return callback({});
+      if (!on(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url)) return callback({});
       const request = fromElectronDetails(details);
       if (request.type === 'other') request.guessTypeOfRequest();
-      const { redirect, match } = blocker.match(request);
+      const { redirect, match } = engine.match(request);
       if (!redirect && !match) return callback({});
       const id = details.webContents?.id;
       if (id !== undefined) blockedCount.set(id, (blockedCount.get(id) || 0) + 1);
       if (redirect) return callback({ redirectURL: stubUrl(redirect) });
       const library = details.resourceType === 'script' && LIBRARIES.find(([re]) => re.test(details.url));
       const name = library ? library[1] : STAND_IN[details.resourceType];
-      callback(name ? { redirectURL: stubUrl(blocker.resources.getResource(name)) } : { cancel: true });
+      callback(name ? { redirectURL: stubUrl(engine.resources.getResource(name)) } : { cancel: true });
     };
     // Scriptlets for a frame, asked for synchronously by adblock-preload.js at document start.
     const { parse } = require('tldts-experimental');
@@ -112,7 +168,7 @@ function createAdblock(deps) {
       if (typeof url !== 'string' || !on(url)) return [];
       const { hostname, domain } = parse(url);
       try {
-        return blocker.getCosmeticsFilters({
+        return engine.getCosmeticsFilters({
           url, hostname: hostname || '', domain: domain || '',
           getBaseRules: false, getInjectionRules: true, getExtendedRules: false, getRulesFromHostname: true, getRulesFromDOM: false,
           callerContext: { frameId: event.frameId, processId: event.processId },
@@ -124,13 +180,13 @@ function createAdblock(deps) {
     electron.ipcMain.on('lumen-adblock:scriptlets', (event, url) => { event.returnValue = scriptletsFor(event, url); });
     // Ghostery's own preload still brings the CSS (and DOM-based updates); its scripts are dropped
     // here because adblock-preload.js already ran them, earlier.
-    const cosmetics = blocker.onInjectCosmeticFilters;
+    let cosmetics = blocker.onInjectCosmeticFilters;
     blocker.onInjectCosmeticFilters = async (event, url, msg) => {
       if (!on(url)) return undefined;
       const sender = { insertCSS: (css, options) => event.sender.insertCSS(css, options), executeJavaScript: () => Promise.resolve() };
       return cosmetics({ frameId: event.frameId, processId: event.processId, sender }, url, msg);
     };
-    const headers = blocker.onHeadersReceived;
+    let headers = blocker.onHeadersReceived;
     blocker.onHeadersReceived = (details, callback) => {
       deps.onResponseHeaders(details); // [settings] sites asking for the color-scheme hint
       return on(details.webContents?.getURL() || details.url) ? headers(details, callback) : callback({});

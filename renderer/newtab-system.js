@@ -183,25 +183,152 @@
   // chose (anything but the default) is kept as it is; one column when stacked keeps the CSS default.
   function defaultSearchPx() {
     const m = WL.metrics(document.documentElement.clientWidth);
-    return m.cols === 1 ? WS.SEARCH_DEFAULT : Math.round(WL.spanPx(m, WL.centreSpan(m, WS.SEARCH_DEFAULT)) * 100) / 100;
+    if (m.cols === 1) return WS.SEARCH_DEFAULT;
+    // Six columns when they are at least the narrowest search bar wide, else eight: side columns stay for cards.
+    const span = WL.spanPx(m, 6) >= WS.SEARCH_MIN - 2 ? 6 : 8;
+    return Math.round(WL.spanPx(m, span) * 100) / 100;
   }
+  // ---- the search box's height on the page (see main in newtab.html) ----
+  // The header as it is at its plainest (Medium clock, Classic style, no card, date and greeting shown) sets where the
+  // search box sits: 88 px of space above that header. A bigger or fancier header takes its extra height from that
+  // space (down to 16 px), so the search box never moves; a header with the clock or greeting off leaves more space.
+  let refKey = '';
+  let refHeight = 0;
+  function plainHeaderHeight() {
+    const greetingText = document.getElementById('greeting')?.textContent || '';
+    const refWidth = Math.round(defaultSearchPx());
+    const key = [refWidth, greetingText].join('|');
+    if (key === refKey) return refHeight;
+    refKey = key;
+    const copy = headerEl.cloneNode(true);
+    copy.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+    copy.hidden = false;
+    copy.querySelectorAll('[hidden]').forEach((n) => { n.hidden = false; });
+    const span = (cls, text) => Object.assign(document.createElement('span'), { className: cls, textContent: text });
+    copy.querySelector('.clock')?.replaceChildren(span('clock-h', '8'), span('clock-sep', ':'), span('clock-m', '88'));
+    const date = copy.querySelector('.date');
+    if (date && !date.textContent) date.textContent = 'Wednesday, September 30';
+    Object.assign(copy.style, { position: 'absolute', visibility: 'hidden', left: '0', top: '0', width: `${refWidth}px`, animation: 'none', pointerEvents: 'none' });
+    copy.style.setProperty('--clock-size', `${WS.CLOCK_PX[WS.CLOCK_DEFAULT]}px`);
+    copy.setAttribute('aria-hidden', 'true');
+    const b = document.body.dataset;
+    const was = { style: b.clockStyle, card: b.clockCard, font: b.greetingFont };
+    Object.assign(b, { clockStyle: 'classic', clockCard: 'none', greetingFont: 'classic' });
+    mainEl.append(copy);
+    refHeight = copy.offsetHeight;
+    copy.remove();
+    for (const [k, v] of [['clockStyle', was.style], ['clockCard', was.card], ['greetingFont', was.font]]) { if (v === undefined) delete b[k]; else b[k] = v; }
+    return refHeight;
+  }
+  const TOP = 88;
+  const MIN_TOP = 16;
+  function anchorSearch() {
+    if (!headerEl || headerEl.parentElement !== mainEl) { mainEl.style.removeProperty('--main-pad'); return; }
+    // A hidden header leaves its room: the search box stays where it was, so nothing below it moves either.
+    const pad = Math.max(MIN_TOP, TOP + plainHeaderHeight() - (headerEl.hidden ? 0 : headerEl.offsetHeight));
+    mainEl.style.setProperty('--main-pad', `${Math.round(pad)}px`);
+  }
+  // A new window size: the search box's place, and sizes that fit this window (a size drawn smaller comes back when
+  // there is room again).
+  // (The grid re-fits the sizes on each resize frame, before it lays the cards out: see newtab-widgets-grid relayout.)
+  addEventListener('resize', () => anchorSearch());
+  // size.view: what is drawn right now, which may be smaller than the saved size when cards leave no room (fitToCards).
   function paint() {
-    mainEl.style.setProperty('--clock-size', `${WS.CLOCK_PX[size.clock]}px`);
-    mainEl.style.setProperty('--search-w', `${size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search}px`);
+    const clock = size.viewClock || size.clock;
+    const search = size.viewSearch || size.search;
+    mainEl.style.setProperty('--clock-size', `${WS.CLOCK_PX[clock]}px`);
+    mainEl.style.setProperty('--search-w', `${search === WS.SEARCH_DEFAULT ? defaultSearchPx() : search}px`);
+    anchorSearch();
+  }
+  // A size set in Settings (or saved from a wider window) is drawn as big as the cards around the centre column allow
+  // in this window, and no bigger, rather than pushing them: the clock steps down, the search bar narrows. Only what
+  // is drawn changes: the saved size stays, and comes back where there is room for it.
+  // The centre column at its smallest (Small clock, narrowest bar): the grid measures what a size moves against it
+  // (WL.movedBy), so cards it pushes anyway, or docks it squeezes anyway, never block a size.
+  function floorBlockers() {
+    const grid = window.widgetGrid;
+    if (!grid?.floor) return;
+    const was = { c: size.viewClock, s: size.viewSearch };
+    size.viewClock = WS.CLOCK_STEPS[0];
+    size.viewSearch = WS.SEARCH_MIN;
+    paint();
+    grid.floor();
+    size.viewClock = was.c;
+    size.viewSearch = was.s;
+    paint();
+  }
+  const savedPx = () => (size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search);
+  let lastFit = null; // { key, clock, search }
+  // The clock's digits as drawn now (seconds, 12/24-hour and the time itself change it; it can be wider than the column).
+  const digitsRange = document.createRange();
+  function clockDigitsWidth() {
+    const c = document.getElementById('clock');
+    if (!c || c.hidden || !c.getClientRects().length) return 0;
+    digitsRange.selectNodeContents(c);
+    return Math.ceil(digitsRange.getBoundingClientRect().width);
+  }
+  function fitToCards() {
+    if (size.hold) return; // a resize is being dragged: what it draws stays as it is
+    const grid = window.widgetGrid;
+    const b = document.body.dataset;
+    const key = [document.documentElement.clientWidth, window.innerHeight, size.clock, size.search, grid?.signature?.() || '', headerEl?.hidden ? 1 : 0, window.newtabSystem?.dockedCount?.() ?? '', document.getElementById('sections')?.offsetHeight ?? '', clockDigitsWidth(), b.clockStyle, b.clockCard, b.greetingFont, document.getElementById('greeting')?.textContent || ''].join('|');
+    if (lastFit?.key === key) { size.viewClock = lastFit.clock; size.viewSearch = lastFit.search; paint(); return; }
+    size.viewClock = null;
+    size.viewSearch = null;
+    paint();
+    const remember = () => { lastFit = { key, clock: size.viewClock, search: size.viewSearch }; };
+    if (!grid?.centreFits) return;
+    floorBlockers();
+    if (grid.centreFits()) { remember(); return; }
+    const from = savedPx();
+    const m = WL.metrics(document.documentElement.clientWidth);
+    const lines = m.cols === 1 ? [] : [4, 6, 8, 10].map((s) => Math.floor(WL.spanPx(m, s)));
+    const tryFits = (c, s) => {
+      size.viewClock = c === size.clock ? null : c;
+      size.viewSearch = s === from ? null : s;
+      paint();
+      return grid.centreFits();
+    };
+    const plan = WS.fitSizes({ clock: size.clock, search: from, widths: WS.fitWidths(from, lines) }, tryFits);
+    size.viewClock = plan.clock;
+    size.viewSearch = plan.search;
+    paint();
+    remember();
   }
   window.newtabSize = {
     apply(clock, search) {
-      if (size.hold) return;
-      size.clock = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
-      size.search = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
-      paint();
+      if (size.hold) { size.pending = [clock, search]; return; } // a drag holds: applied when it ends
+      const c = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
+      const s = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
+      if (c === size.clock && s === size.search) return; // the echo of a size just taken: already drawn
+      size.clock = c;
+      size.search = s;
+      fitToCards();
     },
+    // After the page's sections and cards are in place (newtab.js render): the search box's height, then the sizes.
+    fit() { anchorSearch(); fitToCards(); },
+    anchor: () => anchorSearch(),
+    drawnSearch: () => size.viewSearch || size.search,
+    drawnClock: () => size.viewClock || size.clock,
+    fitNow: () => fitToCards(), // the grid calls this once it has the cards, before drawing them
+    // A drag or key press shows a size: only what is drawn changes, never the saved size.
     preview(clock, search) {
-      if (clock) size.clock = WS.cleanClockSize(clock) || size.clock;
-      if (search) size.search = WS.cleanSearchWidth(search) || size.search;
+      if (clock) size.viewClock = WS.cleanClockSize(clock) || size.viewClock;
+      if (search) size.viewSearch = WS.cleanSearchWidth(search) || size.viewSearch;
       paint();
     },
-    hold(on) { size.hold = Boolean(on); },
+    restore: () => fitToCards(), // the saved sizes again, fitted (a cancelled drag, a size with no room)
+    take(key, value) { // a size chosen in Edit layout: saved here at once (the browser's echo then changes nothing)
+      if (key === 'clock') size.clock = WS.cleanClockSize(value) || size.clock;
+      else size.search = WS.cleanSearchWidth(value) || size.search;
+      fitToCards();
+    },
+    floor: () => floorBlockers(),
+    hold(on) {
+      size.hold = Boolean(on);
+      if (!on && size.pending) { const [c, s] = size.pending; size.pending = null; window.newtabSize.apply(c, s); }
+    },
+    held: () => size.hold,
     get: () => ({ clock: size.clock, search: size.search }),
   };
 

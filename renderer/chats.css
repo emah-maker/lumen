@@ -49,7 +49,9 @@
 .chat-actions { display: flex; opacity: 0; transition: opacity var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; }
 .chat-actions .icon-btn { width: 26px; height: 26px; }
-.chat-actions .chat-delete.armed { color: var(--danger); background: var(--danger-soft); }
+.chat-actions .chat-delete.armed { width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
+.chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
+.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 .chat-badge { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: var(--accent); }
@@ -61,3 +63,9 @@
 #chat-history[data-attention] { position: relative; }
 #chat-history[data-attention]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
 #chat-history[data-attention="approval"]::after { background: var(--warning); }
+
+/* A long history: grouped by when it was used, and searchable. */
+.chat-group { list-style: none; padding: 10px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+.chat-group:first-child { padding-top: 4px; }
+.chat-search { display: block; width: calc(100% - 16px); margin: 0 8px 6px; height: 30px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; }
+.chat-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }

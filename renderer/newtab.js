@@ -133,7 +133,15 @@ function tickClock() {
   lastClock = key;
   const span = (cls, text) => Object.assign(document.createElement('span'), { className: cls, textContent: text });
   el.replaceChildren(span('clock-h', h), span('clock-sep', t.sep), span('clock-m', t.m), ...(t.s ? [span('clock-s', `${t.ssep}${t.s}`)] : []));
+  // 9:59 -> 10:00 (or proportional digits) can widen the clock past the column: fitted again when its width changes.
+  clockRange.selectNodeContents(el);
+  const w = Math.round(clockRange.getBoundingClientRect().width);
+  if (lastClockW && w !== lastClockW) window.newtabSize?.fitNow?.();
+  lastClockW = w;
 }
+const clockRange = document.createRange();
+let lastClockW = 0;
+document.fonts?.ready?.then(() => window.newtabSize?.fitNow?.()); // a clock font that loads late may be wider
 // Minutes only: wake every 10 s. With seconds: just after each second turns. Never draws while the tab is hidden.
 let clockTimer = 0;
 function scheduleClock() {
@@ -162,7 +170,7 @@ function tile(b, size) {
   };
   // A locally cached favicon first, then the icon bundled for default favorites, then a letter.
   const bundled = (window.BUNDLED_ICONS || {})[host(b.url)];
-  const icon = typeof b.icon === 'string' && b.icon.startsWith('data:image/') ? b.icon : bundled;
+  const icon = typeof b.icon === 'string' && (b.icon.startsWith('data:image/') || /^file:\/\/\/.+\/favicon-cache\/[0-9a-f]{20}\.[a-z0-9]+$/i.test(b.icon)) ? b.icon : bundled;
   if (icon) {
     const img = new Image(size, size);
     img.alt = '';
@@ -262,7 +270,9 @@ function render() {
     frequent: part(look.sections.frequent && freq.length, 'Frequently Visited', () => frequent(freq)),
     privacy: part(look.sections.privacy && blocked !== null, 'Privacy', () => privacy(blocked)),
   }, { header: look.sections.header }, widgets);
+  window.newtabSize?.fit?.(); // before the cards are drawn: the search box's height and sizes that fit (against the cards as they were)
   window.renderWidgets?.(widgets); // [widgets] newtab-widgets.js
+  window.newtabSize?.fit?.(); // and once more with the cards as they are now
 }
 
 // "/" jumps to the search field, like many sites; typing elsewhere is left alone.

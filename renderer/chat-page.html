@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chat</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="picker.css" />
   <link rel="stylesheet" href="chats.css" />
   <link rel="stylesheet" href="prefs.css" />
   <link rel="stylesheet" href="extras.css" />
@@ -50,11 +51,20 @@
       </header>
 
       <div id="chat-usage" class="chat-usage" hidden></div>
-      <div id="messages" class="messages" role="log" aria-live="polite" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
+      <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
         <div class="empty" id="empty">
           <p class="empty-title" >Ask anything, or give Lumen a task on the tab you were just on.</p>
           <div class="setup" id="setup" hidden>
             <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
+            <p class="setup-pending" id="setup-pending" role="status" hidden></p>
+            <button class="setup-option" type="button" id="setup-claude-code">
+              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
+              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
+            </button>
+            <button class="setup-option" type="button" id="setup-openrouter">
+              <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
+              <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
+            </button>
             <button class="setup-option" type="button" id="setup-keys">
               <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
               <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
@@ -85,7 +95,10 @@
 
   <script src="i18n.js"></script>
   <script src="markdown.js"></script>
+  <script src="picker-match.js"></script>
   <script src="picker.js"></script>
+  <script src="model-catalog.js"></script>
+  <script src="highlight.js"></script>
   <script src="chat-core.js"></script>
   <script src="tabs-ask-core.js"></script>
   <script src="tabs-ask.js"></script>
@@ -95,6 +108,7 @@
   <script src="slash-match.js"></script>
   <script src="slash.js"></script>
   <script src="skills.js"></script>
+  <script src="chat-commands.js"></script>
   <script src="ui-prefs.js"></script>
 </body>
 </html>

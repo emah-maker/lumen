@@ -56,4 +56,28 @@ function writeJsonAtomic(file, data) {
   }
 }
 
-module.exports = { loadJson, writeJsonAtomic };
+// The same write off the main thread (the periodic session save): serialised, one at a time, and skipped at the
+// rename when `stillLatest()` says a newer write (a synchronous one) has happened meanwhile, so it can never put
+// older data over newer. Its temp file is its own, apart from the synchronous writer's.
+let chain = Promise.resolve();
+function writeJsonAtomicAsync(file, data, stillLatest = () => true) {
+  const text = JSON.stringify(data, null, 2);
+  const run = async () => {
+    const fsp = fs.promises;
+    const tmp = `${file}.tmp-async`;
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    const fh = await fsp.open(tmp, 'w');
+    try { await fh.writeFile(text); await fh.sync(); } finally { await fh.close(); }
+    if (!stillLatest()) { await fsp.unlink(tmp).catch(() => {}); return; }
+    try { JSON.parse(await fsp.readFile(file, 'utf8')); await fsp.copyFile(file, `${file}.bak`); } catch { /* no good file to keep */ }
+    if (!stillLatest()) { await fsp.unlink(tmp).catch(() => {}); return; }
+    try { await fsp.rename(tmp, file); } catch {
+      if (stillLatest()) await fsp.writeFile(file, text).catch(() => {}); // (the fallback write is guarded too)
+      await fsp.unlink(tmp).catch(() => {});
+    }
+  };
+  chain = chain.then(run, run).catch(() => {});
+  return chain;
+}
+
+module.exports = { loadJson, writeJsonAtomic, writeJsonAtomicAsync };

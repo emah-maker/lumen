@@ -533,9 +533,12 @@ function claudeCodeOptions({ signedIn = 'unknown', accountDetail = null } = {}) 
   return require('../claude-code').MODELS.map((m) => ({
     id: `claudecode:${m.id}`,
     label: m.id === 'default' ? 'Claude Code' : `Claude Code · ${m.label}`,
+    name: m.id === 'default' ? 'Claude Code' : m.label, // the picker's row, under its "Your Claude account" heading
+    provider: 'Claude Code', // the picker button's tag
+    badges: signedIn === false ? ['sign in'] : [],
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run claude, then type /login'
-      : m.id === 'default' ? `${CLAUDE_CODE_NOTE} · the model set in Claude Code` : `${CLAUDE_CODE_NOTE} · ${m.label} (the latest ${m.label} model)`,
+      : m.id === 'default' ? 'The model set in Claude Code' : '', // the heading says Claude Code; the name says which model
     group: 'Your Claude account',
     signedIn,
     accountDetail,
@@ -554,9 +557,12 @@ function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models =
   return ['default', ...list].map((model) => ({
     id: `grokbuild:${model}`,
     label: model === 'default' ? 'Grok Build (experimental)' : `Grok Build · ${model} (experimental)`,
+    name: model === 'default' ? 'Grok Build' : require('./model-names').prettyModel(model) || model,
+    provider: 'Grok Build',
+    badges: [...(signedIn === false ? ['sign in'] : []), ...(model === 'default' ? ['experimental'] : [])], // once, on the group's first row
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run grok, then run grok login'
-      : `${GROK_BUILD_NOTE} · ${model === 'default' ? `Grok’s default model${accountDetail ? ` (${accountDetail})` : ''}` : model} · ${note}`,
+      : model === 'default' ? `Grok’s default model${accountDetail ? ` (${accountDetail})` : ''}. ${note.charAt(0).toUpperCase()}${note.slice(1)}` : '', // the note once, on the group's first row
     group: 'Your Grok account',
     signedIn,
     accountDetail,
