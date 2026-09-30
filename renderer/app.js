@@ -528,22 +528,44 @@ let arrivingTimer = 0;
 const showArrived = () => {
   clearTimeout(arrivingTimer);
   arriving = new Set();
-  for (const el of $('tabs').querySelectorAll('.tab.arriving')) el.classList.remove('arriving');
+  for (const el of $('tabs').querySelectorAll('.tab.arriving, .group-label.arriving')) el.classList.remove('arriving');
 };
 window.browser.onTabArriving?.(({ ids } = {}) => {
   arriving = new Set((ids || []).map(Number));
+  for (const id of arriving) $('tabs').querySelector(`.tab[data-id="${id}"]`)?.classList.add('arriving'); // already here (its own strip)
+  markArrivingLabels();
   clearTimeout(arrivingTimer);
   arrivingTimer = setTimeout(showArrived, 700);
 });
+// A group whose every tab is arriving arrives with its label.
+function markArrivingLabels() {
+  if (!arriving.size) return;
+  const byGroup = new Map();
+  for (const t of lastTabState?.tabs || []) if (t.groupId) byGroup.set(t.groupId, [...(byGroup.get(t.groupId) || []), t.id]);
+  for (const [g, ids] of byGroup) if (ids.every((id) => arriving.has(id))) $('tabs').querySelector(`.group-label[data-group="${g}"]`)?.classList.add('arriving');
+}
 window.browser.onTabLanded?.(() => showArrived());
 // Where tabs `ids` sit (the first of them, as wide as all), or the slot kept open for them: for main's landing glide.
 function landingRect(ids) {
-  const els = (ids || []).map((id) => $('tabs').querySelector(`.tab[data-id="${id}"]`)).filter((el) => el && el.getClientRects().length);
-  const el = els[0] || landingSlot?.el || dropSlot?.el;
+  const strip = $('tabs');
+  const want = new Set((ids || []).map(Number));
+  const placed = (el) => el && !el.matches('.held, .gathered, .handed') && el.offsetWidth > 0;
+  // The first id is the dragged tab: from it, the run of arriving tabs beside it (pinned ones may land elsewhere).
+  let first = strip.querySelector(`.tab[data-id="${Number(ids?.[0])}"]`);
+  if (!placed(first)) first = null;
+  let last = first;
+  if (first) {
+    while (placed(first.previousElementSibling) && want.has(Number(first.previousElementSibling.dataset.id))) first = first.previousElementSibling;
+    while (placed(last.nextElementSibling) && want.has(Number(last.nextElementSibling.dataset.id))) last = last.nextElementSibling;
+    if (first.previousElementSibling?.matches('.group-label.arriving')) first = first.previousElementSibling; // its group's label comes with it
+  }
+  const el = first || landingSlot?.el || dropSlot?.el;
   if (!el) return null;
-  const r = el.getBoundingClientRect();
-  const w = els.length > 1 ? els[els.length - 1].getBoundingClientRect().right - r.left : r.width;
-  return { x: r.left, y: r.top, w, h: r.height };
+  const sr = strip.getBoundingClientRect();
+  // offsetLeft/offsetWidth: where it is laid out, not where the landing animation's scale and lift draw it now.
+  const x = sr.left + el.offsetLeft - strip.scrollLeft;
+  const w = last && last !== el ? last.offsetLeft + last.offsetWidth - el.offsetLeft : el.offsetWidth;
+  return { x, y: sr.top + el.offsetTop, w, h: el.offsetHeight };
 }
 window.landingRect = landingRect;
 // A tab from another window held near an edge of this (overflowing) strip: it scrolls, as for a drag within it.
@@ -551,7 +573,7 @@ let dropEdge = 0;
 let dropEdgeTimer = 0;
 window.browser.onTabDropAt?.((at) => {
   // The drag was cancelled (Escape, a lost release): the slot just goes, no landing to wait for.
-  if (at?.cancel) { dropEdge = 0; if (dropSlot) { closeSlot(dropSlot.el); dropSlot = null; trackIndicator(460); } return; }
+  if (at?.cancel) { dropEdge = 0; clearLandingSlot(); if (dropSlot) { closeSlot(dropSlot.el); dropSlot = null; trackIndicator(460); } return; }
   dropEdge = at?.edge || 0;
   if (dropEdge && !dropEdgeTimer) {
     const tick = () => { if (!dropEdge || !dropSlot) { dropEdgeTimer = 0; return; } $('tabs').scrollLeft += 9 * dropEdge; dropEdgeTimer = requestAnimationFrame(tick); };
@@ -1033,7 +1055,8 @@ function groupLabel(group, count, crowded, label = null) {
     label.oncontextmenu = (e) => { e.preventDefault(); window.browser.groupMenu(group.id, { x: e.clientX, y: e.clientY }); };
   }
   label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '')
-    + (drag?.handed && !drag.single && drag.groupId === group.id ? ' handed' : '');
+    + (drag?.handed && !drag.single && drag.groupId === group.id ? ' handed' : '')
+    + (arriving.size && (lastTabState?.tabs || []).filter((t) => t.groupId === group.id).every((t) => arriving.has(t.id)) ? ' arriving' : '');
   label.style.setProperty('--group-color', `var(--g-${group.color})`);
   label.setAttribute('aria-expanded', String(!group.collapsed));
   label.setAttribute('aria-label', t(count === 1 ? 'tabs.group.label.one' : 'tabs.group.label.other', { name: group.name, count }));

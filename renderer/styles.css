@@ -134,7 +134,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
   width: 200px; min-width: 40px; flex: 0 1 200px; height: 28px;
   border-radius: 9px; color: var(--muted);
   background: var(--tab-idle);
-  cursor: default; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
+  cursor: default; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out, opacity 140ms ease-out;
 }
 .tab.active, .tab.dragging { background-color: transparent; }
 /* While tabs are dragged the gliding surface steps aside (it can't follow transforms): the active tab
@@ -224,9 +224,8 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tabs.more-left { mask-image: linear-gradient(90deg, transparent, #000 28px); }
 .tabs.more-right { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 .tabs.more-left.more-right { mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
-.tabs.reordering { mask-image: none; }
-.tab.arriving { opacity: 0 !important; } /* carried in by the chip: shows as it lands (tab:landed) */
-.tab { transition-property: opacity; } /* the dragged tab, held at the edge, never fades into it */
+.tabs.reordering { mask-image: none; } /* the dragged tab, held at the edge, never fades into it */
+.tab.arriving, .group-label.arriving { opacity: 0 !important; transition: none; } /* carried in by the chip: shows as it lands (tab:landed) */
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; object-fit: contain; }
 /* Dark icons (GitHub, Apple, X) vanish on a dark strip: a faint light outline keeps them visible. */

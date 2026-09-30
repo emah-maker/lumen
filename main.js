@@ -3900,7 +3900,7 @@ function tickTabDrag() {
   const cursor = cursorPoint();
   if (!d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y) { d.lastCursor = cursor; d.movedAt = Date.now(); }
   // Measured from the last time the mouse moved: someone holding still over a strip isn't cut off.
-  if (Date.now() - (d.movedAt || d.started) > (d.single && !d.hover ? Math.min(tabDragTimeoutMs, 30000) : tabDragTimeoutMs)) {
+  if (Date.now() - (d.movedAt || d.started) > (!d.hover ? Math.min(tabDragTimeoutMs, 30000) : tabDragTimeoutMs)) {
     d.rec.win.webContents.send('tab:dragabort'); // the strip lets go of its drag, and shows the tab again
     setDragHover(d, null);
     finishTabDrag(d.card ? 'cancel' : 'commit');
@@ -3969,6 +3969,7 @@ function finishTabDrag(reason) {
   const target = d.hover;
   if (rcAlive(rec)) rec.win.webContents.removeListener('before-input-event', d.escape);
   const merging = !d.card && reason === 'commit' && target && rcAlive(target.rec) && rcAlive(rec);
+  const hadChip = Boolean(d.chip);
   if (merging) { try { rec.win.hide(); } catch {} } // it goes as it merges (closing takes a moment): no flash back to full opacity
   setDragHover(d, null, { cancel: reason !== 'commit', chipAs: merging ? 'join' : 'cancel', dropping: reason === 'commit' }); // a cancel closes the hovered strip's slot at once
   if (!rcAlive(rec)) { if (d.card || d.chip) hideDragCard(d, 'cancel'); return; }
@@ -3984,7 +3985,7 @@ function finishTabDrag(reason) {
       const all = tabsOf(rec).filter((t) => !t.closing).map((t) => t.id);
       const groups = [...new Set(tabsOf(rec).map((t) => t.groupId).filter(Boolean))].map((g) => groupForMove(rec, g)).filter(Boolean);
       const dst = target.rec;
-      if (d.chip && !motionReducedMain() && !TEST_BACKGROUND) dst.win.webContents.send('tab:arriving', { ids: all });
+      if (hadChip && !motionReducedMain() && !TEST_BACKGROUND) dst.win.webContents.send('tab:arriving', { ids: [d.tabId, ...all.filter((x) => x !== d.tabId)] });
       d.mergeIds = all;
       let index = at === -1 ? undefined : at;
       if (groups.length && index !== undefined) index = withWindow(dst, () => outsideGroups(index)); // its groups don't split one there
@@ -4000,7 +4001,7 @@ function finishTabDrag(reason) {
       }); // one update
       if (!merged && rcAlive(rec)) { try { rec.win.setOpacity(1); rec.win.show(); rec.win.focus(); } catch {} } // it didn't happen: the window comes back
       // The chip lands in the tabs' place (they show as it arrives), or goes if the merge didn't happen.
-      if (merged) hideDragCard(d, 'join', { rec: dst, ids: all });
+      if (merged) hideDragCard(d, 'join', { rec: dst, ids: [d.tabId, ...all.filter((x) => x !== d.tabId)] });
       else { hideDragCard(d, 'cancel'); if (rcAlive(dst)) dst.win.webContents.send('tab:landed'); }
     } else {
       rec.win.focus();
@@ -4045,10 +4046,11 @@ function finishCardDrag(d, reason, target) {
       }));
       keepSelection(src, ids);
       wakeDeferredAside(d); // the neighbour loads only if the dragged tab did not come back to the front
+      if (!motionReducedMain() && !TEST_BACKGROUND && dragCard?.owner === d && rcAlive(src)) src.win.webContents.send('tab:arriving', { ids: [d.tabId, ...ids.filter((x) => x !== d.tabId)] });
     } else {
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
       const gliding = !motionReducedMain() && !TEST_BACKGROUND && dragCard?.owner === d;
-      if (gliding) target.rec.win.webContents.send('tab:arriving', { ids });
+      if (gliding) target.rec.win.webContents.send('tab:arriving', { ids: [d.tabId, ...ids.filter((x) => x !== d.tabId)] });
       d.landed = moveTabsBetween(src, target.rec, ids, at === -1 ? undefined : at, { active: d.tabId, group: d.group });
       if (!d.landed && rcAlive(target.rec)) target.rec.win.webContents.send('tab:dropat', { cancel: true });
       if (!d.landed && gliding) target.rec.win.webContents.send('tab:landed');
@@ -4062,7 +4064,7 @@ function finishCardDrag(d, reason, target) {
       }
       wakeDeferredAside(d);
     }
-    hideDragCard(d, d.landed === false ? 'cancel' : 'join', d.landed === false ? null : { rec: target.rec, ids });
+    hideDragCard(d, d.landed === false ? 'cancel' : 'join', d.landed === false ? null : { rec: target.rec, ids: [d.tabId, ...ids.filter((x) => x !== d.tabId)] });
     settled();
     return;
   }
