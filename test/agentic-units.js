@@ -15,7 +15,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const flag = (argv, f) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : undefined);
 
 // ---- a fake `claude`: one child per spawn, reads stream-json lines, answers through `respond`
-function fakeClaude(respond) {
+function fakeClaude(respond, control = () => {}) { // control: what the CLI does with an interrupt (default: nothing, a hung CLI)
   const spawned = [];
   const spawn = (bin, argv, opts) => {
     const child = new EventEmitter();
@@ -23,7 +23,7 @@ function fakeClaude(respond) {
     child.stderr = new PassThrough();
     child.exitCode = null;
     child.pid = 4000 + spawned.length;
-    const rec = { argv, opts, child, lines: [], ended: false, killed: false, mcp: JSON.parse(fs.readFileSync(flag(argv, '--mcp-config'), 'utf8')) };
+    const rec = { argv, opts, child, lines: [], controls: [], ended: false, killed: false, mcp: JSON.parse(fs.readFileSync(flag(argv, '--mcp-config'), 'utf8')) };
     rec.out = (obj) => { if (child.exitCode === null) child.stdout.write(`${JSON.stringify(obj)}\n`); };
     rec.exit = (code = 0) => { if (child.exitCode !== null) return; child.exitCode = code; setImmediate(() => child.emit('close', code)); };
     rec.session = flag(argv, '--session-id') || flag(argv, '--resume');
@@ -35,6 +35,8 @@ function fakeClaude(respond) {
         while ((i = buf.indexOf('\n')) >= 0) {
           const msg = JSON.parse(buf.slice(0, i));
           buf = buf.slice(i + 1);
+          // A control_request (Stop's interrupt) is not a message: recorded apart, answered by `control`.
+          if (msg.type === 'control_request') { rec.controls.push(msg); setImmediate(() => control(rec, msg)); continue; }
           rec.lines.push(msg);
           setImmediate(() => respond(rec, msg, rec.lines.length));
         }
@@ -64,7 +66,8 @@ async function engineRuns() {
   let tokens = 0;
   const gate = { open: (tag) => { gateLog.opened.push(tag); return { mcpUrl: 'http://127.0.0.1:5555/mcp', mcpToken: `tok${++tokens}`, hookUrl: 'x' }; }, close: (tag) => gateLog.closed.push(tag) };
   let respond = echo;
-  const cli = fakeClaude((...a) => respond(...a));
+  let control = () => {};
+  const cli = fakeClaude((...a) => respond(...a), (...a) => control(...a));
   let ensured = 0;
   const make = (extra = {}) => {
     const eng = new cc.ClaudeCodeEngine({ userData: tmp, mcpCommand: () => ({ command: 'lumen-bridge', args: ['mcp.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }), ensureServer: () => { ensured++; }, gate: async () => gate, spawn: cli.spawn, kill: cli.kill, ...extra });
@@ -75,7 +78,7 @@ async function engineRuns() {
   let events = [];
 
   // Warm first (runTask), then the message: one process, started before run().
-  const eng = make();
+  const eng = make({ interruptMs: 60 });
   eng.warm({ sessionId: 'sess-1', resume: false, systemPrompt: 'SYS', model: 'default', maxTurns: 0 });
   await sleep(20);
   check('warm: the CLI is started before the message', cli.spawned.length === 1, String(cli.spawned.length));
@@ -103,7 +106,9 @@ async function engineRuns() {
   const t0 = Date.now();
   ctl.abort();
   const stopped = await pending;
-  check('stop: resolves at once as stopped and kills the process', stopped.stopped === true && Date.now() - t0 < 100 && second.killed, JSON.stringify(stopped));
+  check('stop: resolves at once as stopped; the CLI is asked to interrupt first', stopped.stopped === true && Date.now() - t0 < 50 && !second.killed && second.controls.length === 1 && second.controls[0].request?.subtype === 'interrupt' && /^lumen-stop-/.test(second.controls[0].request_id), JSON.stringify({ stopped, controls: second.controls }));
+  await sleep(120);
+  check('stop: a CLI that never answers the interrupt is killed after the wait', second.killed, '');
   respond = echo;
   const r3 = await eng.run(opts({ prompt: 'back', resume: true, model: 'opus' }));
   check('after stop: the next message gets a new process resuming the session', cli.spawned.length === 3 && flag(cli.spawned[2].argv, '--resume') === 'sess-1' && r3.text === 'reply 1: back', JSON.stringify(r3));
@@ -121,12 +126,93 @@ async function engineRuns() {
   await sleep(5);
   check('release: the idle kept process is killed', fourth.killed && eng.proc === null, '');
 
+  // Stop that the CLI honours: it interrupts, the rest of the old turn is read off, the process stays.
+  const kept = make({ interruptMs: 400 });
+  await kept.run(opts({ sessionId: 'sess-int' }));
+  const keptRec = cli.spawned[cli.spawned.length - 1];
+  respond = () => {};
+  control = (rec, msg) => { // stale output of the stopped turn, the ack, then its result
+    rec.out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'STALE' } } });
+    rec.out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id } });
+    rec.out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'interrupted', session_id: rec.session });
+  };
+  const ctlInt = new AbortController();
+  const hung = kept.run(opts({ prompt: 'hang', sessionId: 'sess-int', resume: true, signal: ctlInt.signal }));
+  await sleep(20);
+  ctlInt.abort();
+  const hungOut = await hung;
+  respond = echo;
+  const afterInt = await kept.run(opts({ prompt: 'next', sessionId: 'sess-int', resume: true }));
+  check('stop honoured: the process is kept, the old turn\'s leftover lines are not read as the next reply', hungOut.stopped && !keptRec.killed && cli.spawned[cli.spawned.length - 1] === keptRec && afterInt.text === 'reply 3: next' && !afterInt.failed, JSON.stringify({ hungOut, afterInt, n: cli.spawned.length }));
+  control = () => {};
+  kept.dispose();
+
+  // Usage: a kept process whose totals are running sums reports each message's own share.
+  const cum = [{ c: 0.01, i: 100, o: 10, r: 5 }, { c: 0.03, i: 250, o: 30, r: 10 }, { c: 0.04, i: 300, o: 45, r: 15 }];
+  respond = (rec, msg, n) => say(rec, `t${n}`, { total_cost_usd: cum[n - 1].c, usage: { input_tokens: cum[n - 1].i, output_tokens: cum[n - 1].o, cache_read_input_tokens: cum[n - 1].r }, modelUsage: { m: { inputTokens: cum[n - 1].i, contextWindow: 200000 } } });
+  const sums = make();
+  const u1 = await sums.run(opts({ sessionId: 'sess-sum' }));
+  const u2 = await sums.run(opts({ sessionId: 'sess-sum', resume: true }));
+  const u3 = await sums.run(opts({ sessionId: 'sess-sum', resume: true }));
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  check('usage: cumulative totals from a kept process become per-message deltas', near(u1.cost, 0.01) && near(u2.cost, 0.02) && near(u3.cost, 0.01) && [u1, u2, u3].map((u) => u.usage.inputTokens).join() === '100,150,50' && [u1, u2, u3].map((u) => u.usage.outputTokens).join() === '10,20,15' && u2.usage.cacheReadTokens === 5 && u2.usage.contextWindow === 200000, JSON.stringify([u1, u2, u3]));
+  // Per-turn totals (one goes down) are taken as they are, and stay that way for the process.
+  const per = [{ c: 0.05, i: 100 }, { c: 0.02, i: 50 }, { c: 0.06, i: 200 }];
+  respond = (rec, msg, n) => say(rec, `p${n}`, { total_cost_usd: per[n - 1].c, usage: { input_tokens: per[n - 1].i, output_tokens: 5 } });
+  const pt = make();
+  await pt.run(opts({ sessionId: 'sess-per' }));
+  const p2 = await pt.run(opts({ sessionId: 'sess-per', resume: true }));
+  const p3 = await pt.run(opts({ sessionId: 'sess-per', resume: true }));
+  check('usage: per-turn totals are left alone (a decrease latches it; later larger ones are not subtracted)', near(p2.cost, 0.02) && p2.usage.inputTokens === 50 && near(p3.cost, 0.06) && p3.usage.inputTokens === 200, JSON.stringify([p2, p3]));
+  sums.dispose();
+  pt.dispose();
+  respond = echo;
+
+  // Watchdog: a CLI that goes silent is ended with an error; the next message resumes the session.
+  const dog = make({ watchdogMs: 60 });
+  respond = () => {};
+  events = [];
+  const d1 = await dog.run(opts({ sessionId: 'sess-dog' }));
+  const dogRec = cli.spawned[cli.spawned.length - 1];
+  check('watchdog: silence ends the message with an error and the process', d1.failed && dogRec.killed && events.some((e) => e.type === 'error' && /stopped responding/.test(e.text)) && dog.proc === null, JSON.stringify({ d1, events }));
+  respond = echo;
+  const d2 = await dog.run(opts({ prompt: 'again', sessionId: 'sess-dog', resume: true }));
+  check('watchdog: the next message starts a process with --resume', d2.text === 'reply 1: again' && flag(cli.spawned[cli.spawned.length - 1].argv, '--resume') === 'sess-dog', JSON.stringify(d2));
+  dog.dispose();
+  // ...but a Lumen tool call in flight (an approval card waiting on the user) pauses it.
+  const pause = make({ watchdogMs: 60 });
+  respond = async (rec) => { pause.callBegin(); await sleep(180); pause.callEnd(); say(rec, 'waited'); };
+  const pr = await pause.run(opts({ sessionId: 'sess-pause' }));
+  check('watchdog: paused while a tool call is running', pr.text === 'waited' && !pr.failed, JSON.stringify(pr));
+  pause.dispose();
+  respond = echo;
+
+  // A message that ran a tool is not sent again when the kept process then dies.
+  const rt = make();
+  await rt.run(opts({ sessionId: 'sess-rt' }));
+  const rtRec = cli.spawned[cli.spawned.length - 1];
+  const spawnedBefore = cli.spawned.length;
+  respond = (rec, msg, n) => { if (rec === rtRec && n === 2) { rt.callBegin(); rt.callEnd(); rec.exit(1); } else echo(rec, msg, n); };
+  const acted = await rt.run(opts({ prompt: 'acted', sessionId: 'sess-rt', resume: true }));
+  check('no silent re-send after a tool call ran: the failure is reported, no fresh process', acted.failed && cli.spawned.length === spawnedBefore, JSON.stringify({ acted, n: cli.spawned.length - spawnedBefore }));
+  respond = echo;
+  rt.dispose();
+
+  // release() while warm() is still starting: that process doesn't linger.
+  const wr = make();
+  wr.warm({ sessionId: 'sess-wr', resume: false, systemPrompt: 'SYS', model: 'default', maxTurns: 0 });
+  wr.release();
+  await sleep(30);
+  const wrRec = cli.spawned[cli.spawned.length - 1];
+  check('release during warm: the process it was starting is disposed when it lands', wrRec.session === 'sess-wr' && wrRec.killed && wr.proc === null, String(wrRec.killed));
+
   // Early step rows: a long-streaming tool call shows a row, and the MCP call reports into it.
   events = [];
   respond = async (rec, msg, n) => {
     rec.out({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_1', name: 'mcp__lumen__fill_form', input: {} } } });
     await sleep(cc.EARLY_STEP_MS + 80);
     rec.claimed = eng.claimStep('fill_form');
+    eng.updateStep(rec.claimed, 'fill_form', { fields: [1] }, 'Filling in the sign-up form');
     rec.out({ type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_2', name: 'mcp__lumen__click', input: {} } } });
     await sleep(10);
     rec.fast = eng.claimStep('click');
@@ -136,6 +222,8 @@ async function engineRuns() {
   const rec5 = cli.spawned[cli.spawned.length - 1];
   const rows = events.filter((e) => e.type === 'tool');
   check('early row: a tool call still streaming after 300 ms shows a step row, which the MCP call claims', rows.length === 1 && rows[0].id === 'cc-toolu_1' && rows[0].name === 'fill_form' && rows[0].label === 'Filling in a form' && rec5.claimed === 'cc-toolu_1', JSON.stringify({ rows, claimed: rec5.claimed }));
+  const upd = events.filter((e) => e.type === 'tool_update');
+  check('early row: once the call arrives, a tool_update names the step specifically', upd.length === 1 && upd[0].id === 'cc-toolu_1' && upd[0].label === 'Filling in the sign-up form' && upd[0].input.fields[0] === 1, JSON.stringify(upd));
   check('early row: a quick call gets no early row (its own labelled row instead)', rec5.fast === null && !rows.some((e) => e.name === 'click'), String(rec5.fast));
   respond = echo;
 
@@ -195,6 +283,7 @@ async function engineRuns() {
     cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', model: 'opus' }), cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'p', maxTurns: 5 }),
     cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: 'q' }),
   ]).size === 5, '');
+  check('procKey: today\'s date is not part of the key (a warm start survives midnight)', cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: "x Today's date is 2026-09-30. y" }) === cc.procKey({ bin: 'b', sessionId: 's', systemPrompt: "x Today's date is 2026-10-01. y" }), '');
   const got = [];
   const feed = cc.lineReader((l) => got.push(l));
   feed('{"a":1}\n{"b"'); feed(':2}\n\n');
@@ -235,6 +324,38 @@ async function snapshotRuns() {
   const out = await snap.execute(agent3, 'batch', { steps: [{ do: 'click', ref: 1 }] }, h(false));
   check('batch: a same-page batch reports what changed, not "Now on a new page"', /Changes since your last read \(\+1 \/ -0/.test(out) && /Cart: 1 item/.test(out) && !/Now on a new page/.test(out), out);
 
+  // batch: a recent compact read of the same tab and page, with no acting tool since, is its baseline.
+  const wc4 = { id: 904, isDestroyed: () => false, getURL: () => url };
+  const agent4 = { ...agent, requireTab: () => wc4 };
+  lines = ['# Shop', '[1] button "Add"'];
+  await snap.execute(agent4, 'read_page', { mode: 'compact' }, h(false));
+  const n0 = scriptsSeen.length;
+  const out4 = await snap.execute(agent4, 'batch', { steps: [{ do: 'click', ref: 1 }] }, h(false));
+  check('batch: a fresh read of the same page is reused as the baseline (no extra read)', scriptsSeen.length - n0 === 2 && /Changes since your last read \(\+1 \/ -0/.test(out4), `${scriptsSeen.length - n0} scripts: ${out4}`);
+  await snap.execute(agent4, 'read_page', { mode: 'compact' }, h(false));
+  await snap.execute(agent4, 'click', { element_id: 1 }, h(false)); // an acting tool since the read
+  const n1 = scriptsSeen.length;
+  await snap.execute(agent4, 'batch', { steps: [{ do: 'click', ref: 1 }] }, h(false));
+  check('batch: an acting tool since the last read means a new baseline', scriptsSeen.length - n1 === 4, String(scriptsSeen.length - n1));
+
+  // ReadCache: cleared when the model loses its earlier reads, and keyed by session.
+  const rc = new snap.ReadCache();
+  rc.tick('read_page'); rc.check(1, 'u', 's', 'page');
+  rc.tick('read_page');
+  const hit = rc.check(1, 'u', 's', 'page');
+  rc.clear();
+  rc.tick('read_page');
+  const afterClear = rc.check(1, 'u', 's', 'page');
+  rc.tick('read_page');
+  const again = rc.check(1, 'u', 's', 'page');
+  rc.reset('sess-2'); // a new CLI session
+  rc.tick('read_page');
+  const afterReset = rc.check(1, 'u', 's', 'page');
+  check('read cache: a repeat is "unchanged", but not after clear() or a new session (reset)', /Unchanged/.test(hit) && afterClear === null && /Unchanged/.test(again) && afterReset === null && rc.session === 'sess-2', JSON.stringify({ hit, afterClear, again, afterReset }));
+  rc.tick('read_page'); rc.check(1, 'u', 's', 'page'); rc.tick('read_page');
+  rc.session = 'sess-3';
+  check('read cache: entries of another session are not matched', rc.check(1, 'u', 's', 'page') === null, '');
+
   // The registry pass: read_page's own walk and labels, without the page text.
   const scripts = require('../page-scripts');
   const reg = snap.registryScript(scripts);
@@ -243,6 +364,57 @@ async function snapshotRuns() {
   check('registry script: parses, stores window.__claudeEls with labels, skips body.innerText and the element list', parses && reg.includes('window.__claudeEls = registry;') && reg.includes('entry.label = accessibleName') && !reg.includes('document.body.innerText') && !reg.includes('elementRange') && reg.length < scripts.readPage(0, 0).length, reg.slice(-200));
   check('registry script: compact and find use it (no full readPage)', scriptsSeen.every((s) => s !== scripts.readPage(0, 0)), '');
   check('registry script: falls back to the full read if readPage changes shape', snap.registryScript({ readPage: () => '(() => 1)()' }) === '(() => 1)()', '');
+}
+
+// Grok Build, without grok: setup written once per content change, status event at spawn, thinking not held.
+async function grokRuns() {
+  const gb = require('../grok-build');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-grok-'));
+  const userHome = path.join(tmp, 'user');
+  fs.mkdirSync(userHome);
+  fs.writeFileSync(path.join(userHome, 'auth.json'), 'tok');
+  const oldHome = process.env.GROK_HOME;
+  process.env.GROK_HOME = userHome;
+  const gate = { open: () => ({ mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: 't', hookUrl: 'h' }), close() {}, armed: () => true, listed: () => true };
+  const spawned = [];
+  const spawn = (bin, argv) => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    spawned.push(child);
+    setImmediate(() => {
+      const out = (o) => child.stdout.write(`${JSON.stringify(o)}\n`);
+      out({ type: 'system', subtype: 'init', session_id: 's', model: 'grok-x' });
+      out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } } });
+      out({ type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } } });
+      out({ type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'hi' } } });
+      out({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }], model: 'grok-x' } });
+      out({ type: 'result', subtype: 'success', is_error: false, result: 'hi', session_id: 's', total_cost_usd: 0.001, usage: { input_tokens: 1, output_tokens: 1 } });
+      setImmediate(() => child.emit('close', 0));
+    });
+    return child;
+  };
+  let fresh = 0;
+  const eng = new gb.GrokBuildEngine({ userData: tmp, gate: async () => gate, spawn, onFresh: () => { fresh++; } });
+  eng.bin = process.execPath;
+  const events = [];
+  const go = () => eng.run({ prompt: 'p', sessionId: 'sess', resume: true, systemPrompt: 'SYS', signal: new AbortController().signal, emit: (e) => events.push(e) });
+  const cfg = path.join(eng.home, 'config.toml');
+  const r1 = await go();
+  const m1 = fs.statSync(cfg).mtimeMs;
+  await sleep(30);
+  await eng.prepare(); // what runTask does while the page is read
+  const r2 = await go();
+  check('grok: a reply runs with setup in place; status first, thinking passed through, onFresh per process', r1.text === 'hi' && r2.text === 'hi' && events[0].type === 'status' && /Starting Grok Build/.test(events[0].text) && events.some((e) => e.type === 'thinking') && fresh === 2, JSON.stringify({ r1, events: events.map((e) => e.type), fresh }));
+  check('grok: config.toml and the gate script are not rewritten when unchanged', fs.statSync(cfg).mtimeMs === m1 && fs.existsSync(path.join(eng.home, gb.GATE_FILE)), '');
+  await gb.writeIfChanged(cfg, 'other', 0o600);
+  await eng.prepare().then(() => {}, () => {});
+  eng.prep = null;
+  await eng.prepare();
+  check('grok: an edited config.toml is put back', fs.readFileSync(cfg, 'utf8') === gb.grokConfig({ gate: path.join(eng.home, gb.GATE_FILE) }), fs.readFileSync(cfg, 'utf8').slice(0, 40));
+  check('grok: the sign-in is linked in (async)', fs.readFileSync(path.join(eng.home, 'auth.json'), 'utf8') === 'tok', '');
+  if (oldHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = oldHome;
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 function routeRuns() {
@@ -331,6 +503,7 @@ async function settleRuns() {
 (async () => {
   await engineRuns();
   await snapshotRuns();
+  await grokRuns();
   routeRuns();
   transcriptRuns();
   promptRuns();

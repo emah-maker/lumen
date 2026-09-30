@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree, validModel, usageOf } = require('./cli-utils');
+const { exists, lookup, killTree, validModel, usageOf, perTurnResult } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
 
 const INSTALL_HINT = process.platform === 'win32'
@@ -92,6 +92,12 @@ function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'defaul
 
 // A CLI kept for the chat's next message is stopped after this long without one.
 const IDLE_MS = 10 * 60 * 1000;
+// A message whose process says nothing (no stdout line, no Lumen tool call in flight) for this long
+// is ended with an error; the next message starts the process again with --resume.
+const WATCHDOG_MS = 90 * 1000;
+// Stop first asks the kept CLI to interrupt (a stream-json control_request); it is kept when the
+// interrupted turn's `result` comes within this long, else the process tree is killed as before.
+const INTERRUPT_MS = 1500;
 
 // The --mcp-config for one CLI process. Preferred: Lumen's already-listening local HTTP MCP server
 // (mcp-http.js, as Grok Build uses) with this process's own bearer token: no bridge process, pipe or
@@ -104,8 +110,10 @@ function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
 }
 
 // A kept CLI serves the next message only if that message wants the same binary, session, model,
-// turn cap and system prompt (a new chat, a model or settings change starts another one).
-const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0 }) => JSON.stringify([bin, sessionId, model, maxTurns, crypto.createHash('sha256').update(String(systemPrompt)).digest('hex')]);
+// turn cap and system prompt (a new chat, a model or settings change starts another one). Today's date
+// (agent.js claudeCodeNote) is left out of the key: a kept CLI serves on past midnight with the date it
+// started with rather than respawning, and a warm start made before midnight stays usable after it.
+const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0 }) => JSON.stringify([bin, sessionId, model, maxTurns, crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
 
 // A step row shown while the model is still writing a tool call's input (a long fill_form or batch):
 // it appears after EARLY_STEP_MS, and Lumen's MCP side takes it over when the call arrives
@@ -182,8 +190,15 @@ class ClaudeCodeEngine {
   // spawn / kill: child_process.spawn and cli-utils killTree, swappable for tests. A background task
   // makes its own instance per run (features/ai-agents.js backgroundEngine), so `active`, the kept
   // process and the bin cache are never shared with the sidebar's.
-  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, spawn: spawnChild = spawn, kill = killTree }) {
+  // watchdogMs / interruptMs: see WATCHDOG_MS / INTERRUPT_MS (0 turns the watchdog off). onFresh({ sessionId,
+  // resume }): a new CLI process starts, so anything the model saw through the old one (snapshot.js's
+  // repeat-read cache) no longer counts (features/ai-agents.js).
+  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, interruptMs = INTERRUPT_MS, onFresh = null, spawn: spawnChild = spawn, kill = killTree }) {
     this.kind = 'claudecode';
+    this.watchdogMs = watchdogMs;
+    this.interruptMs = interruptMs;
+    this.onFresh = onFresh;
+    this.gen = 0; // bumped by release(): a warm() started before it disposes its process when it lands
     this.spawn = spawnChild;
     this.kill = kill;
     this.userData = userData;
@@ -248,7 +263,10 @@ class ClaudeCodeEngine {
     delete childEnv.ELECTRON_RUN_AS_NODE;
     // single: takes one message, then stdin closes. A turn cap (--max-turns) may count across a
     // process's messages, so a capped chat gets a fresh (pre-started) process per message instead.
-    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', turn: null, idle: null };
+    // usage: perTurnResult's state (cumulative-or-per-turn totals); drain: set while an interrupted turn's
+    // leftover output is being read off (take() waits for it).
+    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null };
+    try { this.onFresh?.({ sessionId, resume }); } catch {}
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
     proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns }); };
@@ -292,7 +310,8 @@ class ClaudeCodeEngine {
       const bin = await this.ensureBin();
       if (!bin) return null;
       const key = procKey({ bin, ...opts });
-      const p = this.proc;
+      let p = this.proc;
+      if (p?.drain) { await p.drain; p = this.proc; } // a stopped turn's leftover lines are read off first
       if (!fresh && p && !p.exited && !p.spent && !p.turn && p.key === key) { clearTimeout(p.idle); return p; }
       if (p && !p.turn) this.dispose(p);
       const proc = await this.spawnProc({ bin, key, ...opts });
@@ -307,7 +326,12 @@ class ClaudeCodeEngine {
   // its MCP connection overlap with reading the page (agent.js runTask). Never mid-message.
   warm(opts) {
     if (this.busy || this.active || !this.keepAlive) return;
-    this.take(opts).then((p) => { if (p && !p.exited && !p.turn) this.idleLater(p); }).catch(() => {});
+    const gen = this.gen;
+    this.take(opts).then((p) => {
+      if (!p || p.exited || p.turn) return;
+      if (gen !== this.gen) this.dispose(p); // release() came while it was starting: nobody wants this one
+      else this.idleLater(p);
+    }).catch(() => {});
   }
 
   idleLater(proc) {
@@ -328,8 +352,61 @@ class ClaudeCodeEngine {
 
   // The chat was switched, cleared or rewound (agent.js onEngineReset), or a background task ended:
   // an idle kept CLI goes. One mid-message stays, and one that took its last message ends by itself.
+  // Also called when a message failed or was stopped before it reached the CLI (agent.js runTask), so
+  // the process warm() started for it doesn't idle for the full timeout.
   release() {
+    this.gen++;
     if (this.proc && !this.proc.turn && !this.proc.spent) this.dispose();
+  }
+
+  // A Lumen tool call from this CLI starts / ends (features/ai-agents.js mcpCallTool): counted for the
+  // message (a message that ran a tool is never sent again silently), and the watchdog waits for it
+  // (an approval card can wait on the user for as long as it likes).
+  callBegin() {
+    const a = this.active;
+    if (!a) return;
+    a.tools++;
+    a.inflight++;
+    clearTimeout(a.dog);
+  }
+
+  callEnd() {
+    const a = this.active;
+    if (!a) return;
+    a.inflight = Math.max(0, a.inflight - 1);
+    a.arm?.();
+  }
+
+  // Stop on a kept process: ask the CLI to interrupt and read off the rest of the turn (up to its
+  // `result`), so the next message can use the same process. The turn itself has already been
+  // resolved as stopped by the caller; this runs on in the background. A process that doesn't
+  // answer the control_request with a result in interruptMs is killed, as Stop always did.
+  interrupt(proc) {
+    let finish;
+    const drained = new Promise((resolve) => { finish = resolve; });
+    let over = false;
+    let acked = false;
+    let timer = null;
+    const end = (kept) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      proc.drain = null;
+      proc.turn = null;
+      if (kept && !proc.exited) this.idleLater(proc); else this.dispose(proc);
+      finish();
+    };
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => end(false), this.interruptMs); };
+    proc.drain = drained;
+    proc.turn = {
+      handle: (msg) => {
+        if (msg.type === 'result') { proc.usage.last = msg; end(true); } // the interrupted turn's own result: the line is clean again
+        else if (msg.type === 'control_response' && !acked) { acked = true; arm(); } // accepted: the result should follow shortly
+      },
+      exit: () => end(false),
+    };
+    arm();
+    try { proc.child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: `lumen-stop-${crypto.randomBytes(6).toString('hex')}`, request: { subtype: 'interrupt' } })}\n`); } catch { end(false); }
   }
 
   // Early step rows (EARLY_STEP_MS): one per mcp__lumen__ tool_use block as it starts streaming.
@@ -350,6 +427,12 @@ class ClaudeCodeEngine {
     const [step] = this.early.splice(i, 1);
     clearTimeout(step.timer);
     return step.shown ? step.id : null;
+  }
+
+  // The early row `id` (claimStep) now has its call: its real input and describeStep's specific label
+  // replace the generic one (the renderer's tool_update sets the step's label text and title).
+  updateStep(id, name, input, label) {
+    if (label) this.active?.emit({ type: 'tool_update', id, name, input, label });
   }
 
   // End of a message: rows for tool calls that never reached Lumen are marked stopped.
@@ -389,7 +472,9 @@ class ClaudeCodeEngine {
     if (!reused) emit({ type: 'status', text: 'Starting Claude Code…' }); // (its first message: the working line says why it waits)
     proc.turns++;
     const { tag } = proc;
-    this.active = { tag, emit, signal, child: proc.child, agent: runAgent };
+    // tools: Lumen tool calls this message made (callBegin); inflight: those still running; dog/arm: the watchdog.
+    const active = { tag, emit, signal, child: proc.child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
+    this.active = active;
 
     let text = '';
     let finalText = '';
@@ -398,7 +483,18 @@ class ClaudeCodeEngine {
     let rateLimit = null; // the plan's limits as of this turn (rate_limit_event), for the Usage panel
     let settle;
     const ended = new Promise((resolve) => { settle = resolve; });
+    let sent = false; // the message went into stdin
+    let over = false; // the turn has ended (the watchdog stays off)
+    let stalled = false;
+    // Watchdog: any line from the CLI restarts it; it is off while a Lumen tool call runs (an approval card
+    // can wait on the user). A CLI that says nothing for watchdogMs is hung: end it and say so.
+    active.arm = () => {
+      clearTimeout(active.dog);
+      if (!this.watchdogMs || over || active.inflight > 0) return;
+      active.dog = setTimeout(() => { stalled = true; this.dispose(proc); settle({ code: null }); }, this.watchdogMs);
+    };
     const handle = (msg) => {
+      active.arm();
       if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
         rateLimit = msg.rate_limit_info;
         emit({ type: 'rate_limit', info: rateLimit });
@@ -423,26 +519,37 @@ class ClaudeCodeEngine {
         settle({ code: null });
       }
     };
-    proc.turn = { handle, exit: (code) => settle({ code }) };
+    const current = { handle, exit: (code) => settle({ code }) };
+    proc.turn = current;
     if (proc.exited) settle({ code: proc.code });
-    // Stop: the whole tree goes (the stdio bridge is the CLI's child), and the reply ends now.
-    const onAbort = () => { this.dispose(proc); settle({ code: null }); };
+    // Stop: the reply ends now. A kept process that has the message is asked to interrupt and keeps
+    // running if it answers in time (interrupt); any other (one-shot, nothing sent yet) goes with its
+    // whole tree (the stdio bridge is the CLI's child).
+    const onAbort = () => {
+      settle({ code: null });
+      if (proc.exited) return;
+      if (proc.single || !sent) this.dispose(proc); else this.interrupt(proc);
+    };
     signal.addEventListener('abort', onAbort, { once: true });
     if (signal.aborted) onAbort();
     if (!proc.exited && !signal.aborted) {
+      sent = true;
       proc.child.stdin.write(`${JSON.stringify(stdinMessage(prompt, images))}\n`);
       if (proc.single) { proc.spent = true; proc.child.stdin.end(); }
+      active.arm();
     }
 
     const { code } = await ended;
+    over = true;
+    clearTimeout(active.dog);
     signal.removeEventListener('abort', onAbort);
-    proc.turn = null;
+    if (proc.turn === current) proc.turn = null; // (not an interrupt's drain, which clears itself)
     this.clearEarly(emit);
     if (this.active?.tag === tag) this.active = null;
     const ok = Boolean(result && !result.is_error && result.subtype === 'success');
     if (!proc.single) {
       if (ok && !signal.aborted && !proc.exited) { if (newSession) proc.rekey(newSession); this.idleLater(proc); } // kept for the chat's next message
-      else this.dispose(proc); // a failed or capped turn: the next message starts clean (--resume)
+      else if (!proc.drain) this.dispose(proc); // a failed, stalled or capped turn: the next message starts clean (--resume); a stopped one is draining
     } else if (ok && this.keepAlive && !signal.aborted) {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
       const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns };
@@ -452,10 +559,17 @@ class ClaudeCodeEngine {
 
     if (signal.aborted) return { text: text || finalText, sessionId: newSession, stopped: true };
     if (code === 'ENOENT') { this.bin = null; return notInstalled(); }
-    if (!result && reused && !fresh && !text && !finalText) return { retry: true };
-    const usage = usageOf(result);
+    if (stalled) {
+      emit({ type: 'error', text: `Claude Code stopped responding for ${Math.round(this.watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
+      return { text, sessionId: newSession, failed: true, rateLimit };
+    }
+    // Sent again on a fresh process only when nothing ran: a turn that called a tool may have acted already.
+    if (!result && reused && !fresh && !text && !finalText && active.tools === 0) return { retry: true };
+    // What this message cost, not the process's running total (perTurnResult in cli-utils.js).
+    const counted = result ? perTurnResult(result, proc.usage) : null;
+    const usage = usageOf(counted);
     // The turn cap is not a failure: keep the session so "continue" resumes it (agent.js shows the notice).
-    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: result.total_cost_usd, usage, rateLimit };
+    if (turnLimitHit(result)) return { text: text || finalText, sessionId: newSession, limit: true, cost: counted.total_cost_usd, usage, rateLimit };
     if (!ok) {
       // A resumed session that no longer exists: forget it so the next message starts fresh.
       const expired = /no conversation found|session.*not found/i.test(`${result?.result || ''}${(result?.errors || []).join('\n')}${proc.stderr}`);
@@ -463,7 +577,7 @@ class ClaudeCodeEngine {
       emit({ type: 'error', ...describeFailure(result?.result || (result?.errors || []).join('\n') || proc.stderr, code) });
       return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: result.total_cost_usd, usage, rateLimit };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit };
   }
 }
 

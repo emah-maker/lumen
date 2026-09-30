@@ -526,6 +526,41 @@ function settleAuth(userHome, home, before) {
   return true;
 }
 
+// The same two, off the main thread (run() prepares them while the page is being read). Same result.
+async function linkAuthAsync(userHome, home) {
+  const fsp = fs.promises;
+  const stat = (p) => fsp.stat(p, { bigint: true }).catch(() => null);
+  const real = path.join(userHome, 'auth.json');
+  const own = path.join(home, 'auth.json');
+  const before = await stat(real);
+  if (sameFile(before, await stat(own))) return before;
+  await fsp.rm(own, { force: true });
+  if (!before) return null;
+  try { await fsp.link(real, own); } catch { await fsp.copyFile(real, own); await fsp.chmod(own, 0o600); }
+  return before;
+}
+async function settleAuthAsync(userHome, home, before) {
+  const fsp = fs.promises;
+  const stat = (p) => fsp.stat(p, { bigint: true }).catch(() => null);
+  const real = path.join(userHome, 'auth.json');
+  const own = path.join(home, 'auth.json');
+  const [now, mine] = [await stat(real), await stat(own)];
+  if (!before || !now || !mine || sameFile(now, mine)) return false;
+  if (now.mtimeNs !== before.mtimeNs || now.size !== before.size) return false;
+  const [a, b] = await Promise.all([fsp.readFile(own), fsp.readFile(real)]);
+  if (a.equals(b)) return false;
+  await fsp.copyFile(own, real);
+  return true;
+}
+
+// Writes a file only when its content differs (config.toml and the gate script are the same for every
+// message: rewriting them cost a disk write, and on Windows a virus-scan, per message).
+async function writeIfChanged(file, content, mode) {
+  try { if (await fs.promises.readFile(file, 'utf8') === content) return false; } catch {}
+  await fs.promises.writeFile(file, content, { mode });
+  return true;
+}
+
 // The --prompt-file contents: the text, then any images.
 function promptBlocks(prompt, images = []) {
   return JSON.stringify([
@@ -559,8 +594,13 @@ class GrokBuildEngine {
   // test/grokgate.js only, which loosens Grok's own rules to show the gate alone stops a call.
   // background: an engine made for one background task (features/ai-agents.js backgroundEngine): its own
   // GROK_HOME (home) and working folder (dir), no terminal command at all, and its own `active` run.
-  constructor({ userData, gate, lumenReady = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
+  // onFresh({ sessionId, resume }): a new grok process starts (one per message), so the page reads the
+  // model saw before no longer count (snapshot.js's repeat-read cache, features/ai-agents.js).
+  constructor({ userData, gate, lumenReady = null, onFresh = null, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
     this.kind = 'grokbuild';
+    this.onFresh = onFresh;
+    this.prep = null; // { at, promise } from prepare(): the setup a message's run() takes over
+    this.settling = null; // the last run's settleAuthAsync, awaited before the next link
     this.background = background;
     this.home = home;
     this.dir = dir;
@@ -624,23 +664,48 @@ class GrokBuildEngine {
   // runAgent: the Agent whose gate, approvals and tab this run's MCP calls use (a background task's own).
   // shownModel: the model this chat last showed (see modelNotice); the result's `model` is the one
   // Grok reports it used (servedModel), null when it named none.
+  // The part of a message's setup that doesn't need the message: the binary, Lumen's HTTP gate, the
+  // folders, config.toml and the gate script (written only when their content changed) and the link to
+  // the user's sign-in. agent.js runTask starts it while the page is read; run() takes it over.
+  // Grok has no stdin for the prompt (it is read from --prompt-file at spawn), so unlike Claude Code's
+  // warm() the process itself can't start before the message is known.
+  // Lumen's own GROK_HOME (see the file header): config.toml names only the `lumen` server, and the
+  // user's auth.json is linked in so their sign-in works. The working folder is a separate, fixed,
+  // empty folder that is also the child's HOME, so Grok finds no project files there.
+  prepare() {
+    if (this.prep && Date.now() - this.prep.at < 30000) return this.prep.promise;
+    const promise = (async () => {
+      const bin = await this.ensureBin();
+      if (!bin) return { bin: null };
+      const gate = await this.gate();
+      const { home, dir } = this;
+      const gateFile = path.join(home, GATE_FILE);
+      await Promise.all([fs.promises.mkdir(home, { recursive: true, mode: 0o700 }), fs.promises.mkdir(dir, { recursive: true })]);
+      await this.settling; // the last run's token copy-back finishes before the link is looked at again
+      const authBefore = (await Promise.all([
+        writeIfChanged(gateFile, gateScript(), 0o700),
+        writeIfChanged(path.join(home, 'config.toml'), grokConfig({ gate: gateFile }), 0o600),
+        linkAuthAsync(userGrokHome(), home).catch(() => null), // no login shared: the run reports "not signed in"
+      ]))[2];
+      return { bin, gate, authBefore };
+    })();
+    this.prep = { at: Date.now(), promise };
+    promise.catch(() => { if (this.prep?.promise === promise) this.prep = null; });
+    return promise;
+  }
+
   async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, shownModel = null }) {
-    const bin = await this.ensureBin();
+    const prepared = this.prepare(); // (the one runTask started, if it is recent)
+    this.prep = null; // each message prepares afresh
+    const { bin, gate, authBefore } = await prepared;
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
-    const gate = await this.gate();
-    // Lumen's own GROK_HOME (see the file header): config.toml names only the `lumen` server, and
-    // the user's auth.json is linked in so their sign-in works. The working folder is a separate,
-    // fixed, empty folder that is also the child's HOME, so Grok finds no project files there.
-    const home = this.home;
-    const dir = this.dir;
-    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-    fs.mkdirSync(dir, { recursive: true });
+    const { home, dir } = this;
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
-    fs.writeFileSync(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, shownModel };
+    await fs.promises.writeFile(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, shownModel, authBefore };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -648,7 +713,7 @@ class GrokBuildEngine {
       const out = await this.attempt({ ...args, sessionId, waitForLumen: !resume });
       return out.retry ? await this.attempt({ ...args, sessionId: crypto.randomUUID(), waitForLumen: false }) : out;
     } finally {
-      try { fs.rmSync(promptFile, { force: true }); } catch {} // (dir itself is kept: the fixed sidebar folder, see above)
+      fs.promises.rm(promptFile, { force: true }).catch(() => {}); // (dir itself is kept: the fixed sidebar folder, see above)
     }
   }
 
@@ -656,7 +721,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, shownModel = null }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, shownModel = null, authBefore = null }) {
     const tag = crypto.randomBytes(18).toString('hex');
     const lumenReady = this.lumenReady || ((t) => gate.listed(t));
     // This run's MCP token and gate URL (mcp-http.js), handed to Grok in its environment only.
@@ -664,15 +729,12 @@ class GrokBuildEngine {
     // this chat, so a run_terminal_command "allow for this chat" (mcp-http.js terminalDecision) can
     // outlive this one message's tag, which is fresh every time.
     const gateRun = gate.open(tag, sessionId);
-    const gateFile = path.join(home, GATE_FILE);
-    fs.writeFileSync(gateFile, gateScript(), { mode: 0o700 });
-    fs.writeFileSync(path.join(home, 'config.toml'), grokConfig({ gate: gateFile }), { mode: 0o600 });
     const userHome = userGrokHome();
-    let authBefore = null;
-    try { authBefore = linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
+    try { this.onFresh?.({ sessionId, resume }); } catch {}
     const argv = this.argsFor({ promptFile, sessionId, resume, systemPrompt, cwd: dir, model, maxTurns, background: this.background });
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
+    emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (the renderer clears it on the first output)
     const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun, home, dir }), cwd: dir });
     this.active = { tag, emit, signal, child, agent: runAgent };
     // Best-effort, mirroring claude-code.js: kills our own spawned process tree. (Grok's background
@@ -736,6 +798,7 @@ class GrokBuildEngine {
         // A new text block starts a new paragraph in the saved reply too (see claude-code.js).
         if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; show({ type: 'text_block' }); }
         else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') { text += e.delta.text; show({ type: 'text', text: e.delta.text }); }
+        // Held like the rest on a chat's first message only (later ones aren't held): a stopped try's thinking must not reach the sidebar (test/units.js).
         else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') show({ type: 'thinking', text: e.delta.thinking });
         // tool_use blocks are not shown here: Lumen's MCP side emits one step row per call.
       } else if (msg.type === 'assistant') {
@@ -787,7 +850,7 @@ class GrokBuildEngine {
     // A turn Grok ended without Lumen's gate ever seeing it (its prompt hook blocked, say) is no reply.
     if (!armed && !gate.armed(tag) && result && !result.is_error) unguarded = true;
     gate.close(tag);
-    try { settleAuth(userHome, home, authBefore); } catch {}
+    this.settling = settleAuthAsync(userHome, home, authBefore).catch(() => {}); // not awaited: the reply doesn't wait on it (the next prepare() does)
     stderr = (stderr + errBuffer).slice(-4000);
 
     if (offTool) {
@@ -823,4 +886,4 @@ class GrokBuildEngine {
   }
 }
 
-module.exports = { GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };

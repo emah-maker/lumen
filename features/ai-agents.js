@@ -117,14 +117,17 @@ function setupAiAgents(deps) {
   let claudeCodeDetail = null; // subscription label (e.g. 'enterprise'), when known
   const claudeCodeModule = () => require('../claude-code');
   const newClaudeCode = (extra = {}) => new (claudeCodeModule().ClaudeCodeEngine)({
-    userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), gate: oneShotClaude() ? null : startHttpGate, keepAlive: !oneShotClaude(), spawn: cliSpawn(), ...extra,
+    userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), gate: oneShotClaude() ? null : startHttpGate, keepAlive: !oneShotClaude(), spawn: cliSpawn(), onFresh: freshReads, ...extra,
   });
+  // A new CLI process or session: the model no longer has its earlier page reads, so "unchanged since your
+  // last read" would point at nothing (snapshot.js ReadCache); the cache is keyed by the new session too.
+  function freshReads({ sessionId } = {}) { try { require('../snapshot').reads.reset(sessionId); } catch {} }
   const claudeCodeEngine = () => {
     claudeCode ||= newClaudeCode();
     return claudeCode;
   };
   // A chat switched, cleared or rewound (agent.js): the sidebar's idle Claude Code process ends.
-  agent.onEngineReset = () => claudeCode?.release();
+  agent.onEngineReset = () => { freshReads(); claudeCode?.release(); }; // (the read cache too: the chat's CLI session is gone)
   app.on?.('will-quit', () => { claudeCode?.dispose(); for (const e of bgEngines) e.dispose?.(); });
 
   // ---------- Grok Build engine (created on first use) ----------
@@ -147,7 +150,7 @@ function setupAiAgents(deps) {
       const { GrokBuildEngine } = grokBuildModule();
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
-      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn() });
+      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
     }
     return grokBuild;
   };
@@ -230,6 +233,10 @@ function setupAiAgents(deps) {
     if (!early) {
       const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
       toUi({ type: 'tool', id: stepId, name, input: args, label, clientName: session.clientName });
+    } else {
+      // The early row still has its generic label and no input: the call is here, so name it (renderer: tool_update).
+      const label = await inPin(() => runAgent.describeStep(name, args)).catch(() => null);
+      owner.updateStep(stepId, name, args, label);
     }
     const emit = (event) => toUi({ ...event, clientName: session.clientName });
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
@@ -239,6 +246,9 @@ function setupAiAgents(deps) {
       await runAgent.ensureAllowed(name, emit, signal, allow);
       return abortable(runAgent.execute(name, args), signal);
     };
+    // The engine counts this call (a message that ran a tool is never re-sent silently) and pauses its
+    // inactivity watchdog while it runs, approval card included (claude-code.js callBegin).
+    if (engineRun) owner.callBegin?.();
     try {
       const result = await inPin(work);
       toUi({ type: 'tool_done', id: stepId, ok: true });
@@ -247,6 +257,8 @@ function setupAiAgents(deps) {
       const message = signal.aborted ? 'Stopped by the user.' : String(err?.message || err);
       toUi({ type: 'tool_done', id: stepId, ok: false, error: message.split('\n')[0] });
       return { content: [{ type: 'text', text: message }], isError: true };
+    } finally {
+      if (engineRun) owner.callEnd?.();
     }
   }
 

@@ -1196,9 +1196,18 @@ class Agent {
     // are read; the message goes to its stdin once they are (claudeCodeTurn).
     const ccPlan = viaClaudeCode && !this.engineRunScope ? this.claudeCodePlan(messages, userText, images.length, wanted.length) : null;
     if (ccPlan) this.engines.claudecode.warm?.(ccPlan.spawn);
-    const attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
-    if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
-    const page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+    // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
+    if (viaGrokBuild && !this.engineRunScope) this.engines.grokbuild.prepare?.().catch?.(() => {});
+    let attached;
+    let page;
+    try {
+      attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
+      if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
+      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+    } catch (err) {
+      if (ccPlan) this.engines.claudecode.release?.(); // stopped or failed before the message was sent: the warm process is of no use
+      throw err;
+    }
     // The attached page text (or a skill's page, selection or clipboard text) counts as reading the page (see ensureAllowed).
     if (page || attached.block || this.skillRun?.tainted) this.markTainted();
     // ---- [/claude code engine] + [/grok build engine] + [/page context]
@@ -1324,6 +1333,7 @@ class Agent {
       // The CLI no longer has this chat's session (cleared, or from another machine): start a new one
       // at once, handed the conversation so far, instead of failing the message.
       delete settings.ccSession;
+      snapshot.reads.clear(); // the model of the new session has seen none of the earlier reads
       const again = handoff();
       out = await this.engines.claudecode.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit });
     }
