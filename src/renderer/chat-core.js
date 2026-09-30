@@ -108,7 +108,7 @@ async function showWelcome() {
     };
     return btn;
   }));
-  showDefault(st.isDefault);
+  showDefault(st.isDefault || st.devBuild); // (a copy run from source doesn't offer it)
   refreshSetup();
   announce(`${t('welcome.title')}. ${t('welcome.lead')}`);
   welcome.querySelector('.setup-option:not(:disabled)')?.focus({ preventScroll: true });
@@ -128,7 +128,8 @@ if (welcome) {
     else note.textContent = t(r ? 'welcome.default.notTaken' : 'welcome.default.failed'); // (never a click that seems to do nothing)
   };
   // Back from the system's Default apps page: did it take?
-  window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then((yes) => { if (yes) showDefault(true); }).catch(() => {}); });
+  // Back from system settings: the line goes if it took; otherwise its instruction is simply cleared.
+  window.addEventListener('focus', () => { if (welcoming) window.assistant.setup.isDefault().then((yes) => { if (yes) showDefault(true); else $('welcome-default-note').textContent = ''; }).catch(() => {}); });
   $('welcome-done').onclick = () => finishWelcome();
   window.assistant.setup?.onWelcome?.(() => showWelcome());
 }

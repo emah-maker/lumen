@@ -1078,8 +1078,6 @@
   "welcome.import.running": "Importing from {browser}…",
   "welcome.import.done": "Imported from {browser}: {bookmarks} and {history}.",
   "welcome.import.failed": "Couldn’t import: {error}",
-  "welcome.default": "Make Lumen your default browser",
-  "welcome.default.detail": "Links from other apps (mail, chat, documents) then open here.",
   "welcome.default.button": "Make Lumen your default browser",
   "welcome.default.done": "Lumen is your default browser.",
   "welcome.default.windows": "In the Windows Settings window that opened, set Lumen as the default for HTTP and HTTPS links.",
@@ -1109,7 +1107,6 @@
   "welcome.default.failed": "Lumen couldn’t ask your system to make it the default. Try again, or choose it in your system’s default-apps settings.",
   "setup.claudeCode.stillSignedOut": "Still not signed in to Claude Code. In a terminal, run claude and type /login, then click here again.",
   "welcome.default.confirm": "Confirm in the dialog your system opened.",
-  "welcome.default.notYet": "Not set yet: Lumen isn’t your default browser. Try again any time, here or in Settings.",
   "welcome.default.devBuild": "This copy runs from source: use an installed Lumen to make it the default.",
   "welcome.default.ask": "Want links from other apps to open here?",
   "settings.default.button": "Make default"

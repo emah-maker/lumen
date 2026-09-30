@@ -22,7 +22,7 @@ The tables below give each setting's key in `settings.json` and its default. Edi
 | Setting | Key | Default | What it does |
 |---|---|---|---|
 | Default browser | — | — | Shows whether Lumen is the default browser and asks the system to make it so. On Windows, Lumen registers itself as a browser for the current user (so Default apps can offer it) and opens Default apps on Lumen; the choice is read from the user's HTTPS association. |
-| First-run welcome | `welcome` | `pending` on a new install | The sidebar's welcome (connect an AI, import, default browser) shows while this is `pending` and never again once it is `done`. Existing profiles never get it. |
+| First-run welcome | `welcome` | `pending` on a new install | The sidebar's welcome (connect an AI, import; an optional default-browser line) shows while this is `pending` and never again once it is `done`. Existing profiles never get it. |
 
 ## AI and agents
 
