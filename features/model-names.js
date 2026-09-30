@@ -14,7 +14,7 @@ const DATE = /-(\d{4}-\d{2}-\d{2}|\d{8}|\d{2}-\d{4}|\d{2}-\d{2}|\d{4}|0\d\d)$/;
 const snapshotOf = (id) => { const m = DATE.exec(String(id)); return m ? m[1] : null; };
 const withoutDate = (id) => String(id).replace(DATE, '');
 
-const WORDS = { gpt: 'GPT', gemini: 'Gemini', grok: 'Grok', claude: 'Claude', llama: 'Llama', mistral: 'Mistral', qwen: 'Qwen', deepseek: 'DeepSeek', flash: 'Flash', pro: 'Pro', lite: 'Lite', ultra: 'Ultra', nano: 'Nano', exp: 'Experimental', preview: 'Preview', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable', turbo: 'Turbo', vision: 'Vision', fast: 'Fast', reasoning: 'Reasoning', code: 'Code', beta: 'Beta', latest: 'Latest', mini: 'Mini' };
+const WORDS = { oss: 'OSS', glm: 'GLM', chatgpt: 'ChatGPT', it: 'IT', er: 'ER', gpt: 'GPT', gemini: 'Gemini', grok: 'Grok', claude: 'Claude', llama: 'Llama', mistral: 'Mistral', qwen: 'Qwen', deepseek: 'DeepSeek', flash: 'Flash', pro: 'Pro', lite: 'Lite', ultra: 'Ultra', nano: 'Nano', exp: 'Experimental', preview: 'Preview', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable', turbo: 'Turbo', vision: 'Vision', fast: 'Fast', reasoning: 'Reasoning', code: 'Code', beta: 'Beta', latest: 'Latest', mini: 'Mini' };
 // OpenAI's own style keeps size words lower case ("GPT-5.6 mini", "o3 pro").
 const LOWER_AFTER = new Set(['gpt', 'o']);
 const SETTLEDNESS = /^(preview|exp|experimental|beta)$/i;
@@ -30,8 +30,11 @@ function nameFrom(s, { keepStatus = false } = {}) {
     const p = parts[i];
     if (i > 0 && !keepStatus && SETTLEDNESS.test(p)) continue; // shown as a badge instead (badgesFor)
     if (i === 0) { family = p.toLowerCase(); out.push(WORDS[family] || p.charAt(0).toUpperCase() + p.slice(1)); continue; }
+    if (/^[a-z]?\d+[bkm]$/i.test(p)) { out.push(` ${p.toUpperCase()}`); continue; } // a size: "120B", "27B", "A22B"
     if (/^\d+(\.\d+)*[a-z]?$/.test(p)) { out.push(family === 'gpt' && out.length === 1 ? `-${p}` : ` ${p}`); continue; } // GPT-5.6, Gemini 2.5
-    const word = LOWER_AFTER.has(family) ? p.toLowerCase() : WORDS[p.toLowerCase()] || p.charAt(0).toUpperCase() + p.slice(1);
+    // Sizes read as sizes ("120B", "27B", "A22B"); OpenAI keeps its lower-case words.
+    const sized = /^[a-z]?\d+[bkm]$/i.test(p) ? p.toUpperCase() : null;
+    const word = sized || (LOWER_AFTER.has(family) && !WORDS[p.toLowerCase()]?.match(/^[A-Z]{2,}$/) ? p.toLowerCase() : WORDS[p.toLowerCase()] || p.charAt(0).toUpperCase() + p.slice(1));
     // "flash-lite" reads as one word in Google's names.
     if (family === 'gemini' && p.toLowerCase() === 'lite' && /Flash$/.test(out[out.length - 1] || '')) { out[out.length - 1] += `-${word}`; continue; }
     out.push(` ${word}`);
@@ -59,7 +62,8 @@ function badgesFor(id, { chatOnly = false } = {}) {
 // "grok-4-1" -> 4.1).
 function versionOf(id) {
   const s = withoutDate(String(id).split('/').pop()).replace(/^([a-z]+-)(\d)-(\d)(?=-|$)/, '$1$2.$3');
-  const m = /(\d+(?:\.\d+)?)/.exec(s);
+  // A version is small ("5.6", "2.5", "4"); a size like "120b" is not one.
+  const m = /(?:^|[^\d.])(\d{1,2}(?:\.\d+)?)(?![\d]|[bkm](?:-|$))/i.exec(s);
   return m ? Number(m[1]) : 0;
 }
 // The family a model belongs to, for ranking: "gpt", "o" (o1, o3, o4-mini), "gemini", "grok", ...

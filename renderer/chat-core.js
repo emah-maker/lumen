@@ -121,7 +121,8 @@ function setAssistantIdentity(group) {
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
 const modelPicker = window.lumenPicker($('model'), {
   recentKey: 'model',
-  extra: () => (modelGroups.has('openrouter:__more') ? [{ label: t('models.searchAll'), detail: t('models.more.detail'), run: (q) => openModelSearch(q) }] : []),
+  // (The OpenRouter group has its own "More models…" row; a search adds a way to look the words up there too.)
+  extra: (q) => (q && modelGroups.has('openrouter:__more') ? [{ label: t('models.searchFor', { q }), detail: t('models.more.detail'), run: (text) => openModelSearch(text) }] : []),
 });
 
 // Whether there is any model to talk to right now (main's settings:get is the single source of
@@ -176,24 +177,36 @@ async function openModelSearch(query = '') {
       modelPicker.button.focus();
     });
   }
-  if (!openRouterSelect.options.length) {
-    let models = [];
-    try { models = await window.assistant.openRouterModels(); } catch { models = []; }
-    if (!models.length) { append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.loadFailed') })); return; }
-    const vendors = new Map();
-    for (const m of models) {
-      const vendor = String(m.id).split('/')[0];
-      if (!vendors.has(vendor)) vendors.set(vendor, Object.assign(document.createElement('optgroup'), { label: (String(m.name).split(':')[0] || vendor).trim() }));
-      const o = Object.assign(document.createElement('option'), { value: `openrouter:${m.id}`, textContent: m.name, title: m.id });
-      o.dataset.name = String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : m.name;
-      o.dataset.provider = 'OpenRouter';
-      if (!m.tools) o.dataset.badges = 'chat only';
-      vendors.get(vendor).append(o);
-    }
-    openRouterSelect.replaceChildren(...[...vendors.values()].sort((a, b) => a.label.localeCompare(b.label)));
-  }
   openRouterSelect.value = $('model').value;
+  if (openRouterSelect.options.length) { openRouterPicker.open(query); return; }
+  // First time: the list opens at once, saying it is loading, and fills in when the catalog arrives.
+  openRouterPicker.setLoading(true);
   openRouterPicker.open(query);
+  let models = [];
+  try { models = await window.assistant.openRouterModels(); } catch { models = []; }
+  openRouterPicker.setLoading(false);
+  if (!models.length) { openRouterPicker.close(false); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('models.loadFailed') })); return; }
+  // Vendors by their own names, the best-known first, then A–Z.
+  const VENDORS = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', 'x-ai': 'xAI', 'meta-llama': 'Meta', mistralai: 'Mistral', deepseek: 'DeepSeek', qwen: 'Qwen', cohere: 'Cohere', perplexity: 'Perplexity', 'z-ai': 'Z.ai', moonshotai: 'Moonshot' };
+  const FIRST = ['anthropic', 'openai', 'google', 'x-ai', 'meta-llama', 'mistralai', 'deepseek', 'qwen'];
+  const vendorName = (v) => VENDORS[v] || v.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  const short = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
+  const vendors = new Map();
+  for (const m of models) {
+    const vendor = String(m.id).split('/')[0];
+    if (!vendors.has(vendor)) vendors.set(vendor, Object.assign(document.createElement('optgroup'), { label: vendorName(vendor) }));
+    const o = Object.assign(document.createElement('option'), { value: `openrouter:${m.id}`, textContent: m.name, title: m.id });
+    o.dataset.name = String(m.name).includes(':') ? String(m.name).split(':').slice(1).join(':').trim() : m.name;
+    o.dataset.provider = 'OpenRouter';
+    const bits = [m.context ? t('models.context', { n: short(m.context) }) : '', Number.isFinite(m.pricePerM) ? t('models.price', { n: m.pricePerM < 1 ? m.pricePerM.toFixed(2) : String(Math.round(m.pricePerM * 10) / 10) }) : ''].filter(Boolean);
+    if (bits.length) o.dataset.detail = bits.join(' · ');
+    if (!m.tools) o.dataset.badges = 'chat only';
+    vendors.get(vendor).append(o);
+  }
+  const rank = (v) => { const i = FIRST.indexOf(v); return i === -1 ? FIRST.length : i; };
+  openRouterSelect.replaceChildren(...[...vendors].sort((a, b) => rank(a[0]) - rank(b[0]) || a[1].label.localeCompare(b[1].label)).map(([, g]) => g));
+  openRouterSelect.value = $('model').value;
+  openRouterPicker.refresh();
 }
 
 $('model').addEventListener('change', async (e) => {

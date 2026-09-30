@@ -449,7 +449,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* The model name gives way to the buttons, not the other way round: at the 300px minimum width six
    buttons take ~190px, and a long name (up to 220px) used to push Settings and New chat out of the
    sidebar, which clips. The picker button ellipsizes (styles below). */
-.sidebar-head .model-picker { min-width: 0; margin-right: 8px; }
+.sidebar-head .model-picker { min-width: 96px; margin-right: 8px; } /* the model's name always keeps room to be read */
 .sidebar-head .model-picker .picker-button { max-width: min(220px, 100%); }
 #dock-to-side { display: none; } /* only meaningful, and only shown, while chat-full (below) */
 
@@ -637,7 +637,8 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 
 .model-picker { position: relative; display: inline-flex; align-items: center; border-radius: 7px; transition: background-color var(--t-fast) ease-out; }
 .model-picker:hover:not(:has(.picker-menu:hover)) { background: var(--hover); } /* not while the pointer is in its (child) menu */
-.model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; margin-left: -6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker { margin-left: -6px; } /* the hover area reaches past the text; the button itself isn't squeezed */
+.model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-picker .picker-button:focus-visible { outline: 2px solid var(--accent); }
 .model-picker svg { position: absolute; right: 4px; width: 12px; height: 12px; color: var(--muted); pointer-events: none; }
 

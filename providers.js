@@ -58,7 +58,11 @@ async function openRouterCatalog({ cacheFile, fetchImpl = netFetch() } = {}) {
 function parseOpenRouterModels(json) {
   return (json?.data || [])
     .filter((m) => m?.id && !String(m.id).includes(':') && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
-    .map((m) => ({ id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0 }));
+    .map((m) => ({
+      id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0,
+      context: Number(m.context_length) || 0, // for the picker's detail line
+      pricePerM: Number.isFinite(Number(m.pricing?.prompt)) ? Number(m.pricing.prompt) * 1e6 : undefined, // $ per million input tokens
+    }));
 }
 
 // A short list for the picker: the newest tool-capable model of a few families.

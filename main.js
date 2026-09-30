@@ -366,7 +366,7 @@ let cliLoginValid = null;
 const modelNames = require('./features/model-names');
 function modelOptions() {
   const groups = [];
-  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).map(([id, { label, detail }]) => ({ id, label, name: label, provider: 'Claude', detail })) });
+  if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).sort(([a], [b]) => (b === DEFAULT_MODEL) - (a === DEFAULT_MODEL)).map(([id, { label, detail }]) => ({ id, label, name: label, provider: 'Claude', detail })) }); // the default first
   for (const [provider, info] of Object.entries(providers.PROVIDERS)) {
     if (!providerKey(provider)) continue;
     const list = [...(providerModels[provider] || info.defaults)];

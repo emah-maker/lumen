@@ -537,7 +537,7 @@ function claudeCodeOptions({ signedIn = 'unknown', accountDetail = null } = {}) 
     badges: signedIn === false ? ['sign in'] : [],
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run claude, then type /login'
-      : m.id === 'default' ? `${CLAUDE_CODE_NOTE} · the model set in Claude Code` : `${CLAUDE_CODE_NOTE} · ${m.label} (the latest ${m.label} model)`,
+      : m.id === 'default' ? 'The model set in Claude Code' : '', // the heading says Claude Code; the name says which model
     group: 'Your Claude account',
     signedIn,
     accountDetail,
@@ -561,7 +561,7 @@ function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models =
     badges: [...(signedIn === false ? ['sign in'] : []), ...(model === 'default' ? ['experimental'] : [])], // once, on the group's first row
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run grok, then run grok login'
-      : `${GROK_BUILD_NOTE} · ${model === 'default' ? `Grok’s default model${accountDetail ? ` (${accountDetail})` : ''}` : model} · ${note}`,
+      : model === 'default' ? `Grok’s default model${accountDetail ? ` (${accountDetail})` : ''}. ${note.charAt(0).toUpperCase()}${note.slice(1)}` : '', // the note once, on the group's first row
     group: 'Your Grok account',
     signedIn,
     accountDetail,

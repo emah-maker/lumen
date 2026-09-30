@@ -46,7 +46,9 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   list.setAttribute('role', 'listbox');
   if (baseLabel) list.setAttribute('aria-label', baseLabel);
   const empty = Object.assign(document.createElement('div'), { className: 'picker-empty', hidden: true });
-  menu.append(search, list, empty);
+  empty.setAttribute('role', 'status'); // "No models match" and "Loading" are announced
+  menu.append(search, list);
+  let loading = false;
   select.classList.add('picker-native');
   select.tabIndex = -1;
   select.setAttribute('aria-hidden', 'true');
@@ -63,6 +65,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     button.title = option ? [groupOf(option), name, option.value].filter(Boolean).join(' · ') : '';
     button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent].filter(Boolean).join(': '));
   };
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => button.classList.toggle('picker-narrow', button.clientWidth < 150)).observe(button);
   select.pickerSync = sync;
   select.addEventListener('change', sync);
   new MutationObserver(sync).observe(select, { childList: true, subtree: true, attributes: true });
@@ -89,19 +92,25 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (scroll) rows[active].el.scrollIntoView({ block: 'nearest' }); // the list's scroll-padding keeps it clear of the sticky heading
   }
   const hold = (el) => el.addEventListener('pointerdown', (e) => e.preventDefault()); // keeps the focus where it is
+  const BADGES = { 'chat only': ['picker.badge.chatOnly', 'chat only'], preview: ['picker.badge.preview', 'preview'], 'sign in': ['picker.badge.signIn', 'sign in'], experimental: ['picker.badge.experimental', 'experimental'] };
+  const badgeText = (b) => (BADGES[b] ? tr(BADGES[b][0], BADGES[b][1]) : b);
+  let recentRow = false;
   function row(o, key) {
     const el = Object.assign(document.createElement('div'), { className: 'picker-item', id: `${uid}-${key}` });
     el.setAttribute('role', 'option');
     el.setAttribute('aria-selected', String(o.selected));
     const top = Object.assign(document.createElement('span'), { className: 'picker-line' });
     top.append(Object.assign(document.createElement('span'), { className: 'picker-name', textContent: nameOf(o) }));
-    for (const b of (o.dataset.badges || '').split(',').map((x) => x.trim()).filter(Boolean)) {
-      top.append(Object.assign(document.createElement('span'), { className: `picker-badge${b === 'sign in' ? ' warn' : ''}`, textContent: b }));
+    const badges = (o.dataset.badges || '').split(',').map((x) => x.trim()).filter(Boolean);
+    for (const b of badges) {
+      top.append(Object.assign(document.createElement('span'), { className: `picker-badge${b === 'sign in' ? ' warn' : ''}`, textContent: badgeText(b) }));
     }
     el.append(top);
-    const detail = o.dataset.detail || '';
+    // A recent pick says where it is from ("OpenAI"), since it sits outside its provider's heading.
+    const detail = [recentRow ? o.dataset.provider || groupOf(o) : '', o.dataset.detail || ''].filter(Boolean).join(' · ');
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     el.title = [nameOf(o), o.dataset.more ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
+    el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', ')); // what a screen reader says
     hold(el);
     el.addEventListener('click', () => choose(o.value));
     el.addEventListener('pointermove', () => { const k = rows.findIndex((r) => r.el === el); if (k !== active) setActive(k, false); });
@@ -127,16 +136,21 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   }
   // Search: every word must appear somewhere (name, id, provider, note, badges), punctuation ignored ("gpt5" finds
   // "GPT-5"); a name that starts with the query ranks first, then a word that does, then anything else.
+  // Matching is by the start of words (and of the letters/digits inside them: "5" finds "GPT-5.6", "mini" does not
+  // find "Gemini"), in the name, id, provider and badges, with punctuation ignored ("gpt5" finds "GPT-5").
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const tokens = (s) => String(s).toLowerCase().split(/[^a-z0-9]+|(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])/).filter(Boolean);
+  const starts = (field, w) => { const n = norm(w); return Boolean(n) && (norm(field).startsWith(n) || tokens(field).some((t) => t.startsWith(n))); };
   function score(o, words) {
     if (!words.length) return 1;
-    const name = nameOf(o).toLowerCase();
-    const hay = `${name} ${o.value} ${groupOf(o)} ${o.dataset.provider || ''} ${o.dataset.detail || ''} ${o.dataset.badges || ''}`.toLowerCase();
-    const flat = norm(hay);
-    if (!words.every((w) => hay.includes(w) || flat.includes(norm(w)))) return 0;
+    const name = nameOf(o);
+    const group = `${groupOf(o)} ${o.dataset.provider || ''}`;
+    const fields = [name, o.value.replace(/^[a-z]+:/, ''), group, (o.dataset.badges || '').replace(/,/g, ' ')];
+    if (!words.every((w) => fields.some((f) => starts(f, w)))) return 0;
+    if (words.every((w) => starts(group, w))) return 4; // "claude" puts the Claude group first
     const q = words.join(' ');
-    if (name.startsWith(q) || norm(name).startsWith(norm(q))) return 3;
-    return words.some((w) => new RegExp(`(^|[\\s\\-./])${w.replace(/[^a-z0-9]/g, '')}`).test(name)) ? 2 : 1;
+    if (norm(name).startsWith(norm(q))) return 3;
+    return words.every((w) => starts(name, w)) ? 2 : 1;
   }
   function render() {
     const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
@@ -151,7 +165,9 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       const recents = recent().map((v) => all.find((o) => o.value === v)).filter((o) => o && !o.dataset.more && !o.selected).slice(0, 3);
       if (recents.length) {
         out.push(heading(tr('picker.recent', 'Recent')));
+        recentRow = true;
         recents.forEach((o, i) => out.push(row(o, `r${i}`)));
+        recentRow = false;
       }
     }
     const groups = new Map();
@@ -168,30 +184,36 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       ordered = ordered.sort((a, b) => Math.max(...b[1].map((m) => m.sc)) - Math.max(...a[1].map((m) => m.sc)));
     }
     let n = 0;
-    for (const [g, members] of ordered) {
+    for (const [g, all2] of ordered) {
+      // An action row ("More models…") is not a model: it is never folded away or counted.
+      const members = all2.filter((m) => !m.o.dataset.more);
+      const actions = all2.filter((m) => m.o.dataset.more);
       const section = Object.assign(document.createElement('div'), { className: 'picker-section' });
       section.setAttribute('role', 'group');
       if (g && (ordered.length > 1 || out.length)) { const h = heading(g, members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
+      actions.forEach((m, i) => section.append(row(m.o, `${n}-a${i}`)));
       if (folded) {
         const reveal = members[SHOWN].o.value;
         const more = actionRow(`m${n}`, tr('picker.showAll', 'Show all {n}', { n: members.length }), '', () => { expanded.add(g); focusValue = reveal; render(); });
         rows.push({ el: more, expand: g, reveal });
-        section.append(more);
+        section.insertBefore(more, section.children[SHOWN + (section.firstElementChild?.classList.contains('picker-group') ? 1 : 0)] || null);
       }
       out.push(section);
       n++;
     }
+    const anyModel = rows.some((r) => r.value != null);
+    empty.hidden = anyModel || !words.length;
+    empty.textContent = loading ? tr('picker.loading', 'Loading models…') : tr('picker.none', 'No models match “{q}”', { q: search.value.trim() });
+    if (loading) empty.hidden = false;
+    out.push(empty); // right after the models, before any extra rows
     for (const [i, x] of (extra?.(search.value.trim()) || []).entries()) {
       const el = actionRow(`x${i}`, x.label, x.detail || '', () => { close(); x.run(search.value.trim()); }, 'picker-more picker-extra');
       rows.push({ el, run: x.run });
       out.push(el);
     }
     list.replaceChildren(...out);
-    const anyModel = rows.some((r) => r.value != null);
-    empty.hidden = anyModel || !words.length;
-    empty.textContent = tr('picker.none', 'No models match “{q}”', { q: search.value.trim() });
     const selected = rows.findIndex((r) => r.value === select.value);
     const again = keepActive != null ? rows.findIndex((r) => r.value === keepActive) : -1;
     setActive(words.length ? 0 : again !== -1 ? again : selected !== -1 ? selected : 0);
@@ -225,6 +247,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (menu.hidden) return;
     menu.hidden = true;
     button.setAttribute('aria-expanded', 'false');
+    if (anchor) anchor.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', outside, true);
     window.removeEventListener('resize', onResize);
     if (refocus) (anchor || button).focus();
@@ -241,6 +264,9 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   }
   function open(initial = '') {
     expanded = new Set();
+    rows = []; // a reopened list starts at the current model, not wherever the pointer or arrows last were
+    active = -1;
+    focusValue = null;
     const many = options().length > 7 || Boolean(anchor);
     search.hidden = !many;
     search.value = initial;
@@ -253,8 +279,13 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     document.addEventListener('pointerdown', outside, true);
     window.addEventListener('resize', onResize);
     owner().focus({ preventScroll: true });
+    if (anchor) {
+      anchor.setAttribute('aria-expanded', 'true');
+      anchor.lumenAnchoredClose = () => { if (menu.hidden) return false; close(); return true; };
+    }
   }
-  button.addEventListener('click', () => (menu.hidden ? open() : close()));
+  // A click on this button while another list is open under it (OpenRouter's catalog) only closes that list.
+  button.addEventListener('click', () => { if (button.lumenAnchoredClose?.()) return; if (menu.hidden) open(); else close(); });
   button.addEventListener('keydown', (e) => {
     if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); open(); }
   });
@@ -276,5 +307,6 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   }
   menu.addEventListener('keydown', onKey);
   sync();
-  return { button, menu, sync, open, close };
+  // setLoading(true): the list says it is loading (the OpenRouter catalog's first fetch); refresh(): redraw if open.
+  return { button, menu, sync, open, close, setLoading: (on) => { loading = Boolean(on); if (!menu.hidden) render(); }, refresh: () => { if (!menu.hidden) render(); } };
 };
