@@ -189,12 +189,35 @@
     mainEl.style.setProperty('--clock-size', `${WS.CLOCK_PX[size.clock]}px`);
     mainEl.style.setProperty('--search-w', `${size.search === WS.SEARCH_DEFAULT ? defaultSearchPx() : size.search}px`);
   }
+  // A size set in Settings goes as far as the cards around the centre column allow and stops there, rather than
+  // pushing them (the same rule as resizing it in Edit layout): the clock steps down, the search bar narrows.
+  function fitToCards() {
+    const fits = () => window.widgetGrid?.centreFits?.() ?? true;
+    if (fits()) return;
+    while (size.clock !== WS.CLOCK_STEPS[0] && WS.CLOCK_STEPS.indexOf(size.clock) > WS.CLOCK_STEPS.indexOf(WS.CLOCK_DEFAULT)) {
+      size.clock = WS.CLOCK_STEPS[WS.CLOCK_STEPS.indexOf(size.clock) - 1];
+      paint();
+      if (fits()) return;
+    }
+    let lo = WS.SEARCH_MIN, hi = size.search;
+    if (hi <= WS.SEARCH_DEFAULT) return; // at or below the default: the layout was made around it
+    while (hi - lo > WS.SEARCH_STEP) {
+      const mid = Math.round((lo + hi) / 2 / WS.SEARCH_STEP) * WS.SEARCH_STEP;
+      if (mid <= lo || mid >= hi) break;
+      size.search = mid;
+      paint();
+      if (fits()) lo = mid; else hi = mid;
+    }
+    size.search = Math.max(lo, WS.SEARCH_DEFAULT);
+    paint();
+  }
   window.newtabSize = {
     apply(clock, search) {
       if (size.hold) return;
       size.clock = WS.cleanClockSize(clock) || WS.CLOCK_DEFAULT;
       size.search = WS.cleanSearchWidth(search) || WS.SEARCH_DEFAULT;
       paint();
+      fitToCards();
     },
     preview(clock, search) {
       if (clock) size.clock = WS.cleanClockSize(clock) || size.clock;
@@ -202,6 +225,7 @@
       paint();
     },
     hold(on) { size.hold = Boolean(on); },
+    held: () => size.hold,
     get: () => ({ clock: size.clock, search: size.search }),
   };
 

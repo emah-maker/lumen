@@ -296,24 +296,6 @@ function nearestFree(r, obstacle, cols) {
   return options.reduce((best, o) => (Math.abs(o.x - r.x) + Math.abs(o.y - r.y) < Math.abs(best.x - r.x) + Math.abs(best.y - r.y) ? o : best));
 }
 
-// The clock and the search bar, moved or resized as cards of their own, make room for themselves only in free space:
-// they never push the other cards around (dragging one over a card slides it to the nearest free spot instead).
-const GIVES_WAY = new Set(['sys-header', 'sys-search']);
-// The free spot for `r` (its size kept) nearest to where it was asked for, clear of `blockers`; null if there is none.
-function nearestOpen(r, blockers, cols) {
-  let best = null;
-  let bestD = Infinity;
-  const maxY = Math.min(MAX_Y, Math.max(r.y, ...blockers.map((b) => b.y + b.h)) + 1);
-  for (let y = 0; y <= maxY; y++) {
-    for (let x = 0; x + r.w <= cols; x++) {
-      const d = Math.abs(x - r.x) * 1.2 + Math.abs(y - r.y); // sideways first: it stays on the row it was dropped on
-      if (d >= bestD) continue;
-      const c = { ...r, x, y };
-      if (!blockers.some((b) => overlap(c, b))) { best = c; bestD = d; }
-    }
-  }
-  return best;
-}
 function move(items, id, to, o = {}) {
   const { cols = COLS, packed = true } = o;
   if (cols === 1) return items.map(clone);
@@ -324,12 +306,6 @@ function move(items, id, to, o = {}) {
   let r = { ...it, w: Math.min(it.w, cols) };
   r.x = clamp(Math.round(to.x), 0, cols - r.w);
   r.y = clamp(Math.round(to.y), 0, MAX_Y);
-  if (GIVES_WAY.has(it.type)) {
-    const others = list.filter((i) => i.id !== id);
-    const blockers = ob ? [...others, ob] : others;
-    if (blockers.some((b) => overlap(r, b))) r = nearestOpen(r, blockers, cols) || { ...r, x: it.x, y: it.y };
-    return inOrder(items, prune([r, ...others], o)); // everything else stays exactly where it was
-  }
   if (ob && overlap(r, ob)) r = nearestFree(r, ob, cols);
   return finish(items, r, list.filter((i) => i.id !== id), cols, ob, packed, o);
 }
@@ -378,24 +354,7 @@ function resize(items, id, want, o = {}) {
   if (!found || ![want?.x, want?.y, want?.w, want?.h].every(Number.isFinite)) return items.map(clone);
   const { list, ob } = prep(items, o);
   const it = withoutSnap(list.find((i) => i.id === id));
-  let r = stopAtObstacle(fitRect(it, { x: Math.round(want.x), y: Math.round(want.y), w: Math.round(want.w), h: Math.round(want.h) }, cols), it, ob);
-  if (GIVES_WAY.has(it.type)) {
-    // It grows only into free cells: the size stops at the first card in the way (each edge on its own), never pushing it.
-    const others = list.filter((i) => i.id !== id);
-    const blocked = (c) => others.some((b) => overlap(c, b)) || (ob && overlap(c, ob));
-    if (blocked(r)) {
-      const L = limitsOf(it.type);
-      let best = { ...it };
-      for (let w = r.w; w >= L.minW; w--) {
-        for (let h = r.h; h >= L.minH; h--) {
-          const c = { ...r, w, h, x: r.x === it.x ? it.x : r.x + r.w - w, y: r.y === it.y ? it.y : r.y + r.h - h };
-          if (!blocked(c) && w * h > best.w * best.h) best = c;
-        }
-      }
-      r = best;
-    }
-    return inOrder(items, prune([r, ...others], o));
-  }
+  const r = stopAtObstacle(fitRect(it, { x: Math.round(want.x), y: Math.round(want.y), w: Math.round(want.w), h: Math.round(want.h) }, cols), it, ob);
   return finish(items, r, list.filter((i) => i.id !== id), cols, ob, packed, o);
 }
 

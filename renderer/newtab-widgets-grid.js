@@ -33,17 +33,12 @@
   let suppress = false;
   let resyncTimer = 0;
   const layoutHooks = [];
+  let lastBlockers = []; // the cards that stopped the last centre-column resize (centreFits)
   const centreBottom = () => { const f = mainEl.querySelector('form'); return f.offsetTop + f.offsetHeight - mainMargin; };
-  // Where the rows line up (metrics' `top`) is taken from the search block's bottom as it would be with the clock at its
-  // default size: resizing the clock then changes the centre column's height, never the grid under every other card.
-  function gridBottom(formBottom) {
-    const clock = document.getElementById('clock');
-    const WS = globalThis.WidgetSystem;
-    const now = window.newtabSize?.get().clock;
-    if (!clock || !WS || !now || clock.hidden || !mainEl.contains(clock) || !clock.offsetHeight) return formBottom;
-    const h = clock.offsetHeight;
-    return formBottom - (h - h * (WS.CLOCK_PX[WS.CLOCK_DEFAULT] / WS.CLOCK_PX[now]));
-  }
+  // Row 0 sits at a fixed place (the page margin), not wherever the centre column happens to end: the clock's size or
+  // style, the greeting or the date being shown or hidden then change the centre column only, never the grid that
+  // every other card sits on. (The centre column still keeps a gutter above the cards below it: obstacleFor rounds up.)
+  const gridBottom = () => undefined;
 
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -71,7 +66,8 @@
     // The centre column is only an obstacle while something is docked in it (every section may have become a card).
     const docked = window.newtabSystem ? window.newtabSystem.dockedCount() > 0 : true;
     const obstacle = docked ? WL.obstacleFor(contentBottom, m, WL.centreSpan(m, mainEl.offsetWidth)) : null;
-    o = { cols: m.cols, obstacle, packed: body.dataset.wpack === '1', rows: WL.pageRows(window.innerHeight, m) };
+    // While the clock or search bar is being resized, packing holds off: cards don't move up and back during the drag.
+    o = { cols: m.cols, obstacle, packed: body.dataset.wpack === '1' && !window.newtabSize?.held?.(), rows: WL.pageRows(window.innerHeight, m) };
     body.classList.toggle('w-stacked', m.cols === 1);
     if (m.cols === 1 && editing) setEditing(false);
     announceMode();
@@ -587,5 +583,25 @@
   window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, gridBottom(centreBottom())),
     // Does the centre column, at the size it has right now (a clock or search-bar resize being previewed), leave every
     // card where it is? False when it would run into one: the resize stops short instead of pushing cards around.
-    centreFits: () => { if (!items.length || stacked()) return true; measure(); return !o.obstacle || !view.some((it) => WL.overlap(it, o.obstacle)); }, items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
+    // (Measured into copies: the grid's own state is left as it was, so a size that was tried and put back can't leave a
+    // phantom, bigger centre column behind for the next card move.) A banner snapped to the top pushes the centre
+    // column down, so the check uses the column where it is actually drawn.
+    centreFits: () => {
+      if (!items.length || stacked()) return true;
+      const keep = { m, o };
+      measure();
+      const ob = o.obstacle && { ...o.obstacle, y: o.obstacle.y + WL.bannerRows(view, o) };
+      ({ m, o } = keep);
+      lastBlockers = ob ? view.filter((it) => !it.snap || it.snap !== 'top').filter((it) => WL.overlap(it, ob)).map((it) => it.id) : [];
+      return lastBlockers.length === 0;
+    },
+    // Outline, for a moment, the cards that stopped the last clock or search-bar resize.
+    flashBlockers: () => {
+      for (const id of lastBlockers) {
+        const card = cardsById.get(id);
+        if (!card) continue;
+        card.classList.add('w-blocking');
+        setTimeout(() => card.classList.remove('w-blocking'), 1100);
+      }
+    }, items: () => view.map((i) => ({ ...i })), busy: () => Boolean(drag), defer: (list) => { deferred = list; }, state: () => ({ dragging: Boolean(drag), deferred: Boolean(deferred), optimisticAge: optimistic ? Date.now() - optimistic.at : null, editing, items: items.length }) };
 })();

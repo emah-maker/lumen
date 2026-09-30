@@ -88,10 +88,14 @@
     .w-sz-frame { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 12px; pointer-events: none; }
     .w-sz-grip { position: absolute; left: 0; top: 0; box-sizing: border-box; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); pointer-events: auto; touch-action: none; outline: none; }
     .w-sz-grip::after { content: ""; position: absolute; inset: -10px; }
-    /* A clock or search-bar size that would run into a card: the grip nudges, and the size stays where it fits. */
+    /* A clock or search-bar size that would run into a card: the grip nudges once and keeps a tint while it is held at
+       the limit (cleared by the next size that fits); the cards in the way are outlined for a moment. */
     .w-sz-grip.w-sz-blocked { animation: w-sz-nudge 280ms ease-out; background: color-mix(in srgb, var(--accent) 45%, #d70015); }
     @keyframes w-sz-nudge { 30% { translate: 3px 0; } 60% { translate: -2px 0; } }
+    .w-card.w-blocking { outline: 2px dashed color-mix(in srgb, #d70015 65%, transparent); outline-offset: 4px; transition: outline-color 400ms ease-out; }
     @media (prefers-reduced-motion: reduce) { .w-sz-grip.w-sz-blocked { animation: none; } }
+    body.calm .w-sz-grip.w-sz-blocked { animation: none; }
+    .w-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .w-sz-grip:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .w-sz-corner { width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 999px; cursor: nwse-resize; }
     .w-sz-edge { width: 8px; height: 36px; margin: -18px 0 0 -4px; border-radius: 999px; cursor: ew-resize; }
@@ -329,16 +333,22 @@
   const gripL = el('div', 'w-sz-grip w-sz-edge w-ui');
   const gripR = el('div', 'w-sz-grip w-sz-edge w-ui');
   for (const f of [frameClock, frameSearch]) f.setAttribute('aria-hidden', 'true');
+  // How to use them, for screen readers too (a title alone isn't reliably read out).
+  const sizeHint = el('span', 'w-sr');
+  sizeHint.id = 'w-sz-hint';
+  sizeHint.textContent = T('newtab.edit.sizeHint');
   for (const [g, label] of [[gripClock, 'newtab.edit.clock'], [gripL, 'newtab.edit.search'], [gripR, 'newtab.edit.search']]) {
     g.tabIndex = 0;
     g.setAttribute('role', 'slider');
     g.setAttribute('aria-label', T(label));
+    g.setAttribute('aria-describedby', 'w-sz-hint');
     g.title = T(`${label}.hint`);
   }
+  gripR.tabIndex = -1; // one search-width slider in the tab order (both edges set the same value)
   gripClock.setAttribute('aria-valuemin', '0');
   gripClock.setAttribute('aria-valuemax', String(WS.CLOCK_STEPS.length - 1));
   for (const g of [gripL, gripR]) { g.setAttribute('aria-valuemin', String(WS.SEARCH_MIN)); g.setAttribute('aria-valuemax', String(WS.SEARCH_MAX)); }
-  sizers.append(frameClock, frameSearch, gripClock, gripL, gripR);
+  sizers.append(frameClock, frameSearch, gripClock, gripL, gripR, sizeHint);
   document.body.append(sizers);
 
   const clockName = (k) => T(`newtab.edit.clock.${k}`);
@@ -385,22 +395,49 @@
   addEventListener('resize', placeSoon);
   if (typeof ResizeObserver === 'function') new ResizeObserver(placeSoon).observe(document.querySelector('main'));
 
-  // Growing the clock or the search bar never moves a card: a size that would run into one isn't taken. The grip
-  // nudges and says why, and the size stays at the largest that fits (grid.centreFits measures the live preview).
+  // Growing the clock or the search bar never moves a card: a size that would run into one isn't taken. It stops at the
+  // largest size that fits, the grip nudges once (and keeps a tint while it is held against the limit), the cards in
+  // the way are outlined for a moment, and it says why. Shrinking always works. grid.centreFits measures the live preview.
   const fits = () => grid()?.centreFits?.() ?? true;
+  const clockAt = (k) => WS.CLOCK_STEPS.indexOf(k);
+  const bigger = (key, a, b) => (key === 'clock' ? clockAt(a) > clockAt(b) : a > b);
+  const previewLook = (key, value) => { if (key === 'clock') SZ().preview(value, null); else SZ().preview(null, value); };
+  // The largest size from `from` (which fits) towards `want` (which doesn't) that still fits, left previewed.
+  function largestFit(key, from, want) {
+    if (key === 'clock') {
+      for (let i = clockAt(want) - 1; i > clockAt(from); i--) { previewLook(key, WS.CLOCK_STEPS[i]); if (fits()) return WS.CLOCK_STEPS[i]; }
+      previewLook(key, from);
+      return from;
+    }
+    let lo = from, hi = want;
+    while (hi - lo > WS.SEARCH_STEP) {
+      const mid = Math.round((lo + hi) / 2 / WS.SEARCH_STEP) * WS.SEARCH_STEP;
+      if (mid <= lo || mid >= hi) break;
+      previewLook(key, mid);
+      if (fits()) lo = mid; else hi = mid;
+    }
+    previewLook(key, lo);
+    return lo;
+  }
   let blockedSaid = 0;
   function blocked(grip) {
-    grip.classList.remove('w-sz-blocked');
-    void grip.offsetWidth;
-    grip.classList.add('w-sz-blocked');
+    if (grip && !grip.classList.contains('w-sz-blocked')) { grip.classList.add('w-sz-blocked'); grid()?.flashBlockers?.(); }
     if (Date.now() - blockedSaid > 1500) { blockedSaid = Date.now(); say(T('newtab.edit.noRoom')); }
   }
-  const previewLook = (key, value) => { if (key === 'clock') SZ().preview(value, null); else SZ().preview(null, value); };
+  const unblock = (grip) => grip?.classList.remove('w-sz-blocked');
+  // A wanted size -> the size it gets: itself, or (growing into a card) the largest that fits. Previewed.
+  function fitted(key, from, want, grip) {
+    previewLook(key, want);
+    if (!bigger(key, want, from) || fits()) { unblock(grip); return want; }
+    const got = largestFit(key, from, want);
+    blocked(grip);
+    return got;
+  }
   // Set a clock step or search width now, save it (do=look) and, when `record`, put it on the Undo stack.
   function setLook(key, value, { record = true, from, grip = null } = {}) {
     const before = from ?? SZ().get()[key];
-    previewLook(key, value);
-    if (record && before !== value && !fits()) { previewLook(key, before); placeSoon(); if (grip) blocked(grip); return false; }
+    if (record) value = fitted(key, before, value, grip);
+    else previewLook(key, value);
     placeSoon();
     if (before === value) return false;
     window.widgetAct('wlook', 'look', { k: key, v: String(value) });
@@ -413,25 +450,20 @@
   }
   const gridInfo = () => { const m = grid()?.metrics?.() || grid()?.geometry().m; return m && Number.isFinite(m.pitchX) ? { pitch: m.pitchX, pad: m.pad, width: m.width } : null; };
 
-  function dragSizer(grip, e, onMove) {
+  function dragSizer(grip, e, want) {
     if (e.button !== 0 || !SZ()) return;
     e.preventDefault();
     const x0 = e.clientX;
     const y0 = e.clientY;
     const start = SZ().get();
-    SZ().hold(true);
+    SZ().hold(true); // the layout holds still meanwhile (no packing), so growing back within the drag always works
     document.body.classList.add('w-dragging');
     grip.setPointerCapture?.(e.pointerId);
     let latest = null;
-    let ok = null; // the last size that left every card where it was
     const move = (ev) => {
-      const next = onMove(ev.clientX - x0, ev.clientY - y0);
-      if (next && !fits()) {
-        const back = ok ? ok.value : start[next.key];
-        previewLook(next.key, back);
-        latest = ok;
-        blocked(grip);
-      } else { latest = next; ok = next; }
+      const next = want(ev.clientX - x0, ev.clientY - y0);
+      const from = latest ? latest.value : start[next.key];
+      latest = { key: next.key, value: fitted(next.key, from, next.value, grip) };
       placeSoon();
     };
     const end = (ev) => {
@@ -441,6 +473,7 @@
       grip.releasePointerCapture?.(ev.pointerId);
       SZ().hold(false);
       document.body.classList.remove('w-dragging');
+      unblock(grip);
       if (ev.type === 'pointercancel' || !latest) { SZ().preview(start.clock, start.search); placeSoon(); return; }
       setLook(latest.key, latest.value, { from: start[latest.key] });
     };
@@ -450,41 +483,38 @@
   }
   gripClock.addEventListener('pointerdown', (e) => {
     const base = WS.CLOCK_PX[SZ()?.get().clock];
-    dragSizer(gripClock, e, (dx, dy) => {
-      const value = WS.clockStepFromPx(base + dy + dx * 0.4);
-      SZ().preview(value, null);
-      return { key: 'clock', value };
-    });
+    dragSizer(gripClock, e, (dx, dy) => ({ key: 'clock', value: WS.clockStepFromPx(base + dy + dx * 0.4) }));
   });
   for (const [grip, dir] of [[gripL, -1], [gripR, 1]]) {
     grip.addEventListener('pointerdown', (e) => {
       const base = searchNode()?.getBoundingClientRect().width || SZ()?.get().search;
-      dragSizer(grip, e, (dx) => {
-        const value = WS.snapSearchWidth(base + 2 * dir * dx, gridInfo());
-        SZ().preview(null, value);
-        return { key: 'search', value };
-      });
+      dragSizer(grip, e, (dx) => ({ key: 'search', value: WS.snapSearchWidth(base + 2 * dir * dx, gridInfo()) }));
     });
   }
+  // Keyboard: the arrows step (Shift works too, as before), PageUp/PageDown take bigger steps, Home/End go to the ends.
+  const plainKey = (e) => !e.ctrlKey && !e.altKey && !e.metaKey;
   gripClock.addEventListener('keydown', (e) => {
-    if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
-    const dir = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
-    if (!dir) return;
+    if (!plainKey(e)) return;
+    const cur = SZ().get().clock;
+    const i = clockAt(cur);
+    const to = { ArrowUp: i + 1, ArrowRight: i + 1, PageUp: i + 1, ArrowDown: i - 1, ArrowLeft: i - 1, PageDown: i - 1, Home: 0, End: WS.CLOCK_STEPS.length - 1 }[e.key];
+    if (to === undefined) return;
     e.preventDefault();
     e.stopPropagation();
-    const next = WS.stepClock(SZ().get().clock, dir);
-    if (next === SZ().get().clock) say(T('newtab.edit.clock.sized', { size: clockName(next) }));
-    else setLook('clock', next, { grip: gripClock });
+    const next = WS.CLOCK_STEPS[Math.max(0, Math.min(WS.CLOCK_STEPS.length - 1, to))];
+    if (next === cur || !setLook('clock', next, { grip: gripClock })) say(T('newtab.edit.clock.sized', { size: clockName(SZ().get().clock) }));
   });
   for (const grip of [gripL, gripR]) {
     grip.addEventListener('keydown', (e) => {
-      if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      if (!plainKey(e)) return;
+      const cur = SZ().get().search;
+      const step = 2 * WS.SEARCH_STEP;
+      const to = { ArrowRight: cur + step, ArrowUp: cur + step, ArrowLeft: cur - step, ArrowDown: cur - step, PageUp: cur + 4 * step, PageDown: cur - 4 * step, Home: WS.SEARCH_MIN, End: WS.SEARCH_MAX }[e.key];
+      if (to === undefined) return;
       e.preventDefault();
       e.stopPropagation();
-      const cur = SZ().get().search;
-      const next = WS.cleanSearchWidth(cur + (e.key === 'ArrowRight' ? 1 : -1) * 2 * WS.SEARCH_STEP);
-      if (next === cur) say(T('newtab.edit.search.sized', { width: cur }));
-      else setLook('search', next, { grip });
+      const next = WS.cleanSearchWidth(to);
+      if (next === cur || !setLook('search', next, { grip })) say(T('newtab.edit.search.sized', { width: SZ().get().search }));
     });
   }
   // Undo / Reset: put a clock size or width back and save it.

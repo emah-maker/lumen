@@ -134,17 +134,6 @@ module.exports = async function widgetEditUnits(check) {
   r = WL.snapMove(list, 'wsysfavs', { snap: 'left' }, { obstacle: null, rows: 12, packed: false });
   check('system cards: snapping works for them too', noOverlap(r), enc(r));
   void ob;
-  // The clock and the search bar never push other cards: they go only into free space.
-  const around = [it('wsyshead', 'sys-header', 0, 0, 4, 3), it('wtodo01', 'todoist', 4, 0, 4, 3), it('wweather', 'weather', 8, 0, 4, 3), it('wcal001', 'calendar', 0, 3, 4, 3)];
-  const still = (a, b, ids) => ids.every((id) => enc([a.find((c) => c.id === id)]) === enc([b.find((c) => c.id === id)]));
-  r = WL.move(around, 'wsyshead', { x: 4, y: 0 }, { packed: true });
-  check('clock card: dropped onto another card it slides to the nearest free spot; nothing else moves', still(around, r, ['wtodo01', 'wweather', 'wcal001']) && noOverlap(r), enc(r));
-  r = WL.resize(around, 'wsyshead', { x: 0, y: 0, w: 8, h: 3 }, { packed: true });
-  check('clock card: grown into a card it stops at that card; nothing else moves', r.find((c) => c.id === 'wsyshead').w === 4 && still(around, r, ['wtodo01', 'wweather', 'wcal001']) && noOverlap(r), enc(r));
-  r = WL.resize(around, 'wsyshead', { x: 0, y: 0, w: 4, h: 3 + 3 }, { packed: false });
-  check('clock card: grown down into the card below it stays its size; nothing else moves', r.find((c) => c.id === 'wsyshead').h === 3 && still(around, r, ['wcal001']), enc(r));
-  r = WL.move([...around.slice(1), it('wsyssearch', 'sys-search', 0, 7, 6, 2)], 'wsyssearch', { x: 2, y: 7 }, { packed: true });
-  check('search card: moved into free space it goes exactly there', r.find((c) => c.id === 'wsyssearch').x === 2 && r.find((c) => c.id === 'wsyssearch').y === 7, enc(r));
 
   // ---- undo ----
   const H = WE.createHistory(3);
