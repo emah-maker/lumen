@@ -221,12 +221,65 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   await t.u.apply(); await new Promise((r) => setTimeout(r, 50)); // the old staging folder is deleted first
   check('failed swap: Try again (no release info after a restart) looks the update up, then downloads it', t.log.stages.length === 1 && t.u.state().status === 'downloading', JSON.stringify(t.u.state()));
 
+  // Try again is one click: the re-check's update-available goes straight to downloading and applying
+  t = dmg(); t.h.setState({ status: 'error', version: '2.0.0', error: 'the download failed' });
+  t.fake.checkForUpdates = async () => { t.emit('2.0.0'); return { updateInfo: { version: '2.0.0' } }; };
+  await t.u.apply(); await flush();
+  check('try again (relocating copy): one click stages into /Applications, queued, with no move dialog', t.log.stages.length === 1 && t.log.stages[0].execPath.startsWith('/Applications/Lumen.app/') && t.u.state().queued === true && t.log.dialogs.length === 0, JSON.stringify(t.u.state()));
+  t.finish(); await flush();
+  check('try again (relocating copy): it then applies and relaunches by itself', t.log.quits === 1 && t.log.swaps.length === 1 && t.log.swaps[0].relaunch === true, JSON.stringify(t.log.swaps));
+  const off = U.createUpdates({ app: { isPackaged: false, getVersion: () => '1.0.0', getPath: () => os.tmpdir(), quit() {}, moveToApplicationsFolder() {} }, ipcMain: { handle() {} }, session: {}, ui: () => null, readSettings: () => ({}), writeSettings() {}, prefs: () => ({ autoDownloadUpdates: false }), beforeInstall() {}, test: true });
+  const offLog = []; const offFake = new EventEmitter();
+  off.testHooks.useUpdater(offFake); off.testHooks.setKind('nsis'); off.testHooks.stubQuit(() => offLog.push('quit'));
+  off.testHooks.useStager({ canReplace: () => true, canWriteDir: () => true, swapPaths: () => ({ staging: '/x' }), stage: async () => { offLog.push('stage'); return {}; }, launchSwap: () => offLog.push('swap') });
+  off.testHooks.setState({ status: 'error', version: '2.0.0', error: 'x' });
+  offFake.checkForUpdates = async () => { offFake.emit('update-available', { version: '2.0.0', files: [] }); return { updateInfo: { version: '2.0.0' } }; };
+  await off.apply(); await flush();
+  check('try again (automatic downloads off): still one click to download, apply and restart', eq(offLog, ['stage', 'quit', 'swap']), offLog.join());
+  t = make(); t.h.setKind('nsis'); t.h.setState({ status: 'error', version: '2.0.0', error: 'x' });
+  t.fake.checkForUpdates = async () => ({ updateInfo: { version: '1.0.0' } });
+  await t.u.apply(); t.emit('2.1.0'); await flush();
+  check('try again: the retry flag does not outlive its check (a later find downloads but is not queued)', t.u.state().queued === false && t.u.state().status === 'downloading', JSON.stringify(t.u.state()));
+
+  // "checking" is a flag on top of the old status, so the buttons show progress without the prompt flickering
+  t = make(); t.h.setKind('nsis'); t.h.setState({ status: 'error', version: '2.0.0', error: 'x' }); let mid = null;
+  t.fake.checkForUpdates = async () => { mid = t.u.state(); return { updateInfo: { version: '2.0.0' } }; };
+  check('checking: false when idle', t.u.state().checking === false, '');
+  await t.u.check();
+  check('checking: true during a check with a version known, the old status stays, and it clears after', mid.checking === true && mid.status === 'error' && t.u.state().checking === false, JSON.stringify(mid));
+  t = make(); t.h.setKind('nsis'); t.emit('2.0.0'); await flush(); t.finish(); await flush(); mid = null;
+  t.fake.checkForUpdates = async () => { mid = t.u.state(); return { updateInfo: { version: '2.0.0' } }; };
+  await t.u.check();
+  check('checking: also set over "Restart to update" without changing it', mid.checking === true && mid.status === 'downloaded', JSON.stringify(mid));
+
+  // after a failed swap a quit doesn't retry that version, but a fresh stage does clear the block
+  t = make(); t.h.setKind('nsis');
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => ({ version: '2.0.0' }), stage: (a) => { t.log.stages.push(a); return Promise.resolve({ fake: 1 }); }, launchSwap: (a) => t.log.swaps.push(a) });
+  t.h.setState({ status: 'error', error: 'x' }); t.h.restore(true);
+  check('blocked: the snapshot says the failed version is blocked', t.u.state().blocked === true, JSON.stringify(t.u.state()));
+  t.fake.checkForUpdates = async () => { t.emit('2.0.0'); return { updateInfo: { version: '2.0.0' } }; };
+  await t.u.check(); await new Promise((r) => setTimeout(r, 50)); await flush(); // the old staging folder is deleted first
+  check('blocked: a fresh successful stage clears it, so "installs when you quit" is true again', t.u.state().status === 'downloaded' && t.u.state().blocked === false, JSON.stringify(t.u.state()));
+  t.h.willQuit();
+  check('blocked: a plain quit now installs the new stage (no relaunch)', t.log.swaps.length === 1 && t.log.swaps[0].relaunch === false, JSON.stringify(t.log.swaps));
+
+  // a failed swap with no marker left: the version is unknown, so it is an install failure, not a failed check
+  t = make(); t.h.setKind('nsis');
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => null, stage: (a) => { t.log.stages.push(a); return new Promise(() => {}); }, launchSwap: (a) => t.log.swaps.push(a) });
+  t.h.setState({ status: 'error', error: 'Lumen couldn’t replace its files' }); t.h.restore(true);
+  check('no marker: version stays null but installFailed is set, so the UI does not say "couldn’t check"', t.u.state().version === null && t.u.state().installFailed === true && t.u.state().status === 'error', JSON.stringify(t.u.state()));
+  t.fake.checkForUpdates = async () => { t.emit('2.0.0'); return { updateInfo: { version: '2.0.0' } }; };
+  await t.u.apply(); await new Promise((r) => setTimeout(r, 50));
+  check('no marker: Try again looks the update up and downloads it in one click, and the flag clears', t.log.stages.length === 1 && t.u.state().installFailed === false && t.u.state().queued === true, JSON.stringify(t.u.state()));
+  t = make(); t.h.setKind('nsis'); t.h.setState({ status: 'error', error: 'x' }); t.h.restore(false);
+  check('no marker: an ordinary check error is not an install failure', t.u.state().installFailed === false, '');
+
   // a standard user's old /Applications copy hands over to the newer ~/Applications one
   const user = (existing) => { const m = make(); m.h.setKind('mac', false); m.h.setPlacement({ misplaced: false, why: null, userApps: true }); m.h.stubIo({ exists: () => true, version: async () => existing }); return m; };
   t = user('3.0.0');
-  check('newer user copy: the old /Applications copy opens ~/Applications and quits, without a dialog', await t.h.openNewer() === true && eq(t.log.opened, ['/Users/me/Applications/Lumen.app']) && t.log.quits === 1 && t.log.dialogs.length === 0, JSON.stringify(t.log.opened));
+  check('newer user copy: the old /Applications copy opens ~/Applications and quits, without a dialog, after saving the session', await t.h.openNewer() === true && eq(t.log.opened, ['/Users/me/Applications/Lumen.app']) && t.log.quits === 1 && t.log.dialogs.length === 0 && t.log.saves === 1, JSON.stringify(t.log.opened));
   t = user('1.0.0');
-  check('newer user copy: an equal or older one there does nothing', await t.h.openNewer() === false && t.log.opened.length === 0 && t.log.quits === 0, '');
+  check('newer user copy: an equal or older one there does nothing', await t.h.openNewer() === false && t.log.opened.length === 0 && t.log.quits === 0 && t.log.saves === 0, '');
   t = dmg(); t.h.stubIo({ exists: () => true, version: async () => '3.0.0' });
   check('newer user copy: only for the /Applications-as-standard-user case', await t.h.openNewer() === false && t.log.quits === 0, '');
 

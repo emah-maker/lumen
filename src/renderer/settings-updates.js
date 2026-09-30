@@ -31,13 +31,14 @@ function updateView(u) {
     case 'downloading': return u.queued
       ? { note: `Downloading Lumen ${u.version}… ${u.progress || 0}%. Lumen restarts by itself when it is ready.`, cls: '' }
       : { note: `Downloading Lumen ${u.version}… ${u.progress || 0}%`, cls: '', action: own ? 'Restart to update' : undefined };
-    case 'downloaded': return { note: `Lumen ${u.version} is ready. Restart to update, or it installs when you quit. Your settings and tabs are kept.`, cls: 'ok', action: 'Restart to update' };
+    case 'downloaded': return { note: `Lumen ${u.version} is ready. Restart to update${u.blocked ? '.' : ', or it installs when you quit.'} Your settings and tabs are kept.`, cls: 'ok', action: 'Restart to update' };
     case 'available':
       // A Mac copy outside Applications (or a standard user's /Applications): one click installs the update there and restarts.
       if (u.relocate) return { note: `Lumen ${u.version} is available. ${u.relocate === 'user' ? 'Lumen can’t update itself in /Applications without an administrator.' : u.misplaced === 'unwritable' ? 'Lumen is somewhere it can’t update itself.' : 'Lumen is running from the disk image or a temporary location, so it can’t update itself.'} One click installs the update in ${u.relocate === 'user' ? 'your own Applications folder (~/Applications)' : 'Applications'} and restarts, and after that updates install on their own.`, cls: 'ok', action: 'Move and update' };
       if (u.canSelfUpdate) return { note: `Lumen ${u.version} is available.`, cls: 'ok', action: 'Download' };
       return { note: `Lumen ${u.version} is available. This copy can't replace itself where it is installed.${u.kind === 'mac' ? ' Open the downloaded disk image and drag Lumen to Applications.' : u.asset?.name.endsWith('.exe') ? ' Run the downloaded setup to update.' : u.asset ? ' Unzip it over this copy.' : ''}`, cls: 'ok', action: u.asset ? `Download ${u.asset.name}` : 'Open releases page' };
-    case 'error': return u.version && own
+    case 'error': if (u.installFailed && !u.version) return { note: `Lumen couldn’t install the last update: ${u.error || 'unknown error'}`, cls: 'err', action: 'Try again' }; // the swap failed and left no version to name
+      return u.version && own
       ? { note: `Couldn’t update to Lumen ${u.version}: ${u.error || 'unknown error'}`, cls: 'err', action: 'Try again' }
       : { note: `Couldn’t check for updates: ${u.error || 'unknown error'}`, cls: 'err', action: u.relocate === 'misplaced' ? 'Move to Applications' : undefined };
     default: return plainMove || { note: '', cls: '' };
@@ -66,7 +67,10 @@ async function buildUpdates(card) {
     note.className = `note ${v.cls}`.trim();
     action.hidden = !v.action;
     action.textContent = v.action || '';
-    checkBtn.disabled = Boolean(u.disabled) || ['checking', 'downloading'].includes(u.status);
+    // A check with an update already known keeps the old status underneath; the buttons just say so.
+    action.disabled = Boolean(u.checking);
+    checkBtn.textContent = u.checking || u.status === 'checking' ? 'Checking…' : 'Check for updates';
+    checkBtn.disabled = Boolean(u.disabled) || Boolean(u.checking) || ['checking', 'downloading'].includes(u.status);
   }
   // Follows a check or a download (also one started from the toolbar) while About is showing.
   const timer = setInterval(async () => {
