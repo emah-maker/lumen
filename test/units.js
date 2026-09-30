@@ -2385,7 +2385,7 @@ async function swapHelperRuns() {
   check('swap helper: the normal apply still starts the new exe', r3 === 'swapped' && started.length === 1 && started[0][0] === opts().exe, `${r3} ${started.length}`);
   mk('Lumen.update/files/Lumen.exe', 'tiny');
   const r4 = await swap(opts({ relaunch: false, minBytes: 1000 }), start);
-  check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
+  check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && /^the update looked incomplete \(.*too small.*\)\n$/.test(fs.readFileSync(path.join(d, 'err.txt'), 'utf8')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
   fs.rmSync(d, { recursive: true, force: true });
 }
 

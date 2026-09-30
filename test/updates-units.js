@@ -44,9 +44,22 @@ check('sha: the listed hash for a file name is found, also behind a URL', Z.expe
 check('sha: a matching download passes, a flipped byte or a missing hash fails', Z.hashMatches(b64, b64)
   && !Z.hashMatches(crypto.createHash('sha512').update(Buffer.from('lumen update payloaD')).digest('base64'), b64) && !Z.hashMatches(b64, ''), '');
 
+// ---- the synchronous bundle version (will-quit): XML plist directly, a binary one through /usr/bin/plutil on macOS only
+{
+  const xml = Buffer.from('<plist><dict><key>CFBundleShortVersionString</key><string>3.4.5</string></dict></plist>');
+  const bin = Buffer.from('bplist00xx');
+  const rs = (readFile, exec, platform = 'darwin') => U.readBundleVersionSync('/Applications/Lumen.app', { readFile, exec, platform });
+  const seen = [];
+  check('bundle version (sync): an XML plist is read directly, without running anything', rs(() => xml, () => { seen.push('ran'); return ''; }) === '3.4.5' && seen.length === 0, seen.join());
+  check('bundle version (sync): a binary plist is converted with /usr/bin/plutil, not a bare plutil', rs(() => bin, (b, args) => { seen.push(b); return args.includes('xml1') ? xml.toString() : ''; }) === '3.4.5' && seen[0] === '/usr/bin/plutil', seen.join());
+  check('bundle version (sync): a binary plist off macOS, an unreadable file or a failing plutil is null', rs(() => bin, () => xml.toString(), 'win32') === null && rs(() => { throw new Error('ENOENT'); }, () => xml.toString()) === null && rs(() => bin, () => { throw new Error('nope'); }) === null, '');
+}
+
 // ---- the mac swap script clears quarantine and never opens in quit-apply mode
 const sh = Z.macSwapScript({ pid: 1, dir: '/Applications/Lumen.app', root: '/Applications/.Lumen.update/files/Lumen.app', old: '/Applications/Lumen.app.old', errFile: '/e', staging: '/Applications/.Lumen.update', self: '/Applications/.Lumen.update.sh' });
 check('swap script: clears quarantine, renames in place, reopens', /xattr -cr "\$NEW"/.test(sh) && /mv "\$NEW" "\$APP"/.test(sh) && /open "\$APP"/.test(sh), '');
+const shText = Z.macSwapScript({ pid: 1, dir: '/A/Lumen.app', root: '/A/n', old: '/A/o', errFile: '/e', staging: '/A/s', self: '/A/x' });
+check('swap script: the error file gets only a short cause, not a whole sentence that the UI would repeat', /echo "\$\{1:-the Applications folder isn’t writable\}" > "\$ERR"/.test(shText) && !/old version was kept|couldn.t replace/.test(shText) && shText.includes('fail "Lumen didn’t quit in time"'), shText);
 check('swap script: apply-on-quit does not reopen', !/open "\$APP"/.test(Z.macSwapScript({ pid: 1, dir: '/A/Lumen.app', root: '/A/n', old: '/A/o', errFile: '/e', staging: '/A/s', self: '/A/x', relaunch: false })), '');
 
 // ---- installer settings
@@ -241,6 +254,22 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   await t.u.apply(); t.emit('2.1.0'); await flush();
   check('try again: the retry flag does not outlive its check (a later find downloads but is not queued)', t.u.state().queued === false && t.u.state().status === 'downloading', JSON.stringify(t.u.state()));
 
+  // Try again while a background check is already running: it waits for that check and downloads what it finds
+  t = make(); t.h.setKind('nsis'); t.h.setState({ status: 'error', version: '2.0.0', error: 'x' });
+  let release; const gate = new Promise((r) => { release = r; });
+  t.fake.checkForUpdates = async () => { await gate; t.emit('2.0.0'); return { updateInfo: { version: '2.0.0' } }; };
+  const bg = t.u.check(); await flush();
+  check('try again during a background check: the check is in flight', t.u.state().checking === true, JSON.stringify(t.u.state()));
+  const retry = t.u.apply(); await flush();
+  release(); await Promise.all([bg, retry]); await flush();
+  check('try again during a background check: it waits for that check instead of doing nothing, then stages and queues', t.log.stages.length === 1 && t.u.state().queued === true && t.u.state().status === 'downloading', JSON.stringify(t.u.state()));
+  t.finish(); await flush();
+  check('try again during a background check: it then applies and relaunches', t.log.quits === 1 && t.log.swaps.length === 1 && t.log.swaps[0].relaunch === true, JSON.stringify(t.log.swaps));
+  t = make(); t.h.setKind('nsis'); t.h.setState({ status: 'error', version: '2.0.0', error: 'x' });
+  t.fake.checkForUpdates = async () => ({ updateInfo: { version: '1.0.0' } });
+  await t.u.check(); await t.u.apply(); t.emit('2.1.0'); await flush();
+  check('try again: the retry flag is cleared after a wait too (a later find is not queued)', t.u.state().queued === false, JSON.stringify(t.u.state()));
+
   // "checking" is a flag on top of the old status, so the buttons show progress without the prompt flickering
   t = make(); t.h.setKind('nsis'); t.h.setState({ status: 'error', version: '2.0.0', error: 'x' }); let mid = null;
   t.fake.checkForUpdates = async () => { mid = t.u.state(); return { updateInfo: { version: '2.0.0' } }; };
@@ -252,16 +281,16 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   await t.u.check();
   check('checking: also set over "Restart to update" without changing it', mid.checking === true && mid.status === 'downloaded', JSON.stringify(mid));
 
-  // after a failed swap a quit doesn't retry that version, but a fresh stage does clear the block
+  // a failed swap that left a marker: the version is named, it is an install failure, and a fresh stage installs on quit again
   t = make(); t.h.setKind('nsis');
   t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => ({ version: '2.0.0' }), stage: (a) => { t.log.stages.push(a); return Promise.resolve({ fake: 1 }); }, launchSwap: (a) => t.log.swaps.push(a) });
-  t.h.setState({ status: 'error', error: 'x' }); t.h.restore(true);
-  check('blocked: the snapshot says the failed version is blocked', t.u.state().blocked === true, JSON.stringify(t.u.state()));
+  t.h.setState({ status: 'error', error: 'the Applications folder isn’t writable' }); t.h.restore(true);
+  check('failed swap (marker): the version is named and it counts as an install failure', t.u.state().version === '2.0.0' && t.u.state().installFailed === true && t.u.state().status === 'error' && !('blocked' in t.u.state()), JSON.stringify(t.u.state()));
   t.fake.checkForUpdates = async () => { t.emit('2.0.0'); return { updateInfo: { version: '2.0.0' } }; };
   await t.u.check(); await new Promise((r) => setTimeout(r, 50)); await flush(); // the old staging folder is deleted first
-  check('blocked: a fresh successful stage clears it, so "installs when you quit" is true again', t.u.state().status === 'downloaded' && t.u.state().blocked === false, JSON.stringify(t.u.state()));
+  check('failed swap (marker): a fresh successful stage clears the failure and is "Restart to update"', t.u.state().status === 'downloaded' && t.u.state().installFailed === false, JSON.stringify(t.u.state()));
   t.h.willQuit();
-  check('blocked: a plain quit now installs the new stage (no relaunch)', t.log.swaps.length === 1 && t.log.swaps[0].relaunch === false, JSON.stringify(t.log.swaps));
+  check('failed swap (marker): a plain quit then installs the new stage (no relaunch)', t.log.swaps.length === 1 && t.log.swaps[0].relaunch === false, JSON.stringify(t.log.swaps));
 
   // a failed swap with no marker left: the version is unknown, so it is an install failure, not a failed check
   t = make(); t.h.setKind('nsis');

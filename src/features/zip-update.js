@@ -113,8 +113,9 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     `STAGING=${sq(staging)}`,
     `SELF=${sq(self)}`,
     `ORIG=${sq(orig)}`,
+    // errFile holds only a short cause; Settings and the pill put it in their own sentence
     'fail() {',
-    '  echo "Lumen couldn\'t replace its files (is the Applications folder writable for you?). The old version was kept." > "$ERR"',
+    '  echo "${1:-the Applications folder isn’t writable}" > "$ERR"',
     `  ${reopen}`,
     '  rm -f "$SELF"',
     '  exit 1',
@@ -122,7 +123,7 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     'n=0',
     'while kill -0 "$PID" 2>/dev/null; do',
     '  n=$((n + 1))',
-    '  [ "$n" -ge 60 ] && fail',
+    '  [ "$n" -ge 60 ] && fail "Lumen didn’t quit in time"',
     '  sleep 1',
     'done',
     // quit-apply: the staged bundle is gone (already swapped or cleaned up), so there is nothing to do

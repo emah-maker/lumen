@@ -19,7 +19,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const MIN_EXE_BYTES = 10 * 1024 * 1024;
-const MESSAGE = 'Lumen couldn’t replace its files (is another program using the Lumen folder?). The old version was kept.';
+// Only a short cause: Settings and the pill put it in their own sentence ("Couldn’t install Lumen X: <cause>. …").
+const MESSAGE = 'files were in use';
 
 // null when `file` looks like a real Windows executable, else why not.
 function checkExe(file, minBytes = MIN_EXE_BYTES) {
@@ -66,12 +67,12 @@ async function swap(o, start = launch) {
     return 'kept';
   };
   for (let waited = 0; alive(o.pid); waited += 250) {
-    if (waited >= waitMs) return fail();
+    if (waited >= waitMs) return fail('Lumen didn’t quit in time');
     await sleep(250);
   }
   if (!relaunch && !fs.existsSync(o.root)) return 'noop';
   const bad = checkExe(path.join(o.root, path.basename(o.exe)), o.minBytes);
-  if (bad) return fail(`The update wasn't applied: ${bad}. The old version was kept.`);
+  if (bad) return fail(`the update looked incomplete (${bad})`);
   try { fs.rmSync(o.old, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
   try {
     await retry(() => fs.renameSync(o.dir, o.old), 10, retryMs);
