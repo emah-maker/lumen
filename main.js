@@ -372,8 +372,12 @@ function modelOptions() {
     const list = [...(providerModels[provider] || info.defaults)];
     // OpenRouter: models picked from "More models…" (the last few) join the short list.
     const saved = providers.splitModel(readSettings().model || '');
+    const recentOR = new Set();
     if (provider === 'openrouter') {
-      for (const m of [...(saved.provider === 'openrouter' ? [saved.model] : []), ...(readSettings().recentOpenRouter || [])].reverse()) if (typeof m === 'string' && !list.includes(m)) list.unshift(m); // first: never folded away
+      // The model in use first (never folded away); catalog picks made lately after the curated ones (the picker's
+      // own Recent section shows them at the top, so they aren't listed twice up there).
+      if (saved.provider === 'openrouter' && typeof saved.model === 'string' && !list.includes(saved.model)) list.unshift(saved.model);
+      for (const m of readSettings().recentOpenRouter || []) if (typeof m === 'string' && !list.includes(m)) { list.push(m); recentOR.add(m); }
     }
     const entries = list.map((model) => {
       const chatOnly = !providers.canUseTools(provider, model);
@@ -382,7 +386,9 @@ function modelOptions() {
       const name = (provider === 'openrouter' && providers.openRouterName(model)) || modelNames.prettyModel(model) || model;
       const snap = modelNames.snapshotOf(model);
       const badges = [...new Set([...(provider === 'openrouter' && /:free$/.test(model) ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
-      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, detail: snap ? `Snapshot ${snap}` : chatOnly ? 'Can’t act in your tabs' : '', title: model };
+      const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
+      const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: orInfo.context >= 1e6 ? `${Math.round(orInfo.context / 1e5) / 10}M` : `${Math.round(orInfo.context / 1000)}K` }) : '', orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: orInfo.pricePerM < 1 ? orInfo.pricePerM.toFixed(2) : String(Math.round(orInfo.pricePerM * 10) / 10) })) : ''].filter(Boolean).join(' · ') : '';
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
     });
     if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });
@@ -5288,7 +5294,7 @@ ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
 // openrouter.ai asks the user, then redirects to a one-time loopback address with a code that is
 // exchanged for a key; the key is stored encrypted like a pasted one).
 ipcMain.handle('openrouter:models', async () => {
-  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE() });
+  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE(), onRefresh: () => modelsChanged() });
   return models.map(({ id, name, tools, context, pricePerM, free }) => ({ id, name, tools, context, pricePerM, free }));
 });
 function saveProviderKey(provider, key) {
@@ -5457,7 +5463,8 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   if (id === 'openrouter:__more' || (!pickedFromMore && !modelOptions().some((o) => o.id === id))) return false;
   const s = readSettings();
   // The last few OpenRouter models picked from its catalog stay in the short list, so switching between them is one click.
-  const recentOpenRouter = pickedFromMore ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
+  const curatedPick = modelOptions().some((o) => o.id === id && !o.recent);
+  const recentOpenRouter = pickedFromMore && !curatedPick ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
   writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
   modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.

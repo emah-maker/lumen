@@ -54,7 +54,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (onBack) {
       const back = Object.assign(document.createElement('button'), { type: 'button', className: 'picker-back', textContent: '‹' });
       back.setAttribute('aria-label', tr('picker.back', 'Back to the short list'));
-      back.addEventListener('click', () => { close(false); onBack(); });
+      back.addEventListener('click', () => { const q = search.value; close(false); onBack(q); });
       head.append(back);
     }
     head.append(Object.assign(document.createElement('span'), { className: 'picker-title' }));
@@ -251,21 +251,23 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
       const actions = all2.filter((m) => m.o.dataset.more);
       const section = Object.assign(document.createElement('div'), { className: 'picker-section' });
       section.setAttribute('role', 'group');
-      if (g && (headings || words.length || ordered.length > 1 || out.length)) { const h = heading(g, members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); section.append(h); }
+      if (g && (headings || words.length || ordered.length > 1 || out.length)) { const h = heading(g, headings || members.length > SHOWN ? members.length : 0); h.id = `${uid}-g${n}`; section.setAttribute('aria-labelledby', h.id); section.append(h); }
       const folded = !words.length && members.length > LONG && !expanded.has(g) && !members.slice(SHOWN).some((m) => m.o.selected);
       (folded ? members.slice(0, SHOWN) : members).forEach((m, i) => section.append(row(m.o, `${n}-${i}`)));
       if (folded) {
         const reveal = members[SHOWN].o.value;
-        const more = actionRow(`m${n}`, tr('picker.showAll', 'Show all {n}', { n: members.length }), '', () => { expanded.add(g); focusValue = reveal; render(); });
+        const more = actionRow(`m${n}`, tr('picker.showMore', 'Show {n} more', { n: members.length - SHOWN }), '', () => { expanded.add(g); focusValue = reveal; render(); });
         rows.push({ el: more, expand: g, reveal });
         section.append(more);
       }
       actions.forEach((m, i) => section.append(row(m.o, `${n}-a${i}`)));
+      section.style.containIntrinsicSize = `auto ${section.childElementCount * 40 + 8}px`; // about its real height, until drawn
       out.push(section);
       n++;
     }
     const anyModel = rows.some((r) => r.value != null);
-    empty.hidden = anyModel || (!words.length && !on.size);
+    const extras = extra?.(search.value.trim()) || [];
+    empty.hidden = anyModel || (!words.length && !on.size) || extras.length > 0; // a "Look for … on OpenRouter" row says it better
     empty.textContent = loading ? tr('picker.loading', 'Loading models…') : words.length ? tr('picker.none', 'No models match “{q}”', { q: search.value.trim() }) : tr('picker.noneFiltered', 'No models match these filters');
     if (loading) empty.hidden = false;
     out.push(empty); // right after the models, before any extra rows
@@ -275,7 +277,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const total = all.filter((o) => !o.dataset.more).length;
     // Narrowed by a search or a filter: how many of all match ("37 of 412").
     if (title) head.querySelector('.picker-title').textContent = loading ? (slow ? tr('picker.slow', 'Still loading… OpenRouter is slow to answer') : tr('picker.loading', 'Loading models…')) : tr(title, title, { n: words.length || on.size ? tr('picker.of', '{n} of {total}', { n: matched, total }) : total });
-    for (const [i, x] of (extra?.(search.value.trim()) || []).entries()) {
+    for (const [i, x] of extras.entries()) {
       const el = actionRow(`x${i}`, x.label, x.detail || '', () => { close(); x.run(search.value.trim()); }, 'picker-more picker-extra');
       rows.push({ el, run: x.run });
       out.push(el);
@@ -321,7 +323,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (refocus) (anchor || button).focus();
   }
   const onResize = () => close(false);
-  const onScroll = (e) => { if (!menu.contains(e.target)) close(false); };
+  const onScroll = (e) => { if (!menu.contains(e.target) && (e.target === document || e.target.contains?.(anchor || button))) close(false); };
   function outside(e) { if (!menu.contains(e.target) && e.target !== button && !button.contains(e.target) && !(anchor && anchor.contains(e.target))) close(false); }
   function choose(value) {
     if (value == null) return;
@@ -374,7 +376,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   function onKey(e) {
     const onControl = e.target.closest?.('.picker-chip, .picker-back');
     if (onControl && (e.key === 'Enter' || e.key === ' ')) return; // the button's own click
-    if (onControl && /^(Arrow(Up|Down)|Page(Up|Down))$/.test(e.key)) owner().focus(); // the list's keys: the highlight is announced there
+    if (onControl && /^(Arrow(Up|Down)|Page(Up|Down)|Home|End)$/.test(e.key)) owner().focus(); // the list's keys: the highlight is announced there
     if (e.key === 'ArrowDown') setActive(active + 1);
     else if (e.key === 'ArrowUp') setActive(active - 1);
     else if (e.key === 'PageDown') setActive(active + page());

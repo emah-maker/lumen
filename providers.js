@@ -43,27 +43,37 @@ const CATALOG_TTL = 24 * 60 * 60 * 1000;
 const CATALOG_TIMEOUT_MS = 10000;
 const CURATED = [/^anthropic\/claude/, /^openai\/gpt/, /^google\/gemini/, /^meta-llama\/llama/, /^deepseek\/deepseek/, /^x-ai\/grok/];
 let catalog = null; // { fetchedAt, models: [{ id, name, tools, created }] }
+let refreshing = null; // the background refresh under way, if any
 
-async function openRouterCatalog({ cacheFile, fetchImpl = netFetch() } = {}) {
+// onRefresh: an old copy is returned at once and a fresh one fetched behind it; this runs when it has arrived.
+async function openRouterCatalog({ cacheFile, fetchImpl = netFetch(), onRefresh = null } = {}) {
   const fs = require('fs');
   if (!catalog && cacheFile) { try { catalog = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch {} }
   if (catalog && Date.now() - catalog.fetchedAt < CATALOG_TTL) return catalog;
-  // Offline, slow or failing: the last copy (however old) rather than no list; a request that hangs gives up at 10 s.
-  let fresh;
-  try {
-    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-    const timer = ctrl && setTimeout(() => ctrl.abort(), CATALOG_TIMEOUT_MS);
-    try {
-      const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/models`, { headers: PROVIDERS.openrouter.headers, ...(ctrl ? { signal: ctrl.signal } : {}) });
-      if (!res.ok) throw new Error(`OpenRouter models: HTTP ${res.status}`);
-      fresh = parseOpenRouterModels(await res.json());
-    } finally { clearTimeout(timer); }
-  } catch (err) {
-    if (catalog?.models?.length) return catalog;
+  // A copy over a day old: shown at once, and a fresh one fetched behind it (onRefresh runs when it has arrived).
+  if (catalog?.models?.length && onRefresh) {
+    if (!refreshing) {
+      refreshing = fetchCatalog({ cacheFile, fetchImpl }).then(onRefresh, () => {}).finally(() => { refreshing = null; });
+    }
+    return catalog;
+  }
+  try { return await fetchCatalog({ cacheFile, fetchImpl }); } catch (err) {
+    if (catalog?.models?.length) return catalog; // offline, slow or failing: the last copy (however old) rather than no list
     throw err;
   }
+}
+// GET /models (giving up after 10 s), kept in memory and in cacheFile.
+async function fetchCatalog({ cacheFile, fetchImpl }) {
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctrl && setTimeout(() => ctrl.abort(), CATALOG_TIMEOUT_MS);
+  let fresh;
+  try {
+    const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/models`, { headers: PROVIDERS.openrouter.headers, ...(ctrl ? { signal: ctrl.signal } : {}) });
+    if (!res.ok) throw new Error(`OpenRouter models: HTTP ${res.status}`);
+    fresh = parseOpenRouterModels(await res.json());
+  } finally { clearTimeout(timer); }
   catalog = { fetchedAt: Date.now(), models: fresh };
-  if (cacheFile) { try { fs.writeFileSync(cacheFile, JSON.stringify(catalog)); } catch {} }
+  if (cacheFile) { try { require('fs').writeFileSync(cacheFile, JSON.stringify(catalog)); } catch {} }
   return catalog;
 }
 
@@ -291,6 +301,11 @@ function describeProviderError(err, provider) {
 }
 
 // OpenRouter's own name for a model, without its vendor ("Anthropic: Claude Opus 5.5" -> "Claude Opus 5.5"), if known.
+// What the catalog knows of a model: its context size, price per million input tokens and whether it is free.
+function openRouterInfo(model) {
+  const m = catalog?.models?.find((x) => x.id === model);
+  return m ? { context: m.context || 0, pricePerM: m.pricePerM, free: Boolean(m.free) } : null;
+}
 function openRouterName(model) {
   const m = catalog?.models?.find((x) => x.id === model);
   if (!m?.name) return null;
@@ -298,4 +313,4 @@ function openRouterName(model) {
   return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
 }
 
-module.exports = { PROVIDERS, openRouterName, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+module.exports = { PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

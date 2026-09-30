@@ -169,7 +169,7 @@ let catalog = null;
 function openModelSearch(query = '') {
   catalog ||= window.lumenModelCatalog({
     mainSelect: $('model'), anchor: modelPicker.button, host: document.querySelector('.model-picker'),
-    fetchModels: () => window.assistant.openRouterModels(), onBack: () => modelPicker.open(),
+    fetchModels: () => window.assistant.openRouterModels(), onBack: (q) => modelPicker.open(q || ''),
     onFail: (text) => append(Object.assign(document.createElement('div'), { className: 'notice', textContent: text })),
   });
   catalog.open(query);

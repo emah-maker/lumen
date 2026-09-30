@@ -181,7 +181,7 @@ async function buildAi(card) {
   // "More models…" opens OpenRouter's whole catalog here too (renderer/model-catalog.js).
   let catalog = null;
   const openCatalog = (q = '') => {
-    catalog ||= window.lumenModelCatalog({ mainSelect: modelPicker, anchor: settingsPicker.button, host: modelPicker.parentElement, fetchModels: () => S.ai.openRouterModels(), onBack: () => settingsPicker.open(), onFail: (text) => { const n = modelPicker.parentElement.querySelector('.catalog-fail') || modelPicker.parentElement.appendChild(h('span', { class: 'catalog-fail', role: 'status' })); flash(n, text, 'err'); } });
+    catalog ||= window.lumenModelCatalog({ mainSelect: modelPicker, anchor: settingsPicker.button, host: modelPicker.parentElement, fetchModels: () => S.ai.openRouterModels(), onBack: (q) => settingsPicker.open(q || ''), onFail: (text) => { const n = modelPicker.parentElement.querySelector('.catalog-fail') || modelPicker.parentElement.appendChild(h('span', { class: 'catalog-fail', role: 'status' })); flash(n, text, 'err'); } });
     catalog.open(q);
   };
   const settingsPicker = window.lumenPicker(modelPicker, {
