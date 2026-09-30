@@ -16,6 +16,7 @@
       $('count').textContent = String(count);
       $('count').setAttribute('aria-label', `${count} tabs`);
       document.body.className = count > 1 ? `many${count > 2 ? ' three' : ''}` : '';
+      document.documentElement.classList.toggle('still', Boolean(data.still)); // Lumen's Reduce motion
       const icon = $('icon');
       icon.onerror = () => { icon.removeAttribute('src'); icon.classList.add('blank'); };
       if (imageOk(data.favicon, true)) { icon.src = data.favicon; icon.classList.remove('blank'); } else { icon.removeAttribute('src'); icon.classList.add('blank'); }

@@ -153,6 +153,7 @@ function startTabDrag(e, el, id) {
   window.addEventListener('pointerup', endTabDrag, true);
   window.addEventListener('pointercancel', endTabDrag, true);
   window.addEventListener('keydown', dragKey, true);
+  window.addEventListener('blur', dragBlur);
 }
 // A group label pressed: dragged along the strip it moves the whole group there (the group's tabs gather
 // under it and a slot shows where it will land); pulled out of the strip, it takes the group to another
@@ -169,6 +170,7 @@ function startGroupDrag(e, label, groupId) {
   window.addEventListener('pointerup', endTabDrag, true);
   window.addEventListener('pointercancel', endTabDrag, true);
   window.addEventListener('keydown', dragKey, true);
+  window.addEventListener('blur', dragBlur);
 }
 function moveGroupDrag(e) {
   const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
@@ -176,10 +178,13 @@ function moveGroupDrag(e) {
   if (!drag.moved) { drag.moved = true; hideHoverCard(); drag.el.classList.add('dragging'); $('tabs').classList.add('reordering'); }
   const lift = Math.sign(dy) * Math.min(12, Math.abs(dy) * 0.3);
   if (!drag.along && Math.abs(dx) > 12 && Math.abs(dy) < 14) {
+    // Along the strip: the label and its tabs fold away and the slot shows the group where it would land
+    // (the same picture as any tab dragged over a strip).
     drag.along = true;
-    gatherTabs(drag.members, null);
+    drag.el.style.transform = '';
+    gatherTabs(drag.members, null, drag.el);
   }
-  drag.el.style.transform = drag.along ? `translate(${dx}px, ${lift}px)` : `translate(${Math.sign(dx) * Math.min(12, Math.abs(dx) * 0.3)}px, ${lift}px)`;
+  if (!drag.along) drag.el.style.transform = `translate(${Math.sign(dx) * Math.min(12, Math.abs(dx) * 0.3)}px, ${lift}px)`;
   drag.el.classList.toggle('tearing', Math.abs(dy) > 14);
   if (!drag.prepped && window.browser.dragTabPrep && nearEdge(e)) { drag.prepped = true; window.browser.dragTabPrep(); }
   if (!draggedOut(e)) {
@@ -197,10 +202,17 @@ function moveGroupDrag(e) {
   if (dropSlot) { closeSlot(dropSlot.el); dropSlot = null; } // on its way out of the strip: no slot here
   drag.handed = true;
   drag.group = drag.members;
+  drag.single = (lastTabState?.tabs.length || 0) - drag.members.length < 1; // the whole window: it is what moves
   drag.el.style.transform = '';
   drag.el.classList.remove('tearing');
-  drag.el.classList.add('handed');
-  for (const t of $('tabs').querySelectorAll('.tab')) if (drag.members.includes(Number(t.dataset.id))) t.classList.add('handed');
+  if (drag.single) {
+    $('tabs').querySelectorAll('.gathered').forEach((t) => t.classList.remove('gathered'));
+    drag.el.classList.remove('dragging');
+    $('tabs').classList.remove('reordering');
+  } else {
+    drag.el.classList.add('handed');
+    for (const t of $('tabs').querySelectorAll('.tab')) if (drag.members.includes(Number(t.dataset.id))) t.classList.add('handed');
+  }
   trackIndicator(320);
   const stripX = drag.rects[0].left + (drag.startX - drag.labelRect.left);
   window.browser.dragTabStart(drag.id, { x: e.clientX, y: e.clientY, stripX, pressY: drag.startY, ids: drag.members, group: drag.groupId });
@@ -217,11 +229,12 @@ function groupDropBefore(x, members) {
 }
 // Tabs travelling with the dragged one (a multi-selection, a group's tabs) fold into it: they give up
 // their room, and the tabs beside them slide over (FLIP), leaving the dragged tab with a count.
-function gatherTabs(ids, keep) {
+function gatherTabs(ids, keep, extra = null) {
   const strip = $('tabs');
   const all = [...strip.querySelectorAll('.tab, .group-label')];
   const before = new Map(all.map((el) => [el, el.getBoundingClientRect().left]));
   for (const t of strip.querySelectorAll('.tab')) if (t !== keep && ids.includes(Number(t.dataset.id))) t.classList.add('gathered');
+  extra?.classList.add('gathered');
   if (!motionReduced()) {
     for (const el of all) {
       if (el.classList.contains('gathered') || el === keep || el === drag?.el) continue;
@@ -231,22 +244,47 @@ function gatherTabs(ids, keep) {
   }
   trackIndicator(320);
 }
+// This window lost the focus mid-drag (Alt+Tab, the Windows key, another app popping up): the drag is
+// cancelled, as Escape would, rather than left following a pointer that has gone elsewhere.
+function dragBlur() {
+  if (drag && !drag.single) endTabDrag({ type: 'lostcapture' });
+}
 function dragKey(e) {
   if (e.key === 'Escape' && drag) { e.preventDefault(); e.stopPropagation(); endTabDrag(e); }
 }
 let heldTab = null; // { id, ids, timer }: dropped tabs kept hidden in this strip until main has placed them
 function holdDroppedTab(id, ids = [id]) {
-  releaseHeldTab();
+  // A second drop while the first is still being placed: both stay hidden (the first mustn't flash back).
+  if (heldTab) { clearTimeout(heldTab.timer); ids = [...new Set([...heldTab.ids, ...ids])]; }
   heldTab = { id, ids, timer: setTimeout(releaseHeldTab, 5000) };
   for (const x of ids) $('tabs').querySelector(`.tab[data-id="${x}"]`)?.classList.add('held');
 }
-function releaseHeldTab() {
+function releaseHeldTab(quiet = false) {
   if (!heldTab) return;
   clearTimeout(heldTab.timer);
   heldTab = null;
-  $('tabs').querySelectorAll('.held').forEach((t) => t.classList.remove('held'));
+  const shown = [...$('tabs').querySelectorAll('.held')];
+  shown.forEach((t) => t.classList.remove('held'));
+  if (quiet || quiet?.type || !landingSlot) return;
+  // Dropped back into this strip: the tabs take the slot that stayed open for them (renderTabs keeps it
+  // in place until now), so nothing shifts as they appear.
+  clearTimeout(landingSlot.timer);
+  landingSlot.el.remove();
+  landingSlot = null;
+  for (const t of shown) {
+    if (!t.classList.contains('tab')) continue;
+    if (!motionReduced()) t.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
+    t.classList.add('landed');
+    setTimeout(() => t.classList.remove('landed'), 1000);
+  }
+  placeIndicator(false);
 }
-window.browser.onTabDragDone?.(releaseHeldTab);
+window.browser.onTabDragDone?.(() => releaseHeldTab());
+// This window was just made for dragged tabs: say so to screen readers.
+window.browser.onTabArrived?.((info) => {
+  const live = $('tab-live');
+  if (live) live.textContent = info?.count > 1 ? t('tabs.movedToNewWindowMany', { n: info.count }) : t('tabs.movedToNewWindow');
+});
 // A dragged tab is over this strip: the tabs part to open a tab-sized slot where it would land, as in
 // Chrome and Safari. Moving along the strip closes the old slot while the new one opens, so the tabs
 // glide rather than jump. When the tab then arrives here, it takes the slot's place (see animateTabs).
@@ -308,7 +346,7 @@ function showDropSlot(at) {
     clearLandingSlot();
     const el = dropSlot.el;
     dropSlot = null;
-    landingSlot = { el, timer: setTimeout(() => { if (landingSlot?.el === el) { landingSlot = null; closeSlot(el); trackIndicator(460); } }, 180) };
+    landingSlot = { el, timer: setTimeout(() => { if (landingSlot?.el === el) { landingSlot = null; closeSlot(el); trackIndicator(460); } }, 320) };
     return;
   }
   clearLandingSlot();
@@ -348,7 +386,7 @@ window.browser.onTabDropAt?.(showDropSlot);
 // Dragged this far outside the strip (or out of the window), releasing the tab hands it to main.js:
 // into another window's strip if the cursor is over one, else into a new window of its own.
 const TEAR_OFF_PX = 36;
-const nearEdge = (e) => { const bar = $('tabs').getBoundingClientRect(); return e.clientY > bar.bottom + 20 || e.clientY < bar.top - 20; };
+const nearEdge = (e) => { const bar = $('tabs').getBoundingClientRect(); return e.clientY > bar.bottom + 26 || e.clientY < bar.top - 26; };
 function draggedOut(e) {
   const bar = $('tabs').getBoundingClientRect();
   return e.clientY > bar.bottom + TEAR_OFF_PX || e.clientY < bar.top - TEAR_OFF_PX
@@ -362,11 +400,15 @@ function handOffTabDrag(e) {
   drag.handed = true;
   // A multi-selection that includes the dragged tab goes with it (main.js moves them together).
   drag.group = selectedTabs.size > 1 && selectedTabs.has(drag.id) ? stripOrder().filter((x) => selectedTabs.has(x)) : [drag.id];
+  // Every tab of the window going: main drags the window itself, which keeps showing its tabs.
+  drag.single = (lastTabState?.tabs.length || 0) - drag.group.length < 1;
   drag.el.style.transform = '';
   [...$('tabs').querySelectorAll('.tab')].forEach((t) => {
     t.style.transform = '';
-    if (drag.group.includes(Number(t.dataset.id))) t.classList.add('handed');
+    t.classList.remove('gathered');
+    if (!drag.single && drag.group.includes(Number(t.dataset.id))) t.classList.add('handed');
   });
+  if (drag.single) { drag.el.classList.remove('dragging'); $('tabs').classList.remove('reordering'); $('tabs').querySelectorAll('.tab-gather-count').forEach((c) => c.remove()); }
   drag.el.classList.remove('tearing');
   trackIndicator(320); // the tabs close up over the gap
   // x, y: the cursor in this window (it holds its place if the whole window is dragged). stripX, pressY:
@@ -426,13 +468,14 @@ function moveTabDrag(e) {
 
 function endTabDrag(e) {
   if (!drag) return;
-  const { moved, from, to, id, ids, handed, group, groupId, el: dragEl, gathered, along, slotBefore, members } = drag;
+  const { moved, from, to, id, ids, handed, group, groupId, el: dragEl, gathered, along, slotBefore, members, single } = drag;
   // Escape, a cancelled pointer or a lost one: nothing moves.
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
   drag = null;
   window.removeEventListener('pointerup', endTabDrag, true);
   window.removeEventListener('pointercancel', endTabDrag, true);
   window.removeEventListener('keydown', dragKey, true);
+  window.removeEventListener('blur', dragBlur);
   $('tabs').classList.remove('reordering');
   $('tabs').querySelectorAll('.tab-gather-count').forEach((c) => c.remove());
   const blockMove = moved && !handed && !escaped && (gathered || along);
@@ -444,7 +487,7 @@ function endTabDrag(e) {
   });
   // Released outside the strip: the tab stays hidden until main has put it where it was dropped
   // ('tab:dragdone'), so it doesn't flash back here first. Escape shows it again at once.
-  if (handed && !escaped) { holdDroppedTab(id, group); if (groupId != null) dragEl.classList.add('held'); }
+  if (handed && !escaped && !single) { holdDroppedTab(id, group); if (groupId != null) dragEl.classList.add('held'); }
   let heldUntilState = null;
   if (moved) {
     suppressClick = true;
@@ -1047,12 +1090,17 @@ function renderTabs(state) {
   // A drop slot left open for a tab that was just released over this strip (onTabDropAt): measured open
   // above, so the tabs close up from there, and the tab that arrives (or, back in its own strip, the one
   // that was held hidden) takes its place.
+  // The slot is only used up by the update that fills it: tabs new to this strip, or a block moved along
+  // it. Any other update (a title, a stale one held back during the drag) leaves it where it is, and a
+  // drop back into this strip fills it when main confirms ('tab:dragdone', releaseHeldTab).
   const landing = landingSlot;
-  if (landing) { clearTimeout(landing.timer); landing.el.remove(); landingSlot = null; }
+  const fresh = state.tabs.filter((t) => !before.has(String(t.id))).map((t) => String(t.id));
   let landedIds = [];
-  if (landing && heldTab && state.tabs.some((t) => heldTab.ids.includes(t.id))) { landedIds = heldTab.ids.filter((x) => state.tabs.some((t) => t.id === x)).map(String); releaseHeldTab(); }
-  else if (landing) landedIds = state.tabs.filter((t) => !before.has(String(t.id))).map((t) => String(t.id));
-  else if (heldTab?.untilState) releaseHeldTab(); // a block move along this strip: main's update has come
+  let filled = false;
+  if (landing && heldTab?.untilState) { filled = true; landedIds = heldTab.ids.filter((x) => state.tabs.some((t) => t.id === x)).map(String); releaseHeldTab(true); }
+  else if (landing && !heldTab && fresh.length) { filled = true; landedIds = fresh; }
+  else if (!landing && heldTab?.untilState) releaseHeldTab(true); // a block move along this strip: main's update has come
+  if (filled) { clearTimeout(landing.timer); landing.el.remove(); landingSlot = null; }
   const switched = state.activeId !== lastActiveId;
   const groupsById = new Map((state.groups || []).map((g) => [g.id, g]));
   const crowded = state.tabs.length > 12;
@@ -1081,9 +1129,11 @@ function renderTabs(state) {
   for (const { el } of before.values()) if (!keep.has(el)) el.remove();
   // Drop slots aren't tabs: they step out while the tabs are put in order (or they'd end up last), and the
   // open one goes back in front of the same tab. A closing one is simply gone.
-  const openSlot = dropSlot?.el?.isConnected ? dropSlot.el : null;
-  let slotAnchor = openSlot?.nextElementSibling;
-  while (slotAnchor?.classList.contains('tab-drop-slot')) slotAnchor = slotAnchor.nextElementSibling;
+  const slots = [dropSlot?.el, landingSlot?.el].filter((el) => el?.isConnected).map((el) => {
+    let anchor = el.nextElementSibling;
+    while (anchor?.classList.contains('tab-drop-slot')) anchor = anchor.nextElementSibling;
+    return { el, anchor };
+  });
   container.querySelectorAll('.tab-drop-slot').forEach((el) => el.remove());
   // Only elements out of place move, so the rest aren't detached mid-click.
   let cursor = tabIndicator.nextSibling;
@@ -1091,7 +1141,7 @@ function renderTabs(state) {
     if (el === cursor) cursor = el.nextSibling;
     else container.insertBefore(el, cursor);
   }
-  if (openSlot) container.insertBefore(openSlot, slotAnchor?.parentNode === container ? slotAnchor : null);
+  for (const { el, anchor } of slots) container.insertBefore(el, anchor?.parentNode === container ? anchor : null);
 
   // A tab arriving while widths are held (see holdTabWidths) would be squeezed in beside them.
   if (widthsHeld && wanted.some((el) => el.classList.contains('tab') && !before.has(el.dataset.id))) releaseTabWidths(false);

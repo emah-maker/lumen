@@ -246,6 +246,8 @@
   "menu.moveGroupToWindow": "Move Group to Window",
   "tabs.movedHere": "{title}: tab moved here",
   "tabs.movedHereMany": "{n} tabs moved here",
+  "tabs.movedToNewWindow": "Moved to a new window",
+  "tabs.movedToNewWindowMany": "{n} tabs moved to a new window",
   "menu.moveTabsToWindow": "Move {n} Tabs to Window",
   "menu.muteSite": "Mute Site",
   "menu.muteTab": "Mute Tab",

@@ -56,6 +56,8 @@
     .card.drop { opacity: 0; transform: scale(1.04); transition: opacity 160ms ease-out, transform 200ms var(--spring); }
     .card.join { opacity: 0; transform: scale(0.9); transition: opacity 120ms ease-out, transform 160ms ease-out; }
     .card.cancel { opacity: 0; transform: scale(0.9) translateY(-6px); transition: opacity 140ms ease-out, transform 180ms ease-out; }
+    :root.still .card, :root.still .card *, :root.still .stack { transition-duration: 1ms !important; animation: none !important; }
+    :root.still .card { transform: none !important; }
     @media (prefers-reduced-motion: reduce) {
       .card, .card *, .card.drop, .card.join, .card.cancel, .stack { transition-duration: 1ms !important; transform: none !important; animation: none !important; }
     }

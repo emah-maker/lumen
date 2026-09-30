@@ -155,6 +155,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 /* The tab has left for a window of its own (main.js drives that drag): it keeps its DOM node, which holds
    the pointer, but takes no room. */
 .group-label.handed, .group-label.held { display: none; }
+.group-label.gathered { width: 0; min-width: 0; padding: 0; margin: 0 -2px; border: 0; overflow: hidden; opacity: 0; }
 .group-label.dragging { position: relative; z-index: 3; transition: none; }
 .group-label.dragging.tearing { opacity: 0.82; scale: 0.97; }
 .tab.dragging.handed, .tab.handed, .tab.held { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -1px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }

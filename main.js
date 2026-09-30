@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components, systemPreferences } = require('electron');
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
@@ -3350,6 +3350,7 @@ function moveTabsBetween(src, dst, ids, index, { focus = true, active = ids[0], 
       if (stay) switchTab(stay.id);
     });
     let at = Number.isInteger(index) ? index : undefined;
+    if (group && at !== undefined) at = withWindow(dst, () => outsideGroups(at)); // a group never lands inside another
     const done = [];
     for (const id of ids) {
       if (!moveTabBetween(src, dst, id, at, { focus: false, keepSrc: true, show: false })) continue;
@@ -3370,6 +3371,11 @@ function moveTabsBetween(src, dst, ids, index, { focus = true, active = ids[0], 
   if (rcAlive(src) && !tabsOf(src).length) src.win.close();
   return true;
 }
+// The first index at or after `at` that isn't between two tabs of one group (in the current window).
+function outsideGroups(at) {
+  while (at > 0 && at < tabs.length && tabs[at - 1].groupId && tabs[at - 1].groupId === tabs[at].groupId) at++;
+  return at;
+}
 // Several tabs of this window moved as one block, before `beforeId` (the end if null), in the order given:
 // a multi-selection or a group dragged along its own strip. `groupId`: they are that group and stay it
 // (and never land inside another group); otherwise they join a group only if dropped inside one. One
@@ -3383,7 +3389,7 @@ function moveBlock(ids, beforeId, groupId = null) {
   let at = beforeId == null ? tabs.length : tabs.findIndex((t) => t.id === beforeId);
   if (at === -1) at = tabs.length;
   at = Math.max(pinned, at);
-  if (keep) while (at < tabs.length && tabs[at - 1]?.groupId && tabs[at - 1].groupId === tabs[at].groupId) at++; // not into the middle of another group
+  if (keep) at = outsideGroups(at); // not into the middle of another group
   tabs.splice(at, 0, ...moving);
   const prev = tabs[at - 1], next = tabs[at + moving.length];
   const join = keep || (prev?.groupId && prev.groupId === next?.groupId ? prev.groupId : null);
@@ -3446,7 +3452,7 @@ function moveTabToWindowId(src, tabId, windowId, index) {
 // itself, like its title bar. Main polls the cursor; the renderer that holds the pointer reports the
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
 const tabDragMath = require('./features/tab-drag-math');
-let tabDragTimeoutMs = 60000;
+let tabDragTimeoutMs = 15000; // with the mouse still and no release seen (see tickTabDrag)
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
 // Windows front first, as far as Lumen can tell: the order they were last focused in (Electron has no
@@ -3494,7 +3500,8 @@ function whenPainted(rec, tab, then) {
   const waits = [rec.win.webContents.executeJavaScript(frames, true).catch(() => {})];
   if (tab && alive(tab)) {
     try { tab.view.webContents.invalidate(); } catch {}
-    waits.push(tab.view.webContents.executeJavaScript(frames, true).catch(() => {}));
+    // In an isolated world: the page's own requestAnimationFrame (which a site may have replaced) isn't used.
+    waits.push(tab.view.webContents.executeJavaScriptInIsolatedWorld(1003, [{ code: frames }], true).catch(() => {}));
   }
   let done = false;
   const go = () => { if (!done) { done = true; if (rcAlive(rec)) then(); } };
@@ -3503,12 +3510,19 @@ function whenPainted(rec, tab, then) {
 }
 const tabById = (rec, id) => tabsOf(rec).find((t) => t.id === id);
 // Shows a window that has just been given a tab, faded in once it has painted, and focuses it.
+// Lumen's own Reduce motion setting, Performance mode, or the system's (Windows: animations off).
+const motionReducedMain = () => Boolean(settingsBackend.prefs().reduceMotion) || Boolean(perfMode.active?.())
+  || systemPreferences?.getAnimationSettings?.().shouldRenderRichAnimation === false;
 function revealNewWindow(rec, tabId, then = () => {}) {
-  if (TEST_BACKGROUND) { then(); return; }
+  const count = tabsOf(rec).filter((t) => !t.closing).length;
+  const announce = () => { if (rcAlive(rec)) rec.win.webContents.send('tab:arrived', { count }); }; // for screen readers
+  if (TEST_BACKGROUND) { announce(); then(); return; }
   rec.win.setOpacity(0);
   rec.win.showInactive();
   whenPainted(rec, tabById(rec, tabId), () => {
     const w = rec.win;
+    announce();
+    if (motionReducedMain()) { w.setOpacity(1); w.focus(); then(); return; }
     const start = Date.now();
     const FADE_MS = 150;
     const step = setInterval(() => {
@@ -3566,7 +3580,7 @@ function showDragCard(d, tab, cursor) {
     if (tabDrag !== d) return;
     const icons = d.ghost?.favicons?.length ? d.ghost.favicons : tab.favicon ? [tab.favicon] : [];
     const favicon = icons.find((u) => typeof u === 'string' && (u.startsWith('https:') || u.startsWith('data:image/'))) || null;
-    cardCall('show', { title: tabTitle(tab) || 'New Tab', favicon, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length });
+    cardCall('show', { title: tabTitle(tab) || 'New Tab', favicon, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain() });
     card.win.showInactive();
   });
   // The page as it looks now, scaled for the card (at the screen's pixel density).
@@ -3644,8 +3658,10 @@ function tickTabDrag() {
   if (!rcAlive(d.rec)) { endDragQuietly(d); return; } // the window was closed under the drag
   // A release that never came (the mouse-up went somewhere Lumen can't see): nothing is moved on a guess.
   // A card drag is dropped; a dragged window stays where it is, without joining a strip.
-  if (Date.now() - d.started > tabDragTimeoutMs) { setDragHover(d, null); finishTabDrag(d.card ? 'cancel' : 'commit'); return; }
   const cursor = cursorPoint();
+  if (!d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y) { d.lastCursor = cursor; d.movedAt = Date.now(); }
+  // Measured from the last time the mouse moved: someone holding still over a strip isn't cut off.
+  if (Date.now() - (d.movedAt || d.started) > tabDragTimeoutMs) { setDragHover(d, null); finishTabDrag(d.card ? 'cancel' : 'commit'); return; }
   if (d.card) {
     const at = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
     if (at.x !== d.cardAt.x || at.y !== d.cardAt.y) {
@@ -3655,11 +3671,13 @@ function tickTabDrag() {
   } else {
     const area = screen.getDisplayNearestPoint(cursor).workArea;
     const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
-    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setBounds(b); d.last = b; }
+    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setPosition(b.x, b.y); d.last = b; } // position only: no size drift across displays
   }
-  if (Date.now() - d.stripsAt > 250) { d.stripsAt = Date.now(); refreshDragStrips(d); }
+  if (Date.now() - d.stripsAt > 120) { d.stripsAt = Date.now(); refreshDragStrips(d); }
   const hit = tabDragMath.stripHit(cursor, dropTargets(d));
-  setDragHover(d, hit && { rec: hit.key, beforeId: hit.beforeId });
+  // A group is shown (and lands) after a group it is over, never inside it.
+  const beforeId = hit && d.group ? withWindow(hit.key, () => { const i = tabs.findIndex((t) => t.id === hit.beforeId); return i === -1 ? null : tabs[outsideGroups(i)]?.id ?? null; }) : hit?.beforeId;
+  setDragHover(d, hit && { rec: hit.key, beforeId: beforeId ?? null });
 }
 // Every window that could be under the cursor, front first: the strips a tab can join, and the windows that
 // only get in the way (private windows, a normal window whose strip hasn't been measured yet).
@@ -3695,12 +3713,16 @@ function finishTabDrag(reason) {
   if (d.card) { finishCardDrag(d, reason, target); return; }
   // An only-tab window: it stays where it was dropped, joins the strip it is over, or goes back (Escape).
   if (!TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
+  rec.win.webContents.send('tab:dragdone'); // its strip shows the tab again, however the drag ended
   if (reason === 'commit') {
     if (target && rcAlive(target.rec)) {
-      // The whole window merges into that strip: every tab it holds, the dragged one shown.
+      // The whole window merges into that strip: every tab it holds, the dragged one shown, and its groups
+      // still groups there.
       const at = tabsOf(target.rec).findIndex((t) => t.id === target.beforeId);
       const all = tabsOf(rec).filter((t) => !t.closing).map((t) => t.id);
-      moveTabsBetween(rec, target.rec, all, at === -1 ? undefined : at, { active: d.tabId });
+      const groups = [...new Set(tabsOf(rec).map((t) => t.groupId).filter(Boolean))].map((g) => groupForMove(rec, g)).filter(Boolean);
+      const dst = target.rec;
+      if (moveTabsBetween(rec, dst, all, at === -1 ? undefined : at, { active: d.tabId })) batchTabs(() => { for (const g of groups) regroup(dst, g.ids, g.group); });
     } else {
       rec.win.focus();
     }
@@ -3721,12 +3743,14 @@ function finishCardDrag(d, reason, target) {
       // Along its own strip, before the tab the slot was opened in front of (the end if none).
       withWindow(src, () => {
         const before = target.beforeId != null && !ids.includes(target.beforeId) ? target.beforeId : null;
-        if (ids.length === 1 && !d.group) {
+        if (ids.length === 1 && !d.group && tabs.find((t) => t.id === ids[0])?.pinned) {
           const others = tabs.filter((t) => t.id !== ids[0]);
           const at = before == null ? others.length : others.findIndex((t) => t.id === before);
           moveTab(ids[0], at === -1 ? others.length : at);
         } else {
-          moveBlock(ids, before, d.group ? d.groupId : null); // one splice: a group stays whole
+          // One splice, landing exactly where the slot was: a group stays whole, a tab joins a group only
+          // if the slot was inside it.
+          moveBlock(ids, before, d.group ? d.groupId : null);
         }
         if (activeId !== d.tabId && tabs.some((t) => t.id === d.tabId)) switchTab(d.tabId);
       });
@@ -3754,7 +3778,7 @@ function finishCardDrag(d, reason, target) {
     });
   };
   const landIn = (rec) => {
-    rec.win.setPosition(at.x, at.y);
+    rec.win.setBounds({ x: at.x, y: at.y, width: d.size.width, height: d.size.height }); // one call: no size drift on mixed-DPI setups
     if (!moveTabsBetween(src, rec, ids, 0, { focus: false, active: d.tabId, group: d.group })) { rec.win.close(); hideDragCard(d, 'cancel'); settled(); return; }
     settled();
     revealNewWindow(rec, d.tabId, () => hideDragCard(d, 'drop'));
@@ -3766,14 +3790,15 @@ function finishCardDrag(d, reason, target) {
     const waiting = spareRec;
     let done = false;
     cardCall('wait');
-    const fallback = setTimeout(() => { if (!done) { done = true; waiting.whenPrepared = null; newWindowFor(); } }, 1500);
-    waiting.whenPrepared = () => {
+    const ready = () => {
       if (done) return;
       done = true;
       clearTimeout(fallback);
-      const r = takeSpare(d.size);
+      const r = takeSpare(d.size); // a second drop that waited too gets a window of its own
       if (r) landIn(r); else newWindowFor();
     };
+    const fallback = setTimeout(() => { if (!done) { done = true; waiting.whenPrepared = (waiting.whenPrepared || []).filter((f) => f !== ready); newWindowFor(); } }, 1500);
+    waiting.whenPrepared = [...(waiting.whenPrepared || []), ready];
     return;
   }
   newWindowFor();
@@ -3861,7 +3886,7 @@ function tearOffTab(src, tabId, point, ids = [tabId], group = null) {
   }
   const rec = createWindow({
     size: { width: size[0], height: size[1] }, position, hidden: true, boundsFrom: src,
-    adopt: { src, tabId, ids, group, focus: false, done: () => { if (rcAlive(rec)) revealNewWindow(rec, tabId); } },
+    adopt: { src, tabId, ids, group, focus: false, done: (ok) => { if (ok && rcAlive(rec)) revealNewWindow(rec, tabId); } },
   });
   return true;
 }
@@ -4013,14 +4038,23 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       rec.preparedReady = true;
       const waiting = rec.whenPrepared; // a drop that came while this window was loading (finishCardDrag)
       rec.whenPrepared = null;
-      if (waiting) setImmediate(waiting);
+      if (waiting) setImmediate(() => waiting.forEach((f) => f()));
       return;
     }
     if (adopt) {
       // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
       const adopted = moveTabsBetween(adopt.src, rec, adopt.ids || [adopt.tabId], 0, { focus: adopt.focus !== false, active: adopt.tabId, group: adopt.group || null });
-      if (!adopted && !tabs.length) openTab();
-      adopt.done?.(adopted);
+      if (!adopted) {
+        // The tab is gone (closed, or its window closed) while this window was loading. It isn't wanted then,
+        // unless it is the only window left: that one gets a new tab rather than leaving no window at all.
+        const others = [...winRecs].some((r) => r !== rec && rcAlive(r) && !isSpare(r));
+        adopt.done?.(false);
+        if (others) { setImmediate(() => { if (rcAlive(rec)) rec.win.close(); }); return; }
+        if (!tabs.length) openTab();
+        if (!rec.win.isVisible()) rec.win.show();
+      } else {
+        adopt.done?.(true);
+      }
     } else {
       restoreSession(restore);
     }
