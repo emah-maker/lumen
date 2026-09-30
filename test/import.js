@@ -98,9 +98,10 @@ function fakeFirefoxProfile() {
   check('address bar searches with the chosen engine', /^https:\/\/duckduckgo\.com\/\?q=best(%20|\+)pizza/.test(url), url);
   await ui.click('#address');
   await ui.keyboard.type('some query words', { delay: 20 });
-  await ui.waitForTimeout(400);
+  await ui.waitForTimeout(1000);
   const rows = await app.evaluate(async ({ BrowserWindow }) => {
-    const v = BrowserWindow.getAllWindows()[0].contentView.children.find((x) => x.webContents.getURL().endsWith('suggest.html'));
+    // Any window: a hidden spare new-tab window (or the drag card's) can come first in the list.
+    const v = BrowserWindow.getAllWindows().flatMap((w) => w.contentView.children).find((x) => x.webContents?.getURL().endsWith('suggest.html'));
     return v ? v.webContents.executeJavaScript('[...document.querySelectorAll("li")].map(l => l.textContent)') : [];
   });
   check('suggestion row names the engine', rows.some((r) => r.includes('DuckDuckGo Search')), JSON.stringify(rows));
