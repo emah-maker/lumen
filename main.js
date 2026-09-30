@@ -252,7 +252,8 @@ function writeSettings(settings) {
   settingsCache = { ...settings };
   settingsPending = true;
   const gen = ++settingsGen;
-  settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen);
+  settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen)
+    .then(() => { if (gen === settingsGen) settingsPending = false; }); // (on disk: quitting has nothing left to write)
 }
 const writeSettingsAsync = writeSettings; // (the periodic session save)
 // Closing a window and quitting: on disk before the process can go away.

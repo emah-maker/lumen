@@ -48,9 +48,10 @@ function createAdblock(deps) {
 
   // Asked on every request: the allow list's Set is rebuilt only when the setting changes.
   let memo = null;
+  const NO_HOSTS = Object.freeze([]);
   function settings() {
     const s = (deps.peekSettings || deps.readSettings)();
-    const { adblock = true, adblockAllow = [] } = s;
+    const { adblock = true, adblockAllow = NO_HOSTS } = s;
     if (memo && memo.adblock === adblock && memo.list === adblockAllow) return memo.out;
     memo = { adblock, list: adblockAllow, out: { enabled: adblock, allow: new Set(adblockAllow) } };
     return memo.out;

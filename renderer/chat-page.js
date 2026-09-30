@@ -60,7 +60,7 @@
     if (focused) {
       const rows = [...items.querySelectorAll('.chat-item')];
       const row = rows.find((r) => r.dataset.id === focused) || rows[Math.min(focusedAt, rows.length - 1)];
-      (row?.querySelector('.chat-open') || searchBox || prompt)?.focus();
+      (row?.querySelector('.chat-open') || (searchBox && !searchBox.hidden ? searchBox : null) || prompt)?.focus();
     }
   }
   async function openChat(id) {

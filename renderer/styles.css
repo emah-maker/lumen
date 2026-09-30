@@ -899,12 +899,14 @@ body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { dis
 .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
 
 /* Edit on the latest message you sent: a row under its bubble, on hover or focus; not while its reply runs. */
-.msg-user-actions { display: flex; justify-content: flex-end; height: 20px; margin: -14px 0 -6px; opacity: 0; transition: opacity var(--t-fast) ease-out; }
+.msg-user-actions { height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
 .msg-user-actions[hidden] { display: none; }
 .msg.user:hover + .msg-user-actions, .msg-user-actions:hover, .msg-user-actions:focus-within { opacity: 1; }
-.msg-user-actions .msg-edit { height: 20px; padding: 0 7px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.msg-user-actions .msg-edit { float: right; position: relative; top: -16px; height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
 .msg-user-actions .msg-edit:hover { background: var(--field); color: var(--text); }
-body.agent-active .msg-user-actions { display: none; }
+body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions { visibility: hidden; }
+.btn:disabled, .btn.primary:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
+.msg.user.editing .msg-images { margin-bottom: 6px; }
 /* Editing it in place. */
 .msg.user.editing { margin-left: 0; padding: 8px; white-space: normal; }
 .msg-edit-box { display: block; width: 100%; box-sizing: border-box; min-height: 36px; max-height: 240px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface, var(--bg)); color: var(--text); font: inherit; line-height: 1.45; resize: none; outline: none; }

@@ -352,6 +352,7 @@ jump.addEventListener('click', () => {
   jumping = Date.now();
   const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches && messages.scrollHeight - messages.scrollTop - messages.clientHeight < messages.clientHeight * 6;
   messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); // (a long way down: at once)
+  messages.addEventListener('scrollend', () => { if (stuck) messages.scrollTop = messages.scrollHeight; }, { once: true }); // (it grew meanwhile)
   jump.hidden = true;
 });
 messages.after(jump);
@@ -362,7 +363,7 @@ messages.addEventListener('scroll', () => {
 }, { passive: true });
 function scrollToBottom(force = false) {
   if (force) stuck = true;
-  if (stuck && Date.now() - jumping >= 700) messages.scrollTop = messages.scrollHeight; // (a smooth jump finishes first)
+  if (stuck && (force || Date.now() - jumping >= 700)) messages.scrollTop = messages.scrollHeight; // (a smooth jump finishes first)
   jump.hidden = stuck || !messages.querySelector('.msg');
 }
 
@@ -624,7 +625,7 @@ async function askAgain() {
 function editLast() {
   if (running || !lastAsk) return;
   const bubble = [...messages.querySelectorAll('.msg.user')].pop();
-  if (!bubble || bubble.classList.contains('editing')) return;
+  if (!bubble || bubble.classList.contains('editing') || bubble.dataset.skill) return; // (a skill runs again with Regenerate)
   const again = lastAsk;
   const kept = [...bubble.childNodes];
   const box = Object.assign(document.createElement('textarea'), { className: 'msg-edit-box', value: again.text, rows: 1 });
@@ -643,7 +644,8 @@ function editLast() {
   };
   bubble.cancelEdit = restore;
   bubble.classList.add('editing');
-  bubble.replaceChildren(box, row);
+  for (const n of kept) if (n.nodeType === Node.TEXT_NODE) n.remove();
+  bubble.append(box, row);
   if (actions) actions.hidden = true;
   fit();
   box.focus();
@@ -653,12 +655,14 @@ function editLast() {
   send.onclick = async () => {
     const text = box.value.trim();
     if ((!text && !again.images?.length) || running) return;
+    if (!modelReady) { restore(); append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.setupNeeded') })); return; }
     send.disabled = true;
     const result = await window.assistant.rewind?.(again.text);
     if (result !== 'rewound' && result !== 'absent') { restore(); return; }
     while (bubble.nextSibling) bubble.nextSibling.remove();
     bubble.remove();
     ask(text, again.images || [], again.tabs);
+    prompt.focus();
   };
   box.addEventListener('keydown', (e) => {
     if (e.isComposing || e.keyCode === 229) return;
@@ -973,8 +977,9 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'error': {
-      const error = appendToTurn(Object.assign(document.createElement('div'), { className: 'error', textContent: event.text }));
-      error.setAttribute('role', 'alert');
+      const errorEl = Object.assign(document.createElement('div'), { className: 'error', textContent: event.text });
+      errorEl.setAttribute('role', 'alert');
+      const error = appendToTurn(errorEl);
       turn.failed = true;
       if (event.action === 'settings') {
         const button = Object.assign(document.createElement('button'), { className: 'btn', textContent: t('chat.setupAi') });
