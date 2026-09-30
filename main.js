@@ -1294,7 +1294,7 @@ function layout() {
   const uiHadFocus = Boolean(ui()?.isFocused());
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
-    const show = visible && !viewFrozen && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
+    const show = visible && !viewFrozen && !tab.spareFilling && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
@@ -1400,7 +1400,13 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   view.setVisible(false);
   const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
   // The spare page gets this tab's data in place (no reload, no extra history entry).
-  if (spare) wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => wc.loadURL(url).catch(() => {}));
+  if (spare) {
+    // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
+    tab.spareFilling = true;
+    wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); new Promise((r) => requestAnimationFrame(() => r(true)))`, true)
+      .catch(() => wc.loadURL(url).catch(() => {}))
+      .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
+  }
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
@@ -1494,7 +1500,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   tab.faviconUrls = tab.favicons || [];
   wc.on('page-favicon-updated', (_e, favicons) => {
     const next = favicons.filter((u) => typeof u === 'string' && u);
-    if (next.join('\n') === (tab.favicons || []).join('\n')) return; // the same icons again: nothing to redraw
+    if (next.join('\n') === (tab.favicons || []).join('\n')) { if (next.length && !tab.isolated) cacheFavicon(wc.getURL(), next); return; } // the same icons: nothing to redraw (but this host's icon is kept)
     tab.faviconUrls = next;
     tab.favicons = tab.faviconUrls;
     tab.favicon = tab.favicons[0] || null;
@@ -4363,6 +4369,10 @@ const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // `prepared`: a hidden window for a tear-off that may come (prepareDragWindow): it loads its UI and waits.
 // `boundsFrom`: a window of the same size whose page area this one starts with, so the tab's page is at
 // its place from the first frame instead of jumping there once this window's UI reports its own.
+// Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
+let tabsGateOpen = false;
+let openTabsGate = () => {};
+const tabsGate = new Promise((resolve) => { openTabsGate = () => { tabsGateOpen = true; resolve(); }; });
 function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
@@ -4473,6 +4483,12 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       if (waiting) setImmediate(() => waiting.forEach((f) => f()));
       return;
     }
+    // A window's first tabs wait for extensions and the filter lists (every tab is registered with chrome.tabs and
+    // filtered from its first request); the window and its UI load meanwhile (see tabsGate at start-up).
+    if (!adopt && !tabsGateOpen) { tabsGate.then(() => { if (rcAlive(rec)) withWindow(rec, () => settle()); }); return; }
+    settle();
+  });
+  function settle() {
     if (adopt) {
       // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
       const adopted = moveTabsBetween(adopt.src, rec, adopt.ids || [adopt.tabId], 0, { focus: adopt.focus !== false, active: adopt.tabId, group: adopt.group || null });
@@ -4497,7 +4513,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     perf.mark('uiReady');
     downloads.send(); // last session's downloads: the toolbar button shows when there are any
     openLinksFromOtherApps(pendingLinks.splice(0));
-  });
+  }
   return rec;
 }
 let quitting = false; // the app is shutting down: the session was saved by before-quit
@@ -5690,14 +5706,17 @@ app.whenReady().then(async () => {
   // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
   // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
   // doesn't hold up the window. They load while the extensions start (the two don't depend on each other).
+  // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs; the window itself
+  // (its UI, ~0.5 MB of scripts) loads meanwhile, and its tabs come once both are ready (tabsGate).
+  const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
-  // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs.
-  await setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
-  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
-  perf.mark('adblockReady');
-  perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   createWindow();
+  await extending;
+  if (fs.existsSync(path.join(app.getPath('userData'), 'adblock-engine.bin'))) await blocking;
+  perf.mark('adblockReady');
+  openTabsGate();
+  perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   setTimeout(makeSpareNewTab, 4000).unref?.(); // a new-tab page ready for the first Ctrl+T
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now

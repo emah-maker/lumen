@@ -71,7 +71,10 @@ function writeJsonAtomicAsync(file, data, stillLatest = () => true) {
     if (!stillLatest()) { await fsp.unlink(tmp).catch(() => {}); return; }
     try { JSON.parse(await fsp.readFile(file, 'utf8')); await fsp.copyFile(file, `${file}.bak`); } catch { /* no good file to keep */ }
     if (!stillLatest()) { await fsp.unlink(tmp).catch(() => {}); return; }
-    try { await fsp.rename(tmp, file); } catch { await fsp.writeFile(file, text).catch(() => {}); await fsp.unlink(tmp).catch(() => {}); }
+    try { await fsp.rename(tmp, file); } catch {
+      if (stillLatest()) await fsp.writeFile(file, text).catch(() => {}); // (the fallback write is guarded too)
+      await fsp.unlink(tmp).catch(() => {});
+    }
   };
   chain = chain.then(run, run).catch(() => {});
   return chain;
