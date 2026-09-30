@@ -22,6 +22,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       remove: call('prefs:widget-remove'),
       move: call('prefs:widget-move'),
       projects: call('prefs:widget-projects'),
+      tvLists: call('prefs:widget-tv-lists'),
       gmailConnect: call('prefs:widget-gmail-connect'),
       gmailCancel: call('prefs:widget-gmail-cancel'),
       gmailDisconnect: call('prefs:widget-gmail-disconnect'),

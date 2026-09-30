@@ -62,8 +62,8 @@ const el = (tag, cls, text) => {
   if (text !== undefined && text !== null) e.textContent = String(text);
   return e;
 };
-// Only the two TradingView embed pages features/tradingview-view.js builds.
-const tvUrl = (u) => { const s = safeUrl(u); if (!s) return null; try { const p = new URL(s); return p.hostname === 's.tradingview.com' && !p.port && !p.username && ['/widgetembed/', '/embed-widget/mini-symbol-overview/'].includes(p.pathname) ? s : null; } catch { return null; } };
+// Only the TradingView embed pages features/tradingview-view.js builds (a watchlist's hash is long: 8000).
+const tvUrl = (u) => { if (typeof u !== 'string' || u.length >= 8000 || !/^https:\/\/[^\s"'<>\\]+$/i.test(u)) return null; try { const p = new URL(u); return p.hostname === 's.tradingview.com' && !p.port && !p.username && ['/widgetembed/', '/embed-widget/mini-symbol-overview/', '/embed-widget/market-overview/'].includes(p.pathname) ? u : null; } catch { return null; } };
 const safeUrl = (u) => (typeof u === 'string' && u.length < 2000 && /^https:\/\/[^\s"'<>\\]+$/i.test(u) ? u : null);
 // A github.com address (an issue, a pull request or one of its list pages), or null.
 const githubUrl = (u) => (typeof u === 'string' && u.length < 300 && /^https:\/\/github\.com\/[A-Za-z0-9_./#-]{0,250}$/.test(u) ? u : null);
@@ -810,16 +810,20 @@ const WIDGET_RENDERERS = {
     const symbol = text(d.symbol, 60) || 'Chart';
     const dark = d.theme === 'dark' || (d.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
     const url = tvUrl(dark ? d.dark : d.light);
-    if (!url) { card.body.append(el('p', 'w-note', 'This chart can’t be shown.')); return; }
-    card.head.append(openLink(`https://www.tradingview.com/symbols/${encodeURIComponent(symbol.replace(':', '-'))}/`, 'Open', `${symbol} on TradingView`));
+    const list = d.view === 'watchlist';
+    if (!url) { card.body.append(el('p', 'w-note', list ? 'This watchlist can’t be shown.' : 'This chart can’t be shown.')); return; }
+    if (list) card.head.append(openLink('https://www.tradingview.com/chart/', 'Open', 'Your watchlist on TradingView'));
+    else card.head.append(openLink(`https://www.tradingview.com/symbols/${encodeURIComponent(symbol.replace(':', '-'))}/`, 'Open', `${symbol} on TradingView`));
     card.el.classList.add('embed', 'tradingview');
+    if (list) card.el.classList.add('tv-watchlist');
+    if (text(d.note, 200)) card.body.append(el('p', 'w-note tv-note', text(d.note, 200)));
     const frame = document.createElement('iframe');
     frame.className = 'w-frame';
     // No top navigation and no Lumen privileges; popups (TradingView's own links) open as tabs.
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
     frame.referrerPolicy = 'no-referrer';
     frame.loading = 'lazy';
-    frame.title = `${symbol} chart from TradingView`;
+    frame.title = list ? `${text(d.name, 60) || 'Watchlist'} from TradingView` : `${symbol} chart from TradingView`;
     frame.src = url;
     card.body.append(frame);
   },

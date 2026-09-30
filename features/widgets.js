@@ -633,23 +633,44 @@ const CONNECTORS = {
 
   // TradingView: TradingView's own embeddable chart in a sandboxed frame (features/tradingview-view.js).
   // No key, nothing fetched by Lumen: the frame loads the chart and its quotes from TradingView itself.
+  // The one exception is a watchlist imported from the user's TradingView account with sync on: its
+  // symbols are read again (x.tvLists, the user's own TradingView cookies) so edits there show up here.
   tradingview: {
     label: 'TradingView',
-    ttl: 24 * 3600e3,
+    ttl: (data) => (data?.synced ? TVW.SYNC_MS : 24 * 3600e3),
     clean: (c) => {
       const tv = TVW.cleanConfig(c.tv);
       return tv ? { tv, colors: WC.cleanMode(c.colors) } : null;
     },
     async resolve(input) {
       const tv = TVW.cleanConfig(input.tv);
+      if (!tv && input.tv?.view === 'watchlist') throw new Error('Add at least one symbol, like NASDAQ:AAPL, or import a watchlist from your TradingView account.');
       if (!tv) throw new Error(input.tv?.symbol ? 'That doesn’t look like a TradingView symbol. Try NASDAQ:AAPL, BINANCE:BTCUSDT or SPX.' : 'Add a symbol, like NASDAQ:AAPL.');
+      if (tv.view === 'watchlist') {
+        const n = TVW.symbolsOf(tv.symbols).length;
+        return { config: { tv, colors: WC.cleanMode(input.colors) }, message: `${n} symbol${n === 1 ? '' : 's'} will show as a TradingView watchlist${tv.list && tv.sync ? `, kept in sync with “${tv.list.name}” in your TradingView account` : ''}. A symbol TradingView doesn’t know shows as a blank row.` };
+      }
       return { config: { tv, colors: WC.cleanMode(input.colors) }, message: `${tv.symbol} will show as a TradingView ${tv.view === 'mini' ? 'mini chart' : 'chart'}. If TradingView doesn’t know the symbol, the chart says so.` };
     },
-    title: (c) => c.tv.symbol,
+    title: (c) => (c.tv.view === 'watchlist' ? c.tv.list?.name || 'Watchlist' : c.tv.symbol),
     summary: (c) => TVW.summary(c.tv),
-    async fetch(c) {
+    async fetch(c, x) {
+      let tv = c.tv;
+      let synced = false;
+      let note = '';
+      if (tv.view === 'watchlist' && tv.list && tv.sync) {
+        synced = true;
+        try {
+          const got = await x.tvLists();
+          const mine = got.lists.find((l) => l.id === tv.list.id);
+          if (mine) tv = { ...tv, symbol: TVW.symbolsOf(mine.symbols)[0], symbols: mine.symbols, list: { id: mine.id, name: mine.name } };
+          else note = got.signedIn ? `“${tv.list.name}” is no longer in your TradingView account; showing the symbols it had.` : 'Sign in to TradingView in a Lumen tab to keep this list in sync.';
+        } catch (err) {
+          note = `Couldn’t reach your TradingView account (${err.message}); showing the last symbols.`;
+        }
+      }
       // Both themes' addresses, so the page can follow light and dark mode without asking again.
-      return { symbol: c.tv.symbol, view: c.tv.view, theme: c.tv.theme, light: TVW.embedUrl(c.tv, false), dark: TVW.embedUrl(c.tv, true) };
+      return { symbol: tv.symbol, view: tv.view, theme: tv.theme, name: tv.list?.name || '', synced, note, light: TVW.embedUrl(tv, false), dark: TVW.embedUrl(tv, true) };
     },
   },
 
@@ -1121,6 +1142,7 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
 //         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
+//         tradingviewLists()? (TradingView's account answer, read with the user's TradingView cookies; see TVW.ACCOUNT_URL),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
@@ -1281,6 +1303,11 @@ function createWidgets(deps) {
       forget,
       get slack() { return (this._slack ||= slackHelpers(x)); },
       projects: () => todoistProjects(x, x.secret() || ''),
+      // The user's TradingView watchlists, { signedIn, lists }: one read a minute at most, shared by every card.
+      tvLists: () => memo('tv:lists', 60e3, async () => {
+        if (!deps.tradingviewLists) throw new Error('not available here');
+        return TVW.shapeLists(await deps.tradingviewLists());
+      }),
       // "My location": { status: 'consent' | 'off' | 'ok' | 'error', place?, message? }. Nothing is sent
       // before the user agreed; the answer is kept for an hour (in settings, so a restart doesn't ask again).
       async here() {
@@ -1368,7 +1395,7 @@ function createWidgets(deps) {
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
-    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); }
+    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
       .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
@@ -1607,6 +1634,11 @@ function createWidgets(deps) {
     return true;
   }
   // Settings' project picker for a Todoist widget (a token typed but not saved yet may be given).
+  // Settings' "Import from my TradingView account": the lists, fresh (not the minute-old answer).
+  async function tradingviewLists() {
+    forget('tv:lists');
+    return helpers(null).tvLists();
+  }
   async function projects(token) {
     const t = typeof token === 'string' ? token.trim() : '';
     if (t && !/^[A-Za-z0-9_-]{20,100}$/.test(t)) throw new Error('That doesn’t look like a Todoist API token.');
@@ -1974,7 +2006,7 @@ function createWidgets(deps) {
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
