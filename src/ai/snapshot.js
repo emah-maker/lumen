@@ -299,8 +299,8 @@ const NEW_TOOLS = [
 ];
 
 // Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
-const pdfText = require('./features/pdf-text');
-const { captureTab } = require('./features/tab-capture');
+const pdfText = require('../features/pdf-text');
+const { captureTab } = require('../features/tab-capture');
 const TRIMMED = {
   read_page: 'Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.',
   navigate: 'Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.',

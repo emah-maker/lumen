@@ -27,7 +27,7 @@ function runSession(mod, s, verbose) {
   return { ...r, named, total, labelled };
 }
 
-function main(mod = require('../tab-groups'), verbose = process.argv.includes('--verbose')) {
+function main(mod = require('../src/browser/tab-groups'), verbose = process.argv.includes('--verbose')) {
   const sum = { f1: 0, precision: 0, recall: 0, named: 0, labelled: 0, wrong: 0, groups: 0 };
   for (const s of sessions) {
     if (verbose) console.log(s.name);

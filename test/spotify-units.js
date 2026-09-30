@@ -4,9 +4,9 @@
 // expiry and on a 401, a rotated refresh token, no-active-device, 204, 429 backoff, play/pause/next/
 // previous, and that no token ever reaches the page's data or settings.json.
 const crypto = require('crypto');
-const SV = require('../features/spotify-view');
-const { createWidgets, cleanList } = require('../features/widgets');
-const SW = require('../features/spotify-web');
+const SV = require('../src/features/spotify-view');
+const { createWidgets, cleanList } = require('../src/features/widgets');
+const SW = require('../src/features/spotify-web');
 
 const CLIENT = '0123456789abcdef0123456789abcdef';
 // A 1x1 PNG: enough for the magic-byte check.

@@ -6,11 +6,11 @@
 // untouched, every string in locales/en.json). No Electron, no network, no window.
 const fs = require('fs');
 const path = require('path');
-const WL = require('../features/widget-layout');
-const WS = require('../features/widget-system');
-const WE = require('../features/widget-edit');
-const { createTrash } = require('../features/widget-trash');
-const { createWidgets, cleanList, cleanWidget, CONNECTORS, MAX_WIDGETS: CAP } = require('../features/widgets');
+const WL = require('../src/features/widget-layout');
+const WS = require('../src/features/widget-system');
+const WE = require('../src/features/widget-edit');
+const { createTrash } = require('../src/features/widget-trash');
+const { createWidgets, cleanList, cleanWidget, CONNECTORS, MAX_WIDGETS: CAP } = require('../src/features/widgets');
 
 const root = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
@@ -202,7 +202,7 @@ module.exports = async function widgetEditUnits(check) {
   check('picker: a translation table wins over English', WE.pickerEntries({ types: ['weather'], table: { 'newtab.edit.type.weather': 'Wetter' } })[0].label === 'Wetter' && WE.text('newtab.edit.undone', { what: 'x' }) === 'Undone: x' && WE.text('nope.key') === 'nope.key', '');
 
   // ---- the clock's size and the search bar's width ----
-  const SB = require('../settings-backend');
+  const SB = require('../src/settings/settings-backend');
   check('size: defaults are medium and 640 px', SB.DEFAULTS.newTabClockSize === 'm' && SB.DEFAULTS.newTabSearchWidth === 640 && WS.CLOCK_DEFAULT === 'm' && WS.SEARCH_DEFAULT === 640, '');
   check('size: clock steps are s/m/l/xl at 64/88/120/160 px; anything else is refused', WS.CLOCK_STEPS.join() === 's,m,l,xl' && WS.CLOCK_STEPS.map((k) => WS.CLOCK_PX[k]).join() === '64,88,120,160' && WS.cleanClockSize('xl') === 'xl' && WS.cleanClockSize('xxl') === null && WS.cleanClockSize(3) === null && WS.cleanClockSize(undefined) === null, '');
   check('size: the search width is rounded and clamped to 480-960, junk is refused', WS.cleanSearchWidth(100) === 480 && WS.cleanSearchWidth(5000) === 960 && WS.cleanSearchWidth('700') === 700 && WS.cleanSearchWidth(600.6) === 601 && WS.cleanSearchWidth('x') === null && WS.cleanSearchWidth(null) === null && WS.cleanSearchWidth('') === null && WS.cleanSearchWidth(true) === null && WS.cleanSearchWidth(NaN) === null, '');
@@ -219,23 +219,23 @@ module.exports = async function widgetEditUnits(check) {
   check('size: do=look is saved to the two settings', settings.newTabClockSize === 'xl' && settings.newTabSearchWidth === 800, JSON.stringify([settings.newTabClockSize, settings.newTabSearchWidth]));
   await w.act(parse('widget=wreset&do=reset'));
   check('size: Reset layout puts the clock and the search bar back to the defaults', settings.newTabClockSize === 'm' && settings.newTabSearchWidth === 640, JSON.stringify([settings.newTabClockSize, settings.newTabSearchWidth]));
-  const pageSrc = read('renderer/newtab.html');
+  const pageSrc = read('src/renderer/newtab.html');
   check('size: the page reads --clock-size and --search-w on <main>, centred, the clock never scrolls', /main \{[^}]*--clock-size: 88px;[^}]*--search-w: 640px;[^}]*width: min\(var\(--search-w\), 88vw\); margin: 0 auto/.test(pageSrc) && /\.clock \{[^}]*font-size: var\(--clock-size\);[^}]*white-space: nowrap; overflow: visible/.test(pageSrc), '');
 
   // ---- the page's files ----
-  const en = JSON.parse(read('locales/en.json'));
+  const en = JSON.parse(read('src/locales/en.json'));
   const missing = Object.entries(WE.STRINGS).filter(([k, v]) => en[k] !== v).map(([k]) => k);
   check('locales: every page string is in en.json with the same English', missing.length === 0, missing.join(', '));
-  const html = read('renderer/newtab.html');
+  const html = read('src/renderer/newtab.html');
   check('page: the CSP is untouched', html.includes(`content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data: file:; frame-src https:; form-action https:"`), '');
   const order = ['widget-layout.js', 'widget-stacks.js', 'widget-system.js', 'widget-edit.js', 'newtab-system.js', 'newtab-widgets.js', 'newtab-widgets-grid.js', 'newtab-stacks.js', 'newtab-edit.js', 'newtab.js'].map((f) => html.indexOf(`/${f}"`) >= 0 ? html.indexOf(`/${f}"`) : html.indexOf(`"${f}"`));
   check('page: the scripts load in dependency order, all from the app (no other origin)', order.every((n, i) => n > 0 && (i === 0 || n > order[i - 1])) && !/<script[^>]+src="https?:/.test(html), order.join());
-  for (const f of ['renderer/newtab-edit.js', 'renderer/newtab-system.js', 'renderer/newtab-stacks.js']) {
+  for (const f of ['src/renderer/newtab-edit.js', 'src/renderer/newtab-system.js', 'src/renderer/newtab-stacks.js']) {
     const src = read(f);
     check(`page: ${f} builds everything with DOM calls and textContent (no markup strings, no eval, no network)`, !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|fetch\(|XMLHttpRequest|WebSocket/.test(src), '');
   }
-  const gridSrc = read('renderer/newtab-widgets-grid.js');
-  check('page: the grid keeps its calm mode and reduced-motion rules, and the edit UI has its own', /body\.calm/.test(read('renderer/newtab.html')) && /prefers-reduced-motion: no-preference\) \{ body:not\(\.calm\)/.test(read('renderer/newtab-edit.js')) && /aria-live|widgetAnnounce/.test(gridSrc), '');
+  const gridSrc = read('src/renderer/newtab-widgets-grid.js');
+  check('page: the grid keeps its calm mode and reduced-motion rules, and the edit UI has its own', /body\.calm/.test(read('src/renderer/newtab.html')) && /prefers-reduced-motion: no-preference\) \{ body:not\(\.calm\)/.test(read('src/renderer/newtab-edit.js')) && /aria-live|widgetAnnounce/.test(gridSrc), '');
   check('page: keyboard moving and resizing, snapping and undo are wired (arrows, Shift, Ctrl+Alt, Ctrl+Z)', /ArrowLeft/.test(gridSrc) && /e\.shiftKey/.test(gridSrc) && /e\.ctrlKey && e\.altKey/.test(gridSrc) && /key\.toLowerCase\(\) === 'z'/.test(gridSrc), '');
 };
 

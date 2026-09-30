@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const OUT = path.join(ROOT, 'preload.bundle.js');
+const OUT = path.join(ROOT, 'src', 'preload', 'preload.bundle.js');
 const INLINED = ['electron-chrome-extensions/browser-action'];
 
 const read = (file) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n').replace(/^#!.*\n/, '');
@@ -28,7 +28,7 @@ function bundle() {
     '  return loaded[id].exports;',
     '};',
     '((require) => {',
-    read(path.join(ROOT, 'preload.js')).trimEnd(),
+    read(path.join(ROOT, 'src', 'preload', 'preload.js')).trimEnd(),
     '})(load);',
     '})();',
     '',

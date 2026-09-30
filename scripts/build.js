@@ -51,14 +51,14 @@ if (!fs.existsSync(preload.OUT) || fs.readFileSync(preload.OUT, 'utf8').replace(
 
 // Lumen's built-in Google client (one-click "Sign in with Google" for the Gmail widget): from
 // LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET (the release workflow passes repository secrets)
-// into features/google-client.json for this build only; the file is gitignored and removed afterwards.
+// into src/features/google-client.json for this build only; the file is gitignored and removed afterwards.
 // Without them the build has no built-in client and Settings shows the paste-your-own-client flow.
-const googleFile = path.join(root, 'features', 'google-client.json');
+const googleFile = path.join(root, 'src', 'features', 'google-client.json');
 const googleId = (process.env.LUMEN_GOOGLE_CLIENT_ID || '').trim();
 const googleSecret = (process.env.LUMEN_GOOGLE_CLIENT_SECRET || '').trim();
 let wroteGoogle = false;
 if (googleId && googleSecret) {
-  const { builtinClient } = require('../features/google-client');
+  const { builtinClient } = require('../src/features/google-client');
   if (!builtinClient({ env: { LUMEN_GOOGLE_CLIENT_ID: googleId, LUMEN_GOOGLE_CLIENT_SECRET: googleSecret }, file: {} })) {
     console.error('LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET are set but do not look like a Google Desktop OAuth client');
     process.exit(1);

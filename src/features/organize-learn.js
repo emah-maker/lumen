@@ -6,7 +6,7 @@
 //  - exact-duplicate detection for "Close Duplicate Tabs" (never automatic);
 //  - the rule for "Organize tabs automatically when idle" (the local organizer only, never the AI).
 // Nothing here is sent anywhere.
-const tg = require('../tab-groups');
+const tg = require('../browser/tab-groups');
 
 const MAX_HOSTS = 200;
 const MAX_WORDS = 300;

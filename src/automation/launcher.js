@@ -23,7 +23,7 @@ const { spawn } = require('child_process');
 const CHILD_ENV = 'LUMEN_AUTOMATION_PIPE'; // set for the browser this starts
 const LUMEN_FD = 5; // Lumen's end of the relay (3 and 4 are Chromium's)
 
-const available = () => !require('./test-mode').isTest() || process.env.LUMEN_TEST_LAUNCHER === '1';
+const available = () => !require('../test-mode').isTest() || process.env.LUMEN_TEST_LAUNCHER === '1';
 
 // Is this the browser the launcher started? Asked once: the variable isn't passed on to programs
 // Lumen runs (or to a Lumen restarted with app.relaunch, which goes through the launcher again).

@@ -10,12 +10,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
-const { exists, lookup: which, validModel } = require('../cli-utils');
-const launcher = require('../launcher');
+const { exists, lookup: which, validModel } = require('../ai/cli-utils');
+const launcher = require('../automation/launcher');
 // `electron` is only there in the main process; units.js loads this file in plain Node.
 const webContents = { getAllWebContents: () => require('electron').webContents.getAllWebContents() };
 
-const MAIN_DIR = path.join(__dirname, '..');
+const APP_DIR = path.join(__dirname, '..', '..'); // the app's root: package.json and the mcp.js agents are given
 const DEFAULT_AUTOMATION_PORT = 9222;
 const validPort = (port) => (Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : DEFAULT_AUTOMATION_PORT);
 // Anthropic's terms let a user sign in to the unmodified Claude Code binary with their own
@@ -110,7 +110,7 @@ function setupAiAgents(deps) {
   let claudeCodeFound = false;
   let claudeCodeSignedIn = 'unknown'; // true | false | 'unknown' — mirrors claudeCode.status().signedIn
   let claudeCodeDetail = null; // subscription label (e.g. 'enterprise'), when known
-  const claudeCodeModule = () => require('../claude-code');
+  const claudeCodeModule = () => require('../ai/claude-code');
   const claudeCodeEngine = () => {
     if (!claudeCode) {
       const { ClaudeCodeEngine } = claudeCodeModule();
@@ -128,7 +128,7 @@ function setupAiAgents(deps) {
   let grokBuildSignedIn = 'unknown'; // true | false | 'unknown' — mirrors grokBuild.status().signedIn
   let grokBuildDetail = null; // the default model sidebar runs get (asked in Lumen's GROK_HOME), when known
   let grokBuildModels = []; // the model ids `grok models` lists, when known
-  const grokBuildModule = () => require('../grok-build');
+  const grokBuildModule = () => require('../ai/grok-build');
   // Grok Build in the sidebar is experimental (see grok-build.js's header: Grok asks Lumen's gate
   // before every tool call and only Lumen's tools are allowed, on top of Grok's own rules).
   // It is offered only once the user has connected Lumen to Grok Build ("Add to Grok Build" in
@@ -168,7 +168,7 @@ function setupAiAgents(deps) {
 
   let grokGate = null;
   function startGrokGate() {
-    grokGate ||= require('../mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval })
+    grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval })
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }
@@ -238,7 +238,7 @@ function setupAiAgents(deps) {
   // The sidebar's Claude Code engine starts it too (force), and its own sessions are always allowed.
   function startMcp(force = false) {
     if (mcpServer || (!force && !mcpEnabled())) return;
-    mcpServer = require('../mcp').startServer({
+    mcpServer = require('../automation/mcp').startServer({
       userData: app.getPath('userData'),
       tools: deps.tools,
       callTool: mcpCallTool,
@@ -252,7 +252,7 @@ function setupAiAgents(deps) {
   // The command an agent should run: Lumen's own executable in Node mode on mcp.js (clean stdio,
   // no window machinery). Works for the installed app and for development alike.
   function mcpCommand() {
-    return { command: process.execPath, args: [path.join(MAIN_DIR, 'mcp.js')], env: { ELECTRON_RUN_AS_NODE: '1' } };
+    return { command: process.execPath, args: [path.join(APP_DIR, 'mcp.js')], env: { ELECTRON_RUN_AS_NODE: '1' } };
   }
   ipcMain.handle('mcp:info', () => {
     const { command, args, env } = mcpCommand();
@@ -393,7 +393,7 @@ function setupAiAgents(deps) {
   let automationProxy = null;
   function startAutomation() {
     if (!deps.automationPlan) return;
-    automationProxy = require('../automation').start({
+    automationProxy = require('../automation/automation').start({
       ...deps.automationPlan,
       hooks: {
         tabs: deps.userTabs,
@@ -530,7 +530,7 @@ function setupAiAgents(deps) {
 // The CLI's own default comes first and keeps its id and plain "Claude Code" label, so a saved
 // 'claudecode:default' pick (and its replies' labels) stay as they were before there was a choice.
 function claudeCodeOptions({ signedIn = 'unknown', accountDetail = null } = {}) {
-  return require('../claude-code').MODELS.map((m) => ({
+  return require('../ai/claude-code').MODELS.map((m) => ({
     id: `claudecode:${m.id}`,
     label: m.id === 'default' ? 'Claude Code' : `Claude Code · ${m.label}`,
     name: m.id === 'default' ? 'Claude Code' : m.label, // the picker's row, under its "Your Claude account" heading

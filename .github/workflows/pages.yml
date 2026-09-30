@@ -6,7 +6,7 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'docs/**', 'README.md', 'CHANGELOG.md', 'assets/icon.png', 'scripts/build-site.js', '.github/workflows/pages.yml']
+    paths: ['site/**', 'docs/**', 'README.md', 'CHANGELOG.md', 'src/assets/icon.png', 'scripts/build-site.js', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 # Read-only except what the deploy job needs to publish to Pages.

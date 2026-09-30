@@ -162,7 +162,7 @@ const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, usageOf } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
-const { isLimitText, limitOf } = require('./features/grok-limit');
+const { isLimitText, limitOf } = require('../features/grok-limit');
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://x.ai/cli/install.ps1 | iex, then run `grok` once to sign in (needs SuperGrok or X Premium+).'

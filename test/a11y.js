@@ -6,7 +6,7 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { createI18n, candidates } = require('../features/i18n');
+const { createI18n, candidates } = require('../src/features/i18n');
 const { openSettingsTab } = require('./settings-tab');
 
 let failures = 0;
@@ -14,7 +14,7 @@ const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(100); } return v; };
 const root = path.join(__dirname, '..');
-const EN = JSON.parse(fs.readFileSync(path.join(root, 'locales', 'en.json'), 'utf8'));
+const EN = JSON.parse(fs.readFileSync(path.join(root, 'src', 'locales', 'en.json'), 'utf8'));
 
 // Every visible control without an accessible name (a close approximation of the accname rules:
 // aria-label, aria-labelledby, <label for>, alt text, text content, title). Runs in the page.
@@ -45,7 +45,7 @@ const AUDIT = `(() => {
 (async () => {
   // ---- 1. the string table (no Electron) ----
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-locales-'));
-  fs.copyFileSync(path.join(root, 'locales', 'en.json'), path.join(dir, 'en.json'));
+  fs.copyFileSync(path.join(root, 'src', 'locales', 'en.json'), path.join(dir, 'en.json'));
   fs.writeFileSync(path.join(dir, 'xx.json'), JSON.stringify({ 'toolbar.newTab': 'Nouvel onglet', 'menu.newTab': 'NT-xx', 'settings.section.appearance': 'Apparence', 'tabs.close': 'Fermer {title}', 'toolbar.back': '' }));
   const xx = createI18n({ locale: 'xx-YY', dir });
   check('i18n: a region falls back to its language (xx-YY -> xx)', xx.locale === 'xx', xx.locale);
@@ -62,8 +62,8 @@ const AUDIT = `(() => {
   // Every key the code and pages use exists in en.json.
   const missing = [];
   const scan = (file, pattern) => { const src = fs.readFileSync(path.join(root, file), 'utf8'); for (const m of src.matchAll(pattern)) if (!(m[1] in EN)) missing.push(`${file}: ${m[1]}`); };
-  for (const f of ['main.js', 'renderer/app.js', 'renderer/extras.js', 'renderer/chat-core.js', 'renderer/chat-extras.js', 'renderer/chat-items.js', 'renderer/chat-page.js', 'renderer/updates.js', 'renderer/settings.js', 'features/downloads.js', 'features/adblock.js']) scan(f, /\b(?:t|tr|chatTr)\('([^'`]+)'/g);
-  for (const f of ['renderer/index.html', 'renderer/settings.html', 'renderer/chat-page.html']) scan(f, /data-i18n[a-z-]*="([^"]+)"/g);
+  for (const f of ['src/main.js', 'src/renderer/app.js', 'src/renderer/extras.js', 'src/renderer/chat-core.js', 'src/renderer/chat-extras.js', 'src/renderer/chat-items.js', 'src/renderer/chat-page.js', 'src/renderer/updates.js', 'src/renderer/settings.js', 'src/features/downloads.js', 'src/features/adblock.js']) scan(f, /\b(?:t|tr|chatTr)\('([^'`]+)'/g);
+  for (const f of ['src/renderer/index.html', 'src/renderer/settings.html', 'src/renderer/chat-page.html']) scan(f, /data-i18n[a-z-]*="([^"]+)"/g);
   check('i18n: every key in use is in locales/en.json', missing.length === 0, missing.join(', '));
 
   // ---- 2. the browser UI, in English ----

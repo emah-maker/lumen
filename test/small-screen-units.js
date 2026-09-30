@@ -1,7 +1,7 @@
 // Plain Node checks for the ⋯ menu's small-screen layout (features/app-menu-layout.js): which
 // sections fold into submenus as the space below the button shrinks, that every command stays
 // reachable, and where the menu is anchored. Run from test/units.js.
-const L = require('../features/app-menu-layout');
+const L = require('../src/features/app-menu-layout');
 
 module.exports = function smallScreenUnits(check) {
   // A menu shaped like main.js showAppMenu's, with made-up commands.
@@ -54,7 +54,7 @@ module.exports = function smallScreenUnits(check) {
   check('app menu: nor runs past its right edge', L.anchorX({ left: 100, right: 130, contentWidth: 800, menuWidth: 300 }) === 100
     && L.anchorX({ left: 600, right: 790, contentWidth: 800, menuWidth: 100 }) === 690);
   check('app menu: a button on the left (right-to-left layout) opens from its left edge', L.anchorX({ left: 8, right: 38, contentWidth: 800, menuWidth: 300 }) === 8);
-  const en = require('../locales/en.json');
+  const en = require('../src/locales/en.json');
   check('app menu: the submenu names are in locales/en.json', ['menu.moreTools', 'menu.thisPage', 'menu.zoom', 'menu.tabsAndFiles', 'menu.aiAndTasks'].every((k) => typeof en[k] === 'string' && en[k]));
   check('app menu: the space below is bounded by the window and by the work area',
     L.availableBelow({ anchorY: 100, windowBottom: 600, workAreaBottom: 1040 }) === 496 && L.availableBelow({ anchorY: 100, windowBottom: 1200, workAreaBottom: 1040 }) === 936);

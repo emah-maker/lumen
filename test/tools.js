@@ -120,7 +120,7 @@ const path = require('path');
   const withResearch = await listTabs();
   check('read_urls with research tabs on: the page opens in a background tab, the tab in front stays active', r.includes('Test form') && withResearch.length === tabsAfter + 1 && withResearch.find((t) => t.active)?.id === activeBefore, JSON.stringify(withResearch.map((t) => [t.id, t.active, t.url])));
   for (const t of withResearch.slice(tabsAfter)) await run('close_tab', { tab_id: t.id }).catch(() => {});
-  const { validateInput } = require('../agent.js');
+  const { validateInput } = require('../src/ai/agent.js');
   check('validator accepts modifiers array', validateInput('press_key', { key: 'a', modifiers: ['control'] }) === null, validateInput('press_key', { key: 'a', modifiers: ['control'] }));
   check('validator rejects bad modifier', validateInput('press_key', { key: 'a', modifiers: ['hyper'] }) !== null, 'accepted');
   check('validator requires element_id or text', validateInput('click', {}) !== null && validateInput('click', { text: 'Go' }) === null, validateInput('click', {}));

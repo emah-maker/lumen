@@ -6,7 +6,7 @@
 // The OpenAI SDK (also used for Grok and Gemini) loads only when one of them is first used.
 let OpenAIModule = null;
 const OpenAISDK = () => (OpenAIModule ||= require('openai'));
-const { netFetch } = require('./net-fetch');
+const { netFetch } = require('../browser/net-fetch');
 
 const PROVIDERS = {
   openai: {
@@ -148,7 +148,7 @@ async function listModels(provider, apiKey, { cacheFile, onRefresh = null } = {}
     const ids = [];
     for await (const m of page) ids.push(String(m.id).replace(/^models\//, ''));
     // Newest families first and no dated duplicates (an alphabetical cut used to drop every gpt-* model behind o-series ids).
-    const chat = require('./features/model-names').rankModels(ids.filter(PROVIDERS[provider].include), 16);
+    const chat = require('../features/model-names').rankModels(ids.filter(PROVIDERS[provider].include), 16);
     return chat.length ? chat : PROVIDERS[provider].defaults;
   } catch {
     return PROVIDERS[provider].defaults;

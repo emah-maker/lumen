@@ -65,7 +65,7 @@ const v = document.getElementById('v'); v.srcObject = c.captureStream(10); v.pla
   const inTab = (id, js) => app.evaluate((_e, [i, code]) => global.__pageTools.tab(i).view.webContents.executeJavaScript(code), [id, js]);
   const shortcut = (input) => app.evaluate((_e, i) => global.__pageTools.handleShortcut(i), input);
   const ids = () => app.evaluate(() => global.__tabsArray().map((t) => t.id));
-  const pages = { source: 'renderer/source.html', reader: 'renderer/reader.html' };
+  const pages = { source: 'src/renderer/source.html', reader: 'src/renderer/reader.html' };
 
   // ---- Save Page As (Ctrl+S) ----
   const sourceTab = await open(`${base}/source`);

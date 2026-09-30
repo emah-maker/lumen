@@ -1,9 +1,9 @@
 // TradingView widget (run from test/units.js): symbol and option checks, the embed addresses, and the
 // connector through createWidgets' pure parts (no network, no Electron, nothing opens).
-const TV = require('../features/tradingview-view');
-const { cleanWidget, CONNECTORS } = require('../features/widgets');
-const WL = require('../features/widget-layout');
-const WS = require('../renderer/widget-summary');
+const TV = require('../src/features/tradingview-view');
+const { cleanWidget, CONNECTORS } = require('../src/features/widgets');
+const WL = require('../src/features/widget-layout');
+const WS = require('../src/renderer/widget-summary');
 
 module.exports = async function tradingviewUnits(check) {
   for (const ok of ['NASDAQ:AAPL', 'nasdaq:aapl', 'BINANCE:BTCUSDT', 'SPX', 'BRK.B', 'CME_MINI:ES1!', ' fx:eurusd ']) check(`tradingview: ${ok.trim()} is a symbol`, Boolean(TV.cleanSymbol(ok)), ok);

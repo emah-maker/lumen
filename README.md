@@ -101,7 +101,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 - **PDFs** open in Chromium's own viewer, from the web or from disk.
 - **Make it yours** (Settings → Appearance): an accent color (nine presets or any color) across Lumen and its pages, and a new-tab page with a background (Plain, Aurora, Dusk, Ocean, Forest, Sunset, Graphite, or your own picture, kept in your profile), a big clock, a greeting with your name, and the sections you want. Open new-tab pages change as you pick.
-- **New-tab widgets** (Settings → Appearance → Widgets): cards under the search box for the weather in a city you type (Open-Meteo, no account, °F or °C), your calendar from any ICS / webcal link (Muse, Google Calendar, Outlook, iCloud: today and upcoming events, with repeating and all-day events), your Todoist tasks due today or overdue (tick one off right on the card), what is playing on Spotify (with play, pause, next and previous; you supply your own Spotify Client ID and sign in from Settings), your Gmail unread count and latest messages (read-only; one-click "Sign in with Google" in builds with Lumen's Google client, or your own Google Cloud OAuth client), Slack unread DMs, mentions and recent channel messages (read-only, through your own Slack app), your GitHub review requests, assigned issues and pull requests and unread notification count (a read-only token), news headlines from any RSS or Atom feed, a world clock with sunrise and sunset, stock and crypto prices with a simulated paper portfolio (Lumen never places an order), a saved prompt answered by Meta’s Muse model, a live TradingView chart for any symbol (TradingView’s own chart in a frame, no account or key), a note that saves as you type, a countdown to a date, a timer or Pomodoro (focus, then a break; it keeps running while the page is closed), a **custom widget** built from a short JSON recipe (any https address that answers JSON, shown as numbers or a list; see [Custom widgets](docs/custom-widgets.md)), or any https page in a frame (a Muse board, a dashboard). Sites that refuse to be framed get an Open button instead, and Settings tells you which. Lumen fetches everything itself, so the new-tab page never goes online, and your Todoist token and your Spotify, Gmail, Slack and GitHub sign-ins are stored encrypted and never reach the page. Framed pages (the Web page and TradingView cards) load from their own site, like any tab. New kinds of widget are one entry in `features/widgets.js`.
+- **New-tab widgets** (Settings → Appearance → Widgets): cards under the search box for the weather in a city you type (Open-Meteo, no account, °F or °C), your calendar from any ICS / webcal link (Muse, Google Calendar, Outlook, iCloud: today and upcoming events, with repeating and all-day events), your Todoist tasks due today or overdue (tick one off right on the card), what is playing on Spotify (with play, pause, next and previous; you supply your own Spotify Client ID and sign in from Settings), your Gmail unread count and latest messages (read-only; one-click "Sign in with Google" in builds with Lumen's Google client, or your own Google Cloud OAuth client), Slack unread DMs, mentions and recent channel messages (read-only, through your own Slack app), your GitHub review requests, assigned issues and pull requests and unread notification count (a read-only token), news headlines from any RSS or Atom feed, a world clock with sunrise and sunset, stock and crypto prices with a simulated paper portfolio (Lumen never places an order), a saved prompt answered by Meta’s Muse model, a live TradingView chart for any symbol (TradingView’s own chart in a frame, no account or key), a note that saves as you type, a countdown to a date, a timer or Pomodoro (focus, then a break; it keeps running while the page is closed), a **custom widget** built from a short JSON recipe (any https address that answers JSON, shown as numbers or a list; see [Custom widgets](docs/custom-widgets.md)), or any https page in a frame (a Muse board, a dashboard). Sites that refuse to be framed get an Open button instead, and Settings tells you which. Lumen fetches everything itself, so the new-tab page never goes online, and your Todoist token and your Spotify, Gmail, Slack and GitHub sign-ins are stored encrypted and never reach the page. Framed pages (the Web page and TradingView cards) load from their own site, like any tab. New kinds of widget are one entry in `src/features/widgets.js`.
   - **TradingView watchlist:** set a TradingView widget's Style to **Watchlist** for rows of symbols with logo, price and change, one tab per section (like TradingView's phone home-screen widget), optionally with a chart on top. Type or paste symbols (TradingView's “Export list” .txt works, `###Name` starts a section), or press **Import from TradingView** to pick one of your own watchlists: Lumen reads it with your TradingView sign-in in Lumen and, with **Keep in sync** on, re-reads it every 15 minutes. Indices TradingView won't price in widgets (SPX, NDQ, DJI, VIX, DXY) are shown through their CFD twins; futures stay blank.
   - **Add and edit on the page:** Notes, Countdown, Timer, TradingView, Custom and Web page widgets can be added from the page's **Add widget** menu and changed with the pencil on the card (or the gear in Edit layout), without opening Settings. Widgets with an account or a key are still set up in Settings, so keys never pass through the new-tab page.
   - **Saved as you go:** editing a widget in Settings saves by itself a moment after each change. If a change can't be saved (a missing date, a bad symbol) Settings says why, and leaving the form or closing the tab asks first.
@@ -194,11 +194,11 @@ const page = browser.contexts()[0].pages()[0]; // your open tabs
 const tab = await browser.contexts()[0].newPage(); // opens a real Lumen tab
 ```
 
-- Lumen listens on 127.0.0.1 only, through a proxy (`automation.js`) that shows only your tabs: Lumen's own UI, hidden reader tabs and extension pages can't be seen or attached to.
+- Lumen listens on 127.0.0.1 only, through a proxy (`src/automation/automation.js`) that shows only your tabs: Lumen's own UI, hidden reader tabs and extension pages can't be seen or attached to.
 - `newPage()` opens a Lumen tab, `page.close()` closes it, and `browser.close()` only disconnects.
 - The toolbar says **Lumen is being driven by Playwright (CDP)** while connected; **Stop** disconnects.
 - CDP clients don't get approval cards. Any program on your computer that has the address can use the port while it's on, including on signed-in sites. Turning the setting off closes the proxy immediately.
-- The proxy is the only way in, and no debugging port is ever opened. On Windows and Linux, Lumen starts through a small launcher (`launcher.js`) that gives Chromium a private pipe. On macOS there is no launcher (it would lose links opened from other apps): `cdp-inproc.js` answers the protocol inside Lumen from each tab's own debugger.
+- The proxy is the only way in, and no debugging port is ever opened. On Windows and Linux, Lumen starts through a small launcher (`src/automation/launcher.js`) that gives Chromium a private pipe. On macOS there is no launcher (it would lose links opened from other apps): `src/automation/cdp-inproc.js` answers the protocol inside Lumen from each tab's own debugger.
 - Through the macOS (in-process) backend, some browser-level features aren't available and answer with an error: `browser.newContext()`, `context.grantPermissions()`, download events and blocking downloads, window bounds. Clients share one debugger session per tab, so Fetch interception (`page.route`) works for one client at a time, and an iframe or worker that starts paused may already be running when a client resumes it.
 
 ## Token-efficient tools (all AIs)
@@ -262,7 +262,7 @@ Set `LUMEN_GOOGLE_CLIENT_ID` and `LUMEN_GOOGLE_CLIENT_SECRET` (a Google Cloud OA
 
 The Windows build ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, and Electron taken from node_modules), and `scripts/build.js` checks this after every build. Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity) produces one. The untouched Electron binary is recognised, so it runs. The window, taskbar and shortcuts use Lumen's icon at runtime. For a normal signed installer, sign the build with a trusted code-signing certificate.
 
-Release installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead. To ship an update: bump `version` in package.json (`npm version patch --no-git-tag-version`), commit and push, then tag that commit with the same version and push the tag (`git tag v0.2.5 && git push origin v0.2.5`). The workflow refuses a tag that doesn't match package.json. Next to the installers the release gets `latest.yml`, `latest-mac.yml` and `.blockmap` files, which installed copies read to find and verify the update (`features/updates.js`; the Windows zip is listed in `latest.yml` by `scripts/add-zip-to-latest.js`).which installed copies read to find and verify the update (`features/updates.js`, electron-updater).
+Release installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead. To ship an update: bump `version` in package.json (`npm version patch --no-git-tag-version`), commit and push, then tag that commit with the same version and push the tag (`git tag v0.2.5 && git push origin v0.2.5`). The workflow refuses a tag that doesn't match package.json. Next to the installers the release gets `latest.yml`, `latest-mac.yml` and `.blockmap` files, which installed copies read to find and verify the update (`src/features/updates.js`; the Windows zip is listed in `latest.yml` by `scripts/add-zip-to-latest.js`).which installed copies read to find and verify the update (`src/features/updates.js`, electron-updater).
 
 ### DRM (Widevine)
 
@@ -294,23 +294,33 @@ The images in this README are captured from a throwaway profile by `node scripts
 
 ## Layout
 
-The Electron main process is `main.js`; most features live in `features/` as a pure part (tested in Node) plus a `create…()` that main.js wires in.
+Everything that ships in the app is under `src/`; the repository root holds only configuration, docs and the tools around the code.
 
-| Where | What |
-|---|---|
-| `main.js` | windows, tabs (`WebContentsView`), shortcuts, menus, permissions, history and suggestions, extensions, IPC |
-| `agent.js`, `snapshot.js`, `page-scripts.js`, `loop-guard.js` | the sidebar's agent loop (default model `claude-opus-5-5`), its token-efficient page tools, the scripts it runs in pages, and its repeat guard |
-| `providers.js`, `claude-code.js`, `grok-build.js`, `cli-*.js` | model adapters (OpenAI, Grok, Gemini, OpenRouter) and the Claude Code / Grok Build engines that run your own CLI |
-| `mcp.js`, `mcp-http.js`, `automation.js`, `cdp-inproc.js`, `launcher.js` | MCP server for outside agents, and the opt-in CDP endpoint for Playwright |
-| `settings-backend.js`, `settings-file.js`, `renderer/settings.*` | lumen://settings, the one place for settings |
-| `*-preload.js`, `preload.js` (bundled to `preload.bundle.js`) | preloads for the UI, dialogs, downloads, history, suggestions and extensions |
-| `tab-groups.js`, `importer.js`, `search.js`, `favicon-store.js`, `tlds.js` | tab grouping (site and topic), browser import, search engines, favicons, address bar input |
-| `features/` | split-out features, in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `private-*`, `safe-browsing`, `site-security`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`) |
-| `renderer/` | the browser's own pages: toolbar and tab strip, sidebar, new-tab page and its widgets, settings, history, managers, dialogs |
-| `locales/` | UI strings (`en.json`) used through `t()` |
-| `scripts/` | build, packaging hooks, `test-all.js`, `capture-media.js` (the README's media), `measure-*.js` benchmarks |
-| `docs/` | reference pages (below) and `docs/media/` (the README's screenshots and GIFs, not shipped in builds) |
-| `test/` | Playwright suites, one file per area (`node test/<name>.js`), and `*-units.js` pure-logic checks run from `test/units.js` |
+```
+src/                    the app (package.json "main": src/main.js)
+├── main.js             windows, tabs (WebContentsView), shortcuts, menus, permissions, history, extensions, IPC
+├── ai/                 the sidebar's agent loop (agent.js, default model claude-opus-5-5), its page tools
+│                       (snapshot.js, page-scripts.js, loop-guard.js), model adapters (providers.js) and the
+│                       Claude Code / Grok Build engines that run your own CLI (claude-code.js, grok-build.js, cli-*.js)
+├── automation/         MCP server for outside agents (mcp.js, mcp-http.js) and the opt-in CDP endpoint for
+│                       Playwright (automation.js, cdp-inproc.js, launcher.js)
+├── browser/            tab grouping (tab-groups.js), browser import, search engines, favicons, address-bar input, fetch
+├── settings/           lumen://settings backend (settings-backend.js) and the atomic settings file (settings-file.js)
+├── preload/            preloads for the UI, dialogs, downloads, history, suggestions and extensions
+│                       (preload.js is bundled into preload.bundle.js by scripts/bundle-preload.js)
+├── features/           split-out features, each a pure part tested in Node plus a create…() that main.js wires in
+├── renderer/           the browser's own pages: toolbar and tab strip, sidebar, new-tab page and widgets, settings, history
+├── locales/            UI strings (en.json), used through t()
+├── assets/             app icons
+└── vendor/             third-party code shipped as is (Readability)
+mcp.js                  the MCP bridge's stable address (<app>/mcp.js in agents' configs); it starts src/automation/mcp.js
+test/                   Playwright suites, one file per area, and *-units.js pure-logic checks run from test/units.js
+scripts/                build, packaging hooks, test-all.js, bundle-preload.js, build-site.js, capture-media.js, measure-*.js
+docs/                   reference pages (below) and docs/media (the README's screenshots, not shipped)
+site/                   the website on GitHub Pages; its docs pages render README.md, CHANGELOG.md and docs/*.md
+```
+
+`src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `passwords`, `password-page`, `private-*`, `safe-browsing`, `site-security`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`), **app** (`updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`).
 
 **Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
 

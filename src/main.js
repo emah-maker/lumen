@@ -8,34 +8,34 @@ if (TEST) global.__perf = perf;
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
 if (process.argv.includes('--mcp')) {
   if (TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
-  require('./mcp').runBridge({ app });
+  require('./automation/mcp').runBridge({ app });
   return;
 }
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { netFetch } = require('./net-fetch');
+const { netFetch } = require('./browser/net-fetch');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
-const { extensionPermissionLines } = require('./extension-permissions');
-const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./agent');
+const { extensionPermissionLines } = require('./browser/extension-permissions');
+const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage } = require('./features/chat-usage');
-const providers = require('./providers');
+const providers = require('./ai/providers');
 if (TEST) global.__providers = providers;
-const cliJson = require('./cli-json');
-const { engineModel } = require('./cli-utils');
-const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./search');
+const cliJson = require('./ai/cli-json');
+const { engineModel } = require('./ai/cli-utils');
+const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
-const importer = lazy(() => require('./importer'));
-const cliAuth = lazy(() => require('./cli-auth'));
+const importer = lazy(() => require('./browser/importer'));
+const cliAuth = lazy(() => require('./ai/cli-auth'));
 // The SDK needs `new`, which the plain get-trap `lazy()` proxy above can't forward, so it gets its
 // own tiny cached accessor instead. Only the Claude API path (getClient, organizeTabsWithAi's catch)
 // touches this; a session that only ever uses Claude Code, Grok, or another provider never loads it.
 let anthropicSdk_ = null;
 const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
-const { createTabGroups, siteName, pathWords, siteHint } = require('./tab-groups');
+const { createTabGroups, siteName, pathWords, siteHint } = require('./browser/tab-groups');
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
@@ -62,7 +62,7 @@ const SPOTIFY_REDIRECT_PORT = require('./features/spotify-view').REDIRECT_PORT; 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
-const settingsPage = require('./settings-backend'); // [settings] lumen://settings
+const settingsPage = require('./settings/settings-backend'); // [settings] lumen://settings
 const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
 let chatPageRt = null; // its runtime (created below, with the agent)
 // Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
@@ -233,7 +233,7 @@ const tabTools = require('./features/tab-tools').create({ onChange: () => sendTa
 // ---------- settings / API key ----------
 
 let settingsCache = null;
-const settingsFile = require('./settings-file'); // crash-safe read/write (see settings-file.js)
+const settingsFile = require('./settings/settings-file'); // crash-safe read/write (see settings-file.js)
 
 function readSettings() {
   if (!settingsCache) settingsCache = settingsFile.loadJson(SETTINGS_FILE());
@@ -267,7 +267,7 @@ if (TEST) global.__perfMode = perfMode;
 // Favicons out of settings.json and into their own debounced/async store (see favicon-store.js) —
 // settings.json is rewritten fully and synchronously, which a new favicon shouldn't have to pay for.
 // One-time migration: move any favicons an older build saved inline, then drop the key for good.
-const { createFaviconStore } = require('./favicon-store');
+const { createFaviconStore } = require('./browser/favicon-store');
 const faviconStore = createFaviconStore(app.getPath('userData'), readSettings().favicons);
 if (readSettings().favicons) {
   const { favicons, ...rest } = readSettings();
@@ -282,7 +282,7 @@ const automationPlan = prepareAutomation(app, readSettings());
 // Chromium a private pipe instead of a debugging port) and leaves, before it opens anything. A copy
 // started while Lumen runs passes its links on and quits, the same as without automation.
 if (automationPlan?.relaunch && !process.argv.includes('--install-shortcuts')) {
-  require('./launcher').handOver(app, () => instance.acquireInstanceLock(app));
+  require('./automation/launcher').handOver(app, () => instance.acquireInstanceLock(app));
   return;
 }
 
@@ -429,7 +429,7 @@ function getClient() {
 
 const dialogs = createDialogs({
   win: () => win,
-  paths: { preload: path.join(__dirname, 'dialog-preload.js'), html: path.join(__dirname, 'renderer', 'dialog.html') },
+  paths: { preload: path.join(__dirname, 'preload', 'dialog-preload.js'), html: path.join(__dirname, 'renderer', 'dialog.html') },
   switchToContents: (wc) => { const tab = tabByContents(wc); if (tab) switchTab(tab.id); },
   isInFront: (wc) => { const tab = tabByContents(wc); return !tab || tab.id === activeId; },
   onPendingChange: () => { if (tabs.length) sendTabs(); }, // a tab's "dialog waiting" badge
@@ -588,7 +588,7 @@ ipcMain.on('page-dialog', (event, req) => {
 // Registered once the app (and so session.defaultSession) exists; a separate whenReady hook so it
 // doesn't touch the app's main startup sequence.
 app.whenReady().then(() => {
-  session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'page-dialogs-preload.js') });
+  session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
   // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
@@ -825,7 +825,7 @@ function isContentBlocker(manifest = {}, name = '') {
 async function setupExtensions() {
   const ses = session.defaultSession;
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
-  for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'extensions-dnr-preload.js') });
+  for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
   ses.registerPreloadScript({ id: 'lumen-webstore', type: 'frame', filePath: path.join(__dirname, 'features', 'webstore-preload.js') });
   // Keeps the library's extension APIs out of Chromium's own PDF viewer, which they broke (see the file).
@@ -1084,7 +1084,7 @@ let suggestView = null;
 function createSuggestView() {
   if (suggestView && !suggestView.webContents.isDestroyed()) suggestView.webContents.close();
   suggestView = new WebContentsView({
-    webPreferences: { preload: path.join(__dirname, 'suggest-preload.js'), sandbox: true, contextIsolation: true },
+    webPreferences: { preload: path.join(__dirname, 'preload', 'suggest-preload.js'), sandbox: true, contextIsolation: true },
   });
   suggestView.setBackgroundColor('#00000000');
   suggestView.setVisible(false);
@@ -1123,7 +1123,7 @@ let downloadsView = null;
 let downloadsAnchor = null;
 function createDownloadsView() {
   downloadsView = new WebContentsView({
-    webPreferences: { preload: path.join(__dirname, 'downloads-preload.js'), sandbox: true, contextIsolation: true },
+    webPreferences: { preload: path.join(__dirname, 'preload', 'downloads-preload.js'), sandbox: true, contextIsolation: true },
   });
   downloadsView.setBackgroundColor('#00000000');
   downloadsView.setVisible(false);
@@ -1354,7 +1354,7 @@ function researchSession() {
   ses.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
   ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
-  ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'page-dialogs-preload.js') });
+  ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
   settingsBackend.mirrorSession(ses); // the profile's proxy, Do Not Track / Global Privacy Control, languages
   adblock.attachSession(ses); // the same filters as normal tabs (waits for the engine if it is still loading)
@@ -1399,7 +1399,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     // and only the History page gets history-preload.js
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings),
-      ...(historyPage ? { preload: path.join(__dirname, 'history-preload.js') } : {}),
+      ...(historyPage ? { preload: path.join(__dirname, 'preload', 'history-preload.js') } : {}),
       ...(managerPage ? { preload: managers.preloadFor(managerPage) } : {}), // the Bookmarks, Downloads or chat page
       ...(isolated ? { partition: isolated } : {}),
     },
@@ -2243,7 +2243,7 @@ function autoOrganizeNow() {
   try {
     const pool = tabGroups.loose();
     const key = organizeAi.setKey(pool);
-    const topics = pool.length >= 2 ? require('./tab-groups').topicClusters(pool).map((c) => c.ids) : [];
+    const topics = pool.length >= 2 ? require('./browser/tab-groups').topicClusters(pool).map((c) => c.ids) : [];
     if (!organizeLearn.shouldAutoOrganize({ enabled: true, ungrouped: pool.length, topics, key, lastKey: idleOrganizeKey, busy: organizing, onlyMixed: settings.organizeOnlyMixed !== false })) return false;
     idleOrganizeKey = key;
     if (tabGroups.organizeLoose()) { sendTabs(); organizeNote(t('organize.idleDone'), { undo: true }); return true; }
@@ -4418,7 +4418,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
       : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() }),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.bundle.js'), // preload.js with the toolbar element inlined (scripts/bundle-preload.js)
+      preload: path.join(__dirname, 'preload', 'preload.bundle.js'), // preload.js with the toolbar element inlined (scripts/bundle-preload.js)
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -4902,7 +4902,7 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
-const usage = createUsage({ app, claudeBin: () => require('./claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null, ...(TEST ? { otherActivity: async () => false } : {}) });
+const usage = createUsage({ app, claudeBin: () => require('./ai/claude-code').findClaude(), grokSession: () => agent.messages?.settings?.gbSession || null, ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
@@ -4928,7 +4928,7 @@ if (TEST) global.__bg = bgTasks;
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
-  global.__fitContext = require('./agent').fitContext;
+  global.__fitContext = require('./ai/agent').fitContext;
   global.__mcp = () => aiAgents.mcpServer();
   global.__providers = providers;
   global.__importBrowser = importBrowser;
@@ -4974,7 +4974,7 @@ if (TEST) {
 // Saved prompts run from the composer's "/" menu. A run is an ordinary chat message (the expanded
 // prompt), so usage, the approval gate and the taint rules apply unchanged; agent:ask above picks up
 // the prepared run's options (tools off, own model, page text counted as read).
-const skillPageScripts = require('./page-scripts');
+const skillPageScripts = require('./ai/page-scripts');
 const SKILL_WORLD = 1002; // a JavaScript world of our own, apart from the page's and the agent's
 const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));

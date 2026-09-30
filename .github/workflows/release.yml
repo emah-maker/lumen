@@ -1,6 +1,6 @@
 # Builds Lumen for Windows and macOS.
 # - Push a tag like v0.2.0 to publish a GitHub Release with the installers. Installed copies of Lumen
-#   find it through latest.yml / latest-mac.yml (features/updates.js). The tag must match
+#   find it through latest.yml / latest-mac.yml (src/features/updates.js). The tag must match
 #   package.json's version: electron-builder names the files and writes the update info from it.
 # - Run manually (Actions -> Release -> Run workflow) to get the builds as workflow artifacts only.
 name: Release
@@ -90,7 +90,7 @@ jobs:
           LUMEN_SIGN_P12: ${{ secrets.LUMEN_SIGN_P12 }}
           LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
           # Gmail widget's one-click "Sign in with Google": Lumen's own Google Desktop OAuth client
-          # (features/google-client.js). Optional; without these secrets the build keeps the
+          # (src/features/google-client.js). Optional; without these secrets the build keeps the
           # paste-your-own-client flow. An installed app's client secret is not confidential (RFC 8252).
           LUMEN_GOOGLE_CLIENT_ID: ${{ secrets.LUMEN_GOOGLE_CLIENT_ID }}
           LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}

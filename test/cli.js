@@ -13,7 +13,7 @@ const os = require('os');
   // 1. Detection reads the CLI's config dir.
   const config = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-antcfg-'));
   process.env.ANTHROPIC_CONFIG_DIR = config;
-  const cliAuth = require('../cli-auth');
+  const cliAuth = require('../src/ai/cli-auth');
   check('not signed in without credentials', cliAuth.profileState().signedIn === false, JSON.stringify(cliAuth.profileState()));
   fs.mkdirSync(path.join(config, 'credentials'), { recursive: true });
   fs.writeFileSync(path.join(config, 'active_config'), 'work');

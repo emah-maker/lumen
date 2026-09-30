@@ -3,9 +3,9 @@
 // (https only), readable 401/429 messages, and the connector end to end against a FAKE fetch: the key
 // stays out of settings, the brief is fetched once, a typed question is answered without fetching the
 // brief again and is not stored, and the rate limit and backoff apply. No network, no Electron.
-const MV = require('../features/muse-view');
-const WL = require('../features/widget-layout');
-const { createWidgets, cleanWidget } = require('../features/widgets');
+const MV = require('../src/features/muse-view');
+const WL = require('../src/features/widget-layout');
+const { createWidgets, cleanWidget } = require('../src/features/widgets');
 
 module.exports = async function museChecks(check) {
   // ---- config, key, question ----

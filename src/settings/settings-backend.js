@@ -7,13 +7,13 @@
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { registrableDomain } = require('./tab-groups');
-const { related } = require('./features/site-activity');
-const { cleanList: cleanWidgets, cleanSizes } = require('./features/widgets');
+const { registrableDomain } = require('../browser/tab-groups');
+const { related } = require('../features/site-activity');
+const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
 
-const SETTINGS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'settings.html')).href;
-const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'https-only.html')).href;
-const SETTINGS_PRELOAD = path.join(__dirname, 'settings-preload.js');
+const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
+const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
+const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload.js');
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
@@ -128,9 +128,9 @@ const HEX = /^#[0-9a-f]{6}$/i;
 const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
-const translate = require('./features/translate');
-const WS = require('./features/widget-system'); // the clock's steps and the search bar's width range
-const CS = require('./features/clock-styles'); // [look] the clock's styles and the greeting's fonts
+const translate = require('../features/translate');
+const WS = require('../features/widget-system'); // the clock's steps and the search bar's width range
+const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const bool = (v) => v === true;
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
@@ -164,7 +164,7 @@ function validate(key, value) {
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
-    case 'aiSignedInSites': return require('./features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
+    case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
     case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
@@ -183,7 +183,7 @@ function validate(key, value) {
     case 'homeWidgets': return cleanWidgets(value);
     case 'homeWidgetSizes': return cleanSizes(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
-    case 'lastSeenVersion': return value === '' ? '' : require('./features/whats-new').cleanVersion(value);
+    case 'lastSeenVersion': return value === '' ? '' : require('../features/whats-new').cleanVersion(value);
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -269,7 +269,7 @@ function create(deps) {
       const bgra = small.toBitmap();
       const rgba = new Uint8ClampedArray(bgra.length);
       for (let i = 0; i + 3 < bgra.length; i += 4) { rgba[i] = bgra[i + 2]; rgba[i + 1] = bgra[i + 1]; rgba[i + 2] = bgra[i]; rgba[i + 3] = bgra[i + 3]; }
-      colors = require('./features/widget-colors').dominantColors(rgba, 3);
+      colors = require('../features/widget-colors').dominantColors(rgba, 3);
     } catch (err) { console.error('[lumen] could not sample the background picture:', err.message); }
     imageColorsCache = { v: version, colors };
     return colors;
@@ -812,7 +812,7 @@ function create(deps) {
     handle('prefs:open-url', (url) => { if (/^https:\/\//.test(url)) deps.openTab(url); });
     handle('prefs:reset', reset);
     handle('prefs:relaunch', () => {
-      if (require('./test-mode').isTest()) return false; // tests check the saved value instead
+      if (require('../test-mode').isTest()) return false; // tests check the saved value instead
       app.relaunch();
       app.quit();
       return true;

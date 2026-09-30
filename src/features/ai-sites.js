@@ -4,7 +4,7 @@
 // agent.js enforces it (see Agent.aiOffCheck): before every tool call, after one (the tab may have
 // moved there), for the page attached to a message, and in list_tabs. main.js keeps those tabs out
 // of "Organize Tabs with AI". Stored as settings.json aiOffSites.
-const { registrableDomain } = require('../tab-groups');
+const { registrableDomain } = require('../browser/tab-groups');
 
 // The site of a web address, or '' for anything that isn't http(s).
 function siteOf(url) {

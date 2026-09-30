@@ -4,7 +4,7 @@ const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { findClaude } = require('../claude-code');
+const { findClaude } = require('../src/ai/claude-code');
 
 (async () => {
   let failures = 0;

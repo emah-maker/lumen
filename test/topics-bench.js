@@ -3,7 +3,7 @@
 // plus 3 held-out scenarios written before this round's tuning (not used to pick thresholds).
 // Pure Node - no windows, no Electron, no Playwright.
 //   node test/topics-bench.js
-const final = require('../tab-groups');
+const final = require('../src/browser/tab-groups');
 const baseline = require('./_baseline-tab-groups');
 
 // ---------- harness: drive createTabGroups() with plain arrays, no accessors touching the DOM ----------

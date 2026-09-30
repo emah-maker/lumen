@@ -77,7 +77,7 @@ async function idleCpu(app, seconds) {
   out.modules = out.moduleList.length;
   const uiFiles = await ui.evaluate(() => [...document.scripts].map((s) => s.src).concat([...document.querySelectorAll('link[rel=stylesheet]')].map((l) => l.href)).filter(Boolean));
   out.uiScripts = uiFiles.map((u) => { const f = decodeURIComponent(new URL(u).pathname.replace(/^\//, '')); return { name: path.basename(f), kb: Math.round(fs.statSync(f).size / 1024) }; });
-  out.preloadBundleKB = Math.round(fs.statSync(path.join(__dirname, '..', 'preload.bundle.js')).size / 1024);
+  out.preloadBundleKB = Math.round(fs.statSync(path.join(__dirname, '..', 'src', 'preload', 'preload.bundle.js')).size / 1024);
 
   // Memory with 1, 5, 15 tabs (the first is the new-tab page; each other tab loads a local page).
   const openTab = async (n) => {
