@@ -65,5 +65,11 @@ async function buildUpdates(card) {
   }, 1000);
   window.addEventListener('pagehide', () => clearInterval(timer));
   render();
-  card.append(r, auto);
+  // What's new (features/whats-new.js): the release notes once after an update, and on demand.
+  const notes = toggle('showWhatsNew', 'Show what’s new after updates',
+    'After Lumen updates, the release notes for the new version come up once. They ship with Lumen, so this needs no network.');
+  const openNotes = h('button', { id: 'whats-new-open', text: 'Show what’s new', onclick: () => S.whatsNew() });
+  const notesRow = row('What’s new', `The release notes for Lumen ${u.current} and the versions just before it.`, openNotes);
+  notesRow.dataset.search += ' whats new release notes changelog';
+  card.append(r, auto, notes, notesRow);
 }
