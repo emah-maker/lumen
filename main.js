@@ -3724,7 +3724,7 @@ function snapshotFor(tab) {
     return `data:image/jpeg;base64,${image.resize({ width: Math.round(CARD_WIDTH * scale), quality: 'good' }).toJPEG(82).toString('base64')}`;
   }).catch(() => null);
 }
-function showDragCard(d, tab, cursor, { compact = false } = {}) {
+function showDragCard(d, tab, cursor, { compact = false, count = null } = {}) {
   d.cardAt = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
   if (TEST_BACKGROUND) return Promise.resolve();
   const card = dragCardWindow();
@@ -3740,14 +3740,14 @@ function showDragCard(d, tab, cursor, { compact = false } = {}) {
     // A group dragged by its label is the group on the card too: its name and colour, as the slot shows it.
     const group = d.group ? { name: d.group.name, color: d.group.color } : null;
     const accent = settingsBackend.state().accent;
-    cardCall('show', { accent: nativeTheme.shouldUseDarkColors ? accent?.dark : accent?.light, title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: d.ids.length, still: motionReducedMain(), shot: early, compact, bare: !alive(tab) && !early });
+    cardCall('show', { accent: nativeTheme.shouldUseDarkColors ? accent?.dark : accent?.light, title: group ? group.name : tabTitle(tab) || 'New Tab', favicon: group ? null : favicon, group, page: d.ghost?.page || null, dark: nativeTheme.shouldUseDarkColors, shotHeight, count: count || d.ids.length, still: motionReducedMain(), shot: early, compact, bare: !alive(tab) && !early });
     card.win.showInactive();
   });
   const early = prepShot && prepShot.tabId === tab.id && Date.now() - prepShot.at < 4000 ? prepShot.src : null;
   prepShot = null;
   // A fresh snapshot anyway (the page may have changed since the hint); the card swaps it in quietly.
   // (No picture at all, a sleeping tab say: the card folds to its title bar instead of an empty panel.)
-  const shot = snapshotFor(tab).then((src) => { if (tabDrag === d) card.loaded.then(() => { if (tabDrag === d) cardCall(src ? 'shot' : 'bare', src); }); });
+  const shot = compact ? Promise.resolve() : snapshotFor(tab).then((src) => { if (tabDrag === d) card.loaded.then(() => { if (tabDrag === d) cardCall(src ? 'shot' : 'bare', src); }); });
   return Promise.race([shot, new Promise((r) => setTimeout(r, early ? 0 : 250))]);
 }
 // While its tab is out on the card, a window shows the tab beside it (as Chrome does), not a page whose tab
@@ -3827,20 +3827,22 @@ function takeSpare(size) {
 }
 const isSpare = (rec) => Boolean(rec?.prepared);
 
-function setDragHover(d, hit, { cancel = false } = {}) {
+function setDragHover(d, hit, { cancel = false, chipAs = 'cancel' } = {}) {
   const same = d.hover?.rec === hit?.rec && d.hover?.beforeId === hit?.beforeId && Boolean(d.hover?.outside) === Boolean(hit?.outside) && (d.hover?.edge || 0) === (hit?.edge || 0);
   if (same) return;
   if (d.hover?.rec !== hit?.rec && rcAlive(d.hover?.rec)) d.hover.rec.win.webContents.send('tab:dropat', cancel ? { cancel: true } : null);
   const wasOver = Boolean(d.hover);
   d.hover = hit;
-  if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId, outside: Boolean(hit.outside), edge: hit.edge || 0, tab: d.ghost });
+  // The tab itself is the chip under the cursor, so the slot is only the room it will take (ghost: false), as wide as
+  // the tabs that come with it.
+  if (hit && rcAlive(hit.rec)) hit.rec.win.webContents.send('tab:dropat', { beforeId: hit.beforeId, outside: Boolean(hit.outside), edge: hit.edge || 0, tab: d.ghost, ghost: false });
   if (d.card) { if (wasOver !== Boolean(hit)) cardCall('compact', Boolean(hit)); return; }
   if (!TEST_BACKGROUND && rcAlive(d.rec)) {
     try { d.rec.win.setOpacity(hit ? DRAG_OVER_STRIP_OPACITY : 1); } catch {}
     // The window is out of sight over a strip, so the tab itself, as a small chip, stays under the cursor (as in Chrome).
     const tab = tabsOf(d.rec).find((t) => t.id === (d.tabId ?? d.ids?.[0]));
-    if (hit && !d.chip && tab) { d.chip = true; showDragCard(d, tab, cursorPoint(), { compact: true }); }
-    else if (!hit && d.chip) { d.chip = false; hideDragCard(d, 'cancel'); }
+    if (hit && !d.chip && tab) { d.chip = true; showDragCard(d, tab, cursorPoint(), { compact: true, count: d.ghost?.count }); }
+    else if (!hit && d.chip) { d.chip = false; hideDragCard(d, chipAs); }
   }
 }
 function tickTabDrag() {
@@ -3852,7 +3854,8 @@ function tickTabDrag() {
   const cursor = cursorPoint();
   if (!d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y) { d.lastCursor = cursor; d.movedAt = Date.now(); }
   // Measured from the last time the mouse moved: someone holding still over a strip isn't cut off.
-  if (Date.now() - (d.movedAt || d.started) > tabDragTimeoutMs) {
+  const stillLimit = d.single && !d.hover ? Math.min(tabDragTimeoutMs, 10000) : tabDragTimeoutMs;
+  if (Date.now() - (d.movedAt || d.started) > stillLimit) {
     d.rec.win.webContents.send('tab:dragabort'); // the strip lets go of its drag, and shows the tab again
     setDragHover(d, null);
     finishTabDrag(d.card ? 'cancel' : 'commit');
@@ -3910,7 +3913,7 @@ function endDragQuietly(d) {
   if (tabDrag === d) tabDrag = null;
   setDragHover(d, null); // the strip it was over closes its slot
   if (rcAlive(d.rec)) d.rec.win.webContents.removeListener('before-input-event', d.escape);
-  if (d.card) hideDragCard(d, 'cancel');
+  if (d.card || d.chip) hideDragCard(d, 'cancel');
 }
 function finishTabDrag(reason) {
   const d = tabDrag;
@@ -3920,13 +3923,13 @@ function finishTabDrag(reason) {
   const rec = d.rec;
   const target = d.hover;
   if (rcAlive(rec)) rec.win.webContents.removeListener('before-input-event', d.escape);
-  setDragHover(d, null, { cancel: reason !== 'commit' }); // a cancel closes the hovered strip's slot at once
-  if (!rcAlive(rec)) { if (d.card) hideDragCard(d, 'cancel'); return; }
+  const merging = !d.card && reason === 'commit' && target && rcAlive(target.rec) && rcAlive(rec);
+  if (merging) { try { rec.win.hide(); } catch {} } // it goes as it merges (closing takes a moment): no flash back to full opacity
+  setDragHover(d, null, { cancel: reason !== 'commit', chipAs: merging ? 'join' : 'cancel' }); // a cancel closes the hovered strip's slot at once
+  if (!rcAlive(rec)) { if (d.card || d.chip) hideDragCard(d, 'cancel'); return; }
   if (d.card) { finishCardDrag(d, reason, target); return; }
   // An only-tab window: it stays where it was dropped, joins the strip it is over, or goes back (Escape).
-  const merging = reason === 'commit' && target && rcAlive(target.rec);
-  if (merging) { try { rec.win.hide(); } catch {} } // it goes as it merges (closing takes a moment): no flash back to full opacity
-  else if (!TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
+  if (!merging && !TEST_BACKGROUND) { try { rec.win.setOpacity(1); } catch {} }
   rec.win.webContents.send('tab:dragdone'); // its strip shows the tab again, however the drag ended
   if (reason === 'commit') {
     if (merging) {
@@ -4067,6 +4070,7 @@ function beginTabDrag(src, tabId, grab) {
   d.ghost = entry && { group: d.group ? { name: d.group.name, color: d.group.color } : null, title: entry.title, favicons: entry.favicons || [], page: entry.page || null, sleeping: Boolean(entry.sleeping), pinned: Boolean(tab.pinned), count: single ? tabsOf(src).filter((t) => !t.closing).length : d.ids.length };
   const w = src.win;
   if (single) {
+    if (!TEST_BACKGROUND) dragCardWindow(); // loaded now, so the chip shows the moment a strip is reached
     // The whole window follows the cursor, like its title bar; a maximized one is restored first.
     const before = w.getBounds();
     d.origin = { bounds: before, maximized: w.isMaximized() };

@@ -45,7 +45,6 @@
     /* Over a tab strip the slot there shows where it lands; the card becomes the tab itself, a small chip under the
        cursor (held by its icon, as before), so what is being moved never leaves the pointer. */
     .card.compact { width: min(220px, calc(100% - var(--pad) * 2)); border-radius: 9px; opacity: 0.97; }
-    .card.compact .head { height: 32px; }
     .card.compact .shot, .card.bare .shot { height: 0; opacity: 0; border-top-width: 0; }
     /* Dropped while its window is still getting ready: it stays, breathing, until the window takes its place. */
     .card.wait { opacity: 1; transform: none; animation: breathe 900ms ease-in-out infinite alternate; }

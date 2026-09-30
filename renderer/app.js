@@ -471,7 +471,9 @@ function showDropSlot(at) {
   const pinned = Boolean(at.tab?.pinned);
   el.className = `tab-drop-slot${pinned ? ' pinned' : ''}`;
   el.setAttribute('aria-hidden', 'true');
-  el.style.setProperty('--slot-w', `${at.width ? Math.round(at.width) : pinned ? 40 : dropSlotWidth()}px`);
+  const count = Math.max(1, Number(at.tab?.count) || 1);
+  const many = Math.min(strip.clientWidth / 2, count * dropSlotWidth() + 4 * (count - 1)); // several tabs: their room, at most half the strip
+  el.style.setProperty('--slot-w', `${at.width ? Math.round(at.width) : pinned ? 40 * count : many}px`);
   // The tab as it will be here: its icon and title (and how many tabs come with it). An in-strip
   // reorder passes ghost: false — the real tab is already following the pointer, and a second
   // picture of it in the gap would be a double image. The gap itself still opens, labels included.
@@ -723,7 +725,7 @@ function moveTabDrag(e) {
     d.edgeTimer = requestAnimationFrame(tick);
   }
   // (A tab of a group may run a little past the strip's right end: that is how it leaves a group that ends the strip.)
-  const dx = Math.max(br.left - rects[from].left, Math.min(br.right - rects[from].right + (drag.homeGroup ? 20 : 0), drag.dx));
+  const dx = Math.max(br.left - rects[from].left, Math.min(br.right - rects[from].right + (drag.homeGroup ? rects[from].width * 0.6 : 0), drag.dx));
   // Pulled up or down, the tab follows with resistance, and lifts off as it nears the point where it comes out.
   const lift = Math.sign(dy) * Math.min(12, Math.abs(dy) * 0.3);
   drag.el.style.transform = `translate(${dx}px, ${lift}px)`;
@@ -780,7 +782,7 @@ function retarget(x) {
   // Chrome): then it leaves the group in place, the slot's tint and the tab's group colour going with it.
   const prev = dropSlot?.el ? edgeBefore(dropSlot.el) : null;
   const freeLeft = drag.rects[drag.from].left + (x - drag.startX); // where the pointer puts the tab, unclamped
-  const leaving = Boolean(drag.homeGroup && prev && freeLeft > prev.getBoundingClientRect().right + 12);
+  const leaving = Boolean(drag.homeGroup && prev && freeLeft > prev.getBoundingClientRect().right + Math.max(16, drag.rects[drag.from].width / 2));
   if (leaving !== Boolean(drag.leaving)) { drag.leaving = leaving; tintSlot(); }
   const staying = dropSlot?.el ? slotGroup(dropSlot.el, ownFor()) : null;
   if (drag.homeGroup && staying !== drag.homeGroup) drag.el.style.setProperty('--group-color', 'transparent');
