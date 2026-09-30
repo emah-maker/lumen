@@ -90,11 +90,12 @@ function parseOpenRouterModels(json) {
     }));
 }
 
-// A short list for the picker: the newest tool-capable model of a few families.
+// A short list for the picker: the newest tool-capable model of a few families. A ":free" variant
+// (rate-limited, often queued) is picked only when a family has nothing else; the rest stay in More models.
 function curatedOpenRouter(models) {
   const picks = [];
   for (const family of CURATED) {
-    const best = models.filter((m) => family.test(m.id) && m.tools).sort((a, b) => b.created - a.created)[0];
+    const best = models.filter((m) => family.test(m.id) && m.tools).sort((a, b) => (a.free === b.free ? b.created - a.created : a.free ? 1 : -1))[0];
     if (best) picks.push(best.id);
   }
   return picks.length ? picks : PROVIDERS.openrouter.defaults;
