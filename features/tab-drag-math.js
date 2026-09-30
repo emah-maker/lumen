@@ -68,7 +68,7 @@ function stripHit(point, windows, slack = 6) {
     if (point.x < b.x || point.x >= b.x + b.width || point.y < b.y || point.y >= b.y + b.height) continue;
     if (s.occluder || point.y - b.y > s.bottom + slack) return null;
     const before = s.tabs.find((t) => point.x - b.x < t.mid);
-    return { key: s.key, beforeId: before ? before.id : null };
+    return { key: s.key, beforeId: before ? before.id : null, outside: Boolean(before?.outside) }; // outside: before a group's label
   }
   return null;
 }
