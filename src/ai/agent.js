@@ -561,7 +561,7 @@ const taintHolder = (run) => run?.chat || run || null;
 // A tab URL as the agent may see it: origin + path of a web page, '' for a blank new tab (nothing on
 // it, and the agent may want to open a page there), or null (history, settings, file://, anything
 // else). Query strings and fragments can hold tokens, search terms, session ids.
-const NEW_TAB_URL = require('url').pathToFileURL(require('path').join(__dirname, 'renderer', 'newtab.html')).href;
+const NEW_TAB_URL = require('url').pathToFileURL(require('path').join(__dirname, '..', 'renderer', 'newtab.html')).href;
 function agentUrl(url) {
   if (!url || url === 'about:blank' || String(url).split(/[?#]/)[0] === NEW_TAB_URL) return '';
   let parsed;
