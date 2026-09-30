@@ -244,6 +244,8 @@
   "menu.moveTabsToNewWindow": "Move {n} Tabs to New Window",
   "menu.moveGroupToNewWindow": "Move Group to New Window",
   "menu.moveGroupToWindow": "Move Group to Window",
+  "slash.clear": "Clear chat",
+  "slash.clear.description": "Start a fresh conversation. This one stays in your chat history.",
   "tabs.movedHere": "{title}: tab moved here",
   "tabs.movedHereMany": "{n} tabs moved here",
   "tabs.movedToNewWindow": "Moved to a new window",
