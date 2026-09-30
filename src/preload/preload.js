@@ -180,6 +180,15 @@ contextBridge.exposeInMainWorld('assistant', {
   cancelOpenRouterSignIn: () => ipcRenderer.invoke('openrouter:cancel'),
   onSearchEngine: on('search-engine'),
   onModelsUpdated: on('models-updated'),
+  // The first-run welcome (features/setup.js): its state, import without a dialog, the default browser.
+  setup: {
+    state: () => ipcRenderer.invoke('settings:setup-state'),
+    done: () => ipcRenderer.invoke('settings:setup-done'),
+    importFrom: (id) => ipcRenderer.invoke('import:quiet', id),
+    makeDefault: () => ipcRenderer.invoke('settings:make-default'),
+    isDefault: () => ipcRenderer.invoke('settings:default-browser'),
+    onWelcome: on('setup:welcome'),
+  },
   ...testOnly,
 });
 

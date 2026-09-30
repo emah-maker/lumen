@@ -17,7 +17,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
-const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
+const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
   'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers', 'passwords'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
