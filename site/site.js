@@ -75,6 +75,7 @@
   // files named the way package.json names them; else the releases page stays as the link.
   const byName = (v) => ({
     win: `${REL}/download/v${v}/Lumen-Setup-${v}.exe`,
+    winzip: `${REL}/download/v${v}/Lumen-${v}-win-x64.zip`,
     arm64: `${REL}/download/v${v}/Lumen-${v}-mac-arm64.dmg`,
     x64: `${REL}/download/v${v}/Lumen-${v}-mac-x64.dmg`,
   });
@@ -89,7 +90,7 @@
         const find = (re) => (rel.assets || []).find((x) => re.test(x.name) && /^https:\/\/github\.com\//.test(x.browser_download_url || ''));
         const fallback = byName(tag.replace(/^v/, ''));
         const url = (re, key) => { const a = find(re); return a ? a.browser_download_url : fallback[key]; };
-        links = { win: url(/-Setup-.*\.exe$/, 'win'), arm64: url(/-mac-arm64\.dmg$/, 'arm64'), x64: url(/-mac-x64\.dmg$/, 'x64') };
+        links = { win: url(/-Setup-.*\.exe$/, 'win'), winzip: url(/-win-x64\.zip$/, 'winzip'), arm64: url(/-mac-arm64\.dmg$/, 'arm64'), x64: url(/-mac-x64\.dmg$/, 'x64') };
         try { localStorage.setItem('lumen-site-latest', tag); } catch (err) { console.warn('latest release: not remembered', err); }
       }
     } // rate-limited or offline: handled below
@@ -107,7 +108,11 @@
   if (tag) slot.textContent = tag;
   if (!links) return; // the button keeps linking to the latest release page
 
-  if (os === 'win') btn.href = links.win;
+  if (os === 'win') {
+    btn.href = links.win;
+    // the zip needs no installer: for PCs where Smart App Control blocks the setup
+    btn.insertAdjacentHTML('afterend', `<a class="btn ghost" href="${links.winzip}">Zip</a>`);
+  }
   if (os === 'mac') {
     btn.href = links[chip.arch];
     const other = chip.arch === 'arm64' ? 'x64' : 'arm64';

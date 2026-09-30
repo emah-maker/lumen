@@ -244,6 +244,7 @@ function createUpdates(deps) {
     mkdir: (d) => fs.mkdirSync(d, { recursive: true }),
     exists: (p) => fs.existsSync(p),
     version: (bundle) => readBundleVersion(bundle),
+    versionSync: (bundle) => { try { return plistVersion(fs.readFileSync(path.posix.join(bundle, 'Contents', 'Info.plist'))); } catch { return null; } }, // XML plists only; else the check is skipped
     running: (bundle) => runningFrom(bundle),
     dialog: (o) => require('electron').dialog.showMessageBox(o),
     // The other Lumen can't start while this one holds the single-instance lock, so it is opened a
@@ -281,6 +282,7 @@ function createUpdates(deps) {
   let swapStarted = false; // a swap helper is already running: one is enough
   let relaunchOnQuit = false; // the user clicked Restart: the swap started at will-quit reopens Lumen
   let queued = false; // clicked while downloading: apply and relaunch as soon as it is ready
+  let checkRunning = false; // a check is in flight (the status may stay as it was, see check())
   let preparing = false; // checking the Applications folder before a relocated download
   let relocateTo = null; // the Lumen.app a relocated update is being installed to
   let moveError = ''; // why a move / relocated install couldn't go ahead (shown until dismissed or retried)
@@ -377,12 +379,16 @@ function createUpdates(deps) {
   function wire(u) {
     u.on('update-available', (i) => {
       info = i;
+      // a re-check with an update already staged: only a newer one replaces it
+      if (state.status === 'downloaded' && staged && !isNewer(i.version, state.version)) return;
+      if (state.status === 'downloaded') staged = null;
       setState({ status: 'available', version: i.version, error: '' });
       if (canSelfUpdate() && autoDownload()) startStage();
       else if (shouldOfferMove({ relocate: relocate(), version: i.version, ...promptedSettings() })) offerMoveUpdate().catch(() => {});
     });
-    u.on('update-not-available', () => setState({ status: 'up-to-date', error: '' }));
-    u.on('error', (err) => setState({ status: 'error', error: short(err) }));
+    u.on('update-not-available', () => { if (!staged) setState({ status: 'up-to-date', version: null, error: '' }); });
+    // a failed background re-check doesn't turn a known update into an error
+    u.on('error', (err) => { if (!(state.version && ['available', 'downloading', 'downloaded'].includes(state.status))) setState({ status: 'error', error: short(err) }); });
   }
 
   const promptedSettings = () => { const s = deps.readSettings(); return { promptedAt: s.movePromptedAt || 0, promptedVersion: s.movePromptedVersion || '' }; };
@@ -397,16 +403,20 @@ function createUpdates(deps) {
 
   async function check() {
     if (reason) return snapshot();
-    if (['checking', 'downloading', 'downloaded'].includes(state.status)) return snapshot();
+    if (checkRunning || ['checking', 'downloading'].includes(state.status)) return snapshot();
     const u = getUpdater();
-    setState({ status: 'checking', error: '' });
+    checkRunning = true;
+    // With an update already known the status stays as it is, so "Restart to update" / "Move and
+    // update" don't flicker away during a background check; the result only matters if it is newer.
+    if (!state.version) setState({ status: 'checking', error: '' });
     try {
       const result = await u.checkForUpdates();
-      if (!result) setState({ status: 'idle' }); // the updater is inactive (unpackaged)
+      if (!result) { if (state.status === 'checking') setState({ status: 'idle' }); } // the updater is inactive (unpackaged)
       else if (result.updateInfo && !isNewer(result.updateInfo.version, app.getVersion()) && state.status === 'checking') setState({ status: 'up-to-date' });
     } catch (err) {
       if (state.status === 'checking') setState({ status: 'error', error: short(err) });
     }
+    checkRunning = false;
     state.lastChecked = Date.now();
     deps.writeSettings({ ...deps.readSettings(), updatesCheckedAt: state.lastChecked });
     publish();
@@ -452,6 +462,9 @@ function createUpdates(deps) {
   async function apply() {
     if (reason || preparing) return snapshot();
     moveError = '';
+    // A failed install found again after a restart has no release info (hashes) to download from:
+    // look again first; the update-available that follows downloads it.
+    if (state.status === 'error' && state.version && !info) return check();
     const act = clickAction({ disabled: reason, canSelfUpdate: canSelfUpdate(), relocate: relocate(), hasVersion: Boolean(state.version), status: state.status, queued, staged: Boolean(staged), autoDownload: autoDownload() });
     if (act === 'move') return moveToApplications();
     if (act === 'apply') applyNow();
@@ -478,6 +491,12 @@ function createUpdates(deps) {
   function applyOnQuit() {
     if (reason || swapStarted || !(canSelfUpdate() || relocate()) || state.status !== 'downloaded' || !staged) return false;
     if (!relaunchOnQuit && state.version && state.version === blockedVersion) return false;
+    // A relocated install re-checks what is at the target now: a newer Lumen may have been put there
+    // since the download, and it must not be replaced. (Sync: will-quit can't wait.)
+    if (relocateTo && io.exists(relocateTo) && keepExisting(io.versionSync(relocateTo), state.version)) {
+      if (relaunchOnQuit) io.openApp(relocateTo);
+      return false;
+    }
     swapStarted = true;
     try {
       zipMod().launchSwap({ staged, execPath: process.execPath, errFile: errFile(), relaunch: relaunchOnQuit });
@@ -490,21 +509,43 @@ function createUpdates(deps) {
 
   // A complete staged update from an earlier run that was never applied: pick it up again instead of
   // downloading it twice. Only for a version newer than this one; anything else is deleted.
+  // A relocating copy stages next to the Lumen.app it will become (either Applications folder), not
+  // next to itself, so that is where its leftovers are cleared; they are never picked up again.
   function restoreStaged(lastSwapFailed) {
     const zip = zipMod();
-    const stagingDir = zip.swapPaths(process.execPath).staging;
-    const found = zip.readStaged?.(process.execPath);
-    const marked = found?.version || zip.readMarker?.(process.execPath)?.version;
-    if (lastSwapFailed && marked) blockedVersion = marked;
-    if (found && !lastSwapFailed && isNewer(found.version, app.getVersion())) {
-      staged = found.staged;
-      Object.assign(state, { status: 'downloaded', version: found.version, progress: 100, error: '' });
-      // the copy of the exe that runs the swap: ready before the user needs it
-      if (!staged.helper) setTimeout(() => { try { if (staged && !swapStarted) staged.helper = zip.prepareHelper(process.execPath); } catch {} }, 5000).unref?.();
-      return;
+    const reloc = Boolean(relocate());
+    const exe = path.basename(process.execPath);
+    const execPaths = reloc ? ['/Applications', `${io.home().replace(/\/$/, '')}/Applications`].map((d) => `${d}/Lumen.app/Contents/MacOS/${exe}`) : [process.execPath];
+    const stagingDirs = [];
+    for (const execPath of execPaths) {
+      const found = reloc ? null : zip.readStaged?.(execPath);
+      const marked = found?.version || zip.readMarker?.(execPath)?.version;
+      // the failed swap's version: Settings and the pill say what couldn't be installed, and Try again looks it up
+      if (lastSwapFailed && marked && !blockedVersion) { blockedVersion = marked; state.version = marked; }
+      if (found && !lastSwapFailed && isNewer(found.version, app.getVersion())) {
+        staged = found.staged;
+        Object.assign(state, { status: 'downloaded', version: found.version, progress: 100, error: '' });
+        // the copy of the exe that runs the swap: ready before the user needs it
+        if (!staged.helper) setTimeout(() => { try { if (staged && !swapStarted) staged.helper = zip.prepareHelper(process.execPath); } catch {} }, 5000).unref?.();
+        return;
+      }
+      stagingDirs.push(zip.swapPaths(execPath).staging);
     }
-    const done = fs.promises.rm(stagingDir, { recursive: true, force: true }).catch(() => {}).then(() => { if (cleaning === done) cleaning = null; });
+    const done = Promise.all(stagingDirs.map((d) => fs.promises.rm(d, { recursive: true, force: true }).catch(() => {}))).then(() => { if (cleaning === done) cleaning = null; });
     cleaning = done;
+  }
+
+  // A standard user's old /Applications copy, launched while a newer ~/Applications one exists (the
+  // update was installed there): open that one and quit, instead of running a stale copy or asking.
+  async function openNewerUserCopy() {
+    if (relocate() !== 'user') return false;
+    const bundle = `${io.home().replace(/\/$/, '')}/Applications/Lumen.app`;
+    if (!io.exists(bundle)) return false;
+    const existing = await io.version(bundle);
+    if (!existing || !isNewer(existing, app.getVersion())) return false;
+    io.openApp(bundle);
+    io.quit();
+    return true;
   }
 
   function start() {
@@ -522,8 +563,9 @@ function createUpdates(deps) {
       if (msg) state.error = msg.slice(0, 200), state.status = 'error', lastSwapFailed = true;
     } catch {}
     // An update that was unpacked but never applied leaves a big folder next to the install: use it
-    // if it is complete and newer, else clear it.
-    if (canSelfUpdate()) restoreStaged(lastSwapFailed);
+    // if it is complete and newer, else clear it (a relocating copy only clears it).
+    if (canSelfUpdate() || relocate()) restoreStaged(lastSwapFailed);
+    openNewerUserCopy().catch(() => {});
     // First launch from the dmg / Downloads: ask once, right away, to move to Applications (the
     // native dialog). Declining isn't final: the pill stays, and a new version asks once more.
     if (shouldOfferMove({ relocate: relocate(), version: null, ...promptedSettings() })) {
@@ -550,9 +592,10 @@ function createUpdates(deps) {
     setPlacement: (p) => { placement = p; publish(); },
     setKind: (k, replaceable = true) => { kind = k; mode = updateMode({ kind: k, replaceable: () => replaceable }); publish(); },
     restore: (lastSwapFailed) => restoreStaged(lastSwapFailed),
+    openNewer: () => openNewerUserCopy(),
     setState: (patch) => setState(patch),
     willQuit: () => applyOnQuit(),
-    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; blockedVersion = null; publish(); },
+    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; blockedVersion = null; checkRunning = false; publish(); },
   } : undefined;
 
   return { start, check, apply, applyOnQuit, state: snapshot, testHooks };

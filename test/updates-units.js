@@ -113,8 +113,8 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
       stage: (a) => { log.stages.push(a); return new Promise((res) => pending.push(() => res({ fake: a.execPath }))); },
       launchSwap: (a) => log.swaps.push(a) });
     if (veto) h.stubIo({ quit: () => { log.quits++; } }); else h.stubQuit(() => { log.quits++; });
-    h.stubIo({ dialog: async (o) => { log.dialogs.push(o); return { response: log.answer }; }, openApp: (b) => log.opened.push(b), exists: () => false, running: async () => false, version: async () => null, home: () => '/Users/me', canWrite: (d) => d === '/Applications', mkdir() {} });
-    return { u, h, log, emit: (v) => fake.emit('update-available', { version: v, files: [] }), finish: () => pending.shift()() };
+    h.stubIo({ dialog: async (o) => { log.dialogs.push(o); return { response: log.answer }; }, openApp: (b) => log.opened.push(b), exists: () => false, running: async () => false, version: async () => null, versionSync: () => null, home: () => '/Users/me', canWrite: (d) => d === '/Applications', mkdir() {} });
+    return { u, h, log, fake, emit: (v) => fake.emit('update-available', { version: v, files: [] }), finish: () => pending.shift()() };
   }
 
   // idle: a click with nothing to do changes nothing
@@ -212,9 +212,57 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   await t.u.apply();
   check('plain move: a failed move is shown, not swallowed', /Permission denied/.test(t.u.state().moveError) && t.u.state().status === 'idle', t.u.state().moveError);
 
+  // a failed swap (the error marker): the version that couldn't be installed is known, so the pill and Settings say so
+  t = make(); t.h.setKind('nsis');
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => ({ version: '2.0.0' }), stage: (a) => { t.log.stages.push(a); return new Promise(() => {}); }, launchSwap: (a) => t.log.swaps.push(a) });
+  t.h.setState({ status: 'error', error: 'Lumen couldn’t replace its files' }); t.h.restore(true);
+  check('failed swap: the status is an error that names the version, so the pill shows', t.u.state().status === 'error' && t.u.state().version === '2.0.0' && /couldn’t replace/.test(t.u.state().error), JSON.stringify(t.u.state()));
+  t.fake.checkForUpdates = async () => { t.fake.emit('update-available', { version: '2.0.0', files: [] }); return { updateInfo: { version: '2.0.0' } }; };
+  await t.u.apply(); await new Promise((r) => setTimeout(r, 50)); // the old staging folder is deleted first
+  check('failed swap: Try again (no release info after a restart) looks the update up, then downloads it', t.log.stages.length === 1 && t.u.state().status === 'downloading', JSON.stringify(t.u.state()));
+
+  // a standard user's old /Applications copy hands over to the newer ~/Applications one
+  const user = (existing) => { const m = make(); m.h.setKind('mac', false); m.h.setPlacement({ misplaced: false, why: null, userApps: true }); m.h.stubIo({ exists: () => true, version: async () => existing }); return m; };
+  t = user('3.0.0');
+  check('newer user copy: the old /Applications copy opens ~/Applications and quits, without a dialog', await t.h.openNewer() === true && eq(t.log.opened, ['/Users/me/Applications/Lumen.app']) && t.log.quits === 1 && t.log.dialogs.length === 0, JSON.stringify(t.log.opened));
+  t = user('1.0.0');
+  check('newer user copy: an equal or older one there does nothing', await t.h.openNewer() === false && t.log.opened.length === 0 && t.log.quits === 0, '');
+  t = dmg(); t.h.stubIo({ exists: () => true, version: async () => '3.0.0' });
+  check('newer user copy: only for the /Applications-as-standard-user case', await t.h.openNewer() === false && t.log.quits === 0, '');
+
+  t = make(); t.h.setKind('nsis'); t.emit('2.0.0'); await flush(); t.finish(); await flush();
+  t = make(); t.h.setKind('nsis'); t.emit('2.0.0'); await flush(); t.finish(); await flush();
+  let seen = '';
+  t.fake.checkForUpdates = async () => { seen = t.u.state().status; t.fake.emit('update-available', { version: '2.0.0', files: [] }); return { updateInfo: { version: '2.0.0' } }; };
+  await t.u.check();
+  check('check while downloaded: the same version changes nothing (no restage, still Restart to update)', seen === 'downloaded' && t.u.state().status === 'downloaded' && t.log.stages.length === 1, seen + t.log.stages.length + t.u.state().status);
+  t.fake.checkForUpdates = async () => { t.fake.emit('update-available', { version: '2.1.0', files: [] }); return { updateInfo: { version: '2.1.0' } }; };
+  await t.u.check(); await flush();
+  check('check while downloaded: a newer version is staged instead', t.log.stages.length === 2 && t.u.state().status === 'downloading' && t.u.state().version === '2.1.0', JSON.stringify(t.u.state()));
+  t.finish(); await flush();
+  t.fake.checkForUpdates = async () => { t.fake.emit('error', new Error('offline')); throw new Error('offline'); };
+  await t.u.check();
+  check('check while downloaded: a failed re-check keeps the ready update', t.u.state().status === 'downloaded' && t.u.state().version === '2.1.0', JSON.stringify(t.u.state()));
+  t = make(); let first = '';
+  t.fake.checkForUpdates = async () => { first = t.u.state().status; return { updateInfo: { version: '1.0.0' } }; };
+  await t.u.check();
+  check('check with nothing known shows "checking", then up to date', first === 'checking' && t.u.state().status === 'up-to-date', first);
+
+  // a newer Lumen appeared at the install target after the download: quitting doesn't overwrite it
+  t = dmg(); t.emit('2.0.0'); await flush(); await t.u.apply();
+  t.h.stubIo({ exists: () => true, versionSync: () => '3.0.0' });
+  t.finish(); await flush();
+  check('downgrade at quit: a newer copy at the target is kept, nothing is swapped, and Restart opens it instead', t.log.swaps.length === 0 && eq(t.log.opened, ['/Applications/Lumen.app']), JSON.stringify(t.log.swaps));
+  t = dmg(); t.emit('2.0.0'); await flush(); await t.u.apply();
+  t.h.stubIo({ exists: () => true, versionSync: () => '1.5.0' });
+  t.finish(); await flush();
+  check('downgrade at quit: an older copy at the target is replaced as usual', t.log.swaps.length === 1, JSON.stringify(t.log.swaps));
+
   // ---- the mac swap script can install where there was nothing before
   const fresh = Z.macSwapScript({ pid: 1, dir: '/Applications/Lumen.app', root: '/Applications/.Lumen.update/files/Lumen.app', old: '/Applications/Lumen.app.old', errFile: '/e', staging: '/Applications/.Lumen.update', self: '/Applications/.Lumen.update.sh' });
   check('swap script: a first install (no old app) still moves the new one in, and rollback only with an old one', fresh.includes('[ ! -d "$APP" ] || mv "$APP" "$OLD"') && fresh.includes('[ -d "$OLD" ] && mv "$OLD" "$APP"'), fresh);
+  const reopened = Z.macSwapScript({ pid: 1, dir: '/Applications/Lumen.app', root: '/n', old: '/o', errFile: '/e', staging: '/s', self: '/x', orig: '/Volumes/Lumen/Lumen.app' });
+  check('swap script: a failed relocation reopens the original bundle when the target is missing', /ORIG='\/Volumes\/Lumen\/Lumen\.app'/.test(reopened) && reopened.includes('elif [ -n "$ORIG" ] && [ -d "$ORIG" ]; then open "$ORIG"'), reopened);
   check('write probe: canWriteDir follows the probe', Z.canWriteDir('/x', () => {}) === true && Z.canWriteDir('/x', () => { throw new Error('EACCES'); }) === false, '');
 
 
