@@ -23,7 +23,7 @@ const http = require('http');
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
 
-  const uiUrl = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getURL());
+  const uiUrl = () => app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents.getURL());
   const tabCount = () => app.evaluate(() => global.__settings.tabs().length);
   const windowCount = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
   const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(150); } return v; };
@@ -37,7 +37,7 @@ const http = require('http');
 
   // ---- the UI window runs sandboxed, and its bundled preload still works there
   const prefs = await app.evaluate(({ BrowserWindow }) => {
-    const p = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();
+    const p = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents.getLastWebPreferences();
     return { sandbox: p.sandbox, contextIsolation: p.contextIsolation, nodeIntegration: p.nodeIntegration };
   });
   check('UI: the window is sandboxed with context isolation', prefs.sandbox === true && prefs.contextIsolation === true && !prefs.nodeIntegration, JSON.stringify(prefs));
@@ -112,7 +112,7 @@ const http = require('http');
     const tab = global.__agent.browser.openTab('about:blank');
     await new Promise((r) => setTimeout(r, 500));
     const twc = tab.webContents;
-    const uiWc = BrowserWindow.getAllWindows()[0].webContents;
+    const uiWc = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents;
     const invoke = async (channel, event, ...args) => {
       try { await ipcMain._invokeHandlers.get(channel)(event, ...args); return 'allowed'; } catch (err) { return err.message; }
     };
@@ -173,7 +173,7 @@ const http = require('http');
   check('reader: downloads are cancelled', reader.downloads.length > 0 && reader.downloads.every((d) => d.prevented), JSON.stringify(reader.downloads));
 
   // ---- a main-process load of the web in the UI window is put back (last: it reloads the UI)
-  await app.evaluate(({ BrowserWindow }, web) => { BrowserWindow.getAllWindows()[0].webContents.loadURL(web).catch(() => {}); }, web);
+  await app.evaluate(({ BrowserWindow }, web) => { [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents.loadURL(web).catch(() => {}); }, web);
   const back = await waitFor(async () => { const u = await uiUrl(); return /renderer\/index\.html$/.test(u) ? u : ''; }, 8000);
   check('UI: a main-process loadURL of a web page ends up back on index.html', /renderer\/index\.html$/.test(back || ''), back || await uiUrl());
   const ui2 = (await app.windows()).find((p) => /index\.html$/.test(p.url())) || ui;
@@ -205,14 +205,15 @@ const http = require('http');
   const packedUi = await packed.firstWindow();
   await packedUi.waitForSelector('.tab');
   const state = await packed.evaluate(({ app, ipcMain, webContents }) => {
-    const before = webContents.getAllWebContents().length;
-    ipcMain.emit('tab:new', { sender: {} }, 'about:blank'); // a synthetic event, as the tests send
+    const marked = () => webContents.getAllWebContents().filter((w) => w.getURL().includes('synthetic-marker')).length; // (a spare view of Lumen's own may be made meanwhile, so count a tab for this address, not all views)
+    const before = marked();
+    ipcMain.emit('tab:new', { sender: {} }, 'http://127.0.0.1:9/synthetic-marker'); // a synthetic event, as the tests send
     return new Promise((r) => setTimeout(() => r({
       packaged: app.isPackaged,
       userData: app.getPath('userData'),
       hooks: Object.keys(globalThis).filter((k) => k.startsWith('__') && !/playwright/i.test(k)),
       autoApprove: globalThis.lumenProbe?.autoApprove(),
-      synthetic: webContents.getAllWebContents().length - before,
+      synthetic: marked() - before,
     }), 1000));
   });
   check('packaged: app.isPackaged is faked true', state.packaged === true, state.packaged);

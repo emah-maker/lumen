@@ -1073,7 +1073,7 @@ function groupLabel(group, count, crowded, label = null) {
     label.addEventListener('pointercancel', endTabDrag);
     label.oncontextmenu = (e) => { e.preventDefault(); window.browser.groupMenu(group.id, { x: e.clientX, y: e.clientY }); };
   }
-  label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '')
+  label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded === 'dot' ? ' dot' : crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '')
     + (drag?.handed && !drag.single && drag.groupId === group.id ? ' handed' : '')
     + (arriving.size && (lastTabState?.tabs || []).filter((t) => t.groupId === group.id).every((t) => arriving.has(t.id)) ? ' arriving' : '');
   label.style.setProperty('--group-color', `var(--g-${group.color})`);
@@ -1520,18 +1520,48 @@ document.addEventListener('pointermove', (e) => { if (widthsHeld && !$('tabs').c
 window.addEventListener('resize', () => releaseTabWidths(false));
 
 const organizeBtn = $('organize-tabs');
-organizeBtn.onclick = () => window.browser.organizeTabs();
-window.browser.onOrganizing?.((busy) => {
-  // busy: true (grouping on this computer), 'refine' (the groups are shown, the AI is refining them: a click cancels), false.
+// busy: true (grouping on this computer), 'refine' (the groups are shown, the AI is refining them: a click cancels), false.
+const showOrganizing = (busy) => {
   organizeBtn.classList.toggle('busy', Boolean(busy));
   organizeBtn.disabled = busy === true;
   organizeBtn.querySelector('span').textContent = busy === 'refine' ? t('tabs.refining') : busy ? t('tabs.organizing') : t('tabs.organize');
-});
+};
+// The click shows "Organizing…" (and disables the button) at once, not after main's round trip: no dead click, no double trigger.
+// While the AI refines, a click cancels (main decides); main's own 'organizing' messages then take over.
+let organizeGroupsBefore = null; // the groups there were when Organize was clicked: the ones after it that are not in it are the new ones (the toast names them)
+organizeBtn.onclick = () => {
+  if (organizeBtn.disabled) return;
+  organizeGroupsBefore = new Set(((queuedTabState || lastTabState)?.groups || []).map((g) => g.id));
+  if (!organizeBtn.classList.contains('busy')) showOrganizing(true);
+  window.browser.organizeTabs();
+};
+window.browser.onOrganizing?.(showOrganizing);
 // "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
 window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle }) => {
   document.querySelector('.organize-note')?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note', role: 'status' });
-  note.append(Object.assign(document.createElement('span'), { textContent: text }));
+  const words = Object.assign(document.createElement('span'), { className: 'organize-note-text', textContent: text });
+  note.append(words);
+  // An organize's note says what it made: "Organized: Nursing, Maui trip, Recipes +3 · 6 loose" (names clipped by the CSS to fit; the full text is the tooltip).
+  if (undo && !undoLabel) {
+    const summary = () => {
+      const state = queuedTabState || lastTabState;
+      if (!state || !(state.groups || []).length) return;
+      const before = organizeGroupsBefore;
+      const all = state.groups;
+      const fresh = before ? all.filter((g) => !before.has(g.id)) : all;
+      const names = (fresh.length ? fresh : all).map((g) => g.name).filter(Boolean);
+      const said = /(\d+) tabs? left loose/.exec(text); // main counts the tabs it could have grouped (not the new-tab page, say)
+      const loose = said ? Number(said[1]) : state.tabs.filter((x) => !x.groupId && !x.pinned).length;
+      const lead = /^Grouped/.test(text) ? 'Grouped' : t('organize.local');
+      const shown = names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '');
+      const looseWord = t('organize.noteLoose', { count: loose });
+      words.textContent = `${lead}: ${shown}${loose ? ` · ${looseWord === 'organize.noteLoose' ? `${loose} loose` : looseWord}` : ''}`;
+      note.title = `${text}\n${names.join(', ')}`; // the full list, and what main said (which says whether an AI helped)
+    };
+    summary();
+    setTimeout(() => { if (note.isConnected) summary(); }, 200); // the tab state with the new groups may arrive just after the note
+  }
   if (undo) {
     note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { window.browser.undoOrganize(); note.remove(); } })); // (a merge's note brings its own wording)
   }
@@ -1592,10 +1622,15 @@ function renderTabsNow(state) {
   if (filled) { clearTimeout(landing.timer); landing.el.remove(); landingSlot = null; }
   const switched = state.activeId !== lastActiveId;
   const groupsById = new Map((state.groups || []).map((g) => [g.id, g]));
-  const crowded = state.tabs.length > 12;
+  // Many tabs: a group's label becomes a compact chip, its name kept and clipped with an ellipsis (36px at least, 84px at most; the tabs give way, the
+  // strip scrolls). It collapses to a bare dot only when the chips themselves would take most of the strip: so many groups that names cannot all be shown.
+  const chipWidth = (g) => Math.min(84, Math.max(36, String(g.name || '').length * 6.6 + 18)) + 6; // (an estimate: the text, the padding and the gap beside it)
+  const chips = (state.groups || []).reduce((n, g) => n + chipWidth(g), 0);
+  const crowded = state.tabs.length <= 12 ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
   let currentGroup = null;
-  const ungroupedWeb = state.tabs.filter((t) => !t.groupId && t.url).length;
-  organizeBtn.hidden = ungroupedWeb < 8 && !organizeBtn.classList.contains('busy');
+  // Shown when Organize would do something: 4+ tabs it may regroup (main counts them: not pinned, not in the user's own
+  // groups; automatic groups' tabs count). 4 is the bar automatic by-topic grouping uses: fewer is easy to do by hand.
+  organizeBtn.hidden = !(state.organizable >= 4) && !organizeBtn.classList.contains('busy');
   if (!tabIndicator) {
     tabIndicator = Object.assign(document.createElement('div'), { className: 'tab-indicator instant' });
     tabIndicator.setAttribute('aria-hidden', 'true');

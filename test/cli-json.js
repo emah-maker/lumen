@@ -65,6 +65,31 @@ if (mode === 'hang') setInterval(() => {}, 1000);
   const t0 = Date.now();
   const hung = await cj.runCli({ bin: process.execPath, argv: [fake, 'hang'], input: '', env, cwd: dir, timeoutMs: 1500 }).then(() => null, (e) => e);
   check('run: a CLI that never answers is stopped at the timeout', hung && hung.timedOut && Date.now() - t0 < 8000, hung && hung.message);
+  // ---- cancel: an aborted run kills the process, and the next run waits for it
+  {
+    const { spawn: nodeSpawn } = require('child_process');
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    let child = null;
+    let spawned = 0;
+    const spy = (...a) => { spawned++; child = nodeSpawn(...a); return child; };
+    const ac = new AbortController();
+    const started = Date.now();
+    const p = cj.runCli({ bin: process.execPath, argv: [fake, 'hang'], input: '', env, cwd: dir, timeoutMs: 20000, signal: ac.signal, spawn: spy }).then(() => null, (e) => e);
+    await new Promise((r) => setTimeout(r, 400));
+    let idle = false;
+    cj.whenIdle().then(() => { idle = true; });
+    await new Promise((r) => setTimeout(r, 100));
+    check('abort: a second run waits (whenIdle) while the first process still runs', idle === false && child && alive(child.pid), String(idle));
+    ac.abort();
+    const err = await p;
+    check('abort: the run rejects as aborted well before the timeout', err && err.aborted === true && Date.now() - started < 8000, err && err.message);
+    check('abort: the process is gone, not left running', child && !alive(child.pid), String(child && child.pid));
+    await new Promise((r) => setTimeout(r, 50));
+    check('abort: whenIdle resolves once the process has exited', idle === true, String(idle));
+    const before = spawned;
+    const pre = await cj.runCli({ bin: process.execPath, argv: [fake, 'hang'], input: '', env, cwd: dir, signal: ac.signal, spawn: spy }).then(() => null, (e) => e);
+    check('abort: an already-aborted signal never starts a process', pre && pre.aborted === true && spawned === before, String(spawned - before));
+  }
 
   // ---- completeJSON, with the process step faked
   const runs = [];

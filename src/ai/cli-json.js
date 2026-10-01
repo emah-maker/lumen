@@ -80,8 +80,18 @@ const grokDirFor = (userData) => path.join(userData, 'grok-oneshot-cwd');
 
 // Runs one CLI process. Resolves its stdout; rejects on a timeout (the process tree is stopped) or a
 // non-zero exit, with stderr/stdout attached for describeFailure.
-function runCli({ bin, argv, input = null, env, cwd, timeoutMs = TIMEOUT_MS, spawn = nodeSpawn, kill = killTree }) {
-  return new Promise((resolve, reject) => {
+// The runs whose process has not exited yet (each entry settles on the child's 'close'): a new run waits for them
+// (whenIdle), so a quick second click never starts a second CLI while the first one is still being stopped.
+const inflight = new Set();
+const whenIdle = () => Promise.all([...inflight]);
+
+// signal (optional AbortSignal): aborting stops the process tree at once and rejects with { aborted: true }.
+function runCli({ bin, argv, input = null, env, cwd, timeoutMs = TIMEOUT_MS, spawn = nodeSpawn, kill = killTree, signal = null }) {
+  let done;
+  const closed = new Promise((r) => { done = r; });
+  inflight.add(closed);
+  const p = new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(Object.assign(new Error('Canceled.'), { aborted: true })); return; }
     let child;
     try {
       child = spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: [input === null ? 'ignore' : 'pipe', 'pipe', 'pipe'], env, cwd });
@@ -92,13 +102,18 @@ function runCli({ bin, argv, input = null, env, cwd, timeoutMs = TIMEOUT_MS, spa
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let aborted = false;
+    const onAbort = () => { aborted = true; kill(child); };
     const timer = setTimeout(() => { timedOut = true; kill(child); }, timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const settle = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); done(); };
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', (err) => { clearTimeout(timer); reject(err); });
+    child.on('error', (err) => { settle(); reject(err); });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      if (timedOut) reject(Object.assign(new Error(`No answer within ${Math.round(timeoutMs / 1000)} s.`), { timedOut: true }));
+      settle();
+      if (aborted) reject(Object.assign(new Error('Canceled.'), { aborted: true }));
+      else if (timedOut) reject(Object.assign(new Error(`No answer within ${Math.round(timeoutMs / 1000)} s.`), { timedOut: true }));
       else if (code !== 0) reject(Object.assign(new Error(`exit ${code}`), { code, output: `${stderr}\n${stdout}` }));
       else resolve(stdout);
     });
@@ -107,6 +122,8 @@ function runCli({ bin, argv, input = null, env, cwd, timeoutMs = TIMEOUT_MS, spa
       child.stdin.end(input);
     }
   });
+  p.then(done, done); // a run that never started (aborted, or spawn threw) is idle at once
+  return p;
 }
 
 // The JSON answer in a CLI's --output-format json result: Claude Code's structured_output, Grok
@@ -132,14 +149,14 @@ function checkGroups(answer) {
 
 // One answer. engine: 'claudecode' | 'grokbuild'; bin: the CLI found by that engine's detect().
 // userData: Lumen's user-data folder (Grok Build's own home lives there).
-async function completeJSON({ engine, bin, model, system, user, schema, userData, timeoutMs = TIMEOUT_MS, run = runCli }) {
+async function completeJSON({ engine, bin, model, system, user, schema, userData, timeoutMs = TIMEOUT_MS, run = runCli, signal = null }) {
   if (engine === 'claudecode') {
     const { describeFailure } = require('./claude-code');
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cc1-')); // an empty folder: no project settings or files
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
     try {
-      return parseResult(await run({ bin, argv: claudeArgs({ system, schema, model }), input: user, env, cwd, timeoutMs }));
+      return parseResult(await run({ bin, argv: claudeArgs({ system, schema, model }), input: user, env, cwd, timeoutMs, signal }));
     } catch (err) {
       throw err.output !== undefined ? new Error(describeFailure(err.output, err.code).text) : err;
     } finally {
@@ -160,7 +177,7 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
     fs.writeFileSync(promptFile, gb.promptBlocks(user), { mode: 0o600 });
     const env = { ...gb.buildEnv({ userData }), GROK_HOME: home, HOME: cwd, USERPROFILE: cwd, RUST_LOG: 'off' };
     try {
-      return parseResult(await run({ bin, argv: grokArgs({ system, schema, model, promptFile, cwd }), env, cwd, timeoutMs }));
+      return parseResult(await run({ bin, argv: grokArgs({ system, schema, model, promptFile, cwd }), env, cwd, timeoutMs, signal }));
     } catch (err) {
       throw err.output !== undefined ? new Error(gb.describeFailure(err.output, err.code).text) : err;
     } finally {
@@ -171,4 +188,4 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
   throw new Error(`No one-shot runner for ${engine}.`);
 }
 
-module.exports = { claudeArgs, grokArgs, grokConfig, runCli, parseResult, checkGroups, completeJSON, TIMEOUT_MS };
+module.exports = { claudeArgs, grokArgs, grokConfig, runCli, parseResult, checkGroups, completeJSON, whenIdle, TIMEOUT_MS };

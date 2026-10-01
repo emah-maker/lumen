@@ -270,6 +270,8 @@ function writeSettings(settings) {
     .then(() => { if (gen === settingsGen) settingsPending = false; }); // (on disk: quitting has nothing left to write)
 }
 const writeSettingsAsync = writeSettings; // (the periodic session save)
+// Tests that read settings.json straight off disk call this first: a write is off the main thread, so the file can lag the cache.
+if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache) writeSettingsNow(settingsCache); };
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   settingsCache = { ...settings };
@@ -1251,6 +1253,7 @@ function tabState() {
   const defaultZoomPercent = Math.round((settingsBackend.prefs().defaultZoom || 1) * 100);
   return {
     groups: tabGroups.state(),
+    organizable: tabGroups.organizableCount(), // what Organize would regroup (the strip shows its button by this)
     // A sleeping tab has no view/webContents to read from; it still gets a row, built from the
     // snapshot sleepTab() took (title/url/favicon/group), with a 'sleeping' flag for the tab strip.
     // A tab being closed leaves the strip at once, as in Chrome; it comes back only if the page asks
@@ -2212,18 +2215,23 @@ const refineCache = organizeAi.createRefineCache(); // answers for tabs organize
 
 // One refinement request (features/organize-ai.js): group summaries and leftover tabs in, names / placements /
 // merges out. Small max_tokens, temperature 0 and a strict schema, on the cheapest model of the chat's provider.
-async function refineGroups(model, wire, signal) {
-  const route = await groupingRoute(String(model));
+async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_CLI_MS, knownRoute = null) {
+  const route = knownRoute || await groupingRoute(String(model)); // organizeTabs worked the route out once for this click
   const user = JSON.stringify(wire);
   if (route.engine) {
     const { engine, model: engineModelId } = route;
     const bin = await agent.engines[engine].detect();
     if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
-    const ask = (m) => cliJson.completeJSON({ engine, bin, model: m, system: organizeAi.REFINE_PROMPT, user, schema: organizeAi.REFINE_SCHEMA, userData: app.getPath('userData') });
+    // The whole answer has `timeoutMs` (organize-ai's wait, minus a little): a fast model first (Claude Code: Haiku)
+    // gets most of it, and the chat's own model is tried only with what is left, never after a timeout.
+    const deadline = Date.now() + Math.max(5000, timeoutMs - 2000);
+    const ask = (m, ms) => cliJson.completeJSON({ engine, bin, model: m, system: organizeAi.REFINE_PROMPT, user, schema: organizeAi.REFINE_SCHEMA, userData: app.getPath('userData'), timeoutMs: ms, signal }); // an abort stops the process, not just the wait
     const fast = engine === 'claudecode' ? 'haiku' : engineModelId;
-    try { return await ask(fast); } catch (err) {
-      if (fast === engineModelId || /not signed in|usage limit/i.test(err.message)) throw err;
-      return ask(engineModelId);
+    if (fast === engineModelId) return ask(fast, deadline - Date.now());
+    try { return await ask(fast, Math.round((deadline - Date.now()) * 0.6)); } catch (err) {
+      const left = deadline - Date.now();
+      if (err.timedOut || signal?.aborted || left < 8000 || /not signed in|usage limit/i.test(err.message)) throw err;
+      return ask(engineModelId, left);
     }
   }
   const { provider, model: id } = providers.splitModel(model);
@@ -2257,43 +2265,80 @@ function organizeNote(text, { undo = false, merge = false } = {}) {
 // result is already clear or the same tabs were organized before. A second click while it refines cancels
 // it and keeps the local groups. Any failure, timeout or unusable answer keeps the local groups too.
 async function organizeTabs() {
-  if (organizing) { organizeAbort?.abort(); return; }
+  if (organizing) { organizeAbort?.abort(); return 0; }
+  let made = 0; // the groups made (what the tab menu's caller reports)
   organizing = true;
   organizeAbort = new AbortController();
-  ui()?.send('tabs:organizing', true);
+  const rec = curRec;
+  const back = (fn) => withWindow(rec, fn);
+  const inWin = (groups) => Object.fromEntries(['organizeByTopic', 'organizeSeq', 'organizeView', 'applyRefinement'].map((k) => [k, (...a) => back(() => groups[k](...a))]));
+  ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
-    if (tabGroups.candidates().length < 2) throw new Error(t('organize.tooFew'));
+    await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
+    if (organizeAbort.signal.aborted) return 0;
+    if (tabGroups.candidates().length < 2) throw tooFewMessage();
+    // How long the model gets depends on the route: a CLI engine needs seconds just to start (organize-ai TIMEOUT_CLI_MS).
+    // The model is asked only when "Use AI to name and group topics" is on and a route to one exists (a key, or a signed-in CLI); the
+    // route is worked out once per click. Otherwise this stays on this computer: nothing is sent and there is nothing to complain about.
+    const aiOn = readSettings().topicAi === true || (TEST && global.__organizeAlwaysAsk === true);
+    const route = aiOn ? await groupingRoute(String(cheapTopicModel())).catch(() => null) : null;
+    const timeoutMs = organizeAi.timeoutFor(route);
     const stats = await organizeAi.organizeProgressive({
-      tabGroups,
+      tabGroups: inWin(tabGroups), // the model's answer arrives later: it must land in THIS window's tabs, not whichever is current by then
       cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
       signal: organizeAbort.signal,
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
-      ask: (wire, { signal } = {}) => withFallback(cheapTopicModel(), (m) => refineGroups(m, wire, signal), { signal }),
+      timeoutMs,
+      ask: organizeAi.askIfEnabled({ enabled: aiOn, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null), { signal }) }),
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
-      onPhase: (name) => {
-        if (name === 'local') { sendTabs(); ui()?.send('tabs:organizing', 'refine'); } // the groups are there; the model may still refine them
-        else if (name === 'refined') sendTabs();
+      onPhase: (name, info) => {
+        if (name === 'local') { if (info?.count) back(() => { sendTabs(); ui()?.send('tabs:organizing', 'refine'); }); } // the groups are there; the model may still refine them
+        else if (name === 'asking') back(() => ui()?.send('tabs:organizing', 'refine')); // also when nothing grouped locally: the AI is making the groups, a click cancels
+        else if (name === 'refined') back(sendTabs);
       },
     });
-    sendTabs();
+    back(sendTabs);
+    made = stats.groups;
+    const failed = /^kept local/.test(stats.reason) ? stats.failed : '';
     if (!stats.groups && !stats.created) {
-      organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`); // a note that closes itself, not a modal: nothing needs an answer
-    } else if (stats.reason !== 'cancelled') {
-      const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : /timeout/.test(stats.failed) ? t('organize.slow') : t('organize.localOnly');
-      const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
-      organizeNote(`${how}.${what}`, { undo: true });
+      // Nothing was changed (organizeByTopic rolls back), so no Undo. If the AI was asked and failed, say why, not "no groups".
+      back(() => organizeNote(failed ? aiFailureNote(failed) : stats.reason === 'cancelled' ? `${t('organize.cancelledNone')}.` : `${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer
+    } else if (stats.reason === 'cancelled') {
+      // The groups made before the cancel are real and stay: say so, with the Undo that removes them.
+      back(() => organizeNote(`${t('organize.cancelled')}.`, { undo: true }));
+    } else {
+      const how = stats.reason === 'local' ? t('organize.local') : stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : failed ? aiFailureNote(failed, false) : t('organize.localOnly');
+      const what = Number.isInteger(stats.finalGroups) ? ` ${organizeSummary(stats.finalGroups, stats.loose)}` : '';
+      back(() => organizeNote(`${how}.${what}`, { undo: true }));
     }
   } catch (err) {
-    organizeNote(`${t('organize.failed')}: ${err.message}`);
+    back(() => organizeNote(err.tooFew ? err.message : `${t('organize.failed')}: ${err.message}`)); // "nothing to organize" isn't a failure
   } finally {
     organizing = false;
     organizeAbort = null;
-    ui()?.send('tabs:organizing', false);
+    back(() => ui()?.send('tabs:organizing', false));
   }
+  return made;
+}
+// "1 group.", "3 groups, 1 tab left loose.": the singular strings are keys of their own (the string table has no plural rules).
+const organizeSummary = (groups, loose) => t(organizeAi.summaryKey(groups, loose), { groups, loose });
+// The note when the AI step failed: "took too long" only for a real timeout, else the real cause (not signed in, no key...).
+function aiFailureNote(failed, standalone = true) {
+  if (failed === 'timeout') return standalone ? t('organize.slowNone') : t('organize.slow');
+  const cause = String(failed).replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (standalone) return `${t('organize.failed')}: ${cause.replace(/[.]$/, '') || t('organize.localOnly')}.`; // nothing was grouped: not "organized on this computer"
+  return `${t('organize.localOnly')}${cause ? `: ${cause.replace(/[.]$/, '')}` : ''}`;
+}
+// Why Organize has nothing to work on: no pages at all, or only pinned tabs / tabs in groups the user made.
+function tooFewMessage() {
+  const c = tabGroups.organizeCounts();
+  const err = new Error(c.web >= 2 ? t(c.pinned ? 'organize.onlyPinnedOrGrouped' : 'organize.onlyGrouped') : t('organize.tooFew'));
+  err.tooFew = true;
+  return err;
 }
 
 // ---- topic groups: local clusters (tab-groups.js), or named by the cheapest model of the chat's provider
@@ -2344,16 +2389,9 @@ function scheduleAiTopics() {
   }, 2500);
 }
 
-// "Organize Tabs by Topic" (tab menu, ⋯ → Tab Groups): regroups loose tabs and automatic groups.
-async function organizeByTopic() {
-  let proposal = null;
-  if (readSettings().topicAi === true) {
-    proposal = await proposeGroups(cheapTopicModel(), topicList(tabGroups.candidates())).catch(() => null); // falls back to local
-  }
-  const count = tabGroups.organizeByTopic(proposal);
-  sendTabs();
-  return count;
-}
+// "Organize Tabs" (tab menu, Tab Groups, and the strip's button) is organizeTabs: the local organizer groups, and with "Use AI to
+// name and group topics" on a model only refines that result in place. It never proposes the groups itself.
+const organizeByTopic = organizeTabs; // the name the test hook (__organizeByTopic) and scripts/capture-media.js call
 // "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
 function mergeGroups() {
   if (tabGroups.mergeGroups()) sendTabs();
@@ -2472,7 +2510,7 @@ function tabMenuTemplate(id) {
     });
     if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
     if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
-    items.push({ label: t('menu.organizeByTopic'), click: organizeByTopic });
+    items.push({ label: t('menu.organizeByTopic'), click: organizeFromMenu });
     const dupCount = duplicateTabs().reduce((n, d) => n + d.close.length, 0);
     if (dupCount) items.push({ label: t('menu.closeDuplicates', { n: dupCount }), click: closeDuplicateTabs });
     if (tabGroups.state().length > 1) items.push({ label: t('menu.mergeGroups'), click: mergeGroups });
@@ -2634,13 +2672,15 @@ function moveGroupItems(groupId) {
   return items;
 }
 
+// The one "Organize Tabs" item: the local run, refined by a model when AI is on (choosing it again while it refines cancels it).
+const organizeFromMenu = organizeTabs;
+
 function tabGroupsMenu() {
   const mode = groupingMode();
   return [
-    { label: t('menu.organizeByTopic'), click: organizeByTopic },
+    { label: t('menu.organizeByTopic'), click: organizeFromMenu },
     { label: t('menu.mergeGroups'), enabled: tabGroups.state().length > 1, click: mergeGroups },
     { label: t('menu.undoOrganize'), enabled: tabGroups.canUndo(), click: undoOrganize },
-    { label: t('menu.organizeWithAi'), click: organizeTabs }, // while it refines, choosing it again cancels the refinement
     { type: 'separator' },
     { label: t('menu.groupAutomatically'), enabled: false },
     ...[['off', t('menu.off')], ['site', t('menu.bySite')], ['topic', t('menu.byTopic')]].map(([value, label]) => ({ label, type: 'radio', checked: mode === value, click: () => setTabGrouping(value) })),
@@ -4754,6 +4794,8 @@ if (TEST) {
     tearOff: (srcWindowId, tabId, point, ids) => tearOffTab([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, point, ids),
     group: (windowId, ids, name) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => { const g = tabGroups.create(name, ids); sendTabs(); return g.id; }),
     pin: (windowId, tabId, on) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => pinTab(tabId, on)),
+    // A new tab in that window, whichever window is current (a late focus event can move "current" under a test).
+    open: (windowId, url) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => { const t = global.__agent.browser.openTab(url); return { id: t.id, contentsId: t.webContents.id }; }),
     setSelection: (windowId, ids) => { const rec = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId); if (rec) rec.selection = ids; },
     tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => (tabMenuTemplate(tabId) || []).map((i) => ({ label: i.label, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
   };
