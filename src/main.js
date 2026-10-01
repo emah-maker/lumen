@@ -1381,7 +1381,7 @@ function layout() {
   const uiHadFocus = Boolean(ui()?.isFocused());
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
-    const show = visible && !viewFrozen && !tab.spareFilling && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
+    const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
@@ -3347,6 +3347,7 @@ function toggleChatPage() {
 
 function focusAddress() {
   ui()?.focus();
+  if (curRec && !curRec.uiLoaded) curRec.focusAddressPending = true; // (sent again once the UI has loaded: createWindow)
   ui()?.send('focus-address');
 }
 
@@ -4833,14 +4834,14 @@ const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // `prepared`: a hidden window for a tear-off that may come (prepareDragWindow): it loads its UI and waits.
 // `boundsFrom`: a window of the same size whose page area this one starts with, so the tab's page is at
 // its place from the first frame instead of jumping there once this window's UI reports its own.
-// Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
-let tabsGateOpen = false;
 // The first tab (restored or new) has finished loading, or 8 s have passed: the spare new-tab page, the
 // suggestions renderer, the CLI checks and the extension update check start then, not while it loads.
 let markFirstTabLoaded = () => {};
 const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
+// Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
-const tabsGate = new Promise((resolve) => { openTabsGate = () => { tabsGateOpen = true; resolve(); }; });
+const GUESS_TOOLBAR_HEIGHT = 82; // the tab strip and toolbar: where a first tab's page goes before the UI has said (content-bounds)
+const tabsGate = new Promise((resolve) => { openTabsGate = resolve; });
 function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
@@ -4944,7 +4945,21 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   w.on('blur', hideSuggestions);
   w.loadFile(UI_HTML);
+  // A window's first tabs open as soon as extensions and the filter lists are ready (tabsGate), while its UI is still
+  // loading: the first page's renderer starts and its page loads alongside the UI instead of after it (~150 ms sooner
+  // on screen). Its view stays hidden until the UI has said where pages go (content-bounds), and the UI is brought up
+  // to date once it has loaded (finishSettle).
+  // (Not before the UI's page has committed: its renderer is then the window's first, which is what tools driving
+  // Lumen, like the test suites' firstWindow(), take as the window.)
+  let uiLoaded = false;
+  let tabsOpened = false;
+  if (!adopt && !prepared) {
+    const committed = new Promise((resolve) => { w.webContents.once('did-navigate', resolve); w.webContents.once('did-finish-load', resolve); });
+    Promise.all([tabsGate, committed]).then(() => { if (rcAlive(rec)) withWindow(rec, openFirstTabs); });
+  }
   w.webContents.once('did-finish-load', () => {
+    uiLoaded = true;
+    rec.uiLoaded = true;
     firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); });
     if (rec.prepared) {
       // Ready for a tear-off (takeSpare); no tabs until then.
@@ -4957,29 +4972,52 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     }
     // A window's first tabs wait for extensions and the filter lists (every tab is registered with chrome.tabs and
     // filtered from its first request); the window and its UI load meanwhile (see tabsGate at start-up).
-    if (!adopt && !tabsGateOpen) { tabsGate.then(() => { if (rcAlive(rec)) withWindow(rec, () => settle()); }); return; }
+    if (!adopt) { if (tabsOpened) finishSettle(); return; } // (else openFirstTabs finishes once the gate opens)
     settle();
   });
-  function settle() {
-    if (adopt) {
-      // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
-      const adopted = moveTabsBetween(adopt.src, rec, adopt.ids || [adopt.tabId], 0, { focus: adopt.focus !== false, active: adopt.tabId, group: adopt.group || null });
-      if (!adopted) {
-        // The tab is gone (closed, or its window closed) while this window was loading. It isn't wanted then,
-        // unless it is the only window left: that one gets a new tab rather than leaving no window at all.
-        const others = [...winRecs].some((r) => r !== rec && rcAlive(r) && !isSpare(r));
-        adopt.done?.(false);
-        if (others) { setImmediate(() => { if (rcAlive(rec)) rec.win.close(); }); return; }
-        if (!tabs.length) openTab();
-        if (!rec.win.isVisible()) rec.win.show();
-      } else {
-        adopt.done?.(true);
+  function openFirstTabs() {
+    if (tabsOpened) return;
+    tabsOpened = true;
+    if (!uiLoaded && !rec.boundsReported) {
+      rec.holdViews = true; // (layout() keeps tab views hidden until the UI reports where they go)
+      if (!seedBounds) { // laid out at about the size it will have, so the page isn't laid out twice
+        const [width, height] = w.getContentSize();
+        contentBounds = { x: 0, y: GUESS_TOOLBAR_HEIGHT, width, height: Math.max(0, height - GUESS_TOOLBAR_HEIGHT) };
       }
+    }
+    restoreSession(restore);
+    rec.pendingRestore = false;
+    refreshWindowMenu(); // its tabs are back: it may take part in a merge now
+    if (uiLoaded) finishSettle();
+  }
+  // The UI has loaded and the window's tabs are open: the UI gets their state (anything sent while it was
+  // still loading went nowhere), the new-tab page's address bar its focus, then the rest of a window's start.
+  function finishSettle() {
+    if (rec.holdViews) { rec.holdViews = false; layout(); }
+    sendTabs();
+    if (rec.focusAddressPending) { rec.focusAddressPending = false; focusAddress(); } // a new tab asked for it while the UI loaded
+    afterSettle();
+  }
+  // A torn-off tab's window (adopt): its tab moves in once its UI has loaded.
+  function settle() {
+    // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
+    const adopted = moveTabsBetween(adopt.src, rec, adopt.ids || [adopt.tabId], 0, { focus: adopt.focus !== false, active: adopt.tabId, group: adopt.group || null });
+    if (!adopted) {
+      // The tab is gone (closed, or its window closed) while this window was loading. It isn't wanted then,
+      // unless it is the only window left: that one gets a new tab rather than leaving no window at all.
+      const others = [...winRecs].some((r) => r !== rec && rcAlive(r) && !isSpare(r));
+      adopt.done?.(false);
+      if (others) { setImmediate(() => { if (rcAlive(rec)) rec.win.close(); }); return; }
+      if (!tabs.length) openTab();
+      if (!rec.win.isVisible()) rec.win.show();
     } else {
-      restoreSession(restore);
+      adopt.done?.(true);
     }
     rec.pendingRestore = false;
     refreshWindowMenu(); // its tabs are back: it may take part in a merge now
+    afterSettle();
+  }
+  function afterSettle() {
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
     uiReady = true;
@@ -5640,6 +5678,7 @@ ipcMain.on('content-bounds', (_e, bounds) => {
     height: Math.max(0, Math.round(bounds.height)),
     fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
+  if (curRec) { curRec.boundsReported = true; curRec.holdViews = false; } // (a first tab opened while the UI loaded shows now)
   layout();
 });
 
