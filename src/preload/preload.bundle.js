@@ -448,6 +448,7 @@ contextBridge.exposeInMainWorld('browser', {
   setContentBounds: (bounds) => ipcRenderer.send('content-bounds', bounds),
   freezeView: (size) => ipcRenderer.invoke('view:freeze', size),
   thawView: () => ipcRenderer.send('view:thaw'),
+  freezeAlive: () => ipcRenderer.send('view:freeze-alive'),
   setChatFull: (on) => ipcRenderer.send('chat:full', on),
   warmView: () => ipcRenderer.invoke('view:warm'),
   newTab: (url) => ipcRenderer.send('tab:new', url),

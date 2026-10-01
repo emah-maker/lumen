@@ -5330,8 +5330,18 @@ ipcMain.on('content-bounds', (_e, bounds) => {
 // A freeze that is never thawed (a lost message) ends by itself.
 const freezeSeq = new WeakMap(); // window rec -> number
 let freezeCounter = 0;
-const FREEZE_MAX_MS = 2500;
+// Last resort only: the renderer thaws explicitly at the end of a spring or drag and pings view:freeze-alive while moving.
+const FREEZE_MAX_MS = 6000;
+const freezeTimers = new WeakMap(); // window rec -> timeout
 const snapshotSizer = require('./features/snapshot-size');
+function armFreezeTimeout(rec, seq) {
+  clearTimeout(freezeTimers.get(rec));
+  freezeTimers.set(rec, setTimeout(() => {
+    if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return;
+    freezeSeq.set(rec, ++freezeCounter);
+    withWindow(rec, () => { viewFrozen = false; layout(); });
+  }, FREEZE_MAX_MS));
+}
 ipcMain.handle('view:freeze', async (_e, cssSize) => {
   const rec = curRec;
   const wc = activeTab()?.webContents;
@@ -5342,11 +5352,7 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
     const image = await wc.capturePage();
     if (image.isEmpty() || freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // thawed meanwhile
     withWindow(rec, () => { viewFrozen = true; layout(); });
-    setTimeout(() => {
-      if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return;
-      freezeSeq.set(rec, ++freezeCounter);
-      withWindow(rec, () => { viewFrozen = false; layout(); });
-    }, FREEZE_MAX_MS);
+    armFreezeTimeout(rec, seq);
     // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
     // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
     const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
@@ -5363,8 +5369,11 @@ ipcMain.handle('view:warm', async () => {
   try { await wc.capturePage(); } catch {} // full size: the first full readback is the slow one
   return true;
 });
+ipcMain.on('view:freeze-alive', () => { // still animating: push the last-resort thaw back
+  if (curRec && viewFrozen) armFreezeTimeout(curRec, freezeSeq.get(curRec));
+});
 ipcMain.on('view:thaw', () => {
-  if (curRec) freezeSeq.set(curRec, ++freezeCounter); // a capture still in flight won't freeze after this
+  if (curRec) { clearTimeout(freezeTimers.get(curRec)); freezeSeq.set(curRec, ++freezeCounter); } // a capture still in flight won't freeze after this
   viewFrozen = false;
   layout();
 });

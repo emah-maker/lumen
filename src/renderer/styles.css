@@ -39,6 +39,7 @@
   --spring-bouncy: linear(0, 0.0628, 0.2072, 0.3823, 0.5551, 0.7065, 0.8282, 0.9186, 0.9804, 1.0185, 1.0385, 1.0456, 1.0445, 1.0388, 1.0309, 1.0228, 1.0155, 1.0095, 1.0049, 1.0017, 0.9996, 0.9984, 0.998, 0.9979, 0.9981, 0.9985, 0.9988, 0.9992, 0.9995, 0.9997, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --chrome-h: 82px; /* tab strip + toolbar: where the page area starts */
   --t-press: 90ms;
   --t-fast: 140ms;
   --t-base: 240ms;
@@ -471,7 +472,7 @@ body.sidebar-moving:not(.chat-full) .sidebar { position: absolute; top: 0; botto
 .sidebar > .messages { flex-shrink: 1; min-height: 0; }
 /* Warm-up: painted once at idle in the real spot, under the live page (the native page view
    covers it), so the first real open has nothing left to build. */
-body.sidebar-hidden .sidebar.prewarm { visibility: visible; position: fixed; top: 82px; bottom: 0; right: 0; width: var(--sidebar-width); }
+body.sidebar-hidden .sidebar.prewarm { visibility: visible; position: fixed; top: var(--chrome-h); bottom: 0; right: 0; width: var(--sidebar-width); }
 /* Hidden, the sidebar stays laid out at zero width so opening it costs only a width change. */
 body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 0; }
 .sidebar-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; z-index: 3; cursor: col-resize; }
@@ -892,7 +893,9 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 
 /* Page snapshot during the sidebar animation: pinned to the page's top-left at its original size,
    so the sidebar slides over it; any uncovered strip takes the page's own edge colour. */
-.viewport:has(.page-snapshot) { background: var(--snapshot-edge, var(--surface)); }
+.viewport:has(.page-snapshot) { background: var(--snapshot-edge, var(--bg)); }
+.page-snapshot.fade-in { animation: snapshot-in var(--t-press) ease-out; }
+@keyframes snapshot-in { from { opacity: 0; } }
 .page-snapshot { position: absolute; left: 0; top: 0; max-width: none; pointer-events: none; user-select: none; }
 
 /* The AI button shows the selected model's company mark. */
