@@ -104,6 +104,9 @@ const DEFAULTS = {
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
+  cliAccess: false, // [ai] CLI agents (Claude Code, Grok Build, Antigravity) also get their own shell and file tools, not just Lumen's (ai/cli-access.js); off unless the user confirms
+  cliAccessAsk: true, // [ai] with cliAccess: commands and file changes ask for approval first (each CLI's own approval mode)
+  cliAccessFolder: '', // [ai] with cliAccess: the folder CLI agents work in ('' = the user's home folder)
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
@@ -176,6 +179,10 @@ function validate(key, value) {
     case 'permissionDefaults':
       if (!value || typeof value !== 'object') return null;
       return Object.fromEntries(Object.keys(PERMISSIONS).filter((p) => value[p]).map((p) => [p, pick(value[p], ['ask', 'block'], 'ask')]));
+    case 'cliAccessFolder': {
+      const dir = String(value || '').trim();
+      return dir === '' || (path.isAbsolute(dir) && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) ? dir : null;
+    }
     case 'downloadDir': {
       const dir = String(value || '');
       return dir === '' || (path.isAbsolute(dir) && fs.existsSync(dir)) ? dir : null;

@@ -2328,7 +2328,7 @@ ${out.text}${note}
   // with <host>?".
   askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false } = {}) {
     const approvalId = ++this.approvalSeq;
-    emit(action === 'tool' // [mcp client] a tool from an MCP server the user added
+    emit(action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; [cli access] a CLI agent's command or file change
       ? { type: 'approval', approvalId, host, action, title, args, tainted }
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
