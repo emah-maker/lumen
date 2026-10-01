@@ -1067,4 +1067,53 @@ let asked = 0;
     const again = w.g.layoutSignature();
     check('r13 signature: organizing again gives the same groups, names and members', again.key === grouped.key && again.groups === grouped.groups, JSON.stringify([grouped, again]));
   }
+    // Round 14: recall for the obvious clusters of three more windows, without a wrong group
+    {
+      const P14 = require('./fixtures/organize-r14');
+      const find = (rows, re) => { const i = rows.findIndex(([t]) => re.test(t)); if (i < 0) throw new Error(`no tab ${re}`); return i; };
+      const looseShare = (rows, o) => rows.filter((_r, i) => !o.name(i)).length / rows.length;
+      const together = (rows, o, head, list) => list.every((re) => o.same(find(rows, head), find(rows, re)));
+      const apart = (rows, o, head, list) => list.every((re) => !o.same(find(rows, head), find(rows, re)));
+
+      const parent = organized(P14.parent);
+      check('r14 baby: wake windows, the pediatrician, vaccines, Baby Tracker, parental leave and the birth announcement are with the newborn tabs and named Baby',
+        together(P14.parent, parent, /^Newborn sleep/, [/^Wake windows/, /^Pediatrician/, /^Vaccine schedule/, /^Baby Tracker/, /^Parental leave/, /new parents/, /^Shutterfly/, /^Target - Diapers/, /^Postpartum recovery/]) && parent.name(0) === 'Baby', parent.name(0));
+      check('r14 baby: groceries, delivery, a TV show, mail and Venmo are not baby tabs', apart(P14.parent, parent, /^Newborn sleep/, [/^Instacart/, /^DoorDash/, /^Hulu/, /^Gmail/, /^Venmo/, /^Life insurance/]));
+      check('r14 baby: at most 35% of the new parent\'s tabs stay loose', looseShare(P14.parent, parent) <= 0.35, String(looseShare(P14.parent, parent)));
+
+      const realtor = organized(P14.realtor);
+      check('r14 real estate: Redfin, staging, Follow Up Boss, DocuSign, commission and NAR tabs are with the agreements and named Real estate',
+        together(P14.realtor, realtor, /^MLS Search/, [/^Redfin/, /^Staging tips/, /^Follow Up Boss/, /^DocuSign/, /negotiate commission/, /NAR settlement/, /^Buyer representation/, /^Listing agreement/, /^Open house checklist/]) && realtor.name(0) === 'Real estate', realtor.name(0));
+      check('r14 real estate: BBQ, a car lease, Peloton, Netflix and the bank are not real-estate work', apart(P14.realtor, realtor, /^MLS Search/, [/^Best BBQ/, /^Franklin/, /^Honda/, /^Peloton/, /^Netflix/, /^Chase/, /^Dallas Cowboys/]));
+      check('r14 names: no group is named for a bare place or "Shopping" in the realtor\'s, the parent\'s or the crypto window',
+        [[P14.realtor, realtor], [P14.parent, parent], [P14.crypto, organized(P14.crypto)]].every(([rows, o]) => rows.every((_r, i) => !/^(texas|austin|shopping)$/i.test(o.name(i)))));
+      check('r14 real estate: at most 35% of the realtor\'s tabs stay loose', looseShare(P14.realtor, realtor) <= 0.35, String(looseShare(P14.realtor, realtor)));
+
+      const cw = organized(P14.crypto);
+      check('r14 crypto: Coinbase, Uniswap, Ledger, Etherscan, DeFiLlama, Koinly, Solana, ETF flows and the DAO are one group named Crypto',
+        together(P14.crypto, cw, /^Bitcoin price/, [/^Coinbase/, /^Uniswap/, /^Ledger Live/, /^Etherscan/, /^DeFiLlama/, /^Koinly/, /^Is Solana/, /^Bitcoin ETF/, /Bankless DAO/, /^TradingView/]) && cw.name(0) === 'Crypto', cw.name(0));
+      check('r14 crypto: a Roth IRA, a brokerage and the Fed are Finance (or loose), never Crypto', apart(P14.crypto, cw, /^Bitcoin price/, [/^Roth IRA/, /^Fidelity/, /^Vanguard/, /^Fed rate/]));
+      check('r14 woodworking: dovetails, Lie-Nielsen, walnut, a jig, Ana White and the lumber index are one group named Woodworking',
+        together(P14.crypto, cw, /^Dovetail joint/, [/^Hand cut dovetails/, /^Lie-Nielsen/, /^Black walnut/, /^Home Depot - Pocket/, /^Kitchen table build/, /^Lumber price index/, /^Roubo/, /^Titebond/]) && cw.name(find(P14.crypto, /^Dovetail joint/)) === 'Woodworking', cw.name(find(P14.crypto, /^Dovetail joint/)));
+      check('r14 crypto + woodworking: the two are never one group', apart(P14.crypto, cw, /^Bitcoin price/, [/^Dovetail joint/, /^Rockler/]));
+      check('r14 crypto: at most 35% of the window stays loose', looseShare(P14.crypto, cw) <= 0.35, String(looseShare(P14.crypto, cw)));
+
+      // A topical noun three tabs of two sites or more say forms a group; two tabs, or a word of no topic, never do.
+      const filler = [['Quarterly roadmap meeting notes', 'https://docs.google.com/document/d/1'], ['Flights to Lisbon in March', 'https://www.kayak.com/flights/lis'], ['Rust ownership explained', 'https://doc.rust-lang.org/book/ch04'], ['Pasta carbonara recipe', 'https://www.seriouseats.com/carbonara'], ['Mortgage rates today', 'https://www.bankrate.com/mortgages/rates']];
+      const kombucha = [['Kombucha second fermentation bottles flavor ideas', 'https://alpha.example/ferment'], ['Where to buy SCOBY kombucha starter online shipping', 'https://www.etsy.com/search?q=scoby'], ['Is kombucha safe during pregnancy doctors answer', 'https://www.healthline.com/nutrition/kombucha']];
+      const three = organized([...kombucha, ...filler]);
+      check('r14 token: a noun three tabs of three sites say (kombucha) is a group named for it', three.same(0, 1) && three.same(0, 2) && /kombucha/i.test(three.name(0)), three.name(0));
+      const pair = organized([...kombucha.slice(0, 2), ...filler]);
+      check('r14 token: the same noun in only two tabs is no group (one word never links a pair)', !pair.same(0, 1), pair.name(0));
+      const words = [['Complete guide to retirement planning', 'https://www.fidelity.com/a'], ['Travel guide to Lisbon neighborhoods', 'https://www.lonelyplanet.com/b'], ['Style guide for Python code', 'https://peps.python.org/c'], ['Beginner guide to sourdough starters', 'https://www.kingarthur.com/d'],
+        ['Best way to learn Spanish 2026', 'https://www.duolingo.com/e'], ['Best practices for API design 2026', 'https://dev.example/f'], ['Best sci-fi books 2026', 'https://www.goodreads.com/g'],
+        ['Product review tips tricks', 'https://hotel.example/h'], ['Packing list for hiking', 'https://www.rei.com/i'], ['Reading list for summer', 'https://www.goodreads.com/j'], ['Weekend plan for Austin', 'https://www.austinmonthly.com/k'],
+        ['Restaurants near me open now', 'https://www.yelp.com/l'], ['Gyms near campus', 'https://maps.example/m'], ['Tips for first apartment', 'https://www.apartmentlist.com/n'], ['Affordable laptops for students', 'https://www.pcmag.com/o'], ['Affordable flights to Denver', 'https://www.expedia.com/p'], ['Affordable car insurance', 'https://www.geico.com/q']];
+      const generic = organized(words);
+      const guides = [0, 1, 2, 3], bests = [4, 5, 6], misc = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+      check('r14 token: "guide", "best", "2026", "review", "list", "plan", "tips", "near" and an adjective ("affordable") never form a group across topics',
+        guides.every((i) => guides.every((j) => i === j || !generic.same(i, j))) && bests.every((i) => bests.every((j) => i === j || !generic.same(i, j))) && misc.every((i) => misc.every((j) => i === j || !generic.same(i, j))), words.map((_w, i) => generic.name(i)).join('|'));
+      const places = organized([['Austin city council agenda', 'https://www.austintexas.gov/council'], ['Austin dental clinic hours', 'https://www.example-dental.com/hours'], ['Austin bike lanes map', 'https://maps.example/bike'], ['Pasta carbonara recipe', 'https://www.seriouseats.com/carbonara']]);
+      check('r14 names: three tabs that only share a city are not a group named for it', [0, 1, 2].every((i) => places.name(i) !== 'Austin'), [0, 1, 2].map(places.name).join());
+    }
 })().then(() => process.exit(failed ? 1 : 0));

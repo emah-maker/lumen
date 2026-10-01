@@ -563,7 +563,8 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
       const lower = raw.toLowerCase();
       const key = stemWord(lower);
       const acronym = !shouting && /^\p{Lu}+$/u.test(raw);
-      const name = /^\p{Lu}\p{Ll}+$/u.test(raw) && words.capital.has(key) && !COMMON_CAPS.has(lower);
+      // (a capital that only opens the title says nothing, and an adjective or a verb opening it least: "Affordable laptops", "Cooking for two")
+      const name = /^\p{Lu}\p{Ll}+$/u.test(raw) && words.capital.has(key) && !COMMON_CAPS.has(lower) && (words.proper.has(key) || !NOT_A_NOUN.test(lower));
       // A brand written with a capital inside (GitHub, iPhone, PyTorch, OpenAI) is a rare proper noun too.
       const camel = /^\p{Lu}\p{Ll}+(\p{Lu}\p{Ll}*)+$|^\p{Ll}+\p{Lu}\p{L}*$/u.test(raw) && !shouting;
       if (!acronym && !name && !camel) continue;
