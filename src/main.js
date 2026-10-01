@@ -2198,18 +2198,23 @@ const refineCache = organizeAi.createRefineCache(); // answers for tabs organize
 
 // One refinement request (features/organize-ai.js): group summaries and leftover tabs in, names / placements /
 // merges out. Small max_tokens, temperature 0 and a strict schema, on the cheapest model of the chat's provider.
-async function refineGroups(model, wire, signal) {
+async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_CLI_MS) {
   const route = await groupingRoute(String(model));
   const user = JSON.stringify(wire);
   if (route.engine) {
     const { engine, model: engineModelId } = route;
     const bin = await agent.engines[engine].detect();
     if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
-    const ask = (m) => cliJson.completeJSON({ engine, bin, model: m, system: organizeAi.REFINE_PROMPT, user, schema: organizeAi.REFINE_SCHEMA, userData: app.getPath('userData') });
+    // The whole answer has `timeoutMs` (organize-ai's wait, minus a little): a fast model first (Claude Code: Haiku)
+    // gets most of it, and the chat's own model is tried only with what is left, never after a timeout.
+    const deadline = Date.now() + Math.max(5000, timeoutMs - 2000);
+    const ask = (m, ms) => cliJson.completeJSON({ engine, bin, model: m, system: organizeAi.REFINE_PROMPT, user, schema: organizeAi.REFINE_SCHEMA, userData: app.getPath('userData'), timeoutMs: ms });
     const fast = engine === 'claudecode' ? 'haiku' : engineModelId;
-    try { return await ask(fast); } catch (err) {
-      if (fast === engineModelId || /not signed in|usage limit/i.test(err.message)) throw err;
-      return ask(engineModelId);
+    if (fast === engineModelId) return ask(fast, deadline - Date.now());
+    try { return await ask(fast, Math.round((deadline - Date.now()) * 0.6)); } catch (err) {
+      const left = deadline - Date.now();
+      if (err.timedOut || signal?.aborted || left < 8000 || /not signed in|usage limit/i.test(err.message)) throw err;
+      return ask(engineModelId, left);
     }
   }
   const { provider, model: id } = providers.splitModel(model);
@@ -2250,6 +2255,8 @@ async function organizeTabs() {
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
     if (tabGroups.candidates().length < 2) throw tooFewMessage();
+    // How long the model gets depends on the route: a CLI engine needs seconds just to start (organize-ai TIMEOUT_CLI_MS).
+    const timeoutMs = organizeAi.timeoutFor(await groupingRoute(String(cheapTopicModel())).catch(() => null));
     const stats = await organizeAi.organizeProgressive({
       tabGroups: inWin(tabGroups), // the model's answer arrives later: it must land in THIS window's tabs, not whichever is current by then
       cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
@@ -2257,21 +2264,25 @@ async function organizeTabs() {
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
-      ask: (wire, { signal } = {}) => refineGroups(cheapTopicModel(), wire, signal),
+      timeoutMs,
+      ask: (wire, { signal, timeoutMs: ms } = {}) => refineGroups(cheapTopicModel(), wire, signal, ms),
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
       onPhase: (name, info) => {
         if (name === 'local') { if (info?.count) back(() => { sendTabs(); ui()?.send('tabs:organizing', 'refine'); }); } // the groups are there; the model may still refine them
+        else if (name === 'asking') back(() => ui()?.send('tabs:organizing', 'refine')); // also when nothing grouped locally: the AI is making the groups, a click cancels
         else if (name === 'refined') back(sendTabs);
       },
     });
     back(sendTabs);
     made = stats.groups;
+    const failed = /^kept local/.test(stats.reason) ? stats.failed : '';
     if (!stats.groups && !stats.created) {
-      back(() => organizeNote(`${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer. Nothing was changed (organizeByTopic rolls back), so no Undo
+      // Nothing was changed (organizeByTopic rolls back), so no Undo. If the AI was asked and failed, say why, not "no groups".
+      back(() => organizeNote(failed ? aiFailureNote(failed) : `${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer
     } else if (stats.reason !== 'cancelled') {
-      const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : /timeout/.test(stats.failed) ? t('organize.slow') : t('organize.localOnly');
+      const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : failed ? aiFailureNote(failed, false) : t('organize.localOnly');
       const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
       back(() => organizeNote(`${how}.${what}`, { undo: true }));
     }
@@ -2283,6 +2294,13 @@ async function organizeTabs() {
     back(() => ui()?.send('tabs:organizing', false));
   }
   return made;
+}
+// The note when the AI step failed: "took too long" only for a real timeout, else the real cause (not signed in, no key...).
+function aiFailureNote(failed, standalone = true) {
+  if (failed === 'timeout') return standalone ? t('organize.slowNone') : t('organize.slow');
+  const cause = String(failed).replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (standalone) return `${t('organize.failed')}: ${cause.replace(/[.]$/, '') || t('organize.localOnly')}.`; // nothing was grouped: not "organized on this computer"
+  return `${t('organize.localOnly')}${cause ? `: ${cause.replace(/[.]$/, '')}` : ''}`;
 }
 // Why Organize has nothing to work on: no pages at all, or only pinned tabs / tabs in groups the user made.
 function tooFewMessage() {

@@ -1681,8 +1681,19 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // loose tabs into groups, form new groups from loose tabs, merge groups. It changes nothing the user
   // changed meanwhile, and adds no step of undo: it belongs to the organize step `seq` names, and does
   // nothing at all once that step was undone or another one was made.
-  function applyRefinement({ renames = [], places = [], groups: created = [], merges = [] } = {}, { seq = null } = {}) {
+  // fresh: there was no local organize step to belong to (nothing grouped locally): it starts one step of
+  // undo of its own, and drops it again when nothing was grouped.
+  function applyRefinement({ renames = [], places = [], groups: created = [], merges = [] } = {}, { seq = null, fresh = false } = {}) {
     const out = { renamed: 0, placed: 0, created: 0, merged: 0 };
+    if (fresh) {
+      const prev = { undoState, autoUndo, undoSeq };
+      const before = new Set(groups.keys());
+      saveUndo();
+      const res = applyRefinement({ renames, places, groups: created, merges }, { seq: undoState.seq });
+      if (!res.created && !res.renamed && !res.placed && !res.merged) { ({ undoState, autoUndo, undoSeq } = prev); return res; }
+      spreadColors(new Set([...groups.keys()].filter((id) => !before.has(id))));
+      return res;
+    }
     if (seq != null && undoState?.seq !== seq) return out;
     const mine = (g) => g && g.auto && !g.userNamed;
     for (const { into, from } of merges) {

@@ -495,6 +495,7 @@
   "organize.refined": "Organized, names refined with AI",
   "organize.localOnly": "Organized on this computer (the AI didn’t answer)",
   "organize.slow": "The AI took too long, so the quick grouping was kept",
+  "organize.slowNone": "The AI took too long to group these tabs. Try again.",
   "organize.summary": "{groups} groups.",
   "organize.summaryLoose": "{groups} groups, {loose} tabs left loose.",
   "organize.idleDone": "Grouped your loose tabs while you were away",

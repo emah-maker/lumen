@@ -2143,7 +2143,7 @@ async function organizeAiRuns() {
     const f = oai.fragments([sour, loaf, desk]);
     check('organize-ai: two groups sharing a topic word are flagged as likely fragments, unrelated ones are not', f.length === 1 && f[0].join() === '1,2', JSON.stringify(f));
     check('organize-ai: likely fragments are worth asking the model about (to merge)', oai.assess({ groups: [sour, loaf], leftovers: [] }).needsAi && !oai.assess({ groups: [sour, desk], leftovers: [] }).needsAi);
-    check('organize-ai: the model gets 8 seconds before the quick grouping is kept', oai.TIMEOUT_MS === 8000);
+    check('organize-ai: the default wait is the API budget (20 s), longer than the old 8 s', oai.TIMEOUT_MS === 20000 && oai.TIMEOUT_CLI_MS > oai.TIMEOUT_API_MS);
   }
   check('organize-ai: a login wall or loading screen is never asked about', !oai.askable({ title: 'Sign in to your account', url: 'https://login.example.com/' }) && !oai.askable({ title: 'Just a moment...', url: 'https://x.example/' }) && !oai.askable({ title: 'Loading…', url: 'https://x.example/' }));
   check('organize-ai: a vague or loose group name is not clear', !oai.clearName({ name: 'Group' }) && !oai.clearName({ name: 'Core Concepts' }) && !oai.clearName({ name: 'Tokyo', cohesion: 0.1 }) && oai.clearName({ name: 'Tokyo Trip', cohesion: 0.6 }));
@@ -2210,6 +2210,46 @@ async function organizeAiRuns() {
     const { stats } = await run(h, () => new Promise(() => {}), { timeoutMs: 60 });
     check('organize-ai run: a model that never answers times out and keeps the local result', Date.now() - t0 < 2000 && stats.failed === 'timeout' && h.tg.state().length === 2, JSON.stringify(stats));
   }
+  // timeouts by route, and what a failure is called
+  {
+    check('organize-ai timeout: a CLI engine gets 45 s, an API provider 20 s', oai.timeoutFor({ engine: 'claudecode' }) === 45000 && oai.timeoutFor({ engine: 'grokbuild' }) === 45000 && oai.timeoutFor({ api: 'claude-haiku-4-5' }) === 20000 && oai.timeoutFor(null) === 20000);
+    // A virtual clock: a model that answers after 12 s is awaited without a real 12 s wait.
+    const realSet = global.setTimeout; const realClear = global.clearTimeout;
+    const timers = []; let vnow = 0; let seqT = 0;
+    const virtual = async (fn) => {
+      global.setTimeout = (cb, ms) => { const t = { cb, at: vnow + ms, id: ++seqT }; timers.push(t); return t; };
+      global.clearTimeout = (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); };
+      let done = false; let out; let err;
+      const p = fn().then((v) => { out = v; }, (e) => { err = e; }).finally(() => { done = true; });
+      try {
+        while (!done) {
+          await new Promise((r) => realSet(r, 0));
+          if (done) break;
+          timers.sort((a, b) => a.at - b.at);
+          const next = timers.shift();
+          if (!next) continue;
+          vnow = next.at; next.cb();
+        }
+      } finally { global.setTimeout = realSet; global.clearTimeout = realClear; }
+      await p;
+      if (err) throw err;
+      return { out, vnow };
+    };
+    const slowAnswer = (w) => new Promise((res) => setTimeout(() => res({ n: [{ i: w.g[0].i, s: 'Bread Baking' }], p: [], g: [], m: [], h: [] }), 12000));
+    const h1 = make(LEFT);
+    const ok = await virtual(() => run(h1, slowAnswer, { timeoutMs: oai.TIMEOUT_CLI_MS }));
+    check('organize-ai timeout: a model that answers after 12 s succeeds under the CLI budget', ok.out.stats.reason === 'refined' && ok.out.stats.failed === '' && h1.tg.state().some((g) => g.name === 'Bread Baking'), JSON.stringify(ok.out.stats));
+    const h2 = make(LEFT);
+    const late = await virtual(() => run(h2, slowAnswer, { timeoutMs: 8000 }));
+    check('organize-ai timeout: the same answer is a timeout under the old 8 s, and keeps the local groups', late.out.stats.failed === 'timeout' && /kept local/.test(late.out.stats.reason) && h2.tg.state().length === 2, JSON.stringify(late.out.stats));
+    const h3 = make(LEFT);
+    const never = await virtual(() => run(h3, () => new Promise(() => {}), { timeoutMs: oai.TIMEOUT_CLI_MS }));
+    check('organize-ai timeout: a model that never answers times out at the budget, not earlier', never.out.stats.failed === 'timeout' && never.vnow >= 45000, JSON.stringify([never.out.stats, never.vnow]));
+    const h4 = make(LEFT);
+    const { stats: notSigned } = await run(h4, () => { throw new Error('Claude Code is not signed in. Run claude login.'); });
+    check('organize-ai failure: an error that is not a timeout keeps its real cause, never "timeout"', notSigned.failed === 'Claude Code is not signed in. Run claude login.' && /kept local/.test(notSigned.reason), JSON.stringify(notSigned));
+    check('organize-ai failure: a CLI that ran out of its own time counts as a timeout; a cancel as cancelled; a numeric exit code gives text', oai.failureOf(Object.assign(new Error('No answer within 60 s.'), { timedOut: true })) === 'timeout' && oai.failureOf({ code: 'cancelled', message: 'Canceled.' }) === 'cancelled' && oai.failureOf({ code: 1 }) === '1' && oai.failureOf(new Error('boom')) === 'boom');
+  }
   {
     const h = make(LEFT);
     const ac = new AbortController();
@@ -2217,6 +2257,38 @@ async function organizeAiRuns() {
     setTimeout(() => ac.abort(), 30);
     const { stats } = await p;
     check('organize-ai run: cancelling keeps the local result and stops waiting', stats.reason === 'cancelled' && h.tg.state().length === 2, JSON.stringify(stats));
+  }
+  // nothing groups locally: with AI on, the model makes the groups
+  {
+    const JUNK = [['Zxqv wibble plomf', 'https://a1.example/p'], ['Krandle voop snazzle', 'https://b2.example/q'], ['Fleem druxo tarbin', 'https://c3.example/r'], ['Glorp yenta quibb', 'https://d4.example/s'], ['Nurble vask polter', 'https://e5.example/t']];
+    const h = make(JUNK, { base: [] });
+    const before = h.tg.canUndo();
+    const phases = [];
+    const { stats } = await run(h, (w) => { const all = Object.values(w.u).flat().map((x) => x[0]); return { n: [], p: [], g: [{ s: 'Odd Words', t: all.slice(0, 3) }], m: [], h: [] }; }, { onPhase: (n) => phases.push(n) });
+    check('organize-ai none-local: no local group, so the model is asked to make groups from the leftovers', stats.groups === 0 && stats.aiUsed && stats.created === 1 && stats.reason === 'refined' && asks.at(-1).g.length === 0 && Object.values(asks.at(-1).u).flat().length === 5, JSON.stringify([stats, asks.at(-1)]));
+    check('organize-ai none-local: the group exists, with exactly the three tabs the model chose', h.tg.state().length === 1 && h.tg.state()[0].name === 'Odd Words' && h.tabs().filter((t) => t.groupId).length === 3 && phases.includes('asking') && phases.includes('refined'), JSON.stringify([h.tg.state(), phases]));
+    check('organize-ai none-local: Undo reverts it in one step, with no earlier organize step', before === false && h.tg.canUndo() && h.tg.undoOrganize() === true && h.tg.state().length === 0 && h.tabs().every((t) => t.groupId == null) && !h.tg.canUndo());
+  }
+  {
+    const JUNK = [['Zxqv wibble plomf', 'https://a1.example/p'], ['Krandle voop snazzle', 'https://b2.example/q'], ['Fleem druxo tarbin', 'https://c3.example/r']];
+    const h = make(JUNK, { base: [] });
+    const { stats } = await run(h, () => ({ n: [], p: [], g: [], m: [], h: [] }));
+    check('organize-ai none-local: an answer with no groups changes nothing and leaves no undo step', stats.created === 0 && stats.reason === 'none' && !h.tg.canUndo() && h.tg.state().length === 0, JSON.stringify(stats));
+    const h2 = make(JUNK, { base: [] });
+    const { stats: bad } = await run(h2, () => { throw new Error('no key'); });
+    check('organize-ai none-local: a failing model keeps its cause and changes nothing', bad.failed === 'no key' && /kept local/.test(bad.reason) && !h2.tg.canUndo(), JSON.stringify(bad));
+    const h3 = make(JUNK.slice(0, 2), { base: [] });
+    const n0 = asks.length;
+    const { stats: few } = await run(h3, () => { throw new Error('must not be called'); });
+    check('organize-ai none-local: fewer than 3 tabs are not worth a request', asks.length === n0 && few.reason === 'none', JSON.stringify(few));
+    const h4 = make([...JUNK, ['Nurble vask polter', 'https://e5.example/t'], ['Quark zibble ontrip', 'https://f6.example/u']], { base: [] });
+    const skipped = h4.tabs()[0].id;
+    const sent = [];
+    await run(h4, (w) => { sent.push(JSON.stringify(w)); return { n: [], p: [], g: [], m: [], h: [] }; }, { skipId: (id) => id === skipped });
+    check('organize-ai none-local: a tab on a site with AI off is not described to the model', sent.length === 1 && !/a1\.example/.test(sent[0]) && /b2\.example/.test(sent[0]), sent.join());
+    const h5 = make(Array.from({ length: 12 }, (_v, i) => [`Qwf${i}x zrp${i}y blk${i}z`, `https://o${i}.example/${i}`]), { base: [] });
+    const { stats: capped } = await run(h5, () => ({ n: [], p: [], g: [], m: [], h: [] }), { maxTabs: 5 });
+    check('organize-ai none-local: maxTabs limits what is sent', Object.values(asks.at(-1).u).flat().length === 5 && capped.requests === 1, JSON.stringify(asks.at(-1)));
   }
   {
     const h = make(LEFT);
