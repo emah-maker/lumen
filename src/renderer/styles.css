@@ -916,7 +916,9 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
   flex: none; max-width: min(380px, 40vw); display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
   border-radius: 8px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap;
 }
-.organize-note .organize-note-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.organize-note .organize-note-text { min-width: 0; display: inline-flex; white-space: pre; overflow: hidden; }
+.organize-note-lead, .organize-note-more, .organize-note-loose { flex: none; }
+.organize-note-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* only the names clip: the +N, the loose count and Undo stay whole */
 .organize-note button { flex: none; }
 .organize-note button { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
 .organize-note button:hover { background: var(--hover); }

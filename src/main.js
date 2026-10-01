@@ -2286,7 +2286,7 @@ async function organizeTabs() {
   organizeAbort = new AbortController();
   const rec = curRec;
   const back = (fn) => withWindow(rec, fn);
-  const inWin = (groups) => Object.fromEntries(['organizeByTopic', 'organizeSeq', 'organizeView', 'applyRefinement'].map((k) => [k, (...a) => back(() => groups[k](...a))]));
+  const inWin = (groups) => Object.fromEntries(['organizeByTopic', 'organizeSeq', 'organizeView', 'applyRefinement', 'layoutSignature'].map((k) => [k, (...a) => back(() => groups[k](...a))]));
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
     await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
@@ -2322,6 +2322,9 @@ async function organizeTabs() {
     if (!stats.groups && !stats.created) {
       // Nothing was changed (organizeByTopic rolls back), so no Undo. If the AI was asked and failed, say why, not "no groups".
       back(() => organizeNote(failed ? aiFailureNote(failed) : stats.reason === 'cancelled' ? `${t('organize.cancelledNone')}.` : `${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer
+    } else if (stats.unchanged && stats.reason !== 'cancelled' && !failed) {
+      // The groups were already as Organize makes them: nothing changed, so there is nothing to undo.
+      back(() => organizeNote(`${t('organize.already')}.`));
     } else if (stats.reason === 'cancelled') {
       // The groups made before the cancel are real and stay: say so, with the Undo that removes them.
       back(() => organizeNote(`${t('organize.cancelled')}.`, { undo: true }));

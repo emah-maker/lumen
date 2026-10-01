@@ -393,7 +393,8 @@ async function pool(items, limit, fn) {
 // ask, a request with only those hosts is made. A failed or late answer teaches nothing.
 async function organizeProgressive({ tabGroups, ask, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false, hints = null } = {}) {
   const t0 = now();
-  const stats = { groups: 0, aiUsed: false, reason: '', cached: false, requests: 0, chunks: 0, failed: '', wire: [], renamed: 0, placed: 0, created: 0, merged: 0, hinted: 0, localMs: 0, totalMs: 0 };
+  const stats = { unchanged: false, groups: 0, aiUsed: false, reason: '', cached: false, requests: 0, chunks: 0, failed: '', wire: [], renamed: 0, placed: 0, created: 0, merged: 0, hinted: 0, localMs: 0, totalMs: 0 };
+  const sigBefore = tabGroups.layoutSignature?.() || null; // what the strip shows now: when it is the same afterwards, Organize changed nothing
   const count = tabGroups.organizeByTopic(null);
   const seq = tabGroups.organizeSeq();
   stats.groups = count;
@@ -408,6 +409,8 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
     stats.reason = reason;
     stats.totalMs = now() - t0;
     try { const after = tabGroups.organizeView({ explicit: true }); stats.finalGroups = after.groups.length; stats.loose = after.leftovers.length; } catch { /* a stub without organizeView */ }
+    // Groups were there and the same tabs are in the same groups under the same names: "Already organized" (no Undo that would undo nothing).
+    try { const sigAfter = tabGroups.layoutSignature?.(); stats.unchanged = Boolean(sigBefore && sigAfter && sigBefore.groups > 0 && sigBefore.key === sigAfter.key); } catch { stats.unchanged = false; }
     onPhase('done', stats);
     return stats;
   };

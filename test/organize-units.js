@@ -1032,4 +1032,39 @@ let asked = 0;
     const res3 = w3.g.applyRefinement({ renames: v3.groups.length > 1 ? [{ id: v3.groups[1].id, name: v3.groups[0].name }] : [], places: [], groups: [], merges: [] }, { explicit: true });
     check('r10 AI: a rename onto another automatic group\'s name merges the two', v3.groups.length < 2 || (res3.merged === 1 && !w3.g.state().some((g) => /\(\d+\)$/.test(g.name))), JSON.stringify(res3));
   }
+  // Round 13: lease / moving / relocation are not housing alone; baby, woodworking, crypto and real-estate work have groups; "Already organized"
+  {
+    const flat = [['Apartment hunting checklist', 'https://alpha.example/a'], ['Renting your first apartment: tenant rights', 'https://bravo.example/b'], ['Apartment lease terms explained', 'https://charlie.example/c']];
+    const car = organized([...flat, ['Honda CR-V lease review', 'https://www.edmunds.com/honda/cr-v/lease']]);
+    check('r13 housing: a car lease is not in the Housing group', car.same(0, 1) && car.same(0, 2) && !car.same(0, 3) && car.name(3) !== car.name(0), [0, 1, 2, 3].map(car.name).join());
+    const lone = organized([['Honda CR-V lease review', 'https://alpha.example/a'], ['Job relocation package checklist', 'https://bravo.example/b'], ['Moving to Austin tips', 'https://charlie.example/c']]);
+    check('r13 housing: lease, relocation and moving alone are no housing group', [0, 1, 2].every((i) => lone.name(i) !== 'Housing'), [0, 1, 2].map(lone.name).join());
+    const withRent = organized([['Apartment lease terms explained', 'https://alpha.example/a'], ['Tenant rights when you rent', 'https://bravo.example/b'], ['Apartment rental application', 'https://charlie.example/c']]);
+    check('r13 housing: lease beside apartment, rent or tenant is still housing', withRent.same(0, 1) && withRent.same(0, 2) && withRent.name(0) === 'Housing', [0, 1, 2].map(withRent.name).join());
+
+    const baby = organized([['Newborn sleep: wake windows by age', 'https://alpha.example/a'], ['Postpartum recovery checklist', 'https://bravo.example/b'], ['Babylist registry', 'https://www.babylist.com/registry'], ['Best baby monitor 2026', 'https://charlie.example/c']]);
+    check('r13 baby: newborn, postpartum, Babylist and baby gear tabs are one group named Baby', [1, 2, 3].every((i) => baby.same(0, i)) && baby.name(0) === 'Baby', [0, 1, 2, 3].map(baby.name).join());
+    const wood = organized([['Cutting dovetails by hand', 'https://alpha.example/a'], ['Rockler router table review', 'https://www.rockler.com/router-table'], ['Walnut lumber prices', 'https://bravo.example/b'], ['Workbench build plans', 'https://charlie.example/c']]);
+    check('r13 woodworking: tool shopping goes to Woodworking, not Shopping', [1, 2, 3].every((i) => wood.same(0, i)) && wood.name(0) === 'Woodworking', [0, 1, 2, 3].map(wood.name).join());
+    const coins = [['Uniswap swap fees', 'https://app.uniswap.org/swap'], ['Etherscan gas tracker', 'https://etherscan.io/gastracker'], ['MetaMask wallet setup', 'https://metamask.io/download'], ['Koinly crypto tax report', 'https://koinly.io/'], ['Ethereum DeFi yields', 'https://defillama.com/yields']];
+    const money = [['Roth IRA limits', 'https://www.fidelity.com/roth'], ['Vanguard index funds', 'https://investor.vanguard.com/funds'], ['401k rollover guide', 'https://www.nerdwallet.com/401k']];
+    const mixed = organized([...coins, ...money]);
+    check('r13 crypto: three or more crypto tabs are their own group beside Finance', [1, 2, 3, 4].every((i) => mixed.same(0, i)) && mixed.name(0) === 'Crypto' && [6, 7].every((i) => mixed.same(5, i)) && mixed.name(5) === 'Finance' && !mixed.same(0, 5), [0, 1, 2, 3, 4, 5, 6, 7].map(mixed.name).join());
+    const two = organized([coins[0], coins[1], ...money]);
+    check('r13 crypto: two crypto tabs stay with Finance', [1, 2, 3, 4].every((i) => two.same(0, i)) && two.name(0) === 'Finance', [0, 1, 2, 3, 4].map(two.name).join());
+    const deal = organized([['Buyer representation agreement template', 'https://alpha.example/a'], ['Listing agreement: what to include', 'https://bravo.example/b'], ['DocuSign: sign the disclosure', 'https://app.docusign.com/envelopes'], ['Open house checklist for agents', 'https://charlie.example/c']]);
+    check('r13 real estate: agreements, DocuSign and open houses are one group', [1, 2, 3].every((i) => deal.same(0, i)) && deal.name(0) === 'Real estate', [0, 1, 2, 3].map(deal.name).join());
+    const staging = organized([['Deploy to staging server', 'https://alpha.example/a'], ['Staging environment variables', 'https://bravo.example/b'], ['Zxqv wibble plomf', 'https://charlie.example/c']]);
+    check('r13 real estate: a software "staging" tab is not real-estate work', [0, 1, 2].every((i) => staging.name(i) !== 'Real estate'), [0, 1, 2].map(staging.name).join());
+
+    // Already organized: a second Organize over the same groups changes nothing, and the signature says so
+    const w = window_([...RECIPES, ...TRIP].map(([a, b]) => [a, b, { userRemoved: true }]));
+    const first = w.g.layoutSignature();
+    w.g.organizeByTopic();
+    const grouped = w.g.layoutSignature();
+    check('r13 signature: grouping changes the layout', first.groups === 0 && grouped.groups >= 1 && first.key !== grouped.key, JSON.stringify([first, grouped]));
+    w.g.organizeByTopic();
+    const again = w.g.layoutSignature();
+    check('r13 signature: organizing again gives the same groups, names and members', again.key === grouped.key && again.groups === grouped.groups, JSON.stringify([grouped, again]));
+  }
 })().then(() => process.exit(failed ? 1 : 0));

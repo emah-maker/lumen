@@ -60,7 +60,13 @@ const CONCEPTS = {
   baking: 'sourdough bread loaf dough starter flour yeast crumb bake baking knead proofing levain baguette pastry dutch oven hydration scoring banneton cake cookie cookies',
   cooking: 'борщ пирог пирожки блины котлеты суп салат плов recipe receita receitas receta recetas rezept rezepte recette recettes ricetta ricette ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast chicken burrito pasta soup stew casserole skillet 카페 맛집 레시 시피 요리',
   jobs: 'job career resume interview salary hiring recruiter internship applicant offer negotiate negotiation leetcode cscareerquestions grad',
-  housing: 'apartment apartments rent rental lease landlord realtor tenant renter renters moving movers relocation relocating uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento rightmove zoopla tenancy lettings flat flats accommodation homebuyer homebuyers homebuying preapproval 賃貸 不動 월세 전세 부동',
+  // A baby's first year, woodworking, crypto and a real-estate agent's paperwork (the phrases that say them beside these words are PHRASE_CONCEPTS).
+  baby: 'newborn newborns baby babies infant infants swaddle swaddles breastfeeding breastfeed diaper diapers postpartum pediatrician pediatricians babylist huckleberry crib cribs stroller strollers',
+  woodworking: 'woodworking woodworker woodworkers woodshop dovetail dovetails chisel chisels workbench walnut lumber jig jigs joinery rockler woodcraft sawdust',
+  crypto: 'crypto cryptocurrency bitcoin ethereum uniswap ledger etherscan defillama koinly coinbase kraken metamask wallet wallets defi',
+  realestate: 'docusign dotloop',
+  // ("lease", "moving" and "relocation" are not here: a car lease and a job relocation are not housing. A tab with one of them and no other housing word is not housing; with "apartment", "rent" or "tenant" it is, by those words.)
+  housing: 'apartment apartments rent rental landlord realtor tenant renter renters movers uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento rightmove zoopla tenancy lettings flat flats accommodation homebuyer homebuyers homebuying preapproval 賃貸 不動 월세 전세 부동',
   sports: 'messi soccer football basketball baseball hudl ncaa teamworks cleats hamstring uswnt midfielder midfielders nba nfl mlb nhl playoff finals championship coach quarterback fussball fußball bundesliga spielplan laliga futebol cricket ipl bcci cricbuzz espncricinfo kohli dhoni rcb csk wicket innings premier league fixtures standings arsenal chelsea tottenham epl kbo 손흥 흥민 축구 야구 리그',
   health: 'symptom diagnosis medication doctor clinic therapy nutrition workout prescription prescriptions pharmacy cardiology cardiologist patient mychart physician hospital dentist pediatrician',
   finance: 'stock invest investing investor bond dividend portfolio inflation savings loan mortgage mortgages yield yields roth ira 401k 403b rollover retirement retire brokerage dividends index etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase zerodha groww hdfc icici phonepe paytm nifty sensex upstox nubank itaú itau bradesco bovespa ibovespa sparkasse volksbank commerzbank revolut monzo n26 degiro trading212 etoro barclays hsbc santander bbva',
@@ -98,6 +104,9 @@ const CONCEPT_ALSO = { mortgage: 'housing', mortgages: 'housing' };
 // Phrases that say a concept where their words alone would not ("closing costs", "Western blot"), and the ones that must not be read as the words they
 // are made of. [pattern, concept]; the concept is added to the tab as if one of its words were in the title.
 const PHRASE_CONCEPTS = [
+  [/\b(wake windows?|feeding schedules?|what to expect( when)?|baby (formula|monitors?)|infant formula|formula feeding)\b/i, 'baby'],
+  [/\b(hand planes?|router tables?|wood glue|fine woodworking|table saw|band saw)\b/i, 'woodworking'],
+  [/\b(buyer'?s? (representation|agency) agreements?|listing agreements?|open houses?|mls (listings?|numbers?|search|data|id)|(home|house) staging|staging (a )?(home|house|listing)|(sales |market )?comps|comparable sales|zillow (premier )?agent)\b/i, 'realestate'],
   [/\b(pre-?approval|closing costs?|down payments?|first-?time home ?buyers?|mortgage rates?|home ?owner(ship)?)\b/i, 'housing'],
   [/\b(social security|required minimum distributions?|rmd)\b/i, 'finance'],
   [/\b(western blots?|gibson assembly|prime editing|base editing|cell culture|flow cytometry|gel electrophoresis|protocols\.io)\b/i, 'research'],
@@ -169,7 +178,7 @@ const PORTAL_BRANDS = { naver: '네이버', yahoo: 'ヤフー', rakuten: '楽天
 // else took those tabs: "Roth IRA", "Vanguard funds" and "401k rollover" share no word, but are one errand. concept -> group name.
 // Only concepts that name one topic; "shopping" words turn up in tabs about anything, and the broad ones (programming, travel) are held to
 // stricter terms (CONCEPT_LOOSE_ONLY). Cooking is left out: a window of a baker's and a meal-prepper's tabs is two topics.
-const CONCEPT_GROUPS = { finance: 'Finance', jobs: 'Job search', tax: 'Taxes & legal', ecommerce: 'Store', dining: 'Cafes & restaurants', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', health: 'Health', birding: 'Birding', games: 'Games', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports', trucking: 'Trucking', design: 'Design', freelance: 'Freelance', events: 'Events', nursing: 'Nursing', gamedev: 'Game dev' };
+const CONCEPT_GROUPS = { crypto: 'Crypto', finance: 'Finance', baby: 'Baby', woodworking: 'Woodworking', realestate: 'Real estate', jobs: 'Job search', tax: 'Taxes & legal', ecommerce: 'Store', dining: 'Cafes & restaurants', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', health: 'Health', birding: 'Birding', games: 'Games', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports', trucking: 'Trucking', design: 'Design', freelance: 'Freelance', events: 'Events', nursing: 'Nursing', gamedev: 'Game dev' };
 // Concepts too broad to merge groups: they only draw LOOSE tabs together, from different sites, and want this many (the docs of every
 // project are "programming": three of them beside a project's own tabs are that project's; two groups that formed on their own words are two projects).
 const CONCEPT_LOOSE_ONLY = { programming: 4, travel: 4, devops: 3 };
@@ -210,6 +219,8 @@ renewal renewals online free new best top official page pages details detail sum
 const WEAK_WORDS = `job jobs offer offers dashboard start started request requests api january february april june july august september october november december`;
 // Concepts whose tabs may JOIN such a group but never start one: the tax office beside a Roth IRA and a 401k is money, three pages of
 // an agency are government ("Government" takes them, tab-groups.js FALLBACK_CATEGORIES).
+// A concept whose own group (three or more tabs) keeps its tabs out of the broader one: crypto is not Finance once it has a group of its own.
+const CONCEPT_EXCLUDES = { finance: ['crypto'] };
 const CONCEPT_JOINS = { finance: ['tax'] };
 
 // registrable domain (or full host) -> category. Same category names as CONCEPTS where they overlap.
@@ -242,6 +253,10 @@ const SITE_CATEGORIES = {
   design: 'dribbble.com behance.net figma.com canva.com adobe.com fonts.adobe.com fonts.google.com myfonts.com fontshare.com dafont.com coolors.co pantone.com unsplash.com',
   freelance: 'upwork.com fiverr.com freshbooks.com toggl.com track.toggl.com and.co bonsai.co',
   nursing: 'nurseslabs.com nursingcenter.com nurse.org medscape.com uptodate.com ayahealthcare.com vivian.com amnhealthcare.com kronos.net nursing.uworld.com',
+  baby: 'babylist.com whattoexpect.com huckleberrycare.com babycenter.com thebump.com',
+  woodworking: 'rockler.com woodcraft.com finewoodworking.com woodmagazine.com lumberjocks.com popularwoodworking.com',
+  crypto: 'uniswap.org app.uniswap.org ledger.com etherscan.io defillama.com koinly.io coinbase.com kraken.com metamask.io coingecko.com coinmarketcap.com',
+  realestate: 'docusign.com docusign.net dotloop.com mlslistings.com',
   gamedev: 'lospec.com itch.io gamedeveloper.com freesound.org fmod.com audiokinetic.com godotengine.org unity.com unity3d.com docs.unity3d.com discussions.unity.com unrealengine.com aseprite.org gdcvault.com gdconf.com partner.steamgames.com howtomarketagame.com',
 };
 // Ordinary English words (beside COMMON_CAPS): tab-groups.js sharedEvidence never lets two of these alone link tabs.
@@ -328,4 +343,4 @@ const FALLBACK_CATEGORIES = [
   { name: 'News & social', kind: true, weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
 ];
 
-module.exports = { ORDINARY_WORDS, STATE_EDU_HOST, CONCEPT_ALSO, PHRASE_CONCEPTS, BRAND_PHRASES, URL_CATEGORIES, COMMON_CAPS, NOT_SCHOOL_OR_GOV, GENERIC_WORDS, WEAK_WORDS, CONCEPT_PAIR_SITE, PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };
+module.exports = { CONCEPT_EXCLUDES, ORDINARY_WORDS, STATE_EDU_HOST, CONCEPT_ALSO, PHRASE_CONCEPTS, BRAND_PHRASES, URL_CATEGORIES, COMMON_CAPS, NOT_SCHOOL_OR_GOV, GENERIC_WORDS, WEAK_WORDS, CONCEPT_PAIR_SITE, PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

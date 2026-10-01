@@ -2375,6 +2375,21 @@ async function organizeAiRuns() {
     const { stats: capped } = await run(h5, () => ({ n: [], p: [], g: [], m: [], h: [] }), { maxTabs: 5 });
     check('organize-ai none-local: maxTabs limits what is sent', Object.values(asks.at(-1).u).flat().length === 5 && capped.requests === 1, JSON.stringify(asks.at(-1)));
   }
+  // "Already organized": groups existed and an Organize left them exactly as they were (no Undo that undoes nothing)
+  {
+    const h = make();
+    const first = (await run(h, () => ({ n: [], p: [], g: [], m: [], h: [] }))).stats;
+    check('organize-ai already: the first Organize over loose tabs changes the layout', first.groups >= 1 && first.unchanged === false, JSON.stringify(first));
+    const second = (await run(h, () => ({ n: [], p: [], g: [], m: [], h: [] }))).stats;
+    check('organize-ai already: organizing again over the same groups reports unchanged', second.groups >= 1 && second.unchanged === true, JSON.stringify(second));
+    const empty = (await run(make([], { base: [] }), () => ({ n: [], p: [], g: [], m: [], h: [] }))).stats;
+    check('organize-ai already: with no groups before, nothing is "already" organized', empty.unchanged === false, JSON.stringify(empty));
+    const mainSrc = require('fs').readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const en = require('../src/locales/en.json');
+    check('organize toast: unchanged shows "Already organized" with no Undo; the signature crosses the window wrapper', /stats\.unchanged[^{]*\{[\s\S]{0,260}organize\.already[\s\S]{0,40}\)\}\.`\)\)/.test(mainSrc) && !/organize\.already[^;]{0,60}undo: true/.test(mainSrc) && /'layoutSignature'\]/.test(mainSrc) && en['organize.already'] === 'Already organized');
+    const appSrc = require('fs').readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8');
+    check('organize toast: at most two names, then "+N"; only the names part clips', /Math\.min\(2, names\.length\)/.test(appSrc) && /organize-note-more/.test(appSrc) && !/names\.slice\(0, 3\)/.test(appSrc));
+  }
   {
     const h = make(LEFT);
     const { stats } = await run(h, (w) => { h.tg.undoOrganize(); return { n: [{ i: w.g[0].i, s: 'Too Late' }], p: [], g: [], m: [] }; });

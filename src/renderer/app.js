@@ -1554,13 +1554,29 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle }) => {
       const said = /(\d+) tabs? left loose/.exec(text); // main counts the tabs it could have grouped (not the new-tab page, say)
       const loose = said ? Number(said[1]) : state.tabs.filter((x) => !x.groupId && !x.pinned).length;
       const lead = /^Grouped/.test(text) ? 'Grouped' : t('organize.local');
-      const shown = names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '');
       const looseWord = t('organize.noteLoose', { count: loose });
-      words.textContent = `${lead}: ${shown}${loose ? ` · ${looseWord === 'organize.noteLoose' ? `${loose} loose` : looseWord}` : ''}`;
+      // "Organized: Nursing, Maui trip +3 · 6 loose": at most two names, whole (a name that does not fit is dropped into "+N", never cut mid-word);
+      // only the names part ever clips (an ellipsis, for one name wider than the toast), so the "+N", the loose count and Undo always show.
+      const part = (cls, text) => Object.assign(document.createElement('span'), { className: cls, textContent: text });
+      const build = (count) => {
+        const shown = names.slice(0, count);
+        const rest = names.length - shown.length;
+        words.replaceChildren(part('organize-note-lead', `${lead}: `), part('organize-note-names', shown.join(', ')), ...(rest ? [part('organize-note-more', ` +${rest}`)] : []), ...(loose ? [part('organize-note-loose', ` · ${looseWord === 'organize.noteLoose' ? `${loose} loose` : looseWord}`)] : []));
+      };
+      const fit = () => {
+        for (let count = Math.min(2, names.length); count >= 1; count--) {
+          build(count);
+          const box = words.querySelector('.organize-note-names');
+          if (!note.isConnected || box.scrollWidth <= box.clientWidth + 1) return; // fits (or not on screen yet: measured again once it is)
+        }
+      };
+      build(Math.min(2, names.length));
+      summary.fit = fit;
       note.title = `${text}\n${names.join(', ')}`; // the full list, and what main said (which says whether an AI helped)
     };
     summary();
-    setTimeout(() => { if (note.isConnected) summary(); }, 200); // the tab state with the new groups may arrive just after the note
+    requestAnimationFrame(() => { if (note.isConnected) summary.fit?.(); }); // measured once it is in the strip
+    setTimeout(() => { if (note.isConnected) { summary(); summary.fit?.(); } }, 200); // the tab state with the new groups may arrive just after the note
   }
   if (undo) {
     note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { window.browser.undoOrganize(); note.remove(); } })); // (a merge's note brings its own wording)

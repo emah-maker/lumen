@@ -531,6 +531,8 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
     for (const concept of CONCEPTS_OF.get(key) || []) addConcept(concept);
   }
   for (const category of categoriesOfSite(url)) addConcept(category);
+  // A coin is money too: with fewer than three crypto tabs in the window they are Finance's (conceptGroups takes Crypto first, and apart only with three).
+  if (words.has('%crypto')) addConcept('finance');
   // Phrases that say a concept ("closing costs"), and what a brand is ("Hilton Garden Inn": travel), and pages whose address says what they are.
   for (const [re, concept] of knowledge.PHRASE_CONCEPTS) if (re.test(`${plainTitle} ${q} ${subText}`)) addConcept(concept);
   for (const concept of brands.concepts) addConcept(concept);
@@ -1184,7 +1186,10 @@ function conceptGroups(clusters, docs) {
   for (const [concept, label] of Object.entries(knowledge.CONCEPT_GROUPS)) {
     const key = `%${concept}`;
     const has = (i) => docs[i].words.has(key);
-    const mostly = (c) => c.filter(has).length * 2 > c.length && !ofRepo(c) && !(c.length === 1 && repoOf(docs[c[0]].url) && !(has(c[0]) && !(knowledge.CONCEPT_LOOSE_ONLY || {})[concept])); // a lone repo page stays with the repos, unless its name says a narrow topic (nanoGPT: machine learning)
+    // A concept that has its own group in the window (knowledge.CONCEPT_EXCLUDES: crypto, once three tabs say it) leaves those groups to it.
+    const apart = ((knowledge.CONCEPT_EXCLUDES || {})[concept] || []).filter((k) => docs.filter((d) => d.words.has(`%${k}`)).length >= 3);
+    const isApart = (c) => apart.some((k) => c.filter((i) => docs[i].words.has(`%${k}`)).length * 2 > c.length);
+    const mostly = (c) => c.filter(has).length * 2 > c.length && !isApart(c) && !ofRepo(c) && !(c.length === 1 && repoOf(docs[c[0]].url) && !(has(c[0]) && !(knowledge.CONCEPT_LOOSE_ONLY || {})[concept])); // a lone repo page stays with the repos, unless its name says a narrow topic (nanoGPT: machine learning)
     // A broad concept (programming, travel) only draws loose tabs together: a group that already formed on its words stays as it is.
     const looseMin = (knowledge.CONCEPT_LOOSE_ONLY || {})[concept]; // ...and needs this many of them
     const looseOnly = looseMin > 0;
@@ -1227,7 +1232,7 @@ function conceptGroups(clusters, docs) {
     }
     // A member that carries the concept where the group mostly doesn't, and is not close to the rest of it.
     for (const c of [...out]) {
-      if (c === home || c.length < 3 || mostly(c) || ofRepo(c)) continue;
+      if (c === home || c.length < 3 || mostly(c) || isApart(c) || ofRepo(c)) continue;
       // ...unless it also carries the concept its own group is about (an arXiv paper is research, but among machine learning tabs it is machine learning).
       const own = groupConcepts.filter((k) => k !== concept && c.filter((j) => docs[j].words.has(`%${k}`)).length * 2 > c.length);
       for (const i of c.filter(has)) {
@@ -2354,6 +2359,19 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // falls back to the local clusters). Groups the user made, and tabs the user took out of groups,
   // dragged, or pinned, stay as they are. A new group that mostly matches an old automatic one keeps
   // its colour (and, for local clusters, its name) so the tab strip doesn't reshuffle. One step of undo.
+  // What the strip shows of grouping: each group's name with its tabs, and the loose tabs. Ids of groups are left out, so regrouping into the
+  // same groups gives the same signature (organize-ai: "Already organized"). `groups`: how many there are.
+  function layoutSignature() {
+    const names = new Map();
+    for (const g of groups.values()) names.set(g.id, g.name);
+    const byGroup = new Map();
+    const loose_ = [];
+    for (const t of getTabs()) {
+      if (t.groupId && names.has(t.groupId)) { if (!byGroup.has(t.groupId)) byGroup.set(t.groupId, []); byGroup.get(t.groupId).push(t.id); } else loose_.push(t.id);
+    }
+    const parts = [...byGroup].map(([id, ids]) => `${names.get(id)}\u0001${ids.sort((a, b) => String(a).localeCompare(String(b))).join(',')}`).sort();
+    return { key: `${parts.join('|')}#${loose_.sort((a, b) => String(a).localeCompare(String(b))).join(',')}`, groups: byGroup.size };
+  }
   function organizeByTopic(proposal = null) {
     const prev = { undoState, autoUndo, undoSeq };
     saveUndo();
@@ -2613,7 +2631,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   return {
     groups, GROUP_COLORS, create, add, remove, ungroupAll, joinOpener, autoGroup, applyProposal, organizeByTopic, groupLoose, organizeLoose, mergeGroups, entryFor: (id) => { const t = tabById(id); return t ? entry(t) : null; }, groupEntries: (id) => members(id).map(entry), organizeView, applyRefinement, organizeSeq: () => (undoState ? undoState.seq : null), undoOrganize, canUndo: () => Boolean(undoState || autoUndo), loose: () => loose().map(entry),
     // What "Organize by topic" regroups: loose tabs and tabs in automatic groups.
-    candidates: () => getTabs().filter(organizable).map(entry), organizableCount: () => getTabs().filter(organizable).length, organizeCounts, arrange, cleanup, state, snapshot, restore, members,
+    layoutSignature, candidates: () => getTabs().filter(organizable).map(entry), organizableCount: () => getTabs().filter(organizable).length, organizeCounts, arrange, cleanup, state, snapshot, restore, members,
     changed: onChange,
   };
 }
