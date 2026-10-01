@@ -14,6 +14,9 @@
 //   order / pick      the next usable model: same provider first (Opus -> Sonnet -> Haiku), then the
 //                     same vendor's other route (Claude API <-> Claude Code, Grok API <-> Grok Build),
 //                     then every other connected provider. Never a model that isn't in `options`.
+//   capsOf            what a model can take: its context size and whether it sees images (a small table of known
+//                     models, the catalog's own numbers for OpenRouter's); pick/choose skip a model that can't hold
+//                     the conversation or its images, and only when nothing capable is left move to one anyway
 //   resolve           at the start of a turn: the user's pick, or its stand-in while it cools down
 //   noticeFor         the one quiet line the chat shows
 
@@ -32,10 +35,15 @@ const MAX_HOPS = 3; // switches within one turn
 // ---------- classification ----------
 
 const NET_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EPIPE', 'ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'EHOSTDOWN', 'ERR_NETWORK', 'ERR_NETWORK_CHANGED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_ABORTED', 'ERR_SOCKET_CONNECTION_TIMEOUT', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED']);
-const CONTEXT_RE = /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length|exceeds the (maximum|max) (number of )?(input )?tokens/i;
-const TEXT_LIMIT_RE = /usage limit|limit reached|reached (your|the) (\w+ )?limit|hit your (\w+ )?limit|rate.?limit|out of (extra )?usage|\bquota\b|insufficient[_ ]quota|resource[_ ]exhausted|credit balance is too low|credits? (have )?(run|ran) out|out of credits|insufficient (credits|funds|balance)|weekly limit|monthly (spend|usage)? ?limit|spend limit|billing/i;
+const CONTEXT_RE = /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length|exceeds the (maximum|max) (number of )?(input )?tokens|token limit|tokens? (limit|quota) (for|of|per) (this|the) (request|message|prompt)|exceeded the model limit|input length exceeds/i;
+// Text only (a CLI's sentence, no status): anchored phrases that name a plan, usage or billing limit. A bare "limit",
+// "quota", "rate limit" or "reset" shows up in tool and page messages ("request rate limit of tool calls per page").
+const TEXT_LIMIT_RE = /\busage limit|\brate[ _-]?limit(ed)? (exceeded|reached)|\bbeen rate[ -]limited|quota exceeded|exceeded (your|the) (current )?quota|insufficient[_ ]quota|\bcredit balance\b|resource[_ ]exhausted|credits? (have )?(run|ran) out|out of credits|insufficient (credits|funds|balance)|out of (extra )?usage|(hit|reached) your (\w+ )?limit|your (weekly|monthly|5-hour|daily) limit|monthly (spend )?limit|spend limit (reached|exceeded)/i;
+const TEXT_RESET_RE = /\bresets?\s+(at|in|on|today|tomorrow|\d|[a-z]{3,9}\.?\s+\d|mon|tue|wed|thu|fri|sat|sun)/i; // "resets 5pm", "resets Oct 5": with a limit word
+const TEXT_LIMIT_WORD_RE = /limit|usage|quota|plan|credits?/i;
+const textLimit = (text) => TEXT_LIMIT_RE.test(text) || (TEXT_RESET_RE.test(text) && TEXT_LIMIT_WORD_RE.test(text));
 const TEXT_AUTH_RE = /not (signed|logged)[ -]?in|sign(ed)?[ -]?in (has )?expired|please (run|sign) ?in|\/login|run `?grok login|add your [\w ]*api key|no api key|invalid (x-)?api[ -]?key|api key (was )?(rejected|invalid|not valid|missing)|no api key|unauthori[sz]ed|authentication[_ ]error|invalid[_ ]authentication|permission[_ ]error|oauth token (has )?expired|credentials/i;
-const TEXT_NET_RE = /fetch failed|connection error|network (error|is unreachable|request failed)|socket hang up|timed? ?out|timeout|ENOTFOUND|getaddrinfo|ECONN(RESET|REFUSED|ABORTED)|EAI_AGAIN|ENETUNREACH|ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_\w+|NETWORK_\w+|TIMED_OUT|PROXY_\w+|EMPTY_RESPONSE)|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|stopped responding|(could not|couldn.t|can.t|cannot|unable to) (reach|connect)|no (internet|network) connection|offline|server (error|is having trouble)|internal server error|at capacity/i;
+const TEXT_NET_RE = /fetch failed|connection (error|failed|refused|reset|closed|lost|timed out|timeout)|(lost|no|failed|dropped) (internet |network )?connection|network (error|is unreachable|request failed|failure|changed|unreachable)|socket hang up|(request|connect|connection|read|gateway|stream) (timed? ?out|timeout)|ETIMEDOUT|ENOTFOUND|getaddrinfo|ECONN(RESET|REFUSED|ABORTED)|EAI_AGAIN|ENETUNREACH|ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_\w+|NETWORK_\w+|TIMED_OUT|PROXY_\w+|EMPTY_RESPONSE)|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|stopped responding|(could not|couldn.t|can.t|cannot|unable to) (reach|connect)|no (internet|network) connection|server (error|is having trouble)|internal server error|at capacity/i;
 const STATUS_NO_FALLBACK = new Set([400, 404, 405, 409, 413, 415, 422]); // a bad request is the request's fault: another model gets the same answer
 
 const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' && v !== true && v !== false ? Number(v) : null);
@@ -75,7 +83,7 @@ function facts(input) {
   const inner = body.error && typeof body.error === 'object' ? body.error : {};
   const cause = err.cause && typeof err.cause === 'object' ? err.cause : {};
   const status = num(err.status ?? err.statusCode ?? err.response?.status ?? body.status ?? inner.status);
-  const codes = [err.code, cause.code, cause.cause?.code, err.errno, body.code, inner.code].filter((c) => typeof c === 'string');
+  const codes = [err.code, cause.code, cause.cause?.code, err.errno, cause.errno, body.code, inner.code].filter((c) => typeof c === 'string');
   const types = [err.type, body.type, inner.type, body.code, inner.code, err.code].filter((c) => typeof c === 'string').map((s) => s.toLowerCase());
   // The SDKs repeat the API's message inside their own ("429 <message>"): each text once, so a "6m0s" is not counted twice.
   const parts = [err.name, err.message, body.message, inner.message, cause.message, cause.cause?.message, typeof err.error === 'string' ? err.error : ''].filter((p) => typeof p === 'string' && p);
@@ -126,8 +134,8 @@ function classify(input, { now = Date.now(), model = '' } = {}) {
   if (status !== null && STATUS_NO_FALLBACK.has(status)) return out('other');
 
   // No status: a CLI's text. (Claude Code and Grok Build describe every failure as a sentence.)
-  if (TEXT_AUTH_RE.test(text) && !TEXT_LIMIT_RE.test(text)) return out('auth');
-  if (TEXT_LIMIT_RE.test(text)) return limit(false);
+  if (TEXT_AUTH_RE.test(text) && !textLimit(text)) return out('auth');
+  if (textLimit(text)) return limit(false);
   if (TEXT_AUTH_RE.test(text)) return out('auth');
   if (TEXT_NET_RE.test(text)) return out('unreachable', { resetsAt: now + COOLDOWN.unreachable });
   return out('other');
@@ -187,6 +195,52 @@ function createCooldowns() {
   };
 }
 
+// ---------- what a model can take ----------
+
+// Context size (tokens) and image input of the models Lumen offers, by id. Only what the picker's list doesn't carry:
+// an OpenRouter row has the catalog's own `context` (and `vision`), which win. vision null: unknown, treated as able
+// (a model is passed over only when it is known to be text-only). Engines (Claude Code, Grok Build) compact their own
+// history, so only their vision counts.
+const CAPS = [
+  [/^claude|^anthropic\//, { context: 200_000, vision: true }],
+  [/^gpt-5|^o[134](-|$)|^chatgpt/, { context: 400_000, vision: true }],
+  [/^gpt-4\.1/, { context: 1_000_000, vision: true }],
+  [/^gpt-4o|^gpt-4-turbo/, { context: 128_000, vision: true }],
+  [/^gpt-3|^gpt-4$/, { context: 16_000, vision: false }],
+  [/^grok-4-fast|^grok-4\.1-fast/, { context: 2_000_000, vision: true }],
+  [/^grok-code/, { context: 256_000, vision: false }],
+  [/^grok-4/, { context: 256_000, vision: true }],
+  [/^grok-3/, { context: 131_072, vision: false }],
+  [/^grok-2-vision/, { context: 32_768, vision: true }],
+  [/^grok-2|^grok-beta/, { context: 131_072, vision: false }],
+  [/^gemini/, { context: 1_000_000, vision: true }],
+  [/deepseek|codestral|gpt-oss|^o1-mini/, { context: 128_000, vision: false }],
+];
+const DEFAULT_CAPS = { context: 0, vision: null }; // unknown size: the old flat budget (see contextChars)
+const CHARS_PER_TOKEN = 3; // a request's characters per context token, with room left for the system prompt, tools and the reply
+const UNKNOWN_CHARS = 320_000; // the flat budget for a model nobody knows the size of
+const MAX_CHARS = 1_200_000; // however large the window, the request itself stays this size
+
+// { context (tokens, 0 unknown), vision (true | false | null), engine } for a picker id. `options` is the picker's list.
+function capsOf(id, options = []) {
+  const o = (options || []).find((x) => x?.id === id) || {};
+  const bare = String(id || '').replace(/^[a-z][a-z0-9]*:/, '');
+  const row = CAPS.find(([re]) => re.test(bare))?.[1] || DEFAULT_CAPS;
+  const engine = isEngine(id);
+  return {
+    context: engine ? 0 : Number(o.context) > 0 ? Number(o.context) : row.context,
+    vision: typeof o.vision === 'boolean' ? o.vision : engine ? (providerOf(id) === 'claudecode' ? true : null) : row.vision,
+    engine,
+  };
+}
+
+// How many characters of history a request to this model may carry (agent.js trims to it with fitContext).
+function contextChars(id, options = []) {
+  const { context, engine } = capsOf(id, options);
+  if (engine) return Infinity;
+  return context > 0 ? Math.min(context * CHARS_PER_TOKEN, MAX_CHARS) : UNKNOWN_CHARS;
+}
+
 // ---------- choosing the next model ----------
 
 // How near `candidate` is to `current` within one vendor's line-up: cheaper first (Opus -> Sonnet -> Haiku), then
@@ -223,18 +277,25 @@ function order({ current, options, allowEngines = true }) {
   return result;
 }
 
-// The model to move to now, or null: the first of order() that isn't cooling down or already tried this turn.
-function pick({ current, options, cooldowns, at = Date.now(), allowEngines = true, tried = [] }) {
+// The model to move to now: the first of order() that isn't cooling down or already tried this turn and can take the
+// conversation (`need`: { chars, images }, how big it is and whether it holds images). When no such model is left,
+// the first one that isn't cooling anyway, marked: the history is then trimmed to its window (`trim`) and images are
+// left out when it is text-only (`noImages`). { id, trim, noImages } | null.
+function choose({ current, options, cooldowns, at = Date.now(), allowEngines = true, tried = [], need = null }) {
   const skip = new Set([current, ...tried]);
-  return order({ current, options, allowEngines }).find((id) => !skip.has(id) && !cooldowns?.cooling(id, at)) || null;
+  const open = order({ current, options, allowEngines }).filter((id) => !skip.has(id) && !cooldowns?.cooling(id, at));
+  const verdict = (id) => ({ id, trim: Boolean(need?.chars) && need.chars > contextChars(id, options), noImages: Boolean(need?.images) && capsOf(id, options).vision === false });
+  const all = open.map(verdict);
+  return all.find((v) => !v.trim && !v.noImages) || all[0] || null;
 }
+function pick(args) { return choose(args)?.id || null; }
 
 // What a turn starts on. `preferred` is the model the user picked; while it cools down, its stand-in.
 // { model, from: preferred | null, until }. With the setting off, or nothing else to use, the pick as is.
-function resolve({ preferred, options, cooldowns, at = Date.now(), enabled = true, allowEngines = true }) {
+function resolve({ preferred, options, cooldowns, at = Date.now(), enabled = true, allowEngines = true, need = null }) {
   if (!enabled || !preferred || !cooldowns?.cooling(preferred, at)) return { model: preferred, from: null, until: 0 };
-  const next = pick({ current: preferred, options, cooldowns, at, allowEngines });
-  return next ? { model: next, from: preferred, until: cooldowns.until(preferred, at) } : { model: preferred, from: null, until: 0 };
+  const next = choose({ current: preferred, options, cooldowns, at, allowEngines, need });
+  return next ? { model: next.id, from: preferred, until: cooldowns.until(preferred, at), trim: next.trim, noImages: next.noImages } : { model: preferred, from: null, until: 0 };
 }
 
 // ---------- the chat's line ----------
@@ -257,19 +318,30 @@ const providerName = (id, options = []) => {
 
 // The notice for a switch. kind: 'limit' | 'unreachable' (it just happened) | 'still' (a new turn starts on the
 // stand-in) | 'back' (the cooldown ended). `when` formats a time ("3:40 PM"); by default the local clock.
-function noticeFor({ kind, from, to, resetsAt = 0, exact = false }, options = [], { when, now = Date.now() } = {}) {
+// restart: the reply had started and its text is dropped, so the notice says it starts over. trim / noImages: the
+// new model can't hold all of the conversation, or can't see images (see choose).
+function noticeFor({ kind, from, to, resetsAt = 0, exact = false, restart = false, trim = false, noImages = false }, options = [], { when, now = Date.now() } = {}) {
   const a = nameOf(from, options);
   const b = nameOf(to, options);
   const clock = when || ((ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
   // A reset time is named only when the error gave one (not a guess) and it is within a day.
   const back = exact && resetsAt > now && resetsAt - now < 24 * 60 * MINUTE ? ` Back on ${a} at ${clock(resetsAt)}.` : '';
-  if (kind === 'limit') return `${a} hit its usage limit, switched to ${b}.${back}`;
-  if (kind === 'unreachable') return `Couldn’t reach ${providerName(from, options)}, switched to ${b}.`;
-  if (kind === 'still') return `${a} is still unavailable, using ${b} for now.${back}`;
+  const extra = `${trim ? ' Its context window is smaller, so the oldest messages are left out.' : ''}${noImages ? ' It can’t see images, so the ones in this chat are left out.' : ''}`;
+  if (restart && (kind === 'limit' || kind === 'unreachable')) {
+    const head = kind === 'limit' ? `${a} hit its limit` : `Couldn’t reach ${providerName(from, options)}`;
+    return `${head} — restarting the reply on ${b}.${back}${extra}`;
+  }
+  if (kind === 'limit') return `${a} hit its usage limit, switched to ${b}.${back}${extra}`;
+  if (kind === 'unreachable') return `Couldn’t reach ${providerName(from, options)}, switched to ${b}.${extra}`;
+  if (kind === 'still') return `${a} is still unavailable, using ${b} for now.${back}${extra}`;
   if (kind === 'back') return `Back on ${a}.`;
   return `Switched to ${b}.`;
 }
 
+// Which run of the app a stand-in was made in. A chat saved with a stand-in (settings.fallbackFrom) and opened after a
+// restart has no cooldown to go with it: it returns to its own model without a word (agent.settleStandIn).
+const SESSION = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+
 const shared = createCooldowns(); // the app's one set of cooldowns
 
-module.exports = { classify, createCooldowns, shared, order, pick, resolve, usable, nameOf, providerName, noticeFor, providerOf, familyOf, isEngine, COOLDOWN, MAX_HOPS };
+module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, providerOf, familyOf, isEngine, COOLDOWN, MAX_HOPS };

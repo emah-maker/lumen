@@ -84,6 +84,7 @@ function parseOpenRouterModels(json) {
     .filter((m) => m?.id && (!String(m.id).includes(':') || /:free$/.test(String(m.id))) && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
     .map((m) => ({
       id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0,
+      ...(Array.isArray(m.architecture?.input_modalities) ? { vision: m.architecture.input_modalities.includes('image') } : {}), // images in: a text-only model is passed over when a chat holds some (ai/fallback.js)
       context: Number(m.context_length) || 0, // for the picker's detail line
       free: /:free$/.test(String(m.id)),
       pricePerM: Number.isFinite(Number(m.pricing?.prompt)) ? Number(m.pricing.prompt) * 1e6 : undefined, // $ per million input tokens
@@ -305,7 +306,7 @@ function describeProviderError(err, provider) {
 // What the catalog knows of a model: its context size, price per million input tokens and whether it is free.
 function openRouterInfo(model) {
   const m = catalog?.models?.find((x) => x.id === model);
-  return m ? { context: m.context || 0, pricePerM: m.pricePerM, free: Boolean(m.free) } : null;
+  return m ? { context: m.context || 0, pricePerM: m.pricePerM, free: Boolean(m.free), ...(typeof m.vision === 'boolean' ? { vision: m.vision } : {}) } : null;
 }
 function openRouterName(model) {
   const m = catalog?.models?.find((x) => x.id === model);
