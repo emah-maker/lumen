@@ -259,6 +259,15 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.globe { color: var(--faint); stroke-width: 1.25; }
 .tab-favicon.page-icon { color: var(--muted); }
 .tab.ai-reading .tab-title { animation: ai-reading-pulse 1.4s ease-in-out infinite; }
+/* [chat per tab] The chat in this tab: a small mark on its icon. Working turns, waiting is hollow, an OK needed is amber, a finished reply not yet seen stays solid. */
+.tab-chat-mark { display: none; position: absolute; left: 21px; bottom: 4px; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; pointer-events: none; background: var(--accent); box-shadow: 0 0 0 1.5px var(--surface-raised, var(--bg)); }
+.tab[data-chat]:not([data-chat=""]) .tab-chat-mark { display: block; }
+@container tab (max-width: 72px) { .tab-chat-mark { left: calc(50% + 3px); } }
+.tab-chat-mark.running { background: none; border: 1.5px solid var(--hairline); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+.tab-chat-mark.waiting { background: none; border: 1.5px solid var(--faint); }
+.tab-chat-mark.approval { background: var(--warning); }
+.tab-chat-mark.done { background: var(--success); }
+
 @keyframes ai-reading-pulse { 50% { opacity: 0.55; } }
 .tab-favicon.spinner { border: 1.5px solid var(--hairline); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; background: none; }
 /* The title runs to the tab's edge and fades out there; while the ✕ shows, the fade moves in ahead

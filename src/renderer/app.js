@@ -1091,6 +1091,8 @@ function createTabEl(id) {
   el.dataset.id = String(id);
   el.setAttribute('role', 'tab');
   const inner = Object.assign(document.createElement('div'), { className: 'tab-inner' });
+  const chatMark = Object.assign(document.createElement('span'), { className: 'tab-chat-mark' }); // [chat per tab] updateTabEl
+  chatMark.setAttribute('aria-hidden', 'true');
   const title = Object.assign(document.createElement('span'), { className: 'tab-title' });
   const close = Object.assign(document.createElement('button'), { className: 'tab-close' });
   close.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2 2 8"/></svg>';
@@ -1113,7 +1115,7 @@ function createTabEl(id) {
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
   inner.append(globeIcon(), title, close);
-  el.append(inner);
+  el.append(inner, chatMark);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
   el.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
@@ -1154,13 +1156,17 @@ function faviconImg(el, key, urls, retried = false) {
 
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
-  el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '')
+  el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '') + (tab.chat ? ` chat-${tab.chat}` : '')
     + (selectedTabs.has(tab.id) && !active ? ' selected' : '') + (arriving.has(tab.id) ? ' arriving' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
-  el.setAttribute('aria-label', tab.aiReading ? `${tab.title} (AI is reading)` : tab.title);
+  const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote].filter(Boolean).join(', '));
+  el.dataset.chat = tab.chat || '';
+  const chatMark = el.querySelector('.tab-chat-mark');
+  if (chatMark) chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat}` : ''}`;
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
   const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;

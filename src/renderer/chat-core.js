@@ -778,7 +778,9 @@ function resumeLive(live) {
   if (!live || turn) return;
   const lastUser = [...messages.querySelectorAll('.msg.user')].pop();
   if (askOf(lastUser)) lastAsk = askOf(lastUser);
-  beginTurn();
+  // Waiting for a free slot (features/tab-chats.js): its message is not in the saved chat yet, so it is shown here.
+  if (live.queued && live.queued.text && askOf(lastUser)?.text !== live.queued.text) { lastAsk = { text: live.queued.text, images: [], tabs: null }; startTurn(live.queued.text, []); } else beginTurn();
+  if (live.queued?.status && turn.working) turn.working.dataset.status = live.queued.status;
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
   for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted });
@@ -926,7 +928,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
   if (!turn || event.runId !== runId) return;
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
-  if (event.type === 'status') { if (turn.working) turn.working.dataset.status = event.text || ''; return; }
+  if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
   if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) delete turn.working.dataset.status;
   switch (event.type) {
     case 'turn_start':

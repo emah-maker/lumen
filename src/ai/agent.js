@@ -12,6 +12,7 @@ const { addUsage } = require('../features/chat-usage');
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
+const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -949,6 +950,7 @@ class Agent {
     this.current = null;
     this.runs = new Map(); // a chat's messages array -> its live run { controller, promise, hosts } (a chat left mid-run keeps going: detach())
     this.nextModel = null;
+    this.pageContexts = new WeakMap(); // [chat per tab] a chat's messages array -> the page text it was last sent (chats run side by side)
     this.scopes = new Set(); // live task scopes (see taskScope), for usingTab()
     this.actionLogs = new Map(); // [ai controls] run id -> what that sidebar run changed (Undo)
     this.actionLogSeq = 0;
@@ -1026,15 +1028,31 @@ class Agent {
   // has any tab). A pinned tab that has closed ends the task's use of it with a clear message.
   taskTab() {
     const scope = taskScope.getStore();
-    if (!scope || scope.tabId === null) {
-      const front = this.browser.activeTab();
-      if (front && this.tabBusyElsewhere(front.id, scope)) throw new Error(TAB_BUSY);
-      return front;
-    }
-    const tab = this.browser.tabById ? this.browser.tabById(scope.tabId) : this.browser.activeTab();
-    if (!tab) throw new Error(TAB_CLOSED);
-    if (this.tabBusyElsewhere(scope.tabId, scope)) throw new Error(TAB_BUSY);
-    return tab;
+    // [chat per tab] A run acts on the tab it is bound to, never on whichever one is in front; only a run
+    // that has no tab yet (or a task outside a run) uses the front tab.
+    const front = scope && scope.tabId !== null ? null : this.browser.activeTab();
+    const got = tabChats.resolveToolTab({
+      pinned: scope ? scope.tabId : null,
+      activeId: front ? front.id : null,
+      exists: (id) => Boolean(this.browser.tabById ? this.browser.tabById(id) : this.browser.activeTab()),
+      busyElsewhere: (id) => this.tabBusyElsewhere(id, scope),
+    });
+    if (got.error === 'closed') throw new Error(TAB_CLOSED);
+    if (got.error === 'busy') throw new Error(TAB_BUSY);
+    if (front) return front;
+    if (got.id === null) return null;
+    return this.browser.tabById ? this.browser.tabById(got.id) : this.browser.activeTab();
+  }
+
+  // [chat per tab] Moves the run of chat `messages` to another tab (and window): "Move chat to this tab"
+  // while it works. Its next tool call acts there. True when a run was moved.
+  repinRun(messages, tabId, meta = {}) {
+    const scope = [...this.scopes].find((s) => s.chat && s.chat === messages);
+    if (!scope) return false;
+    if (scope.tabId !== tabId) scope.idsFresh = false;
+    scope.tabId = tabId;
+    Object.assign(scope, meta);
+    return true;
   }
 
   // switch_tab / open_tab move the task to another tab on purpose.
@@ -1099,6 +1117,7 @@ class Agent {
       if (want && !text.includes(want)) return 'absent'; // the last exchange is an earlier one: it stays
       m.splice(i);
       m.simpleTurn = null;
+      this.pageContexts.delete(m); // the page text it carried is gone: the next message sends it again
       repairHistory(m);
       // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
       if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; }
@@ -1138,7 +1157,6 @@ class Agent {
   detach() {
     this.messages = [];
     this.approvedHosts = new Set();
-    this.lastPageContext = null;
     this.nextModel = null;
     this.onEngineReset?.(); // an idle kept Claude Code process ends; one mid-reply goes on
   }
@@ -1148,7 +1166,6 @@ class Agent {
   attach(messages, hosts) {
     this.messages = messages;
     if (hosts) this.approvedHosts = hosts;
-    this.lastPageContext = null;
   }
 
   // Stops the open chat's reply (a chat left running is stopped by opening it, or with stopFor).
@@ -1167,10 +1184,12 @@ class Agent {
   // `extra.tabs`: ids of open tabs whose text the user attached to this message (features/tabs-ask.js).
   // `skill`: options of a prepared skill run { mode, model, tainted } (features/skills.js), or null.
   // Runs in the open chat wait for each other; a chat the user left keeps its own run (detach).
+  // [chat per tab] `extra.messages` / `extra.hosts`: a chat that is not the open one (it waited for a free slot
+  // while the sidebar moved on to another tab's chat) starts on its own conversation and approved sites.
   run(userText, emit, images = [], extra = {}, skill = null) {
-    const messages = this.messages;
+    const messages = extra.messages || this.messages;
     const previous = this.runs.get(messages);
-    const rec = { controller: new AbortController(), promise: null, hosts: this.approvedHosts };
+    const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts };
     const next = (async () => {
       if (previous) {
         previous.controller.abort();
@@ -1203,7 +1222,7 @@ class Agent {
       // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
       // thinking-block prefix check on newer models. The model can change between messages (setModel).
       if (!messages.settings) messages.settings = { model: DEFAULT_MODEL, adhdMode: true, ...this.getOptions() };
-      if (this.nextModel) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.nextModel = null; }
+      if (this.nextModel && messages === this.messages) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.nextModel = null; }
       // [model fallback] A stand-in from an earlier turn (fallbackFrom holds the user's own pick) goes back to the pick
       // first: whether it is still cooling down is decided again below, so the chat returns on its own when it isn't.
       this.settleStandIn(messages.settings);
@@ -1215,7 +1234,9 @@ class Agent {
       if (skill?.model && this.browser.effectiveModel?.(skill.model) === skill.model) { modelBefore = messages.settings.model; messages.settings.model = skill.model; }
       this.standInFor(messages.settings, standIn, emit, { chars: historyChars(messages) + String(userText || '').length, images: images.length > 0 || hasImages(messages) });
 
-      const tab = this.browser.activeTab();
+      // [chat per tab] A run starts in the tab its chat is bound to (extra.tabId), which is not always the one in front
+      // (a chat that waited for a free slot); otherwise in the front tab.
+      const tab = (extra.tabId != null && this.browser.tabById?.(extra.tabId)) || this.browser.activeTab();
       await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill });
     } catch (err) {
       if (controller.signal.aborted || err instanceof sdk().APIUserAbortError) emit({ type: 'notice', text: 'Stopped.', stopped: true });
@@ -1341,7 +1362,7 @@ class Agent {
     try {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
-      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { messages, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engines.claudecode.release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
@@ -1417,7 +1438,7 @@ class Agent {
   // ---- [page context] The active tab's title, URL and first ~7k characters of readable text
   // (page-scripts readPage, in the agent's isolated world). Skipped for new-tab and internal pages
   // and when the user turned it off. An unchanged page is sent once, then referenced.
-  async pageContextFor(tab, { fresh = false } = {}) {
+  async pageContextFor(tab, { fresh = false, messages = this.messages } = {}) {
     if (!tab || this.getOptions().pageContext === false) return '';
     const wc = tab.webContents;
     const url = wc.getURL();
@@ -1427,8 +1448,9 @@ class Agent {
     try { page = await runScript(wc, scripts.readPage(0, 0), 4000); } catch { return ''; }
     const body = String(page?.text || '').slice(0, PAGE_CONTEXT_CHARS);
     if (!body.trim()) return '';
-    const same = !fresh && this.lastPageContext?.url === url && this.lastPageContext.body === body;
-    this.lastPageContext = { url, body };
+    const last = this.pageContexts.get(messages);
+    const same = !fresh && last?.url === url && last.body === body;
+    this.pageContexts.set(messages, { url, body });
     const attr = (s) => String(s).replace(/[<>"&]/g, (c) => `&#${c.charCodeAt(0)};`);
     const safe = body.replace(/<(\/?)untrusted_page_content/gi, '‹$1untrusted_page_content');
     const more = page.totalTextChars > body.length ? `\n[first ${body.length} of ${page.totalTextChars} characters; call read_page for the rest]` : '';
