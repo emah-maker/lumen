@@ -2,6 +2,7 @@
 // string, navigator.userAgentData (brands, getHighEntropyValues), the Sec-CH-UA* request headers and the
 // window.chrome object a Chrome page has all come from here, so they cannot disagree. Google's sign-in
 // ("This browser or app may not be secure") compares them. Pure (no Electron): test/chrome-identity-units.js.
+/* global window, location */ // the patch functions are serialized into pages and run there
 
 // Chrome's brand list, built the way Chromium builds it (GenerateBrandVersionList): the made-up
 // "Not?A_Brand" entry and the order of the three both follow from the major version, so a hard-coded list
