@@ -1078,12 +1078,15 @@ function loadHistory() {
   })();
 }
 
+let historyDirty = false; // a visit is recorded that the file doesn't have yet
+const historyJson = () => JSON.stringify([...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000));
 function saveHistorySoon() {
+  historyDirty = true;
   clearTimeout(historySaveTimer);
   historySaveTimer = setTimeout(() => {
     if (!historyLoaded) { saveHistorySoon(); return; } // (never overwrite the file with a list that is still missing its past)
-    const entries = [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000);
-    fs.writeFile(HISTORY_FILE(), JSON.stringify(entries), () => {});
+    historyDirty = false;
+    fs.writeFile(HISTORY_FILE(), historyJson(), () => {});
   }, 2000);
 }
 
@@ -4404,7 +4407,7 @@ function beginTabDrag(src, tabId, grab) {
   d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
   w.webContents.on('before-input-event', d.escape);
   refreshDragStrips(d);
-  d.timer = setInterval(tickTabDrag, 16);
+  d.timer = setInterval(tickTabDrag, 8);
   return true;
 }
 const num = (v) => (Number.isFinite(v) ? v : 0);
@@ -4664,6 +4667,11 @@ let quitting = false; // the app is shutting down: the session was saved by befo
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
   if (settingsPending && settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
+  if (historyDirty && historyLoaded) { // (visits from the last two seconds land now, once the past is merged in)
+    clearTimeout(historySaveTimer);
+    historyDirty = false;
+    try { fs.writeFileSync(HISTORY_FILE(), historyJson()); } catch { /* disk full or locked: the older file stays */ }
+  }
   quitting = true;
 });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -5449,17 +5457,23 @@ ipcMain.on('nav:back', () => activeTab()?.webContents.navigationHistory.goBack()
 ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());
 ipcMain.on('nav:reload', reloadActive);
 
-ipcMain.handle('suggest:query', (_e, query) => suggestions(query));
+ipcMain.handle('suggest:query', async (_e, query) => { await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));
 // The extension icons the toolbar has no room for: listed in a menu under the "..." button; the pick goes back
 // to the toolbar, which triggers that extension's action as its icon would.
+// A toolbar action with no title of its own is labelled by its extension's manifest name, never the raw id.
+const extensionName = (id) => {
+  let name = '';
+  try { name = String(session.defaultSession.extensions.getExtension(id)?.name || ''); } catch { /* gone */ }
+  return name.slice(0, 80) || t('extension.fallbackName');
+};
 ipcMain.on('actions:overflow', (_e, point, items) => {
   const list = (Array.isArray(items) ? items : []).filter((i) => i && typeof i.id === 'string' && typeof i.title === 'string').slice(0, 60);
   if (!list.length || !win || win.isDestroyed()) return;
   const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
-  const menu = Menu.buildFromTemplate(list.map((i) => ({ label: i.title.slice(0, 80) || i.id, click: () => ui()?.send('actions:overflow-pick', i.id) })));
+  const menu = Menu.buildFromTemplate(list.map((i) => ({ label: i.title.slice(0, 80) || extensionName(i.id), click: () => ui()?.send('actions:overflow-pick', i.id) })));
   menu.popup({ window: win, x: n(point?.x), y: n(point?.y) });
 });
 ipcMain.on('suggest:pick', (_e, index, listId) => ui()?.send('suggest:picked', { index, listId }));

@@ -41,3 +41,6 @@ body.chat-page.agent-active .cp-main { box-shadow: inset 0 0 0 2px var(--accent)
   .cp-back-label { display: none; }
 }
 body.chat-page .chat-usage { max-width: 760px; width: 100%; margin: 0 auto; padding-left: 24px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

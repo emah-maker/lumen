@@ -36,3 +36,6 @@
 .skill-full summary { cursor: default; width: max-content; }
 .skill-full summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .skill-full pre { margin: 6px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-wrap: break-word; border-radius: 8px; background: var(--surface, var(--field)); color: var(--text); font: 11.5px/1.45 ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

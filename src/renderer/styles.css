@@ -565,7 +565,7 @@ body.chat-full .setup { text-align: left; }
 /* Long conversations: messages scrolled far out of view aren't laid out or painted. The newest few are always
    rendered (so scroll-to-bottom measures real heights), and the clip margin keeps a reply's copy/regenerate
    buttons, which sit just outside its box, from being cut off. */
-.messages > .msg:not(:nth-last-child(-n+4)) { content-visibility: auto; contain-intrinsic-size: auto 120px; overflow-clip-margin: 44px; }
+.messages > .msg:not(:nth-last-child(-n+4)) { content-visibility: auto; contain-intrinsic-size: auto 160px; overflow-clip-margin: 44px; }
 .msg.user {
   margin-left: 40px; padding: 8px 12px; border-radius: 14px 14px 4px 14px; background: var(--field); white-space: pre-wrap; word-wrap: break-word;
   box-shadow: inset 0 1px 0 var(--highlight); transform-origin: bottom right;
