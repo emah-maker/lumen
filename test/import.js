@@ -93,8 +93,10 @@ function fakeFirefoxProfile() {
   await ui.waitForTimeout(300);
   await ui.fill('#address', 'best pizza near me');
   await ui.press('#address', 'Enter');
-  await ui.waitForTimeout(1500);
-  const url = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL());
+  // The search page is a real site: wait for the tab to leave the new tab page (a slow CI runner needs more than 1.5 s).
+  const activeUrl = () => app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL());
+  for (let i = 0; i < 40 && !/^https?:/.test(await activeUrl()); i++) await ui.waitForTimeout(250);
+  const url = await activeUrl();
   check('address bar searches with the chosen engine', /^https:\/\/duckduckgo\.com\/\?q=best(%20|\+)pizza/.test(url), url);
   await ui.click('#address');
   await ui.keyboard.type('some query words', { delay: 20 });
