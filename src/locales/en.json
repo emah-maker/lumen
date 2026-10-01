@@ -262,6 +262,7 @@
   "merge.none.single": "Only one window is open, so there is nothing to merge.",
   "merge.none.restoring": "Another window is still restoring its tabs. Try again in a moment.",
   "merge.none.empty": "No other window has tabs to merge.",
+  "merge.none.dragging": "Finish dragging the tab first, then merge.",
   "merge.none.organizing": "Tabs are still being organized. Try merging again in a moment.",
   "merge.undo": "Undo",
   "merge.undoTitle": "Undo merge",

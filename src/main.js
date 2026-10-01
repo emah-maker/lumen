@@ -3276,7 +3276,7 @@ function handleShortcut(event, input) {
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && input.shift && key === 'a') openTabSearch();
-  else if (mod && input.shift && !input.alt && key === 'm') mergeWindows(curRec); // Merge All Windows (this window takes the others; the toast says why when it can't)
+  else if (mod && input.shift && !input.alt && key === 'm') mergeWindows(focusedRec() || curRec); // Merge All Windows, into the focused window as the menu does (this window takes the others; the toast says why when it can't)
   else if (mod && input.shift && !input.alt && key === 'l') toggleChatPage(); // the sidebar's chat as a full page, and back
   else if (mod && key === 't') openTab();
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
@@ -4036,7 +4036,7 @@ function mergeAfterOrganize(dst, opts) {
 // tab then comes forward, for "Merge Window Into" (that is the page you were looking at). Returns { windows, tabs } or null;
 // when it does nothing the toast says why (not while a tab is being dragged: that is left alone).
 function mergeWindows(dst, { sourceIds = null, activate = null } = {}) {
-  if (tabDrag) return null; // a drag is in progress: windows must not change under it
+  if (tabDrag) { if (rcAlive(dst)) noteIn(dst, t('merge.none.dragging')); return null; } // a drag is in progress: windows must not change under it
   if (!rcAlive(dst) || !winRecs.has(dst) || isSpare(dst)) return null;
   if (organizing) { mergeAfterOrganize(dst, { sourceIds, activate }); return null; }
   const windows = describeWindows();
