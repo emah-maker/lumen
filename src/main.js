@@ -263,8 +263,11 @@ let settingsGen = 0; // bumped by every write: an async write that is no longer 
 // Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
 // with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
 let settingsPending = false; // an async write not yet known to be on disk
+// [chat per tab] Set where the run slots exist: a changed cap acts at once (a higher one starts the chats waiting).
+let onSettingsWritten = null;
 function writeSettings(settings) {
   settingsCache = { ...settings };
+  onSettingsWritten?.(settingsCache);
   settingsPending = true;
   const gen = ++settingsGen;
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen)
@@ -276,6 +279,7 @@ if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache)
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   settingsCache = { ...settings };
+  onSettingsWritten?.(settingsCache);
   settingsPending = false;
   settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
@@ -3560,6 +3564,7 @@ function tellUser(run, kind) {
 // and an IPC from a window first brings the open chat in line with that window's tab (syncToSender).
 const chatBind = tabChatsLib.createBindings();
 const runSlots = tabChatsLib.createRunSlots();
+onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
@@ -6118,7 +6123,17 @@ ipcMain.handle('tabs:ask-list', (event) => {
     .filter((t) => tabsAsk.ineligible({ ...t, aiOff: aiSites.isOff(t.url) }) === null)
     .map((t) => ({ id: t.id, title: t.title, host: hostOf(t.url) || t.url, favicon: t.favicon, active: t.active, sleeping: t.sleeping }));
 });
-ipcMain.on('agent:stop', (event) => {
+// Stops a chat's run: one waiting for a slot leaves the line, one working is aborted. `id`: any chat (the chat list's
+// "Stop waiting"); none: the open chat (the Stop button).
+function stopChat(id) {
+  const run = chatRuns.get(id);
+  if (!run || run.deleted) return false;
+  if (run.queued) run.cancelQueued();
+  else agent.stopFor(run.messages);
+  return true;
+}
+ipcMain.on('agent:stop', (event, id) => {
+  if (typeof id === 'string' && id) { stopChat(id); return; }
   syncToSender(event);
   const run = chatRuns.get(chatId);
   if (run?.queued) run.cancelQueued(); // it never started: leaves the waiting line

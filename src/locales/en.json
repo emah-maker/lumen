@@ -93,6 +93,8 @@
   "chats.tabUntitled": "another tab",
   "chats.showTab": "Open chat in its tab",
   "chats.moveHere": "Move chat to this tab",
+  "chats.thisTab": "This tab",
+  "chats.stopWaiting": "Stop waiting",
   "chats.badge.approval": "Needs your OK",
   "chats.badge.unread": "New reply",
   "chats.untitled": "Chat",

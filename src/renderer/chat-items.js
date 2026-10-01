@@ -122,7 +122,9 @@
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') });
       if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
-      if (inTab) openBtn.append(Object.assign(document.createElement('span'), { className: 'chat-meta chat-in-tab', textContent: inTab }));
+      // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
+      const place = inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : '');
+      if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
       // Still running (it was left mid-reply), waiting for an OK, or finished and not seen yet.
       if (chat.badge) {
         const label = { running: tr('chats.badge.running', 'Working'), queued: tr('chats.badge.queued', 'Waiting for its turn'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
@@ -173,7 +175,14 @@
         tabActions.push(show, move);
       }
       actions.append(...tabActions, rename, exportBtn, del);
-      li.append(openBtn, actions);
+      li.append(openBtn);
+      // Waiting for its turn: it can be taken out of the line from here.
+      if (chat.badge === 'queued' && api.stopChat) {
+        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
+        stop.onclick = (e) => { e.stopPropagation(); api.stopChat(chat.id); };
+        li.append(stop);
+      }
+      li.append(actions);
       return li;
     };
   };

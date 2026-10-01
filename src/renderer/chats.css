@@ -57,6 +57,11 @@
 .chat-badge { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: var(--accent); }
 .chat-badge.running { animation: chat-badge-pulse 1.4s ease-in-out infinite; }
 .chat-badge.approval { background: var(--warning); }
+.chat-place { font-size: 11.5px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* AA for small text on the row and the selected row */
+.chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.chat-open:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); } /* softer than the global ring: the row is already tinted */
+.chat-stop-wait { flex: none; margin-right: 4px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 11.5px; cursor: default; }
+.chat-stop-wait:hover { background: var(--hover); }
 .chat-badge.queued { background: none; box-shadow: inset 0 0 0 1.5px var(--faint); } /* in line: a hollow dot */
 @keyframes chat-badge-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .chat-badge.running { animation: none; } }
