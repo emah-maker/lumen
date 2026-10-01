@@ -355,7 +355,9 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
 @media (max-width: 1000px) {
   .omnibox:not(:has(input:focus)), body.zoomed .omnibox:not(:has(input:focus)) { justify-content: flex-start; padding-left: 12px; }
 }
-.security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; }
+.security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; cursor: pointer; border-radius: 6px; padding: 2px 3px; margin: -2px -3px; }
+.security:hover { background: var(--hover); }
+.security:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .security svg { width: 11px; height: 11px; }
 .security.insecure { color: var(--warning); }
 .security.danger { color: var(--danger); }

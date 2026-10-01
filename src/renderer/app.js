@@ -108,10 +108,13 @@ function setMarkup(el, html) {
 }
 
 // The indicator collapses to icon-only at narrow or zoomed widths, so it needs a name beyond its tooltip.
+// It is a button: it opens the site's page info (connection, permissions, cookies: features/page-info.js).
 function setSecurityName(el, name) {
-  el.title = name;
+  el.title = t('pageInfo.tooltip', { state: name });
   el.setAttribute('aria-label', name);
-  el.setAttribute('role', 'img');
+  el.setAttribute('role', 'button');
+  el.setAttribute('aria-haspopup', 'menu');
+  el.tabIndex = 0;
 }
 
 function showAddress() {
@@ -1923,6 +1926,13 @@ $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
+// The lock (or "Not secure") opens the site's page info under it.
+function openPageInfo() {
+  const r = $('security').getBoundingClientRect();
+  window.browser.openPageInfo?.({ x: Math.round(r.left), y: Math.round(r.bottom + 4) });
+}
+$('security').addEventListener('click', openPageInfo);
+$('security').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPageInfo(); } });
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).

@@ -15,7 +15,7 @@ const { t } = require('./i18n');
 const RISKY_TYPES = /^\.(exe|msi|msix|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|hta|jar|dll|lnk|reg|appx)$/i;
 const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
 
-// deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave }
+// deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)? }
 function createDownloads(deps) {
   const downloads = []; // { id, name, path, state, received, total, paused, awaitingOk, url, started, endedAt, speed } (+ item, contents: not sent)
   const reserved = new Set(); // paths claimed by downloads still running, so two same-named files don't collide
@@ -98,7 +98,8 @@ function createDownloads(deps) {
       const risky = RISKY_TYPES.test(path.extname(base));
       // [settings] "Ask where to save": Electron shows its save dialog when no path is set. A risky
       // file is asked about first, so it takes the usual folder.
-      const ask = deps.askWhereToSave() && !risky;
+      // Save Link As… / Save Image As… (features/link-menu.js) ask for that one download, by its address.
+      const ask = (deps.askWhereToSave() || Boolean(deps.askOnce?.(item.getURLChain?.() || [url]))) && !risky;
       let target = null;
       let holding = null; // risky: the temporary file it downloads to until approved
       if (risky) {
