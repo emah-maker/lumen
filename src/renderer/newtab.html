@@ -664,6 +664,15 @@
     .ws-buttons .w-btn { margin: 0; }
     .ws-status { flex: 1 1 auto; margin: 0; font-size: 12px; color: var(--muted); }
     .ws-status.err { color: var(--warn, #d70015); }
+    .ws-places { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .ws-chip { appearance: none; margin: 0; padding: 3px 10px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; cursor: default; outline: none; }
+    .ws-chip:hover { background: var(--hover); }
+    .ws-chip.off { text-decoration: line-through; color: var(--muted); }
+    .ws-chip:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    /* The clock and greeting's pencil (newtab-setup.js openLook): shown on hover or focus, and not while Edit layout is on (its gear does this). */
+    .hdr-edit { position: absolute; right: 0; top: 4px; }
+    header:hover .hdr-edit, header:focus-within .hdr-edit { opacity: 1; }
+    body.w-editing .hdr-edit { display: none; }
     /* Custom recipes, Notes, Countdown and Timer. */
     .cw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; align-content: start; }
     .cw-stat { display: flex; flex-direction: column; min-width: 0; }
@@ -789,6 +798,7 @@
         <p class="date" id="date"></p>
       </div>
       <h1 id="greeting">Hello</h1>
+      <button class="w-icon-btn hdr-edit" id="hdr-edit" type="button" aria-label="Edit clock and greeting" title="Edit"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.6 2.2l2.2 2.2L4.2 10H2v-2.2z"/></svg></button>
     </header>
     <form action="https://www.google.com/search" method="get" role="search">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.75"/><path d="m10.6 10.6 3.4 3.4"/></svg>

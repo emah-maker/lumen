@@ -65,6 +65,7 @@ const MK = require('./markets-view');
 const TVW = require('./tradingview-view');
 const CW = require('./custom-widget');
 const LW = require('./local-widgets');
+const WCFG = require('./widget-config'); // the home page's own editor: what it may see, and its form laid over what is saved
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -86,8 +87,10 @@ const ENDPOINTS = {
   coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
 };
 // Kinds the new-tab page can add and edit itself (renderer/newtab-setup.js), through do=setup: none of
-// them has a key, a sign-in or a private address, so their settings may be shown to the page. The
-// value picks what the page's form starts from. Everything else opens Settings (do=configure).
+// them has a key or a sign-in, so their settings may be shown to the page. The value picks what the
+// page's form starts from. Weather, World clock, Calendar and Feed are edited the same way, but their
+// settings are cut down (features/widget-config.js: a calendar's address never leaves the browser) and
+// laid over what is saved when the form comes back. Everything else opens Settings (do=configure).
 const INLINE = {
   notes: () => ({}),
   countdown: (w) => ({ cd: w.cd }),
@@ -95,6 +98,10 @@ const INLINE = {
   tradingview: (w) => ({ tv: w.tv }),
   custom: (w) => ({ recipe: w.recipe }),
   embed: (w) => ({ url: w.url, height: w.height }),
+  weather: (w) => WCFG.view(w),
+  worldclock: (w) => WCFG.view(w),
+  calendar: (w) => WCFG.view(w),
+  feed: (w) => WCFG.view(w),
 };
 const MAX_WIDGETS = 24; // every kind of card can be added more than once (several feeds, places, pages), so the cap is well above the number of kinds
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -151,12 +158,13 @@ const CONNECTORS = {
     async resolve(input, x) {
       let places = WX.cleanPlaces(input.wx?.places);
       let message = places.length === 1 ? `${places[0].here ? 'My location' : places[0].name} is ready.` : `${places.length} places are ready.`;
-      if (!places.length) { // the older form: a typed city
-        const query = str(input.city, 80);
+      // A typed city: the older form (no places yet), or the home page's editor, which adds it to the places (wx.append).
+      const query = str(input.city, 80);
+      if (!places.length || (query && input.wx?.append === true)) {
         if (!query) throw new Error('Type a city, or search for a place.');
         const found = (await searchPlaces(x, query))[0];
         if (!found) throw new Error(`No place called “${query}” was found.`);
-        places = [{ name: found.name, lat: found.lat, lon: found.lon }];
+        places = WX.cleanPlaces([...places, { name: found.name, lat: found.lat, lon: found.lon }]);
         message = `Found ${found.name}.`;
       }
       const wx = WX.cleanConfig({ ...input.wx, places, units: pick(input.units, ['f', 'c'], input.wx?.units) }, {});
@@ -208,12 +216,12 @@ const CONNECTORS = {
     },
     async resolve(input, x) {
       let places = WCK.cleanPlaces(input.wc?.places);
-      if (!places.length) { // a typed city
-        const query = str(input.city, 80);
+      const query = str(input.city, 80);
+      if (!places.length || (query && input.wc?.append === true)) { // a typed city (the home page's editor adds it to the places: wc.append)
         if (!query) throw new Error('Type a city, or search for a place.');
         const found = (await searchPlaces(x, query))[0];
         if (!found) throw new Error(`No place called “${query}” was found.`);
-        places = WCK.cleanPlaces([found]);
+        places = WCK.cleanPlaces([...places, found]);
       }
       const sun = await Promise.all(places.map((p) => sunFor(x, p)));
       places = places.map((p, i) => ({ ...p, tz: sun[i].tz }));
@@ -253,7 +261,7 @@ const CONNECTORS = {
       const upcoming = cal.events.filter((e) => e.allDay || e.end > Date.now());
       const events = cal.total === 1 ? '1 event' : `${cal.total} events`;
       return {
-        config: { url, name: cal.name, count: 5, colors: WC.cleanMode(input.colors) },
+        config: { url, name: cal.name, count: input.count ?? 5, colors: WC.cleanMode(input.colors) },
         message: `${cal.name ? `${cal.name}: ` : ''}${events}, ${upcoming.length} in the next two weeks.`,
       };
     },
@@ -1925,10 +1933,11 @@ function createWidgets(deps) {
       if (!action.items) return { invalid: true };
       action.dock = (params.get('d') || '').split(',').filter(SYS.isSystemId).slice(0, SYS.IDS.length); // system cards back to the centre column
     }
-    if (action.do === 'look') { // Edit layout's clock size (k=clock&v=s|m|l|xl) and search bar width (k=search&v=480-960)
-      action.key = params.get('k') === 'clock' ? 'newTabClockSize' : params.get('k') === 'search' ? 'newTabSearchWidth' : null;
-      action.value = action.key === 'newTabClockSize' ? SYS.cleanClockSize(params.get('v')) : action.key ? SYS.cleanSearchWidth(/^\d{3,4}$/.test(params.get('v') || '') ? params.get('v') : null) : null;
-      if (!action.value) return { invalid: true };
+    if (action.do === 'look') { // the clock's size (k=clock&v=s|m|l|xl), the search bar's width (k=search&v=480-960) and the clock card's own choices (features/widget-config.js LOOK)
+      const look = WCFG.cleanLook(params.get('k'), params.get('v'));
+      if (!look) return { invalid: true };
+      action.key = look.key;
+      action.value = look.value;
     }
     if (action.do === 'stack') { // Edit layout: this widget (and its stack) dropped onto another of the same size
       action.onto = params.get('onto');
@@ -2041,6 +2050,7 @@ function createWidgets(deps) {
     const prev = action.create ? null : list().find((x) => x.id === action.id);
     if (!action.create && (!prev || prev.type !== input.type)) return { ok: false, message: 'That widget is gone.' };
     if (prev?.type === 'notes') input.note = prev.note; // editing a note's card keeps what is written on it
+    if (WCFG.KINDS.includes(input.type)) Object.assign(input, WCFG.mergeEdit(prev, input)); // the form's few fields over the saved settings
     try {
       const { widget, message } = await saveWidget(input, prev ? prev.id : null);
       return { ok: true, message: message || 'Saved.', id: widget.id };

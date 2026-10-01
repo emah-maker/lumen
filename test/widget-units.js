@@ -401,6 +401,7 @@ module.exports = async function widgetUnits(check) {
   check('feed: Settings refuses a non-https custom address', /https/.test(refused), refused);
 
   await require('./widget-edit-units')(check); // system cards and Edit layout
+  await require('./widget-config-units')(check); // editing a widget on the home page
   await require('./slack-units')(check);
   // ---- world clock: zones, clocks and sun times (features/worldclock-view.js) ----
   check('world clock: the default size is 4x3', WL.DEFAULT_SIZE.worldclock.w === 4 && WL.DEFAULT_SIZE.worldclock.h === 3, JSON.stringify(WL.DEFAULT_SIZE.worldclock));
