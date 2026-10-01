@@ -123,7 +123,7 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, 'ai-keys': { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -236,6 +236,7 @@ async function buildAi(card) {
       [1, 2, 3, 4, 6, 8].map((n) => [n, String(n)]), { number: true }),
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
+    toggle('claudeCodeFullAccess', tr('settings.ai.claudeCodeFullAccess', 'Give Claude Code full access to this computer'), tr('settings.ai.claudeCodeFullAccessDesc', 'Claude Code in the sidebar works as it does in your terminal: it can run commands, read and change any of your files, and use your own MCP servers, skills and slash commands, all without asking first. Only turn this on if you trust it with your computer: a web page it reads could try to trick it. Off by default; applies from the next message.')),
     toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
   );
@@ -378,11 +379,11 @@ async function buildAi(card) {
   const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
-  agents.append(row('Allow AI agents to connect', 'Off by default. When on, Claude Code, Codex, Gemini CLI and other MCP clients on this computer can drive Lumen. They still need your OK for each new site. The Add buttons below turn this on.', mcpToggle));
+  agents.append(row('Allow AI agents to connect', 'Off by default. When on, Claude Code, Codex, Grok Build, Antigravity and other MCP clients on this computer can drive Lumen. They still need your OK for each new site. The Add buttons below turn this on.', mcpToggle));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
-    // snip.addButton is the agent id ('claude' | 'codex' | 'grok' | 'gemini'); 'json' (other clients) has none.
+    // snip.addButton is the agent id ('claude' | 'codex' | 'grok' | 'antigravity'); 'json' (other clients) has none.
     const addLabel = `Add to ${snip.label}`;
     const add = snip.addButton ? h('button', {
       text: addLabel,
@@ -411,8 +412,10 @@ async function buildAi(card) {
       snip.secondary ? h('p', { class: 'note', text: snip.secondary }) : null,
       note);
   }));
-  agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Gemini CLI and other MCP clients.', 'mcp claude codex gemini grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+  agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
   agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
+
+  buildAntigravity(agents, refreshModels);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -1696,6 +1699,24 @@ async function buildPrivacy(card) {
   permissions.append(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults));
   permissions.append(stackRow('Site permissions', 'What you allowed or blocked. Revoke to be asked again.', granted));
   renderGranted();
+
+  // [site data] Every site that keeps cookies, with Remove (features/site-data.js).
+  const sites = h('div', { class: 'list', id: 'site-data' });
+  const filter = h('input', { type: 'search', id: 'site-data-filter', placeholder: 'Filter sites', 'aria-label': 'Filter sites' });
+  let siteList = [];
+  const renderSites = () => {
+    const q = filter.value.trim().toLowerCase();
+    const shown = siteList.filter((s) => !q || s.site.includes(q));
+    sites.replaceChildren(...(shown.length ? shown.map((s) => h('div', { class: 'item', 'data-site': s.site },
+      h('span', { class: 'grow' }, s.site, h('span', { class: 'note', text: ` · ${s.cookies === 1 ? '1 cookie' : `${s.cookies} cookies`}` })),
+      h('button', { text: 'Remove', class: 'revoke', 'aria-label': `Remove cookies and site data for ${s.site}`, onclick: async () => { siteList = (await S.clearSite(s.site)).list; renderSites(); } })))
+      : [h('span', { class: 'note', text: q ? 'No sites match.' : 'No sites have stored cookies.' })]));
+  };
+  filter.addEventListener('input', renderSites);
+  const loadSites = async () => { siteList = await S.siteData(); renderSites(); };
+  const data = card.group('Site data').subpage('site-data', 'Site data', 'The sites that keep cookies on this computer, and removing one of them.', 'cookies storage website data remove manage');
+  data.append(stackRow('Sites with cookies', 'Remove deletes a site’s cookies (you’ll be signed out of it) and what it stored on this computer. Clear browsing data removes everything at once.', filter, sites));
+  loadSites();
 }
 
 // [passwords] Privacy and security → Passwords: the Save passwords switch, and a sub-page listing saved
@@ -1805,6 +1826,43 @@ async function buildPasswords(card) {
       h('button', { class: 'danger', id: 'passwords-delete-all', text: 'Delete all saved passwords', onclick: async () => { pw = await P.removeAll(); renderLogins(); } }))));
   page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
   renderLogins();
+}
+
+// Settings → AI → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
+// command is shown, and runs only on the click.
+function buildAntigravity(slot, refreshModels) {
+  const agyNote = status('ai-agy-status');
+  const agyCommand = h('pre', { class: 'mono code', id: 'ai-agy-command', text: '' });
+  const agyButtons = h('div', { class: 'controls' });
+  const renderAgy = (s) => {
+    agyNote.className = 'note';
+    agyNote.textContent = !s.installed ? tr('settings.ai.agyMissing', 'Not installed.') : s.enabled ? tr('settings.ai.agyOn', 'Installed and offered in the model menu. If it asks you to sign in, run agy in a terminal and sign in with your Google account.') : tr('settings.ai.agyFound', 'Installed. Not offered in the model menu yet.');
+    agyCommand.textContent = s.installCommand || '';
+    agyCommand.hidden = Boolean(s.installed);
+    const buttons = [];
+    if (!s.installed) {
+      buttons.push(h('button', {
+        id: 'ai-agy-install', class: 'primary', text: tr('settings.ai.agyInstall', 'Run this command'),
+        onclick: async (e) => {
+          const btn = e.target;
+          btn.disabled = true;
+          btn.textContent = tr('settings.ai.agyInstalling', 'Installing…');
+          const r = await S.ai.antigravityInstall().catch((err) => ({ ok: false, output: err.message }));
+          renderAgy(await S.ai.antigravityStatus(true));
+          if (!r.ok) flash(agyNote, r.output || tr('settings.ai.agyInstallFailed', 'The installer did not finish.'), 'err');
+          await refreshModels();
+        },
+      }));
+    } else if (!s.enabled) {
+      buttons.push(h('button', { id: 'ai-agy-use', class: 'primary', text: tr('settings.ai.agyUse', 'Use in the sidebar'), onclick: async () => { await S.ai.useAntigravity(); renderAgy(await S.ai.antigravityStatus(true)); await refreshModels(); } }));
+    }
+    buttons.push(h('button', { id: 'ai-agy-check', text: tr('settings.ai.agyCheck', 'Check again'), onclick: async () => { renderAgy(await S.ai.antigravityStatus(true)); await refreshModels(); } }));
+    agyButtons.replaceChildren(...buttons);
+  };
+  const agyRow = row(tr('settings.ai.agy', 'Antigravity (replaces Gemini CLI)'), tr('settings.ai.agyDesc', 'Google’s coding agent, signed in with your own Google account: Lumen never sees the login. In the sidebar it gets Lumen’s browser tools only, like Claude Code and Grok Build. The install command below is Google’s own; it runs only when you click the button.'), agyButtons);
+  agyRow.querySelector('.text').append(agyCommand, agyNote);
+  S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
+  slot.append(agyRow);
 }
 
 async function buildDownloads(card) {
@@ -2071,7 +2129,16 @@ async function buildAbout(card) {
     h('tr', {}, h('th', { text: 'Component' }), h('th', { text: 'Version' })),
     [['Lumen', a.version], ['Electron', a.versions.electron], ['Chromium', a.versions.chrome], ['Node.js', a.versions.node], ['V8', a.versions.v8], ['Anthropic CLI (pinned)', a.cliPinned], ['OS', a.os]]
       .map(([k, v]) => h('tr', { 'data-component': k }, h('td', { text: k }), h('td', { class: 'mono', text: v }))));
-  card.append(stackRow('Lumen', 'An AI browser.', versions));
+  card.append(stackRow('Lumen', 'Every AI, one browser. Free software under the GPL-3.0 license.', versions));
+  // For a bug report: the versions as plain text, and where to file it.
+  const details = () => [...versions.querySelectorAll('tr[data-component]')].map((r) => `${r.cells[0].textContent}: ${r.cells[1].textContent}`).join('\n');
+  const copyDetails = h('button', { id: 'about-copy', type: 'button', text: 'Copy version details', onclick: async () => {
+    try { await navigator.clipboard.writeText(details()); copyDetails.textContent = 'Copied'; } catch { copyDetails.textContent = 'Select the table to copy it'; }
+    setTimeout(() => { copyDetails.textContent = 'Copy version details'; }, 1600);
+  } });
+  const issues = 'https://github.com/emah-maker/lumen/issues';
+  const report = h('a', { id: 'about-report', href: issues, text: 'Report a problem', onclick: (e) => { e.preventDefault(); S.openUrl(issues); } });
+  card.append(row('Found a problem?', 'Copy the version details and include them in your report.', report, copyDetails));
   card.append(stackRow('Build', null, h('table', {},
     [['App', a.appPath], ['Executable', a.exePath], ['Profile', a.userData], ['Packaged', a.packaged ? 'Yes' : 'No (development)']]
       .map(([k, v]) => h('tr', {}, h('td', { text: k }), h('td', { class: 'mono', text: v }))))));

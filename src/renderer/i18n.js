@@ -5,7 +5,12 @@
   const table = (window.lumenI18n && window.lumenI18n.strings) || {};
   const format = (text, vars) => (vars ? text.replace(/\{(\w+)\}/g, (whole, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole)) : text);
   const has = (key) => typeof table[key] === 'string';
-  const t = (key, vars) => format(has(key) ? table[key] : key, vars);
+  // The strings name shortcuts the Windows way ("New tab (Ctrl+T)"); on macOS they read "⌘T", "⇧⌘K",
+  // as Mac menus write them. Ctrl+Tab stays: on a Mac that one really is the Control key.
+  const MAC = /^Mac/.test(navigator.platform || '');
+  const forMac = (text) => text.replace(/\bCtrl\+((?:Shift\+|Alt\+)*)(?!Tab\b)([A-Z0-9](?![A-Za-z])|F\d{1,2}\b|PageUp|PageDown|Enter|Delete|Backspace|[/=,\-[\]])/g,
+    (_m, mods, key) => `${mods.includes('Alt+') ? '⌥' : ''}${mods.includes('Shift+') ? '⇧' : ''}⌘${key}`);
+  const t = (key, vars) => { const text = format(has(key) ? table[key] : key, vars); return MAC ? forMac(text) : text; };
 
   // Static markup: data-i18n sets the text, data-i18n-<attr> sets that attribute (title, aria-label,
   // placeholder). The English stays in the HTML as the fallback.

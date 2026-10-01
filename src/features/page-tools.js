@@ -62,7 +62,7 @@ async function fetchSource(ses, url) {
   return { status: res.status, type, text, truncated };
 }
 
-// deps: { win, openTab, sendTabs, downloadDir, showSaveDialog }
+// deps: { win, openTab, sendTabs, downloadDir, showSaveDialog, t }
 function createPageTools(deps) {
   const store = new Map(); // token -> { kind, url, data (a promise) }
 
@@ -205,8 +205,9 @@ function createPageTools(deps) {
     if (p.mediaType !== 'video') return [];
     const flags = p.mediaFlags || {};
     const frame = p.frame && !p.frame.isDestroyed?.() ? p.frame : wc.mainFrame;
+    const t = deps.t || ((key) => key);
     const items = [{
-      label: 'Picture in Picture',
+      label: t('menu.pictureInPicture'),
       type: 'checkbox',
       checked: Boolean(flags.isShowingPictureInPicture),
       enabled: flags.canShowPictureInPicture !== false,
@@ -214,8 +215,8 @@ function createPageTools(deps) {
     }];
     if (isWebUrl(p.srcURL)) {
       items.push(
-        { label: 'Open Video in New Tab', click: () => openTab(p.srcURL) },
-        { label: 'Copy Video Address', click: () => copy(p.srcURL) },
+        { label: t('menu.openVideoNewTab'), click: () => openTab(p.srcURL) },
+        { label: t('menu.copyVideoAddress'), click: () => copy(p.srcURL) },
       );
     }
     items.push({ type: 'separator' });

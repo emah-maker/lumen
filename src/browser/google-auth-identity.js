@@ -7,10 +7,11 @@
 //    navigator.userAgentData and window.chrome absent, navigator.webdriver false.
 // Pure (no Electron): test/google-auth-identity-units.js. main.js applies it (applyChromeIdentity,
 // setupHeaders in settings-backend.js, the private-window session).
+/* global window, location */ // the patch functions are serialized into pages and run there
 
 // accounts.google.com and its country forms (accounts.google.co.uk, accounts.google.com.au, accounts.google.de),
 // the YouTube sign-in hop, and Google's verification (passkey / 2-step) host.
-const HOST_SOURCE = '^(?:accounts\.google\.(?:com?\.)?[a-z]{2,3}|accounts\.youtube\.com|gds\.google\.com)$';
+const HOST_SOURCE = '^(?:accounts\\.google\\.(?:com?\\.)?[a-z]{2,3}|accounts\\.youtube\\.com|gds\\.google\\.com)$'; // (\\. in a string: a literal dot in the RegExp)
 const HOST_RE = new RegExp(HOST_SOURCE, 'i');
 const isAuthHost = (host) => HOST_RE.test(String(host || ''));
 function isAuthUrl(url) {

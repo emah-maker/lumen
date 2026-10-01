@@ -372,7 +372,9 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
 @media (max-width: 1000px) {
   .omnibox:not(:has(input:focus)), body.zoomed .omnibox:not(:has(input:focus)) { justify-content: flex-start; padding-left: 12px; }
 }
-.security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; }
+.security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; cursor: pointer; border-radius: 6px; padding: 2px 3px; margin: -2px -3px; }
+.security:hover { background: var(--hover); }
+.security:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .security svg { width: 11px; height: 11px; }
 .security.insecure { color: var(--warning); }
 .security.danger { color: var(--danger); }
@@ -1070,3 +1072,14 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .link-btn { padding: 0; border: none; background: none; color: var(--accent); font: inherit; cursor: pointer; text-align: left; }
 .link-btn:hover { text-decoration: underline; }
 .link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* Windows high contrast (forced colors): the system flattens backgrounds and shadows to its own colors,
+   so state shown only by a background (the active and selected tabs, a pressed toolbar button) is
+   drawn as an outline in the system's highlight color instead, and the address field keeps an edge. */
+@media (forced-colors: active) {
+  .tab.active { outline: 2px solid Highlight; outline-offset: -3px; }
+  .tab.selected { outline: 1px dashed Highlight; outline-offset: -3px; }
+  .icon-btn[aria-pressed="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
+  .omnibox { border: 1px solid CanvasText; }
+  :focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
+}

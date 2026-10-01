@@ -198,7 +198,7 @@ module.exports = async function widgetEditUnits(check) {
   // ---- the picker ----
   check('picker: every connector kind has its own name and line, each listed once', Object.keys(CONNECTORS).every((t) => WE.TYPE_INFO[t] && WE.STRINGS[WE.TYPE_INFO[t][0]] && WE.STRINGS[WE.TYPE_INFO[t][1]]) && new Set(WE.pickerEntries({ types: Object.keys(CONNECTORS) }).map((e) => e.type)).size === Object.keys(CONNECTORS).length, Object.keys(CONNECTORS).filter((t) => !WE.TYPE_INFO[t]).join());
   const pe = WE.pickerEntries({ types: ['weather', 'bogus'], hidden: [{ id: 'wsysfavs', label: 'Favorites' }] });
-  check('picker: sections that were hidden first, then every kind; unknown kinds get a name and a generic line', pe[0].kind === 'section' && pe[0].id === 'wsysfavs' && pe[1].label === 'Weather' && pe[2].label === 'Bogus' && pe[2].hint === WE.STRINGS['newtab.edit.type.other.hint'], JSON.stringify(pe));
+  check('picker: every kind first, then the sections that were hidden; unknown kinds get a name and a generic line', pe[2].kind === 'section' && pe[2].id === 'wsysfavs' && pe[0].label === 'Weather' && pe[1].label === 'Bogus' && pe[1].hint === WE.STRINGS['newtab.edit.type.other.hint'], JSON.stringify(pe));
   check('picker: a translation table wins over English', WE.pickerEntries({ types: ['weather'], table: { 'newtab.edit.type.weather': 'Wetter' } })[0].label === 'Wetter' && WE.text('newtab.edit.undone', { what: 'x' }) === 'Undone: x' && WE.text('nope.key') === 'nope.key', '');
 
   // ---- the clock's size and the search bar's width ----

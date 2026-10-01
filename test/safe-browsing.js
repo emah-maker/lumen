@@ -188,6 +188,27 @@ const path = require('path');
   await load(malwareUrl);
   check('another listed page still gets the warning', Boolean(await waitFor(onWarning)), await url());
 
+  // 6b. A private window is protected the same way: its tabs show the warning, and going past it is the user's answer
+  // in Lumen's dialog, drawn in the private window.
+  visits.length = 0;
+  const privMalware = `${malwareUrl}?private`;
+  const pwin = await app.evaluate((_e, u) => global.__private.open(u).win.id, privMalware);
+  const privUrl = () => app.evaluate((_e, id) => { const w = global.__private.list().find((x) => x.windowId === id); return w?.tabs[0]?.url || ''; }, pwin);
+  const privWarn = await waitFor(() => privUrl().then((u) => u.includes('safe-browsing.html') && u));
+  check('a private tab shows the Safe Browsing warning for a listed page', Boolean(privWarn), await privUrl());
+  check('...and the listed page was never requested from it', !visits.some((v) => v.startsWith('malware.test')), visits);
+  const privTab = (js) => app.evaluate(({ webContents }, [id, c]) => webContents.fromId(global.__private.list().find((x) => x.windowId === id).tabs[0].contentsId).executeJavaScript(c, true), [pwin, js]);
+  await waitFor(() => privTab("document.readyState === 'complete'"));
+  await privTab("document.getElementById('advanced').click(); document.getElementById('continue').click()");
+  const privAsked = await waitFor(dialogId);
+  const dialogHost = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.contentView.children.some((v) => /dialog\.html/.test(v.webContents.getURL()) && v.getVisible()))?.id ?? null);
+  check("in a private window, 'Visit this site anyway' asks in Lumen's dialog, over the private window", Boolean(privAsked) && dialogHost === pwin, `${privAsked} ${dialogHost} ${pwin}`);
+  if (privAsked) await app.evaluate((_e, id) => global.__dialogs.respond({ id, response: 0 }), privAsked);
+  await sleep(600);
+  check('Cancel keeps the private tab on the warning', (await privUrl()).includes('safe-browsing.html') && !visits.some((v) => v.startsWith('malware.test')), await privUrl());
+  await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).close(), pwin);
+  await waitFor(() => app.evaluate(() => global.__private.count() === 0));
+
   // 7. Switched off again: listed pages load, and Google hears nothing more.
   await app.evaluate(() => global.__settings.backend.set('safeBrowsing', false));
   google.length = 0;
