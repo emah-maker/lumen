@@ -95,9 +95,9 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1 } = {}) {
       if (running.has(chatId)) { running.set(chatId, { kind }); start(); return 'started'; }
       const queuedAt = waiting.findIndex((w) => w.chatId === chatId);
       if (queuedAt >= 0) waiting.splice(queuedAt, 1); // (the newer message wins its place in line)
-      if (waiting.length === 0 && fits(kind)) { running.set(chatId, { kind }); start(); return 'started'; }
       waiting.push({ chatId, kind, start });
-      return 'queued';
+      pump(); // (starts at once when there is room: a chat behind others that don't fit still goes ahead of them)
+      return running.has(chatId) ? 'started' : 'queued';
     },
     // The chat's run ended (or it was stopped): the next one in line may go.
     release(chatId) { running.delete(chatId); pump(); },
@@ -113,7 +113,7 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1 } = {}) {
     reason(chatId) {
       const w = waiting.find((x) => x.chatId === chatId);
       if (!w) return null;
-      return why(w.kind) || (waiting[0] !== w ? 'limit' : null);
+      return why(w.kind);
     },
     runningIds: () => [...running.keys()],
     waitingIds: () => waiting.map((w) => w.chatId),

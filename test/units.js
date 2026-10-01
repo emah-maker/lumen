@@ -889,6 +889,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('cli args: Grok always has a cap: the chosen one, else 100', flag(gbArgs(120)) === '120' && flag(gbArgs(0)) === '100' && !gb.ARGS_BASE.includes('--max-turns'), '');
     const { DEFAULTS } = require('../src/settings/settings-backend');
     check('setting: maxSteps defaults to unlimited', DEFAULTS.maxSteps === 0, '');
+    check('setting: three chats work at once by default (one per tab, features/tab-chats.js)', DEFAULTS.maxChatRuns === 3 && require('../src/features/tab-chats').DEFAULT_MAX_RUNS === 3, '');
   }
 
   const { ReadCache } = require('../src/ai/snapshot');

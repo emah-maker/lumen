@@ -3604,9 +3604,14 @@ function followTabChat(tab, { push = true } = {}) {
   if (!tab || tab.managerPage === 'chat' || tab.isolated || tab.settings) return; // the chat page and Settings keep whatever chat is open
   const own = chatBind.chatOf(tab.id) || pinnedChat(tab.id);
   const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId) });
+  const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
+  const unseen = (id) => unreadChats.has(id) && !sidebarOpen; // a finished reply stays "done" on its tab until the sidebar is looked at
   if (plan.chat) {
     chatBind.bind(tab.id, plan.chat);
+    const keep = unseen(plan.chat);
     if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true });
+    if (keep) unreadChats.add(chatId);
+    else if (sidebarOpen) unreadChats.delete(chatId);
   } else if (plan.adopt) {
     chatBind.bind(tab.id, plan.adopt);
   } else {
@@ -5143,9 +5148,14 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     }
     rec.pendingRestore = false;
     refreshWindowMenu(); // its tabs are back: it may take part in a merge now
-    const items = agent.transcript();
-    if (ui()) shownChat.set(ui(), chatId); // [chat per tab] (restoring the tabs brought the open chat to the front tab's)
-    if (items.length) ui()?.send('agent:history', { items });
+    // [chat per tab] Restoring the tabs (or the tab that moved in) brought the open chat to the front tab's. A chat still working
+    // there (a tab that moved here mid-task) shows live, and its events come to this window from now on.
+    if (ui() && runIsLive(chatRuns.get(chatId))) pushChatView(ui());
+    else {
+      const items = agent.transcript();
+      if (ui()) shownChat.set(ui(), chatId);
+      if (items.length) ui()?.send('agent:history', { items });
+    }
     uiReady = true;
     perf.mark('uiReady');
     downloads.send(); // last session's downloads: the toolbar button shows when there are any

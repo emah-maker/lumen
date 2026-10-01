@@ -69,7 +69,7 @@ const fakeClient = (app) => app.evaluate(() => {
   await fakeClient(app);
   await app.evaluate(() => global.__agent.approvedHosts.add('approved-in-legacy.test'));
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
-  await ui.fill('#prompt', 'first follow-up');
+  await ui.fill('#prompt', 'first follow-up about the tides');
   await ui.press('#prompt', 'Enter');
   await waitFor(() => ui.evaluate(() => /Reply 1\./.test(document.getElementById('messages').textContent)));
   let usage = await waitFor(() => ui.evaluate(() => { const el = document.getElementById('chat-usage'); return !el.hidden && el.textContent; }));
