@@ -11,6 +11,7 @@ const { registrableDomain } = require('../browser/tab-groups');
 const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
 const { requestedHints, withHints } = require('../browser/chrome-identity');
+const { createSiteZoom } = require('../features/site-zoom');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -224,6 +225,7 @@ function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
   const launched = applyAtLaunch(app, readSettings());
   const userZoomed = new Set(); // hosts the user zoomed by hand: the default zoom leaves them alone
+  const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
   const upgraded = new Map(); // webContents id -> { from, to } while an HTTPS-only upgrade loads
   const httpAllowed = new Set(); // hosts the user chose to visit over http this session
 
@@ -252,6 +254,8 @@ function create(deps) {
     let host;
     try { host = new URL(wc.getURL()).host; } catch { return; }
     if (!/^https?:/.test(wc.getURL()) || userZoomed.has(host)) return;
+    const saved = siteZoom.levelFor(host); // zoomed by hand in an earlier run
+    if (saved !== null) { userZoomed.add(host); wc.setZoomLevel(saved); return; }
     wc.setZoomFactor(prefs().defaultZoom);
   }
   function uiPrefs() {
@@ -495,13 +499,17 @@ function create(deps) {
     });
     wc.once('destroyed', () => upgraded.delete(wc.id));
   }
-  function noteUserZoom(wc) {
-    try { userZoomed.add(new URL(wc.getURL()).host); } catch {}
+  // `level`: the zoom level the page is being set to, remembered for its host (features/site-zoom.js).
+  function noteUserZoom(wc, level) {
+    let host;
+    try { host = new URL(wc.getURL()).host; } catch { return; }
+    userZoomed.add(host);
+    if (level !== undefined && /^https?:/.test(wc.getURL())) siteZoom.set(host, level);
   }
   // "Actual size" means the default zoom from Settings for web pages (100% for Lumen's own pages),
   // and the site follows that default again from now on.
   function resetZoom(wc) {
-    try { userZoomed.delete(new URL(wc.getURL()).host); } catch {}
+    try { const host = new URL(wc.getURL()).host; userZoomed.delete(host); siteZoom.forget(host); } catch {}
     if (/^https?:/.test(wc.getURL())) wc.setZoomFactor(prefs().defaultZoom);
     else wc.setZoomLevel(0);
   }
@@ -755,7 +763,7 @@ function create(deps) {
   // ---- reset ----
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'siteZoom']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
     userZoomed.clear();
@@ -867,7 +875,7 @@ function create(deps) {
 
   return {
     prefs, set, state, start, attachTab, mirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
-    noteUserZoom, resetZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
+    noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };
 }

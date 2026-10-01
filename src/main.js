@@ -2084,8 +2084,9 @@ function zoomPage(wc, step) {
   // site follows that default again; zooming by hand makes the default leave this site alone.
   if (step === 0) settingsBackend.resetZoom(wc);
   else {
-    settingsBackend.noteUserZoom(wc);
-    wc.setZoomLevel(Math.min(Math.max(wc.getZoomLevel() + step, -3), 5));
+    const level = Math.min(Math.max(wc.getZoomLevel() + step, -3), 5);
+    settingsBackend.noteUserZoom(wc, level); // (kept for the site across restarts: features/site-zoom.js)
+    wc.setZoomLevel(level);
   }
   sendTabs();
 }
