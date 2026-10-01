@@ -43,6 +43,7 @@
   flex: 1; min-width: 0; margin: 4px 4px 4px 8px; padding: 5px 6px; font: inherit; font-size: 13px; color: var(--text);
   background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; outline: none;
 }
+.chat-rename-input:focus-visible { box-shadow: var(--focus-ring); }
 
 /* Actions show on hover or keyboard focus, so the list reads as titles first. */
 .chat-actions { display: flex; opacity: 0; transition: opacity var(--t-fast) var(--ease-out); }

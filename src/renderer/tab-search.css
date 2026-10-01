@@ -24,7 +24,7 @@
   flex: none; height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field);
   color: var(--text); font: inherit; font-size: 13px; outline: none;
 }
-.tab-search-panel input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), 0 0 0 4px var(--accent-soft); }
+.tab-search-panel input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), var(--focus-ring); }
 .tab-search-results { list-style: none; margin: 6px 0 0; padding: 0; overflow-y: auto; }
 .tab-search-section { padding: 8px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .tab-search-empty { padding: 14px 8px; font-size: 12.5px; color: var(--muted); }
@@ -38,3 +38,6 @@
 .tab-search-title, .tab-search-host { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tab-search-host { font-size: 11px; color: var(--muted); }
 .tab-search-audio { flex: none; color: var(--muted); display: grid; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

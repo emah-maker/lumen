@@ -37,3 +37,6 @@
 .skills-review-item p { margin: 4px 0; }
 .skills-review-prompt { max-height: 16em; margin: 6px 0 0; }
 .skills-rejected { margin: 6px 0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

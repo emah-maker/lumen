@@ -43,8 +43,8 @@ const tabSearch = (() => {
   function build() {
     panel = Object.assign(document.createElement('div'), { id: 'tab-search-panel', className: 'tab-search-panel', hidden: true });
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'Search tabs');
-    input = Object.assign(document.createElement('input'), { id: 'tab-search-input', type: 'search', placeholder: 'Search tabs', autocomplete: 'off', spellcheck: false });
+    panel.setAttribute('aria-label', window.t('tabSearch.label'));
+    input = Object.assign(document.createElement('input'), { id: 'tab-search-input', type: 'search', placeholder: window.t('tabSearch.label'), autocomplete: 'off', spellcheck: false });
     input.setAttribute('aria-controls', 'tab-search-results');
     list = Object.assign(document.createElement('ul'), { id: 'tab-search-results', className: 'tab-search-results' });
     list.setAttribute('role', 'listbox');
@@ -80,11 +80,11 @@ const tabSearch = (() => {
     } else icon = Object.assign(document.createElement('span'), { className: 'tab-search-icon blank' });
     const text = Object.assign(document.createElement('span'), { className: 'tab-search-text' });
     text.append(
-      Object.assign(document.createElement('span'), { className: 'tab-search-title', textContent: item.title || item.url || 'New Tab' }),
+      Object.assign(document.createElement('span'), { className: 'tab-search-title', textContent: item.title || item.url || window.t('tabSearch.newTab') }),
       Object.assign(document.createElement('span'), { className: 'tab-search-host', textContent: hostOf(item.url) }),
     );
     li.append(icon, text);
-    if (item.audible) li.append(Object.assign(document.createElement('span'), { className: 'tab-search-audio', innerHTML: SPEAKER, title: 'Playing audio' }));
+    if (item.audible) li.append(Object.assign(document.createElement('span'), { className: 'tab-search-audio', innerHTML: SPEAKER, title: window.t('tabSearch.audio') }));
     li.onmousemove = () => { if (selected !== i) { selected = i; render(); } };
     li.onclick = () => activate(item);
     return li;
@@ -99,13 +99,13 @@ const tabSearch = (() => {
     results.forEach((item, i) => {
       if (item.kind !== section) {
         section = item.kind;
-        const header = Object.assign(document.createElement('li'), { className: 'tab-search-section', textContent: section === 'open' ? 'Open tabs' : 'Recently closed' });
+        const header = Object.assign(document.createElement('li'), { className: 'tab-search-section', textContent: section === 'open' ? window.t('tabSearch.open') : window.t('tabSearch.closed') });
         header.setAttribute('role', 'presentation');
         list.append(header);
       }
       list.append(row(item, i));
     });
-    if (!results.length) list.append(Object.assign(document.createElement('li'), { className: 'tab-search-empty', textContent: 'No matching tabs' }));
+    if (!results.length) list.append(Object.assign(document.createElement('li'), { className: 'tab-search-empty', textContent: window.t('tabSearch.empty') }));
     const current = document.getElementById(`tab-search-item-${selected}`);
     if (current) {
       input.setAttribute('aria-activedescendant', current.id);

@@ -1,22 +1,25 @@
 /* Private window chrome: a dark purple frame so it can't be mistaken for a normal window.
    Heights must add up to TOP in features/private-window.js (36 + 42 = 78). */
+:root {
+  --p-bg: #1d1530; --p-strip: #150f24; --p-badge: #6b4bd8; --p-tab: #241a3b; --p-tab-text: #cfc4f2; --p-raised: #2f2350; --p-close-hover: #4a3a78; --p-accent: #a58cff; --p-text: #ece6ff; --p-line: #45356f; --p-field-line: #5a4690;
+}
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: #1d1530; color: #ece6ff; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; user-select: none; }
-#strip { height: 36px; display: flex; align-items: flex-end; gap: 4px; padding: 0 8px; background: #150f24; }
-#badge { align-self: center; padding: 3px 9px; border-radius: 10px; background: #6b4bd8; color: #fff; font-weight: 600; font-size: 12px; margin-right: 6px; }
+html, body { margin: 0; height: 100%; background: var(--p-bg); color: var(--p-text); font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; user-select: none; }
+#strip { height: 36px; display: flex; align-items: flex-end; gap: 4px; padding: 0 8px; background: var(--p-strip); }
+#badge { align-self: center; padding: 3px 9px; border-radius: 10px; background: var(--p-badge); color: #fff; font-weight: 600; font-size: 12px; margin-right: 6px; }
 #tabs { display: flex; gap: 2px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
-.tab { display: flex; align-items: center; gap: 6px; height: 30px; max-width: 220px; min-width: 80px; padding: 0 8px 0 12px; border-radius: 8px 8px 0 0; background: #241a3b; color: #cfc4f2; cursor: default; }
-.tab.active { background: #2f2350; color: #fff; }
+.tab { display: flex; align-items: center; gap: 6px; height: 30px; max-width: 220px; min-width: 80px; padding: 0 8px 0 12px; border-radius: 8px 8px 0 0; background: var(--p-tab); color: var(--p-tab-text); cursor: default; }
+.tab.active { background: var(--p-raised); color: #fff; }
 .tab .title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tab .close { border: 0; background: transparent; color: inherit; width: 18px; height: 18px; border-radius: 4px; cursor: pointer; line-height: 1; }
-.tab .close:hover { background: #4a3a78; }
-.tab.loading .title::before { content: "\2022  "; color: #a58cff; }
-#new-tab { align-self: center; border: 0; background: transparent; color: #cfc4f2; font-size: 18px; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; }
-#new-tab:hover { background: #2f2350; }
-#toolbar { height: 42px; display: flex; align-items: center; gap: 4px; padding: 0 8px; background: #2f2350; border-bottom: 1px solid #45356f; }
-#toolbar button { border: 0; background: transparent; color: #ece6ff; width: 30px; height: 30px; border-radius: 6px; font-size: 16px; cursor: pointer; }
-#toolbar button:hover:not(:disabled) { background: #45356f; }
+.tab .close:hover { background: var(--p-close-hover); }
+.tab.loading .title::before { content: "\2022  "; color: var(--p-accent); }
+#new-tab { align-self: center; border: 0; background: transparent; color: var(--p-tab-text); font-size: 18px; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; }
+#new-tab:hover { background: var(--p-raised); }
+#toolbar { height: 42px; display: flex; align-items: center; gap: 4px; padding: 0 8px; background: var(--p-raised); border-bottom: 1px solid var(--p-line); }
+#toolbar button { border: 0; background: transparent; color: var(--p-text); width: 30px; height: 30px; border-radius: 6px; font-size: 16px; cursor: pointer; }
+#toolbar button:hover:not(:disabled) { background: var(--p-line); }
 #toolbar button:disabled { opacity: 0.4; cursor: default; }
 #address-form { flex: 1; }
-#address { width: 100%; height: 30px; border: 1px solid #5a4690; border-radius: 15px; padding: 0 14px; background: #1d1530; color: #fff; font: inherit; outline: none; user-select: text; }
-#address:focus { border-color: #a58cff; }
+#address { width: 100%; height: 30px; border: 1px solid var(--p-field-line); border-radius: 15px; padding: 0 14px; background: var(--p-bg); color: #fff; font: inherit; outline: none; user-select: text; }
+#address:focus { border-color: var(--p-accent); }

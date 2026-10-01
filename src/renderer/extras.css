@@ -77,7 +77,7 @@
   background: transparent; color: var(--muted); font-size: 14px; line-height: 1;
 }
 .update-dismiss:hover { background: var(--hover); color: var(--text); }
-@media (prefers-reduced-motion: reduce) { .update-pill { animation: fade-in 160ms ease-out; } }
+@media (prefers-reduced-motion: reduce) { .update-pill { animation: fade-in var(--t-fast) ease-out; } }
 
 /* [ai controls] AI turned off on this tab's site (the chip), and "Undo tab changes" under a reply. */
 .page-context.ai-off { color: var(--text, inherit); background: var(--accent-soft, rgba(10, 132, 255, 0.12)); }
@@ -92,7 +92,7 @@
 .usage-meter:hover { color: var(--text, inherit); }
 .usage-meter:focus-visible { outline: 2px solid var(--accent, #007aff); outline-offset: 1px; }
 .usage-meter .um-bar { flex: none; width: 44px; height: 4px; border-radius: 2px; background: rgba(127, 127, 127, 0.22); overflow: hidden; }
-.usage-meter .um-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent, #007aff); transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1); }
+.usage-meter .um-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent, #007aff); transition: width var(--t-smooth) cubic-bezier(0.16, 1, 0.3, 1); }
 .usage-meter.high .um-bar i { background: #ff453a; }
 .usage-meter.warn .um-bar i { background: #ff9f0a; }
 .usage-meter.high[data-kind="limit"] .um-text { color: #ff453a; }

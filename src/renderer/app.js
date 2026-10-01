@@ -107,6 +107,13 @@ function setMarkup(el, html) {
   el.innerHTML = html;
 }
 
+// The indicator collapses to icon-only at narrow or zoomed widths, so it needs a name beyond its tooltip.
+function setSecurityName(el, name) {
+  el.title = name;
+  el.setAttribute('aria-label', name);
+  el.setAttribute('role', 'img');
+}
+
 function showAddress() {
   const security = $('security');
   if (document.activeElement === address) return;
@@ -115,25 +122,25 @@ function showAddress() {
     security.hidden = true; // an error page (or Lumen's own reader/source page) has no connection to vouch for
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'broken') {
     security.className = 'security danger';
-    setMarkup(security, WARN + '<span>Not secure</span>');
-    security.title = "This site's certificate isn't trusted. You chose to continue anyway.";
+    setMarkup(security, WARN + '<span>' + t('security.notSecureLabel').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]) + '</span>');
+    setSecurityName(security, t('security.broken'));
     security.hidden = false;
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'mixed') {
     security.className = 'security insecure';
     setMarkup(security, WARN);
-    security.title = 'Not fully secure: parts of this page (such as images) were loaded over an unencrypted connection';
+    setSecurityName(security, t('security.mixed'));
     security.hidden = false;
   } else if (currentUrl.startsWith('https:')) {
     security.className = 'security';
     setMarkup(security, LOCK);
-    security.title = t('security.secure');
+    setSecurityName(security, t('security.secure'));
     security.hidden = false;
   } else if (currentUrl.startsWith('http:')) {
     security.className = 'security insecure';
     security.dataset.markup = ''; // built by hand below: not what setMarkup last wrote
     security.innerHTML = WARN;
     security.append(Object.assign(document.createElement('span'), { textContent: t('security.notSecure') }));
-    security.title = t('security.notEncrypted');
+    setSecurityName(security, t('security.notEncrypted'));
     security.hidden = false;
   } else {
     security.hidden = true;
@@ -1911,12 +1918,13 @@ $('app-menu').onclick = () => {
   };
   new ResizeObserver(refresh).observe(list);
   customElements.whenDefined('browser-action-list').then(() => {
-    if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true });
+    // subtree + attributes: a button's own size/visibility can change (badge, popup state) without a child being added
+    if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true, subtree: true, attributes: true });
     refresh();
   });
   more.onclick = () => {
     const r = more.getBoundingClientRect();
-    window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, hiddenActions().map((n) => ({ id: n.id, title: n.title || n.id })));
+    window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, hiddenActions().map((n) => ({ id: n.id, title: n.title || '' })));
   };
   window.browser.onActionsOverflowPick?.((id) => {
     const node = [...(list.shadowRoot?.querySelectorAll('.action') || [])].find((n) => n.id === id);

@@ -5,9 +5,17 @@
   --bg: #ffffff; --surface: #ffffff; --field: rgba(0, 0, 0, 0.05); --hover: rgba(0, 0, 0, 0.05);
   --text: #1d1d1f; --muted: #6e6e73; --accent: #007aff; --hairline: rgba(0, 0, 0, 0.1);
 }
+/* Motion and focus, shared by every page that links this file. */
+:root {
+  --t-press: 90ms; --t-fast: 140ms; --t-base: 240ms; --t-smooth: 420ms; /* the same steps as styles.css */
+  --focus-ring: 0 0 0 2px var(--accent); /* one focus ring for every control that removes its outline */
+}
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1c1c1e; --surface: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.07);
     --text: #f5f5f7; --muted: #98989d; --accent: #0a84ff; --hairline: rgba(255, 255, 255, 0.12);
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
