@@ -24,20 +24,20 @@ const path = require('path');
   const value = await ui.inputValue('#address');
   check('inline completion', value === 'example.com', value);
   const popup = await app.evaluate(({ BrowserWindow }) => {
-    const views = BrowserWindow.getAllWindows()[0].contentView.children;
+    const views = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].contentView.children;
     const v = views.find((x) => x.webContents.getURL().endsWith('suggest.html'));
     return v ? { visible: v.getVisible(), bounds: v.getBounds() } : null;
   });
   check('dropdown shown over page', popup?.visible && popup.bounds.height > 40, JSON.stringify(popup));
   const popupRows = await app.evaluate(async ({ BrowserWindow }) => {
-    const v = BrowserWindow.getAllWindows()[0].contentView.children.find((x) => x.webContents.getURL().endsWith('suggest.html'));
+    const v = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].contentView.children.find((x) => x.webContents.getURL().endsWith('suggest.html'));
     return v.webContents.executeJavaScript('[...document.querySelectorAll("li")].map(l => l.textContent)');
   });
   check('dropdown lists history + search', popupRows.some((r) => r.includes('example.com')) && popupRows.some((r) => r.includes('Google Search')), JSON.stringify(popupRows));
   await ui.keyboard.press('ArrowDown');
   await ui.keyboard.press('Escape');
   await ui.waitForTimeout(200);
-  const hidden = await app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows()[0].contentView.children.find((x) => x.webContents.getURL().endsWith('suggest.html')).getVisible());
+  const hidden = await app.evaluate(({ BrowserWindow }) => ![...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].contentView.children.find((x) => x.webContents.getURL().endsWith('suggest.html')).getVisible());
   check('Escape hides dropdown', hidden, 'still visible');
   await ui.keyboard.press('Escape');
 
@@ -51,7 +51,7 @@ const path = require('path');
 
   // Find as you type (no Enter).
   // Synthetic keys skip Electron's before-input-event, so open the bar the way Ctrl+F does.
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('find:open'));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents.send('find:open'));
   await ui.waitForTimeout(200);
   await ui.keyboard.type('domain', { delay: 60 });
   await ui.waitForTimeout(700);
@@ -72,7 +72,7 @@ const path = require('path');
     await ui.waitForTimeout(500);
     const side = await ui.evaluate(() => { const r = document.getElementById('sidebar').getBoundingClientRect(); return { left: r.left, width: r.width }; });
     const view = await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
+      const win = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0];
       const v = win.contentView.children.find((c) => c.getVisible?.() && c.webContents && c.webContents !== win.webContents && !c.webContents.getURL().includes('suggest.html'));
       return v ? v.getBounds() : null;
     });
@@ -83,22 +83,22 @@ const path = require('path');
   const handle = await ui.evaluate(() => { const r = document.getElementById('sidebar-resize').getBoundingClientRect(); return { x: Math.round(r.left + 2), y: Math.round(r.top + r.height / 2) }; });
   const before = await edges();
   await app.evaluate(async ({ BrowserWindow }, h) => {
-    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    const wc = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents;
     wc.sendInputEvent({ type: 'mouseDown', x: h.x, y: h.y, button: 'left', clickCount: 1 });
     for (let dx = 0; dx <= 120; dx += 10) { wc.sendInputEvent({ type: 'mouseMove', x: h.x - dx, y: h.y, button: 'left', modifiers: ['leftButtonDown'] }); await new Promise((r) => setTimeout(r, 16)); }
     wc.sendInputEvent({ type: 'mouseUp', x: h.x - 120, y: h.y, button: 'left', clickCount: 1 });
   }, handle);
   const dragged = await edges();
   check('drag-resize widens the sidebar and the page meets its edge', dragged.side.width > before.side.width + 80 && dragged.gap <= 1, JSON.stringify({ before, dragged }));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 760));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(1000, 760));
   const resized = await edges();
   check('after a window resize the page still meets the sidebar edge', resized.gap <= 1 && resized.view.width >= 400, JSON.stringify(resized));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 860));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(1280, 860));
   const regrown = await edges();
   check('a bigger window gives the chosen width back', Math.abs(regrown.side.width - dragged.side.width) <= 2 && regrown.gap <= 1, JSON.stringify({ regrown, dragged }));
   const handleNow = await ui.evaluate(() => { const r = document.getElementById('sidebar-resize').getBoundingClientRect(); return { x: Math.round(r.left + 2), y: Math.round(r.top + r.height / 2) }; });
   await app.evaluate(({ BrowserWindow }, h) => {
-    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    const wc = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents;
     for (const clickCount of [1, 2]) {
       wc.sendInputEvent({ type: 'mouseDown', x: h.x, y: h.y, button: 'left', clickCount });
       wc.sendInputEvent({ type: 'mouseUp', x: h.x, y: h.y, button: 'left', clickCount });
@@ -118,7 +118,7 @@ const path = require('path');
   const clickAddress = async () => {
     const r = await ui.evaluate(() => { const b = document.getElementById('address').getBoundingClientRect(); return { x: Math.round(b.x + 30), y: Math.round(b.y + b.height / 2) }; });
     await app.evaluate(({ BrowserWindow }, p) => {
-      const wc = BrowserWindow.getAllWindows()[0].webContents;
+      const wc = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents;
       wc.focus();
       wc.sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 });
       wc.sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 });
@@ -155,7 +155,7 @@ const path = require('path');
     await ui.keyboard.press('Escape');
   }
   if (focusRuns) check(`address bar keeps focus and every character (${good}/30)`, good === 30, JSON.stringify(bad.slice(0, 3)));
-  const shown = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.filter((v) => v.getVisible?.() && v.getBounds().height > 0 && v.webContents?.getURL().includes('suggest.html')).length);
+  const shown = await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].contentView.children.filter((v) => v.getVisible?.() && v.getBounds().height > 0 && v.webContents?.getURL().includes('suggest.html')).length);
   check('no suggestion view left over the page', shown === 0, shown);
   server.close();
 
