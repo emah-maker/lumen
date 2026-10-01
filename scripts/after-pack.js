@@ -56,9 +56,6 @@ function vmpSign(appOutDir) {
   return true;
 }
 
-// SignPath builds sign Lumen.exe after this hook; castlabs wants VMP after Authenticode on Windows.
-const deferVmp = (env) => String((env || {}).LUMEN_DEFER_VMP || '').trim() === '1';
-
 // The fuses to flip for a platform, or null to leave the Electron binary untouched.
 function fuses(electronPlatformName) {
   if (electronPlatformName !== 'darwin' && electronPlatformName !== 'mas') return null;
@@ -73,9 +70,7 @@ function fuses(electronPlatformName) {
 exports.default = async (context) => {
   const { appOutDir, electronPlatformName } = context;
   fs.rmSync(path.join(appOutDir, 'resources', 'default_app.asar'), { force: true });
-  const deferred = electronPlatformName === 'win32' && deferVmp(process.env);
-  if (deferred) console.log('Deferring Widevine VMP signing until Lumen.exe is Authenticode-signed (scripts/vmp-sign.js).');
-  const signed = !deferred && (electronPlatformName === 'win32' || electronPlatformName === 'darwin') && vmpSign(appOutDir);
+  const signed = (electronPlatformName === 'win32' || electronPlatformName === 'darwin') && vmpSign(appOutDir);
   const config = fuses(electronPlatformName);
   // castlabs refuses to VMP-sign a binary whose fuses were changed, and a change after signing
   // breaks the signature, so a signed macOS build keeps stock fuses (DRM over hardening).
@@ -83,5 +78,3 @@ exports.default = async (context) => {
   else if (config) await context.packager.addElectronFuses(context, config);
 };
 exports.fuses = fuses;
-exports.vmpSign = vmpSign;
-exports.deferVmp = deferVmp;
