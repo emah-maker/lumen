@@ -233,6 +233,20 @@ module.exports = async function widgetStackUnits(check) {
   check('stack sizes: a kind that needs more (Muse is at least 3 by 3) raises the whole stack to the nearest size all support', ST.stackSize(rSmall, ['wa000001', 'wm000001'], { w: 2, h: 2 }, WL).w === 3 && ST.stackSize(rSmall, ['wa000001', 'wm000001'], { w: 2, h: 2 }, WL).h === 3 && rMuseStored.filter((w) => w.stack).length === 2 && rMuseStored.filter((w) => w.stack).every((w) => w.w === 3 && w.h === 3), JSON.stringify(rMuseStored.map((w) => [w.id, w.w, w.h, w.stack, w.was])));
   check('stack sizes: the members that grew remember their size, so they can leave at it', byId(rMuseStored, 'wa000001').was.w === 2 && byId(rMuseStored, 'wm000001').was.w === 4 && byId(rMuseStored, 'wm000001').was.h === 4, '');
   check('stack sizes: a full stack still says full', ST.stackBlock(cleanList(N(10)).concat([rA]), 'wa000001', 'wt0000', WL) === 'full', '');
+  // "Remove from stack" restores the pre-join size, even after the stack was resized; without one it keeps the stack's size
+  const rResized = cleanList(rStored.map((w) => (w.stack ? { ...w, w: 5, h: 4 } : w)));
+  const rLeftBig = ST.leave(rResized, 'wb000001', WL);
+  check('stack leave: a member that joined at another size gets it back (the 3 by 3 of the stack never sticks), whatever the stack grew to', byId(rLeftBig, 'wb000001').w === 3 && byId(rLeftBig, 'wb000001').h === 3 && byId(rLeftBig, 'wa000001').w === 5 && byId(rLeftBig, 'wa000001').stack, JSON.stringify(rLeftBig.map((w) => [w.id, w.w, w.h])));
+  const rPlain = cleanList([{ ...rA, stack: 'sabcd1', top: true, w: 3, h: 3 }, { ...rB, x: 0, y: 0, w: 3, h: 3, stack: 'sabcd1' }, { ...rC, x: 6, w: 3, h: 3 }]);
+  check('stack leave: with no remembered size it keeps the stack\'s current size', byId(ST.leave(rPlain, 'wb000001', WL), 'wb000001').w === 3 && byId(ST.leave(rPlain, 'wb000001', WL), 'wb000001').h === 3, '');
+  // the Edit stack panel: with room it sits beside the stack; hemmed in, it takes the free spot that covers the least; with none it is centered
+  const pBox = (p) => ({ left: p.left, top: p.top, right: p.left + 300, bottom: p.top + 300 });
+  const pOwn = { left: 100, top: 100, right: 400, bottom: 300 };
+  const pBlock = [{ left: 410, top: 60, right: 760, bottom: 500 }, { left: 0, top: 320, right: 800, bottom: 380 }];
+  const pFree = WE.placePanel({ size: { w: 300, h: 300 }, view: { w: 1200, h: 800 }, own: pOwn, others: pBlock });
+  check('edit panel: hemmed in beside the stack, it finds the free space instead (no overlap with other cards)', pBlock.every((b) => WE.overlapArea(pBox(pFree), b) === 0) && WE.overlapArea(pBox(pFree), pOwn) === 0, JSON.stringify(pFree));
+  const pNone = WE.placePanel({ size: { w: 300, h: 300 }, view: { w: 700, h: 500 }, own: pOwn, others: [{ left: 0, top: 0, right: 700, bottom: 90 }, { left: 410, top: 90, right: 700, bottom: 500 }, { left: 0, top: 310, right: 410, bottom: 500 }, { left: 0, top: 90, right: 90, bottom: 310 }] });
+  check('edit panel: with no free spot at all it is centered (the page dims the rest)', pNone.side === 'center' && pNone.left === 200, JSON.stringify(pNone));
   // started from a card's panel: the stack keeps that card's place and size (the anchor), the picked widget adapts
   const rAnch = ST.join(rList, 'wa000001', 'wb000001', WL, 'wa000001');
   check('stack anchor: a stack started from a card keeps that card\'s place and size; the picked widget adapts and remembers its own', ['wa000001', 'wb000001'].every((id) => byId(rAnch, id).w === 4 && byId(rAnch, id).h === 3 && byId(rAnch, id).x === 0) && byId(rAnch, 'wa000001').top === true && byId(rAnch, 'wb000001').was.w === 3 && byId(rAnch, 'wa000001').was === undefined, JSON.stringify(rAnch.slice(0, 2)));

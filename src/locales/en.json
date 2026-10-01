@@ -433,7 +433,7 @@
   "newtab.stack.why": "Suggested: {why}",
   "newtab.stack.why.event": "event starting soon",
   "newtab.stack.why.countdown": "countdown ends within a day",
-  "newtab.stack.why.morning": "morning forecast",
+  "newtab.stack.why.morning": "morning weather",
   "newtab.stack.edit": "Edit the stack with {title}",
   "newtab.stack.edit.title": "Edit stack",
   "newtab.stack.make": "Stack {title} with another widget",

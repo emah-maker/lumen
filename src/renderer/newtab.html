@@ -16,6 +16,7 @@
       --space-1: 8px; --space-2: 16px; --space-3: 24px; --space-4: 32px; --gutter: 24px; --margin: 24px; --row: 48px;
     }
     @media (min-width: 1240px) { :root { --margin: 32px; } }
+    :root { --rail-bg: color-mix(in srgb, var(--bg) 20%, transparent); --rail-bg-hot: color-mix(in srgb, var(--bg) 62%, transparent); --rail-dot: color-mix(in srgb, var(--text) 40%, transparent); --rail-dot-on: color-mix(in srgb, var(--text) 78%, transparent); }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #1c1c1e; --card: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.08);
@@ -354,13 +355,15 @@
     .w-card.in-stack { padding-right: 34px; }
     .w-card.in-stack:not(.w-under) { touch-action: pan-x pinch-zoom; }
     /* The rail is faint at rest and shows fully on hover, focus, while the stack moves and for a moment after a switch (iOS's page indicator). */
-    .w-stack { position: absolute; right: 4px; top: 50%; z-index: 2; translate: 0 -50%; display: flex; flex-direction: column; align-items: center; width: 24px; max-height: calc(100% - 12px); box-sizing: border-box; padding: 2px 0; border-radius: 13px; outline: none; opacity: 0.92; transition: opacity 240ms var(--ease), background-color 240ms var(--ease), box-shadow 240ms var(--ease); }
-    .w-card:hover .w-stack, .w-card:focus-within .w-stack, .w-card.rail-on .w-stack, .w-card.w-moving .w-stack { opacity: 1; background: color-mix(in srgb, var(--bg) 58%, transparent); box-shadow: 0 0 0 0.5px var(--border); }
+    .w-stack { position: absolute; right: 4px; top: 50%; z-index: 2; translate: 0 -50%; display: flex; flex-direction: column; align-items: center; width: 24px; max-height: calc(100% - 12px); box-sizing: border-box; padding: 2px 0; border-radius: 13px; outline: none; background: var(--rail-bg); opacity: 0.92; transition: opacity 240ms var(--ease), background-color 240ms var(--ease), box-shadow 240ms var(--ease); }
+    .w-card:hover .w-stack, .w-card:focus-within .w-stack, .w-card.rail-on .w-stack, .w-card.w-moving .w-stack { opacity: 1; background: var(--rail-bg-hot); box-shadow: 0 0 0 0.5px var(--border); }
     .w-stack:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
     .w-stack-dots { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 0; }
     .w-stack-dot { appearance: none; display: grid; place-items: center; flex: 0 1 24px; width: 24px; height: 24px; min-height: 13px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; outline: none; cursor: default; }
-    .w-stack-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--text) 54%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 60%, transparent); transition: scale 220ms var(--ease), background-color 220ms var(--ease); }
-    .w-stack-dot[aria-current="true"]::before { background: var(--text); scale: 1.25; }
+    .w-stack-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rail-dot); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 60%, transparent); transition: scale 220ms var(--ease), background-color 220ms var(--ease); }
+    .w-stack-dot[aria-current="true"]::before { background: var(--rail-dot-on); scale: 1.25; }
+    .w-card:hover .w-stack-dot::before, .w-card:focus-within .w-stack-dot::before, .w-card.rail-on .w-stack-dot::before { background: color-mix(in srgb, var(--text) 52%, transparent); }
+    .w-card:hover .w-stack-dot[aria-current="true"]::before, .w-card:focus-within .w-stack-dot[aria-current="true"]::before, .w-card.rail-on .w-stack-dot[aria-current="true"]::before { background: var(--text); }
     .w-stack-dot:hover::before { background: color-mix(in srgb, var(--text) 75%, transparent); }
     .w-stack-dot[aria-current="true"]:hover::before { background: var(--text); }
     .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accent); }
@@ -368,6 +371,10 @@
     body.on-media .w-stack-dot[aria-current="true"]::before, body.on-media .w-stack-dot[aria-current="true"]:hover::before { background: #fff; }
     body.on-media .w-stack-dot:hover::before { background: rgba(255, 255, 255, 0.9); }
     body.on-media .w-card:hover .w-stack, body.on-media .w-card:focus-within .w-stack, body.on-media .w-card.rail-on .w-stack, body.on-media .w-card.w-moving .w-stack { background: rgba(0, 0, 0, 0.3); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2); }
+    body.on-media .w-stack { background: rgba(0, 0, 0, 0.14); }
+    body.on-media .w-card:hover .w-stack-dot::before, body.on-media .w-card:focus-within .w-stack-dot::before, body.on-media .w-card.rail-on .w-stack-dot::before { background: rgba(255, 255, 255, 0.78); }
+    body.on-media .w-card:hover .w-stack-dot[aria-current="true"]::before, body.on-media .w-card:focus-within .w-stack-dot[aria-current="true"]::before, body.on-media .w-card.rail-on .w-stack-dot[aria-current="true"]::before { background: #fff; }
+    .w-stack-scrim { position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.3); }
     body.on-media .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 3.5px #fff; }
     @media (hover: none) { .w-stack { opacity: 0.92; } }
     @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-card.rail-intro .w-stack { animation: w-rail-intro 1.6s var(--ease) 1; } }

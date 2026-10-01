@@ -36,7 +36,7 @@
   const PX_MAX = 160; // px of wheel that move one card (less for a short card: its own height)
   const LONG_PRESS_MS = 520; // a press on the rail this long opens Edit stack…
   const RAIL_MS = 1400; // the rail stays fully visible this long after a switch
-  const TOUCH_HOLD_MS = 30000; // after a person touched a stack, smart rotate leaves it be this long
+  const TOUCH_HOLD_MS = 10 * 60 * 1000; // after a person cycled or touched a stack their order wins: smart rotate leaves it be this long
   const pending = new Map(); // member id -> when it was picked (until the browser's list agrees)
   const runs = new Map(); // stack id -> { last (ms of the last move or touch), seen (the last smart key acted on) }
   let groups = new Map(); // widget id -> { sid, members: [ids], top, rotate, smart }
@@ -460,7 +460,7 @@
     const to = cardOf(toId);
     if (!to || !g.members.includes(toId) || fromId === toId) return;
     const focused = Boolean(from?.contains(document.activeElement));
-    for (const id of g.members) pending.delete(id);
+    for (const id of g.members) { pending.delete(id); const why = cardOf(id)?.querySelector(":scope > .w-stack-why"); if (why) why.hidden = true; } // a reason belongs to the card it surfaced: any switch clears it
     pending.set(toId, Date.now());
     moved(g.sid);
     g.top = toId;
@@ -475,6 +475,9 @@
       live.textContent = '';
       setTimeout(() => { live.textContent = txt('newtab.stack.shown', { title: titleOfId(toId), n: g.members.indexOf(toId) + 1, count: n }); }, 40);
     }
+    const why = run(g.sid).pendingWhy;
+    run(g.sid).pendingWhy = null;
+    if (why && why.id === toId) whyChip(g.sid, to, why.reason);
     window.widgetAct(toId, 'cycle');
   }
   // Met the end of the stack: the end dot pulses so the resistance reads as deliberate, not stuck.
@@ -628,8 +631,6 @@
     const label = txt(`newtab.stack.why.${reason}`);
     why.textContent = txt('newtab.stack.why', { why: label });
     why.hidden = false;
-    clearTimeout(why._t);
-    why._t = setTimeout(() => { why.hidden = true; }, 6000);
     const live = card.querySelector('.w-stack-live');
     if (live) setTimeout(() => { live.textContent = `${titleOf(card)}. ${txt('newtab.stack.why', { why: label })}`; }, 80);
   }
@@ -648,8 +649,8 @@
         const pick = SM.smartPick({ items, now: ms, hour: now.getHours(), day: dayKey(now) });
         const act = SM.smartAction(pick, { top: g.top, seen: r.seen, paused: held || ms - r.touch < TOUCH_HOLD_MS });
         if (act.mark) r.seen = pick.key;
+        if (act.move) r.pendingWhy = { id: pick.id, reason: pick.reason }; // the caption goes up when the card lands (commit)
         if (act.move && go(g, pick.id, g.members.indexOf(pick.id) > g.members.indexOf(g.top) ? 1 : -1)) {
-          setTimeout(() => whyChip(g.sid, cardOf(pick.id), pick.reason), 320);
           continue;
         }
         if (act.mark && !act.move) whyChip(g.sid, card, pick.reason);
@@ -796,11 +797,21 @@
 
   // ---- the Edit stack panel ----
   let panel = null; // { sid, card, opener, root, key }
+  // The dim layer behind a panel that had to be centered.
+  function scrim(on) {
+    const have = document.querySelector('.w-stack-scrim');
+    if (!on) { have?.remove(); return; }
+    if (have) return;
+    const s = el('div', 'w-stack-scrim');
+    s.setAttribute('aria-hidden', 'true');
+    document.body.insertBefore(s, panel.root);
+  }
   function closePanel(refocus = true) {
     if (!panel) return;
     const { root, opener } = panel;
     panel = null;
     root.remove();
+    scrim(false);
     document.removeEventListener('keydown', panelKeys, true);
     document.removeEventListener('pointerdown', panelOutside, true);
     if (refocus && opener?.isConnected) opener.focus({ preventScroll: true });
@@ -842,6 +853,7 @@
     panel.root.style.left = `${Math.round(at.left)}px`;
     panel.root.style.top = `${Math.round(at.top)}px`;
     panel.root.dataset.side = at.side;
+    scrim(at.side === 'center'); // nowhere free: the panel is centered and the page behind it is dimmed
     window.widgetEditUI?.placeToast?.();
     // A card that was just made or moved is still sliding into its place (260 ms): measure again once it has landed.
     if (!panel.rechecked) {

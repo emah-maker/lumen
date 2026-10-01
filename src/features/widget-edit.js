@@ -51,7 +51,7 @@ const STRINGS = {
   'newtab.stack.why': 'Suggested: {why}',
   'newtab.stack.why.event': 'event starting soon',
   'newtab.stack.why.countdown': 'countdown ends within a day',
-  'newtab.stack.why.morning': 'morning forecast',
+  'newtab.stack.why.morning': 'morning weather',
   'newtab.stack.edit': 'Edit the stack with {title}',
   'newtab.stack.edit.title': 'Edit stack',
   'newtab.stack.make': 'Stack {title} with another widget',
@@ -246,11 +246,12 @@ const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 function pickerEntries({ types = [], hidden = [], table, stack = false } = {}) {
   const out = [];
   if (stack) out.push({ kind: 'stack', label: text('newtab.edit.type.smartstack', null, table), hint: text('newtab.edit.type.smartstack.hint', null, table) }); // first: it is the way in
-  for (const h of hidden) out.push({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) });
   for (const type of types) {
     const info = TYPE_INFO[type];
     out.push({ kind: 'widget', type, label: info ? text(info[0], null, table) : cap(type), hint: text(info ? info[1] : 'newtab.edit.type.other.hint', null, table) });
   }
+  // After the widgets: a few "Show again" rows must not push real widgets below the fold.
+  for (const h of hidden) out.push({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) });
   return out;
 }
 
@@ -285,6 +286,32 @@ function placePanel({ size, view, own, others = [], avoid = [], gap = 12, margin
     const box = boxAt(left, top, sz);
     const score = overlapArea(box, own) * 1000 + avoid.reduce((a, r) => a + overlapArea(box, r) * 2, 0) + others.reduce((a, r) => a + overlapArea(box, r), 0);
     if (!best || score < best.score) best = { left, top, side, score };
+  }
+  // The usual spots overlap something: hit-test the free space. Candidate corners come from the edges of the other cards
+  // (just beyond each one), the window's edges and the stack's own; the one that covers the least wins, nearest to the stack on a tie.
+  if (best.score > 0) {
+    const maxL = view.w - sz.w - margin;
+    const maxT = view.h - sz.h - margin;
+    const xs = [margin, maxL, midX, own.right + gap, own.left - gap - sz.w, ...others.flatMap((r) => [r.right + gap, r.left - gap - sz.w])];
+    const ys = [margin, maxT, midY, lift, own.bottom + gap, own.top - gap - sz.h, ...others.flatMap((r) => [r.bottom + gap, r.top - gap - sz.h])];
+    const cx = (own.left + own.right) / 2;
+    const cy = (own.top + own.bottom) / 2;
+    let found = null;
+    for (const x of xs) {
+      for (const y of ys) {
+        const left = clampTo(x, margin, maxL);
+        const top = clampTo(y, margin, maxT);
+        const box = boxAt(left, top, sz);
+        const score = overlapArea(box, own) * 1000 + avoid.reduce((a, r) => a + overlapArea(box, r) * 2, 0) + others.reduce((a, r) => a + overlapArea(box, r), 0);
+        const dist = Math.hypot(left + sz.w / 2 - cx, top + sz.h / 2 - cy);
+        if (!found || score < found.score || (score === found.score && dist < found.dist)) found = { left, top, score, dist, side: left >= own.right ? 'right' : left + sz.w <= own.left ? 'left' : top >= own.bottom ? 'below' : top + sz.h <= own.top ? 'above' : 'right' };
+      }
+    }
+    if (found && found.score < best.score) best = found;
+  }
+  // Nothing is free: centered over the page (the caller dims what is behind it).
+  if (best.score > 0) {
+    return { left: Math.round((view.w - sz.w) / 2), top: Math.round(clampTo((view.h - sz.h) / 2, margin, view.h - sz.h - margin)), side: 'center' };
   }
   return { left: best.left, top: best.top, side: best.side };
 }
