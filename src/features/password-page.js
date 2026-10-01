@@ -116,11 +116,15 @@ function watch() {
     const on = (type, fn) => { document.addEventListener(type, fn, true); listeners.push([type, fn]); };
     let noted = null;
     let field = null;
-    let since = 0;
-    let timer = null;
+    // The field going away is watched through DOM changes, not a poll: the observer wakes the check
+    // (once per burst) only when the page's markup or visibility attributes change.
+    let watcher = null;
+    let queued = 0;
+    let expiry = 0;
+    const stopWatching = () => { if (watcher) watcher.disconnect(); watcher = null; clearTimeout(queued); clearTimeout(expiry); queued = 0; expiry = 0; };
     const finish = (value) => {
       for (const [type, fn] of listeners) document.removeEventListener(type, fn, true);
-      clearInterval(timer);
+      stopWatching();
       state.pending = null;
       state.flush = null;
       state.stop = null;
@@ -131,8 +135,7 @@ function watch() {
     const gone = (el) => !el || !el.isConnected || !el.getClientRects().length;
     const check = () => {
       if (!noted) return;
-      if (gone(field)) { finish(noted); return; }
-      if (Date.now() - since > 30000) { noted = null; field = null; clearInterval(timer); timer = null; }
+      if (gone(field)) finish(noted);
     };
     const note = () => {
       const list = collect();
@@ -140,8 +143,12 @@ function watch() {
       if (!got) return false;
       noted = got;
       field = (list.find((d) => d.info.type === 'password' && d.el.value === got.password) || {}).el || null;
-      since = Date.now();
-      if (!timer) timer = setInterval(check, 400);
+      clearTimeout(expiry);
+      expiry = setTimeout(() => { noted = null; field = null; stopWatching(); }, 30000);
+      if (!watcher) {
+        watcher = new MutationObserver(() => { if (!queued) queued = setTimeout(() => { queued = 0; check(); }, 150); });
+        watcher.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+      }
       return true;
     };
     on('input', (e) => { const t = e.target; if (t && t.tagName === 'INPUT' && String(t.type).toLowerCase() === 'password') state.seen.add(t); });

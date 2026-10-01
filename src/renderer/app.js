@@ -99,6 +99,14 @@ function prettyUrl(url) {
   return url.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
 }
 
+// innerHTML is only touched when the markup differs: tab updates call this on every state push, and a
+// rewrite throws away and rebuilds the same icon nodes.
+function setMarkup(el, html) {
+  if (el.dataset.markup === html) return;
+  el.dataset.markup = html;
+  el.innerHTML = html;
+}
+
 function showAddress() {
   const security = $('security');
   if (document.activeElement === address) return;
@@ -107,21 +115,22 @@ function showAddress() {
     security.hidden = true; // an error page (or Lumen's own reader/source page) has no connection to vouch for
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'broken') {
     security.className = 'security danger';
-    security.innerHTML = WARN + '<span>Not secure</span>';
+    setMarkup(security, WARN + '<span>Not secure</span>');
     security.title = "This site's certificate isn't trusted. You chose to continue anyway.";
     security.hidden = false;
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'mixed') {
     security.className = 'security insecure';
-    security.innerHTML = WARN;
+    setMarkup(security, WARN);
     security.title = 'Not fully secure: parts of this page (such as images) were loaded over an unencrypted connection';
     security.hidden = false;
   } else if (currentUrl.startsWith('https:')) {
     security.className = 'security';
-    security.innerHTML = LOCK;
+    setMarkup(security, LOCK);
     security.title = t('security.secure');
     security.hidden = false;
   } else if (currentUrl.startsWith('http:')) {
     security.className = 'security insecure';
+    security.dataset.markup = ''; // built by hand below: not what setMarkup last wrote
     security.innerHTML = WARN;
     security.append(Object.assign(document.createElement('span'), { textContent: t('security.notSecure') }));
     security.title = t('security.notEncrypted');
@@ -333,7 +342,7 @@ function moveConfirmed() {
   if (!awaitingMove) return;
   clearTimeout(awaitingMove);
   awaitingMove = null;
-  if (pendingState && !drag) { const state = pendingState; pendingState = null; renderTabs(state); }
+  if (pendingState && !drag) { const state = pendingState; pendingState = null; renderTabsNow(state); }
 }
 let heldTab = null; // { id, ids, timer }: dropped tabs kept hidden in this strip until main has placed them
 function holdDroppedTab(id, ids = [id]) {
@@ -982,7 +991,7 @@ function endTabDrag(e) {
   if (pendingState) {
     const state = pendingState;
     pendingState = null;
-    renderTabs(state);
+    renderTabsNow(state);
   }
 }
 
@@ -1180,12 +1189,14 @@ function releaseStrip() {
     if (pendingState && !drag && renamingGroup === null) {
       const held = pendingState;
       pendingState = null;
-      renderTabs(held);
+      renderTabsNow(held);
     }
   }, 0);
 }
 $('tabs').addEventListener('pointerdown', () => {
   stripPressed = true;
+  lastLayoutSig = null; // a press can become a drag that moves tabs: the next update measures
+
   clearTimeout(stripPressTimer);
   stripPressTimer = setTimeout(releaseStrip, 4000); // a release that never arrives can't freeze the strip
 }, true);
@@ -1234,7 +1245,7 @@ function startRename(groupId) {
     if (pendingState) {
       const held = pendingState;
       pendingState = null;
-      renderTabs(held);
+      renderTabsNow(held);
     }
   };
   input.addEventListener('keydown', (e) => {
@@ -1545,7 +1556,30 @@ window.browser.onOrganizeNote?.(({ text, undo }) => {
   setTimeout(() => note.remove(), 9000);
 });
 
+// State pushes arrive in bursts (a page loading fires title, favicon and loading updates back to back):
+// they are coalesced into one render per frame, the latest state winning.
+let queuedTabState = null;
+let tabsFrame = 0;
 function renderTabs(state) {
+  queuedTabState = state;
+  if (tabsFrame) return;
+  tabsFrame = requestAnimationFrame(() => {
+    tabsFrame = 0;
+    const next = queuedTabState;
+    queuedTabState = null;
+    if (next) renderTabsNow(next);
+  });
+}
+// What decides where tabs sit and how wide they are. While it is unchanged, an update is only titles,
+// icons, loading flags and the like: those are patched in place, with no measuring and no FLIP.
+let lastLayoutSig = null;
+function layoutSig(state) {
+  const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}`).join(',');
+  return `${state.activeId}#${groups}#${tabs}`;
+}
+
+function renderTabsNow(state) {
   // Updates wait while tabs are being moved here, but not while they are out on the card: the strip then
   // shows the window as it is (the tab beside the dragged one active, say), keeping the dragged tabs folded.
   const out = drag?.handed && !drag.single;
@@ -1556,8 +1590,11 @@ function renderTabs(state) {
   lastTabState = state;
   if (!drag?.handed) pruneSelection(state);
   const container = $('tabs');
+  const sig = layoutSig(state);
+  const patchOnly = tabsRendered && sig === lastLayoutSig && !landingSlot && !dropSlot && !drag && !heldTab && !arriving.size && !widthsHeld && !container.querySelector('.tab-drop-slot');
+  lastLayoutSig = sig;
   const before = new Map();
-  for (const el of container.querySelectorAll('.tab, .group-label')) before.set(el.dataset.id, { el, rect: el.getBoundingClientRect() });
+  for (const el of container.querySelectorAll('.tab, .group-label')) before.set(el.dataset.id, { el, rect: patchOnly ? null : el.getBoundingClientRect() });
   // A drop slot left open for a tab that was just released over this strip (onTabDropAt): measured open
   // above, so the tabs close up from there, and the tab that arrives (or, back in its own strip, the one
   // that was held hidden) takes its place.
@@ -1596,6 +1633,11 @@ function renderTabs(state) {
     wanted.push(updateTabEl(before.get(String(tab.id))?.el || createTabEl(tab.id), tab, group, state.activeId));
   }
   const keep = new Set(wanted);
+  if (patchOnly && wanted.length === before.size && wanted.every((el) => before.get(el.dataset.id)?.el === el)) {
+    finishTabsRender(state, before, container, switched);
+    return;
+  }
+  if (patchOnly) for (const v of before.values()) v.rect = v.el.getBoundingClientRect(); // the strip did differ after all
   for (const { el } of before.values()) if (!keep.has(el)) el.remove();
   // Drop slots aren't tabs: they step out while the tabs are put in order (or they'd end up last), and the
   // open one goes back in front of the same tab. A closing one is simply gone.
@@ -1628,6 +1670,11 @@ function renderTabs(state) {
     const first = state.tabs.find((x) => String(x.id) === landedIds[0]);
     if (live) live.textContent = landedIds.length > 1 ? t('tabs.movedHereMany', { n: landedIds.length }) : t('tabs.movedHere', { title: first?.title || '' });
   }
+  finishTabsRender(state, before, container, switched);
+}
+
+// Everything after the strip itself: the indicator, the toolbar state of the active tab.
+function finishTabsRender(state, before, container, switched) {
   updateHoverCard();
   const activeId = container.querySelector('.tab.active')?.dataset.id;
   placeIndicator(tabsRendered && !motionReduced() && [...before.keys()].includes(activeId));
@@ -1682,9 +1729,9 @@ function renderTabs(state) {
   document.body.classList.toggle('tab-loading', Boolean(active?.loading));
   $('back').disabled = !state.canGoBack;
   $('forward').disabled = !state.canGoForward;
-  $('reload-icon').innerHTML = active?.loading
+  setMarkup($('reload-icon'), active?.loading
     ? '<path d="M4 4l8 8M12 4l-8 8"/>'
-    : '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/>';
+    : '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/>');
   $('reload').title = active?.loading ? t('toolbar.stop') : t('toolbar.reload.title');
   $('reload').setAttribute('aria-label', active?.loading ? t('toolbar.stop') : t('toolbar.reload'));
 }
