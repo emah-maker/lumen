@@ -13,14 +13,14 @@
 // city / region -> country. Lower case, single words (titles are tokenised into words).
 const PLACES = {
   japan: 'tokyo kyoto osaka hiroshima nara sapporo yokohama shinjuku shibuya harajuku akihabara hokkaido okinawa fukuoka nagoya kobe nikko hakone kamakura',
-  france: 'paris lyon marseille bordeaux nice provence louvre versailles',
-  italy: 'rome venice florence milan naples tuscany amalfi sicily verona bologna',
-  spain: 'madrid barcelona seville valencia granada mallorca ibiza',
-  portugal: 'lisbon porto algarve',
+  france: 'paris lyon marseille bordeaux nice provence louvre versailles toulouse strasbourg',
+  italy: 'rome venice florence milan naples tuscany amalfi sicily verona bologna roma venezia firenze milano napoli torino',
+  spain: 'madrid barcelona seville sevilla valencia granada mallorca ibiza malaga bilbao',
+  portugal: 'lisbon lisboa porto algarve',
   england: 'london manchester liverpool',
   scotland: 'edinburgh glasgow',
   ireland: 'dublin galway',
-  germany: 'berlin munich hamburg frankfurt cologne',
+  germany: 'berlin munich münchen munchen muenchen hamburg frankfurt cologne köln düsseldorf stuttgart dresden leipzig nürnberg bayern bavaria',
   netherlands: 'amsterdam rotterdam',
   greece: 'athens santorini mykonos crete',
   turkey: 'istanbul cappadocia',
@@ -30,7 +30,7 @@ const PLACES = {
   korea: 'seoul busan jeju',
   china: 'beijing shanghai shenzhen',
   singapore: 'singapore',
-  india: 'delhi mumbai bangalore goa kerala',
+  india: 'delhi mumbai bangalore goa kerala chennai kolkata hyderabad pune jaipur agra',
   emirates: 'dubai abu',
   australia: 'sydney melbourne brisbane perth',
   zealand: 'auckland queenstown wellington',
@@ -39,28 +39,31 @@ const PLACES = {
   brazil: 'rio paulo',
   peru: 'lima cusco',
   iceland: 'reykjavik',
-  switzerland: 'zurich geneva zermatt',
-  austria: 'vienna salzburg',
-  czech: 'prague',
+  switzerland: 'zurich zürich geneva zermatt',
+  austria: 'vienna wien salzburg',
+  czech: 'prague praha',
+  poland: 'warsaw warszawa krakow kraków gdansk',
+  argentina: 'buenos mendoza bariloche',
   hungary: 'budapest',
   denmark: 'copenhagen',
   sweden: 'stockholm',
   norway: 'oslo bergen',
 };
 
-// concept -> words (lower case; matched after stemming, so plurals and -ing forms count).
+// concept -> words (lower case; matched after stemming, so plurals and -ing forms count). Travel and housing also carry the same errands in
+// German, Spanish, Portuguese, French and Italian, and Japanese and Korean as the two-character pieces tab-groups reads those scripts in.
 const CONCEPTS = {
-  travel: 'amtrak flixbus megabus greyhound flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover boarding',
+  travel: 'amtrak flixbus megabus greyhound flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover boarding attractions flug flüge flughafen bahn zug reise reisen urlaub unterkunft ferienwohnung vuelo vuelos billete billetes alojamiento viaje viajes pasaje pasajes passagem passagens voo voos viagem viagens vol vols billet sncf voyage volo voli treno albergo viaggio 旅行 航空 ホテ 항공 숙소 여행 호텔',
   education: 'lecture homework syllabus assignment textbook exam midterm semester professor course quiz lab tutor gradebook',
   shopping: 'price buy deal discount coupon cart checkout shipping warranty unboxing',
   entertainment: 'movie movies film films cinema trailer trailers imdb letterboxd goodreads rotten tomatoes tomato book books novel novels author series season episode episodes tv sitcom documentary actor director',
   baking: 'sourdough bread loaf dough starter flour yeast crumb bake baking knead proofing levain baguette pastry dutch oven hydration scoring banneton cake cookie cookies',
   cooking: 'recipe ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast chicken burrito pasta soup stew casserole skillet',
   jobs: 'job career resume interview salary hiring recruiter internship applicant offer negotiate negotiation leetcode cscareerquestions grad',
-  housing: 'apartment apartments rent rental lease landlord realtor tenant renter renters moving movers relocation relocating uhaul',
-  sports: 'nba nfl mlb nhl playoff finals championship coach quarterback',
+  housing: 'apartment apartments rent rental lease landlord realtor tenant renter renters moving movers relocation relocating uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento 賃貸 不動 월세 전세 부동',
+  sports: 'nba nfl mlb nhl playoff finals championship coach quarterback fussball fußball bundesliga spielplan laliga futebol cricket ipl bcci cricbuzz espncricinfo kohli dhoni rcb csk wicket innings',
   health: 'symptom diagnosis medication doctor clinic therapy nutrition workout',
-  finance: 'stock invest investing investor bond dividend portfolio inflation savings loan mortgage mortgages yield yields roth ira 401k 403b rollover retirement retire brokerage dividends index etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase',
+  finance: 'stock invest investing investor bond dividend portfolio inflation savings loan mortgage mortgages yield yields roth ira 401k 403b rollover retirement retire brokerage dividends index etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase zerodha groww hdfc icici phonepe paytm nifty sensex upstox nubank itaú itau bradesco bovespa ibovespa sparkasse volksbank commerzbank revolut monzo n26 degiro trading212 etoro barclays hsbc santander bbva',
   tax: 'tax taxes irs',
   ml: 'machine neural reinforcement rlhf gradient backpropagation pytorch tensorflow keras llm llms gpt transformer transformers attention embedding embeddings huggingface arxiv kaggle tensor deeplearning cuda gpu gpus vram nanogpt lora oom finetune finetuning tuning tokenizer diffusion classifier backprop supervised unsupervised convolutional rnn lstm gan autoencoder overfitting regularization hyperparameter dataset pretraining inference mlp bert langchain',
   fitness: 'fitness gym cardio run running runner runners marathon jog jogging c25k couch strava garmin pegasus parkrun triathlon yoga pilates crossfit deadlift squat hiit hypertrophy macros macro protein lifting weightlifting powerlifting barbell dumbbell creatine bench',
@@ -87,11 +90,15 @@ const SITE_PLACES = [['disneyworld.disney.go.com', 'orlando'], ['universalorland
 // travel or housing word.
 const CITIES = 'boston cambridge somerville brooklyn manhattan queens nyc chicago seattle austin denver miami atlanta dallas houston portland philadelphia pittsburgh oakland diego vegas orlando nashville detroit baltimore minneapolis phoenix charlotte raleigh richmond tampa cleveland columbus cincinnati sacramento honolulu anchorage';
 
+// Sites that are many things under one name (a portal): the name says nothing about a page ('Naver Maps' and 'Naver Sports' are not one topic).
+// domain label -> the name in other scripts.
+const PORTAL_BRANDS = { naver: '네이버', yahoo: 'ヤフー', rakuten: '楽天', kakao: '카카오', daum: '다음', baidu: '百度', coupang: '쿠팡', tistory: '티스토리' };
+
 // Concepts whose tabs form a group of their own (tab-groups.js conceptGroups) when three or more loose tabs carry them and nothing
 // else took those tabs: "Roth IRA", "Vanguard funds" and "401k rollover" share no word, but are one errand. concept -> group name.
 // Only concepts that name one topic; "shopping" words turn up in tabs about anything, and the broad ones (programming, travel) are held to
 // stricter terms (CONCEPT_LOOSE_ONLY). Cooking is left out: a window of a baker's and a meal-prepper's tabs is two topics.
-const CONCEPT_GROUPS = { finance: 'Finance', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', entertainment: 'Movies & books', travel: 'Travel' };
+const CONCEPT_GROUPS = { finance: 'Finance', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports' };
 // Concepts too broad to merge groups: they only draw LOOSE tabs together, from different sites, and want this many (the docs of every
 // project are "programming": three of them beside a project's own tabs are that project's; two groups that formed on their own words are two projects).
 const CONCEPT_LOOSE_ONLY = { programming: 4, travel: 4, devops: 3 };
@@ -115,7 +122,7 @@ const CONCEPT_JOINS = { finance: ['tax'] };
 
 // registrable domain (or full host) -> category. Same category names as CONCEPTS where they overlap.
 const SITE_CATEGORIES = {
-  travel: 'amtrak.com flixbus.com disneyworld.disney.go.com universalorlando.com booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com lonelyplanet.com klook.com hotels.com vrbo.com agoda.com viator.com getyourguide.com nomadicmatt.com japan-guide.com travel.state.gov flights.google.com',
+  travel: 'amtrak.com flixbus.com bahn.de thetrainline.com sncf-connect.com trenitalia.com renfe.com italotreno.it omio.com rome2rio.com disneyworld.disney.go.com universalorlando.com booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com lonelyplanet.com klook.com hotels.com vrbo.com agoda.com viator.com getyourguide.com nomadicmatt.com japan-guide.com travel.state.gov flights.google.com',
   education: 'canvas.northeastern.edu instructure.com blackboard.com zybooks.com khanacademy.org coursera.org edx.org chegg.com quizlet.com piazza.com gradescope.com brightspace.com coursehero.com ocw.mit.edu',
   shopping: 'amazon.com bestbuy.com walmart.com target.com ebay.com etsy.com newegg.com rtings.com wirecutter.com camelcamelcamel.com costco.com homedepot.com lowes.com',
   baking: 'kingarthurbaking.com bobsredmill.com theclevercarrot.com',
@@ -127,8 +134,8 @@ const SITE_CATEGORIES = {
   programming: 'stackoverflow.com stackexchange.com developer.mozilla.org npmjs.com pypi.org docs.python.org readthedocs.io nextjs.org typescriptlang.org react.dev nodejs.org rust-lang.org go.dev pkg.go.dev docs.rs numpy.org pandas.pydata.org matplotlib.org scipy.org djangoproject.com docs.djangoproject.com flask.palletsprojects.com realpython.com w3schools.com css-tricks.com',
   devops: 'kubernetes.io docs.docker.com hub.docker.com docker.com aws.amazon.com docs.aws.amazon.com terraform.io registry.terraform.io developer.hashicorp.com helm.sh nginx.org nginx.com docs.ansible.com ansible.com cloud.google.com azure.microsoft.com jenkins.io prometheus.io grafana.com',
   entertainment: 'imdb.com rottentomatoes.com letterboxd.com goodreads.com metacritic.com themoviedb.org',
-  sports: 'espn.com basketball-reference.com nba.com nfl.com mlb.com',
-  finance: 'reuters.com bloomberg.com cnbc.com wsj.com marketwatch.com federalreserve.gov fidelity.com vanguard.com schwab.com robinhood.com etrade.com nerdwallet.com investopedia.com coinbase.com',
+  sports: 'espn.com basketball-reference.com nba.com nfl.com mlb.com cricbuzz.com espncricinfo.com iplt20.com bcci.tv ge.globo.com lance.com.br bundesliga.com kicker.de sportschau.de',
+  finance: 'reuters.com bloomberg.com cnbc.com wsj.com marketwatch.com federalreserve.gov fidelity.com vanguard.com schwab.com robinhood.com etrade.com nerdwallet.com investopedia.com coinbase.com zerodha.com groww.in hdfcbank.com icicibank.com phonepe.com paytm.com upstox.com nubank.com.br itau.com.br bradesco.com.br xpi.com.br b3.com.br n26.com revolut.com monzo.com degiro.com trading212.com',
   tax: 'irs.gov',
   ml: 'arxiv.org wandb.ai huggingface.co distill.pub 3blue1brown.com paperswithcode.com pytorch.org tensorflow.org kaggle.com fast.ai deeplearning.ai',
   fitness: 'strava.com runnersworld.com myfitnesspal.com bodybuilding.com garmin.com parkrun.com',
@@ -203,4 +210,4 @@ const FALLBACK_CATEGORIES = [
   { name: 'News & social', weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
 ];
 
-module.exports = { SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };
+module.exports = { PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

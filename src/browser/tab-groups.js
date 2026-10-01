@@ -84,7 +84,7 @@ const isAppOrSearch = (url) => Boolean(PRODUCT_SITES[hostname(url)]) || SEARCH_D
 // The list also holds the generic title words ("explained", "basics", "tutorial", "overview", "beginners" ...): they say what kind of page it
 // is, never what it is about, so two tabs sharing only one of them are not one topic ("Bond yields explained", "Transformer attention explained").
 const STOPWORDS = new Set(`a an and are as at be by for from has have how i in is it its of on or our that the this to was what when where which who why will with you your
-about after all also any best can com could do does get go guide home into just like login more most new news no not now official one only other out over page
+about after all also any best can com could do does get go guide home live into just like login more most new news no not now official one only other out over page
 said see sign site so some than them then there these they top up us use using via vs was way we web welcome were what www html htm php aspx index amp http https
 gov gouv edu official free online app video videos watch search results result edit view log docs doc wiki org net io co uk en de fr es de
 help helps works time times visit deal deals thing things day days week weeks year years review reviews reviewed rated tips ideas
@@ -279,12 +279,23 @@ function cjkTokens(chunk) {
         if (chars.length < 2 || (kana && chars.length < 3)) continue; // a lone character or a particle ("の", "です")
         for (let i = 0; i < chars.length - 1; i++) {
           const g = chars[i] + chars[i + 1];
-          if (!CJK_STOP_BIGRAMS.has(g)) out.push({ key: g, surface: g });
+          if (!CJK_STOP_BIGRAMS.has(g)) out.push({ key: g, surface: g, piece: part }); // `piece`: the whole run it was cut from (see runCompatible)
         }
       }
     }
   }
   return out;
+}
+// Is `cand` a whole run in `text`, as cjkTokens reads it: starting and ending where a run of one script, a filler word or a grammar
+// character does, not the middle or tail of a longer word ("ース" in "ニュース")?
+function wholeRunIn(text, cand) {
+  const edges = new Set([0, text.length]);
+  const edge = (re) => { for (const m of text.matchAll(re)) { edges.add(m.index); edges.add(m.index + m[0].length); } };
+  edge(CJK_RUNS);
+  edge(CJK_FILLER_RE);
+  edge(new RegExp(HAN_FUNCTION_CHARS.source, 'gu'));
+  for (let at = text.indexOf(cand); at >= 0; at = text.indexOf(cand, at + 1)) if (edges.has(at) && edges.has(at + cand.length)) return true;
+  return false;
 }
 // The longest run of letters that `need` of a group's titles share ("파이썬 기초 강의" + "파이썬 기초 배우기" -> 파이썬), to name a
 // CJK group whole instead of pasting two bigrams together ("파이 이썬"). '' when that run is only filler.
@@ -297,7 +308,8 @@ function sharedRun(titles, need) {
     if (!letter(first[i])) continue;
     for (let j = i + 2; j <= first.length && letter(first[j - 1]); j++) {
       const cand = first.slice(i, j).join('');
-      if (cand.length > best.length && !isFillerRun(cand) && texts.filter((t) => t.includes(cand)).length >= need) best = cand;
+      // Named from whole runs only: "ース" is the tail of ニュース and タイガース, not a word that either title says.
+      if (cand.length > best.length && !isFillerRun(cand) && texts.filter((t) => t.includes(cand)).length >= need && texts.some((t) => wholeRunIn(t, cand))) best = cand;
     }
   }
   const script = '\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}\\p{scx=Hangul}';
@@ -368,10 +380,12 @@ function courseCodes(text) {
 
 function tabWords({ title = '', url = '', text = '', hint = '' }) {
   const words = new Map();
+  words.pieces = new Map(); // CJK bigram -> the whole runs it came from
   const bigrams = [];
   const add = (list, weight, { naming = false, vector = false } = {}) => {
     for (let i = 0; i < list.length; i++) {
-      const { key, surface } = list[i];
+      const { key, surface, piece } = list[i];
+      if (piece) { if (!words.pieces.has(key)) words.pieces.set(key, new Set()); words.pieces.get(key).add(piece); }
       const entry = words.get(key) || { weight: 0, surface };
       entry.weight = Math.max(entry.weight, weight);
       words.set(key, entry);
@@ -407,7 +421,13 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   if (repo) shownTitle = String(shownTitle).split(/\s+/).map((w) => (w.toLowerCase().startsWith(`${repo.owner}/`) ? w.slice(repo.owner.length + 1) : w)).join(' ');
   // An address in a title ("Inbox - mah.e@northeastern.edu - Outlook") names a mailbox, not a topic: its domain must not link the page to a university's.
   const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(shownTitle, url).replace(/\S+@\S+\.\S+/g, ' ');
-  const titleTokens = tokens(cleanTitle);
+  // A site's own name is no topic. A title that is only the site's name ("Times of India", "Aaj Tak Live") says nothing about the page, and
+  // a portal's name ("Naver", "Yahoo", "楽天") links its maps to its sports: those words never link two tabs.
+  const hostLabels = hostname(url).split('.').filter((l) => l.length >= 4);
+  const compactTitle = cleanTitle.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const nameOnly = compactTitle.length >= 4 && hostLabels.some((l) => compactTitle === l.replace(/[^a-z0-9]/g, '') || (compactTitle.includes(l) && compactTitle.length - l.length <= 4));
+  const portalKeys = new Set(knowledge.PORTAL_BRANDS[label] ? [stemWord(label), ...tokens(knowledge.PORTAL_BRANDS[label]).map((t) => t.key)] : []);
+  const titleTokens = nameOnly ? [] : tokens(cleanTitle).filter((t) => !portalKeys.has(t.key));
   // Words written with a capital ("Москве", "iPhone in Boston"): names of places and things. `proper` ones are capitalised in
   // the middle of a sentence-case title, where only a name is. A Title Case title capitalises everything, so says nothing.
   words.proper = new Set();
@@ -462,10 +482,28 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   return words;
 }
 
+// Two CJK tabs are only linked by a character pair when they share a whole run of at least two characters: one tab's run is the other's
+// ("ニュース" and "ニュース"; "제주도" in "제주도를"), not just the tail they happen to have in common ("ース" of ニュース and タイガース).
+const runCompatible = (p, q) => [...p].some((a) => [...q].some((b) => a.length >= 2 && b.length >= 2 && (a.includes(b) || b.includes(a))));
+function dropFragmentLinks(docs) {
+  const byKey = new Map();
+  for (const d of docs) for (const k of d.words.pieces.keys()) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(d); }
+  for (const [k, list] of byKey) {
+    if (list.length < 2) continue;
+    for (const d of list) {
+      const partners = list.filter((o) => o !== d && runCompatible(d.words.pieces.get(k), o.words.pieces.get(k))).length;
+      if (partners >= 1 && partners * 2 >= list.length - 1) continue;
+      d.words.delete(k);
+      for (const w of [...d.words.keys()]) if (w[0] === '~' && w.slice(1).split('|').includes(k)) d.words.delete(w);
+    }
+  }
+}
+
 // TF-IDF vectors for a set of entries, idf computed over just this set ("current tabs").
 function vectorize(entries, { allowCommon = false } = {}) {
   const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url), siteKey: siteKey(e.url), siteHint: siteHint(e.url) || e.aiHint || '' }));
   const n = docs.length;
+  dropFragmentLinks(docs);
   // A site's own name ("nextjs.org", "zod.dev") is brand noise between two of its own pages, but
   // it IS the topic when a page of ANOTHER site names it (Stack Overflow "Next.js ...", a GitHub
   // repo called next.js): then the site's tabs get that word at full strength, so the docs join.
@@ -565,6 +603,8 @@ const strongCounts = (list) => {
 // -> { key, score } for the best shared word, or null. ca/cb: precomputed strongCounts (optional).
 function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
   let best = null;
+  // No word in common, no link (and no need to work out what either group is characterised by).
+  if (!(ca.size <= cb.size ? [...ca.keys()].some((k) => cb.has(k)) : [...cb.keys()].some((k) => ca.has(k)))) return null;
   // A group (3+ tabs) characterised by a word the other never has (a kitchen renovation, a Tokyo
   // trip) is not the other's topic just because they share a common word (budget, itinerary). A
   // shared word only overrides that when it characterises the group as much as its own word does
@@ -620,6 +660,7 @@ function cosine(a, b) {
   }
   // Two pages that share a city and nothing else ("Best ramen in Boston", "Boston rent prices", "Boston to NYC bus tickets") are not one topic:
   // a city only counts beside a travel or housing word. A group's pooled words (a centroid) count a shared country too, so a Tokyo weather page can still join a Japan trip.
+  // (A country or a city PLACES knows can link two tabs, but a group it bridges between different topics is split afterwards: splitPlaceBridges.)
   if (cities && !beyondPlaces) return 0;
   // Three letter fragments alone ("documentation" / "compilation") are a coincidence unless there are many.
   if (trigrams === sharedReal && trigrams < 5) return 0;
@@ -666,6 +707,17 @@ function centroidOf(docs) {
   return { vec, norm: Math.hypot(...vec.values()), words, own: docs.reduce((n, d) => n + ownWords(d), 0) / docs.length };
 }
 
+// A cluster's centroid, remembered per cluster array: a cluster that has not grown is not pooled again (the merge loops compare every
+// pair of clusters every round, and rebuilding both centroids each time made organizing a few hundred tabs freeze the window).
+const centroidCache = new WeakMap();
+function clusterCentroid(c, docs) {
+  const hit = centroidCache.get(c);
+  if (hit && hit.n === c.length && hit.docs === docs) return hit.value;
+  const value = centroidOf(c.map((k) => docs[k]));
+  centroidCache.set(c, { n: c.length, docs, value });
+  return value;
+}
+
 // A library or product whose own site is in the cluster and whose name most of the cluster's tabs carry
 // (its docs, a Stack Overflow question, its repo): the cluster is named for it, as its site writes it
 // ("Tailwind CSS", "Zod"), rather than for the most frequent word or phrase.
@@ -681,6 +733,44 @@ function libraryName(members, majority) {
     }
   }
   return '';
+}
+
+// One place word must not bridge several topics: a group whose tabs are linked by a city or country (Berlin, India) but that holds tabs
+// of two or more specific topics (a trip, a flat, a football club) keeps the topic most of its tabs carry; a tab of another topic goes
+// loose, and so does a tab that carries no topic of its own and shares nothing with the rest but the place ("Gewerbeanmeldung Berlin" among
+// trains and flights, the Times of India among Goa hotels). A group that is all one topic, or one topic and tabs of no topic that say more
+// than the place, is left whole when it is big (a Japan trip with its subway pass and restaurant pages); a small one keeps only the tabs that do.
+const SPLIT_MIN_GROUP = 3;
+const SPLIT_PLACE_TOPIC = 6;
+function splitPlaceBridges(clusters, docs) {
+  const loose = [];
+  const out = clusters.map((c) => {
+    if (c.length < SPLIT_MIN_GROUP) return c;
+    const conceptsOf = (i) => [...docs[i].words.keys()].filter((k) => k[0] === '%' && docs[i].vec.has(k));
+    const placeCount = new Map();
+    for (const i of c) for (const k of docs[i].vec.keys()) if (isRealKey(k) && isPlaceKey(k)) placeCount.set(k, (placeCount.get(k) || 0) + 1);
+    if (![...placeCount.values()].some((n) => n >= 2)) return c;
+    const count = new Map();
+    for (const i of c) for (const k of conceptsOf(i)) count.set(k, (count.get(k) || 0) + 1);
+    const ranked = [...count].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]);
+    if (!ranked.length) return c;
+    const main = ranked[0][0];
+    const others = c.filter((i) => { const k = conceptsOf(i); return k.length && !k.includes(main); });
+    if (!others.length && c.length >= SPLIT_PLACE_TOPIC) return c; // a big group of one topic, its place in most of it (a Japan trip with its subway pass and restaurant pages)
+    const counts = strongCounts(c.map((i) => docs[i]));
+    const keep = c.filter((i) => {
+      const k = conceptsOf(i);
+      if (k.includes(main)) return true;
+      if (k.length) return false;
+      // No topic of its own: stays only with a word, beyond the place, that another member says too.
+      return [...strongSet(docs[i])].some((w) => !isPlaceKey(w) && (counts.get(w) || 0) >= 2);
+    });
+    if (keep.length < 2) return c;
+    const stay = new Set(keep);
+    for (const i of c) if (!stay.has(i)) { loose.push([i]); (docs.apart ||= new Map()).set(i, stay); } // anchorMerge must not take them back on the same place word
+    return keep;
+  });
+  return out.concat(loose);
 }
 
 // A tab in a group of 6+ that shares no topic word with a fair part of the group (a weather page that
@@ -709,12 +799,22 @@ const PRUNE_KEEP_COSINE = 0.25;
 function anchorMerge(clusters, docs) {
   const out = clusters.map((c) => [...c]);
   const counts = out.map((c) => strongCounts(c.map((i) => docs[i])));
+  const apart = (X, Y) => X.some((a) => docs.apart?.has(a) && Y.some((b) => docs.apart.get(a).has(b)));
+  // A pair's link is kept until one of its clusters changes (the arrays are replaced when merged).
+  const linkOf = new Map();
+  const linkBetween = (i, j) => {
+    let row = linkOf.get(out[i]);
+    if (!row) linkOf.set(out[i], (row = new Map()));
+    if (!row.has(out[j])) row.set(out[j], anchorLink(out[i].map((k) => docs[k]), out[j].map((k) => docs[k]), docs.df, docs.n, counts[i], counts[j]));
+    return row.get(out[j]);
+  };
   for (;;) {
     let best = null;
     for (let i = 0; i < out.length; i++) {
       for (let j = i + 1; j < out.length; j++) {
         if (out[i].length < 2 && out[j].length < 2) continue; // two lone tabs: pass one already compared them
-        const link = anchorLink(out[i].map((k) => docs[k]), out[j].map((k) => docs[k]), docs.df, docs.n, counts[i], counts[j]);
+        let link = linkBetween(i, j);
+        if (link && isPlaceKey(link.key) && docs.apart && (apart(out[i], out[j]) || apart(out[j], out[i]))) link = null; // split off from that group for bridging topics with this very word
         if (link && (!best || link.score > best.score)) best = { i, j, score: link.score, key: link.key };
       }
     }
@@ -749,7 +849,7 @@ function conceptAbsorb(clusters, docs) {
       for (let b = 0; b < out.length; b++) {
         if (b === s || out[b].length < 4 || out[b].length <= out[s].length || ofRepoCluster(out[b], docs)) continue;
         if (![...sets[s]].some((k) => sets[b].has(k))) continue;
-        const cos = cosine(centroidOf(out[s].map((i) => docs[i])), centroidOf(out[b].map((i) => docs[i])));
+        const cos = cosine(clusterCentroid(out[s], docs), clusterCentroid(out[b], docs));
         if (cos >= ABSORB_MIN_COS && (!best || cos > best.cos)) best = { b, cos };
       }
       if (!best) continue;
@@ -788,7 +888,7 @@ function siteJoin(clusters, docs) {
   // so only a tab that shares words with one of them (SAME_SITE_MIN_COS) joins it.
   const joinBest = (i, pred, minCos) => {
     const d = docs[i];
-    const fits = out.filter((c) => c.length >= 2 && majority(c, pred)).map((c) => ({ c, cos: cosine(d, centroidOf(c.map((k) => docs[k]))) }));
+    const fits = out.filter((c) => c.length >= 2 && majority(c, pred)).map((c) => ({ c, cos: cosine(d, clusterCentroid(c, docs)) }));
     const need = fits.length > 1 ? Math.max(minCos, SAME_SITE_MIN_COS) : minCos;
     const best = fits.filter((f) => f.cos >= need).sort((a, b) => b.cos - a.cos || b.c.length - a.c.length)[0];
     if (best) best.c.push(i);
@@ -1055,21 +1155,31 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
   // merge here, though - that pairwise comparison is identical to pass one's and already had its
   // shot there; this stage is only for absorbing a straggler into (or joining) real evidence.
   let merged = clusters.map((c) => [...c]);
+  // Each pair's score is kept until one of its clusters changes, so a round only scores the merged cluster against the rest.
+  const pairScore = new Map();
+  const scoreOfPair = (x, y) => {
+    let row = pairScore.get(x);
+    if (!row) pairScore.set(x, (row = new Map()));
+    if (!row.has(y)) row.set(y, cosine(clusterCentroid(x, docs), clusterCentroid(y, docs)));
+    return row.get(y);
+  };
   for (;;) {
     let best = null;
     for (let i = 0; i < merged.length; i++) {
       for (let j = i + 1; j < merged.length; j++) {
         if (merged[i].length < 2 && merged[j].length < 2) continue;
-        const s = cosine(centroidOf(merged[i].map((k) => docs[k])), centroidOf(merged[j].map((k) => docs[k])));
+        const s = scoreOfPair(merged[i], merged[j]);
         if (s >= CENTROID_MERGE_THRESHOLD && (!best || s > best.s)) best = { i, j, s };
       }
     }
     if (!best) break;
+    pairScore.delete(merged[best.i]);
+    pairScore.delete(merged[best.j]);
     merged[best.i] = merged[best.i].concat(merged[best.j]);
     merged.splice(best.j, 1);
   }
   // Third stage: groups (and lone tabs) that share an anchor word are one topic.
-  if (!process.env.NOANCHOR) merged = anchorMerge(pruneWeak(anchorMerge(merged, docs), docs), docs);
+  if (!process.env.NOANCHOR) merged = anchorMerge((process.env.NOSPLIT ? (x) => x : splitPlaceBridges)(pruneWeak(anchorMerge(merged, docs), docs), docs), docs);
   if (!process.env.NOABSORB) merged = conceptAbsorb(merged, docs);
   // Fifth stage: loose tabs by their site and its hint.
   const hintOf = new Map(); // sorted member indices -> the hint a cluster was formed on

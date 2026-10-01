@@ -2227,8 +2227,8 @@ const refineCache = organizeAi.createRefineCache(); // answers for tabs organize
 
 // One refinement request (features/organize-ai.js): group summaries and leftover tabs in, names / placements /
 // merges out. Small max_tokens, temperature 0 and a strict schema, on the cheapest model of the chat's provider.
-async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_CLI_MS) {
-  const route = await groupingRoute(String(model));
+async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_CLI_MS, knownRoute = null) {
+  const route = knownRoute || await groupingRoute(String(model)); // organizeTabs worked the route out once for this click
   const user = JSON.stringify(wire);
   if (route.engine) {
     const { engine, model: engineModelId } = route;
@@ -2288,7 +2288,11 @@ async function organizeTabs() {
     if (organizeAbort.signal.aborted) return 0;
     if (tabGroups.candidates().length < 2) throw tooFewMessage();
     // How long the model gets depends on the route: a CLI engine needs seconds just to start (organize-ai TIMEOUT_CLI_MS).
-    const timeoutMs = organizeAi.timeoutFor(await groupingRoute(String(cheapTopicModel())).catch(() => null));
+    // The model is asked only when "Use AI to name and group topics" is on and a route to one exists (a key, or a signed-in CLI); the
+    // route is worked out once per click. Otherwise this stays on this computer: nothing is sent and there is nothing to complain about.
+    const aiOn = readSettings().topicAi === true || (TEST && global.__organizeAlwaysAsk === true);
+    const route = aiOn ? await groupingRoute(String(cheapTopicModel())).catch(() => null) : null;
+    const timeoutMs = organizeAi.timeoutFor(route);
     const stats = await organizeAi.organizeProgressive({
       tabGroups: inWin(tabGroups), // the model's answer arrives later: it must land in THIS window's tabs, not whichever is current by then
       cache: TEST && global.__organizeAlwaysAsk === true ? organizeAi.createRefineCache() : refineCache, // a test asks fresh every time
@@ -2297,7 +2301,7 @@ async function organizeTabs() {
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
       timeoutMs,
-      ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m) => refineGroups(m, wire, signal, ms)),
+      ask: organizeAi.askIfEnabled({ enabled: aiOn, route, ask: (wire, { signal, timeoutMs: ms } = {}) => withFallback(cheapTopicModel(), (m, first) => refineGroups(m, wire, signal, ms, first ? route : null)) }),
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
@@ -2317,8 +2321,8 @@ async function organizeTabs() {
       // The groups made before the cancel are real and stay: say so, with the Undo that removes them.
       back(() => organizeNote(`${t('organize.cancelled')}.`, { undo: true }));
     } else {
-      const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : failed ? aiFailureNote(failed, false) : t('organize.localOnly');
-      const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
+      const how = stats.reason === 'local' ? t('organize.local') : stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : failed ? aiFailureNote(failed, false) : t('organize.localOnly');
+      const what = Number.isInteger(stats.finalGroups) ? ` ${organizeSummary(stats.finalGroups, stats.loose)}` : '';
       back(() => organizeNote(`${how}.${what}`, { undo: true }));
     }
   } catch (err) {
@@ -2332,6 +2336,8 @@ async function organizeTabs() {
 }
 // The note when the AI step failed: "took too long" only for a real timeout, else the real cause (not signed in, no key...).
 function aiFailureNote(failed, standalone = true) {
+// "1 group.", "3 groups, 1 tab left loose.": the singular strings are keys of their own (the string table has no plural rules).
+const organizeSummary = (groups, loose) => t(organizeAi.summaryKey(groups, loose), { groups, loose });
   if (failed === 'timeout') return standalone ? t('organize.slowNone') : t('organize.slow');
   const cause = String(failed).replace(/\s+/g, ' ').trim().slice(0, 160);
   if (standalone) return `${t('organize.failed')}: ${cause.replace(/[.]$/, '') || t('organize.localOnly')}.`; // nothing was grouped: not "organized on this computer"

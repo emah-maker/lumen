@@ -350,15 +350,23 @@ function mergePlans(plans) {
   return out;
 }
 
-function withTimeout(promise, ms, signal) {
+// `controller` (optional) is the AbortController of the request the promise belongs to: a timeout aborts it, so the HTTP request
+// or CLI process stops instead of running on after the wait is over.
+function withTimeout(promise, ms, signal, controller = null) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(Object.assign(new Error('The model took too long.'), { code: 'timeout' })), ms);
+    const timer = setTimeout(() => { try { controller?.abort(); } catch { /* already aborted */ } reject(Object.assign(new Error('The model took too long.'), { code: 'timeout' })); }, ms);
     const onAbort = () => reject(Object.assign(new Error('Canceled.'), { code: 'cancelled' }));
     if (signal?.aborted) { clearTimeout(timer); reject(Object.assign(new Error('Canceled.'), { code: 'cancelled' })); return; }
     signal?.addEventListener('abort', onAbort, { once: true });
     promise.then(resolve, reject).finally(() => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); });
   });
 }
+
+// The model is asked only when the user turned "Use AI" on AND a route to a model exists (a key, or a signed-in CLI); otherwise null:
+// organizing stays on this computer, and nothing is sent or reported as a failure.
+// The string-table key of the "N groups, M tabs left loose" note: the table has no plural rules, so each singular is a key of its own.
+const summaryKey = (groups, loose) => (loose ? `organize.summaryLoose${groups === 1 ? '.oneGroup' : ''}${loose === 1 ? '.oneLoose' : ''}` : groups === 1 ? 'organize.summary.one' : 'organize.summary');
+const askIfEnabled = ({ enabled, route, ask }) => (enabled === true && route && typeof ask === 'function' ? ask : null);
 
 // What went wrong, for stats.failed: 'timeout' only when a wait really ran out (ours, or the CLI's own), else the real message.
 const failureOf = (err) => (err?.code === 'timeout' || err?.timedOut ? 'timeout' : err?.code === 'cancelled' ? 'cancelled' : err?.message || (err?.code != null ? String(err.code) : '') || 'failed');
@@ -404,6 +412,14 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
     return stats;
   };
   if (signal?.aborted) return finish('cancelled');
+  if (typeof ask !== 'function') return finish(count ? 'local' : 'none'); // AI off or no route: the local groups are the answer
+  // One request: it has its own AbortController (aborted by a cancel and by its own timeout), so a timeout stops the request itself.
+  const request = (wire) => {
+    const ctl = new AbortController();
+    const link = () => ctl.abort();
+    if (signal?.aborted) ctl.abort(); else signal?.addEventListener('abort', link, { once: true });
+    return withTimeout(Promise.resolve(ask(wire, { signal: ctl.signal, timeoutMs })), timeoutMs, signal, ctl).finally(() => signal?.removeEventListener('abort', link));
+  };
   const hosts = hints ? unknownHosts([...view.groups.flatMap((g) => g.entries), ...view.leftovers], hints.lookup) : [];
   const learnHints = (plan) => { if (hints && plan?.hints?.size) stats.hinted += hints.learn(plan.hints) || 0; };
   // Only the unknown sites to ask about: one small request, the groups stay as they are.
@@ -413,7 +429,7 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
     stats.requests++;
     stats.wire.push(JSON.stringify(wire));
     try {
-      learnHints(parseRefinement(await withTimeout(Promise.resolve(ask(wire, { signal, timeoutMs })), timeoutMs, signal), { groupIds: [], leftoverIds: [], hosts }));
+      learnHints(parseRefinement(await request(wire), { groupIds: [], leftoverIds: [], hosts }));
     } catch (err) { stats.failed = failureOf(err); }
   };
 
@@ -427,7 +443,7 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
       stats.requests++;
       stats.wire.push(JSON.stringify(wire));
       try {
-        const json = await withTimeout(Promise.resolve(ask(wire, { signal, timeoutMs })), timeoutMs, signal);
+        const json = await request(wire);
         const parsed = parseRefinement(json, { groupIds: chunk.groups.map((g) => g.id), leftoverIds: chunk.leftovers.map((e) => e.id), hosts: asked });
         if (!parsed) throw new Error('Unusable answer.');
         cache.remember(view, chunk, parsed);
@@ -508,5 +524,5 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
 module.exports = {
   hostOf, tabKey, groupKey, setKey, estimateTokens, topWords, groupSummary, leftoverSummary, buildWire, legacyWire, unknownHosts, MAX_HINT_HOSTS,
   REFINE_PROMPT, REFINE_SCHEMA, REFINE_MAX_TOKENS, parseRefinement, askable, clearName, assess, createRefineCache, chunkView,
-  planApply, mergePlans, fragments, withTimeout, organizeProgressive, failureOf, timeoutFor, TIMEOUT_MS, TIMEOUT_CLI_MS, TIMEOUT_API_MS, MIN_NEW_GROUP_TABS, MAX_PARALLEL, MIN_COHESION,
+  planApply, mergePlans, fragments, withTimeout, askIfEnabled, summaryKey, organizeProgressive, failureOf, timeoutFor, TIMEOUT_MS, TIMEOUT_CLI_MS, TIMEOUT_API_MS, MIN_NEW_GROUP_TABS, MAX_PARALLEL, MIN_COHESION,
 };

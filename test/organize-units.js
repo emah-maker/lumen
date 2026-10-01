@@ -441,4 +441,84 @@ function organized(specs) {
   check('AWS, EC2, CloudWatch and Terraform are one Cloud & DevOps group', [1, 2, 3, 4].every((i) => aws.same(0, i)) && aws.name(0) === 'Cloud & DevOps' && !aws.same(0, 5), [0, 1, 2, 3, 4].map(aws.name).join());
 }
 
-process.exit(failed ? 1 : 0);
+// Round 8 rater: speed, places and brands that bridge topics, CJK names, regional concepts, and the Organize AI gate.
+const oai = require('../src/features/organize-ai');
+const en = require('../src/locales/en.json');
+{
+  // 300 realistic tabs organize in well under a second (the centroid loops used to rebuild every centroid per pair: 4-16 s).
+  const pool = [['Flights to Tokyo - Google Flights', 'https://www.google.com/travel/flights'], ['Tokyo hotels - Booking.com', 'https://www.booking.com/city/jp/tokyo.html'], ['Easy Banana Bread Recipe', 'https://www.allrecipes.com/banana-bread'], ['Sourdough starter guide', 'https://www.kingarthurbaking.com/sourdough'],
+    ['React useEffect docs', 'https://react.dev/reference/react/useEffect'], ['node:fs documentation', 'https://nodejs.org/api/fs.html'], ['Stack Overflow - how to debounce', 'https://stackoverflow.com/questions/1'], ['CS 3500 - Canvas', 'https://canvas.northeastern.edu/courses/1'],
+    ['Gradescope HW3', 'https://www.gradescope.com/courses/1'], ['Roth IRA contribution limits - Fidelity', 'https://www.fidelity.com/roth'], ['Vanguard index funds', 'https://investor.vanguard.com/funds'], ['Best noise cancelling headphones - Wirecutter', 'https://www.nytimes.com/wirecutter/headphones'],
+    ['Sony WH-1000XM5 review - RTINGS', 'https://www.rtings.com/headphones/sony'], ['Marathon training plan - Runner\'s World', 'https://www.runnersworld.com/marathon'], ['Strava - Morning run', 'https://www.strava.com/activities/1'], ['Monstera care guide', 'https://www.plantcare.example/monstera'],
+    ['Pothos propagation', 'https://www.gardenersworld.example/pothos'], ['PyTorch documentation', 'https://pytorch.org/docs/stable/index.html'], ['Attention Is All You Need - arXiv', 'https://arxiv.org/abs/1706.03762'], ['Kubernetes Documentation', 'https://kubernetes.io/docs/home/'],
+    ['Zillow - apartments for rent', 'https://www.zillow.com/rentals/'], ['Software engineer jobs - Indeed', 'https://www.indeed.com/jobs?q=software+engineer'], ['NBA Finals Game 3 recap - ESPN', 'https://www.espn.com/nba/recap'], ['Fed holds rates steady - Reuters', 'https://www.reuters.com/markets/fed']];
+  const words = ['alpha', 'river', 'budget', 'garden', 'python', 'recipe', 'ticket', 'guide', 'review', 'news', 'match', 'course', 'notes', 'price', 'plan'];
+  const specs = Array.from({ length: 300 }, (_, i) => { const [a, b] = pool[i % pool.length]; return [`${a} ${words[(i * 7) % 15]} ${words[(i * 3 + Math.floor(i / pool.length)) % 15]}`, `${b}${b.includes('?') ? '&' : '?'}n=${i}`]; });
+  const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }]));
+  const t0 = Date.now();
+  const made = w.g.organizeByTopic();
+  const ms = Date.now() - t0;
+  check('perf: 300 realistic tabs organize in under 1.5 s', made >= 5 && ms < 1500, `${ms} ms, ${made} groups`);
+}
+{
+  // One place word must not bridge a registration office, a flat, trains and a football club.
+  const de = organized([['Gewerbeanmeldung Berlin', 'https://service.berlin.de/dienstleistung/121921/'], ['Wohnung mieten Berlin - ImmoScout24', 'https://www.immobilienscout24.de/Suche/de/berlin/wohnung-mieten'], ['2-Zimmer Wohnung Prenzlauer Berg', 'https://www.immobilienscout24.de/expose/1'], ['WG-Zimmer Neukölln - WG-Gesucht', 'https://www.wg-gesucht.de/wg-zimmer-in-berlin.1.html'],
+    ['Deutsche Bahn - Berlin nach München', 'https://www.bahn.de/buchung'], ['Flüge Berlin München - Skyscanner', 'https://www.skyscanner.de/fluge/ber/muc'], ['Hotel München Hauptbahnhof - Booking.com', 'https://www.booking.com/hotel/de/munchen.html'], ['Bayern München - Spielplan', 'https://fcbayern.com/de/spielplan'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('German set: the two flats and the WG room are one housing group, apart from the trains and flights', de.same(1, 2) && de.same(1, 3) && de.same(4, 5) && de.same(4, 6) && !de.same(1, 4), [1, 4].map(de.name).join());
+  check('German set: Berlin registration and Bayern football are not in the trip or the housing group', !de.same(0, 4) && !de.same(0, 1) && !de.same(7, 4) && !de.same(7, 1), [0, 7].map(de.name).join());
+  const india = organized([['Delhi to Goa flights - ixigo', 'https://www.ixigo.com/flights/delhi-goa'], ['Goa hotels - MakeMyTrip', 'https://www.makemytrip.com/hotels/goa'], ['Goa beaches guide - Lonely Planet', 'https://www.lonelyplanet.com/india/goa'], ['Times of India', 'https://timesofindia.indiatimes.com/'], ['Naukri - Software Engineer jobs Bangalore', 'https://www.naukri.com/software-engineer-jobs-in-bangalore'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('India set: Goa travel is not mixed with the Times of India or Naukri', india.same(0, 1) && india.same(0, 2) && !india.same(0, 3) && !india.same(0, 4), india.name(0));
+  const live = organized([['RCB vs CSK live score', 'https://www.cricbuzz.com/live-cricket-scores/1'], ['Aaj Tak Live', 'https://www.aajtak.in/live-tv'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('"Live" in a site\'s own name does not link an IPL score to Aaj Tak Live', !live.same(0, 1));
+  const naver = organized([['네이버 지도', 'https://map.naver.com/'], ['손흥민 경기 결과 - 네이버 스포츠', 'https://sports.naver.com/'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('a portal\'s own name (네이버) does not link its maps to its sports', !naver.same(0, 1));
+  const trip = organized([['Flights to Tokyo - Kayak', 'https://www.kayak.com/flights/tokyo'], ['Tokyo hotels - Booking.com', 'https://www.booking.com/city/jp/tokyo.html'], ['Where to eat in Tokyo - Eater', 'https://www.eater.com/tokyo'], ['Tokyo Subway Ticket - Tokyo Metro', 'https://www.tokyometro.jp/en/ticket/'],
+    ['Kyoto ryokan - Tripadvisor', 'https://www.tripadvisor.com/Kyoto'], ['Japan Rail Pass prices', 'https://www.japan-guide.com/e/e2361.html'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('a big one-place trip still stays whole (subway pass and restaurants included)', [1, 2, 3, 4, 5].every((i) => trip.same(0, i)) && !trip.same(0, 6), trip.name(0));
+}
+{
+  // CJK: named from whole runs, linked by whole runs.
+  const jp = organized([['Yahoo!ニュース', 'https://news.yahoo.co.jp/'], ['NHK ニュース', 'https://www3.nhk.or.jp/news/'], ['阪神タイガース 試合結果', 'https://www.hanshin.example/results'], ['京都 観光 おすすめ - じゃらん', 'https://www.jalan.net/kyoto'], ['京都 紅葉 2026 見頃', 'https://www.kyoto.example/koyo'],
+    ['クックパッド - 肉じゃが', 'https://cookpad.com/recipe/1'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('Yahoo!ニュース and NHK ニュース are a group named from a whole run, never "ース"; the Tigers are not in it', jp.same(0, 1) && !jp.same(0, 2) && jp.name(0) !== 'ース' && jp.name(0).length >= 2, jp.name(0));
+  check('Cookpad 肉じゃが is not pulled into the Kyoto trip', jp.same(3, 4) && !jp.same(3, 5), jp.name(5));
+  const three = organized([['Yahoo!ニュース', 'https://news.yahoo.co.jp/'], ['NHK ニュース', 'https://www3.nhk.or.jp/news/'], ['阪神タイガース 試合結果', 'https://www.hanshin.example/results'], ['東京タイガース ニュース', 'https://www.tokyo.example/news']]);
+  check('no CJK group is named by a bigram fragment (ース, ュー)', [0, 1, 2, 3].every((i) => !/^(ース|ュー|ニュ)$/.test(three.name(i))), [0, 1, 2, 3].map(three.name).join());
+}
+{
+  // Regional concepts, within Finance and Sports.
+  const fin = organized([['PhonePe - Transactions', 'https://www.phonepe.com/'], ['HDFC NetBanking', 'https://netbanking.hdfcbank.com/'], ['Zerodha Kite - Holdings', 'https://kite.zerodha.com/holdings'], ['Nifty 50 today - Moneycontrol', 'https://www.moneycontrol.com/nifty'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('Indian finance (PhonePe, HDFC, Zerodha, Nifty) is one Finance group', [1, 2, 3].every((i) => fin.same(0, i)) && fin.name(0) === 'Finance' && !fin.same(0, 4), fin.name(0));
+  const br = organized([['Nubank - Fatura', 'https://app.nubank.com.br/fatura'], ['Itaú - Conta corrente', 'https://www.itau.com.br/conta'], ['Bradesco Internet Banking', 'https://banco.bradesco/'], ['Ibovespa hoje - InfoMoney', 'https://www.infomoney.com.br/ibovespa'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('Brazilian finance (Nubank, Itaú, Bradesco, Ibovespa) is one Finance group', [1, 2, 3].every((i) => br.same(0, i)) && br.name(0) === 'Finance' && !br.same(0, 4), br.name(0));
+  const ipl = organized([['IPL 2026 Points Table', 'https://www.espncricinfo.com/ipl/points-table'], ['RCB vs CSK live score', 'https://www.cricbuzz.com/live-cricket-scores/1'], ['Virat Kohli stats', 'https://www.espncricinfo.com/player/virat-kohli'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('IPL, Cricbuzz and Kohli are one Sports group', [1, 2].every((i) => ipl.same(0, i)) && ipl.name(0) === 'Sports' && !ipl.same(0, 3), ipl.name(0));
+}
+{
+  // The note reads "1 group", not "1 groups"; every key exists.
+  const keys = [[1, 0], [3, 0], [1, 1], [1, 4], [3, 1], [3, 4]].map(([g, l]) => oai.summaryKey(g, l));
+  check('summary strings: every singular and plural key exists in en.json', keys.every((k) => typeof en[k] === 'string'), keys.filter((k) => typeof en[k] !== 'string').join());
+  const say = (g, l) => en[oai.summaryKey(g, l)].replace('{groups}', g).replace('{loose}', l);
+  check('summary strings read "1 group." and "1 group, 1 tab left loose." and "3 groups, 4 tabs left loose."', say(1, 0) === '1 group.' && say(1, 1) === '1 group, 1 tab left loose.' && say(3, 4) === '3 groups, 4 tabs left loose.' && say(3, 1) === '3 groups, 1 tab left loose.' && say(2, 0) === '2 groups.', `${say(1, 0)} / ${say(1, 1)}`);
+}
+let asked = 0;
+(async () => {
+  // topicAi off (or no route): the model is never asked and nothing is reported as a failure.
+  const ask = () => { asked++; return Promise.resolve({}); };
+  check('askIfEnabled: setting off means no ask function', oai.askIfEnabled({ enabled: false, route: { api: 'm' }, ask }) === null);
+  check('askIfEnabled: no usable route means no ask function', oai.askIfEnabled({ enabled: true, route: null, ask }) === null);
+  check('askIfEnabled: setting on and a route means the ask function', oai.askIfEnabled({ enabled: true, route: { engine: 'claudecode' }, ask }) === ask);
+  const w = window_([...RECIPES, ...TRIP].map(([a, b]) => [a, b, { userRemoved: true }]));
+  const phases = [];
+  const stats = await oai.organizeProgressive({ tabGroups: w.g, ask: oai.askIfEnabled({ enabled: false, route: null, ask }), onPhase: (n) => phases.push(n) });
+  check('topicAi off: organizeProgressive makes the local groups, asks nothing, reports no AI failure', stats.groups >= 1 && asked === 0 && stats.requests === 0 && !stats.failed && stats.reason === 'local' && !phases.includes('asking'), JSON.stringify({ asked, reason: stats.reason, failed: stats.failed }));
+  check('topicAi off: the local groups can be undone', w.g.undoOrganize() && w.tabs().every((t) => !t.groupId));
+  // A timeout aborts the request itself, not just the wait.
+  const ctl = new AbortController();
+  const err = await oai.withTimeout(new Promise(() => {}), 30, undefined, ctl).catch((e) => e);
+  check('withTimeout: a timeout aborts the request\'s AbortController', err.code === 'timeout' && ctl.signal.aborted === true, `${err.code} ${ctl.signal.aborted}`);
+  let seen = null;
+  const w2 = window_([...RECIPES, ...TRIP].map(([a, b]) => [a, b, { userRemoved: true }]));
+  const st2 = await oai.organizeProgressive({ tabGroups: w2.g, timeoutMs: 40, alwaysAsk: true, ask: (wire, { signal }) => { seen = signal; return new Promise(() => {}); } });
+  check('organizeProgressive: the signal handed to ask is aborted when the wait times out', st2.failed === 'timeout' && seen && seen.aborted === true, `${st2.failed} ${seen && seen.aborted}`);
+})().then(() => process.exit(failed ? 1 : 0));
