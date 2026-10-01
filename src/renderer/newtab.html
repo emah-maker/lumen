@@ -378,8 +378,12 @@
     .w-link { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 7px; color: var(--muted); font-size: 11.5px; font-weight: 500; text-decoration: none; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
     .w-link:hover { background: var(--hover); color: var(--text); }
     .w-link svg, .w-icon-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-    .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0.35; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
-    .w-card:hover .w-icon-btn, .w-icon-btn:hover, .w-icon-btn:focus-visible { opacity: 1; }
+    .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+    /* Hidden until the card is hovered or focused (and always on a failed card's pencil); touch has no hover, so it stays faintly there. */
+    .w-card:hover .w-icon-btn, .w-card:focus-within .w-icon-btn, .w-icon-btn:hover, .w-icon-btn:focus-visible, .w-icon-btn.always { opacity: 1; }
+    @media (hover: none) { .w-icon-btn { opacity: 0.6; } }
+    body.on-media .w-icon-btn { background: rgba(0, 0, 0, 0.28); color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); }
+    body.on-media .w-icon-btn:hover { background: rgba(0, 0, 0, 0.45); }
     @media (prefers-reduced-motion: reduce) { .w-icon-btn { transition: none; } }
     .w-icon-btn:hover { background: var(--hover); color: var(--text); }
     .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible, .wx-day:focus-visible, .wx-dot:focus-visible, .td-add input:focus-visible, .mu-ask input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
@@ -686,7 +690,7 @@
        It sits right after the greeting's own text (never at the column's edge), so a wide clock or a long greeting can't run under it. */
     .greet { display: flex; align-items: center; gap: 6px; min-width: 0; }
     .greet h1 { min-width: 0; overflow-wrap: anywhere; }
-    header:hover .hdr-edit, header:focus-within .hdr-edit { opacity: 1; }
+    header:hover .hdr-edit, header:focus-within .hdr-edit, .greet:hover .hdr-edit, .hdr-edit:focus-visible { opacity: 1; }
     body.w-editing .hdr-edit { display: none; }
     /* Custom recipes, Notes, Countdown and Timer. */
     .cw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; align-content: start; }

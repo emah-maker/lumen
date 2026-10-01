@@ -144,8 +144,13 @@ function createHistory(limit = 20) {
     clear() { stack.length = 0; },
     get size() { return stack.length; },
     some(test) { return stack.some(test); },
+    retain(keep) { for (let i = stack.length - 1; i >= 0; i--) if (!keep(stack[i])) stack.splice(i, 1); return stack.length; }, // drops what `keep` refuses
   };
 }
+// Config and removal entries outlive Edit layout (their Undo toast does); layout entries don't.
+const survivesEditExit = (e) => Boolean(e) && (e.kind === 'config' || e.kind === 'remove');
+// A config or removal the browser has let go of (ttl ms after it happened) can no longer be undone.
+const timedOut = (e, now, ttl) => Boolean(e) && (e.kind === 'config' || e.kind === 'remove') && now - e.at > ttl;
 const rectKey = (it) => `${it.x},${it.y},${it.w},${it.h},${it.snap || ''}`;
 // To go from the layout `cur` back to `prev` (both: [{ id, x, y, w, h, snap? }], system cards that are
 // free included): `items` are the cards to send (only those that differ, and only ones that still
@@ -201,7 +206,7 @@ function pickerEntries({ types = [], hidden = [], table } = {}) {
   return out;
 }
 
-const api = { STRINGS, TYPE_INFO, text, createHistory, undoPlan, guides, pickerEntries, rectKey };
+const api = { STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();

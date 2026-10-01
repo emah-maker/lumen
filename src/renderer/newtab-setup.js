@@ -216,15 +216,24 @@ let released = []; // what was made inert behind the panel
 // While a panel is open nothing behind it can be reached: Tab, clicks and screen readers stay in the panel.
 function lockPage(back) {
   released = [...document.body.children].filter((n) => n !== back && n.id !== 'w-live' && !/^(SCRIPT|STYLE)$/.test(n.tagName) && !n.hasAttribute('inert'));
-  for (const n of released) n.setAttribute('inert', '');
+  for (const n of released) { n.setAttribute('inert', ''); n.dataset.wsInert = '1'; }
 }
 function unlockPage() {
-  for (const n of released) n.removeAttribute('inert');
+  for (const n of released) { n.removeAttribute('inert'); delete n.dataset.wsInert; }
   released = [];
 }
+// Safety net: if a panel went away without close() (a redraw, a reload that kept the DOM, a thrown error), nothing stays unreachable.
+function releaseStaleLock() {
+  if (panel && panel.isConnected) return;
+  panel = null;
+  unlockPage();
+  for (const n of document.querySelectorAll('[data-ws-inert]')) { n.removeAttribute('inert'); delete n.dataset.wsInert; }
+}
+window.addEventListener('pagehide', () => { panel?.remove(); panel = null; unlockPage(); releaseStaleLock(); });
+new MutationObserver(() => { if (released.length && !(panel && panel.isConnected)) releaseStaleLock(); }).observe(document.body, { childList: true });
 
 function close() {
-  if (!panel) return;
+  if (!panel) { releaseStaleLock(); return; }
   if (flushName) { const f = flushName; flushName = null; f(); } // a name typed a moment ago is kept, not dropped
   panel.remove();
   panel = null;
@@ -313,12 +322,25 @@ function open(target) {
     ok.disabled = true;
     note.className = 'ws-status';
     note.textContent = 'Saving…';
-    const timer = setTimeout(() => { if (pending?.owner === back) pending.resolve({ ok: false, message: 'No answer from Lumen. Try again.' }); }, 20000); // the page reloaded, or main never got it
+    const timer = setTimeout(() => { if (pending?.owner === back) pending.resolve({ ok: false, retry: true, message: 'No answer from Lumen. Try again.' }); }, 20000); // the page reloaded, or main never got it
     pending = {
       owner: back,
       resolve(r) {
         clearTimeout(timer);
         pending = null;
+        if (r && r.retry) { // no answer in time: Save is live again, with a Retry beside the message
+          const here = panel === back;
+          if (!here) { toast(`${name} didn’t save: no answer from Lumen.`, { error: true }); return; }
+          ok.disabled = false;
+          note.className = 'ws-status err';
+          note.textContent = 'No answer · ';
+          const retry = el('button', 'w-btn', 'Retry');
+          retry.type = 'button';
+          retry.addEventListener('click', () => box.requestSubmit());
+          note.append(retry);
+          sync();
+          return;
+        }
         const here = panel === back; // false when Escape or a click outside closed it while the save was on its way
         if (r && r.ok) {
           if (here) close();
@@ -394,6 +416,9 @@ function openLook() {
   const { back, box } = dialog('Edit clock and greeting');
   const save = (k, v) => window.widgetAct('wlook', 'look', { k, v });
   const onOff = (v) => (v ? 'on' : 'off');
+  // What each control shows now, so Reset can be undone.
+  const state = { show: look.clock !== false, seconds: cs.seconds === true, date: cs.date !== false, style: cs.style || 'classic', hours: cs.hours || 'auto', card: cs.card || 'none', greeting: cs.greeting || 'classic' };
+  const BOOLS = ['show', 'seconds', 'date'];
   // The name is saved as it is typed (after a short pause), and whatever is left when the panel closes.
   const name = input('text', look.name, { maxlength: '40', placeholder: 'Your name', autocomplete: 'off' });
   let sent = look.name || '';
@@ -402,27 +427,41 @@ function openLook() {
   name.addEventListener('input', () => { clearTimeout(timer); flushName = sendName; timer = setTimeout(sendName, 400); });
   name.addEventListener('change', sendName);
   const controls = {
-    show: switchChip('Clock', look.clock !== false, (v) => save('show', onOff(v))),
-    seconds: switchChip('Seconds', cs.seconds === true, (v) => save('seconds', onOff(v))),
-    date: switchChip('Date', cs.date !== false, (v) => save('date', onOff(v))),
-    style: segmented('Clock style', STYLES, cs.style || 'classic', (v) => save('style', v)),
-    hours: segmented('Hours', HOURS, cs.hours || 'auto', (v) => save('hours', v)),
-    card: segmented('Behind the clock', CARDS, cs.card || 'none', (v) => save('card', v)),
-    greeting: segmented('Greeting font', GREET, cs.greeting || 'classic', (v) => save('greeting', v)),
+    show: switchChip('Clock', look.clock !== false, (v) => { state.show = v; save('show', onOff(v)); }),
+    seconds: switchChip('Seconds', cs.seconds === true, (v) => { state.seconds = v; save('seconds', onOff(v)); }),
+    date: switchChip('Date', cs.date !== false, (v) => { state.date = v; save('date', onOff(v)); }),
+    style: segmented('Clock style', STYLES, cs.style || 'classic', (v) => { state.style = v; save('style', v); }),
+    hours: segmented('Hours', HOURS, cs.hours || 'auto', (v) => { state.hours = v; save('hours', v); }),
+    card: segmented('Behind the clock', CARDS, cs.card || 'none', (v) => { state.card = v; save('card', v); }),
+    greeting: segmented('Greeting font', GREET, cs.greeting || 'classic', (v) => { state.greeting = v; save('greeting', v); }),
   };
   const switches = el('ul', 'ws-places');
   for (const k of ['show', 'seconds', 'date']) { const li = el('li'); li.append(controls[k].node); switches.append(li); }
   const showField = el('div', 'ws-field');
   showField.append(el('span', 'ws-label', 'Show'), switches);
-  const reset = el('button', 'w-btn', 'Reset to defaults');
+  const reset = el('button', 'w-btn', 'Reset clock look');
   reset.type = 'button';
-  reset.title = 'Clock style, hours, seconds, date, card and greeting font. Your name stays.';
+  reset.title = 'Resets Show clock, seconds, date, clock style, hours, the card behind the clock and the greeting font. Your name stays.';
   const status = el('p', 'ws-status');
   status.setAttribute('role', 'status');
   reset.addEventListener('click', () => {
+    const before = { ...state };
     window.widgetAct('wlook', 'look', { k: 'defaults', v: 'all' });
-    for (const [k, v] of Object.entries(LOOK_DEFAULT)) controls[k].set(v);
-    status.textContent = 'Back to the defaults.';
+    for (const [k, v] of Object.entries(LOOK_DEFAULT)) { controls[k].set(v); state[k] = v; }
+    status.textContent = 'Clock look reset. ';
+    const undo = el('button', 'w-btn', 'Undo');
+    undo.type = 'button';
+    undo.addEventListener('click', () => {
+      for (const [k, v] of Object.entries(before)) {
+        if (state[k] === v) continue;
+        state[k] = v;
+        controls[k].set(v);
+        save(k, BOOLS.includes(k) ? onOff(v) : v);
+      }
+      status.textContent = 'Put your clock look back.';
+      reset.focus();
+    });
+    status.append(undo);
   });
   const done = el('button', 'w-btn primary', 'Done');
   done.type = 'submit';
