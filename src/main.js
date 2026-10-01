@@ -171,7 +171,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
-  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
@@ -5453,6 +5453,15 @@ ipcMain.handle('suggest:query', (_e, query) => suggestions(query));
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));
+// The extension icons the toolbar has no room for: listed in a menu under the "..." button; the pick goes back
+// to the toolbar, which triggers that extension's action as its icon would.
+ipcMain.on('actions:overflow', (_e, point, items) => {
+  const list = (Array.isArray(items) ? items : []).filter((i) => i && typeof i.id === 'string' && typeof i.title === 'string').slice(0, 60);
+  if (!list.length || !win || win.isDestroyed()) return;
+  const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
+  const menu = Menu.buildFromTemplate(list.map((i) => ({ label: i.title.slice(0, 80) || i.id, click: () => ui()?.send('actions:overflow-pick', i.id) })));
+  menu.popup({ window: win, x: n(point?.x), y: n(point?.y) });
+});
 ipcMain.on('suggest:pick', (_e, index, listId) => ui()?.send('suggest:picked', { index, listId }));
 
 ipcMain.on('find:start', (_e, text, options = {}) => {

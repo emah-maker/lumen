@@ -380,8 +380,18 @@ body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy
 /* Extension icons can't push the ⋯ and AI buttons out of the window: the toolbar's end column is
    max-content, so enough icons at the 800px minimum ran it past the right edge (body clips it). The
    list gets what's left after the other buttons and a usable address field; icons past that are
-   clipped (there's no overflow menu yet). */
-browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); max-width: max(84px, calc(100vw - 600px)); overflow: hidden; }
+   clipped, and the "..." button beside the list (app.js) lists them. */
+browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); max-width: max(84px, calc(100vw - 640px)); overflow: hidden; }
+body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /* the zoom pill sits in the address field's end: the icons give it room */
+/* Wide windows: the address field stays a reasonable width and centred, with the icons at the edges. */
+@media (min-width: 1600px) {
+  .toolbar { grid-template-columns: minmax(max-content, 1fr) minmax(0, 760px) minmax(max-content, 1fr); }
+}
+/* The page zoomed in far: the pill and the security label take the field's room, so the URL starts at the left and the label shrinks to its icon. */
+@media (max-width: 1200px) {
+  body.zoomed .omnibox:not(:has(input:focus)) { justify-content: flex-start; padding-left: 12px; }
+  body.zoomed .security span { display: none; }
+}
 
 /* Find bar: the row opens by animating its grid track, so the page eases down with it. */
 .findbar {
@@ -393,10 +403,11 @@ browser-action-list { display: flex; align-items: center; min-height: 28px; --br
 .findbar.open .findbar-inner { padding-bottom: 6px; }
 .findbar-inner > * { transition: transform var(--t-smooth) var(--spring-smooth); }
 .findbar:not(.open) .findbar-inner > * { transform: translateY(-6px); }
-.findbar input { width: 260px; height: 28px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; transition: background-color var(--t-fast) ease-out, box-shadow var(--t-base) var(--ease-out); }
+.findbar input { width: clamp(160px, 30vw, 260px); height: 28px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; transition: background-color var(--t-fast) ease-out, box-shadow var(--t-base) var(--ease-out); }
 .findbar input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), 0 0 0 4px var(--accent-soft); }
+.findbar input:focus-visible { box-shadow: 0 0 0 1px var(--border), var(--focus-ring); }
 .find-count { min-width: 72px; padding: 0 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.findbar.no-match input { box-shadow: 0 0 0 1px var(--danger); animation: shake 320ms var(--ease-out); }
+.findbar.no-match input { box-shadow: 0 0 0 1px var(--danger); animation: shake var(--t-drag) var(--ease-out); }
 @keyframes shake { 20% { transform: translateX(-3px); } 45% { transform: translateX(3px); } 70% { transform: translateX(-1.5px); } }
 
 .loadbar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; overflow: hidden; z-index: 1; animation: fade-in var(--t-base) ease-out; }

@@ -80,6 +80,8 @@ contextBridge.exposeInMainWorld('browser', {
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
+  openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items), // the extension icons that don't fit the toolbar
+  onActionsOverflowPick: on('actions:overflow-pick'),
   suggest: (query) => ipcRenderer.invoke('suggest:query', query),
   showSuggestions: (rect, payload) => ipcRenderer.send('suggest:show', rect, payload),
   hideSuggestions: () => ipcRenderer.send('suggest:hide'),
