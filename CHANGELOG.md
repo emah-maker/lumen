@@ -20,6 +20,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - Polish: the page and video right-click menus, spelling suggestions, the risky-download prompt, and the Open File and Export Chat dialogs use Lumen's translated strings instead of fixed English. The lock is a keyboard-focusable button with a focus ring and a name for screen readers.
 - Home page Smart Stack: a stack holds 2 to 10 widgets of any kind and cycles with the mouse wheel, a swipe, Up and Down, the page dots or the arrows. It can rotate by itself and surface the calendar, a countdown or the weather when they matter. Edit it from Edit layout, with Undo.
 - Smart Stack, easier to find and nicer to use: Add widget has a Smart Stack entry (a timer, a countdown and a note to start), the Edit stack panel opens from the card header, the page dots (right-click, Menu key or long-press) and outside Edit layout, and Edit layout shows how to stack once. Cards now slide a full card up and out inside the stack, the grid is not redrawn on a switch, the dots have their own gutter and show on hover, and a swipe at the end of a stack resists before it wraps.
+- Windows releases can be code-signed through SignPath (opt-in by repository secrets; see docs/windows-signing.md). Nothing changes until the secrets are set and the application to SignPath Foundation is approved.
 
 ## 0.4.4 (2026-10-01)
 
