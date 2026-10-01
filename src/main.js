@@ -399,6 +399,9 @@ let cliLoginValid = null;
 // privileged — connected API providers sort alphabetically by label, then local agent engines
 // (Claude Code) last, so the list reads the same regardless of which one the user set up.
 const modelNames = require('./features/model-names');
+// [model fallback] ai/fallback.js: a model out of usage or unreachable is left alone for a while and another connected one answers.
+const aiFallback = require('./ai/fallback');
+const fallbackOn = () => readSettings().autoFallback !== false; // Settings > AI: Switch models automatically when one is unavailable
 function modelOptions() {
   const groups = [];
   if (anthropicUsable()) groups.push({ label: 'Claude', entries: Object.entries(MODELS).sort(([a], [b]) => (b === DEFAULT_MODEL) - (a === DEFAULT_MODEL)).map(([id, { label, detail }]) => ({ id, label, name: label, provider: 'Claude', detail })) }); // the default first
@@ -425,7 +428,7 @@ function modelOptions() {
       const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
       const fmt = require('./renderer/picker-match').format; // the catalog's own rules ($1.25, 128K)
       const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: fmt.size(orInfo.context) }) : '', orInfo.pricePerM < 0 ? t('models.priceVaries') : orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: fmt.money(orInfo.pricePerM) })) : ''].filter(Boolean).join(' · ') : '';
-      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context, ...(typeof orInfo.vision === 'boolean' ? { vision: orInfo.vision } : {}) } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
     });
     if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });
@@ -2094,6 +2097,32 @@ const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has
 // it as a one-shot, tool-less run (cli-json.js), so no API key is needed. An API model without a
 // key goes to Claude Code instead, when it's installed and not known to be signed out.
 const LOCAL_ENGINE = /^(claudecode|grokbuild):/;
+// [model fallback] The same rules for the one-shot AI calls outside the chat (topic naming, Organize's refine, a skill's
+// proposal, page translation). standInOf: the model to start on while `model` cools down. withFallback: a call that
+// fails on a usage limit or a lost connection is asked once more on the next usable model (never on other failures,
+// and never with the setting off). `run(model, first)`; engines: false keeps Claude Code and Grok Build out (translation).
+function standInOf(model) {
+  return fallbackOn() ? aiFallback.resolve({ preferred: String(model), options: modelOptions(), cooldowns: aiFallback.shared }).model : model;
+}
+async function withFallback(model, run, { engines = true, signal = null } = {}) {
+  let current = String(model);
+  const tried = new Set();
+  for (;;) {
+    try {
+      return await run(current, tried.size === 0);
+    } catch (err) {
+      if (!fallbackOn() || signal?.aborted) throw err; // a Stop is never a reason to switch
+      const info = aiFallback.classify(err);
+      if (info.kind !== 'limit' && info.kind !== 'unreachable') throw err;
+      aiFallback.shared.mark(current, info);
+      tried.add(current);
+      const next = tried.size >= 2 ? null : aiFallback.pick({ current, options: modelOptions(), cooldowns: aiFallback.shared, allowEngines: engines, tried: [...tried] });
+      if (!next) throw err;
+      console.log(`[model fallback] background task: ${current} ${info.kind === 'limit' ? 'hit a limit' : 'was unreachable'}, retrying on ${next}`);
+      current = next;
+    }
+  }
+}
 async function groupingRoute(model) {
   if (LOCAL_ENGINE.test(model)) return { engine: model.split(':')[0], model: engineModel(model) };
   const { provider } = providers.splitModel(model);
@@ -2161,7 +2190,7 @@ function translateEngine() {
     model = `${provider}:${list.find((m) => /mini|flash|fast|lite|haiku/i.test(m)) || list[0]}`;
   }
   const label = provider === 'anthropic' ? 'Anthropic' : providers.PROVIDERS[provider].label;
-  return { id: provider === 'anthropic' ? 'anthropic' : provider, label, run: (system, user) => translateComplete(model, system, user) };
+  return { id: provider === 'anthropic' ? 'anthropic' : provider, label, run: (system, user) => withFallback(model, (m) => translateComplete(m, system, user), { engines: false }) };
 }
 const TRANSLATE_SCHEMA = { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { id: { type: 'integer' }, text: { type: 'string' } }, required: ['id', 'text'], additionalProperties: false } } }, required: ['items'], additionalProperties: false };
 async function translateComplete(model, system, user) {
@@ -2242,7 +2271,7 @@ async function organizeTabs() {
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
-      ask: (wire, { signal } = {}) => refineGroups(cheapTopicModel(), wire, signal),
+      ask: (wire, { signal } = {}) => withFallback(cheapTopicModel(), (m) => refineGroups(m, wire, signal), { signal }),
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },
@@ -2271,6 +2300,9 @@ async function organizeTabs() {
 // ---- topic groups: local clusters (tab-groups.js), or named by the cheapest model of the chat's provider
 // when "Use AI to name and group topics" is on. Only ids, titles and hostnames are sent.
 function cheapTopicModel() {
+  return standInOf(cheapTopicModelFor());
+}
+function cheapTopicModelFor() {
   const chosen = agent.messages.settings?.model || readSettings().model || DEFAULT_MODEL;
   if (LOCAL_ENGINE.test(chosen)) return chosen; // proposeGroupsLocal picks the fast model itself
   const { provider } = providers.splitModel(chosen);
@@ -2304,7 +2336,7 @@ function scheduleAiTopics() {
     aiTopicsBusy = true;
     aiTopicsLastKey = key;
     try {
-      if (tabGroups.groupLoose(await proposeGroups(cheapTopicModel(), topicList(pool)))) sendTabs();
+      if (tabGroups.groupLoose(await withFallback(cheapTopicModel(), (m) => proposeGroups(m, topicList(pool))))) sendTabs();
     } catch {
       if (tabGroups.groupLoose()) sendTabs(); // no key or no network: the local clusters instead
     } finally {
@@ -5207,6 +5239,7 @@ const agent = new Agent({
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
+  autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
@@ -5339,8 +5372,10 @@ function modelsChanged() {
 }
 const skillSurfaces = () => [ui(), ...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)].filter((wc) => wc && !wc.isDestroyed());
 // One model call outside the chat (the proposal for "Create a skill from this chat"): same routes as tab grouping.
-async function completeSkillJson({ system, user, schema }) {
-  const model = String(cheapTopicModel());
+async function completeSkillJson(args) {
+  return withFallback(String(cheapTopicModel()), (m) => completeSkillJsonOn(m, args));
+}
+async function completeSkillJsonOn(model, { system, user, schema }) {
   const route = await groupingRoute(model);
   if (route.engine) {
     const bin = await agent.engines[route.engine].detect();
@@ -5892,6 +5927,8 @@ function effectiveModel(preferred = readSettings().model) {
 ipcMain.handle('settings:get', () => {
   const options = modelOptions();
   const model = effectiveModel();
+  // [model fallback] While the picked model cools down, the picker shows the model that is really answering, marked as temporary.
+  const standIn = fallbackOn() ? aiFallback.resolve({ preferred: model, options, cooldowns: aiFallback.shared }) : { from: null };
   return {
     hasStoredKey: Boolean(storedApiKey()),
     hasEnvKey: Boolean(process.env.ANTHROPIC_API_KEY),
@@ -5909,7 +5946,9 @@ ipcMain.handle('settings:get', () => {
     organizeLearned: organizeLearner.size(),
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),
-    model,
+    model: standIn.from ? standIn.model : model,
+    fallback: standIn.from ? { from: aiFallback.nameOf(standIn.from, options), to: aiFallback.nameOf(standIn.model, options), until: standIn.until } : null,
+    autoFallback: fallbackOn(),
     models: options,
     // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
     ready: Boolean(model),
@@ -6127,6 +6166,7 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   const curatedPick = modelOptions().some((o) => o.id === id && !o.recent);
   const recentOpenRouter = pickedFromMore && !curatedPick ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
   writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
+  aiFallback.shared.clear(id); // [model fallback] picking a model by hand (the original, after a switch) means try it now: no cooldown
   modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
   return agent.setModel(id) ? 'next-message' : true;
