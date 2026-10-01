@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>Can't open this page</title>
+  <link rel="stylesheet" href="tokens.css" />
   <style>
-    :root { color-scheme: light dark; --bg: #ffffff; --field: rgba(0, 0, 0, 0.05); --hover: rgba(0, 0, 0, 0.09); --text: #1d1d1f; --muted: #6e6e73; --accent: #007aff; }
-    @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.12); --text: #f5f5f7; --muted: #98989d; --accent: #0a84ff; } }
+    :root { --hover: rgba(0, 0, 0, 0.09); }
+    @media (prefers-color-scheme: dark) { :root { --hover: rgba(255, 255, 255, 0.12); } }
     html, body { height: 100%; margin: 0; }
     body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
     main { width: min(480px, 88vw); margin: 0 auto; padding-top: 22vh; animation: rise 560ms cubic-bezier(0.16, 1, 0.3, 1); }

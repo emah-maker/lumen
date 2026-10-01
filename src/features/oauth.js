@@ -155,7 +155,7 @@ const sameText = (a, b) => {
 // A request with the wrong state, a different path or a different Host header (DNS rebinding) is
 // answered and ignored: it can neither finish nor break the sign-in.
 function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messages = {} } = {}) {
-  const msg = { title: 'Lumen', done: 'You can close this tab and go back to Lumen.', denied: 'Sign-in was cancelled. You can close this tab.', ...messages };
+  const msg = { title: 'Lumen', done: 'You can close this tab and go back to Lumen.', denied: 'Sign-in was canceled. You can close this tab.', ...messages };
   return new Promise((resolve, reject) => {
     let finish;
     let fail;
@@ -177,7 +177,7 @@ function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messag
       if (!sameText(url.searchParams.get('state') || '', state)) { send(400, msg.title, 'This sign-in link did not come from Lumen.'); return; }
       const error = url.searchParams.get('error');
       const code = url.searchParams.get('code');
-      if (error) { send(200, msg.title, msg.denied); fail(new OAuthError(error === 'access_denied' ? 'Sign-in was cancelled.' : `Sign-in was refused (${flat(error, 60)}).`, { kind: 'cancelled' })); close(); return; }
+      if (error) { send(200, msg.title, msg.denied); fail(new OAuthError(error === 'access_denied' ? 'Sign-in was canceled.' : `Sign-in was refused (${flat(error, 60)}).`, { kind: 'cancelled' })); close(); return; }
       if (!code || code.length > 4096) { send(400, msg.title, 'No sign-in code arrived.'); return; }
       send(200, msg.title, msg.done);
       finish({ code });
@@ -188,7 +188,7 @@ function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messag
       const port = server.address().port;
       timer = setTimeout(() => { fail(new OAuthError('Sign-in timed out. Try again.', { kind: 'timeout' })); close(); }, timeoutMs);
       timer.unref?.();
-      resolve({ port, redirectUri: `http://127.0.0.1:${port}${path}`, wait, close: () => { fail(new OAuthError('Sign-in was cancelled.', { kind: 'cancelled' })); close(); } });
+      resolve({ port, redirectUri: `http://127.0.0.1:${port}${path}`, wait, close: () => { fail(new OAuthError('Sign-in was canceled.', { kind: 'cancelled' })); close(); } });
     });
   });
 }

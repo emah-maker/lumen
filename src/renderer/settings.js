@@ -706,8 +706,8 @@ const WIDGET_ICONS = {
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
 const WIDGET_SPANS = [['2', 'A third'], ['3', 'Half'], ['4', 'Two thirds'], ['6', 'Full width']];
 const WIDGET_COLORS = [['calendar', 'Default'], ['match', 'Match screen'], ['accent', 'Accent only'], ['mono', 'Monochrome']];
-const TODO_SOURCES = [['todayOverdue', 'Today and overdue'], ['today', 'Today'], ['upcoming', 'Upcoming (next days)'], ['inbox', 'Inbox'], ['project', 'A project'], ['label', 'A label'], ['all', 'All tasks'], ['custom', 'A Todoist filter']];
-const TODO_FIELDS = [['due', 'Due date and time'], ['project', 'Project name and colour'], ['labels', 'Labels'], ['priority', 'Priority colour'], ['description', 'Description'], ['subtasks', 'Subtask count'], ['recurring', 'Repeat icon']];
+const TODO_SOURCES = [['todayOverdue', 'Today and overdue'], ['today', 'Today'], ['upcoming', 'Upcoming'], ['inbox', 'Inbox'], ['project', 'A project'], ['label', 'A label'], ['all', 'All tasks'], ['custom', 'A Todoist filter']];
+const TODO_FIELDS = [['due', 'Due date and time'], ['project', 'Project name and color'], ['labels', 'Labels'], ['priority', 'Priority color'], ['description', 'Description'], ['subtasks', 'Subtask count'], ['recurring', 'Repeat icon']];
 function widgetIcon(type) {
   const span = h('span', { class: `widget-icon wi-${type}` });
   span.innerHTML = WIDGET_ICONS[type] || ''; // constant markup
@@ -1543,7 +1543,7 @@ async function buildWidgets(card) {
     window.scrollTo?.({ top: 0 });
   }
 
-  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
+  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the center', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
   const addRow = row('Add a widget', 'Weather, tasks, calendar, headlines, music, mail, stocks and more.', add);
   addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
@@ -1619,7 +1619,7 @@ async function buildPrivacy(card) {
   card.group('Tracking and connections').append(
     toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them: Electron has no full third-party cookie switch.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
-    toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honour it as an opt-out of data sale.'),
+    toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
     toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'),
   );
 
