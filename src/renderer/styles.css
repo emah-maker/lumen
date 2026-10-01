@@ -311,7 +311,7 @@ body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /
    fewer extension icons (the list's cap drops; the overflow button lists the rest), and any remainder is clipped. */
 @media (max-width: 860px) {
   .toolbar { gap: 4px; padding: 0 6px; }
-  .toolbar-end { gap: 0; overflow: hidden; }
+  .toolbar-end { gap: 0; overflow: clip; overflow-clip-margin: 3px; } /* (the margin keeps the buttons' focus ring) */
   browser-action-list { max-width: max(56px, calc(100vw - 600px)); }
 }
 /* Very wide windows: the address field stops growing. */
