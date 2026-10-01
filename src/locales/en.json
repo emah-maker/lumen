@@ -1240,6 +1240,8 @@
   "menu.pictureInPicture": "Picture in Picture",
   "menu.siteInfo": "Site Information…",
   "menu.keyboardShortcuts": "Keyboard Shortcuts",
+  "menu.openVideoNewTab": "Open Video in New Tab",
+  "menu.copyVideoAddress": "Copy Video Address",
   "pip.noVideo": "No video on this page to play in Picture in Picture.",
   "pip.failed": "This video can’t play in Picture in Picture.",
   "pageInfo.tooltip": "{state}. Click for site information.",
@@ -1324,5 +1326,15 @@
   "shortcuts.askFromAddress": "Ask the AI from the address bar (after typing)",
   "shortcuts.settings": "Settings",
   "shortcuts.showShortcuts": "Keyboard shortcuts",
-  "shortcuts.hide": "Hide Lumen"
+  "shortcuts.hide": "Hide Lumen",
+  "spelling.none": "No Spelling Suggestions",
+  "spelling.addToDictionary": "Add to Dictionary",
+  "dialog.openFile.title": "Open File",
+  "dialog.openFile.filter": "Web pages, PDFs, images and media",
+  "dialog.openFile.all": "All Files",
+  "dialog.exportChat.title": "Export Chat",
+  "downloads.confirm": "Download “{name}”?",
+  "downloads.confirm.button": "Download",
+  "downloads.confirm.detail": "This type of file can run programs on your computer. Only keep it if you trust {host}.",
+  "downloads.confirm.detailNoHost": "This type of file can run programs on your computer. Only keep it if you trust the site."
 }

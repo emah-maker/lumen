@@ -12,6 +12,7 @@ const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
 const { requestedHints, withHints } = require('../browser/chrome-identity');
 const { createSiteZoom } = require('../features/site-zoom');
+const { t } = require('../features/i18n');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -547,8 +548,8 @@ function create(deps) {
     return [
       ...(suggestions.length
         ? suggestions.map((word) => ({ label: word, click: () => wc.replaceMisspelling(word) }))
-        : [{ label: 'No spelling suggestions', enabled: false }]),
-      { label: 'Add to Dictionary', click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) },
+        : [{ label: t('spelling.none'), enabled: false }]),
+      { label: t('spelling.addToDictionary'), click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) },
       { type: 'separator' },
     ];
   }

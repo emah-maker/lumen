@@ -82,6 +82,7 @@ const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's
 let chatPageRt = null; // its runtime (created below, with the agent)
 // Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
 const pageTools = require('./features/page-tools').createPageTools({
+  t,
   openTab: (...args) => openTab(...args),
   sendTabs: () => sendTabs(),
   downloadDir: () => settingsBackend.downloadDir(),
@@ -5176,9 +5177,9 @@ const OPENABLE = ['html', 'htm', 'xhtml', 'shtml', 'mhtml', 'svg', 'pdf', 'txt',
 async function openFileDialog() {
   if (!win || win.isDestroyed()) return;
   const { canceled, filePaths } = await electronDialog.showOpenDialog(win, {
-    title: 'Open File',
+    title: t('dialog.openFile.title'),
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'Web pages, PDFs, images and media', extensions: OPENABLE }, { name: 'All Files', extensions: ['*'] }],
+    filters: [{ name: t('dialog.openFile.filter'), extensions: OPENABLE }, { name: t('dialog.openFile.all'), extensions: ['*'] }],
   });
   if (!canceled) openLinksFromOtherApps(fileUrlsFor(filePaths));
 }
@@ -6086,7 +6087,7 @@ ipcMain.handle('chats:export', async (_e, id) => {
   if (!out) return { ok: false, reason: 'empty' };
   const fileName = `${cleanTitle(out.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 60).trim() || 'Chat'}.md`;
   const { canceled, filePath } = await electronDialog.showSaveDialog(win, {
-    title: 'Export chat',
+    title: t('dialog.exportChat.title'),
     defaultPath: path.join(app.getPath('documents'), fileName),
     filters: [{ name: 'Markdown', extensions: ['md'] }],
   });

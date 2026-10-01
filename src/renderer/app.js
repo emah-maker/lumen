@@ -2490,7 +2490,7 @@ window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
-  button.title = `${who.name} (Ctrl+J)`;
+  button.title = `${who.name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
   button.dataset.assistant = who.name;
   button.setAttribute('aria-label', who.name);
   button.style.setProperty('--assistant-tint', who.tint);

@@ -177,11 +177,11 @@ function createDownloads(deps) {
     if (!win || win.isDestroyed()) { entry.item.cancel(); return; }
     deps.dialog.showMessageBox(win, {
       type: 'warning',
-      buttons: ['Cancel', 'Download'],
+      buttons: [t('dialog.cancel'), t('downloads.confirm.button')],
       defaultId: 0,
       cancelId: 0,
-      message: `Download “${base}”?`,
-      detail: `This type of file can run programs on your computer. Only keep it if you trust ${hostOf(url) || 'the site'}.`,
+      message: t('downloads.confirm', { name: base }),
+      detail: hostOf(url) ? t('downloads.confirm.detail', { host: hostOf(url) }) : t('downloads.confirm.detailNoHost'),
     }).then(({ response }) => {
       const { item } = entry;
       if (entry.state !== 'progressing' || (!entry.held && item.getState() !== 'progressing')) return; // cancelled from the menu meanwhile
