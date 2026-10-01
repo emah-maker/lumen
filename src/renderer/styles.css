@@ -306,11 +306,12 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 
 /* One calm row: navigation left, address centered, actions right. */
 .toolbar {
-  display: grid; grid-template-columns: minmax(max-content, 1fr) minmax(240px, 680px) minmax(0, max-content);
+  --toolbar-side-min: 150px; /* each side keeps room for its buttons, so the address never overlaps them */
+  display: grid; grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, 680px) minmax(var(--toolbar-side-min), 1fr);
   align-items: center; gap: 8px; height: var(--toolbar-h); padding: 0 8px;
 }
 .toolbar-start, .toolbar-end { display: flex; align-items: center; gap: 2px; }
-.toolbar-end { justify-content: flex-end; min-width: 0; }
+.toolbar-end { justify-content: flex-end; min-width: 0; overflow: clip; overflow-clip-margin: 3px; } /* (the margin keeps the buttons' focus ring) */
 
 .icon-btn {
   width: 30px; height: 30px; flex: none; display: grid; place-items: center;
@@ -411,7 +412,7 @@ browser-action-list { display: flex; align-items: center; min-height: 28px; --br
 body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /* the zoom pill sits in the address field's end: the icons give it room */
 /* Wide windows: the address field stays a reasonable width and centred, with the icons at the edges. */
 @media (min-width: 1600px) {
-  .toolbar { grid-template-columns: minmax(max-content, 1fr) minmax(240px, 760px) minmax(0, max-content); }
+  .toolbar { grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, 760px) minmax(var(--toolbar-side-min), 1fr); }
 }
 /* The page zoomed in far: the pill and the security label take the field's room, so the URL starts at the left and the label shrinks to its icon. */
 @media (max-width: 1200px) {
@@ -435,7 +436,7 @@ body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /
 }
 /* Very wide windows: the address field stops growing. */
 @media (min-width: 1920px) {
-  .toolbar { grid-template-columns: minmax(max-content, 1fr) minmax(240px, 880px) minmax(0, max-content); }
+  .toolbar { grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, 880px) minmax(var(--toolbar-side-min), 1fr); }
 }
 
 /* Find bar: the row opens by animating its grid track, so the page eases down with it. */
