@@ -107,7 +107,7 @@ const os = require('os');
   // The user sees the agent: pill text + step rows in the sidebar.
   await ui.waitForTimeout(300);
   const pill = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), text: document.querySelector('#agent-pill span:not(.agent-dot)')?.textContent }));
-  check('pill says Claude is using this tab', pill.active && pill.text === 'Claude is using this tab', JSON.stringify(pill));
+  check('pill says Lumen is being driven by Claude Code', pill.active && pill.text === 'Lumen is being driven by Claude Code', JSON.stringify(pill));
   const steps = await ui.$$eval('.mcp-step', (els) => els.map((e) => e.textContent));
   check('tool calls appear as sidebar steps', steps.some((s) => s.startsWith('Claude Code:')), JSON.stringify(steps));
 
