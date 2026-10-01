@@ -533,6 +533,7 @@
   "organize.summaryLoose.oneGroup": "{groups} group, {loose} tabs left loose.",
   "organize.summaryLoose.oneGroup.oneLoose": "{groups} group, {loose} tab left loose.",
   "organize.local": "Organized",
+  "organize.noteLoose": "{count} loose",
   "organize.idleDone": "Grouped your loose tabs while you were away",
   "organize.undo": "Undo",
   "menu.closeDuplicates": "Close Duplicate Tabs ({n})",
