@@ -506,7 +506,8 @@ function create(deps) {
     let host;
     try { host = new URL(wc.getURL()).host; } catch { return; }
     userZoomed.add(host);
-    if (level !== undefined && /^https?:/.test(wc.getURL())) siteZoom.set(host, level);
+    // (Never from a private window: its session isn't persistent, and nothing it does is kept on disk.)
+    if (level !== undefined && /^https?:/.test(wc.getURL()) && wc.session?.isPersistent?.() !== false) siteZoom.set(host, level);
   }
   // "Actual size" means the default zoom from Settings for web pages (100% for Lumen's own pages),
   // and the site follows that default again from now on.
