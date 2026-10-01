@@ -127,6 +127,7 @@ const camelWords = (s) => String(s).replace(/([a-z0-9])([A-Z])/g, '$1 $2').repla
 // Light Porter-style stemming: plurals, then -ing/-ed/-er with a doubled-consonant collapse
 // ("running" -> "runn" -> "run"). Approximate on purpose - only used as a matching key, never shown.
 function stem(w) {
+  if (/^careers?$/.test(w)) return 'career'; // not "care" ("Houseplant care" is no job search)
   if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
   let s = w;
   if (s.length > 5 && s.endsWith('ing') && /[aeiou]/.test(s.slice(0, -3))) s = s.slice(0, -3);
@@ -159,7 +160,7 @@ const HINT_RULES = Object.entries(knowledge.SITE_HINTS).flatMap(([hint, sites]) 
 // The hint of a tab's site ("School", "Job search" ...), or ''. From the host and path only, never the page.
 function siteHint(url) {
   const host = hostname(url).replace(/^www\./, '');
-  if (!host) return '';
+  if (!host || knowledge.HINT_EXCEPTIONS.split(' ').some((x) => host === x || host.endsWith(`.${x}`))) return '';
   let pathname = '/';
   try { ({ pathname } = new URL(url)); } catch {}
   for (const r of HINT_RULES) {
@@ -705,10 +706,10 @@ function conceptAbsorb(clusters, docs) {
     changed = false;
     const sets = out.map(conceptsOf);
     for (let s = 0; s < out.length; s++) {
-      if (out[s].length > ABSORB_MAX || !sets[s].size) continue;
+      if (out[s].length > ABSORB_MAX || !sets[s].size || ofRepoCluster(out[s], docs)) continue; // a project's own pages stay its own
       let best = null;
       for (let b = 0; b < out.length; b++) {
-        if (b === s || out[b].length < 4 || out[b].length <= out[s].length) continue;
+        if (b === s || out[b].length < 4 || out[b].length <= out[s].length || ofRepoCluster(out[b], docs)) continue;
         if (![...sets[s]].some((k) => sets[b].has(k))) continue;
         const cos = cosine(centroidOf(out[s].map((i) => docs[i])), centroidOf(out[b].map((i) => docs[i])));
         if (cos >= ABSORB_MIN_COS && (!best || cos > best.cos)) best = { b, cos };
@@ -808,7 +809,24 @@ const CONCEPT_PULL_MAX_COS = 0.6; // a tab this close to the rest of its group s
 // pair of two tabs that carry different concepts ("Bond yields explained", "Transformer attention explained") is no pair at all.
 const CONCEPT_SMALL_WINDOW = 12;
 const CONCEPT_PAIR_HITS = 2;
+// A project's own pages (a repo's code, issues and PRs) are that project's, whatever they are about: more than half of the cluster, or half, are one repo's.
+function ofRepoCluster(c, docs) {
+  const n = new Map();
+  for (const i of c) { const r = repoOf(docs[i].url); if (r) n.set(r.name, (n.get(r.name) || 0) + 1); }
+  return c.length >= 2 && Math.max(0, ...n.values()) * 2 >= c.length;
+}
 const SUBNAMES = Object.fromEntries(Object.entries(knowledge.CONCEPT_SUBNAMES || {}).map(([concept, list]) => [concept, list.map(([name, words]) => [name, new Set(words.split(/\s+/).map(stem))])]));
+// The narrower name for a concept group (Python for a pandas, NumPy and Django window): the first (language) name that more than half
+// of the tabs carry a word of, and no tab of another one does. A window of Python, JavaScript and CSS is "Programming".
+function subName(concept, c, docs) {
+  const subs = SUBNAMES[concept] || [];
+  const carries = (i, words) => [...words].some((k) => docs[i].words.has(k));
+  const hit = subs.find(([, words]) => c.filter((i) => carries(i, words)).length * 2 > c.length);
+  if (!hit || subs.some((o) => o !== hit && c.some((i) => carries(i, o[1])))) return '';
+  return hit[0];
+}
+// Families of a concept a cluster spans (how many of the narrower names have a tab).
+const spans = (concept, c, docs) => (SUBNAMES[concept] || []).filter(([, words]) => c.some((i) => [...words].some((k) => docs[i].words.has(k)))).length;
 function conceptGroups(clusters, docs) {
   let out = clusters.map((c) => [...c]);
   const small = docs.length <= CONCEPT_SMALL_WINDOW;
@@ -828,19 +846,32 @@ function conceptGroups(clusters, docs) {
     const [a, b] = c.map(conceptsOfTab);
     return a.size && b.size && ![...a].some((k) => b.has(k)) ? [[c[0]], [c[1]]] : [c];
   });
-  // A project's own pages (a repo's code, issues and PRs) are that project's, whatever they are about.
-  const ofRepo = (c) => { const n = new Map(); for (const i of c) { const r = repoOf(docs[i].url); if (r) n.set(r.name, (n.get(r.name) || 0) + 1); } return c.length >= 2 && Math.max(0, ...n.values()) * 2 >= c.length; };
+  const ofRepo = (c) => ofRepoCluster(c, docs);
+  // The only page of a repo among a topic's tabs ("GitHub - python/cpython" beside Python tutorials) is not that topic's: it goes back to being loose
+  // (the last stage files it under its site or category, with the other repos).
+  out = out.flatMap((c) => {
+    if (c.length < 3 || ofRepo(c)) return [c];
+    const repoTabs = c.filter((i) => repoOf(docs[i].url));
+    if (!repoTabs.length || repoTabs.length * 2 >= c.length) return [c];
+    const pages = new Map(); // pages of each repo in the whole window: a repo with others elsewhere keeps its tab by its words
+    for (const d of docs) { const r = repoOf(d.url); if (r) pages.set(r.key, (pages.get(r.key) || 0) + 1); }
+    // ...unless the others are about the repo by name (pandas-dev/pandas beside pandas tutorials).
+    const named = (i) => tokens(repoOf(docs[i].url).name.replace(/[-_.]/g, ' ')).some(({ key }) => c.some((j) => j !== i && (docs[j].words.get(key)?.weight ?? 0) >= 0.7));
+    const single = repoTabs.filter((i) => pages.get(repoOf(docs[i].url).key) === 1 && !named(i));
+    const rest = c.filter((i) => !single.includes(i));
+    return single.length && rest.length >= 2 ? [rest, ...single.map((i) => [i])] : [c];
+  });
   for (const [concept, label] of Object.entries(knowledge.CONCEPT_GROUPS)) {
     const key = `%${concept}`;
     const has = (i) => docs[i].words.has(key);
-    const mostly = (c) => c.filter(has).length * 2 > c.length && !ofRepo(c);
+    const mostly = (c) => c.filter(has).length * 2 > c.length && !ofRepo(c) && !(c.length === 1 && repoOf(docs[c[0]].url)); // a lone repo page stays with the repos
     // A broad concept (programming, travel) only draws loose tabs together: a group that already formed on its words stays as it is.
     const looseMin = (knowledge.CONCEPT_LOOSE_ONLY || {})[concept]; // ...and needs this many of them
     const looseOnly = looseMin > 0;
     const big = looseOnly ? undefined : out.filter((c) => c.length > CONCEPT_SMALL && mostly(c)).sort((a, b) => b.length - a.length)[0];
     // Parts: the small groups and loose tabs that carry it (any size in a small window, or while the home stays under MAX_GROUP). A broad concept takes only loose tabs and pairs, of different sites (two pages of one docs site are that
     // site's own group, categoryOf's).
-    const joinMax = looseOnly ? 2 : small ? Infinity : big ? MAX_GROUP - big.length : CONCEPT_SMALL;
+    const joinMax = looseOnly ? 3 : small ? Infinity : big ? MAX_GROUP - big.length : CONCEPT_SMALL;
     let parts = out.filter((c) => c !== big && c.length <= joinMax && mostly(c));
     if (looseOnly) {
       const perSite = new Map();
@@ -848,6 +879,11 @@ function conceptGroups(clusters, docs) {
       parts = parts.filter((c) => c.every((i) => perSite.get(docs[i].siteKey) < 2));
     }
     let home = big;
+    // A group that already spans several languages ("Python" and "JavaScript" tabs) is the programming group: loose docs of other sites join it.
+    if (!home && looseOnly && SUBNAMES[concept]) {
+      const host = out.filter((c) => c.length >= 3 && mostly(c) && spans(concept, c, docs) >= 2).sort((a, b) => b.length - a.length)[0];
+      if (host && parts.some((c) => c !== host)) { home = host; formed.set(home, label); parts = parts.filter((c) => c !== host); }
+    }
     if (!home && parts.reduce((n, c) => n + c.length, 0) >= (looseMin || 3) && parts.length >= 2) {
       home = parts[0];
       formed.set(home, label);
@@ -881,8 +917,7 @@ function conceptGroups(clusters, docs) {
   }
   // A group named for the narrower thing most of its tabs are about ("Python" for pandas, NumPy and Django).
   for (const [c, label] of formed) {
-    const sub = (SUBNAMES[concepts.get(c)] || []).find(([, words]) => c.filter((i) => [...words].some((k) => docs[i].words.has(k))).length * 2 > c.length);
-    formed.set(c, sub ? sub[0] : label);
+    formed.set(c, subName(concepts.get(c), c, docs) || label);
   }
   return { clusters: out, formed };
 }
@@ -895,9 +930,37 @@ function categoryOf({ url, title }) {
   const cats = knowledge.FALLBACK_CATEGORIES;
   const strong = cats.find((c) => !c.weak && host && (hostMatches(host, c.hosts) || (c.hostRe && c.hostRe.test(host))));
   if (strong) return strong;
-  const byTitle = cats.find((c) => c.title.test(String(title || '')));
+  // "Best novels 2026" and "Laptop deals" are not one shopping trip: a title says Shopping only with a product, or a price/buy/cart word.
+  const byTitle = cats.find((c) => c.title.test(String(title || '')) && (c.name !== 'Shopping' || knowledge.SHOP_TITLE.test(String(title || ''))));
   if (byTitle) return byTitle;
   return cats.find((c) => c.weak && host && hostMatches(host, c.hosts)) || null;
+}
+
+// Two tabs make a group only when they share something: a word or concept both carry (not a letter-triple, nor a site's name), a site
+// hint, or a category. Whatever stage paired them ("Houseplant care tips" and "Resume template" on a stray word fragment), the pair
+// of two unrelated tabs stays loose.
+function pairShares(c, docs, drawn) {
+  if (drawn) return true;
+  const [a, b] = c.map((i) => docs[i]);
+  for (const k of a.vec.keys()) if (k[0] !== '#' && k[0] !== '^' && b.vec.has(k)) return true;
+  if (a.siteHint && a.siteHint === b.siteHint && !knowledge.BROAD_HINTS.has(a.siteHint)) return true;
+  const ca = categoryOf(a);
+  return Boolean(ca && ca === categoryOf(b));
+}
+// The category (School, Travel ...) most of a cluster's tabs are filed under, or ''.
+function categoryLabel(members) {
+  const n = new Map();
+  for (const d of members) { const k = categoryOf(d); if (k) n.set(k.name, (n.get(k.name) || 0) + 1); }
+  const top = [...n].sort((a, b) => b[1] - a[1])[0];
+  return top && top[1] * 2 > members.length ? top[0] : '';
+}
+// The concept most of a cluster's tabs carry, named as a concept group is ("Programming", "Python" when most are Python), or ''.
+function conceptLabel(c, docs) {
+  for (const [concept, label] of Object.entries(knowledge.CONCEPT_GROUPS)) {
+    if (c.filter((i) => docs[i].words.has(`%${concept}`)).length * 2 <= c.length) continue;
+    return subName(concept, c, docs) || label;
+  }
+  return '';
 }
 
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
@@ -967,8 +1030,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     merged = joined.clusters;
     for (const [c, hint] of joined.hinted) hintOf.set(idsKey(c), hint);
   }
-  if (!process.env.NOCONCEPT) {
-    if (process.env.DBGC) console.error('PRE', JSON.stringify(merged.map((c) => c.map((i) => docs[i].title.slice(0, 25)))));
+  {
     const drawn = conceptGroups(merged, docs);
     merged = drawn.clusters;
     for (const [c, label] of drawn.formed) conceptOf.set(idsKey(c), label);
@@ -1003,7 +1065,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     }
     for (const [c, list] of byCat) {
       if (list.length < 2) { rest.push(...list); continue; }
-      hintOf.set(idsKey(list), c.name);
+      hintOf.set(idsKey(list), c.name === 'Dev docs' && list.every((i) => docs[i].siteKey === docs[list[0]].siteKey) ? siteName(docs[list[0]].url, docs[list[0]].title) : c.name); // two GitHub pages: "GitHub"
       groupsNow.push(list);
     }
     for (const small of groupsNow.filter((c) => c.length <= 2)) {
@@ -1018,7 +1080,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
   const titleCase = (w) => (w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1) : w);
   const titleCasePhrase = (s) => s.split(/\s+/).map(titleCase).join(' ');
   const clip = (s) => (s.length <= 24 ? s : (s.slice(0, 24).replace(/\s+\S*$/, '') || s.slice(0, 24)));
-  const named = clusters.filter((c) => c.length >= 2).map((c) => {
+  const named = clusters.filter((c) => c.length > 2 || (c.length === 2 && pairShares(c, docs, conceptOf.has(idsKey(c))))).map((c) => {
     const members = c.map((i) => docs[i]);
     let pairSum = 0;
     for (let x = 0; x < c.length; x++) for (let y = x + 1; y < c.length; y++) pairSum += sim[c[x]][c[y]];
@@ -1080,6 +1142,16 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     const [topSite, topSiteCount] = [...siteCount].sort((x, y) => y[1] - x[1])[0] || [];
     const oneSite = members.length >= 3 && topSite && topSiteCount / members.length >= SITE_DOMINANT && !SEARCH_DOMAINS.has(topSite);
     const kindOfSite = (n) => knowledge.BROAD_HINTS.has(n) || knowledge.FALLBACK_CATEGORIES.some((k) => k.name === n); // a name that says a KIND of site
+    // The name of last resort: the site's, when every tab is on one site; else what the tabs share (a concept). Tabs of different
+    // sites with nothing to be named for are not a group ("Alpha" for a houseplant page and a resume template).
+    const oneSiteAll = members.every((d) => d.siteKey === members[0].siteKey);
+    const fallbackName = () => {
+      if (oneSiteAll) return siteName(members[0].url, members[0].title);
+      const label = conceptLabel(c, docs) || categoryLabel(members);
+      if (label || members.length < 3) return label; // a pair of two sites with nothing to be named for is no group
+      const lead = members.find((d) => d.siteKey === topSite) || members[0]; // three or more: the site most of them are on
+      return siteName(lead.url, lead.title);
+    };
     let name;
     if (conceptOf.has(idsKey(c))) name = conceptOf.get(idsKey(c));
     else if (oneSite && !(topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) && (!top || kindOfSite(hintOf.get(idsKey(c)) || sharedHint))) {
@@ -1094,10 +1166,10 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     else if (libraryName(members, majority)) name = libraryName(members, majority);
     else if (bigramRanked.length) name = titleCasePhrase(words2(bigramRanked[0]));
     else if (top) name = titleCase(bestSurface(top[0]));
-    else name = sharedHint || siteName(members[0].url, members[0].title);
+    else name = sharedHint || fallbackName();
     // CJK words are bigrams, so two of them pasted together name a group badly ("파이 이썬"): use the longest run the
     // titles share, or the site's (category's) name when that run is only filler.
-    if (CJK.test(name)) name = sharedRun(members.map((d) => d.title), members.length) || sharedRun(members.map((d) => d.title), majority) || sharedHint || siteName(members[0].url, members[0].title);
+    if (CJK.test(name)) name = sharedRun(members.map((d) => d.title), members.length) || sharedRun(members.map((d) => d.title), majority) || sharedHint || fallbackName();
     // One site's tabs named by a piece of the site's own name ("Hacker" from "Hacker News"): the whole name.
     if (members.every((d) => d.siteKey === members[0].siteKey) && !oneSite) {
       const site = siteName(members[0].url, members[0].title);
@@ -1106,8 +1178,9 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     // "Next" from "Next.js" titles: keep the suffix a library name is written with.
     const dotted = /^[A-Za-z]+$/.test(name) && members.find((d) => new RegExp(`\\b${name}\\.(js|ts|py|io)\\b`, 'i').test(d.title));
     if (dotted) name = `${name}${String(dotted.title).match(new RegExp(`\\b${name}(\\.(?:js|ts|py|io))\\b`, 'i'))[1]}`;
+    if (!name) return null;
     return { name: clip(name), ids: members.map((d) => d.id), key: top?.[0] || null, cohesion };
-  });
+  }).filter(Boolean);
   return Object.assign(named, { hasCommon: docs.hasCommon });
 }
 

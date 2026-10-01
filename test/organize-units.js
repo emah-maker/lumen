@@ -315,6 +315,33 @@ function organized(specs) {
   check('two tabs with one finance word each are not enough', !weak.same(0, 1), weak.name(0));
   const misfit = organized([['Roth IRA limits', 'https://a.example/1'], ['Neural network backpropagation', 'https://a.example/2'], ['Quarterly zebra', 'https://c.example/3']]);
   check('a finance tab and an ML tab are never a pair', !misfit.same(0, 1));
+  // Round 6 rater defects: a pair needs something in common, shopping needs a product, programming and DevOps are their own groups.
+  const unrel = organized([['Houseplant care tips', 'https://alpha.example/p0'], ['Resume template', 'https://bravo.example/p1']]);
+  check('two unrelated tabs on fake hosts stay loose (no group named for a host)', !unrel.same(0, 1) && !unrel.name(0) && !unrel.name(1), `${unrel.name(0)} / ${unrel.name(1)}`);
+  const unrelReal = organized([['Houseplant care tips', 'https://www.thespruce.com/houseplant-care'], ['Resume template', 'https://www.canva.com/resumes/templates']]);
+  check('two unrelated tabs on real hosts stay loose', !unrelReal.same(0, 1) && !unrelReal.name(0), `${unrelReal.name(0)} / ${unrelReal.name(1)}`);
+  const unrelMore = organized([['Houseplant care tips', 'https://alpha.example/p0'], ['Resume template', 'https://bravo.example/p1'], ['Tax filing deadline', 'https://charlie.example/p2'], ['Guitar chords for beginners', 'https://delta.example/p3']]);
+  check('four unrelated tabs: no group, and none named for a host', [0, 1, 2, 3].every((i) => !unrelMore.name(i)), [0, 1, 2, 3].map(unrelMore.name).join());
+  const shopBooks = organized([['Laptop deals', 'https://alpha.example/p0'], ['Best novels 2026', 'https://bravo.example/p1']]);
+  check('"Laptop deals" and "Best novels 2026" are not a Shopping pair', !shopBooks.same(0, 1) && shopBooks.name(0) !== 'Shopping' && shopBooks.name(1) !== 'Shopping', `${shopBooks.name(0)} / ${shopBooks.name(1)}`);
+  const shopPair = organized([['Laptop deals this week', 'https://alpha.example/p0'], ['Gaming laptop price drop', 'https://bravo.example/p1']]);
+  check('two product and price tabs are still a pair', shopPair.same(0, 1), shopPair.name(0));
+  const prog = organized([['Python asyncio tutorial', 'https://realpython.com/a'], ['pytest fixtures', 'https://docs.pytest.org/f'], ['Flask quickstart', 'https://flask.palletsprojects.com/q'],
+    ['JavaScript promises', 'https://alpha.example/js'], ['TypeScript generics', 'https://bravo.example/ts'], ['CSS grid guide', 'https://charlie.example/css']]);
+  check('Python, JavaScript, TypeScript and CSS tabs: one group named Programming, none left loose', [1, 2, 3, 4, 5].every((i) => prog.same(0, i)) && prog.name(0) === 'Programming', [0, 1, 2, 3, 4, 5].map(prog.name).join());
+  const pyOnly = organized([['Python asyncio tutorial', 'https://realpython.com/a'], ['pytest fixtures', 'https://docs.pytest.org/f'], ['Flask quickstart', 'https://flask.palletsprojects.com/q'], ['pandas groupby', 'https://pandas.pydata.org/g']]);
+  check('mostly Python tabs are "Python", not the name of a host', [1, 2, 3].every((i) => pyOnly.same(0, i)) && pyOnly.name(0) === 'Python', pyOnly.name(0));
+  const devops = organized([['Kubernetes pods docs', 'https://kubernetes.io/docs/pods'], ['Docker compose networking', 'https://docs.docker.com/n'], ['AWS Lambda pricing', 'https://aws.amazon.com/lambda/pricing'], ['Terraform modules', 'https://registry.terraform.io/m'],
+    ['Python asyncio tutorial', 'https://realpython.com/a'], ['pytest fixtures', 'https://docs.pytest.org/f'], ['JavaScript promises', 'https://alpha.example/js'], ['CSS grid guide', 'https://charlie.example/css']]);
+  check('Kubernetes, Docker, AWS and Terraform tabs are one DevOps group', [1, 2, 3].every((i) => devops.same(0, i)) && /devops/i.test(devops.name(0)), devops.name(0));
+  check('...kept apart from the programming tabs, which are one Programming group', [5, 6, 7].every((i) => devops.same(4, i)) && !devops.same(0, 4) && devops.name(4) === 'Programming', `${devops.name(0)} / ${devops.name(4)}`);
+  const repos = organized([['Python tutorial for beginners', 'https://a.example/1'], ['Python virtual environments', 'https://b.example/2'], ['Python dataclasses', 'https://c.example/3'], ['JavaScript promises', 'https://d.example/4'], ['CSS grid guide', 'https://e.example/5'],
+    ['GitHub - python/cpython', 'https://github.com/python/cpython'], ['GitHub - nodejs/node', 'https://github.com/nodejs/node']]);
+  check('lone repo pages stay out of the programming group', [1, 2, 3, 4].every((i) => repos.same(0, i)) && !repos.same(0, 5) && !repos.same(0, 6) && repos.name(0) === 'Programming', `${repos.name(0)} / ${repos.name(5)}`);
+  check('...and are filed together under GitHub', repos.same(5, 6) && repos.name(5) === 'GitHub', repos.name(5));
+  const rl = organized([['Reinforcement learning basics', 'https://a.example/1'], ['Neural networks explained', 'https://b.example/2'], ['RLHF explained simply', 'https://c.example/3'], ['Diffusion models intro', 'https://d.example/4'], ['Pizza dough', 'https://e.example/5']]);
+  check('reinforcement learning, RLHF and diffusion tabs join the machine learning group', [1, 2, 3].every((i) => rl.same(0, i)) && rl.name(0) === 'Machine learning' && !rl.same(0, 4), rl.name(0));
+
 }
 
 process.exit(failed ? 1 : 0);
