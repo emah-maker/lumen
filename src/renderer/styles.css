@@ -667,6 +667,7 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .model-picker { margin-left: -6px; } /* the hover area reaches past the text; the button itself isn't squeezed */
 .model-picker .picker-button { border: none; background: transparent; color: var(--text); font: inherit; font-weight: 600; letter-spacing: -0.01em; padding: 3px 22px 3px 6px; border-radius: 7px; cursor: default; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-picker .picker-button:focus-visible { outline: 2px solid var(--accent); }
+.model-picker .picker-button[data-temporary] .picker-text { font-style: italic; } /* a stand-in model while the picked one is unavailable (hover says why) */
 .model-picker svg { position: absolute; right: 4px; width: 12px; height: 12px; color: var(--muted); pointer-events: none; }
 
 /* ---------- downloads indicator ---------- */

@@ -281,6 +281,13 @@ async function loadModels() {
   if (modelReady) { select.value = s.model; select.pickerSync(); }
   const current = s.models.find((m) => m.id === s.model);
   select.title = current?.detail || '';
+  // [model fallback] The picked model is unavailable for now: the picker shows the one really answering, marked as temporary.
+  if (s.fallback) {
+    const hint = t('models.fallbackHint', { name: s.fallback.to, from: s.fallback.from });
+    select.title = hint;
+    modelPicker.button.title = hint;
+    modelPicker.button.dataset.temporary = '1';
+  } else delete modelPicker.button.dataset.temporary;
   prompt.placeholder = !current ? t('composer.setup') : t('composer.ask', { name: current.group === 'Claude' ? 'Claude' : current.label });
   setAssistantIdentity(current?.group);
 }
@@ -1004,6 +1011,7 @@ window.assistant.onEvent((event) => {
     case 'notice': {
       if (event.stopped) turn.stopped = true;
       const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t('chat.stopped') : event.text }));
+      if (event.fallback) loadModels(); // [model fallback] the picker follows the model that is answering now (or the pick, once it is back)
       if (event.action === 'continue') {
         const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
         button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
