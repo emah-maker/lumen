@@ -165,14 +165,14 @@ const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
 const UI_ONLY_IPC = new Set([
-  'content-bounds', 'view:freeze', 'view:thaw', 'chat:full', 'view:warm',
+  'content-bounds', 'view:freeze', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
   'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -2337,10 +2337,10 @@ async function organizeTabs() {
   }
   return made;
 }
-// The note when the AI step failed: "took too long" only for a real timeout, else the real cause (not signed in, no key...).
-function aiFailureNote(failed, standalone = true) {
 // "1 group.", "3 groups, 1 tab left loose.": the singular strings are keys of their own (the string table has no plural rules).
 const organizeSummary = (groups, loose) => t(organizeAi.summaryKey(groups, loose), { groups, loose });
+// The note when the AI step failed: "took too long" only for a real timeout, else the real cause (not signed in, no key...).
+function aiFailureNote(failed, standalone = true) {
   if (failed === 'timeout') return standalone ? t('organize.slowNone') : t('organize.slow');
   const cause = String(failed).replace(/\s+/g, ' ').trim().slice(0, 160);
   if (standalone) return `${t('organize.failed')}: ${cause.replace(/[.]$/, '') || t('organize.localOnly')}.`; // nothing was grouped: not "organized on this computer"
