@@ -68,7 +68,7 @@ async function buildUpdates(card) {
     busy = true;
     render();
     clickError = '';
-    try { u = await fn(); } catch (err) { clickError = String(err?.message || '').split(/\r?\n/)[0] || ut('unknownError'); } finally { busy = false; u = await U.state(); render(); }
+    try { u = await fn(); } catch (err) { clickError = String(err?.message || '').replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '').split(/\r?\n/)[0] || ut('unknownError'); } finally { busy = false; u = await U.state(); render(); }
   };
   const action = h('button', { class: 'primary', id: 'updates-apply', hidden: true, onclick: () => click(() => U.apply()) });
   const checkBtn = h('button', { id: 'updates-check', text: ut('action.check'), onclick: () => click(() => U.check()) });

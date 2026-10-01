@@ -5862,7 +5862,7 @@ const aiAgents = setupAiAgents({
 // ---------- updates from GitHub Releases (features/updates.js) ----------
 
 const updates = require('./features/updates').createUpdates({
-  app, ipcMain, session, ui, readSettings, writeSettings, test: TEST,
+  app, ipcMain, session, ui, readSettings, writeSettings, test: TEST, t,
   prefs: () => settingsBackend.prefs(),
   startupDelayMs: () => perfMode.limits().startupDelayMs,
   beforeInstall: () => { saveSession(); saveChat(); }, // the installer may close Lumen before its windows do
