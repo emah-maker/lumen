@@ -1803,7 +1803,6 @@ function wakeTab(tab) {
   try { view.setBounds(tabSleep.wakeBounds(contentBounds, { fullscreen: tab.fullscreen, full: tab.fullscreen ? (() => { const [width, height] = win.getContentSize(); return { width, height }; })() : null })); } catch { /* laid out by layout() */ }
   win.contentView.addChildView(view);
   view.setVisible(false);
-  raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
   wireView(tab, tab.sleepUrl || newTabUrl(), history);
