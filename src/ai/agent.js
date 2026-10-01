@@ -494,6 +494,17 @@ function fitContext(messages, budget) {
   const note = { type: 'text', text: '(Earlier parts of this conversation were left out to fit the model’s context window.)' };
   return [{ role: 'user', content: [note, ...content] }, ...messages.slice(start + 1)];
 }
+// What the conversation weighs, and whether it holds images: asked when a switch is chosen (fallback.choose skips a model
+// that can't take it) and to size the next request (contextBudget).
+const historyChars = (messages) => messages.reduce((n, m) => n + messageChars(m), 0);
+const hasImages = (messages) => messages.some((m) => Array.isArray(m.content) && m.content.some((b) => b?.type === 'image' || (b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some((c) => c?.type === 'image'))));
+// The same history for a model that can't see images: each image becomes a short note. (A copy; the chat keeps its images.)
+const IMAGE_NOTE = '[image omitted]';
+function withoutImages(messages) {
+  if (!hasImages(messages)) return messages;
+  const swap = (b) => (b?.type === 'image' ? { type: 'text', text: IMAGE_NOTE } : b?.type === 'tool_result' && Array.isArray(b.content) ? { ...b, content: b.content.map(swap) } : b);
+  return messages.map((m) => (Array.isArray(m.content) ? { ...m, content: m.content.map(swap) } : m));
+}
 const isContextError = (err) => /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length/i.test(String(err?.message || ''));
 
 // settings = { model, adhdMode }; adhdMode is fixed per conversation, the model can change.
@@ -1066,6 +1077,7 @@ class Agent {
       return message;
     });
     if (snapshot.settings) messages.settings = snapshot.settings;
+    this.settleStandIn(messages.settings);
     repairHistory(messages); // saved mid-task: answer the tool calls that never got a result
     // A saved chat may hold page content from before the restart: treat it as having read some.
     if (messages.length) messages.tainted = true;
@@ -1106,6 +1118,7 @@ class Agent {
   // Claude Code or Grok Build can't pick up an API tool loop at all).
   // Returns true when the switch waits for the next message.
   setModel(model) {
+    fallback.shared.clear(model); // picking a model by hand (or "Switch back") is asking to try it now: it is not left alone any longer
     if (this.running) {
       this.nextModel = model;
       return true;
@@ -1193,13 +1206,14 @@ class Agent {
       if (this.nextModel) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.nextModel = null; }
       // [model fallback] A stand-in from an earlier turn (fallbackFrom holds the user's own pick) goes back to the pick
       // first: whether it is still cooling down is decided again below, so the chat returns on its own when it isn't.
+      this.settleStandIn(messages.settings);
       const standIn = messages.settings.fallbackFrom ? messages.settings.model : null;
       if (messages.settings.fallbackFrom) { messages.settings.model = messages.settings.fallbackFrom; delete messages.settings.fallbackFrom; }
       // The model the picker shows: a saved model that isn't connected anymore falls back the same way.
       // (Nothing connected at all: keep it, and the request fails with the "set up an AI" message.)
       if (this.browser.effectiveModel) messages.settings.model = this.browser.effectiveModel(messages.settings.model) || messages.settings.model;
       if (skill?.model && this.browser.effectiveModel?.(skill.model) === skill.model) { modelBefore = messages.settings.model; messages.settings.model = skill.model; }
-      this.standInFor(messages.settings, standIn, emit);
+      this.standInFor(messages.settings, standIn, emit, { chars: historyChars(messages) + String(userText || '').length, images: images.length > 0 || hasImages(messages) });
 
       const tab = this.browser.activeTab();
       await this.inTask(tab?.id, controller.signal, () => this.runTask(messages, tab, userText, images, controller, emit, extra), messages, log, { ...(extra.meta || {}), hosts, skill });
@@ -1221,21 +1235,47 @@ class Agent {
     return typeof this.browser.fallbackOptions === 'function' && this.browser.autoFallback?.() !== false;
   }
 
+  fallbackOptionsList() {
+    try { return typeof this.browser?.fallbackOptions === 'function' ? this.browser.fallbackOptions() : []; } catch { return []; }
+  }
+
+  // History characters a request to `model` may carry: by its context window (fallback.capsOf), the flat figures
+  // as before when it is not known.
+  contextBudget(model) {
+    const id = String(model);
+    if (providers.splitModel(id).provider === 'anthropic') return CONTEXT_CHARS.anthropic;
+    const chars = fallback.contextChars(id, this.fallbackOptionsList());
+    return Number.isFinite(chars) ? chars : CONTEXT_CHARS.other;
+  }
+
+  // A stand-in saved with a chat (settings.fallbackFrom) outlives the cooldown that made it: after a restart nothing
+  // in memory says the model is unavailable, so the chat goes back to its own model, silently. (Within one run of the
+  // app the cooldown decides, and the "Back on" note says so.)
+  settleStandIn(settings) {
+    if (!settings?.fallbackFrom) return;
+    if (settings.fallbackSession === fallback.SESSION || fallback.shared.cooling(settings.fallbackFrom)) return;
+    settings.model = settings.fallbackFrom;
+    delete settings.fallbackFrom;
+    delete settings.fallbackSession;
+  }
+
   // The start of a turn: the user's pick, or the model that stands in for it while it cools down (and the one
   // quiet line saying so, only when that changes). `before` is the stand-in the chat was on last turn, if any.
-  standInFor(settings, before, emit) {
+  // `need`: { chars, images }, what the conversation holds, so a stand-in that can take it is preferred.
+  standInFor(settings, before, emit, need = null) {
     if (!this.fallbackOn()) return;
     const options = this.browser.fallbackOptions();
-    const r = fallback.resolve({ preferred: settings.model, options, cooldowns: fallback.shared, enabled: true });
+    const r = fallback.resolve({ preferred: settings.model, options, cooldowns: fallback.shared, enabled: true, need });
     if (!r.from) {
       if (before) emit({ type: 'notice', text: fallback.noticeFor({ kind: 'back', from: settings.model }, options), fallback: { from: settings.model, to: settings.model, kind: 'back' } });
       return;
     }
     settings.fallbackFrom = r.from;
+    settings.fallbackSession = fallback.SESSION;
     settings.model = r.model;
     if (before !== r.model) {
       const entry = fallback.shared.entry(r.from);
-      emit({ type: 'notice', text: fallback.noticeFor({ kind: 'still', from: r.from, to: r.model, resetsAt: r.until, exact: entry?.exact }, options), fallback: { from: r.from, to: r.model, kind: 'still', until: r.until } });
+      emit({ type: 'notice', text: fallback.noticeFor({ kind: 'still', from: r.from, to: r.model, resetsAt: r.until, exact: entry?.exact, trim: r.trim, noImages: r.noImages }, options), fallback: { from: r.from, to: r.model, kind: 'still', until: r.until, fromName: fallback.nameOf(r.from, options) } });
     }
   }
 
@@ -1244,7 +1284,8 @@ class Agent {
   // (a bad request, a refusal, a rejected key, a stop) returns null and the error stands.
   // allowEngines: the turn may go to Claude Code or Grok Build. Only when no tool has run in it (see toolCalls):
   // they can't continue an API tool loop, and starting over would repeat what already happened.
-  failoverFor(messages, err, emit, { tried, allowEngines }) {
+  // partial: the failed attempt had streamed text that is now dropped, which the notice says ("restarting the reply").
+  failoverFor(messages, err, emit, { tried, allowEngines, partial = false }) {
     if (!this.fallbackOn() || tried.size >= fallback.MAX_HOPS) return null;
     const settings = messages.settings;
     const current = settings.model;
@@ -1253,11 +1294,13 @@ class Agent {
     fallback.shared.mark(current, info);
     tried.add(current);
     const options = this.browser.fallbackOptions();
-    const next = fallback.pick({ current, options, cooldowns: fallback.shared, allowEngines, tried: [...tried] });
-    if (!next) return null;
+    const choice = fallback.choose({ current, options, cooldowns: fallback.shared, allowEngines, tried: [...tried], need: { chars: historyChars(messages), images: hasImages(messages) } });
+    if (!choice) return null;
+    const next = choice.id;
     if (!settings.fallbackFrom) settings.fallbackFrom = current;
+    settings.fallbackSession = fallback.SESSION;
     settings.model = next;
-    emit({ type: 'notice', text: fallback.noticeFor({ kind: info.kind, from: current, to: next, resetsAt: info.resetsAt, exact: info.exact }, options), fallback: { from: settings.fallbackFrom, to: next, kind: info.kind, until: info.resetsAt } });
+    emit({ type: 'notice', text: fallback.noticeFor({ kind: info.kind, from: current, to: next, resetsAt: info.resetsAt, exact: info.exact, restart: partial, trim: choice.trim, noImages: choice.noImages }, options), fallback: { from: settings.fallbackFrom, to: next, kind: info.kind, until: info.resetsAt, fromName: fallback.nameOf(settings.fallbackFrom, options) } });
     this.browser.onFallback?.();
     return next;
   }
@@ -1601,7 +1644,7 @@ class Agent {
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
-      messages: historyFor(fitContext(messages, budget), messages.settings.model),
+      messages: (fallback.capsOf(messages.settings.model, this.fallbackOptionsList()).vision === false ? withoutImages : (m) => m)(historyFor(fitContext(messages, budget), messages.settings.model)),
       tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
@@ -1636,8 +1679,8 @@ class Agent {
       let message;
       try {
         message = onClaude
-          ? await this.claudeTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.anthropic * budgetScale), toolsOff)
-          : await this.otherTurn(messages, signal, tee, Math.round(CONTEXT_CHARS.other * budgetScale), toolsOff).catch((err) => {
+          ? await this.claudeTurn(messages, signal, tee, Math.round(this.contextBudget(model) * budgetScale), toolsOff)
+          : await this.otherTurn(messages, signal, tee, Math.round(this.contextBudget(model) * budgetScale), toolsOff).catch((err) => {
             err.__provider = providers.splitModel(model).provider;
             throw err;
           });
@@ -1659,7 +1702,7 @@ class Agent {
         // turn added nothing, earlier tool results are in it), so no tool runs twice. What this turn had streamed is dropped.
         if (!signal.aborted) {
           const calls = taskScope.getStore()?.toolCalls || 0;
-          const next = this.failoverFor(messages, err, emit, { tried: fb.tried, allowEngines: step === 0 && calls === fb.calls0 });
+          const next = this.failoverFor(messages, err, emit, { tried: fb.tried, allowEngines: step === 0 && calls === fb.calls0, partial: streamed.trim().length > 0 });
           if (next) {
             emit({ type: 'retry' });
             if (fallback.isEngine(next)) throw REDISPATCH; // runTask starts the engine's turn
@@ -2860,4 +2903,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
+module.exports = { requestFor, Agent, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };

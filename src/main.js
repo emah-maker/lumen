@@ -428,7 +428,7 @@ function modelOptions() {
       const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
       const fmt = require('./renderer/picker-match').format; // the catalog's own rules ($1.25, 128K)
       const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: fmt.size(orInfo.context) }) : '', orInfo.pricePerM < 0 ? t('models.priceVaries') : orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: fmt.money(orInfo.pricePerM) })) : ''].filter(Boolean).join(' · ') : '';
-      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context, ...(typeof orInfo.vision === 'boolean' ? { vision: orInfo.vision } : {}) } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
     });
     if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });
@@ -2133,6 +2133,7 @@ async function withFallback(model, run, { engines = true } = {}) {
       tried.add(current);
       const next = tried.size >= 2 ? null : aiFallback.pick({ current, options: modelOptions(), cooldowns: aiFallback.shared, allowEngines: engines, tried: [...tried] });
       if (!next) throw err;
+      console.log(`[model fallback] background task: ${current} ${info.kind === 'limit' ? 'hit a limit' : 'was unreachable'}, retrying on ${next}`);
       current = next;
     }
   }
@@ -6217,6 +6218,7 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   const curatedPick = modelOptions().some((o) => o.id === id && !o.recent);
   const recentOpenRouter = pickedFromMore && !curatedPick ? [id.slice('openrouter:'.length), ...(s.recentOpenRouter || []).filter((m) => m !== id.slice('openrouter:'.length))].slice(0, 4) : s.recentOpenRouter;
   writeSettings({ ...s, model: id, ...(recentOpenRouter ? { recentOpenRouter } : {}) });
+  aiFallback.shared.clear(id); // [model fallback] picking a model by hand (the original, after a switch) means try it now: no cooldown
   modelsChanged(); // every sidebar, chat page and Settings shows the new pick
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
   return agent.setModel(id) ? 'next-message' : true;

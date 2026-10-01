@@ -80,12 +80,51 @@ const cases = [
   ['undefined', undefined, 'other'],
   ['null', null, 'other'],
   ['an empty string', '', 'other'],
+  // ---- text only: anchored phrases switch, loose words do not (a tool, a page or a request message can say "limit" or "timeout")
+  ['text: "request rate limit of tool calls per page" is not a model limit', 'Cannot process: request rate limit of tool calls per page exceeded', 'other'],
+  ['text: "rate limit of tool calls per page"', 'The request rate limit of tool calls per page was hit', 'other'],
+  ['text: "Tool timed out after 30s"', 'Tool timed out after 30s', 'other'],
+  ['text: "read_page timed out"', 'read_page timed out waiting for the page', 'other'],
+  ['text: "page is offline-capable"', 'The page is offline-capable', 'other'],
+  ['text: "you are offline" in page text', 'This site works offline', 'other'],
+  ['text: a bare "limit reached" (a tab limit)', 'Tab limit reached: close a tab first', 'other'],
+  ['text: a bare "quota" (storage)', 'Storage quota for this site is 50MB', 'other'],
+  ['text: "too many tools: limit is 128"', 'too many tools: limit is 128', 'other'],
+  ['text: "Image exceeds the 5MB limit"', 'Image exceeds the 5MB limit', 'other'],
+  ['text: "max_tokens limit exceeded"', 'max_tokens limit exceeded', 'other'],
+  ['text: "safety limit"', 'response blocked: safety limit', 'other'],
+  ['text: the word "resets" with no limit around it', 'The timer resets at midnight in this game', 'other'],
+  ['text: "billing" in a page title', 'Billing settings | Example', 'other'],
+  ['text: token-limit wording is a context error', 'You have reached the token limit for this request', 'other'],
+  ['text: "token limit for this request"', 'Exceeded the token limit for this request', 'other'],
+  ['text: input length over the context window', 'Input length exceeds the context window limit', 'other'],
+  ['text: the conversation over the model limit for context', 'The conversation exceeded the model limit for context', 'other'],
+  ['status 400 with a context error', api('BadRequestError', 400, 'invalid_request_error', 'prompt is too long: 250000 tokens > 200000 maximum'), 'other'],
+  ['text: "rate limit exceeded"', 'Rate limit exceeded. Try again later.', 'limit'],
+  ['text: "rate limit reached"', 'Claude rate limit reached', 'limit'],
+  ['text: a leading provider name', 'Grok usage limit reached, resets 5pm (UTC)', 'limit', (c) => c.resetsAt === Date.UTC(2026, 9, 1, 17, 0, 0)],
+  ['text: "quota exceeded"', 'Daily quota exceeded for this project', 'limit'],
+  ['text: "insufficient_quota"', 'error code: insufficient_quota', 'limit'],
+  ['text: "credit balance"', 'Your credit balance is too low', 'limit'],
+  ['text: "You\u2019ve hit your limit \u00b7 resets 3pm"', 'You\u2019ve hit your limit \u00b7 resets 3pm', 'limit'],
+  ['text: "usage limit"', 'Your plan usage limit has been reached', 'limit'],
+  ['text: "resets" with a limit', 'Limit hit. Resets in 2h', 'limit'],
+  ['text: connection error', 'Connection error. Check your network', 'unreachable'],
+  ['text: network error', 'Network error while contacting the API', 'unreachable'],
+  ['text: ETIMEDOUT in a message', 'connect ETIMEDOUT 104.18.0.1:443', 'unreachable'],
+  ['text: ECONNREFUSED in a message', 'connect ECONNREFUSED 127.0.0.1:443', 'unreachable'],
+  ['text: "request timed out" from an SDK', 'Request timed out.', 'unreachable'],
+  ['structured: an errno string on the error', Object.assign(new Error('boom'), { errno: 'ECONNRESET' }), 'unreachable'],
+  ['structured: a code on the cause', Object.assign(new Error('x'), { cause: { code: 'ENOTFOUND' } }), 'unreachable'],
+  ['structured: a status 502 with text that says nothing', Object.assign(new Error('x'), { status: 502 }), 'unreachable'],
+  ['structured: error.type overloaded_error', Object.assign(new Error('x'), { error: { type: 'overloaded_error' } }), 'unreachable'],
+  ['structured: status 429 with unrelated text', Object.assign(new Error('Tool timed out'), { status: 429 }), 'limit'],
 ];
 for (const [label, input, kind, extra] of cases) {
   const c = classify(input, { now: NOW });
   check(`classify: ${label} -> ${kind}`, c.kind === kind && (!extra || extra(c)), J({ ...c }));
 }
-check(`classify: ${cases.length} shapes covered`, cases.length >= 50, String(cases.length));
+check(`classify: ${cases.length} shapes covered`, cases.length >= 90, String(cases.length));
 
 // ---- the picker's list, as main.js modelOptions() builds it
 const claude = (id, label) => ({ id, label, name: label, group: 'Claude', provider: 'Claude' });
@@ -400,6 +439,175 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
       try { await run(w.agent, m2, w.log); } catch (e) { thrown = e; }
       check('API unreachable after a tool ran: it may not move to an engine (the tool is not repeated), the error stands', Boolean(thrown) && w.log.tools.length === 1 && w.log.cc.length === 0 && m2.settings.model === 'claude-opus-5-5', J({ tools: w.log.tools, cc: w.log.cc, thrown: thrown?.message }));
     }
+
+// ---- what a model can take: context size and images
+{
+  const { capsOf, contextChars, choose } = fallback;
+  const O = [
+    ...OPTS,
+    { id: 'openrouter:vendor/small-text', label: 'small text', group: 'OpenRouter', provider: 'OpenRouter', context: 8000, vision: false },
+    { id: 'openrouter:vendor/big-vision', label: 'big vision', group: 'OpenRouter', provider: 'OpenRouter', context: 1_000_000, vision: true },
+    { id: 'openrouter:vendor/unknown', label: 'unknown', group: 'OpenRouter', provider: 'OpenRouter' },
+  ];
+  check('caps: Claude is 200k tokens with vision', capsOf('claude-sonnet-5', O).context === 200_000 && capsOf('claude-sonnet-5', O).vision === true);
+  check('caps: GPT-5.6 is 400k, Grok 4 256k with vision', capsOf('openai:gpt-5.6', O).context === 400_000 && capsOf('xai:grok-4', O).context === 256_000 && capsOf('xai:grok-4', O).vision === true);
+  check('caps: Grok 3 and grok-code are text-only', capsOf('xai:grok-3', O).vision === false && capsOf('xai:grok-code-fast-1', O).vision === false);
+  check('caps: an OpenRouter row carries its own numbers', capsOf('openrouter:vendor/small-text', O).context === 8000 && capsOf('openrouter:vendor/small-text', O).vision === false);
+  check('caps: unknown is unknown (not text-only)', capsOf('openrouter:vendor/unknown', O).vision === null && capsOf('openrouter:vendor/unknown', O).context === 0);
+  check('caps: engines see images (Claude Code) or are unknown (Grok Build), and manage their own history', capsOf('claudecode:opus', O).vision === true && capsOf('grokbuild:default', O).vision === null && contextChars('claudecode:opus', O) === Infinity);
+  check('budget: Claude keeps 600k characters, a 128k model about 384k, unknown the old 320k, huge windows are capped', contextChars('claude-opus-5-5', O) === 600_000 && contextChars('openai:gpt-4o', O) === 384_000 && contextChars('openrouter:vendor/unknown', O) === 320_000 && contextChars('openrouter:vendor/big-vision', O) === 1_200_000, J([contextChars('claude-opus-5-5', O), contextChars('openai:gpt-4o', O), contextChars('openrouter:vendor/unknown', O), contextChars('openrouter:vendor/big-vision', O)]));
+  const cd = createCooldowns();
+  const only = (...ids) => O.filter((o) => ids.includes(o.id));
+
+  // a long conversation skips the model that can't hold it
+  let c = choose({ current: 'claude-opus-5-5', options: only('claude-opus-5-5', 'openrouter:vendor/small-text', 'openai:gpt-5.6'), cooldowns: cd, need: { chars: 100_000, images: false } });
+  check('choose: a model whose window is too small for the chat is passed over', c?.id === 'openai:gpt-5.6' && !c.trim && !c.noImages, J(c));
+  // images skip a text-only model
+  c = choose({ current: 'openai:gpt-5.6', options: only('openai:gpt-5.6', 'xai:grok-3', 'xai:grok-4'), cooldowns: cd, need: { chars: 1000, images: true } });
+  check('choose: a text-only model is passed over when the chat holds images', c?.id === 'xai:grok-4' && !c.noImages, J(c));
+  c = choose({ current: 'openai:gpt-5.6', options: only('openai:gpt-5.6', 'xai:grok-3', 'xai:grok-4'), cooldowns: cd, need: { chars: 1000, images: false } });
+  check('choose: without images the order is unchanged', c?.id === 'xai:grok-3' || c?.id === 'xai:grok-4', J(c));
+  // nothing capable: still falls back, marked
+  c = choose({ current: 'claude-opus-5-5', options: only('claude-opus-5-5', 'openrouter:vendor/small-text'), cooldowns: cd, need: { chars: 100_000, images: true } });
+  check('choose: no capable model: it falls back anyway, trimmed and without images', c?.id === 'openrouter:vendor/small-text' && c.trim === true && c.noImages === true, J(c));
+  check('choose: nothing else connected is still null', choose({ current: 'claude-opus-5-5', options: only('claude-opus-5-5'), cooldowns: cd, need: { chars: 1, images: false } }) === null);
+  check('pick: still returns an id, and ignores capability when no need is given', fallback.pick({ current: 'claude-opus-5-5', options: only('claude-opus-5-5', 'openrouter:vendor/small-text'), cooldowns: cd }) === 'openrouter:vendor/small-text');
+  c = choose({ current: 'claude-opus-5-5', options: only('claude-opus-5-5', 'claudecode:sonnet'), cooldowns: cd, need: { chars: 5_000_000, images: true } });
+  check('choose: an engine takes any length (it compacts its own history) and images (Claude Code)', c?.id === 'claudecode:sonnet' && !c.trim && !c.noImages, J(c));
+  // resolve at the start of a turn
+  const cd2 = createCooldowns();
+  cd2.mark('claude-opus-5-5', { kind: 'limit', scope: 'provider', resetsAt: NOW + 3600e3 }, NOW);
+  const r = resolve({ preferred: 'claude-opus-5-5', options: only('claude-opus-5-5', 'openrouter:vendor/small-text', 'openai:gpt-5.6'), cooldowns: cd2, at: NOW, need: { chars: 100_000, images: false } });
+  check('resolve: the start-of-turn stand-in can hold the chat too', r.model === 'openai:gpt-5.6' && r.from === 'claude-opus-5-5', J(r));
+  // notices
+  const n = (extra) => noticeFor({ kind: 'limit', from: 'claude-opus-5-5', to: 'claude-sonnet-5', ...extra }, OPTS);
+  check('notice: a reply that restarts says so', n({ restart: true }) === 'Claude Opus 5.5 hit its limit — restarting the reply on Claude Sonnet 5.', n({ restart: true }));
+  check('notice: unreachable restart', noticeFor({ kind: 'unreachable', from: 'xai:grok-4', to: 'claude-opus-5-5', restart: true }, OPTS) === 'Couldn’t reach xAI — restarting the reply on Claude Opus 5.5.');
+  check('notice: trimmed and images left out are said', /oldest messages are left out/.test(n({ trim: true })) && /can’t see images/.test(n({ noImages: true })));
+  check('notice: not restarting keeps the plain wording', n({}) === 'Claude Opus 5.5 hit its usage limit, switched to Claude Sonnet 5.');
+}
+
+// ---- images and history size in the agent
+{
+  const { withoutImages, historyChars, hasImages, fitContext } = require('../src/ai/agent');
+  const img = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } };
+  const hist = [
+    { role: 'user', content: [img, { type: 'text', text: 'what is this' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'screenshot', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: 'ok' }, img] }] },
+    { role: 'assistant', content: 'plain string' },
+  ];
+  const stripped = withoutImages(hist);
+  check('hasImages: sees an attached image and one inside a tool result', hasImages(hist) && !hasImages(stripped) && !hasImages([{ role: 'user', content: 'hi' }]));
+  check('withoutImages: each image becomes "[image omitted]", the chat is untouched', stripped[0].content[0].text === '[image omitted]' && stripped[2].content[0].content[1].text === '[image omitted]' && hist[0].content[0].type === 'image' && stripped[3] === hist[3]);
+  check('withoutImages: nothing to change returns the same array', withoutImages([{ role: 'user', content: 'hi' }]).length === 1);
+  check('historyChars: grows with the text, an image counts a fixed amount', historyChars([{ role: 'user', content: 'x'.repeat(1000) }]) === 1000 && historyChars([{ role: 'user', content: [img] }]) === 6000);
+  const long = Array.from({ length: 40 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: 'y'.repeat(5000) }));
+  const fitted = fitContext(long, 50_000);
+  check('fitContext: a model with a small window gets the recent turns and a note', historyChars(fitted) <= 60_000 && fitted.length < long.length && /left out/.test(fitted[0].content[0].text), J({ n: fitted.length, chars: historyChars(fitted) }));
+}
+
+// ---- the agent: capability on a switch, restart notice, the way back, stale stand-ins
+{
+  const bigText = 'z'.repeat(150_000);
+  const IMG = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } };
+  const rl = () => api('RateLimitError', 429, 'rate_limit_error', 'rate limited', headers({ 'retry-after': '900' }));
+  const OP = [claude('claude-opus-5-5', 'Opus 5.5'), claude('claude-sonnet-5', 'Sonnet 5'), { id: 'xai:grok-3', label: 'Grok 3', name: 'Grok 3', group: 'Grok', provider: 'Grok' }, { id: 'openai:gpt-4o', label: 'GPT-4o', name: 'GPT-4o', group: 'OpenAI', provider: 'OpenAI' }];
+
+  // a conversation with an image skips the text-only model (Grok 3), even though it comes earlier in a "same provider" order
+  {
+    fallback.shared.clear();
+    const { agent, log } = makeAgent({ options: OP.filter((o) => o.id !== 'claude-sonnet-5'), scripts: { 'claude-opus-5-5': [rl()] } });
+    const messages = fresh('claude-opus-5-5');
+    messages.push({ role: 'user', content: [IMG, { type: 'text', text: 'look' }] }, { role: 'assistant', content: [{ type: 'text', text: 'seen' }] });
+    await run(agent, messages, log);
+    check('switch: a chat with images skips a text-only model', log.turns[log.turns.length - 1].model === 'openai:gpt-4o', J(log.turns));
+  }
+  // a very long conversation skips a model that cannot hold it
+  {
+    fallback.shared.clear();
+    const small = [OP[0], { id: 'openrouter:v/tiny', label: 'tiny', name: 'tiny', group: 'OpenRouter', provider: 'OpenRouter', context: 8000 }, OP[3]];
+    const { agent, log } = makeAgent({ options: small, scripts: { 'claude-opus-5-5': [rl()] } });
+    const messages = fresh('claude-opus-5-5');
+    messages.push({ role: 'user', content: bigText }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] });
+    await run(agent, messages, log);
+    check('switch: a long chat skips a model with a small window', log.turns[log.turns.length - 1].model === 'openai:gpt-4o', J(log.turns));
+  }
+  // nothing capable: it still switches, trimmed, and the notice says so
+  {
+    fallback.shared.clear();
+    const only2 = [OP[0], { id: 'openrouter:v/tiny', label: 'tiny', name: 'tiny', group: 'OpenRouter', provider: 'OpenRouter', context: 8000, vision: false }];
+    const { agent, log } = makeAgent({ options: only2, scripts: { 'claude-opus-5-5': [rl()] } });
+    const messages = fresh('claude-opus-5-5');
+    messages.push({ role: 'user', content: [IMG, { type: 'text', text: bigText }] }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] });
+    await run(agent, messages, log);
+    check('switch: no capable model: it falls back anyway and the notice says what is left out', log.turns[log.turns.length - 1].model === 'openrouter:v/tiny' && /oldest messages are left out/.test(notices(log)[0]) && /can’t see images/.test(notices(log)[0]), J({ turns: log.turns, n: notices(log) }));
+  }
+  // the budget follows the model
+  {
+    const { agent } = makeAgent({ options: [...OP, { id: 'openrouter:v/tiny', label: 'tiny', name: 'tiny', group: 'OpenRouter', provider: 'OpenRouter', context: 8000 }] });
+    check('contextBudget: by the model\u2019s window', agent.contextBudget('claude-opus-5-5') === 600_000 && agent.contextBudget('openai:gpt-4o') === 384_000 && agent.contextBudget('openrouter:v/tiny') === 24_000 && agent.contextBudget('openai:unheard-of') === 320_000, J([agent.contextBudget('claude-opus-5-5'), agent.contextBudget('openai:gpt-4o'), agent.contextBudget('openrouter:v/tiny'), agent.contextBudget('openai:unheard-of')]));
+  }
+  // a reply that had started says it restarts
+  {
+    fallback.shared.clear();
+    const partial = Object.assign(rl(), {});
+    const { agent, log } = makeAgent({ options: OP.slice(0, 2) });
+    let first = true;
+    agent.claudeTurn = async function (messages, signal, emit) {
+      const model = messages.settings.model;
+      log.turns.push({ model });
+      if (first) { first = false; emit({ type: 'text', text: 'Here is the start of an answ' }); throw partial; }
+      return { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn', model };
+    };
+    const messages = fresh('claude-opus-5-5');
+    await run(agent, messages, log);
+    check('a partial reply that is dropped: the notice says it restarts', /^Claude Opus 5\.5 hit its limit — restarting the reply on Claude Sonnet 5\./.test(notices(log)[0] || ''), J(notices(log)));
+    check('the notice event carries the name to switch back to', log.events.find((e) => e.fallback)?.fallback.fromName === 'Claude Opus 5.5', J(log.events.find((e) => e.fallback)));
+  }
+  // the way back: a manual pick of the original clears its cooldown and the stand-in
+  {
+    fallback.shared.clear();
+    const { agent, log } = makeAgent({ scripts: { 'claude-opus-5-5': [rl()] } });
+    const messages = fresh('claude-opus-5-5');
+    await run(agent, messages, log);
+    agent.messages = messages;
+    check('before: Opus cools down, the chat is on Sonnet', fallback.shared.cooling('claude-opus-5-5', clock) && messages.settings.model === 'claude-sonnet-5');
+    agent.setModel('claude-opus-5-5');
+    check('switch back: the pick clears the cooldown and the stand-in', !fallback.shared.cooling('claude-opus-5-5', clock) && messages.settings.model === 'claude-opus-5-5' && !messages.settings.fallbackFrom, J(messages.settings));
+    log.events.length = 0; log.turns.length = 0;
+    await agent.runOnce('again', (e) => log.events.push(e), [], {}, null, messages, { controller: new AbortController(), hosts: new Set() });
+    check('switch back: the next message runs on the original, with no notice', log.turns[0]?.model === 'claude-opus-5-5' && notices(log).length === 0, J({ turns: log.turns, n: notices(log) }));
+  }
+  // a stand-in saved with a chat, opened after a restart (no cooldown in memory): back on the original, silently
+  {
+    fallback.shared.clear();
+    const { agent, log } = makeAgent();
+    const snapshot = { settings: { model: 'claude-sonnet-5', fallbackFrom: 'claude-opus-5-5', fallbackSession: 'an-earlier-run', adhdMode: true }, messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: [{ type: 'text', text: 'hello' }] }] };
+    agent.restore(snapshot);
+    check('restore: a stale stand-in is cleared at load', agent.messages.settings.model === 'claude-opus-5-5' && !agent.messages.settings.fallbackFrom && !agent.messages.settings.fallbackSession, J(agent.messages.settings));
+    // the same, found at the start of a turn (a chat that was never passed through restore)
+    const m2 = fresh('claude-sonnet-5');
+    m2.settings.fallbackFrom = 'claude-opus-5-5';
+    m2.settings.fallbackSession = 'an-earlier-run';
+    await agent.runOnce('hi', (e) => log.events.push(e), [], {}, null, m2, { controller: new AbortController(), hosts: new Set() });
+    check('stale stand-in at the start of a turn: the original answers, no "Back on" note', log.turns[0]?.model === 'claude-opus-5-5' && notices(log).length === 0 && !m2.settings.fallbackFrom, J({ turns: log.turns, n: notices(log) }));
+    // a stand-in made in this run, whose cooldown has ended, still gets its "Back on" note
+    const m3 = fresh('claude-sonnet-5');
+    m3.settings.fallbackFrom = 'claude-opus-5-5';
+    m3.settings.fallbackSession = fallback.SESSION;
+    log.events.length = 0; log.turns.length = 0;
+    await agent.runOnce('hi', (e) => log.events.push(e), [], {}, null, m3, { controller: new AbortController(), hosts: new Set() });
+    check('a stand-in from this run whose cooldown ended: "Back on" is said', J(notices(log)) === J(['Back on Claude Opus 5.5.']), J(notices(log)));
+    // a still-cooling stand-in from an earlier run is kept
+    const m4 = fresh('claude-sonnet-5');
+    m4.settings.fallbackFrom = 'claude-opus-5-5';
+    m4.settings.fallbackSession = 'an-earlier-run';
+    fallback.shared.mark('claude-opus-5-5', { kind: 'limit', scope: 'model', resetsAt: clock + 600e3 }, clock);
+    agent.restore({ settings: m4.settings, messages: [{ role: 'user', content: 'hi' }] });
+    check('a stand-in whose cooldown is live is kept at load', agent.messages.settings.fallbackFrom === 'claude-opus-5-5' && agent.messages.settings.model === 'claude-sonnet-5');
+  }
+}
   } finally {
     Date.now = realNow;
   }

@@ -1012,6 +1012,19 @@ window.assistant.onEvent((event) => {
       if (event.stopped) turn.stopped = true;
       const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t('chat.stopped') : event.text }));
       if (event.fallback) loadModels(); // [model fallback] the picker follows the model that is answering now (or the pick, once it is back)
+      if (event.fallback && event.fallback.kind !== 'back' && event.fallback.from !== event.fallback.to) {
+        // One quiet way back: picks the original model again (this also ends its cooldown, see settings:set-model); the next message tries it.
+        const name = event.fallback.fromName || event.fallback.from;
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t(event.fallback.kind === 'unreachable' ? 'chat.fallbackRetry' : 'chat.fallbackBack', { name }) });
+        button.onclick = async () => {
+          button.disabled = true;
+          const ok = await window.assistant.setModel(event.fallback.from).catch(() => false);
+          await loadModels();
+          if (ok) button.replaceWith(Object.assign(document.createElement('span'), { textContent: t('chat.fallbackBackDone', { name }) }));
+          else button.remove();
+        };
+        notice.append(' ', button);
+      }
       if (event.action === 'continue') {
         const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('chat.continue') });
         button.onclick = () => { button.remove(); ask(t('chat.continuePrompt')); };
