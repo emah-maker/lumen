@@ -107,6 +107,11 @@
     @media (prefers-reduced-motion: reduce) {
       main, #backdrop::before { animation: none !important; }
     }
+    /* The slow drift moves a (for Aurora, 30px-blurred) layer that every frosted card behind-blurs, so the GPU
+       resamples all of them each frame for as long as the page is open. Performance mode's "calm" stops it, and it
+       holds still while cards wiggle in edit mode, when the page already animates plenty. */
+    body.calm #backdrop::before { animation: none; }
+    body.w-editing #backdrop::before { animation-play-state: paused; }
 
     header { margin-bottom: var(--space-3); }
     .date { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
