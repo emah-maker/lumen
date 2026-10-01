@@ -164,6 +164,17 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   check('site data: and clears its storage', cleared.includes('https://example.com') && cleared.includes('https://www.example.com') && !cleared.some((o) => o.includes('bbc')), cleared.join());
   check('site data: a bad site name clears nothing', (await SD.clearSite(fakeJar, 'a b/c')) === 0 && (await SD.clearSite(fakeJar, '')) === 0, '');
 
+  // ---- the error page's wording per network error (renderer/error-kinds.js)
+  const EK = require('../src/renderer/error-kinds');
+  const dns = EK.describe('ERR_NAME_NOT_RESOLVED', 'nope.example');
+  check('error page: a DNS failure says the site can\'t be found, names it, and hints at a typo', dns.title === 'This site can’t be found' && dns.message.includes('“nope.example”') && /typo/.test(dns.hint), JSON.stringify(dns));
+  check('error page: offline says so', EK.describe('net::ERR_INTERNET_DISCONNECTED', 'a.example').title === 'You’re offline', '');
+  check('error page: aliases share a wording', EK.describe('ERR_TIMED_OUT', 'a.example').title === EK.describe('ERR_CONNECTION_TIMED_OUT', 'a.example').title, '');
+  check('error page: an unknown error gets the general wording with the host', EK.describe('ERR_SOMETHING_NEW', 'a.example').title === 'Can’t open this page' && EK.describe('ERR_SOMETHING_NEW', 'a.example').message.includes('“a.example”') && EK.describe('', '').hint === '', '');
+  check('error page: every wording has a title and a message', Object.keys(EK.KINDS).every((k) => { const d = EK.describe(k, 'h.example'); return d.title && d.message; }), '');
+  const errorHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'error.html'), 'utf8');
+  check('error page: error.html loads the wordings before its own script', errorHtml.indexOf('error-kinds.js') !== -1 && errorHtml.indexOf('error-kinds.js') < errorHtml.indexOf('error.js"'), '');
+
   // ---- shortcut hints in the UI's strings read the Mac way on macOS (renderer/i18n.js)
   const vm = require('vm');
   const i18nSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'i18n.js'), 'utf8');

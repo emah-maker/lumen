@@ -14,6 +14,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - Picture in Picture from ⋯ → This Page (and the View menu on a Mac) plays the page's video in a floating window.
 - `Esc` stops a page that is still loading, and `Ctrl+Shift+Delete` opens Clear browsing data.
 - On a Mac, About Lumen shows Lumen's version and the Electron and Chromium it is built on.
+- The error page says what went wrong and what to try: you're offline, the site can't be found (check for a typo), it refused to connect, it took too long, a redirect loop (clear the site's cookies), or the ad blocker stopped it.
 - Windows high contrast: the active tab, pressed toolbar buttons, focus rings and Settings' switches stay visible.
 - Settings → About Lumen has Copy version details and Report a problem, for bug reports. On a Mac, the toolbar's shortcut hints read ⌘T, ⇧⌘A and so on instead of Ctrl+.
 - Polish: the page and video right-click menus, spelling suggestions, the risky-download prompt, and the Open File and Export Chat dialogs use Lumen's translated strings instead of fixed English. The lock is a keyboard-focusable button with a focus ring and a name for screen readers.

@@ -146,6 +146,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('site data: Remove deletes the site\'s cookies and drops it from the list', Boolean(gone) && Boolean(after), String(after));
     await app.evaluate((_e, id) => global.__agent.browser.closeTab?.(id), sid).catch(() => {});
 
+    // A refused connection gets its own wording on the error page (renderer/error-kinds.js).
+    const closed = http.createServer();
+    await new Promise((r) => closed.listen(0, '127.0.0.1', r));
+    const closedPort = closed.address().port;
+    await new Promise((r) => closed.close(r)); // nothing listens there now
+    const refusedTab = await app.evaluate((_e, u) => global.__agent.browser.openTab(u).id, `http://127.0.0.1:${closedPort}/`);
+    const errorText = await waitFor(() => app.evaluate((_e, id) => {
+      const wc = global.__settings.contents(id);
+      return wc && /error\.html/.test(wc.getURL()) ? wc.executeJavaScript("document.querySelector('h1').textContent + ' | ' + document.getElementById('hint').textContent") : null;
+    }, refusedTab));
+    check('error page: a refused connection says so, with a hint', /refused to connect/.test(errorText || '') && /down|port/.test(errorText || ''), String(errorText));
+
     // Keyboard Shortcuts sheet.
     await press(app, '/', [mod, 'shift']);
     const kind = await waitFor(() => app.evaluate(() => global.__dialogs.currentKind()));
@@ -191,10 +203,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const crashed = makeProfile({ startup: 'newtab', session }, { crashed: true });
     ({ app } = await launch(crashed));
     const offered = await waitFor(() => app.evaluate(() => global.__dialogs.currentKind()));
-    const card = offered && await app.evaluate(async ({ webContents }) => {
-      const view = webContents.getAllWebContents().find((w) => w.getURL().endsWith('dialog.html'));
-      return view.executeJavaScript("({ message: document.getElementById('message').textContent, detail: document.getElementById('detail').textContent, buttons: [...document.querySelectorAll('#buttons button')].map((b) => b.textContent) })");
-    });
+    const card = offered && await waitFor(() => app.evaluate(async ({ webContents }) => {
+      const view = webContents.getAllWebContents().find((w) => w.getURL().includes('dialog.html'));
+      if (!view || view.isLoading()) return null;
+      const c = await view.executeJavaScript("({ message: document.getElementById('message').textContent, detail: document.getElementById('detail').textContent, buttons: [...document.querySelectorAll('#buttons button')].map((b) => b.textContent) })");
+      return c.message ? c : null;
+    }));
     check('after a crash, with startup set to a new tab, Lumen offers the old tabs', card && /didn’t shut down correctly/.test(card.message) && /2 tabs/.test(card.detail) && card.buttons.join() === 'Not Now,Restore', JSON.stringify(card));
     await app.evaluate(() => global.__dialogs.respond({ id: global.__dialogs.currentId(), response: 1 }));
     const restored = await waitFor(async () => { const w = await windows(app); const urls = w[0]?.tabs.map((t) => t.url || '') || []; return urls.some((u) => u.endsWith('/one')) && urls.some((u) => u.endsWith('/two')) && w[0]; });

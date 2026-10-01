@@ -33,6 +33,7 @@ Each item is wired into its menus, has a shortcut where browsers usually have on
 
 Polish in the same round:
 
+- The error page names what went wrong and what to try for the common network errors ("You're offline", "This site can't be found: check the address for a typo", "refused to connect", "took too long to respond", a redirect loop with a hint to clear the site's cookies, the ad blocker), instead of one "Can't open this page" for all of them.
 - English strings that bypassed `t()` now go through it: the page menu's Save Page As and View Page Source, the video menu (Picture in Picture, Open Video in New Tab, Copy Video Address), the spelling items (No Spelling Suggestions, Add to Dictionary), the risky-download prompt, the Open File dialog and the Export Chat dialog.
 - Windows high contrast (forced colors): the active and selected tabs, pressed toolbar buttons, the address field, focus rings and Settings' switches stay visible. Before, they were drawn with backgrounds the system flattens.
 - Settings → About Lumen has **Copy version details** and **Report a problem**, for bug reports.
@@ -51,7 +52,7 @@ Polish in the same round:
 | **History** | Searchable page, remove an entry, clear by time range | Per-visit timeline, journeys | Same as Chrome | Per-visit | Partial: one entry per address (latest visit), page not localized | Later: a per-visit list needs a new history store | M |
 | **Bookmarks** | Ctrl+D, manager, one folder level, HTML import and export | Bar, nested folders, side panel | Pinned tabs replace them | Favorites bar, nested folders | Partial: no bookmarks bar, no nested folders | Yes for the bar: it's the most-noticed missing piece for people coming from Chrome or Safari, though Arc users don't miss it | M |
 | **Downloads** | Panel and page, ask where to save, risky files held, Save … As (added) | Same | Same | Same | Have | — | — |
-| **Find in page** | Count, next and previous, Esc | Same (no match case either) | Same | Same | Have | — | — |
+| **Find in page** | Count, next and previous, Esc | Same (no match case either) | Same | Plus match case and "begins with" | Have | Match case: later, small | S |
 | **Zoom** | Pill in the address bar, default zoom, per-site zoom remembered (added) | Same, plus a +/− bubble | Same | Same | Have | — | — |
 | **Print** | Ctrl+P to the system dialog (Save as PDF is in the system dialog on macOS; Windows has Microsoft Print to PDF) | Built-in preview | System | System | Partial: no print preview on Windows | No: the system dialog already previews on macOS, and a Chromium-style preview is a large UI job | L |
 | **Reader mode** | Address-bar button and ⋯ menu | Reading mode side panel | — | Reader | Have (no font or width settings) | Later: font and width controls are small and nice to have | S |
@@ -83,7 +84,7 @@ Polish in the same round:
 | **Sync** | — | Google account | Arc account | iCloud | Missing | No: Lumen has no servers of its own (no telemetry, no accounts) | L |
 | **Split view** | — | Edge and Chrome split screen | Split view | — | Missing | Later: the sidebar covers the most common side-by-side use | L |
 | **Translation** | Your connected AI, or Google Translate with consent | Built in | Built in | Built in, on device | Have (by AI) | On-device (Bergamot): declined by the owner | — |
-| **Error pages** | Can't open, certificate, HTTPS-only, Safe Browsing, crashed | Specific offline and DNS messages | Same | Same | Partial: one generic message for network errors; error, history, bookmarks and downloads pages aren't localized | Yes: localize these pages (they need the strings handed in, as the settings page does) | M |
+| **Error pages** | Certificate, HTTPS-only, Safe Browsing, crashed, and network errors with their own wording and hint: offline, site not found, refused, timed out, reset, proxy, redirect loop, blocked (added) | Same, plus an offline game | Same | Same | Partial: the error, history, bookmarks and downloads pages aren't localized | Yes: localize these pages (they need the strings handed in, as the settings page does) | M |
 | **Notifications** | Web notifications through the permission prompt; Lumen's own for background tasks | Plus quieter prompts | Same | Same | Have | — | — |
 | **Protocol handlers** | http and https, html and pdf files; mailto, tel and sms ask, then open the system app | `registerProtocolHandler` | Same | Same | Partial | No: rarely used, and each handler is a page that can take links from other apps | M |
 
