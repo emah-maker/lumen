@@ -1480,7 +1480,7 @@ function takeSpareNewTab() {
 }
 // The next one is made right away: Ctrl+T pressed again a moment later finds
 // it, or one part-way through loading. (It used to wait 700 ms, and a quick second new tab started from nothing.)
-const spareSoon = () => setTimeout(makeSpareNewTab, 0).unref?.();
+const spareSoon = () => setTimeout(makeSpareNewTab, 100).unref?.();
 
 // ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
 // A web page in a new view (a link opened in a new tab, a restored or sleeping tab woken, an address typed into the
@@ -1619,15 +1619,16 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   win.contentView.addChildView(view);
   view.setVisible(false);
   const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
-  // The spare page gets this tab's data in place (no reload, no extra history entry).
-  if (spare) {
-    // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms. A spare still
-    // loading finishes first (its page reads the data then).
+  // The spare page gets this tab's data in place (no reload, no extra history entry): hidden until it has drawn it (a
+  // frame of the old data would flash otherwise). Usually it already shows the same data (its address says so) and is
+  // shown at once: a hidden page's renderer runs at background priority, and even a no-op script there took ~45 ms.
+  // A spare still loading finishes first (its page reads the data then).
+  if (spare && !(spared.ready && wc.getURL() === url)) {
     tab.spareFilling = true;
     const fill = () => wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); true`, true)
       .catch(() => { if (!wc.isDestroyed()) wc.loadURL(url).catch(() => {}); });
     const loaded = spared.ready ? Promise.resolve() : new Promise((r) => { wc.once('did-finish-load', r); setTimeout(r, 1500); });
-    const filled = loaded.then(fill);
+    const filled = loaded.then(() => (wc.isDestroyed() || wc.getURL() === url ? null : fill()));
     // (At most 100 ms past its load: an occluded or minimized window draws no frames, and the tab must not stay blank.)
     Promise.race([filled, loaded.then(() => new Promise((r) => setTimeout(r, 100)))])
       .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
