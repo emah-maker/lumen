@@ -1247,6 +1247,7 @@ ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event
 
 // The URL a tab is "really" on: error pages report the address that failed.
 function realUrl(wc) {
+  if (warmPending.has(wc)) return ''; // (still on the warm view's about:blank: no address yet, as a fresh view has none)
   const url = wc.getURL();
   if (isErrorPage(url) || url.startsWith(settingsPage.HTTPS_ONLY_URL)) return new URL(url).searchParams.get('url') || ''; // [settings] HTTPS-only warning too
   return url;
@@ -1291,7 +1292,7 @@ function tabState() {
       const url = realUrl(wc);
       return {
         id: t.id,
-        title: wc.getTitle() || 'New Tab',
+        title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
         url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: t.favicon || null,
@@ -1314,7 +1315,7 @@ function tabState() {
       };
     }),
     activeId,
-    canGoBack: history ? history.canGoBack() : false,
+    canGoBack: active ? canGoBack(active.webContents) : false,
     canGoForward: history ? history.canGoForward() : false,
   };
 }
@@ -1381,6 +1382,7 @@ function layout() {
   const uiHadFocus = Boolean(ui()?.isFocused());
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
+    if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
     const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
@@ -1476,13 +1478,124 @@ function takeSpareNewTab() {
 }
 const spareSoon = () => setTimeout(makeSpareNewTab, 700).unref?.(); // (once this tab has drawn and the first keys are in)
 
+// ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
+// A web page in a new view (a link opened in a new tab, a restored or sleeping tab woken, an address typed into the
+// new-tab page, whose own renderer is locked to Lumen's pages) waited ~70 ms for its renderer process to start. One
+// hidden view is kept on about:blank instead: its process is up and belongs to no site yet, so the next such page
+// loads in it at once. Another is made a moment later. (It costs a renderer's memory: not on a PC short of memory, nor
+// with Performance mode switched on by hand.)
+let warmTab = null; // { view, prefs }
+const warmPending = new WeakSet(); // a tab's page that hasn't left the warm view's about:blank yet (no address, no history)
+let warmForTest = false;
+const warmTabsOn = () => (!TEST || warmForTest) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
+function makeWarmTab() {
+  if (warmTab || !app.isReady() || !warmTabsOn() || quitting) return;
+  const prefs = settingsBackend.tabWebPreferences(false);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // a tab's size, not 0×0
+  applyChromeIdentity(view.webContents); // (in place well before its first page: its renderer is already running)
+  view.webContents.loadURL('about:blank').catch(() => {});
+  warmTab = { view, prefs: JSON.stringify(prefs) };
+}
+let warmTimer = null;
+const warmSoon = (ms = 600) => { clearTimeout(warmTimer); warmTimer = setTimeout(makeWarmTab, ms); warmTimer.unref?.(); }; // (after the page that took the last one has started)
+// The warm view, for a web page in the profile's session with no back/forward list to restore; null if there is none
+// ready (or its page settings changed since). The page's address comes from wireView's loadURL.
+function takeWarmTab() {
+  const s = warmTab;
+  if (!s) return null;
+  warmTab = null;
+  warmSoon();
+  const wc = s.view.webContents;
+  const ready = !wc.isDestroyed() && !wc.isCrashed() && !wc.isLoading() && wc.getURL() === 'about:blank' && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false));
+  if (!ready) { try { wc.close(); } catch {} return null; }
+  warmPending.add(wc);
+  // Its about:blank never shows in the tab's back list: gone once the page (or its error page) commits.
+  const committed = () => {
+    warmPending.delete(wc);
+    try { if (wc.navigationHistory.getEntryAtIndex(0)?.url === 'about:blank' && wc.navigationHistory.length() > 1) wc.navigationHistory.clear(); } catch {}
+  };
+  wc.once('did-navigate', committed);
+  return s.view;
+}
+// The new-tab page's renderer is locked to Lumen's own pages, so a web address typed there (or a tile or search on
+// it) waited for a renderer process of its own. The page loads in the warm view instead, which takes the tab's place
+// once the page has drawn: the new-tab page stays on screen until then, as Chromium keeps the old page up until the
+// new one paints. If nothing commits (a download, a stopped load), the new-tab page simply stays. Back from the page
+// returns to a new-tab page (backToNewTab: the warm view's history starts at the page).
+function leaveNewTabFor(tab, url) {
+  if (!alive(tab) || tab.settings || tab.managerPage || tab.isolated || tab.outgoing || !isWebUrl(url) || !isNewTab(tab.view.webContents.getURL())) return false;
+  const view = takeWarmTab();
+  if (!view) return false;
+  const old = tab.view;
+  const oldWc = old.webContents;
+  const host = win;
+  oldWc.off('destroyed', tab.onViewDestroyed); // replaced, not closed: that handler would close the tab
+  tab.outgoing = { view: old, win: host, overlay: tab.overlay || null };
+  tab.view = view;
+  tab.overlay = null; // (the new-tab page's full-width layout was on the old view)
+  tab.backToNewTab = true;
+  host.contentView.addChildView(view);
+  host.contentView.addChildView(old); // the new-tab page stays on top until the page has drawn
+  const wc = wireView(tab, url);
+  layout();
+  let settled = false;
+  const reveal = () => { if (!settled) { settled = true; finishLeaving(tab, true); } };
+  const revert = () => { if (!settled) { settled = true; finishLeaving(tab, false); } };
+  wc.once('did-navigate', () => {
+    setTimeout(reveal, 500).unref?.(); // (a page that never paints still takes its place)
+    wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `new Promise((done) => { try { new PerformanceObserver(done).observe({ type: 'paint', buffered: true }); } catch { done(); } })` }])
+      .then(() => setTimeout(reveal, 16), reveal);
+  });
+  wc.on('did-stop-loading', () => { if (warmPending.has(wc)) revert(); }); // nothing committed: back to the new-tab page
+  wc.once('destroyed', revert);
+  if (tab.id === activeId) syncExtensions(() => extensions?.selectTab(wc));
+  sendTabs();
+  return true;
+}
+// The swap above, ended: `keep` puts the page in the tab for good (the new-tab page goes, Back returns to one);
+// otherwise the new-tab page is the tab's again. Also called when the tab is closed, put to sleep, moved to another
+// window or left for another tab before the page has drawn.
+function finishLeaving(tab, keep = true) {
+  const out = tab.outgoing;
+  if (!out) return;
+  tab.outgoing = null;
+  const host = out.win && !out.win.isDestroyed() ? out.win : null;
+  if (keep || !alive(tab) || !warmPending.has(tab.view.webContents)) {
+    try { host?.contentView.removeChildView(out.view); } catch {}
+    try { out.view.webContents.close(); } catch {}
+    return;
+  }
+  const failed = tab.view;
+  tab.backToNewTab = false;
+  failed.webContents.off('destroyed', tab.onViewDestroyed);
+  tab.view = out.view;
+  tab.overlay = out.overlay;
+  tab.onViewDestroyed = () => closeTab(tab.id, { destroyed: true });
+  out.view.webContents.once('destroyed', tab.onViewDestroyed);
+  try { host?.contentView.removeChildView(failed); } catch {}
+  try { failed.webContents.close(); } catch {}
+  if (host && rcAlive(tab.rec) && tab.rec.win === host) withWindow(tab.rec, () => { if (tab.id === activeId) syncExtensions(() => extensions?.selectTab(out.view.webContents)); layout(); sendTabs(); });
+}
+// Back, and whether there is one: past the first page of a tab that left the new-tab page (above), a new-tab page.
+function goBack(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  if (wc.navigationHistory.canGoBack()) { wc.navigationHistory.goBack(); return; }
+  const tab = tabByContents(wc);
+  if (tab?.backToNewTab) { tab.backToNewTab = false; wc.loadURL(newTabUrl()).catch(() => {}); }
+}
+const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab));
+if (TEST) global.__warmTabs = { enable: (on = true) => { warmForTest = on; if (on) makeWarmTab(); else if (warmTab) { try { warmTab.view.webContents.close(); } catch {} warmTab = null; } }, ready: () => Boolean(warmTab && !warmTab.view.webContents.isLoading()), contentsId: () => warmTab?.view.webContents.id ?? null, forgetHistory: (id) => { const t = tabs.find((x) => x.id === id); if (t) t.sleepHistory = null; return Boolean(t?.sleeping); } };
+
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
   const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
   const spare = plainNewTab ? takeSpareNewTab() : null;
   if (plainNewTab) spareSoon();
-  const view = adopted || spare || new WebContentsView({
+  const webPage = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && isWebUrl(url);
+  const warm = webPage ? takeWarmTab() : null; // (its process is already up: see makeWarmTab)
+  const view = adopted || spare || warm || new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
     webPreferences: {
@@ -1616,7 +1729,12 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
     tab.favicon = tab.favicons[0] || null;
   });
-  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc); });
+  wc.on('will-navigate', (event, url) => {
+    if (askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc)) return;
+    // A tile or a search on the new-tab page: the page loads in the warm view (leaveNewTabFor), as a typed address does.
+    if (event.isMainFrame !== false && alive(tab) && tab.view.webContents === wc && isNewTab(wc.getURL()) && isWebUrl(event.url || url)
+      && withWindow(tab.rec, () => leaveNewTabFor(tab, event.url || url))) event.preventDefault();
+  });
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
@@ -1792,6 +1910,7 @@ function memoryPressure() {
 }
 
 function sleepTab(tab) {
+  finishLeaving(tab); // (a page that just left the new-tab page: the new-tab page goes now)
   const wc = tab.view.webContents;
   tab.sleepUrl = realUrl(wc) || wc.getURL();
   tab.sleepTitle = wc.getTitle() || 'New Tab';
@@ -1811,7 +1930,9 @@ function sleepTab(tab) {
 
 function wakeTab(tab) {
   if (!tab.sleeping) return;
-  const view = new WebContentsView({
+  // A web page with no back/forward list to bring back (a tab restored from the last session) wakes in the warm view.
+  const warm = !tab.managerPage && !tab.isolated && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
+  const view = warm || new WebContentsView({
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
       ...(tab.managerPage ? { preload: managers.preloadFor(tab.managerPage) } : {}),
@@ -1999,6 +2120,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   if (index === -1) return;
   if (chatFullTab === id) chatFullTab = null;
   const [tab] = tabs.splice(index, 1);
+  finishLeaving(tab);
   tabGroups.cleanup();
   // `pendingCloseUrl` (set by requestCloseTab) covers the case where this runs from the 'destroyed'
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
@@ -2063,7 +2185,7 @@ function listTabs() {
   // them; switch_tab wakes one up like any other tab click would (see switchTab).
   return tabs.filter((t) => alive(t) || t.sleeping).map((t) => ({
     id: t.id,
-    title: t.sleeping ? (t.sleepTitle || 'New Tab') : t.view.webContents.getTitle(),
+    title: t.sleeping ? (t.sleepTitle || 'New Tab') : warmPending.has(t.view.webContents) ? '' : t.view.webContents.getTitle(),
     url: t.sleeping ? (t.sleepUrl || '') : realUrl(t.view.webContents),
     active: t.id === activeId,
     group: t.groupId ? tabGroups.groups.get(t.groupId)?.name || null : null,
@@ -3255,7 +3377,7 @@ function showContextMenu(wc, p) {
   }
   if (items.length === 0) {
     items.push(
-      { label: t('menu.back'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
+      { label: t('menu.back'), enabled: canGoBack(wc), click: () => goBack(wc) },
       { label: t('menu.forward'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
       { label: t('menu.reload'), click: () => wc.reload() },
       { type: 'separator' },
@@ -3321,10 +3443,10 @@ function handleShortcut(event, input) {
   else if (mod && key === 's') { if (wc) pageTools.savePage(wc).catch(() => {}); }
   else if (mod && key === 'u') { if (wc) pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }); }
   else if (mod && key === ',') openSettingsPage(); // [settings]
-  else if (process.platform === 'darwin' && input.meta && key === '[') wc?.navigationHistory.goBack();
+  else if (process.platform === 'darwin' && input.meta && key === '[') goBack(wc);
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
-  else if (input.alt && key === 'arrowleft') wc?.navigationHistory.goBack();
+  else if (input.alt && key === 'arrowleft') goBack(wc);
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
@@ -3705,7 +3827,7 @@ function macMenu() {
     {
       label: t('menu.history'),
       submenu: [
-        { label: t('menu.back'), ...shown('Cmd+['), click: () => wc()?.navigationHistory.goBack() },
+        { label: t('menu.back'), ...shown('Cmd+['), click: () => goBack(wc()) },
         { label: t('menu.forward'), ...shown('Cmd+]'), click: () => wc()?.navigationHistory.goForward() },
         { label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage },
       ],
@@ -3805,6 +3927,7 @@ const activeIdOf = (rec) => (rec === curRec ? activeId : rec.activeId);
 function releaseTab(tab, { keepFlags = false } = {}) {
   const index = tabs.indexOf(tab);
   if (index === -1) return false;
+  finishLeaving(tab);
   if (chatFullTab === tab.id) chatFullTab = null;
   tabs.splice(index, 1);
   Object.assign(tab, windowMerge.releaseFlags(tab, { keep: keepFlags })); // leaves its group; placed by hand (automatic grouping leaves it alone), unless a merge: the tab keeps the flag it had
@@ -5837,7 +5960,9 @@ ipcMain.on('nav:go', (_e, text) => {
   if (current?.settings || current?.managerPage === 'chat') { replaceTab(activeId, resolveInput(text)); return; } // the chat page is locked like Settings
   const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
   if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }
-  wc.loadURL(resolveInput(text)).catch(() => {});
+  const target = resolveInput(text);
+  if (leaveNewTabFor(current, target)) { activeTab()?.webContents.focus(); return; } // (a new-tab page: the page loads in the warm view)
+  wc.loadURL(target).catch(() => {});
   wc.focus();
 });
 function toggleReaderActive() {
@@ -5847,7 +5972,7 @@ ipcMain.on('page:reader', () => { toggleReaderActive(); });
 ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
 if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
-ipcMain.on('nav:back', () => activeTab()?.webContents.navigationHistory.goBack());
+ipcMain.on('nav:back', () => goBack(activeTab()?.webContents));
 ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());
 ipcMain.on('nav:reload', reloadActive);
 
@@ -6382,7 +6507,7 @@ app.whenReady().then(async () => {
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   setTimeout(markFirstTabLoaded, 8000).unref?.(); // (a first tab that never finishes doesn't hold these back)
-  firstTabLoaded.then(() => makeSpareNewTab()); // a new-tab page ready for the first Ctrl+T, once the first tab has loaded
+  firstTabLoaded.then(() => { makeSpareNewTab(); warmSoon(400); }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page, once the first tab has loaded
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours
