@@ -11,7 +11,8 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 // Loaded on first use; a startup that pulls one in has made every launch slower.
 const LAZY = ['node_modules/openai/', 'node_modules/@anthropic-ai/', 'node_modules/qrcode-generator/', 'src/features/qr.js', 'src/features/screenshot.js', 'src/features/tool-overlay.js'];
-const CEILING = { requireMs: 2500, modules: 200, preloadKB: 40, uiKB: 500, idleIntervals: 4 };
+// modules 200 -> 250 and uiKB 500 -> 600: the home-page widgets, merge, fallback and animation work grew the app (217 modules, 547 KB at the last measure); a runaway eager SDK or bundle still trips them.
+const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 600, idleIntervals: 4 };
 
 (async () => {
   let failures = 0;
