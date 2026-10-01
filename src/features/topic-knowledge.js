@@ -53,31 +53,64 @@ const PLACES = {
 // concept -> words (lower case; matched after stemming, so plurals and -ing forms count). Travel and housing also carry the same errands in
 // German, Spanish, Portuguese, French and Italian, and Japanese and Korean as the two-character pieces tab-groups reads those scripts in.
 const CONCEPTS = {
-  travel: 'amtrak flixbus megabus greyhound ryanair easyjet jet2 flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover boarding attractions flug flüge flughafen bahn zug reise reisen urlaub unterkunft ferienwohnung vuelo vuelos billete billetes alojamiento viaje viajes pasaje pasajes passagem passagens voo voos viagem viagens vol vols billet sncf voyage volo voli treno albergo viaggio 旅行 航空 ホテ 항공 숙소 여행 호텔',
+  travel: 'amtrak flixbus megabus greyhound ryanair easyjet jet2 flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover boarding attractions honeymoon hilton marriott hyatt sheraton wyndham hampton ihg museum museums flug flüge flughafen bahn zug reise reisen urlaub unterkunft ferienwohnung vuelo vuelos billete billetes alojamiento viaje viajes pasaje pasajes passagem passagens voo voos viagem viagens vol vols billet sncf voyage volo voli treno albergo viaggio 旅行 航空 ホテ 항공 숙소 여행 호텔',
   education: 'lecture homework syllabus assignment textbook exam midterm semester professor course quiz lab tutor gradebook',
   shopping: 'price buy deal discount coupon cart checkout shipping warranty unboxing',
   entertainment: 'movie movies film films cinema trailer trailers imdb letterboxd goodreads rotten tomatoes tomato book books novel novels author series season episode episodes tv sitcom documentary actor director',
   baking: 'sourdough bread loaf dough starter flour yeast crumb bake baking knead proofing levain baguette pastry dutch oven hydration scoring banneton cake cookie cookies',
   cooking: 'recipe ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast chicken burrito pasta soup stew casserole skillet 카페 맛집 레시 시피 요리',
   jobs: 'job career resume interview salary hiring recruiter internship applicant offer negotiate negotiation leetcode cscareerquestions grad',
-  housing: 'apartment apartments rent rental lease landlord realtor tenant renter renters moving movers relocation relocating uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento rightmove zoopla tenancy lettings flat flats accommodation 賃貸 不動 월세 전세 부동',
+  housing: 'apartment apartments rent rental lease landlord realtor tenant renter renters moving movers relocation relocating uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento rightmove zoopla tenancy lettings flat flats accommodation homebuyer homebuyers homebuying preapproval 賃貸 不動 월세 전세 부동',
   sports: 'nba nfl mlb nhl playoff finals championship coach quarterback fussball fußball bundesliga spielplan laliga futebol cricket ipl bcci cricbuzz espncricinfo kohli dhoni rcb csk wicket innings premier league fixtures standings arsenal chelsea tottenham epl kbo 손흥 흥민 축구 야구 리그',
-  health: 'symptom diagnosis medication doctor clinic therapy nutrition workout',
+  health: 'symptom diagnosis medication doctor clinic therapy nutrition workout prescription prescriptions pharmacy cardiology cardiologist patient mychart physician hospital dentist pediatrician',
   finance: 'stock invest investing investor bond dividend portfolio inflation savings loan mortgage mortgages yield yields roth ira 401k 403b rollover retirement retire brokerage dividends index etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase zerodha groww hdfc icici phonepe paytm nifty sensex upstox nubank itaú itau bradesco bovespa ibovespa sparkasse volksbank commerzbank revolut monzo n26 degiro trading212 etoro barclays hsbc santander bbva',
   dining: 'cafe cafes 카페 맛집',
   tax: 'tax taxes irs turbotax hrblock comptroller legalzoom llc incorporation bookkeeping quickbooks',
   ecommerce: 'shopify etsy squareup shipstation pirateship usps fedex ups seller sellers storefront listings dropshipping',
   ml: 'machine neural reinforcement rlhf gradient backpropagation pytorch tensorflow keras llm llms gpt transformer transformers attention embedding embeddings huggingface arxiv kaggle tensor deeplearning cuda gpu gpus vram nanogpt lora oom finetune finetuning tuning tokenizer diffusion classifier backprop supervised unsupervised convolutional rnn lstm gan autoencoder overfitting regularization hyperparameter dataset pretraining inference mlp bert langchain',
-  fitness: 'fitness gym cardio run running runner runners marathon jog jogging c25k couch strava garmin pegasus parkrun triathlon yoga pilates crossfit deadlift squat hiit hypertrophy macros macro protein lifting weightlifting powerlifting barbell dumbbell creatine bench',
-  plants: 'plant plants monstera fiddle pothos philodendron fern ferns moss succulent succulents orchid orchids bonsai garden gardening seedling houseplant houseplants cactus cacti repot repotting prune pruning compost fertilizer perennial',
-  programming: 'golang goroutine goroutines python pandas numpy scipy matplotlib seaborn jupyter django flask fastapi pytest pip asyncio dataclasses typescript javascript react redux vue svelte angular nextjs node nodejs npm webpack vite rust cargo golang java kotlin sql postgres postgresql mysql sqlite mongodb redis git docker api apis css html regex linux bash compiler programming coding developer sdk',
+  fitness: 'fitness gym cardio run running runner runners marathon jog jogging c25k couch strava garmin peloton pegasus parkrun triathlon yoga pilates crossfit deadlift squat hiit hypertrophy macros macro protein lifting weightlifting powerlifting barbell dumbbell creatine bench',
+  plants: 'plant plants monstera fiddle pothos philodendron fern ferns moss succulent succulents orchid orchids bonsai garden gardening seedling houseplant houseplants cactus cacti repot repotting prune pruning compost fertilizer perennial soil seeds heirloom mulch blight',
+  programming: 'golang goroutine goroutines python pandas numpy scipy matplotlib seaborn jupyter django flask fastapi pytest pip asyncio dataclasses typescript javascript react redux vue svelte angular nextjs node nodejs npm webpack vite rust cargo golang java kotlin sql postgres postgresql mysql sqlite mongodb redis git docker electron css html regex linux bash compiler programming coding developer sdk',
   devops: 'kubernetes k8s kubectl helm docker dockerfile container containers terraform ansible aws azure gcp cloud lambda ec2 s3 nginx cicd jenkins devops pod pods deployment microservice microservices serverless prometheus ec2 s3 cloudformation route53 iam rds eks ecs fargate gcloud',
   music: 'chord lyric guitar piano song album playlist',
   // Team tools, monitoring and research tools: sites whose pages say little ("Sprint 42 board", "Incidents", "Zotero").
   worktools: 'jira confluence atlassian linear asana notion slack trello sprint backlog kanban',
   observability: 'datadog pagerduty sentry grafana newrelic cloudwatch observability incident incidents alerting oncall tracing apm opsgenie splunk',
-  research: 'overleaf zotero scholar semanticscholar mendeley latex bibtex citation citations bibliography thesis preprint',
+  research: 'overleaf zotero scholar semanticscholar mendeley latex bibtex citation citations bibliography thesis preprint addgene benchling neb gibson lipofectamine transfection crispr cas9 grna plasmid plasmids pcr qpcr blot deseq2 seurat bioconductor ggplot2 rstudio pubmed biorxiv genome genomics sequencing rnaseq bioinformatics',
+  birding: 'birding birder birders birdwatching birdwatcher bird birds ebird audubon merlin binoculars swarovski ornithology warbler warblers',
+  games: 'crossword crosswords wordle sudoku chess lichess puzzle puzzles minesweeper solitaire',
 };
+// Words that say a second concept besides the one they are listed under (tab-groups.js CONCEPTS_OF): buying a home is housing and a loan is finance.
+const CONCEPT_ALSO = { mortgage: 'housing', mortgages: 'housing' };
+// Phrases that say a concept where their words alone would not ("closing costs", "Western blot"), and the ones that must not be read as the words they
+// are made of. [pattern, concept]; the concept is added to the tab as if one of its words were in the title.
+const PHRASE_CONCEPTS = [
+  [/\b(pre-?approval|closing costs?|down payments?|first-?time home ?buyers?|mortgage rates?|home ?owner(ship)?)\b/i, 'housing'],
+  [/\b(social security|required minimum distributions?|rmd)\b/i, 'finance'],
+  [/\b(western blots?|gibson assembly|prime editing|base editing|cell culture|flow cytometry|gel electrophoresis|protocols\.io)\b/i, 'research'],
+  [/\b(spelling bee|nyt games|nyt connections|steam (deck|store|sale|library)|chess\.com)\b/i, 'games'],
+  [/\b(\d{1,2}x\d{2}|vortex (diamondback|viper|razor))\b/i, 'birding'], // binocular sizes: "8x42"
+];
+// Brand and place names made of everyday words ("Hilton Garden Inn" is not gardening, "Home Depot" is not a home, "Best Buy" is not a best-of list). The
+// phrase is taken out of the title before its words are read, so none of them counts as a topic word or names a group; the concept (if any) is what
+// the brand is. [pattern, concept or ''].
+const BRAND_PHRASES = [
+  [/\b(hilton garden inn|garden inn|holiday inn( express)?|hampton inn|courtyard by marriott|residence inn|fairfield inn|comfort inn|sleep inn|best western|red roof inn|days inn|motel 6|la quinta|four seasons|super 8)\b/i, 'travel'],
+  [/\b(olive garden|chick-?fil-?a|taco bell|burger king|panda express|pizza hut|texas roadhouse|red lobster|golden corral|blue bottle( coffee)?|dunkin'?( donuts)?|five guys|shake shack|in-?n-?out)\b/i, 'dining'],
+  [/\b(whole foods( market)?|trader joe'?s|harris teeter|stop (&|and) shop|piggly wiggly)\b/i, 'cooking'],
+  [/\b(home depot|best buy|bath (&|and) body works|ace hardware|bed bath (&|and) beyond|barnes (&|and) noble|dick'?s sporting goods|dollar (general|tree)|big lots|old navy|rite aid|victoria'?s secret|sports authority)\b/i, 'shopping'],
+  [/\bplanet fitness\b/i, 'fitness'],
+  [/\b(capitol hill|silicon valley|green bay|palm beach|long island|rhode island|salt lake)\b/i, ''],
+];
+// Pages whose address says what they are, whatever the site: [pattern on "host/path", category]. A news site's puzzle pages are games, not news.
+const URL_CATEGORIES = [
+  [/(^|\.)nytimes\.com\/(games|crosswords?|puzzles?|spelling-bee|wordle|connections|strands)\b/i, 'games'],
+  [/(^|\.)(chess\.com|lichess\.org|sudoku\.com|steampowered\.com|steamcommunity\.com)\//i, 'games'],
+];
+// Capitalised words that are only ordinary words at the start of a title or in a Title Case one: they never count as a name (tab-groups.js tabWords,
+// `distinct`). A shared name beside them ("ASGCT", "Medicare", "Lipofectamine") is a topic by itself.
+const COMMON_CAPS = `about above across after again against almost along also always among another answer around article articles available back basic basics beautiful because become before behind being below best better between beyond black blue book books both build building business call came can cannot center centre change check choose classic clean clear close cloud color colour come coming common company complete compare control cool could country course create current daily dark data date days deal deals design details different direct does doing done down during each early easy either else email enjoy enter even event events ever every example examples explore family fast feature featured feel field file files final find fine first fish five fix food form found four free fresh friday friends from front full game games general get getting give global going gold good great green group grow guide guides hand happy hard have health help here high history home hour hours house how however human idea ideas image images important include inside instead into issue issues item items join just keep kind know large last late latest learn less let life light like line link list little live local long look looking lost love made main make making many market match material matter maybe mean media meet member message might mind model modern monday money month months more most move much music name national natural need needs never next nice night none north note notes nothing notice number offer office often once online only open option options order other outside over page pages paper part party past people perfect person personal phone photo photos picture piece place places plan plans play please plus point popular post power price prices private problem product products program project public quick quickly quote rate read ready real really recent recipe recipes record red related report research resource resources result results review reviews right room rules same saturday save school search season second section see seen select send series service services set several share shop short should show side sign simple since site size small social some something sometimes soon sorry south special start started state stay step still stop store story strategy street student students study style subject success such summer sunday support sure take team tech tell test text than thank thanks that their them then there these they thing things think this those though thought three through thursday time times tips today together tonight tool tools top topic total town track training travel tuesday turn under until update updates upon use used user users using value version video view visit want watch water ways wednesday week weekend weeks welcome well went were west what when where whether which while white whole whose why will wind winter with within without women wonder word words work working works world would write year years yesterday yet york young your`;
+
 // Places a word stands for: airport codes, theme parks and landmarks name their city ("Flights to MCO" and "Disney World tickets" are an
 // Orlando trip). [pattern, city]; the city is added to the tab as if its title said it.
 const PLACE_ALIASES = [
@@ -85,12 +118,21 @@ const PLACE_ALIASES = [
   [/\b(nrt|hnd|shinjuku gyoen|senso-?ji)\b/i, 'tokyo'], [/\b(kix|itm|fushimi inari)\b/i, 'osaka'], [/\b(lhr|lgw|heathrow|gatwick)\b/i, 'london'],
   [/\b(cdg|ory|eiffel)\b/i, 'paris'], [/\b(fco|ciampino|colosseum)\b/i, 'rome'], [/\b(bcn|sagrada familia)\b/i, 'barcelona'], [/\b(lax|disneyland)\b/i, 'angeles'],
   [/\b(jfk|lga|ewr)\b/i, 'york'], [/\b(sfo|golden gate)\b/i, 'francisco'], [/\b(bos)\b/i, 'boston'], [/\b(las vegas strip|harry reid)\b/i, 'vegas'],
+  [/\bDC\b/, 'washington'], [/\b(washington,? d\.?c\.?|national mall|smithsonian|lincoln memorial|reagan national|dca)\b/i, 'washington'],
+  [/\b(chianti|siena|lucca|pisa|montepulciano)\b/i, 'tuscany'],
+  // Regions of a country that a trip is to as one place: the third item says the region's towns are that place, not the country's ("Flights to
+  // Naples" and "Hotels in Positano" are one Amalfi Coast trip, not an Italy one).
+  [/\b(amalfi( coast)?|positano|sorrento|capri|ravello|naples|napoli)\b/i, 'amalfi coast', true],
+  [/\b(lake como|lago di como|bellagio|varenna)\b/i, 'lake como', true],
+  [/\b(swiss alps|zermatt|interlaken|grindelwald|jungfrau|matterhorn)\b/i, 'swiss alps', true],
+  [/\b(napa( valley)?|sonoma)\b/i, 'napa valley', true],
+  [/\b(hawaii|maui|oahu|kauai|honolulu|waikiki)\b/i, 'hawaii', true],
 ];
 // Hosts that are a place by themselves: [host suffix, city].
 const SITE_PLACES = [['disneyworld.disney.go.com', 'orlando'], ['universalorlando.com', 'orlando'], ['seaworld.com', 'orlando']];
 // Cities beyond PLACES (no country is added for them): a city word alone is no topic (tab-groups.js cosine), it only counts beside a
 // travel or housing word.
-const CITIES = 'boston cambridge somerville brooklyn manhattan queens nyc chicago seattle austin denver miami atlanta dallas houston portland philadelphia pittsburgh oakland diego vegas orlando nashville detroit baltimore minneapolis phoenix charlotte raleigh richmond tampa cleveland columbus cincinnati sacramento honolulu anchorage';
+const CITIES = 'boston cambridge somerville brooklyn manhattan queens nyc chicago seattle austin denver miami atlanta dallas houston portland philadelphia pittsburgh oakland diego vegas orlando nashville detroit baltimore minneapolis phoenix charlotte raleigh richmond tampa cleveland columbus cincinnati sacramento honolulu anchorage washington';
 
 // Sites that are many things under one name (a portal): the name says nothing about a page ('Naver Maps' and 'Naver Sports' are not one topic).
 // domain label -> the name in other scripts.
@@ -100,7 +142,7 @@ const PORTAL_BRANDS = { naver: '네이버', yahoo: 'ヤフー', rakuten: '楽天
 // else took those tabs: "Roth IRA", "Vanguard funds" and "401k rollover" share no word, but are one errand. concept -> group name.
 // Only concepts that name one topic; "shopping" words turn up in tabs about anything, and the broad ones (programming, travel) are held to
 // stricter terms (CONCEPT_LOOSE_ONLY). Cooking is left out: a window of a baker's and a meal-prepper's tabs is two topics.
-const CONCEPT_GROUPS = { finance: 'Finance', jobs: 'Job search', tax: 'Taxes & legal', ecommerce: 'Store', dining: 'Cafes & restaurants', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports' };
+const CONCEPT_GROUPS = { finance: 'Finance', jobs: 'Job search', tax: 'Taxes & legal', ecommerce: 'Store', dining: 'Cafes & restaurants', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', health: 'Health', birding: 'Birding', games: 'Games', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports' };
 // Concepts too broad to merge groups: they only draw LOOSE tabs together, from different sites, and want this many (the docs of every
 // project are "programming": three of them beside a project's own tabs are that project's; two groups that formed on their own words are two projects).
 const CONCEPT_LOOSE_ONLY = { programming: 4, travel: 4, devops: 3 };
@@ -111,11 +153,14 @@ const CONCEPT_SAME_SITE_OK = { devops: true, observability: true, worktools: tru
 const CONCEPT_SUBNAMES = {
   programming: [
     ['Python', 'python pandas numpy scipy matplotlib seaborn jupyter django flask fastapi pytest pip pypi asyncio dataclasses'],
-    ['JavaScript', 'javascript typescript react redux vue svelte angular nextjs node nodejs npm webpack vite'],
+    ['JavaScript', 'javascript typescript react redux vue svelte angular nextjs node nodejs npm webpack vite electron'],
     ['CSS', 'css html flexbox'],
     ['Rust', 'rust cargo'],
     ['Go', 'golang goroutine goroutines'],
     ['SQL', 'sql postgres postgresql mysql sqlite mongodb redis'],
+  ],
+  research: [
+    ['Lab & bioinformatics', 'addgene benchling neb gibson lipofectamine transfection crispr cas9 grna plasmid plasmids pcr qpcr blot deseq2 seurat bioconductor ggplot2 rstudio pubmed biorxiv genome genomics sequencing rnaseq bioinformatics'],
   ],
 };
 // Concepts whose site category is strong enough that two loose tabs make a group (tab-groups.js conceptGroups): two monitoring tools, or the
@@ -139,7 +184,7 @@ const CONCEPT_JOINS = { finance: ['tax'] };
 
 // registrable domain (or full host) -> category. Same category names as CONCEPTS where they overlap.
 const SITE_CATEGORIES = {
-  travel: 'amtrak.com flixbus.com bahn.de thetrainline.com lner.co.uk nationalrail.co.uk ryanair.com easyjet.com jet2.com hostelworld.com visitscotland.com visitbritain.com skyscanner.net kayak.co.uk sncf-connect.com trenitalia.com renfe.com italotreno.it omio.com rome2rio.com disneyworld.disney.go.com universalorlando.com booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com lonelyplanet.com klook.com hotels.com vrbo.com agoda.com viator.com getyourguide.com nomadicmatt.com japan-guide.com travel.state.gov flights.google.com',
+  travel: 'amtrak.com flixbus.com bahn.de thetrainline.com lner.co.uk nationalrail.co.uk ryanair.com easyjet.com jet2.com hostelworld.com visitscotland.com visitbritain.com skyscanner.net kayak.co.uk sncf-connect.com trenitalia.com renfe.com italotreno.it omio.com rome2rio.com disneyworld.disney.go.com universalorlando.com booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com lonelyplanet.com klook.com hotels.com vrbo.com agoda.com viator.com getyourguide.com nomadicmatt.com japan-guide.com travel.state.gov flights.google.com cntraveler.com hilton.com marriott.com hyatt.com ihg.com wyndhamhotels.com nps.gov si.edu',
   education: 'canvas.northeastern.edu instructure.com blackboard.com zybooks.com khanacademy.org coursera.org edx.org chegg.com quizlet.com piazza.com gradescope.com brightspace.com coursehero.com ocw.mit.edu',
   shopping: 'amazon.com bestbuy.com walmart.com target.com ebay.com etsy.com newegg.com rtings.com wirecutter.com camelcamelcamel.com costco.com homedepot.com lowes.com',
   baking: 'kingarthurbaking.com bobsredmill.com theclevercarrot.com',
@@ -148,7 +193,7 @@ const SITE_CATEGORIES = {
   housing: 'zillow.com apartments.com redfin.com streeteasy.com trulia.com realtor.com rightmove.co.uk zoopla.co.uk spareroom.co.uk onthemarket.com unitestudents.com',
   dev: 'github.com gitlab.com dev.to',
   // Language and library docs, Q&A and package registries: programming itself, as opposed to a code host (a repo's pages are that project's).
-  programming: 'stackoverflow.com stackexchange.com developer.mozilla.org npmjs.com pypi.org docs.python.org readthedocs.io nextjs.org typescriptlang.org react.dev nodejs.org rust-lang.org go.dev pkg.go.dev docs.rs numpy.org pandas.pydata.org matplotlib.org scipy.org djangoproject.com docs.djangoproject.com flask.palletsprojects.com realpython.com w3schools.com css-tricks.com',
+  programming: 'stackoverflow.com stackexchange.com developer.mozilla.org npmjs.com pypi.org docs.python.org readthedocs.io nextjs.org typescriptlang.org react.dev electronjs.org nodejs.org rust-lang.org go.dev pkg.go.dev docs.rs numpy.org pandas.pydata.org matplotlib.org scipy.org djangoproject.com docs.djangoproject.com flask.palletsprojects.com realpython.com w3schools.com css-tricks.com',
   devops: 'kubernetes.io docs.docker.com hub.docker.com docker.com aws.amazon.com docs.aws.amazon.com terraform.io registry.terraform.io developer.hashicorp.com helm.sh nginx.org nginx.com docs.ansible.com ansible.com cloud.google.com azure.microsoft.com jenkins.io prometheus.io grafana.com',
   entertainment: 'imdb.com rottentomatoes.com letterboxd.com goodreads.com metacritic.com themoviedb.org',
   sports: 'espn.com sports.naver.com skysports.com theathletic.com basketball-reference.com nba.com nfl.com mlb.com cricbuzz.com espncricinfo.com iplt20.com bcci.tv ge.globo.com lance.com.br bundesliga.com kicker.de sportschau.de',
@@ -159,7 +204,10 @@ const SITE_CATEGORIES = {
   fitness: 'strava.com runnersworld.com myfitnesspal.com bodybuilding.com garmin.com parkrun.com',
   worktools: 'atlassian.net atlassian.com jira.com linear.app asana.com notion.so notion.site slack.com app.slack.com trello.com monday.com clickup.com',
   observability: 'datadoghq.com datadoghq.eu pagerduty.com sentry.io grafana.com grafana.net newrelic.com one.newrelic.com splunk.com opsgenie.com honeycomb.io',
-  research: 'overleaf.com zotero.org scholar.google.com semanticscholar.org mendeley.com arxiv.org researchgate.net jstor.org pubmed.ncbi.nlm.nih.gov dblp.org openreview.net paperswithcode.com',
+  research: 'overleaf.com zotero.org scholar.google.com semanticscholar.org mendeley.com arxiv.org researchgate.net jstor.org pubmed.ncbi.nlm.nih.gov dblp.org openreview.net paperswithcode.com addgene.org benchling.com neb.com biorxiv.org medrxiv.org bioconductor.org protocols.io posit.cloud rstudio.com thermofisher.com',
+  birding: 'ebird.org audubon.org allaboutbirds.org merlin.allaboutbirds.org',
+  games: 'chess.com lichess.org sudoku.com steampowered.com store.steampowered.com steamcommunity.com',
+  plants: 'burpee.com gardeners.com almanac.com',
 };
 // Shops (and so the kind of page "Target: Back to school" is, whatever its title says): see tab-groups.js cosine.
 const RETAIL_HOSTS = 'amazon.com ebay.com etsy.com bestbuy.com walmart.com target.com newegg.com costco.com homedepot.com lowes.com ikea.com macys.com nordstrom.com kohls.com wayfair.com oldnavy.gap.com gap.com walgreens.com cvs.com staples.com';
@@ -206,26 +254,33 @@ const BROAD_HINTS = new Set(['Code', 'News', 'Social', 'Entertainment', 'Work', 
 //   hosts  domains (and subdomains), or "docs.*" (first label); strong: the host alone decides
 //   title  words of the title that decide when the host doesn't
 //   weak   the host says little (a news site can carry a review): a title match wins over it
+//   kind   the category is a KIND of site (mail, dev docs, video, news): its tabs are a group because of the site, with nothing else shared. The
+//          others (a school, an agency, a trip) are topics: their tabs must also share a word or concept (tab-groups.js cohere)
 //   join   the category is one topic, so its tabs may join a cluster of the same category (a trip, a course);
 //          the others are kinds of site, which form their own group beside a topic's ("Dev docs" is not "Lumen")
 // Host tests for what a list of domains can't say: a school is any .edu / .ac.xx / .edu.xx / k12 host, an agency any
 // .gov / .mil / .gov.xx / .gouv.xx host. Kept apart: a tax office is no school.
 const EDU_HOST = /\.(edu|ac\.[a-z]{2}|edu\.[a-z]{2})$|(^|\.)k12\.|\.k12\.[a-z]{2}\.us$/;
 const GOV_HOST = /\.(gov|mil)$|\.(gov|gouv)\.[a-z]{2}$|(^|\.)gov\.uk$/;
+// Hosts under those suffixes that are not a school or an agency for the tab's purposes: a university's extension service answers gardening and home
+// questions, a museum is a day out, a national park is a trip. They fall to their topic (a plants group, a trip) instead.
+const NOT_SCHOOL_OR_GOV = /^extension\.|(^|\.)(smithsonian[a-z]*\.(org|edu|gov)|si\.edu|nps\.gov)$|(^|\.)(museum|museums)\./;
 // What a title must carry, beside a deal word, to be about shopping: a price/buy/cart word, or something that is bought. "Best" and "deals" alone
 // ("Best novels 2026") are not shopping.
 const SHOP_TITLE = /\b(price|prices|pricing|buy|buying|cart|checkout|coupons?|discounts?|sale|shipping|laptops?|phones?|iphones?|headphones?|earbuds|airpods|monitors?|keyboards?|mouse|tvs?|televisions?|cameras?|tablets?|ipads?|speakers?|shoes|sneakers|chairs?|desks?|mattress(es)?|vacuums?|blenders?|watch(es)?|smartwatch|backpacks?|jackets?|appliances?|gadgets?)\b|通販|купить|скидк|할인|优惠/i;
 const FALLBACK_CATEGORIES = [
-  { name: 'Mail & notes', hosts: 'mail.google.com gmail.com calendar.google.com drive.google.com docs.google.com sheets.google.com slides.google.com keep.google.com outlook.live.com outlook.office.com outlook.office365.com mail.yahoo.com proton.me notion.so evernote.com todoist.com trello.com asana.com slack.com airtable.com mail.*', title: /\b(inbox|(?<!(?:district|academic|school|holiday) )calendar|to-?do|agenda)\b|受信トレイ|メール|почта|входящие|письм|받은편지함|收件箱/i },
+  { name: 'Mail & notes', kind: true, hosts: 'mail.google.com gmail.com calendar.google.com drive.google.com docs.google.com sheets.google.com slides.google.com keep.google.com outlook.live.com outlook.office.com outlook.office365.com mail.yahoo.com proton.me notion.so evernote.com todoist.com trello.com asana.com slack.com airtable.com mail.*', title: /\b(inbox|(?<!(?:district|academic|school|holiday) )calendar|to-?do|agenda)\b|受信トレイ|メール|почта|входящие|письм|받은편지함|收件箱/i },
   { name: 'Recipes', join: true, hosts: 'allrecipes.com seriouseats.com kingarthurbaking.com budgetbytes.com epicurious.com bonappetit.com foodnetwork.com cooking.nytimes.com eatingwell.com', title: /\b(recipes?|cookies?|bak(e|ing)(?! sale)|sourdough|dough|dinner ideas|meal prep|ingredients?)\b|レシピ|рецепт|레시피|食谱/i },
   { name: 'School', join: true, hosts: 'instructure.com canvas.* blackboard.com moodle.* brightspace.com gradescope.com piazza.com edstem.org zybooks.com quizlet.com chegg.com khanacademy.org coursera.org edx.org classroom.google.com schoology.com', hostRe: EDU_HOST, title: /\b(lectures?|homework|syllabus|assignments?|exams?|midterm|calculus|linear algebra|matri(x|ces)|eigen\w*|theorems?|physics|chemistry|biology|statistics|cs ?\d{3,4})\b|講義|宿題|試験|授業|лекци|домашн|экзамен|семестр|강의|숙제|课程|作业/i },
   // Government: agencies are not schools. Hosts by suffix (hostRe) and a few by name; the title words are the ones that say it alone.
   { name: 'Government', hosts: 'europa.eu canada.ca gc.ca usa.gov', hostRe: GOV_HOST, title: /\b(tax returns?|dmv|passport renewal|social security|voter registration|driver'?s licen[sc]e)\b|確定申告|налог|госуслуги/i },
-  { name: 'Dev docs', hosts: 'aws.amazon.com cloud.google.com kubernetes.io docs.docker.com terraform.io developer.mozilla.org stackoverflow.com stackexchange.com github.com gitlab.com npmjs.com pypi.org dev.to react.dev reactjs.org electronjs.org nodejs.org typescriptlang.org python.org rust-lang.org go.dev docs.rs vuejs.org angular.dev nextjs.org tailwindcss.com devdocs.io w3schools.com docs.*', title: /\b(api reference|documentation|docs|handbook|sdk|stack overflow|javascript|typescript|node\.?js|pull request|commit)\b/i },
-  { name: 'Travel', join: true, hosts: 'booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com hotels.com vrbo.com agoda.com lonelyplanet.com flights.google.com amtrak.com flixbus.com megabus.com greyhound.com disneyworld.disney.go.com universalorlando.com', title: /\b(flights?|hotels?|itinerary|airbnb|vacation|trip|things to do|visa|airport)\b|ホテル|観光|旅行|航空券|旅館|отел|авиабилет|путешеств|достопримечательн|호텔|여행|관광|酒店|旅游|景点/i },
-  { name: 'Shopping', join: true, hosts: 'amazon.com ebay.com etsy.com bestbuy.com walmart.com target.com newegg.com rtings.com wirecutter.com costco.com homedepot.com lowes.com ikea.com', title: /\b(deals?|discount|coupon|price|buy|cart|best [\w ]{2,30}20\d\d)\b|口コミ|通販|купить|отзыв|скидк|후기|할인|优惠|评测/i },
-  { name: 'Video & music', hosts: 'youtube.com youtu.be vimeo.com twitch.tv netflix.com hulu.com disneyplus.com spotify.com soundcloud.com music.apple.com', title: /\b(official video|trailer|playlist|lofi|podcast)\b|動画|予告編|клип|трейлер|плейлист|동영상|视频/i },
-  { name: 'News & social', weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
+  { name: 'Dev docs', kind: true, hosts: 'aws.amazon.com cloud.google.com kubernetes.io docs.docker.com terraform.io developer.mozilla.org stackoverflow.com stackexchange.com github.com gitlab.com npmjs.com pypi.org dev.to react.dev reactjs.org electronjs.org nodejs.org typescriptlang.org python.org rust-lang.org go.dev docs.rs vuejs.org angular.dev nextjs.org tailwindcss.com devdocs.io w3schools.com docs.*', title: /\b(api reference|documentation|docs|handbook|sdk|stack overflow|javascript|typescript|node\.?js|pull request|commit)\b/i },
+  { name: 'Travel', join: true, hosts: 'booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com hotels.com vrbo.com agoda.com lonelyplanet.com flights.google.com hilton.com marriott.com hyatt.com ihg.com nps.gov amtrak.com flixbus.com megabus.com greyhound.com disneyworld.disney.go.com universalorlando.com', title: /\b(flights?|hotels?|itinerary|airbnb|vacation|trip|things to do|visa|airport)\b|ホテル|観光|旅行|航空券|旅館|отел|авиабилет|путешеств|достопримечательн|호텔|여행|관광|酒店|旅游|景点/i },
+  { name: 'Shopping', kind: true, join: true, hosts: 'amazon.com ebay.com etsy.com bestbuy.com walmart.com target.com newegg.com rtings.com wirecutter.com costco.com homedepot.com lowes.com ikea.com', title: /\b(deals?|discount|coupon|price|buy|cart|best [\w ]{2,30}20\d\d)\b|口コミ|通販|купить|отзыв|скидк|후기|할인|优惠|评测/i },
+  // Puzzles and games: a news site's games pages are these, not news.
+  { name: 'Games', hosts: 'chess.com lichess.org sudoku.com steampowered.com store.steampowered.com steamcommunity.com', urlRe: URL_CATEGORIES[0][0], title: /\b(crosswords?|wordle|sudoku|spelling bee|chess)\b/i },
+  { name: 'Video & music', kind: true, hosts: 'youtube.com youtu.be vimeo.com twitch.tv netflix.com hulu.com disneyplus.com spotify.com soundcloud.com music.apple.com', title: /\b(official video|trailer|playlist|lofi|podcast)\b|動画|予告編|клип|трейлер|плейлист|동영상|视频/i },
+  { name: 'News & social', kind: true, weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
 ];
 
-module.exports = { GENERIC_WORDS, WEAK_WORDS, CONCEPT_PAIR_SITE, PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };
+module.exports = { CONCEPT_ALSO, PHRASE_CONCEPTS, BRAND_PHRASES, URL_CATEGORIES, COMMON_CAPS, NOT_SCHOOL_OR_GOV, GENERIC_WORDS, WEAK_WORDS, CONCEPT_PAIR_SITE, PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

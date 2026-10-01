@@ -148,7 +148,7 @@ const at = (w, id) => w.tabs().find((t) => t.id === id); // grouping reorders th
   check('31-tab bar: at least 90% grouped', grouped / 31 >= 0.9, `${grouped}/31`);
   check('31-tab bar: no giant group, no "Other"', Math.max(...sizes) <= 8 && !named.some((g) => /^other$/i.test(g.name)), named.map((g, i) => `${g.name}:${sizes[i]}`).join());
   const nameOf = (i) => named.find((g) => g.id === at(w, i + 1).groupId)?.name || '';
-  check('31-tab bar: good names', /recipes|baking/i.test(nameOf(4)) && /dev|programming/i.test(nameOf(7)) && nameOf(7) === nameOf(11) && /school/i.test(nameOf(12)) && nameOf(12) === nameOf(23) && /mail/i.test(nameOf(15)) && nameOf(15) === nameOf(29) && /video/i.test(nameOf(16)), named.map((g) => g.name).join());
+  check('31-tab bar: good names', /recipes|baking/i.test(nameOf(4)) && /dev|programming|javascript/i.test(nameOf(7)) && nameOf(7) === nameOf(11) && /school/i.test(nameOf(12)) && nameOf(12) === nameOf(23) && /mail/i.test(nameOf(15)) && nameOf(15) === nameOf(29) && /video/i.test(nameOf(16)), named.map((g) => g.name).join());
   check('31-tab bar: the keyboard review joins the keyboard group', nameOf(19) === nameOf(21) && nameOf(19) !== '', nameOf(21));
   check('31-tab bar: topics stay apart (Tokyo trip is not dev docs)', nameOf(0) !== nameOf(7) && nameOf(26) !== nameOf(7), `${nameOf(0)} / ${nameOf(26)} / ${nameOf(7)}`);
   check('31-tab bar: deterministic', run().g.state().map((g) => g.name).join() === named.map((g) => g.name).join());
@@ -167,9 +167,11 @@ function organized(specs) {
 {
   const r = organized([['Where is my refund? | Internal Revenue Service', 'https://www.irs.gov/refunds'], ['Driver license renewal - California DMV', 'https://www.dmv.ca.gov/portal/'], ['Universal Credit - GOV.UK', 'https://www.gov.uk/universal-credit'],
     ['Syllabus - CS 3500', 'https://www.northeastern.edu/cs3500'], ['Reading list', 'https://www.cam.ac.uk/reading'], ['Schoology - Home', 'https://app.schoology.com/home']]);
-  check('irs.gov + dmv.ca.gov group as Government, not School', r.same(0, 1) && /^government$/i.test(r.name(0)), r.name(0));
-  check('a .gov.uk page joins them', r.same(0, 2), r.name(2));
-  check('.edu / .ac.uk / schoology still School', r.same(3, 4) && /school/i.test(r.name(3)) && !r.same(0, 3), `${r.name(3)} / ${r.name(4)}`);
+  // Round 10: a host alone (.gov, .edu, .ac.uk) forms no group: the tabs must share a word or concept too.
+  check('irs.gov, dmv.ca.gov and gov.uk share only the kind of host: no group, and never School', !r.same(0, 1) && !r.same(0, 2) && !/school/i.test(r.name(0)) && !/school/i.test(r.name(1)), r.name(0));
+  check('.edu / .ac.uk / schoology share only the kind of host: no group', !r.same(3, 4) && !r.same(3, 5) && !r.same(0, 3), `${r.name(3)} / ${r.name(4)}`);
+  const govWord = organized([['Driver license renewal - California DMV', 'https://www.dmv.ca.gov/portal/'], ['Driver license renewal - Texas DPS', 'https://www.dps.texas.gov/renew'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('two agency pages that share a title word still group (and are not School)', govWord.same(0, 1) && !/school/i.test(govWord.name(0)) && !govWord.same(0, 2), govWord.name(0));
 }
 
 // 13. CJK and Cyrillic titles group
@@ -225,7 +227,7 @@ function organized(specs) {
   const hn = organized([['Hacker News 7', 'https://news.ycombinator.com/'], ['Hacker News 38', 'https://news.ycombinator.com/newest'], ...RECIPES]);
   check('two Hacker News tabs are named Hacker News', hn.same(0, 1) && hn.name(0) === 'Hacker News', hn.name(0));
   const gov = organized([['GOV.UK', 'https://www.gov.uk/'], ['Weather.gov', 'https://weather.gov/'], ['Where is my refund? | IRS', 'https://www.irs.gov/refunds'], ['Easy Banana Bread Recipe', 'https://a.example/banana-bread']]);
-  check('GOV.UK and .gov pages join the Government group, not one named "GOV"', gov.same(0, 1) && gov.same(0, 2) && gov.name(0) === 'Government' && !gov.same(0, 3), gov.name(0));
+  check('GOV.UK, weather.gov and the IRS share only a host kind: no group, and none named "GOV"', !gov.same(0, 1) && !gov.same(0, 2) && !gov.same(1, 2) && gov.name(0) !== 'GOV', gov.name(0));
 }
 
 // 18. a window that is all about one thing: the word every tab carries is the topic, not noise (once nothing else grouped)
@@ -259,7 +261,7 @@ function organized(specs) {
   const brokers = organized([['Fidelity - Portfolio', 'https://www.fidelity.com/'], ['Vanguard - Funds', 'https://investor.vanguard.com/'], ['Schwab Brokerage', 'https://www.schwab.com/'], ['Robinhood', 'https://robinhood.com/']]);
   check('Fidelity / Vanguard / Schwab / Robinhood: Finance', [1, 2, 3].every((i) => brokers.same(0, i)) && brokers.name(0) === 'Finance', brokers.name(0));
   const irs = organized([['Where is my refund? | Internal Revenue Service', 'https://www.irs.gov/refunds'], ['Driver license renewal - California DMV', 'https://www.dmv.ca.gov/portal/'], ['Universal Credit - GOV.UK', 'https://www.gov.uk/universal-credit'], ['Roth IRA limits', 'https://www.fidelity.com/roth']]);
-  check('the IRS among government pages (one money tab) stays Government', irs.same(0, 1) && irs.same(0, 2) && !irs.same(0, 3) && irs.name(0) === 'Government', irs.name(0));
+  check('the IRS among government pages (one money tab): not grouped with them by host alone', !irs.same(0, 1) && !irs.same(0, 2) && !irs.same(1, 2), irs.name(0));
   const ml = organized([['Machine learning course - Coursera', 'https://www.coursera.org/learn/ml'], ['Attention is all you need', 'https://arxiv.org/abs/1706.03762'], ['Transformers explained', 'https://huggingface.co/blog/transformers'], ['Gradient descent visualized', 'https://distill.pub/gd'], ['Neural network basics', 'https://3blue1brown.com/nn'],
     ['Python asyncio tutorial', 'https://realpython.com/async'], ['Python dataclasses', 'https://docs.python.org/3/library/dataclasses.html'], ['PyTorch tutorials', 'https://pytorch.org/tutorials']]);
   check('Coursera, arXiv, Hugging Face, Distill, 3Blue1Brown: Machine learning', [1, 2, 3, 4].every((i) => ml.same(0, i)) && /machine learning/i.test(ml.name(0)), ml.name(0));
@@ -556,6 +558,33 @@ const en = require('../src/locales/en.json');
       ['제주도 항공권 - 스카이스캐너', 'https://www.skyscanner.co.kr/jeju'], ['제주도 숙소 추천 - 야놀자', 'https://www.yanolja.com/jeju'], ['제주도 3박4일 여행 코스', 'https://blog.naver.com/jeju'],
     ],
   };
+  // Round 10 personas (trimmed from the raters' wedding planner, bio grad student and retiree): added to the precision sets below.
+  Object.assign(PERSONAS, {
+    wedding: [
+      ['Wedding venues in Napa - The Knot', 'https://www.theknot.com/marketplace/napa'], ['Zola - wedding registry', 'https://www.zola.com/registry'], ['Wedding photographer packages Napa', 'https://www.weddingwire.com/napa-photographers'],
+      ['Honeymoon in Amalfi Coast - Conde Nast', 'https://www.cntraveler.com/amalfi'], ['Flights to Naples - Kayak', 'https://www.kayak.com/flights/BOS-NAP'], ['Hotels in Positano - Booking.com', 'https://www.booking.com/city/it/positano.html'],
+      ['Mortgage rates today - Bankrate', 'https://www.bankrate.com/mortgages/rates'], ['Zillow - homes for sale Somerville MA', 'https://www.zillow.com/somerville-ma'], ['Redfin - Medford MA listings', 'https://www.redfin.com/city/medford'], ['First-time homebuyer programs Massachusetts', 'https://www.mass.gov/homebuyer'],
+      ['Pull request #482 - acme/api', 'https://github.com/acme/api/pull/482'], ['Pull request #490 - acme/api', 'https://github.com/acme/api/pull/490'], ['Issues - acme/api', 'https://github.com/acme/api/issues'],
+      ['Datadog - API latency dashboard', 'https://app.datadoghq.com/dashboard/abc'], ['PagerDuty - incidents', 'https://acme.pagerduty.com/incidents'], ['Gmail', 'https://mail.google.com/mail/u/0'], ['NYT - The Daily', 'https://www.nytimes.com/the-daily'],
+    ],
+    biograd: [
+      ['PubMed - CRISPR off-target effects', 'https://pubmed.ncbi.nlm.nih.gov/12345/'], ['bioRxiv - prime editing efficiency', 'https://www.biorxiv.org/content/10.1101/2026.01'], ['Addgene - pX330 plasmid', 'https://www.addgene.org/42230/'],
+      ['Benchling - gRNA design', 'https://benchling.com/crispr'], ['NEB - Gibson assembly protocol', 'https://www.neb.com/protocols/gibson'], ['Thermo Fisher - Lipofectamine 3000', 'https://www.thermofisher.com/lipofectamine'],
+      ['R ggplot2 volcano plot tutorial', 'https://r-graph-gallery.com/volcano'], ['DESeq2 vignette - Bioconductor', 'https://bioconductor.org/packages/DESeq2'], ['RStudio Posit Cloud', 'https://posit.cloud/'],
+      ['Boston to Seattle flights - Google Flights', 'https://www.google.com/travel/flights?q=BOS+SEA'], ['Seattle Airbnb - Capitol Hill', 'https://www.airbnb.com/s/Seattle'],
+      ['ASGCT 2026 annual meeting - Seattle', 'https://www.asgct.org/annual-meeting'], ['Abstract submission - ASGCT', 'https://www.asgct.org/abstracts'], ['Netflix', 'https://www.netflix.com/browse'],
+    ],
+    retiree: [
+      ['Birding in Costa Rica - Audubon', 'https://www.audubon.org/costarica'], ['eBird - Hotspots near me', 'https://ebird.org/hotspots'], ['Merlin Bird ID', 'https://merlin.allaboutbirds.org/'],
+      ['Best binoculars for birding 2026 - Wirecutter', 'https://www.nytimes.com/wirecutter/binoculars'], ['Vortex Diamondback HD 8x42 - B&H', 'https://www.bhphotovideo.com/vortex'],
+      ['Medicare Part D plans 2027', 'https://www.medicare.gov/plan-compare'], ['AARP - Medicare guide', 'https://www.aarp.org/medicare'], ['Social Security - my account', 'https://www.ssa.gov/myaccount'],
+      ['Fidelity - Required minimum distributions', 'https://www.fidelity.com/rmd'], ['Vanguard - Retirement dashboard', 'https://investor.vanguard.com/'],
+      ['Tomato blight treatment - Extension', 'https://extension.umn.edu/tomato'], ['Raised bed garden soil mix', 'https://www.gardeners.com/soil'], ['Burpee - heirloom seeds', 'https://www.burpee.com/seeds'],
+      ['Crossword - NYT', 'https://www.nytimes.com/crosswords'], ['Wordle', 'https://www.nytimes.com/games/wordle'], ['Spelling Bee - NYT', 'https://www.nytimes.com/puzzles/spelling-bee'],
+      ['Amtrak - Boston to Washington', 'https://www.amtrak.com/tickets'], ['Hilton Garden Inn Washington DC', 'https://www.hilton.com/dc'], ['Smithsonian - Natural History Museum hours', 'https://naturalhistory.si.edu/visit'], ['Cherry blossom bloom forecast DC', 'https://www.nps.gov/cherry-blossom'],
+      ['Weather.com - 10 day', 'https://weather.com/forecast'], ['Gmail', 'https://mail.google.com/mail/u/0'],
+    ],
+  });
   // "r9" helper: tabs are found by a word of their title; `loose` is a tab in no group.
   const setOf = (key) => {
     const specs = PERSONAS[key];
@@ -643,6 +672,52 @@ const en = require('../src/locales/en.json');
     }
   }
   check(`r9: precision: tabs in a group that most of it shares nothing with (${strangers} of ${placed}) are at most 2`, strangers <= 2, odd.join(' ; '));
+
+  // ---- Round 10 ----
+  const wed = setOf('wedding');
+  check('r10: Honeymoon in Amalfi Coast, Flights to Naples and Hotels in Positano are one trip named Amalfi Coast', wed.together(/Honeymoon/, /Naples/) && wed.together(/Honeymoon/, /Positano/) && wed.nameOf(/Honeymoon/) === 'Amalfi Coast', wed.nameOf(/Honeymoon/));
+  check('r10: mortgage rates and the first-time homebuyer page join Zillow and Redfin in Housing', wed.together(/Mortgage/, /Zillow/) && wed.together(/homebuyer/, /Redfin/) && wed.nameOf(/Zillow/) === 'Housing', wed.nameOf(/homebuyer/));
+  check('r10: the repo group is not named "Api", and the Datadog dashboard is not in it (Observability with PagerDuty)', !/^api$/i.test(wed.nameOf(/Pull request #482/)) && !wed.together(/Datadog/, /Pull request #482/) && wed.together(/Datadog/, /PagerDuty/) && wed.nameOf(/Datadog/) === 'Observability', `${wed.nameOf(/Pull request #482/)}|${wed.nameOf(/Datadog/)}`);
+  const bio = setOf('biograd');
+  check('r10: Addgene, Benchling, NEB, Lipofectamine, ggplot2, DESeq2, RStudio and PubMed are one lab group', [/bioRxiv/, /Addgene/, /Benchling/, /NEB/, /Lipofectamine/, /ggplot2/, /DESeq2/, /RStudio/].every((re) => bio.together(/PubMed/, re)) && /lab|research/i.test(bio.nameOf(/PubMed/)), bio.nameOf(/PubMed/));
+  check('r10: two ASGCT tabs are a group (a shared acronym)', bio.together(/ASGCT 2026/, /Abstract submission/) && /asgct/i.test(bio.nameOf(/Abstract submission/)), bio.nameOf(/Abstract submission/));
+  check('r10: "Capitol Hill" is not a topic: the Seattle flights and the Airbnb are a Seattle trip', bio.together(/Boston to Seattle/, /Seattle Airbnb/) && /seattle/i.test(bio.nameOf(/Seattle Airbnb/)), bio.nameOf(/Seattle Airbnb/));
+  const ret = setOf('retiree');
+  check('r10: eBird, Audubon, Merlin, binoculars (and a Vortex 8x42) are Birding', [/eBird/, /Merlin/, /binoculars/, /Vortex/].every((re) => ret.together(/Audubon/, re)) && ret.nameOf(/Audubon/) === 'Birding', ret.nameOf(/Audubon/));
+  check('r10: crossword, Wordle and Spelling Bee are Games, not News & social', [/Wordle/, /Spelling Bee/].every((re) => ret.together(/Crossword/, re)) && ret.nameOf(/Crossword/) === 'Games', ret.nameOf(/Crossword/));
+  check('r10: Hilton Garden Inn is travel, not Garden: with Amtrak, the Smithsonian and the cherry blossoms it is a Washington trip', [/Hilton/, /Smithsonian/, /Cherry/].every((re) => ret.together(/Amtrak/, re)) && ret.nameOf(/Hilton/) === 'Washington' && !ret.together(/Hilton/, /Raised bed/), ret.nameOf(/Hilton/));
+  check('r10: an extension service page is gardening, a museum and a park are travel: none of them is School or Government', !/school|government/i.test(ret.nameOf(/Tomato/)) && !/school|government/i.test(ret.nameOf(/Smithsonian/)) && ret.together(/Tomato/, /Raised bed/) && ret.together(/Raised bed/, /Burpee/) && /plants|garden/i.test(ret.nameOf(/Tomato/)), `${ret.nameOf(/Tomato/)}|${ret.nameOf(/Smithsonian/)}`);
+  check('r10: Medicare Part D and the AARP Medicare guide share a name: a group', ret.together(/Medicare Part D/, /AARP/), ret.nameOf(/AARP/));
+  check('r10: Social Security, Fidelity RMD and Vanguard retirement are Finance', [/Fidelity/, /Vanguard/].every((re) => ret.together(/Social Security/, re)) && ret.nameOf(/Fidelity/) === 'Finance', ret.nameOf(/Fidelity/));
+  // Brand phrases: masked words are no topic words
+  const brands = organized([['Hilton Garden Inn Boston', 'https://www.hilton.com/boston'], ['Olive Garden menu', 'https://www.olivegarden.com/menu'], ['Raised bed garden soil mix', 'https://www.gardeners.com/soil'], ['Home Depot - Paint colors', 'https://www.example.org/paint'], ['Best Buy - Laptop deals', 'https://www.example.org/laptops'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r10: Hilton Garden Inn and Olive Garden are not gardening; Home Depot and Best Buy share no word', !brands.same(0, 2) && !brands.same(1, 2) && !brands.same(0, 1) && !brands.same(3, 4), [0, 1, 2, 3, 4].map(brands.name).join('|'));
+  const hotels = organized([['Marriott Bonvoy - Denver', 'https://www.marriott.com/denver'], ['Hyatt Regency Denver', 'https://www.hyatt.com/denver'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r10: two hotel chains are travel', hotels.same(0, 1) && !hotels.same(0, 2), hotels.name(0));
+  // Host-only matches
+  const hostOnly = organized([['Admissions - State University', 'https://www.stateu.edu/admissions'], ['Library hours', 'https://www.otheru.edu/library'], ['Weather advisory', 'https://www.weather.gov/box'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r10: two .edu tabs and a .gov tab, sharing nothing else, are loose', !hostOnly.same(0, 1) && !hostOnly.name(0) && !hostOnly.name(2), hostOnly.name(0));
+  const edu = organized([['Linear algebra notes', 'https://www.stateu.edu/la'], ['Calculus homework 4', 'https://www.otheru.edu/calc'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r10: .edu tabs whose titles say school work (linear algebra, homework) are School', edu.same(0, 1) && edu.name(0) === 'School', edu.name(0));
+  // No group escapes the cohesion check (kinds of site excepted: mail, dev docs, video, news, shops)
+  {
+    const kinds = new Set(knowledge.FALLBACK_CATEGORIES.filter((c) => c.kind).map((c) => c.name));
+    const escaped = [];
+    for (const [key, specs] of Object.entries(PERSONAS)) {
+      const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }]));
+      w.g.organizeByTopic();
+      const docs = docsOf(specs);
+      const names = new Map(w.g.state().map((g) => [g.id, g.name]));
+      const by = new Map();
+      w.tabs().forEach((t) => { if (t.groupId) by.set(t.groupId, [...(by.get(t.groupId) || []), t.id - 1]); });
+      for (const [id, members] of by) {
+        if (kinds.has(names.get(id))) continue;
+        const parts = tg._cohere(members, docs);
+        if (!(parts.length === 1 && parts[0].length === members.length)) escaped.push(`${key}/${names.get(id)}`);
+      }
+    }
+    check('r10: no group in any persona escapes the cohesion check (cohere keeps it whole)', escaped.length === 0, escaped.join(' ; '));
+  }
 }
 
 {
@@ -672,4 +747,23 @@ let asked = 0;
   const w2 = window_([...RECIPES, ...TRIP].map(([a, b]) => [a, b, { userRemoved: true }]));
   const st2 = await oai.organizeProgressive({ tabGroups: w2.g, timeoutMs: 40, alwaysAsk: true, ask: (wire, { signal }) => { seen = signal; return new Promise(() => {}); } });
   check('organizeProgressive: the signal handed to ask is aborted when the wait times out', st2.failed === 'timeout' && seen && seen.aborted === true, `${st2.failed} ${seen && seen.aborted}`);
+  // Round 10: a model's group named like a local one joins it ("Finance" and "Finance (2)")
+  {
+    const fin = [['Roth IRA limits', 'https://www.fidelity.com/roth'], ['Vanguard index funds', 'https://investor.vanguard.com/funds'], ['401k rollover guide', 'https://www.nerdwallet.com/401k'], ['Schwab Brokerage', 'https://www.schwab.com/'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara'], ['Tiramisu recipe', 'https://www.example.org/tiramisu'], ['Mortgage notes', 'https://www.example.org/m'], ['Budget spreadsheet', 'https://www.example.org/b']];
+    const w = window_(fin.map(([a, b]) => [a, b, { userRemoved: true }]));
+    await oai.organizeProgressive({ tabGroups: w.g, ask: async (wire) => ({ n: [], p: [], g: [{ s: 'Finance', t: Object.values(wire.u || {}).flat().map((x) => x[0]).slice(0, 2) }], m: [], h: [] }) });
+    const names = w.g.state().map((g) => g.name);
+    check('r10 AI: a model group named like a local group joins it: no "Finance (2)"', names.filter((n) => /^finance/i.test(n)).length <= 1 && !names.some((n) => /\(\d+\)$/.test(n)), names.join());
+    const w2 = window_(fin.map(([a, b]) => [a, b, { userRemoved: true }]));
+    w2.g.organizeByTopic();
+    const view = w2.g.organizeView();
+    const first = view.groups[0];
+    const res = w2.g.applyRefinement({ renames: [], places: [], groups: [{ name: first.name, ids: view.leftovers.map((e) => e.id).slice(0, 2) }], merges: [] }, { explicit: true });
+    check('r10 AI: applyRefinement files a created group under an existing automatic name instead of a twin', res.created === 0 && new Set(w2.g.state().map((g) => g.name)).size === w2.g.state().length, JSON.stringify(res));
+    const w3 = window_(fin.map(([a, b]) => [a, b, { userRemoved: true }]));
+    w3.g.organizeByTopic();
+    const v3 = w3.g.organizeView();
+    const res3 = w3.g.applyRefinement({ renames: v3.groups.length > 1 ? [{ id: v3.groups[1].id, name: v3.groups[0].name }] : [], places: [], groups: [], merges: [] }, { explicit: true });
+    check('r10 AI: a rename onto another automatic group\'s name merges the two', v3.groups.length < 2 || (res3.merged === 1 && !w3.g.state().some((g) => /\(\d+\)$/.test(g.name))), JSON.stringify(res3));
+  }
 })().then(() => process.exit(failed ? 1 : 0));

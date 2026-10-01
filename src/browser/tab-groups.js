@@ -156,6 +156,9 @@ const PLACE_OF = new Map();
 for (const [country, cities] of Object.entries(knowledge.PLACES)) for (const city of cities.split(/\s+/)) PLACE_OF.set(stem(city), country);
 const CONCEPT_OF = new Map();
 for (const [concept, words] of Object.entries(knowledge.CONCEPTS)) for (const w of words.split(/\s+/)) CONCEPT_OF.set(stem(w), concept);
+// A word may say a second concept besides its own (knowledge.CONCEPT_ALSO: "mortgage" is finance and housing).
+const CONCEPTS_OF = new Map([...CONCEPT_OF].map(([k, c]) => [k, [c]]));
+for (const [w, concept] of Object.entries(knowledge.CONCEPT_ALSO)) { const k = stem(w); CONCEPTS_OF.set(k, [...new Set([...(CONCEPTS_OF.get(k) || []), concept])]); }
 // A site may be in several categories (arxiv.org: machine learning and research): host -> [category].
 const CATEGORY_OF_SITE = new Map();
 for (const [category, sites] of Object.entries(knowledge.SITE_CATEGORIES)) for (const site of sites.split(/\s+/)) CATEGORY_OF_SITE.set(site, [...(CATEGORY_OF_SITE.get(site) || []), category]);
@@ -167,8 +170,10 @@ const categoriesOfSite = (url) => {
 };
 const CITY_KEYS = new Set(knowledge.CITIES.split(/\s+/).map(stem));
 // A city no country is known for (Boston): a word that says where, never what. Cities PLACES knows (Tokyo) name their country too, which is a topic.
-const isCityKey = (k) => CITY_KEYS.has(k) && !PLACE_OF.has(k);
-const isPlaceKey = (k) => CITY_KEYS.has(k) || PLACE_OF.has(k) || COUNTRY_KEYS.has(k);
+// A place a pattern stands for (an airport code, a landmark, a region: knowledge.PLACE_ALIASES) is a place too, whichever words say it.
+const ALIAS_KEYS = new Set(knowledge.PLACE_ALIASES.map(([, city]) => stem(city)));
+const isCityKey = (k) => (CITY_KEYS.has(k) || ALIAS_KEYS.has(k)) && !PLACE_OF.has(k);
+const isPlaceKey = (k) => CITY_KEYS.has(k) || ALIAS_KEYS.has(k) || PLACE_OF.has(k) || COUNTRY_KEYS.has(k);
 const ownedByHost = (host, list) => list.split(/\s+/).some((s) => host === s || host.endsWith(`.${s}`));
 // Site hints (knowledge.SITE_HINTS): "Canvas is school work". Each written site becomes a rule: a
 // domain (and its subdomains), a first label ("canvas.*"), or a domain plus a path prefix.
@@ -363,6 +368,7 @@ function repoOf(url) {
   } catch { return null; }
 }
 
+const WEAK_REPO_NAMES = new Set('api app web www site server client backend frontend core lib docs website utils tools cli sdk examples demo main test tests service services platform'.split(' '));
 // "issues", "pull", "discussions" ... -> what kind of page a repo tab is (for naming "Lumen PRs").
 function repoPageKind(url) {
   try {
@@ -384,6 +390,18 @@ function courseCodes(text) {
   return out;
 }
 
+// A title (or address words) with its brand phrases taken out -> { text, concepts }: see knowledge.BRAND_PHRASES.
+const COMMON_CAPS = new Set(knowledge.COMMON_CAPS.split(/\s+/).filter(Boolean));
+function maskBrands(text) {
+  const concepts = new Set();
+  let out = String(text || '');
+  for (const [re, concept] of knowledge.BRAND_PHRASES) {
+    if (!re.test(out)) continue;
+    if (concept) concepts.add(concept);
+    out = out.replace(new RegExp(re.source, 'gi'), ' ');
+  }
+  return { text: out, concepts };
+}
 function tabWords({ title = '', url = '', text = '', hint = '' }) {
   const words = new Map();
   words.pieces = new Map(); // CJK bigram -> the whole runs it came from
@@ -426,7 +444,11 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   // "acme/billing-api" in a title: the owner is not a topic (two repos of one owner are two topics).
   if (repo) shownTitle = String(shownTitle).split(/\s+/).map((w) => (w.toLowerCase().startsWith(`${repo.owner}/`) ? w.slice(repo.owner.length + 1) : w)).join(' ');
   // An address in a title ("Inbox - mah.e@northeastern.edu - Outlook") names a mailbox, not a topic: its domain must not link the page to a university's.
-  const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(shownTitle, url).replace(/\S+@\S+\.\S+/g, ' ');
+  const plainTitle = isTransientTitle(title) ? '' : stripSiteSegment(shownTitle, url).replace(/\S+@\S+\.\S+/g, ' ');
+  // Brand names made of everyday words ("Hilton Garden Inn", "Home Depot") are taken out before any word is read: none of them is a topic word, and the
+  // brand says its own concept (a hotel chain is travel). See knowledge.BRAND_PHRASES.
+  const brands = maskBrands(plainTitle);
+  const cleanTitle = brands.text;
   // A site's own name is no topic. A title that is only the site's name ("Times of India", "Aaj Tak Live") says nothing about the page, and
   // a portal's name ("Naver", "Yahoo", "楽天") links its maps to its sports: those words never link two tabs.
   const hostLabels = hostname(url).split('.').filter((l) => l.length >= 4);
@@ -456,8 +478,8 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   // Down-weighted, and a key of its own (^): same-site tabs shouldn't cluster on the brand alone, and
   // "canvas.northeastern.edu" must not link to a page whose title merely says "Northeastern".
   if (label && label.length >= 3 && !SEARCH_DOMAINS.has(domain)) for (const { key, surface } of tokens(label)) words.set(`^${key}`, { weight: 0.3, surface });
-  add(tokens(decodeURIComponent(pathname).replace(/[-_]/g, ' ')), 0.5);
-  const q = queryText(url);
+  add(tokens(maskBrands(decodeURIComponent(pathname).replace(/[-_]/g, ' ')).text), 0.5);
+  const q = maskBrands(queryText(url)).text;
   if (q) add(tokens(decodeURIComponent(q.replace(/\+/g, ' '))), 1, { naming: true, vector: true });
   if (text) add(tokens(String(text).slice(0, 500)), TEXT_WEIGHT, { vector: true }); // optional page text (see main.js note)
   // The search a tab was opened from (main.js passes the opener's query): the page is what that search led to.
@@ -466,25 +488,60 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
     words.set(repo.key, { weight: 1.2, surface: repo.name });
     add(tokens(repo.name.replace(/[-_.]/g, ' ')), 0.8);
   }
+  // Airport codes, theme parks, landmarks and regions name their city, and so do a few hosts. A region's towns (Naples, Positano: the Amalfi Coast) are
+  // that place and not their country's: `region` maps each word to it.
+  const placed = new Set();
+  const region = new Map();
+  const aliasText = `${cleanTitle} ${q}`;
+  for (const [re, city, own] of knowledge.PLACE_ALIASES) {
+    if (!re.test(aliasText)) continue;
+    placed.add(city);
+    if (own) for (const m of aliasText.matchAll(new RegExp(re.source, 'gi'))) for (const t of tokens(m[0])) region.set(t.key, stem(city));
+  }
+  words.regional = region;
   // Places name their country, everyday words name a kind of task, well-known sites a category.
+  const addConcept = (concept) => { if (!words.has(`%${concept}`)) words.set(`%${concept}`, { weight: CONCEPT_WEIGHT, surface: concept }); };
   for (const [key, { weight }] of [...words]) {
     if (weight < 0.7 || !isRealKey(key)) continue;
     const country = PLACE_OF.get(key);
-    if (country && !words.has(stem(country))) words.set(stem(country), { weight: PLACE_WEIGHT, surface: country.charAt(0).toUpperCase() + country.slice(1) });
-    const concept = CONCEPT_OF.get(key);
-    if (concept && !words.has(`%${concept}`)) words.set(`%${concept}`, { weight: CONCEPT_WEIGHT, surface: concept });
+    if (country && !region.has(key) && !words.has(stem(country))) words.set(stem(country), { weight: PLACE_WEIGHT, surface: country.charAt(0).toUpperCase() + country.slice(1) });
+    for (const concept of CONCEPTS_OF.get(key) || []) addConcept(concept);
   }
-  for (const category of categoriesOfSite(url)) if (!words.has(`%${category}`)) words.set(`%${category}`, { weight: CONCEPT_WEIGHT, surface: category });
-  // Airport codes, theme parks and landmarks name their city, and so do a few hosts.
-  const placed = new Set();
-  for (const [re, city] of knowledge.PLACE_ALIASES) if (re.test(`${cleanTitle} ${q}`)) placed.add(city);
+  for (const category of categoriesOfSite(url)) addConcept(category);
+  // Phrases that say a concept ("closing costs"), and what a brand is ("Hilton Garden Inn": travel), and pages whose address says what they are.
+  for (const [re, concept] of knowledge.PHRASE_CONCEPTS) if (re.test(`${plainTitle} ${q}`)) addConcept(concept);
+  for (const concept of brands.concepts) addConcept(concept);
   const host = hostname(url);
+  for (const [re, concept] of knowledge.URL_CATEGORIES) if (re.test(`${host.replace(/^www\./, '')}${pathname}`)) addConcept(concept);
   for (const [site, city] of knowledge.SITE_PLACES) if (host === site || host.endsWith(`.${site}`)) placed.add(city);
-  for (const city of placed) if (!words.has(stem(city))) words.set(stem(city), { weight: 0.9, surface: city.charAt(0).toUpperCase() + city.slice(1) });
+  for (const city of placed) if (!words.has(stem(city))) words.set(stem(city), { weight: 0.9, surface: city.replace(/(^|\s)\S/g, (c) => c.toUpperCase()) });
   words.retail = ownedByHost(host.replace(/^www\./, ''), knowledge.RETAIL_HOSTS);
   words.brand = label && label.length >= 4 && !BRAND_WORDS.has(label) && !SEARCH_DOMAINS.has(domain) ? label : '';
   if (titleTokens.length <= 2) for (const g of charTrigrams(cleanTitle)) if (!words.has(g)) words.set(g, { weight: 0.4, surface: g });
   words.bigrams = bigrams;
+  // Distinctive names: an acronym (ASGCT, CRISPR) or a capitalised word that is not an ordinary one (Medicare, Lipofectamine) is a topic by itself when
+  // another tab says it too (see distinctGroups). A shouted title or a Title Case one says nothing by its capitals.
+  words.distinct = new Set();
+  {
+    const letters = cleanTitle.replace(/[^\p{L}]/gu, '');
+    const shouting = letters.length >= 8 && letters.replace(/[^\p{Lu}]/gu, '').length > letters.length * 0.6;
+    // An acronym inside a longer first or last segment ("ASGCT 2026 annual meeting - Seattle") is a topic, whatever stripSiteSegment made of the segment
+    // for being a site's name: it stays a word of the tab.
+    const segments = maskBrands(String(shownTitle).replace(/\S+@\S+\.\S+/g, ' ')).text.split(/\s+[-|–—·:]\s+/);
+    const restored = segments.filter((seg) => seg.trim().split(/[^\p{L}\p{N}]+/u).filter(Boolean).length >= 2).join(' ');
+    for (const raw of `${cleanTitle} ${restored}`.split(/[^\p{L}\p{N}]+/u)) {
+      if (raw.length < 4 || !/^\p{L}+$/u.test(raw) || CJK.test(raw)) continue;
+      const lower = raw.toLowerCase();
+      const key = stemWord(lower);
+      const acronym = !shouting && /^\p{Lu}+$/u.test(raw);
+      const name = /^\p{Lu}\p{Ll}+$/u.test(raw) && words.capital.has(key) && !COMMON_CAPS.has(lower);
+      if (!acronym && !name) continue;
+      // (a page's own site's name is no name another page can share, unless it is an acronym: ASGCT's own pages say it)
+      if (STOPWORDS.has(lower) || isGenericKey(key) || NAV_WORDS.has(key) || BRAND_KEYS.has(key) || isPlaceKey(key) || (!acronym && hostLabels.some((l) => l.replace(/[^a-z0-9]/g, '') === lower))) continue;
+      if (acronym && !words.has(key)) words.set(key, { weight: 1, surface: raw });
+      if ((words.get(key)?.weight ?? 0) >= 0.8) words.distinct.add(key);
+    }
+  }
   return words;
 }
 
@@ -580,6 +637,8 @@ function vectorize(entries, { allowCommon = false } = {}) {
   for (const d of docs) { d.named = named; d.exempt = exempt; }
   docs.df = df;
   docs.n = n;
+  docs.distinct = new Map(); // distinctive name -> the tabs (doc indices) that say it in their title
+  docs.forEach((d, i) => { for (const k of d.words.distinct || []) { if (!docs.distinct.has(k)) docs.distinct.set(k, []); docs.distinct.get(k).push(i); } });
   return docs;
 }
 
@@ -985,7 +1044,7 @@ function conceptGroups(clusters, docs) {
   // How many of a tab's own words (and, if asked, its site's category) say the concept: a site's name alone is not strong evidence.
   const hitsOf = (i, concept, site = true) => {
     let n = site && categoriesOfSite(docs[i].url).includes(concept) ? 1 : 0;
-    for (const [k, v] of docs[i].words) if (v.weight >= 0.7 && CONCEPT_OF.get(k) === concept) n++;
+    for (const [k, v] of docs[i].words) if (v.weight >= 0.7 && CONCEPTS_OF.get(k)?.includes(concept)) n++;
     return n;
   };
   const groupConcepts = Object.keys(knowledge.CONCEPT_GROUPS);
@@ -1076,6 +1135,38 @@ function conceptGroups(clusters, docs) {
   return { clusters: out, formed };
 }
 
+// Seventh stage: a distinctive name (an acronym or a proper noun: ASGCT, Medicare; see tabWords `distinct`) that two or more loose tabs say is a topic by
+// itself, however little else their titles share: "ASGCT 2026 annual meeting" and "Abstract submission - ASGCT". A tab on the named site counts as saying it
+// when another tab's title does. Only loose tabs; the group is named for the name, and goes through the cohesion check like every other.
+// A tab's site's own name as a key ("asgct" for asgct.org), '' when it is no name another tab can be about: a university's ("Northeastern dining" is not Canvas's
+// topic) or a mail host's.
+const siteNameKey = (d) => (d.words.brand && !knowledge.EDU_HOST.test(hostname(d.url)) && !ownedByHost(hostname(d.url), knowledge.SSO_HOSTS) ? stemWord(d.words.brand) : '');
+const DISTINCT_MAX = 6; // a name more tabs than this say is a site or a window-wide word, not a pair's
+function distinctGroups(clusters, docs) {
+  const out = clusters.map((c) => [...c]);
+  const formed = new Map();
+  const loose = new Set(out.filter((c) => c.length === 1).map((c) => c[0]));
+  const taken = new Set();
+  const byLabel = new Map(); // a site's own name -> its tabs
+  docs.forEach((d, i) => { const k = siteNameKey(d); if (k) { if (!byLabel.has(k)) byLabel.set(k, []); byLabel.get(k).push(i); } });
+  const found = [];
+  for (const [k, titled] of docs.distinct) {
+    const list = [...new Set([...titled, ...(byLabel.get(k) || [])])].filter((i) => loose.has(i));
+    if (docs.length >= 4 && titled.length > docs.length * COMMON_WORD_SHARE) continue; // a word the whole window says is the window's topic (topicClusters asks again with it kept)
+    if (list.length >= 2 && list.length <= DISTINCT_MAX && titled.some((i) => list.includes(i))) found.push([k, list, titled]);
+  }
+  found.sort((a, b) => b[1].length - a[1].length);
+  for (const [k, list, titled] of found) {
+    const free = list.filter((i) => !taken.has(i));
+    if (free.length < 2) continue;
+    free.forEach((i) => taken.add(i));
+    const said = free.find((i) => titled.includes(i));
+    formed.set(free, docs[said].words.get(k).surface);
+  }
+  const kept = out.filter((c) => !(c.length === 1 && taken.has(c[0])));
+  return { clusters: kept.concat([...formed.keys()]), formed };
+}
+
 // ---------- cohesion: what a group has to show before it is a group ----------
 //
 // Precision over recall: a wrong group costs the user more than a loose tab. Whatever stage put tabs together (a shared word, an anchor,
@@ -1110,6 +1201,7 @@ function evidenceOf(d) {
   for (const [k, e] of d.words) {
     if (k[0] === '%') { if (k !== '%shopping') concepts.add(k); continue; }
     if (!isRealKey(k) || e.weight < 0.7) continue;
+    if (d.words.regional?.has(k)) { places.add(d.words.regional.get(k)); continue; } // Naples beside Positano: the Amalfi Coast, not Italy
     if (isPlaceKey(k)) { places.add(placeId(k)); continue; }
     if (!(d.vec.has(k) || d.common.has(k)) || isGenericKey(k) || NAV_WORDS.has(k)) continue;
     words.add(k);
@@ -1146,6 +1238,16 @@ function supportsOf(c, docs) {
   }
   for (const h of hold((e) => (e.site ? [e.site] : []))) out.push({ holders: h });
   for (const h of hold((e) => (e.hint ? [e.hint] : []))) out.push({ holders: h });
+  // A distinctive name (ASGCT, Medicare: tabWords `distinct`) that one tab's title says and another says too, or is its site's own name.
+  if (docs.distinct) {
+    const named = new Map();
+    for (const i of c) {
+      for (const k of docs[i].words.distinct || []) { if (!named.has(k)) named.set(k, { titled: 0, all: new Set() }); named.get(k).titled++; named.get(k).all.add(i); }
+      const label = siteNameKey(docs[i]);
+      if (label && docs.distinct.has(label)) { if (!named.has(label)) named.set(label, { titled: 0, all: new Set() }); named.get(label).all.add(i); }
+    }
+    for (const { titled, all } of named.values()) if (titled >= 1 && all.size >= 2) out.push({ holders: [...all] });
+  }
   // A word held by 2+ tabs: alone it counts when it says something (and nothing about the tabs contradicts it), otherwise it needs a second one.
   const byWord = new Map();
   c.forEach((i, x) => { for (const k of ev[x].words) { if (!byWord.has(k)) byWord.set(k, []); byWord.get(k).push(i); } });
@@ -1270,7 +1372,8 @@ const hostMatches = (host, sites) => sites.split(/\s+/).some((s) => (s.endsWith(
 function categoryOf({ url, title }) {
   const host = hostname(url).replace(/^www\./, '');
   const cats = knowledge.FALLBACK_CATEGORIES;
-  const strong = cats.find((c) => !c.weak && host && (hostMatches(host, c.hosts) || (c.hostRe && c.hostRe.test(host))));
+  const fullUrl = `${host}${(() => { try { return new URL(url).pathname; } catch { return ''; } })()}`;
+  const strong = cats.find((c) => !c.weak && host && (hostMatches(host, c.hosts) || (c.hostRe && c.hostRe.test(host) && !knowledge.NOT_SCHOOL_OR_GOV.test(host)) || (c.urlRe && c.urlRe.test(fullUrl))));
   if (strong) return strong;
   // "Best novels 2026" and "Laptop deals" are not one shopping trip: a title says Shopping only with a product, or a price/buy/cart word.
   const byTitle = cats.find((c) => c.title.test(String(title || '')) && (c.name !== 'Shopping' || knowledge.SHOP_TITLE.test(String(title || ''))));
@@ -1292,9 +1395,7 @@ function pairShares(c, docs, drawn) {
   const shared = [...a.vec.keys()].filter((k) => k[0] !== '#' && k[0] !== '^' && b.vec.has(k));
   const trip = shared.some((k) => k === '%travel' || k === '%housing');
   if (shared.some((k) => !GENERIC_PAIR_STEMS.has(k) && (trip || !isCityKey(k))) && !(shared.every((k) => GENERIC_PAIR_STEMS.has(k) || isCityKey(k)) && !trip)) return true;
-  if (a.siteHint && a.siteHint === b.siteHint && !knowledge.BROAD_HINTS.has(a.siteHint)) return true;
-  const ca = categoryOf(a);
-  return Boolean(ca && ca === categoryOf(b));
+  return Boolean(a.siteHint && a.siteHint === b.siteHint && !knowledge.BROAD_HINTS.has(a.siteHint));
 }
 // The category (School, Travel ...) most of a cluster's tabs are filed under, or ''.
 function categoryLabel(members) {
@@ -1380,6 +1481,9 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
   // Third stage: groups (and lone tabs) that share an anchor word are one topic.
   if (!process.env.NOANCHOR) merged = anchorMerge((process.env.NOSPLIT ? (x) => x : splitPlaceBridges)(pruneWeak(anchorMerge(merged, docs), docs), docs), docs);
   if (!process.env.NOABSORB) merged = conceptAbsorb(merged, docs);
+  // A tab that only a loose word bridged to a group ("API" in a latency dashboard beside a repo's pages) is let go before the stages that place the loose tabs, so
+  // that they get their chance with it (a monitoring tool and its pair); the cohesion check runs again at the end.
+  merged = merged.flatMap((c) => cohere(c, docs));
   // Fifth stage: loose tabs by their site and its hint.
   const hintOf = new Map(); // sorted member indices -> the hint a cluster was formed on
   const conceptOf = new Map(); // ... and the concept that drew a cluster together (names it before anything else)
@@ -1394,31 +1498,43 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     merged = drawn.clusters;
     for (const [c, label] of drawn.formed) conceptOf.set(idsKey(c), label);
   }
+  {
+    const named = distinctGroups(merged, docs);
+    merged = named.clusters;
+    for (const c of named.formed.keys()) conceptOf.set(idsKey(c), ''); // drawn together by a name, and named the usual way (the name's own spelling is not always the best: Москве, Москва)
+  }
   // Cohesion: whatever formed a group, most of its tabs must share something that says something (see cohere); then the trips.
   const rekey = (c, change) => { // change a cluster's tabs, keeping the name its old tabs earned it
     const was = idsKey(c);
     const [concept, hint] = [conceptOf.get(was), hintOf.get(was)];
+    const [hasConcept, hasHint] = [conceptOf.has(was), hintOf.has(was)];
     change();
-    if (concept || hint) {
+    if (hasConcept || hasHint) {
       conceptOf.delete(was);
       hintOf.delete(was);
-      if (concept) conceptOf.set(idsKey(c), concept);
-      if (hint) hintOf.set(idsKey(c), hint);
+      if (hasConcept) conceptOf.set(idsKey(c), concept);
+      if (hasHint) hintOf.set(idsKey(c), hint);
     }
   };
+  // Every group is cohered: its tabs are split into the parts that share something, and a tab sharing nothing is let go. Run before the trips (a trip
+  // is made of tabs that already hold together) and again at the very end, so that no stage after the first run (trips, categories) can leave a group that
+  // has not passed it. `skip(c)`: groups a KIND of site names (kindOf) are not one topic and are not held to it.
+  const cohereAll = (list, skip = () => false) => list.flatMap((c) => {
+    if (skip(c)) return [c];
+    const parts = cohere(c, docs);
+    if (parts.length === 1 && parts[0].length === c.length) return [c];
+    const was = idsKey(c);
+    const [concept, hint] = [conceptOf.get(was), hintOf.get(was)];
+    const [hasConcept, hasHint] = [conceptOf.has(was), hintOf.has(was)];
+    conceptOf.delete(was);
+    hintOf.delete(was);
+    const main = parts.filter((p) => p.length >= 2).sort((x, y) => y.length - x.length)[0];
+    if (main && hasConcept) conceptOf.set(idsKey(main), concept);
+    if (main && hasHint) hintOf.set(idsKey(main), hint);
+    return parts;
+  });
   {
-    merged = merged.flatMap((c) => {
-      const parts = cohere(c, docs);
-      if (parts.length === 1 && parts[0].length === c.length) return [c];
-      const was = idsKey(c);
-      const [concept, hint] = [conceptOf.get(was), hintOf.get(was)];
-      conceptOf.delete(was);
-      hintOf.delete(was);
-      const main = parts.filter((p) => p.length >= 2).sort((x, y) => y.length - x.length)[0];
-      if (main && concept) conceptOf.set(idsKey(main), concept);
-      if (main && hint) hintOf.set(idsKey(main), hint);
-      return parts;
-    });
+    merged = cohereAll(merged);
     for (const [c, label] of tripGroups(merged, docs, rekey, (c) => conceptOf.get(idsKey(c)))) conceptOf.set(idsKey(c), label);
   }
   // No mega-groups: a cluster past MAX_GROUP is re-split at a stricter threshold (a few times); tabs
@@ -1429,6 +1545,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
   // and title (mail, dev docs, news ...): a lone tab of a one-topic category (a trip, a course, recipes) joins a
   // cluster of that category, the rest of a category form a group of their own named for it; small clusters of a
   // one-topic category fold into the biggest of it. Deterministic, never one "Other", and no group past MAX_GROUP.
+  const byCategory = new Set(); // the clusters the category stage made or grew: it holds them to its own, stricter rule (below)
   if (categories) {
     const cat = docs.map(categoryOf);
     const majorCat = (c) => { const n = new Map(); for (const i of c) if (cat[i]) n.set(cat[i], (n.get(cat[i]) || 0) + 1); const top = [...n].sort((a, b) => b[1] - a[1])[0]; return top && top[1] * 2 > c.length ? top[0] : null; };
@@ -1436,6 +1553,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
       const was = idsKey(c);
       const name = hintOf.get(was) || (docs[c[0]].siteHint && c.every((i) => docs[i].siteHint === docs[c[0]].siteHint) ? docs[c[0]].siteHint : '');
       c.push(...list);
+      byCategory.add(c);
       hintOf.delete(was);
       if (name) hintOf.set(idsKey(c), name);
     };
@@ -1443,30 +1561,58 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     const lone = clusters.filter((c) => c.length < 2).map((c) => c[0]);
     const rest = [];
     const byCat = new Map();
+    // A host (a .edu, a .gov) or a title word is no more than a hint at a category: a tab joins a group of it, and tabs make a group of it, only when
+    // they share something besides (see cohere). The four kinds of site (mail, dev docs, video, news) are the exception: their group IS the kind.
+    // A tab whose TITLE says the category ("syllabus", "linear algebra": School) is a tab of it by its words; one that is only on the category's hosts ("a
+    // .edu") has the host alone, which is the hint that needs more.
+    const byTitle = (i) => Boolean(cat[i] && cat[i].title.test(String(docs[i].title || '')));
+    const holds = (home, list) => { // every host-only tab of `list` is bound to a tab of `home` (or, with no home, to another of the list)
+      const need = list.filter((i) => !byTitle(i) && !cat[i].kind);
+      if (!need.length) return true;
+      const parts = cohere([...home, ...list], docs);
+      return need.every((i) => { const part = parts.find((p) => p.includes(i)); return part && part.length >= 2 && part.some((j) => (home.length ? home : list).includes(j) && j !== i); });
+    };
     for (const i of lone) {
       if (!cat[i]) { rest.push(i); continue; }
-      const home = cat[i].join ? groupsNow.filter((c) => majorCat(c) === cat[i] && c.length < MAX_GROUP).sort((a, b) => b.length - a.length)[0] : null;
+      const home = cat[i].join ? groupsNow.filter((c) => majorCat(c) === cat[i] && c.length < MAX_GROUP && holds(c, [i])).sort((a, b) => b.length - a.length)[0] : null;
       if (home) grow(home, [i]);
       else byCat.set(cat[i], [...(byCat.get(cat[i]) || []), i]);
     }
     for (const [c, list] of byCat) {
       if (list.length < 2) { rest.push(...list); continue; }
-      hintOf.set(idsKey(list), c.name === 'Dev docs' && list.every((i) => docs[i].siteKey === docs[list[0]].siteKey) ? siteName(docs[list[0]].url, docs[list[0]].title) : c.name); // two GitHub pages: "GitHub"
-      groupsNow.push(list);
+      let parts = [list];
+      if (!c.kind) { // a topic's tabs: those its title words name are one group, and a host-only tab is in it only when it is bound to a tab of it (or to another host-only one)
+        const root = new Map(list.map((i) => [i, i]));
+        const find = (i) => (root.get(i) === i ? i : (root.set(i, find(root.get(i))), root.get(i)));
+        const joinAll = (members) => members.forEach((j) => root.set(find(j), find(members[0])));
+        joinAll(list.filter(byTitle));
+        for (const p of cohere(list, docs)) if (p.length >= 2) joinAll(p);
+        const by = new Map();
+        for (const i of list) by.set(find(i), [...(by.get(find(i)) || []), i]);
+        parts = [...by.values()].filter((p) => p.length >= 2);
+      }
+      for (const part of parts) {
+        hintOf.set(idsKey(part), c.name === 'Dev docs' && part.every((i) => docs[i].siteKey === docs[part[0]].siteKey) ? siteName(docs[part[0]].url, docs[part[0]].title) : c.name); // two GitHub pages: "GitHub"
+        groupsNow.push(part);
+        byCategory.add(part);
+      }
+      rest.push(...list.filter((i) => !parts.some((p) => p.includes(i))));
     }
     for (const small of groupsNow.filter((c) => c.length <= 2)) {
       const c = majorCat(small);
-      const into = c && c.join ? groupsNow.filter((o) => o !== small && o.length > 2 && majorCat(o) === c && o.length + small.length <= MAX_GROUP).sort((a, b) => b.length - a.length)[0] : null;
+      const into = c && c.join ? groupsNow.filter((o) => o !== small && o.length > 2 && majorCat(o) === c && o.length + small.length <= MAX_GROUP && holds(o, small)).sort((a, b) => b.length - a.length)[0] : null;
       if (into) { grow(into, small); groupsNow = groupsNow.filter((o) => o !== small); }
     }
     clusters = groupsNow.concat(rest.map((i) => [i]));
   }
+  // Whatever the stages after the first cohesion pass did (trips, the mega-group split, categories), no group leaves without having passed it.
+  clusters = cohereAll(clusters, (c) => byCategory.has(c));
   // Deterministic order: tabs in the order given, groups by their first tab.
   clusters = clusters.map((c) => [...c].sort((x, y) => x - y)).sort((x, y) => x[0] - y[0]);
   const titleCase = (w) => (w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1) : w);
   const titleCasePhrase = (s) => s.split(/\s+/).map(titleCase).join(' ');
   const clip = (s) => (s.length <= 24 ? s : (s.slice(0, 24).replace(/\s+\S*$/, '') || s.slice(0, 24)));
-  const named = clusters.filter((c) => c.length > 2 || (c.length === 2 && pairShares(c, docs, conceptOf.has(idsKey(c))))).map((c) => {
+  const named = clusters.filter((c) => c.length > 2 || (c.length === 2 && pairShares(c, docs, conceptOf.has(idsKey(c)) || hintOf.has(idsKey(c))))).map((c) => {
     const members = c.map((i) => docs[i]);
     let pairSum = 0;
     for (let x = 0; x < c.length; x++) for (let y = x + 1; y < c.length; y++) pairSum += sim[c[x]][c[y]];
@@ -1541,7 +1687,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
       return siteName(lead.url, lead.title);
     };
     let name;
-    if (conceptOf.has(idsKey(c))) name = conceptOf.get(idsKey(c));
+    if (conceptOf.get(idsKey(c))) name = conceptOf.get(idsKey(c));
     else if (oneSite && !(topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) && (!top || kindOfSite(hintOf.get(idsKey(c)) || sharedHint))) {
       const lead = members.find((d) => d.siteKey === topSite);
       name = siteName(lead.url, lead.title);
@@ -1549,7 +1695,9 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     else if (topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) {
       const kinds = new Set(members.filter((d) => repoOf(d.url)?.name === topRepo).map((d) => repoPageKind(d.url)));
       const kind = kinds.size === 1 ? [...kinds][0] : '';
-      name = `${titleCasePhrase(topRepo.replace(/[-_]+/g, ' '))}${kind ? ` ${kind}` : ''}`;
+      const owner = members.map((d) => repoOf(d.url)).find((r) => r && r.name === topRepo)?.owner;
+      // "api", "web", "docs": a repo name that names nothing alone is shown with its owner ("acme/api"), not as "Api"
+      name = WEAK_REPO_NAMES.has(topRepo) && owner ? `${owner}/${topRepo}${kind ? ` ${kind}` : ''}` : `${titleCasePhrase(topRepo.replace(/[-_]+/g, ' '))}${kind ? ` ${kind}` : ''}`;
     } else if (siteOnly) name = sharedHint || siteName(members[0].url, members[0].title);
     else if (nameTop && isPlaceKey(nameTop[0]) && conceptLabel(c, docs) === 'Housing') name = `${bestSurface(nameTop[0])} housing`; // flats in Edinburgh are not the Edinburgh trip
     else if (libraryName(members, majority)) name = libraryName(members, majority);
@@ -2181,6 +2329,16 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
       const g = groups.get(id);
       const clean = cleanGroupName(name);
       if (!mine(g) || !clean) continue;
+      // Renamed like another automatic group: the two are one group ("Finance" and "Finance (2)" help no one).
+      const twin = [...groups.values()].find((o) => o.id !== id && mine(o) && !o.domain && o.name.toLowerCase() === clean.toLowerCase());
+      if (twin) {
+        const [keep, gone] = twin.id < id ? [twin, g] : [g, twin];
+        for (const tab of members(gone.id)) if (!pinned(tab)) tab.groupId = keep.id;
+        groups.delete(gone.id);
+        keep.name = clean.slice(0, 40);
+        out.merged++;
+        continue;
+      }
       g.name = uniqueName(clean, id).slice(0, 40);
       out.renamed++;
     }
@@ -2199,7 +2357,11 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
       const free = ids.filter((id) => takes(tabById(id)));
       if (free.length < 2) continue;
       free.forEach((id) => claim(tabById(id)));
-      create(uniqueName(cleanGroupName(name)), free, { auto: true });
+      // A group named like an automatic one that exists: the tabs join it rather than make a twin.
+      const clean = cleanGroupName(name);
+      const twin = [...groups.values()].find((o) => mine(o) && !o.domain && o.name.toLowerCase() === clean.toLowerCase());
+      if (twin) { for (const id of free) { tabById(id).groupId = twin.id; tabById(id).autoKey = keyOf(tabById(id)); } out.placed += free.length; continue; }
+      create(uniqueName(clean), free, { auto: true });
       out.created++;
     }
     if (out.merged || out.renamed || out.placed || out.created) { arrange(); cleanup(); }
@@ -2290,4 +2452,4 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   };
 }
 
-module.exports = { _vectorize: vectorize, _cosine: cosine, createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, siteHint, hintHost, GROUP_COLORS, MAX_AUTO_MOVES };
+module.exports = { _vectorize: vectorize, _cohere: cohere, _cosine: cosine, createTabGroups, isTransientTitle, isAppOrSearch, tokens, stripSiteSegment, cleanGroupName, siteName, registrableDomain, siteKey, topicClusters, mergeSimilarGroups, nameSimilarity, placeTabs, sanitizeProposal, pathWords, siteHint, hintHost, GROUP_COLORS, MAX_AUTO_MOVES };
