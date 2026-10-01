@@ -743,6 +743,15 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('preload bundle: needs nothing a sandboxed preload can\'t load', requires.length === 0, requires.join(', '));
 }
 
+// ---- The main window's page is a committed bundle of index.src.html's scripts and stylesheets
+{
+  const out = require('../scripts/bundle-renderer').bundle();
+  const dir = path.join(__dirname, '../src/renderer');
+  const committed = (f) => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n') : '');
+  check('ui bundle: index.html, ui.bundle.js and ui.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('index.html') === out.html && committed('ui.bundle.js') === out.js && committed('ui.bundle.css') === out.css, '');
+  check('ui bundle: no inline script (the CSP allows none)', !/<script>/.test(out.html), '');
+}
+
 // ---- launcher.js: the first process hands over to the launcher (macOS: with the links it was sent)
 {
   const { handOver, launcherArgs } = require('../src/automation/launcher');
