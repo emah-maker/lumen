@@ -57,7 +57,7 @@ module.exports = async function gmailUnits(check) {
   check('oauth loopback: it stops listening after the redirect', closed === 'closed', closed);
   lb = await OA.startLoopback({ state: 's2' });
   await get(`${lb.redirectUri}?error=access_denied&state=s2`);
-  check('oauth loopback: the user saying no rejects with a cancelled sign-in', await lb.wait.then(() => false, (e) => e.kind === 'cancelled' && /cancelled/.test(e.message)), '');
+  check('oauth loopback: the user saying no rejects with a cancelled sign-in', await lb.wait.then(() => false, (e) => e.kind === 'cancelled' && /canceled/.test(e.message)), '');
   lb = await OA.startLoopback({ state: 's3', timeoutMs: 40 });
   check('oauth loopback: it gives up after the time limit', await lb.wait.then(() => false, (e) => e.kind === 'timeout'), '');
   lb = await OA.startLoopback({ state: 's4' });
@@ -89,7 +89,7 @@ module.exports = async function gmailUnits(check) {
     authorizeBase: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'x', clientId: 'cid', scope: 's', post,
     openExternal: async (u) => { const q = new URL(u).searchParams; setTimeout(() => get(`${q.get('redirect_uri')}?error=access_denied&state=${q.get('state')}`).catch(() => {}), 5); },
   });
-  check('oauth sign-in: denying consent ends it without a token request', await denied.done.then(() => false, (e) => /cancelled/.test(e.message)) && posts.length === 1, '');
+  check('oauth sign-in: denying consent ends it without a token request', await denied.done.then(() => false, (e) => /canceled/.test(e.message)) && posts.length === 1, '');
   const bad = await OA.beginSignIn({
     authorizeBase: 'https://a/', tokenUrl: 'x', clientId: 'cid', scope: 's', post: async () => ({ ok: false, status: 401, body: '{"error":"invalid_client"}' }),
     openExternal: async (u) => { const q = new URL(u).searchParams; setTimeout(() => get(`${q.get('redirect_uri')}?code=c&state=${q.get('state')}`).catch(() => {}), 5); },

@@ -39,11 +39,18 @@
   --spring-bouncy: linear(0, 0.0628, 0.2072, 0.3823, 0.5551, 0.7065, 0.8282, 0.9186, 0.9804, 1.0185, 1.0385, 1.0456, 1.0445, 1.0388, 1.0309, 1.0228, 1.0155, 1.0095, 1.0049, 1.0017, 0.9996, 0.9984, 0.998, 0.9979, 0.9981, 0.9985, 0.9988, 0.9992, 0.9995, 0.9997, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --tabstrip-h: 38px;
+  --toolbar-h: 44px;
+  --chrome-h: calc(var(--tabstrip-h) + var(--toolbar-h)); /* where the page area starts (main.js gets the measured rect from the renderer) */
   --t-press: 90ms;
   --t-fast: 140ms;
   --t-base: 240ms;
   --t-smooth: 420ms;
   --t-snappy: 520ms;
+  --t-drag: 300ms; /* tabs closing up or opening back after a drag; the find bar's no-match shake */
+
+  /* One focus ring for every control that removes its outline: a box-shadow ring follows the control's own radius. */
+  --focus-ring: 0 0 0 2px var(--accent);
 
   font: 13px/1.45 system-ui, -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", sans-serif;
   letter-spacing: -0.003em;
@@ -93,7 +100,7 @@ svg.dots { fill: currentColor; stroke: none; }
 [hidden] { display: none !important; }
 ::selection { background: var(--accent-soft); color: var(--text); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-input:focus-visible, textarea:focus-visible { outline: none; }
+input:focus-visible, textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); } /* (fields that draw their own ring below, or sit in one, override this) */
 input, textarea { caret-color: var(--accent); }
 
 /* Tactile press: every control answers on pointer-down. */
@@ -106,116 +113,14 @@ button:active:not(:disabled) { transform: scale(0.94); }
 
 /* The tab strip doubles as the title bar; leave room for the native window controls. */
 .tabstrip {
-  display: flex; align-items: center; gap: 2px; height: 38px; padding: 5px 8px 0;
+  display: flex; align-items: center; gap: 2px; height: var(--tabstrip-h); padding: 5px 8px 0;
   padding-right: 140px;
   padding-right: max(140px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 8px));
   -webkit-app-region: drag;
 }
 .tabstrip button, .tab { -webkit-app-region: no-drag; }
-.tabs { position: relative; display: flex; gap: 4px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; padding: 1px 0; }
+.tabs { position: relative; display: flex; gap: 4px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; padding: 1px 0; scroll-padding-inline: 28px; } /* = the fade width (.more-left/.more-right): a scrolled-to tab clears the faded edge */
 .tabs::-webkit-scrollbar { display: none; }
-
-/* One surface glides between tabs instead of each tab lighting up on its own. */
-.tab-indicator {
-  position: absolute; top: 1px; left: 0; height: 28px; width: 0; border-radius: 8px; pointer-events: none; z-index: 0;
-  background: var(--surface-raised);
-  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 0.5px var(--hairline), 0 2px 6px -2px rgb(0 0 0 / calc(0.5 * var(--shadow-k)));
-  transition: transform var(--t-smooth) var(--spring-smooth), width var(--t-smooth) var(--spring-smooth), opacity var(--t-fast) ease-out;
-}
-.tab-indicator.instant { transition: none; }
-.tabs.reordering .tab-indicator { opacity: 0; }
-
-/* Background tabs are soft pills (Safari, Arc): a faint fill with a little space between them, so
-   each reads as a tab rather than loose text between hairlines. The active tab is the raised
-   surface of .tab-indicator above; hover lifts a pill's fill a step. */
-.tab {
-  position: relative; z-index: 1;
-  container: tab / inline-size;
-  width: 200px; min-width: 40px; flex: 0 1 200px; height: 28px;
-  border-radius: 9px; color: var(--muted);
-  background: var(--tab-idle);
-  cursor: default; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out, opacity 140ms ease-out;
-}
-.tab.active, .tab.dragging { background-color: transparent; }
-/* While tabs are dragged the gliding surface steps aside (it can't follow transforms): the active tab
-   carries its own, and the other tabs keep their usual fill, so the strip looks the same throughout. */
-.tabs.reordering .tab.active:not(.dragging) { background-color: var(--surface-raised); box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 0.5px var(--hairline); }
-.tab-inner { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 8px 0 10px; font-size: 12.5px; }
-.tab.active .tab-inner { font-weight: 500; }
-/* Narrow tabs: icon only, centered; the active tab keeps its close button. */
-@container tab (max-width: 72px) {
-  .tab-inner { justify-content: center; gap: 2px; padding: 0 4px; }
-  .tab-title { display: none; }
-  .tab:not(.active) .tab-close { display: none; }
-  .tab.active .tab-close { position: static; margin: 0; }
-}
-.tab.dragging { position: relative; z-index: 3; background: var(--surface-raised); color: var(--text); box-shadow: inset 0 1px 0 var(--highlight), 0 10px 24px -6px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); transition: none; scale: 1.03; }
-/* In-strip reorder: the tab follows the pointer and leaves the flow, so the drop slot — which
-   sits in the real order, group labels included — is the only gap. It keeps the width it had;
-   a fixed tab no longer gets one from the strip. */
-.tab.dragging.floating { position: fixed; z-index: 6; flex: none; margin: 0; }
-/* Pulled away from the strip, not yet out: it lifts off, a hint that letting go further out opens a window. */
-.tab.dragging.tearing { opacity: 0.82; scale: 0.97; box-shadow: inset 0 1px 0 var(--highlight), 0 14px 30px -6px rgb(0 0 0 / calc(0.9 * var(--shadow-k))); transition: opacity var(--t-fast) ease-out, scale var(--t-fast) ease-out, box-shadow var(--t-fast) ease-out; }
-/* The tab has left for a window of its own (main.js drives that drag): it keeps its DOM node, which holds
-   the pointer, but takes no room. */
-.group-label.handed, .group-label.held, .group-label.gathered { width: 0; min-width: 0; padding: 0; margin: 0 -2px; border: 0; overflow: hidden; opacity: 0; pointer-events: none; }
-.group-label.handed { transition: width 280ms var(--spring-smooth), padding 280ms var(--spring-smooth), margin 280ms var(--spring-smooth), opacity 90ms ease-out; }
-/* Cancelled: the tab (or group label) opens back up in its place. */
-.tab.returning, .group-label.returning { transition: flex-basis 300ms var(--spring-smooth), width 300ms var(--spring-smooth), min-width 300ms var(--spring-smooth), padding 300ms var(--spring-smooth), margin 300ms var(--spring-smooth), opacity 180ms ease-out; }
-.tab-drop-slot.in-group { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1.5px var(--group-color), 0 6px 16px -6px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
-.group-label.dragging { position: relative; z-index: 3; transition: none; }
-.group-label.dragging.tearing { opacity: 0.82; scale: 0.97; }
-.tab.dragging.handed, .tab.handed, .tab.held { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -2px; overflow: hidden; opacity: 0; scale: 1; pointer-events: none; }
-/* ...and the tabs close up over the space it leaves, rather than snapping shut. */
-.tab.dragging.handed, .tab.handed { transition: flex-basis 280ms var(--spring-smooth), width 280ms var(--spring-smooth), min-width 280ms var(--spring-smooth), margin 280ms var(--spring-smooth), opacity 90ms ease-out; }
-@media (prefers-reduced-motion: reduce) { .tab.dragging.handed, .tab.handed { transition: none; } }
-:root.pref-reduce-motion .tab.dragging.handed, :root.pref-reduce-motion .tab.handed { transition: none; }
-/* A dragged tab is over this strip: the tabs part and the tab itself appears in the gap, where it would
-   land (app.js onTabDropAt), as in Chrome and Safari; the card that followed the cursor steps aside. It
-   opens with the same spring the tabs move with, and a closing slot shrinks as the next one opens. */
-.tab-drop-slot {
-  position: relative; z-index: 2; flex: 0 0 0; width: 0; height: 28px; margin: 0 -2px; border-radius: 9px; overflow: hidden;
-  background: var(--surface-raised); color: var(--text);
-  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px rgb(var(--accent-rgb) / 0.45), 0 6px 16px -6px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
-  opacity: 0; scale: 0.94; pointer-events: none; -webkit-app-region: no-drag;
-  transition: flex-basis var(--t-smooth) var(--spring-smooth), width var(--t-smooth) var(--spring-smooth), margin var(--t-smooth) var(--spring-smooth), opacity 140ms ease-out, scale var(--t-smooth) var(--spring-snappy);
-}
-.tab-drop-slot.open { flex-basis: var(--slot-w, 200px); width: var(--slot-w, 200px); margin: 0; opacity: 1; scale: 1; }
-.tab-drop-slot.instant { transition: none; }
-.tab-drop-ghost { width: var(--slot-w, 200px); height: 100%; }
-.tab-drop-ghost .tab-inner { font-weight: 500; }
-.tab-drop-ghost .tab-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tab-drop-slot.pinned .tab-inner { justify-content: center; padding: 0; }
-.tab-drop-slot.pinned .tab-title, .tab-drop-slot.pinned .tab-drop-count { display: none; }
-.tab-drop-count { flex: none; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .tab-drop-slot { transition: opacity 1ms; } }
-:root.pref-reduce-motion .tab-drop-slot { transition: opacity 1ms; }
-/* The tab that just arrived by a drag: a brief accent ring, so the eye finds where it went. */
-.tab.landed { animation: landed-ring 1s ease-out; }
-@keyframes landed-ring { 0%, 25% { box-shadow: 0 0 0 1.5px rgb(var(--accent-rgb) / 0.6); } 100% { box-shadow: 0 0 0 1.5px rgb(var(--accent-rgb) / 0); } }
-@media (prefers-reduced-motion: reduce) { .tab.landed { animation: none; } }
-:root.pref-reduce-motion .tab.landed { animation: none; }
-/* Travelling with the dragged tab (a multi-selection, a group's tabs): folded into it. */
-.tab.gathered { width: 0; min-width: 0; flex: 0 0 0; padding: 0; margin: 0 -2px; overflow: hidden; opacity: 0; pointer-events: none; transition: none; }
-/* Folded away (out on the card, waiting to land, gathered into another tab): no width at all, whatever
-   the tab is otherwise (the active tab's min-width and a pinned tab's fixed width would leave a hole). */
-.tab.handed, .tab.held, .tab.gathered { width: 0 !important; min-width: 0 !important; flex: 0 0 0 !important; padding: 0 !important; }
-/* A group label dragged along its strip follows the pointer, like a tab. */
-.group-label.dragging.floating { position: fixed; z-index: 6; flex: none; margin: 0; }
-.tab-gather-count { margin-left: auto; }
-/* A whole group in a drop slot: its colour and name. */
-.tab-drop-ghost.group .tab-inner { gap: 7px; }
-.tab-drop-group-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--group-color, var(--g-gray)); }
-.tab-drop-slot:has(.tab-drop-ghost.group) { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1.5px var(--group-color, rgb(var(--accent-rgb) / 0.45)), 0 6px 16px -6px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
-.tabs.reordering .tab:not(.dragging) { transition: transform var(--t-smooth) var(--spring-smooth), background-color var(--t-fast) ease-out; }
-.tab:hover:not(.active) { background-color: var(--hover); color: var(--text); }
-.tab.active { min-width: 52px; color: var(--text); }
-.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; } /* inset: the strip scrolls, so an outside ring was clipped */
-/* Asleep (view destroyed, reloads on click): a greyed icon and a softer title, not a washed-out tab. */
-.tab.sleeping:not(.active) .tab-favicon { opacity: 0.5; filter: grayscale(1); transition: opacity var(--t-fast) ease-out, filter var(--t-fast) ease-out; }
-.tab.sleeping:not(.active) .tab-title { opacity: 0.72; transition: opacity var(--t-fast) ease-out; }
-.tab.sleeping:not(.active):hover .tab-favicon, .tab.sleeping:not(.active):hover .tab-title { opacity: 1; filter: none; }
-.tab.alert:not(.active)::before { content: ''; pointer-events: none; z-index: 1; position: absolute; top: 5px; left: 20px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg, transparent); } /* a dialog is waiting for this tab */
 /* Pinned: icon only, fixed width, at the left of the strip (main.js keeps them first). */
 .tab.pinned, .tab.pinned.active { width: 40px; min-width: 40px; flex: none; }
 .tab.pinned .tab-inner { justify-content: center; padding: 0; }
@@ -224,7 +129,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
 .tabs.more-left { mask-image: linear-gradient(90deg, transparent, #000 28px); }
 .tabs.more-right { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 .tabs.more-left.more-right { mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
-.tabs.reordering { mask-image: none; } /* the dragged tab, held at the edge, never fades into it */
+.tabs.reordering { mask-image: none; } /* the dragged tab, held at the edge, never fades into it; every reorder and gather FLIP sets this class, so the mask (a compositing cost) is off while tabs animate */
 .tab.arriving, .group-label.arriving { opacity: 0 !important; transition: none; } /* carried in by the chip: shows as it lands (tab:landed) */
 .tab-ghost { position: fixed; z-index: 5; pointer-events: none; margin: 0; }
 .tab-favicon { width: 16px; height: 16px; flex: none; border-radius: 3px; object-fit: contain; }
@@ -282,11 +187,11 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 
 /* One calm row: navigation left, address centered, actions right. */
 .toolbar {
-  display: grid; grid-template-columns: minmax(max-content, 1fr) minmax(0, 680px) minmax(max-content, 1fr);
-  align-items: center; gap: 8px; height: 44px; padding: 0 8px;
+  display: grid; grid-template-columns: minmax(max-content, 1fr) minmax(240px, 680px) minmax(0, max-content);
+  align-items: center; gap: 8px; height: var(--toolbar-h); padding: 0 8px;
 }
 .toolbar-start, .toolbar-end { display: flex; align-items: center; gap: 2px; }
-.toolbar-end { justify-content: flex-end; }
+.toolbar-end { justify-content: flex-end; min-width: 0; }
 
 .icon-btn {
   width: 30px; height: 30px; flex: none; display: grid; place-items: center;
@@ -314,10 +219,12 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
   border: none; background: transparent; color: var(--text); font: inherit; letter-spacing: -0.005em; outline: none; text-overflow: ellipsis;
 }
 .omnibox input::placeholder { color: var(--muted); }
+.omnibox input:focus-visible { box-shadow: none; } /* the field around it takes the ring */
 .omnibox:has(input:focus) {
   justify-content: flex-start; padding-left: 12px; padding-right: 12px; background: var(--surface-raised); transform: scale(1.012);
   box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 6px 18px -10px rgb(0 0 0 / calc(0.5 * var(--shadow-k)));
 }
+.omnibox:has(input:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 6px 18px -10px rgb(0 0 0 / calc(0.5 * var(--shadow-k))); }
 .omnibox:has(input:focus) input { flex: 1; field-sizing: fixed; animation: fade-in var(--t-base) ease-out; }
 .omnibox:has(input:focus) .security { display: none; }
 .omnibox:has(input:focus) .omnibox-end { opacity: 0; transform: scale(0.9); pointer-events: none; }
@@ -380,8 +287,37 @@ body.agent-active .agent-pill { display: flex; animation: pill-in var(--t-snappy
 /* Extension icons can't push the ⋯ and AI buttons out of the window: the toolbar's end column is
    max-content, so enough icons at the 800px minimum ran it past the right edge (body clips it). The
    list gets what's left after the other buttons and a usable address field; icons past that are
-   clipped (there's no overflow menu yet). */
-browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); max-width: max(84px, calc(100vw - 600px)); overflow: hidden; }
+   clipped, and the "..." button beside the list (app.js) lists them. */
+browser-action-list { display: flex; align-items: center; min-height: 28px; --browser-action-hover-bg: var(--hover); max-width: max(84px, calc(100vw - 640px)); overflow: hidden; }
+body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /* the zoom pill sits in the address field's end: the icons give it room */
+/* Wide windows: the address field stays a reasonable width and centred, with the icons at the edges. */
+@media (min-width: 1600px) {
+  .toolbar { grid-template-columns: minmax(max-content, 1fr) minmax(240px, 760px) minmax(0, max-content); }
+}
+/* The page zoomed in far: the pill and the security label take the field's room, so the URL starts at the left and the label shrinks to its icon. */
+@media (max-width: 1200px) {
+  body.zoomed .omnibox:not(:has(input:focus)) { justify-content: flex-start; padding-left: 12px; }
+  body.zoomed .security span { display: none; }
+}
+
+/* 800-900 px: the security label's words give way to its icon (the aria-label names it), and the omnibox's
+   end actions pack tighter, so the address keeps the room. */
+@media (max-width: 900px) {
+  .security span { display: none; }
+  .omnibox-end { gap: 0; }
+  .omnibox-action { width: 24px; }
+}
+/* ~800 px: the address field keeps its 240 px floor (the grid column), so the end column shrinks first: tighter gaps,
+   fewer extension icons (the list's cap drops; the overflow button lists the rest), and any remainder is clipped. */
+@media (max-width: 860px) {
+  .toolbar { gap: 4px; padding: 0 6px; }
+  .toolbar-end { gap: 0; overflow: clip; overflow-clip-margin: 3px; } /* (the margin keeps the buttons' focus ring) */
+  browser-action-list { max-width: max(56px, calc(100vw - 600px)); }
+}
+/* Very wide windows: the address field stops growing. */
+@media (min-width: 1920px) {
+  .toolbar { grid-template-columns: minmax(max-content, 1fr) minmax(240px, 880px) minmax(0, max-content); }
+}
 
 /* Find bar: the row opens by animating its grid track, so the page eases down with it. */
 .findbar {
@@ -393,10 +329,11 @@ browser-action-list { display: flex; align-items: center; min-height: 28px; --br
 .findbar.open .findbar-inner { padding-bottom: 6px; }
 .findbar-inner > * { transition: transform var(--t-smooth) var(--spring-smooth); }
 .findbar:not(.open) .findbar-inner > * { transform: translateY(-6px); }
-.findbar input { width: 260px; height: 28px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; transition: background-color var(--t-fast) ease-out, box-shadow var(--t-base) var(--ease-out); }
+.findbar input { width: clamp(160px, 30vw, 260px); height: 28px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; transition: background-color var(--t-fast) ease-out, box-shadow var(--t-base) var(--ease-out); }
 .findbar input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), 0 0 0 4px var(--accent-soft); }
+.findbar input:focus-visible { box-shadow: 0 0 0 1px var(--border), var(--focus-ring); }
 .find-count { min-width: 72px; padding: 0 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.findbar.no-match input { box-shadow: 0 0 0 1px var(--danger); animation: shake 320ms var(--ease-out); }
+.findbar.no-match input { box-shadow: 0 0 0 1px var(--danger); animation: shake var(--t-drag) var(--ease-out); }
 @keyframes shake { 20% { transform: translateX(-3px); } 45% { transform: translateX(3px); } 70% { transform: translateX(-1.5px); } }
 
 .loadbar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; overflow: hidden; z-index: 1; animation: fade-in var(--t-base) ease-out; }
@@ -423,9 +360,10 @@ body.agent-active.agent-away .viewport { background: var(--surface); }
 .working-in span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sidebar {
-  position: relative; overflow: hidden;
-  /* --reveal (0–1) is driven by a spring in app.js while the sidebar opens or closes. */
-  width: calc(var(--sidebar-width) * var(--reveal, 1)); max-width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; align-items: flex-end; min-height: 0;
+  position: relative; overflow: hidden; isolation: isolate; /* own stacking context: the --z-* scale stays inside it */
+  /* The sidebar is always laid out at its final width. While it opens or closes, app.js slides it with a
+     transform + opacity on this one element (body.sidebar-moving, below): no layout or child restyle per frame. */
+  width: var(--sidebar-width); max-width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; align-items: flex-end; min-height: 0;
   /* The divider is a real border inside the sidebar: the page view is a native layer drawn on
      top of the UI, so anything painted outside the sidebar's box would be hidden under it. */
   background: var(--bg); border-left: 1px solid var(--border); box-shadow: 0 -1px 0 var(--hairline);
@@ -433,18 +371,21 @@ body.agent-active.agent-away .viewport { background: var(--surface); }
 /* Content keeps its full width and slides with the sidebar's leading edge, so text never reflows mid-animation. */
 .sidebar > :not(.sidebar-resize) {
   width: calc(var(--sidebar-width) - 1px); flex-shrink: 0;
-  opacity: calc(0.25 + var(--reveal, 1) * 0.75);
 }
+/* Moving: the sidebar floats over the page area (which is held at its full size under the snapshot) and its
+   inline transform/opacity are driven by the spring. The strip a closing sidebar uncovers is the snapshot-edge colour. */
+.body { position: relative; }
+body.sidebar-moving:not(.chat-full) .sidebar { position: absolute; top: 0; bottom: 0; right: 0; z-index: var(--z-float, 5); will-change: transform, opacity; }
 .sidebar > .messages { flex-shrink: 1; min-height: 0; }
 /* Warm-up: painted once at idle in the real spot, under the live page (the native page view
    covers it), so the first real open has nothing left to build. */
-body.sidebar-hidden .sidebar.prewarm { visibility: visible; position: fixed; top: 82px; bottom: 0; right: 0; width: var(--sidebar-width); }
+body.sidebar-hidden .sidebar.prewarm { visibility: visible; position: fixed; top: var(--chrome-h); bottom: 0; right: 0; width: var(--sidebar-width); }
 /* Hidden, the sidebar stays laid out at zero width so opening it costs only a width change. */
 body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 0; }
 .sidebar-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; z-index: 3; cursor: col-resize; }
 .sidebar-resize::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: transparent; transition: background-color var(--t-fast) ease-out; }
 .sidebar-resize:hover::after, .sidebar-resize:focus-visible::after, body.resizing .sidebar-resize::after { background: var(--accent); }
-.sidebar-resize:focus-visible { outline: none; }
+.sidebar-resize:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 
 .sidebar-head { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 8px 0 20px; }
@@ -459,7 +400,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* ---------- full-page chat: homepage "Ask AI" fills the whole content area ---------- */
 /* The native page view is hidden by main (see 'chat:full' in main.js) rather than resized down to
    nothing, so there is no page to keep visible beside the chat here — the sidebar just takes over
-   the full width in place, ignoring --reveal and the resize handle entirely. */
+   the full width in place, ignoring the spring and the resize handle entirely. */
 body.chat-full .sidebar { width: 100%; max-width: none; align-items: stretch; border-left: none; animation: chat-full-in var(--t-smooth) var(--spring-smooth) backwards; }
 body.chat-full .sidebar > :not(.sidebar-resize) { width: 100%; opacity: 1; }
 body.chat-full .sidebar-resize { display: none; }
@@ -545,6 +486,10 @@ body.chat-full .setup { text-align: left; }
 .messages > .restored { animation: none; }
 
 .msg { margin: 16px 0; }
+/* Long conversations: messages scrolled far out of view aren't laid out or painted. The newest few are always
+   rendered (so scroll-to-bottom measures real heights), and the clip margin keeps a reply's copy/regenerate
+   buttons, which sit just outside its box, from being cut off. */
+.messages > .msg:not(:nth-last-child(-n+4)) { content-visibility: auto; contain-intrinsic-size: auto 160px; overflow-clip-margin: 44px; }
 .msg.user {
   margin-left: 40px; padding: 8px 12px; border-radius: 14px 14px 4px 14px; background: var(--field); white-space: pre-wrap; word-wrap: break-word;
   box-shadow: inset 0 1px 0 var(--highlight); transform-origin: bottom right;
@@ -625,7 +570,8 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 }
 .working.waiting { display: none; } /* an approval card is waiting on the user, not the AI */
 @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(200%); } }
-@keyframes working-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.9; } }
+/* Opacity only, and slow (3.2 s): the reduced-motion status indicator, a gentle breath rather than a flash. */
+@keyframes working-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.8; } }
 @keyframes pulse { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
 
 /* ---------- composer (a floating glass layer; messages pass underneath) ---------- */
@@ -639,9 +585,14 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
   box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
   transition: box-shadow var(--t-smooth) var(--ease-out), transform var(--t-smooth) var(--spring-smooth);
 }
+/* While the sidebar springs or is dragged wider, its children's opacity changes every frame, which makes the
+   blur behind the composer resample each frame; the glass is a flat veil for those few hundred milliseconds. */
+body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; }
 .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
 .composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; max-height: 160px; padding: 4px 0; }
 .composer textarea::placeholder { color: var(--muted); }
+.composer textarea:focus-visible { box-shadow: none; } /* the whole composer takes the ring */
+.composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
 .send {
   position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
   background: var(--accent); color: var(--on-accent);
@@ -742,7 +693,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
   .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
   .tab.ai-reading .tab-title, .tab-favicon.spinner, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
   /* The working line stays visible: the light stops travelling and the whole bar breathes instead. */
-  .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 1.8s ease-in-out infinite !important; animation-duration: 1.8s !important; animation-iteration-count: infinite !important; }
+  .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 3.2s ease-in-out infinite !important; animation-duration: 3.2s !important; animation-iteration-count: infinite !important; }
   .loadbar::before { transform: none; left: 0; width: 100%; opacity: 0.6; }
   body.agent-active .viewport, body.agent-active .agent-pill { animation: none !important; }
   button:active:not(:disabled) { transform: none; }
@@ -751,6 +702,9 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 }
 @media (prefers-reduced-transparency: reduce) {
   .composer { background: var(--surface-raised); backdrop-filter: none; }
+  /* Every other blurred surface (the task sheet over the sidebar, attachment badges) goes opaque too. */
+  .attachment-remove { background: rgba(0, 0, 0, 0.78); backdrop-filter: none; }
+  .task-create { background: var(--bg); backdrop-filter: none; }
 }
 
 /* Copy a reply: appears on hover/focus at the reply's corner. */
@@ -777,7 +731,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 
 /* Settings -> Accessibility -> Reduce motion and Performance mode (pref-reduce-motion, prefs.css) squash every
    animation to one 0.01ms run, which left the working line's light parked off the bar: same pulse instead. */
-.pref-reduce-motion .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 1.8s ease-in-out infinite !important; animation-duration: 1.8s !important; animation-iteration-count: infinite !important; }
+.pref-reduce-motion .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 3.2s ease-in-out infinite !important; animation-duration: 3.2s !important; animation-iteration-count: infinite !important; }
 
 /* In the background, decorative loops stop (saves GPU; nothing to look at). */
 body.window-inactive .agent-pill,
@@ -806,7 +760,8 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .group-label.crowded .group-name { display: none; }
 .group-label.crowded::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--group-color); }
 .group-label.crowded:not(.collapsed) .group-count { display: none; }
-.group-label input { width: 96px; padding: 0; border: none; background: transparent; color: inherit; font: inherit; outline: none; }
+.group-label input { width: 96px; padding: 0; border: none; border-radius: 3px; background: transparent; color: inherit; font: inherit; outline: none; }
+.group-label input:focus-visible { box-shadow: var(--focus-ring); }
 /* A group reads as one run: its colour line starts under the label and carries on, unbroken across
    the gaps, under each of its tabs, with rounded ends at the label and the group's last tab. */
 .tab.grouped::after {
@@ -845,7 +800,10 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 
 /* Page snapshot during the sidebar animation: pinned to the page's top-left at its original size,
    so the sidebar slides over it; any uncovered strip takes the page's own edge colour. */
-.viewport:has(.page-snapshot) { background: var(--snapshot-edge, var(--surface)); }
+.viewport:has(.page-snapshot), body.resizing .viewport { background: var(--snapshot-edge, var(--bg)); } /* a resize drag: until the snapshot lands, the area the held page hasn't filled reads as the page's edge, not a stale surface */
+.page-snapshot.fade-in { animation: snapshot-in var(--t-press) ease-out; }
+@keyframes snapshot-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .page-snapshot.fade-in { animation: none; } }
 .page-snapshot { position: absolute; left: 0; top: 0; max-width: none; pointer-events: none; user-select: none; }
 
 /* The AI button shows the selected model's company mark. */

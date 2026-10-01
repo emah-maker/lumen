@@ -116,8 +116,7 @@ const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const isWebUrl = (url) => /^https?:\/\//i.test(url);
 
 // Look like stock Chrome; sites (notably Google) treat unknown browser tokens as bots.
-const UA_PLATFORM = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; Intel Mac OS X 10_15_7' }[process.platform] || 'X11; Linux x86_64';
-app.userAgentFallback = `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
+app.userAgentFallback = require('./browser/chrome-identity').userAgent(process.platform, process.versions.chrome); // (browser/chrome-identity.js)
 // Google's sign-in on other sites (One Tap, "Sign in with Google") uses FedCM when the browser says it is Chrome.
 // Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
 app.commandLine.appendSwitch('disable-features', 'FedCm');
@@ -171,7 +170,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
-  'app-menu', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
@@ -1055,20 +1054,38 @@ const SEED_SITES = [
 let history = new Map(); // url -> { url, title, visits, last }
 let historySaveTimer = null;
 
+// Read off the startup path (a long history is a sizeable file): visits recorded meanwhile are kept, with the
+// file's earlier ones merged under them. Whatever needs the whole list awaits `historyReady`; suggestions just
+// work from what is there.
+let historyLoaded = false;
+let historyReady = Promise.resolve();
 function loadHistory() {
-  try {
-    // Older builds recorded sign-in and token URLs; drop them on load.
-    history = new Map(JSON.parse(fs.readFileSync(HISTORY_FILE(), 'utf8')).filter((h) => importer.isWorthImporting(h.url)).map((h) => [h.url, h]));
-  } catch {
-    history = new Map();
-  }
+  historyReady = (async () => {
+    try {
+      await new Promise((r) => setImmediate(r));
+      // Older builds recorded sign-in and token URLs; drop them on load.
+      const saved = JSON.parse(await fs.promises.readFile(HISTORY_FILE(), 'utf8')).filter((h) => importer.isWorthImporting(h.url));
+      for (const h of saved) {
+        const now = history.get(h.url);
+        if (!now) history.set(h.url, h);
+        else { now.visits += h.visits || 0; now.last = Math.max(now.last, h.last || 0); now.title = now.title || h.title; }
+      }
+      historyVersion++;
+      if (process.platform === 'darwin' && Menu.getApplicationMenu()) Menu.setApplicationMenu(macMenu()); // its History menu lists the recent pages
+    } catch { /* no file yet, or unreadable: start empty */ }
+    historyLoaded = true;
+  })();
 }
 
+let historyDirty = false; // a visit is recorded that the file doesn't have yet
+const historyJson = () => JSON.stringify([...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000));
 function saveHistorySoon() {
+  historyDirty = true;
   clearTimeout(historySaveTimer);
   historySaveTimer = setTimeout(() => {
-    const entries = [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000);
-    fs.writeFile(HISTORY_FILE(), JSON.stringify(entries), () => {});
+    if (!historyLoaded) { saveHistorySoon(); return; } // (never overwrite the file with a list that is still missing its past)
+    historyDirty = false;
+    fs.writeFile(HISTORY_FILE(), historyJson(), () => {});
   }, 2000);
 }
 
@@ -1702,8 +1719,16 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
     // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
-  if (history?.entries?.length) {
-    wc.navigationHistory.restore({ entries: history.entries, index: history.index }).catch(() => wc.loadURL(url).catch(() => {}));
+  // The saved back/forward list is used only when its current entry is the page `url` names (tabSleep.wakePlan);
+  // otherwise, or if the restore throws or leaves the view blank, the plain address loads.
+  const plan = history?.entries?.length ? tabSleep.wakePlan({ sleepUrl: url, history, isError: isErrorPage }) : null;
+  if (plan?.restore) {
+    wc.navigationHistory.restore(plan.restore).catch(() => { if (!wc.isDestroyed()) wc.loadURL(url).catch(() => {}); });
+    setTimeout(() => { // a restore that never committed anything (stuck at about:blank): load the address
+      if (wc.isDestroyed() || wc.isLoading()) return;
+      const now = wc.getURL();
+      if (!now || now === 'about:blank') wc.loadURL(url).catch(() => {});
+    }, 10e3).unref?.();
   } else if (!loaded) { // an adopted page is already on its way to its address
     wc.loadURL(url).catch(() => {});
   }
@@ -1716,6 +1741,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
 // its title/url/favicon/group from the snapshot sleepTab() takes below. switchTab() wakes it back
 // up through wireView(), the same path a freshly opened tab takes, reloading the same URL (restoring
 // scroll position isn't attempted). See canSleep() for every case this leaves alone.
+const tabSleep = require('./features/tab-sleep'); // the pure decisions: may it sleep, how it wakes
 const SLEEP_AFTER_MS = 20 * 60 * 1000;
 const SLEEP_CHECK_MS = 60 * 1000;
 // When the OS is short of memory, background tabs sleep after 2 minutes instead, oldest first. On
@@ -1767,8 +1793,13 @@ function wakeTab(tab) {
   });
   tab.view = view;
   tab.sleeping = false;
+  // Real bounds before the page starts loading: a 0x0 view (the default) makes a heavy single-page site
+  // measure a zero-size viewport; switchTab's layout() came only after, and a tab woken while not in
+  // front (Reload, the AI, a drag) would stay 0x0 until first shown.
+  try { view.setBounds(tabSleep.wakeBounds(contentBounds, { fullscreen: tab.fullscreen, full: tab.fullscreen ? (() => { const [width, height] = win.getContentSize(); return { width, height }; })() : null })); } catch { /* laid out by layout() */ }
   win.contentView.addChildView(view);
   view.setVisible(false);
+  raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
   wireView(tab, tab.sleepUrl || newTabUrl(), history);
@@ -1797,12 +1828,15 @@ function addRestoredTab(url, title, favicon = null) {
 // A page may have text typed into a form; sleeping can't ask "Leave site?" the way a real close does
 // (will-prevent-unload, above, is deliberately bypassed for a silent background sleep), so this
 // substitutes for it. Any doubt (a throw, a page that blocks the read) counts as "yes, has input".
+// Also: a reply still streaming in (an AI chat site: the page keeps changing with no load in progress, or
+// shows a Stop button), a playing media element, a chosen upload (tabSleep.pageBusyScript). Bounded to 5 s.
 async function hasUnsavedInput(wc) {
   try {
-    return await wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `(() => {
-      const dirty = (el) => (el.matches('input,textarea') ? el.value !== (el.defaultValue ?? '') : el.isContentEditable && el.textContent.trim() !== '');
-      return [...document.querySelectorAll('input,textarea,[contenteditable=""],[contenteditable=true]')].some(dirty);
-    })()` }]);
+    const answer = await Promise.race([
+      wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: tabSleep.pageBusyScript(1200) }]),
+      new Promise((resolve) => setTimeout(resolve, 5000)), // a page that won't answer: undefined, which counts as busy
+    ]);
+    return tabSleep.pageBusy(answer);
   } catch {
     return true;
   }
@@ -1812,9 +1846,12 @@ async function hasUnsavedInput(wc) {
 // away), never settings/internal pages, never a tab mid-close, mid-navigation, playing audio, or with
 // typed form input. On any doubt this returns false and the tab is left alone.
 async function canSleep(tab) {
-  if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.settings || tab.closing || tab.openPopups > 0 || agent.usingTab(tab.id)) return false;
-  const wc = tab.view.webContents;
-  if (!isWebUrl(realUrl(wc)) || wc.isLoading() || wc.isCurrentlyAudible()) return false;
+  const wc = alive(tab) ? tab.view.webContents : null;
+  if (tabSleep.keepReason({
+    alive: Boolean(wc), sleeping: tab?.sleeping, active: tab?.id === activeId, settings: tab?.settings, closing: tab?.closing, unloadAsked: tab?.unloadAsked,
+    openPopups: tab?.openPopups, agentUsing: wc ? agent.usingTab(tab.id) : false, aiLock: tab?.aiLock, webPage: wc ? isWebUrl(realUrl(wc)) : false,
+    loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab?.fullscreen, devTools: wc?.isDevToolsOpened(),
+  })) return false;
   return !(await hasUnsavedInput(wc));
 }
 
@@ -1825,9 +1862,9 @@ async function sweepSleep() {
   for (const tab of [...tabs].sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0))) {
     if (!tab.lastActiveAt || tab.lastActiveAt > cutoff) continue;
     if (!(await canSleep(tab))) continue;
-    // hasUnsavedInput (inside canSleep) is an async round trip to the page: re-check the fast,
-    // synchronous conditions in case the user switched to (or closed) this exact tab meanwhile.
-    if (!alive(tab) || tab.sleeping || tab.id === activeId) continue;
+    // hasUnsavedInput (inside canSleep) is an async round trip to the page (over a second): re-check the fast,
+    // synchronous conditions in case the user switched to (or closed) this exact tab, or it started playing, meanwhile.
+    if (!alive(tab) || tab.sleeping || tab.id === activeId || tab.view.webContents.isCurrentlyAudible() || tab.view.webContents.isLoading()) continue;
     sleepTab(tab);
     sendTabs();
   }
@@ -1920,6 +1957,16 @@ function switchTab(id, { wake = true } = {}) {
 
 // `user`: the user closed it (a sleeping tab's ✕, Close group); a tab closed by code (a sign-in tab closing
 // itself, an extension) never takes its window with it.
+// Calls `fn` once the tab is closed (its page destroyed and the tab gone from the strip: a tab put to sleep
+// destroys its page too, and is still there). Returns a function that stops listening.
+function onTabGone(id, fn) {
+  const wc = tabs.find((t) => t.id === id)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return () => {};
+  const gone = () => { if (!tabs.some((t) => t.id === id)) fn(); };
+  wc.once('destroyed', gone);
+  return () => { if (!wc.isDestroyed()) wc.removeListener('destroyed', gone); };
+}
+
 function closeTab(id, { destroyed = false, user = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
@@ -2663,11 +2710,13 @@ function openHistoryPage() {
   openTab(HISTORY_URL, { historyPage: true });
 }
 const fromHistoryPage = (event) => event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith(HISTORY_URL);
-ipcMain.handle('history:list', (event) => {
+ipcMain.handle('history:list', async (event) => {
   if (!fromHistoryPage(event)) return [];
+  await historyReady;
   return [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000).map(({ url, title, last }) => ({ url, title, last }));
 });
-ipcMain.handle('history:remove', (event, url) => {
+ipcMain.handle('history:remove', async (event, url) => {
+  await historyReady;
   if (!fromHistoryPage(event) || typeof url !== 'string' || !history.delete(url)) return false;
   saveHistorySoon();
   return true;
@@ -2686,6 +2735,7 @@ function historyMenu() {
       click: async () => {
         const { response } = await dialog.showMessageBox(win, { type: 'question', buttons: [t('dialog.cancel'), t('history.clear.button')], defaultId: 1, cancelId: 0, message: t('history.clear'), detail: t('history.clear.detail') });
         if (response !== 1) return;
+        await historyReady;
         history.clear();
         fs.rm(HISTORY_FILE(), { force: true }, () => {});
       },
@@ -2915,51 +2965,23 @@ const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
 if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
-// (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol.
-const CHROME_MAJOR = process.versions.chrome.split('.')[0];
-// Chrome's brand list, built the way Chromium builds it (GenerateBrandVersionList): the made-up
-// "Not…A…Brand" entry and the order of the three both follow from the major version, so a
-// hard-coded list gives Lumen away as soon as Chromium moves on. Chromium 152 gives
-// Chromium, Not?A_Brand/24, Google Chrome; Chrome 154 gives Chromium, Google Chrome, Not A(Brand/99.
-function chromeBrands(full) {
-  const seed = Number(CHROME_MAJOR);
-  const chars = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_'];
-  const greaseVersion = ['8', '99', '24'][seed % 3];
-  const list = [
-    { brand: `Not${chars[seed % chars.length]}A${chars[(seed + 1) % chars.length]}Brand`, version: full ? `${greaseVersion}.0.0.0` : greaseVersion },
-    { brand: 'Chromium', version: full ? process.versions.chrome : CHROME_MAJOR },
-    { brand: 'Google Chrome', version: full ? process.versions.chrome : CHROME_MAJOR },
-  ];
-  const order = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]][seed % 6];
-  const shuffled = [];
-  list.forEach((b, i) => { shuffled[order[i]] = b; });
-  return shuffled;
-}
-// What Chrome reports as Windows' platformVersion (the UniversalApiContract version, not "10.0"): 10.0.0 or lower on
-// Windows 10, 13-14 on Windows 11 21H2, 15 on 22H2/23H2, 19 on 24H2 and later. Read from the build number.
-function windowsPlatformVersion() {
-  const build = Number(String(require('os').release()).split('.')[2]) || 0;
-  return build >= 26100 ? '19.0.0' : build >= 22621 ? '15.0.0' : build >= 22000 ? '14.0.0' : '10.0.0';
-}
-const UA_METADATA = {
-  brands: chromeBrands(false),
-  fullVersionList: chromeBrands(true),
-  platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux',
-  // Chrome on a Mac reports the real macOS version (26.0.0), not an empty string.
-  platformVersion: process.platform === 'win32' ? windowsPlatformVersion() : process.platform === 'darwin' ? process.getSystemVersion() : '',
-  architecture: process.arch === 'arm64' ? 'arm' : 'x86', // Chrome on Apple Silicon says "arm"
-  bitness: '64',
-  model: '',
-  mobile: false,
-};
+// (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
+// brand list, headers and window.chrome all come from browser/chrome-identity.js so they agree.
+const CHROME_IDENTITY = require('./browser/chrome-identity');
+// Google's sign-in hosts refuse a Chrome-shaped Electron whatever it reports; they get a Firefox identity instead
+// (browser/google-auth-identity.js): Firefox's User-Agent, no client hints, Firefox's navigator, no window.chrome.
+const GOOGLE_AUTH = require('./browser/google-auth-identity');
+const FIREFOX_PROFILE = GOOGLE_AUTH.firefoxProfile(process.platform);
+const UA_METADATA = CHROME_IDENTITY.uaMetadata({
+  chromeVersion: process.versions.chrome, platform: process.platform, arch: process.arch,
+  release: require('os').release(), systemVersion: process.platform === 'darwin' ? process.getSystemVersion() : '',
+});
 // The same identity for the Sec-CH-UA request headers, which Chrome sends on every request to a
 // secure origin. Requests from tabs otherwise go out with none at all (and the browser's own with
 // Electron's Chromium-only list): a Chrome user agent without them is what bot checks look for.
-const UA_HINT_HEADERS = {
-  'Sec-CH-UA': UA_METADATA.brands.map((b) => `"${b.brand}";v="${b.version}"`).join(', '),
-  'Sec-CH-UA-Mobile': '?0',
-  'Sec-CH-UA-Platform': `"${UA_METADATA.platform}"`,
-};
+const UA_HINT_HEADERS = CHROME_IDENTITY.lowEntropyHeaders(UA_METADATA);
+// Sec-CH-UA-Arch, -Platform-Version, -Full-Version-List… for an origin whose response asked for them (settings-backend.js).
+const uaHighEntropyHeaders = (hints) => CHROME_IDENTITY.highEntropyHeaders(UA_METADATA, hints);
 // The override only covers the tab's own frame. Cross-origin iframes and workers are separate
 // targets that would still say "Chromium", and Cloudflare's checkbox (an iframe from
 // challenges.cloudflare.com) fails a page whose frames disagree. So auto-attach to each one, paused
@@ -2974,8 +2996,17 @@ const popupWindowOptions = () => ({
 });
 // Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
 // strip; for popups and private windows (no strip) a small dialog over the window.
+// Automation on: Chromium's remote-debugging pipe (or port) is open, which Google can read as a bot.
+const automationIsOn = () => Boolean(readSettings().automationEnabled);
+function turnAutomationOff() { // what Settings → Advanced → Automation does when switched off, then a restart
+  try { writeSettings({ ...readSettings(), automationEnabled: false }); } catch {}
+  try { fs.rmSync(path.join(app.getPath('userData'), 'automation-token'), { force: true }); } catch {} // (a new address when it is turned on again)
+  app.relaunch();
+  app.quit();
+}
 const googleRefusedText = (wc, inTab) => (!identified.has(wc)
   ? t('google.refused.debugger') // Lumen couldn't present itself as Chrome here: another debugger holds the page
+  : automationIsOn() ? t('google.refused.automation')
   : t(inTab ? 'google.refused.tipsTab' : 'google.refused.tips'));
 // win: the window to show the dialog over (a tab's browser window); by default the popup's own.
 function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
@@ -2984,7 +3015,11 @@ function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
     if (!/^https:\/\/accounts\.google\.com\/.*signin\/rejected/.test(String(navUrl)) || Date.now() - shown < 10000) return;
     shown = Date.now();
     const win = winOf?.() || BrowserWindow.fromWebContents(wc);
-    if (win && !win.isDestroyed()) electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc, inTab), buttons: ['OK'] }).catch(() => {});
+    const offer = identified.has(wc) && automationIsOn(); // one click to the likely fix
+    if (win && !win.isDestroyed()) {
+      electronDialog.showMessageBox(win, { type: 'info', message: t('google.refused.title'), detail: googleRefusedText(wc, inTab), buttons: offer ? [t('google.refused.turnOff'), 'OK'] : ['OK'], defaultId: 0, cancelId: offer ? 1 : 0 })
+        .then(({ response }) => { if (offer && response === 0) turnAutomationOff(); }).catch(() => {});
+    }
   };
   wc.on('did-navigate', check);
   wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads
@@ -3039,17 +3074,44 @@ function applyChromeIdentity(wc) {
   }
   identified.add(wc);
   const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
+  const firefox = { userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform }; // no userAgentMetadata: Firefox has no client hints
+  const basic = { userAgent: override.userAgent, userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }; // (if this DevTools rejects the newest metadata fields, the brands still apply)
+  const send = (method, params, sessionId) => wc.debugger.sendCommand(method, params, sessionId);
   // Workers have no Emulation domain; Network sets the same thing there.
-  const identify = (sessionId) => wc.debugger.sendCommand('Emulation.setUserAgentOverride', override, sessionId)
-    .catch(() => wc.debugger.sendCommand('Network.setUserAgentOverride', override, sessionId)).catch(() => {});
-  const autoAttach = (sessionId) => wc.debugger.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
+  // asFirefox: the target is a Google sign-in page (see GOOGLE_AUTH): nothing of Chrome's brands may show there.
+  const identify = (sessionId, asFirefox = false) => (asFirefox
+    ? send('Emulation.setUserAgentOverride', firefox, sessionId).catch(() => send('Network.setUserAgentOverride', firefox, sessionId)).catch(() => {})
+    : send('Emulation.setUserAgentOverride', override, sessionId)
+      .catch(() => send('Emulation.setUserAgentOverride', basic, sessionId))
+      .catch(() => send('Network.setUserAgentOverride', override, sessionId))
+      .catch(() => send('Network.setUserAgentOverride', basic, sessionId)).catch(() => {}));
+  // window.chrome and navigator.webdriver, at document start in every frame (browser/chrome-identity.js); not in workers.
+  // (Both scripts name the hosts they act on: the Chrome one skips Google's sign-in hosts, the Firefox one runs only there.)
+  const script = (sessionId) => Promise.all([
+    send('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_IDENTITY.IDENTITY_SCRIPT, runImmediately: true }, sessionId).catch(() => {}),
+    send('Page.addScriptToEvaluateOnNewDocument', { source: GOOGLE_AUTH.firefoxScript(FIREFOX_PROFILE), runImmediately: true }, sessionId).catch(() => {}),
+  ]);
+  const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
-    Promise.all([identify(sessionId), targetInfo.type === 'iframe' ? autoAttach(sessionId) : null])
-      .finally(() => wc.debugger.sendCommand('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
+    const frame = targetInfo.type === 'iframe';
+    Promise.all([identify(sessionId, frame && GOOGLE_AUTH.isAuthUrl(targetInfo.url)), frame ? script(sessionId) : null, frame ? autoAttach(sessionId) : null])
+      .finally(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {}));
   });
-  identify();
+  // The page's own target follows its main frame: Firefox's User-Agent while it is on a sign-in host (every hop of a
+  // redirect chain counts), Chrome's again once it leaves. (The request headers are rewritten by host in
+  // settings-backend.js and the navigator by the script above, so neither waits on this.)
+  let asFirefox = false;
+  const follow = (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    const want = GOOGLE_AUTH.isAuthUrl(details.url);
+    if (want !== asFirefox) { asFirefox = want; identify(undefined, want); }
+  };
+  wc.on('did-start-navigation', follow);
+  wc.on('did-redirect-navigation', follow);
+  identify(undefined, GOOGLE_AUTH.isAuthUrl(wc.getURL()) ? (asFirefox = true) : false);
+  script();
   autoAttach();
 }
 
@@ -3858,7 +3920,7 @@ async function refreshDragStrips(d) {
     // All at once, not one after another: a quick drop onto another window's strip finds it measured.
     const found = await Promise.all(recs.filter((rec) => !((d.single && rec === d.rec) || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized())).map((rec) => stripGeometry(rec)));
     for (const g of found) if (g) next.set(g.rec, g);
-    if (tabDrag === d) d.strips = next;
+    if (tabDrag === d) { d.strips = next; d.targets?.invalidate(); } // the targets carry the strips' geometry
   } finally { d.refreshing = false; }
 }
 // A window is only shown once it has painted what it now holds: its strip with the tab, and the tab's
@@ -3881,6 +3943,7 @@ function whenPainted(rec, tab, then) {
 const tabById = (rec, id) => tabsOf(rec).find((t) => t.id === id);
 // Shows a window that has just been given a tab, faded in once it has painted, and focuses it.
 // Lumen's own Reduce motion setting, Performance mode, or the system's (Windows: animations off).
+const frameClock = require('./features/frame-clock'); // timers for the main process's own short animations
 const motionReducedMain = () => Boolean(settingsBackend.prefs().reduceMotion) || Boolean(perfMode.active?.())
   || systemPreferences?.getAnimationSettings?.().shouldRenderRichAnimation === false;
 function revealNewWindow(rec, tabId, then = () => {}) {
@@ -3894,14 +3957,14 @@ function revealNewWindow(rec, tabId, then = () => {}) {
     announce();
     const focus = () => { if (!tabDrag) w.focus(); }; // a new drag already under way keeps its window focused
     if (motionReducedMain()) { w.setOpacity(1); focus(); then(); return; }
-    const start = Date.now();
-    const FADE_MS = 150;
-    const step = setInterval(() => {
-      if (w.isDestroyed()) { clearInterval(step); return; }
-      const k = Math.min(1, (Date.now() - start) / FADE_MS);
-      w.setOpacity(1 - (1 - k) ** 3);
-      if (k === 1) clearInterval(step);
-    }, 16);
+    // Timed against the clock, aimed at frame boundaries (features/frame-clock.js): a setInterval(16) fires on
+    // Windows' coarse timer and stutters, and a busy turn slowed every later step. setOpacity is a native call
+    // per window, so the fade is a few steps (4 over ~120 ms) rather than one per frame.
+    let shown = -1;
+    const fade = frameClock.tween({ duration: 120, ease: (t) => frameClock.quantize(t, 4), onFrame: (eased) => {
+      if (w.isDestroyed()) { fade?.stop(); return; }
+      if (eased !== shown) { shown = eased; w.setOpacity(eased); }
+    } });
     focus();
     then();
   });
@@ -4039,20 +4102,21 @@ function glideCard(d, rec, slot) {
   if (need > cw) card.win.setSize(need, ch);
   cardCall('compact', true);
   cardCall('land', Math.round(slot.w || 0), Math.round(slot.h || 0)); // and takes the tab's width, height and corners on the way
-  const t0 = Date.now();
-  const ease = (t) => 1 - (1 - t) ** 3;
-  clearInterval(card.glide);
-  card.glide = setInterval(() => {
-    if (card.win.isDestroyed() || card.owner !== d) { clearInterval(card.glide); return; }
-    const t = Math.min(1, (Date.now() - t0) / 120);
-    card.win.setPosition(Math.round(x0 + (to.x - x0) * ease(t)), Math.round(y0 + (to.y - y0) * ease(t)));
-    if (t < 1) return;
-    clearInterval(card.glide);
-    cardCall('hide', 'land');
-    if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); // the real tab shows as the chip fades over it
-    clearTimeout(card.hideTimer);
-    card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && card.owner === d) card.win.hide(); }, 160);
-  }, 16);
+  card.glide?.stop();
+  // Frame-clock timing (features/frame-clock.js): each step's position comes from the elapsed time, and the
+  // timers aim at frame boundaries, so a late step skips ahead instead of stuttering.
+  card.glide = frameClock.tween({
+    duration: 120,
+    onFrame: (eased, t) => {
+      if (card.win.isDestroyed() || card.owner !== d) { card.glide?.stop(); return; }
+      card.win.setPosition(Math.round(x0 + (to.x - x0) * eased), Math.round(y0 + (to.y - y0) * eased));
+      if (t < 1) return;
+      cardCall('hide', 'land');
+      if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); // the real tab shows as the chip fades over it
+      clearTimeout(card.hideTimer);
+      card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && card.owner === d) card.win.hide(); }, 160);
+    },
+  });
 }
 
 // ---- a window made ready for a tear-off before it happens
@@ -4116,11 +4180,13 @@ function setDragHover(d, hit, { cancel = false, chipAs = 'cancel', dropping = fa
 function tickTabDrag() {
   const d = tabDrag;
   if (!d) return;
+  dragTicks.mark();
   if (!rcAlive(d.rec)) { endDragQuietly(d); return; } // the window was closed under the drag
   // A release that never came (the mouse-up went somewhere Lumen can't see): nothing is moved on a guess.
   // A card drag is dropped; a dragged window stays where it is, without joining a strip.
   const cursor = cursorPoint();
-  if (!d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y) { d.lastCursor = cursor; d.movedAt = Date.now(); }
+  const moved = !d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y;
+  if (moved) { d.lastCursor = cursor; d.movedAt = Date.now(); }
   // Measured from the last time the mouse moved: someone holding still over a strip isn't cut off.
   if (Date.now() - (d.movedAt || d.started) > (!d.hover ? Math.min(tabDragTimeoutMs, 30000) : tabDragTimeoutMs)) {
     d.rec.win.webContents.send('tab:dragabort'); // the strip lets go of its drag, and shows the tab again
@@ -4134,7 +4200,7 @@ function tickTabDrag() {
       d.cardAt = at;
       if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(at.x, at.y);
     }
-  } else {
+  } else if (moved || !d.last) { // a still cursor needs no display lookup: the window is already where it goes
     const area = screen.getDisplayNearestPoint(cursor).workArea;
     const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
     if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setPosition(b.x, b.y); d.last = b; } // position only: no size drift across displays
@@ -4163,12 +4229,20 @@ function tickTabDrag() {
 }
 // Every window that could be under the cursor, front first: the strips a tab can join, and the windows that
 // only get in the way (private windows, a normal window whose strip hasn't been measured yet).
+// Built at most every 120 ms (the strip measurement's own rhythm) and after each measurement, not on every
+// 4-8 ms tick of the drag: it looks every window up and measures its bounds.
 function dropTargets(d) {
+  if (!d.targets) d.targets = frameClock.ttlCache(() => buildDropTargets(d), 120);
+  return d.targets.get();
+}
+function buildDropTargets(d) {
   const out = [];
+  const recByWin = new Map();
+  for (const r of winRecs) recByWin.set(r.win, r);
   for (const w of BrowserWindow.getAllWindows()) {
     if (w.isDestroyed() || !w.isVisible() || w.isMinimized() || (dragCard && w === dragCard.win)) continue;
     if (d.single && w === d.rec.win) continue; // the window being dragged is under the cursor by definition
-    const rec = [...winRecs].find((r) => r.win === w);
+    const rec = recByWin.get(w);
     if (rec && isSpare(rec)) continue;
     const g = rec && d.strips.get(rec);
     out.push(g ? { key: rec, win: w, bounds: w.getContentBounds(), bottom: g.bottom, tabs: g.tabs } : { win: w, bounds: w.getBounds(), occluder: true });
@@ -4375,7 +4449,7 @@ function beginTabDrag(src, tabId, grab) {
   d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
   w.webContents.on('before-input-event', d.escape);
   refreshDragStrips(d);
-  d.timer = setInterval(tickTabDrag, 12);
+  d.timer = setInterval(() => { if (dragTicks.due(DRAG_TICK_GAP)) tickTabDrag(); }, 8); // a pointer move may have just ticked
   return true;
 }
 const num = (v) => (Number.isFinite(v) ? v : 0);
@@ -4387,8 +4461,13 @@ ipcMain.on('tab:dragstart', (event, id, grab) => {
 });
 // The pointer moved (the page holding it reports every move): the card or window follows at once, on the
 // mouse's own rhythm, instead of waiting for the next poll.
+// At most one tick per 4 ms: a 1 kHz mouse reports a move per millisecond, and each tick looks every window up
+// and moves a transparent window (the 8 ms poll below keeps going meanwhile), which backed up the main thread.
+// The poll and the pointer reports share one gate (tickTabDrag marks it), so they never tick back to back.
+const DRAG_TICK_GAP = 4;
+const dragTicks = frameClock.tickGuard();
 ipcMain.on('tab:dragmove', (event) => {
-  if (tabDrag && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
+  if (tabDrag && dragTicks.due(DRAG_TICK_GAP) && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
 });
 // A tab is being pulled towards the edge of the strip: it may come out next, so have a window ready.
 ipcMain.on('tab:dragprep', (event, tabId) => {
@@ -4545,6 +4624,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   // the tab pages too, or a video or call kept playing with no window to stop it.
   w.on('closed', () => {
     uiReady = false;
+    clearTimeout(freezeTimers.get(rec)); // no freeze timer outlives its window
+    freezeTimers.delete(rec);
     dropDeadWindowViews();
     winRecs.delete(rec);
     if (rec === spareRec) spareRec = null;
@@ -4635,6 +4716,11 @@ let quitting = false; // the app is shutting down: the session was saved by befo
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
   if (settingsPending && settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
+  if (historyDirty && historyLoaded) { // (visits from the last two seconds land now, once the past is merged in)
+    clearTimeout(historySaveTimer);
+    historyDirty = false;
+    try { fs.writeFileSync(HISTORY_FILE(), historyJson()); } catch { /* disk full or locked: the older file stays */ }
+  }
   quitting = true;
 });
 let uiReady = false; // the window's UI has loaded and its tabs are open
@@ -5205,6 +5291,7 @@ const settingsBackend = settingsPage.create({
   showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
   peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
+  chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   win: () => win,
   tabContents: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => t.view.webContents),
@@ -5277,8 +5364,20 @@ ipcMain.on('content-bounds', (_e, bounds) => {
 // A freeze that is never thawed (a lost message) ends by itself.
 const freezeSeq = new WeakMap(); // window rec -> number
 let freezeCounter = 0;
-const FREEZE_MAX_MS = 2500;
-ipcMain.handle('view:freeze', async () => {
+// Last resort only: the renderer thaws explicitly at the end of a spring or drag and pings view:freeze-alive while moving.
+const FREEZE_MAX_MS = 6000;
+const freezeTimers = new WeakMap(); // window rec -> timeout
+const snapshotSizer = require('./features/snapshot-size');
+function armFreezeTimeout(rec, seq) {
+  clearTimeout(freezeTimers.get(rec));
+  freezeTimers.set(rec, setTimeout(() => {
+    if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return;
+    console.warn(`[lumen] page freeze timed out after ${FREEZE_MAX_MS} ms without a thaw; showing the live page again`);
+    freezeSeq.set(rec, ++freezeCounter);
+    withWindow(rec, () => { viewFrozen = false; layout(); });
+  }, FREEZE_MAX_MS));
+}
+ipcMain.handle('view:freeze', async (_e, cssSize) => {
   const rec = curRec;
   const wc = activeTab()?.webContents;
   if (!rec || !wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
@@ -5288,12 +5387,12 @@ ipcMain.handle('view:freeze', async () => {
     const image = await wc.capturePage();
     if (image.isEmpty() || freezeSeq.get(rec) !== seq || !rcAlive(rec)) return null; // thawed meanwhile
     withWindow(rec, () => { viewFrozen = true; layout(); });
-    setTimeout(() => {
-      if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return;
-      freezeSeq.set(rec, ++freezeCounter);
-      withWindow(rec, () => { viewFrozen = false; layout(); });
-    }, FREEZE_MAX_MS);
-    return `data:image/jpeg;base64,${image.toJPEG(88).toString('base64')}`;
+    armFreezeTimeout(rec, seq);
+    // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
+    // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
+    const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
+    const shot = target ? image.resize({ width: target.width, height: target.height, quality: 'good' }) : image;
+    return shot.toJPEG(snapshotSizer.JPEG_QUALITY);
   } catch {
     return null;
   }
@@ -5305,8 +5404,11 @@ ipcMain.handle('view:warm', async () => {
   try { await wc.capturePage(); } catch {} // full size: the first full readback is the slow one
   return true;
 });
+ipcMain.on('view:freeze-alive', () => { // still animating: push the last-resort thaw back
+  if (curRec && viewFrozen) armFreezeTimeout(curRec, freezeSeq.get(curRec));
+});
 ipcMain.on('view:thaw', () => {
-  if (curRec) freezeSeq.set(curRec, ++freezeCounter); // a capture still in flight won't freeze after this
+  if (curRec) { clearTimeout(freezeTimers.get(curRec)); freezeSeq.set(curRec, ++freezeCounter); } // a capture still in flight won't freeze after this
   viewFrozen = false;
   layout();
 });
@@ -5420,10 +5522,25 @@ ipcMain.on('nav:back', () => activeTab()?.webContents.navigationHistory.goBack()
 ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());
 ipcMain.on('nav:reload', reloadActive);
 
-ipcMain.handle('suggest:query', (_e, query) => suggestions(query));
+ipcMain.handle('suggest:query', async (_e, query) => { await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));
+// The extension icons the toolbar has no room for: listed in a menu under the "..." button; the pick goes back
+// to the toolbar, which triggers that extension's action as its icon would.
+// A toolbar action with no title of its own is labelled by its extension's manifest name, never the raw id.
+const extensionName = (id) => {
+  let name = '';
+  try { name = String(session.defaultSession.extensions.getExtension(id)?.name || ''); } catch { /* gone */ }
+  return name.slice(0, 80) || t('extension.fallbackName');
+};
+ipcMain.on('actions:overflow', (_e, point, items) => {
+  const list = (Array.isArray(items) ? items : []).filter((i) => i && typeof i.id === 'string' && typeof i.title === 'string').slice(0, 60);
+  if (!list.length || !win || win.isDestroyed()) return;
+  const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
+  const menu = Menu.buildFromTemplate(list.map((i) => ({ label: i.title.slice(0, 80) || extensionName(i.id), click: () => ui()?.send('actions:overflow-pick', i.id) })));
+  menu.popup({ window: win, x: n(point?.x), y: n(point?.y) });
+});
 ipcMain.on('suggest:pick', (_e, index, listId) => ui()?.send('suggest:picked', { index, listId }));
 
 ipcMain.on('find:start', (_e, text, options = {}) => {
@@ -5675,7 +5792,7 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     if (done) return;
     done = true;
     clearTimeout(timer);
-    clearInterval(watch);
+    unwatch();
     cancelOpenRouterSignIn = null;
     server.close();
     if (authTab && tabs.some((t) => t.id === authTab)) setTimeout(() => { if (tabs.some((t) => t.id === authTab)) closeTab(authTab); }, 1200);
@@ -5683,8 +5800,8 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
   };
   cancelOpenRouterSignIn = () => finish({ ok: false, cancelled: true, message: t('openrouter.cancelled') });
   // Closing the sign-in tab (or it failing to load, offline, and the user closing it) cancels at
-  // once, instead of leaving the button disabled until the 5-minute timeout.
-  const watch = setInterval(() => { if (authTab && !tabs.some((t) => t.id === authTab)) cancelOpenRouterSignIn?.(); }, 700);
+  // once (onTabGone), instead of leaving the button disabled until the 5-minute timeout.
+  let unwatch = () => {}; // set once the tab exists
   const server = require('http').createServer(async (req, res) => {
     const code = new URL(req.url, 'http://127.0.0.1').searchParams.get('code');
     if (!code) { res.writeHead(404).end(); return; }
@@ -5711,6 +5828,7 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     const callback = `http://127.0.0.1:${server.address().port}/callback`;
     const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
     authTab = openTab(url).id;
+    if (!done) unwatch = onTabGone(authTab, () => cancelOpenRouterSignIn?.());
   });
 }));
 
@@ -5730,7 +5848,7 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
     if (done) return;
     done = true;
     clearTimeout(timer);
-    clearInterval(watch);
+    unwatch();
     cancelSpotifySignIn = null;
     server.close();
     if (authTab && tabs.some((x) => x.id === authTab)) setTimeout(() => { if (tabs.some((x) => x.id === authTab)) closeTab(authTab); }, 1200);
@@ -5738,7 +5856,7 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
   };
   cancelSpotifySignIn = () => finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
   // Closing the sign-in tab cancels at once, instead of waiting for the 5-minute timeout.
-  const watch = setInterval(() => { if (authTab && !tabs.some((x) => x.id === authTab)) cancelSpotifySignIn?.(); }, 700);
+  let unwatch = () => {}; // set once the tab exists
   const page = (title, text) => `<title>${title}</title><body style="font:15px system-ui;padding:40px">${text}</body>`;
   const server = require('http').createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -5760,7 +5878,7 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
   });
   const timer = setTimeout(() => finish({ ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
   server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: SPOTIFY_REDIRECT_PORT }) }));
-  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; });
+  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
 }));
 
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)

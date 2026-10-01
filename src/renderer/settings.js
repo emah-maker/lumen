@@ -233,6 +233,7 @@ async function buildAi(card) {
     select('maxSteps', tr('settings.ai.maxSteps', 'Max steps per task'), tr('settings.ai.maxStepsDesc', 'How many steps the assistant may take on one request before it wraps up with an answer. Unlimited still stops if it gets stuck in a loop, and you can always press Stop.'),
       [[0, tr('settings.ai.maxSteps.unlimited', 'Unlimited')], ...[30, 60, 120, 250].map((n) => [n, String(n)])], { number: true }),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
+    toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
   );
   card.at('tabs-groups').append(
@@ -705,8 +706,8 @@ const WIDGET_ICONS = {
 const WIDGET_HEIGHTS = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']];
 const WIDGET_SPANS = [['2', 'A third'], ['3', 'Half'], ['4', 'Two thirds'], ['6', 'Full width']];
 const WIDGET_COLORS = [['calendar', 'Default'], ['match', 'Match screen'], ['accent', 'Accent only'], ['mono', 'Monochrome']];
-const TODO_SOURCES = [['todayOverdue', 'Today and overdue'], ['today', 'Today'], ['upcoming', 'Upcoming (next days)'], ['inbox', 'Inbox'], ['project', 'A project'], ['label', 'A label'], ['all', 'All tasks'], ['custom', 'A Todoist filter']];
-const TODO_FIELDS = [['due', 'Due date and time'], ['project', 'Project name and colour'], ['labels', 'Labels'], ['priority', 'Priority colour'], ['description', 'Description'], ['subtasks', 'Subtask count'], ['recurring', 'Repeat icon']];
+const TODO_SOURCES = [['todayOverdue', 'Today and overdue'], ['today', 'Today'], ['upcoming', 'Upcoming'], ['inbox', 'Inbox'], ['project', 'A project'], ['label', 'A label'], ['all', 'All tasks'], ['custom', 'A Todoist filter']];
+const TODO_FIELDS = [['due', 'Due date and time'], ['project', 'Project name and color'], ['labels', 'Labels'], ['priority', 'Priority color'], ['description', 'Description'], ['subtasks', 'Subtask count'], ['recurring', 'Repeat icon']];
 function widgetIcon(type) {
   const span = h('span', { class: `widget-icon wi-${type}` });
   span.innerHTML = WIDGET_ICONS[type] || ''; // constant markup
@@ -1542,7 +1543,7 @@ async function buildWidgets(card) {
     window.scrollTo?.({ top: 0 });
   }
 
-  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the centre', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
+  const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the center', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
   const addRow = row('Add a widget', 'Weather, tasks, calendar, headlines, music, mail, stocks and more.', add);
   addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
@@ -1618,7 +1619,7 @@ async function buildPrivacy(card) {
   card.group('Tracking and connections').append(
     toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them: Electron has no full third-party cookie switch.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
-    toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honour it as an opt-out of data sale.'),
+    toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
     toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'),
   );
 

@@ -22,7 +22,7 @@ const size = (n) => {
 
 function statusOf(d) {
   if (d.state === 'completed') return d.exists ? size(d.total || d.received) : 'Deleted';
-  if (d.state === 'cancelled') return 'Cancelled';
+  if (d.state === 'cancelled') return 'Canceled';
   if (d.state === 'interrupted') return 'Failed';
   if (d.awaitingOk) return 'Waiting for your OK';
   const progress = d.total ? `${size(d.received)} of ${size(d.total)}` : size(d.received);

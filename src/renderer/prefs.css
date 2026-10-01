@@ -13,3 +13,6 @@
 .pref-lite .composer { backdrop-filter: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
 .pref-lite .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
 .pref-lite .approval:not(.resolved):hover { box-shadow: 0 0 0 1px var(--hairline); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

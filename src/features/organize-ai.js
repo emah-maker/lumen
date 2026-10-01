@@ -345,8 +345,8 @@ function mergePlans(plans) {
 function withTimeout(promise, ms, signal) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(Object.assign(new Error('The model took too long.'), { code: 'timeout' })), ms);
-    const onAbort = () => reject(Object.assign(new Error('Cancelled.'), { code: 'cancelled' }));
-    if (signal?.aborted) { clearTimeout(timer); reject(Object.assign(new Error('Cancelled.'), { code: 'cancelled' })); return; }
+    const onAbort = () => reject(Object.assign(new Error('Canceled.'), { code: 'cancelled' }));
+    if (signal?.aborted) { clearTimeout(timer); reject(Object.assign(new Error('Canceled.'), { code: 'cancelled' })); return; }
     signal?.addEventListener('abort', onAbort, { once: true });
     promise.then(resolve, reject).finally(() => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); });
   });

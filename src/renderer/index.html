@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data: crx: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data: blob: crx: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>Lumen</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="picker.css" />
@@ -25,7 +25,7 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l1.3 3.2L12.5 7l-3.2 1.3L8 11.5 6.7 8.3 3.5 7l3.2-1.3z"/></svg>
         <span data-i18n="tabs.organize">Organize</span>
       </button>
-      <button class="icon-btn tab-search-btn" id="tab-search" type="button" title="Search tabs (Ctrl+Shift+A)" aria-label="Search tabs" aria-haspopup="dialog" aria-expanded="false">
+      <button class="icon-btn tab-search-btn" id="tab-search" type="button" title="Search tabs (Ctrl+Shift+A)" aria-label="Search tabs" data-i18n-title="tabSearch.title" data-i18n-aria-label="tabSearch.label" aria-haspopup="dialog" aria-expanded="false">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>
       </button>
     </div>
@@ -72,6 +72,9 @@
           <svg viewBox="0 0 16 16" class="download-arrow" aria-hidden="true"><path d="M8 3v7M5 7.5 8 10.5l3-3M4.5 13h7"/></svg>
         </button>
         <browser-action-list id="extension-actions" alignment="bottom right"></browser-action-list>
+        <button class="icon-btn" id="actions-overflow" type="button" title="More extensions" aria-label="More extensions" aria-haspopup="menu" data-i18n-title="toolbar.moreExtensions" data-i18n-aria-label="toolbar.moreExtensions" hidden>
+          <svg viewBox="0 0 16 16" class="dots"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>
+        </button>
         <button class="icon-btn" id="toggle-sidebar" title="AI (Ctrl+J)" aria-label="AI assistant" aria-pressed="false" data-i18n-title="toolbar.ai.title" data-i18n-aria-label="toolbar.ai">
           <svg viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8"/></svg>
         </button>
@@ -244,6 +247,8 @@
   <script src="tabs-ask-core.js"></script>
   <script src="tabs-ask.js"></script>
   <script src="chat-items.js"></script>
+  <script src="snapshot-arrival.js"></script>
+  <script src="freeze-keepalive.js"></script>
   <script src="app.js"></script>
   <script src="chats.js"></script>
   <script src="tasks.js"></script>

@@ -56,7 +56,7 @@
       return [of, d.speed ? `${size(d.speed)}/s` : '', eta].filter(Boolean).join(' · ');
     }
     if (d.state === 'completed') return d.missing ? 'Deleted' : [size(d.total || d.received), d.host, when(d.endedAt)].filter(Boolean).join(' · ');
-    if (d.state === 'cancelled') return ['Cancelled', d.host].filter(Boolean).join(' · ');
+    if (d.state === 'cancelled') return ['Canceled', d.host].filter(Boolean).join(' · ');
     return ['Failed', d.host].filter(Boolean).join(' · ');
   }
   function actionsOf(d) {

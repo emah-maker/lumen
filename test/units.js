@@ -11,6 +11,58 @@ const { loadJson, writeJsonAtomic } = require('../src/settings/settings-file');
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
 
+// ---- the window's CSP lets the page snapshot (a blob: URL image, see freezePage in app.js) load
+{
+  const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
+  // A tolerant read of the CSP <meta>: any attribute order, quote style and spacing.
+  const cspMeta = (html.match(/<meta\b[^>]*>/gi) || []).find((m) => /http-equiv\s*=\s*["']?content-security-policy["']?(\s|\/|>)/i.test(m)) || '';
+  const csp = (cspMeta.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i) || []).slice(1).find((g) => g !== undefined) || '';
+  const imgSrc = (csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('img-src ')) || '').split(/\s+/);
+  check('csp: index.html img-src allows blob: (the sidebar snapshot)', imgSrc.includes('blob:'), csp);
+}
+
+// ---- a snapshot that decoded after a newer freeze or a thaw is revoked, not shown (freezePage in app.js)
+{
+  const { snapshotArrival } = require('../src/renderer/snapshot-arrival');
+  check('snapshot: current and decoded is shown', snapshotArrival({ token: 3, current: 3, decoded: true }) === 'show', '');
+  check('snapshot: superseded by a newer freeze or a thaw is discarded', snapshotArrival({ token: 3, current: 4, decoded: true }) === 'discard', '');
+  check('snapshot: superseded and broken is still just discarded (no thaw of the newer freeze)', snapshotArrival({ token: 3, current: 4, decoded: false }) === 'discard', '');
+  check('snapshot: current but broken thaws the live page', snapshotArrival({ token: 3, current: 3, decoded: false }) === 'thaw', '');
+  // Keep-alive for a held resize drag: stopped on every exit, and capped.
+  const { freezeKeepAlive } = require('../src/renderer/freeze-keepalive');
+  const fakeTimers = () => { const t = { live: new Set(), n: 0, fns: {} }; t.set = (fn) => { t.fns[++t.n] = fn; t.live.add(t.n); return t.n; }; t.clear = (id) => t.live.delete(id); return t; };
+  {
+    const t = fakeTimers();
+    const k = freezeKeepAlive(() => {}, { setTimer: t.set, clearTimer: t.clear, now: () => 0 });
+    k.stop();
+    check('keepalive: stop() clears the interval', t.live.size === 0, '');
+    k.stop();
+    check('keepalive: stop() twice is harmless', t.live.size === 0, '');
+  }
+  {
+    const t = fakeTimers();
+    let now = 0;
+    let pings = 0;
+    freezeKeepAlive(() => { pings++; }, { maxMs: 60000, setTimer: t.set, clearTimer: t.clear, now: () => now });
+    now = 30000; t.fns[1]();
+    check('keepalive: pings while under the cap', pings === 1 && t.live.size === 1, '');
+    now = 60000; t.fns[1]();
+    check('keepalive: at the cap it stops itself without pinging', pings === 1 && t.live.size === 0, '');
+  }
+  // Chrome height tokens: the strip and toolbar heights add up to --chrome-h, and both rows use them.
+  {
+    const fs = require('fs');
+    const path = require('path');
+    const css = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+    const appJs = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
+    check('chrome: --tabstrip-h and --toolbar-h are px tokens', /--tabstrip-h:\s*\d+px/.test(css) && /--toolbar-h:\s*\d+px/.test(css), '');
+    check('chrome: --chrome-h is calc(--tabstrip-h + --toolbar-h)', /--chrome-h:\s*calc\(var\(--tabstrip-h\)\s*\+\s*var\(--toolbar-h\)\)/.test(css), '');
+    check('chrome: .tabstrip height uses --tabstrip-h', /\.tabstrip\s*\{[^}]*height:\s*var\(--tabstrip-h\)/.test(css), '');
+    check('chrome: .toolbar height uses --toolbar-h', /\.toolbar\s*\{[^}]*height:\s*var\(--toolbar-h\)/.test(css), '');
+    check('chrome: one strip-fade system (more-left/right), not two', !/fade-start|fade-end/.test(css) && !/updateStripFades/.test(appJs), '');
+  }
+}
+
 // ---- address bar
 const searched = (text) => resolveInput(text, 'google').startsWith('https://www.google.com/search?q=');
 for (const [input, want] of [
@@ -2543,6 +2595,9 @@ async function swapHelperRuns() {
   check('drag: a menu tear-off stays fully on the work area', hung.x === area.x + area.width - 1200 && hung.y === area.y + area.height - 800 && hung.width === 1200 && hung.height === 800, JSON.stringify(hung));
   check('drag: a menu tear-off that already fits is not moved', JSON.stringify(placeOnWorkArea({ x: 40, y: 50, width: 800, height: 600 }, area)) === JSON.stringify({ x: 40, y: 50, width: 800, height: 600 }));
 }
+
+// ---- frame timing helpers (features/frame-clock.js)
+require('./frame-clock-units')(check);
 
 // ---- ask across open tabs (features/tabs-ask.js, renderer/tabs-ask-core.js, read_tabs in agent.js)
 async function tabsAskRuns() {
