@@ -14,9 +14,20 @@ const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 
 // ---- the window's CSP lets the page snapshot (a blob: URL image, see freezePage in app.js) load
 {
   const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
-  const csp = (html.match(/Content-Security-Policy"\s+content="([^"]*)"/) || [])[1] || '';
+  // A tolerant read of the CSP <meta>: any attribute order, quote style and spacing.
+  const cspMeta = (html.match(/<meta\b[^>]*>/gi) || []).find((m) => /http-equiv\s*=\s*["']?content-security-policy["']?(\s|\/|>)/i.test(m)) || '';
+  const csp = (cspMeta.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i) || []).slice(1).find((g) => g !== undefined) || '';
   const imgSrc = (csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('img-src ')) || '').split(/\s+/);
   check('csp: index.html img-src allows blob: (the sidebar snapshot)', imgSrc.includes('blob:'), csp);
+}
+
+// ---- a snapshot that decoded after a newer freeze or a thaw is revoked, not shown (freezePage in app.js)
+{
+  const { snapshotArrival } = require('../src/renderer/snapshot-arrival');
+  check('snapshot: current and decoded is shown', snapshotArrival({ token: 3, current: 3, decoded: true }) === 'show', '');
+  check('snapshot: superseded by a newer freeze or a thaw is discarded', snapshotArrival({ token: 3, current: 4, decoded: true }) === 'discard', '');
+  check('snapshot: superseded and broken is still just discarded (no thaw of the newer freeze)', snapshotArrival({ token: 3, current: 4, decoded: false }) === 'discard', '');
+  check('snapshot: current but broken thaws the live page', snapshotArrival({ token: 3, current: 3, decoded: false }) === 'thaw', '');
 }
 
 // ---- address bar
