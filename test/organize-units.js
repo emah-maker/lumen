@@ -1113,6 +1113,8 @@ let asked = 0;
       const guides = [0, 1, 2, 3], bests = [4, 5, 6], misc = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
       check('r14 token: "guide", "best", "2026", "review", "list", "plan", "tips", "near" and an adjective ("affordable") never form a group across topics',
         guides.every((i) => guides.every((j) => i === j || !generic.same(i, j))) && bests.every((i) => bests.every((j) => i === j || !generic.same(i, j))) && misc.every((i) => misc.every((j) => i === j || !generic.same(i, j))), words.map((_w, i) => generic.name(i)).join('|'));
+      const ports = organized(P14.parent.map(([t], i) => [t, `http://127.0.0.1:${5000 + (i % 3)}/${i}`]));
+      check('r14 names: a topic across three local ports is named for its topic, never for "127.0.0.1:5000"', ports.name(0) === 'Baby' && ports.same(0, find(P14.parent, /^Pediatrician/)), ports.name(0));
       const places = organized([['Austin city council agenda', 'https://www.austintexas.gov/council'], ['Austin dental clinic hours', 'https://www.example-dental.com/hours'], ['Austin bike lanes map', 'https://maps.example/bike'], ['Pasta carbonara recipe', 'https://www.seriouseats.com/carbonara']]);
       check('r14 names: three tabs that only share a city are not a group named for it', [0, 1, 2].every((i) => places.name(i) !== 'Austin'), [0, 1, 2].map(places.name).join());
     }

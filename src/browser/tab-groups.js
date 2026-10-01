@@ -1892,7 +1892,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     const bigramRanked = [...bigramScore.values()].filter((e) => e.count >= majority).sort((a, b) => b.score - a.score);
     const top = ranked[0];
     const nameTop = ranked.find(([k]) => !isGenericKey(k)); // "job" may link tabs, and keys the group, but never names it
-    const siteOnly = top && members.every((d) => registrableDomain(d.url) === registrableDomain(members[0].url)) && registrableDomain(members[0].url).startsWith(top[0]);
+    const siteOnly = top && members.every((d) => registrableDomain(d.url) === registrableDomain(members[0].url)) && registrableDomain(members[0].url).startsWith(top[0]) && members.every((d) => d.site === members[0].site);
     // A project's tabs: named for the repo ("Lumen PRs", "Lumen issues"), whatever else is in the group.
     const repoCount = new Map();
     for (const d of members) { const r = repoOf(d.url); if (r) repoCount.set(r.name, (repoCount.get(r.name) || 0) + 1); }
@@ -1908,7 +1908,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     const kindOfSite = (n) => knowledge.BROAD_HINTS.has(n) || knowledge.FALLBACK_CATEGORIES.some((k) => k.name === n); // a name that says a KIND of site
     // The name of last resort: the site's, when every tab is on one site; else what the tabs share (a concept). Tabs of different
     // sites with nothing to be named for are not a group ("Alpha" for a houseplant page and a resume template).
-    const oneSiteAll = members.every((d) => d.siteKey === members[0].siteKey);
+    const oneSiteAll = members.every((d) => d.siteKey === members[0].siteKey && d.site === members[0].site); // (dev servers on different ports are one siteKey, '': not one site)
     const fallbackName = () => {
       if (oneSiteAll) return siteName(members[0].url, members[0].title);
       const label = conceptLabel(c, docs) || categoryLabel(members);
