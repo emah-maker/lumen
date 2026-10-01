@@ -28,6 +28,39 @@ const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 
   check('snapshot: superseded by a newer freeze or a thaw is discarded', snapshotArrival({ token: 3, current: 4, decoded: true }) === 'discard', '');
   check('snapshot: superseded and broken is still just discarded (no thaw of the newer freeze)', snapshotArrival({ token: 3, current: 4, decoded: false }) === 'discard', '');
   check('snapshot: current but broken thaws the live page', snapshotArrival({ token: 3, current: 3, decoded: false }) === 'thaw', '');
+  // Keep-alive for a held resize drag: stopped on every exit, and capped.
+  const { freezeKeepAlive } = require('../src/renderer/freeze-keepalive');
+  const fakeTimers = () => { const t = { live: new Set(), n: 0, fns: {} }; t.set = (fn) => { t.fns[++t.n] = fn; t.live.add(t.n); return t.n; }; t.clear = (id) => t.live.delete(id); return t; };
+  {
+    const t = fakeTimers();
+    const k = freezeKeepAlive(() => {}, { setTimer: t.set, clearTimer: t.clear, now: () => 0 });
+    k.stop();
+    check('keepalive: stop() clears the interval', t.live.size === 0, '');
+    k.stop();
+    check('keepalive: stop() twice is harmless', t.live.size === 0, '');
+  }
+  {
+    const t = fakeTimers();
+    let now = 0;
+    let pings = 0;
+    freezeKeepAlive(() => { pings++; }, { maxMs: 60000, setTimer: t.set, clearTimer: t.clear, now: () => now });
+    now = 30000; t.fns[1]();
+    check('keepalive: pings while under the cap', pings === 1 && t.live.size === 1, '');
+    now = 60000; t.fns[1]();
+    check('keepalive: at the cap it stops itself without pinging', pings === 1 && t.live.size === 0, '');
+  }
+  // Chrome height tokens: the strip and toolbar heights add up to --chrome-h, and both rows use them.
+  {
+    const fs = require('fs');
+    const path = require('path');
+    const css = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+    const appJs = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
+    check('chrome: --tabstrip-h and --toolbar-h are px tokens', /--tabstrip-h:\s*\d+px/.test(css) && /--toolbar-h:\s*\d+px/.test(css), '');
+    check('chrome: --chrome-h is calc(--tabstrip-h + --toolbar-h)', /--chrome-h:\s*calc\(var\(--tabstrip-h\)\s*\+\s*var\(--toolbar-h\)\)/.test(css), '');
+    check('chrome: .tabstrip height uses --tabstrip-h', /\.tabstrip\s*\{[^}]*height:\s*var\(--tabstrip-h\)/.test(css), '');
+    check('chrome: .toolbar height uses --toolbar-h', /\.toolbar\s*\{[^}]*height:\s*var\(--toolbar-h\)/.test(css), '');
+    check('chrome: one strip-fade system (more-left/right), not two', !/fade-start|fade-end/.test(css) && !/updateStripFades/.test(appJs), '');
+  }
 }
 
 // ---- address bar

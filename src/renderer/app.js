@@ -1568,22 +1568,7 @@ function renderTabs(state) {
     const next = queuedTabState;
     queuedTabState = null;
     if (next) renderTabsNow(next);
-    updateStripFades();
   });
-}
-// A strip with more tabs than fit scrolls sideways (tabs keep a minimum width); soft edges show which side has more.
-// Classes only, so the mask costs nothing while every tab fits.
-let stripFadeFrame = 0;
-function updateStripFades() {
-  const strip = $('tabs');
-  const over = strip.scrollWidth - strip.clientWidth > 1;
-  strip.classList.toggle('fade-start', over && strip.scrollLeft > 1);
-  strip.classList.toggle('fade-end', over && strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1);
-}
-{
-  const queueFades = () => { if (!stripFadeFrame) stripFadeFrame = requestAnimationFrame(() => { stripFadeFrame = 0; updateStripFades(); }); };
-  $('tabs').addEventListener('scroll', queueFades, { passive: true });
-  new ResizeObserver(queueFades).observe($('tabs'));
 }
 // What decides where tabs sit and how wide they are. While it is unchanged, an update is only titles,
 // icons, loading flags and the like: those are patched in place, with no measuring and no FLIP.
@@ -2085,6 +2070,9 @@ function edgeColor(img) {
 }
 
 // fade: the snapshot eases in over --t-press (a shortcut-started spring, where the capture lands mid-animation).
+// The last page edge colour seen: a resize drag shows it in the area the page hasn't caught up with yet,
+// before its own snapshot (50-200 ms) is ready.
+let lastSnapshotEdge = '';
 async function freezePage({ fade = false } = {}) {
   const token = ++freezeToken;
   // The area the snapshot fills, in CSS pixels: main captures it at that size, not at device size.
@@ -2109,7 +2097,8 @@ async function freezePage({ fade = false } = {}) {
   if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
   if (fade) img.classList.add('fade-in');
-  viewport.style.setProperty('--snapshot-edge', edgeColor(img));
+  lastSnapshotEdge = edgeColor(img);
+  viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge);
   viewport.append(img);
 }
 
@@ -2226,11 +2215,13 @@ resizer.addEventListener('pointerdown', (e) => {
   const held = frozen && !heldRect;
   if (held) {
     heldRect = viewport.getBoundingClientRect();
+    if (lastSnapshotEdge) viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge); // body.resizing paints it behind the held page
     frozen.then(() => { if (!ended && !snapshot && heldRect) { heldRect = null; reportBounds(); } }); // no snapshot came: don't leave the page at a stale size
   }
   let frame = 0;
   // A still pointer sends no moves, and main thaws a freeze that has been quiet for 6 s: keep it alive until the drag ends.
-  const alive = setInterval(freezeAlive, 1000);
+  // Capped (freeze-keepalive.js): a pointer held for over a minute stops pinging and main thaws the page.
+  const alive = freezeKeepAlive(freezeAlive);
   const move = (ev) => {
     cancelAnimationFrame(frame);
     freezeAlive();
@@ -2238,7 +2229,7 @@ resizer.addEventListener('pointerdown', (e) => {
   };
   const up = async () => {
     ended = true;
-    clearInterval(alive);
+    alive.stop();
     resizer.removeEventListener('pointermove', move);
     document.body.classList.remove('resizing');
     localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)));
@@ -2247,6 +2238,7 @@ resizer.addEventListener('pointerdown', (e) => {
       if (held) { heldRect = null; reportBounds(); } // the page's final size, once, while it is still hidden
       thawPage();
     }
+    if (!snapshot) viewport.style.removeProperty('--snapshot-edge');
   };
   resizer.addEventListener('pointermove', move);
   // Fires after pointerup or pointercancel, and if capture is lost any other way: the drag always ends.
