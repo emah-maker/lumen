@@ -14,7 +14,7 @@ Lumen.exe (main process: main.js)
 │   └── dialog view: Lumen's own alert/confirm/permission cards (src/renderer/dialog.html)
 ├── hidden reader views: background reading and web search for the AI, in a separate in-memory session
 ├── Chromium's GPU, network and utility processes
-└── optional children: the Claude Code or Grok Build CLI when that engine is chosen
+└── optional children: the Claude Code, Grok Build or Antigravity CLI when that engine is chosen
 ```
 
 - **`src/main.js`** owns the window, the tabs array, sessions, menus, IPC and the startup order. Larger areas live in `src/features/` and in top-level modules (`src/ai/agent.js`, `src/browser/tab-groups.js`, `src/settings/settings-backend.js`, …) that `src/main.js` wires up with small dependency objects.
@@ -32,7 +32,7 @@ Lumen.exe (main process: main.js)
 ## The AI in the sidebar
 
 - **`src/ai/agent.js`** runs the agent loop in the main process: it sends the chat to the chosen model, runs the tools it asks for, and streams events to the sidebar.
-- **Engines.** Claude through Anthropic's SDK; OpenAI, Grok, Gemini and OpenRouter through `src/ai/providers.js`, which converts the conversation to and from Chat Completions. "Your account" engines run the user's own CLI headless and let it call Lumen's tools over MCP: `src/ai/claude-code.js` (Claude Code) and `src/ai/grok-build.js` (Grok Build, experimental).
+- **Engines.** Claude through Anthropic's SDK; OpenAI, Grok, Gemini and OpenRouter through `src/ai/providers.js`, which converts the conversation to and from Chat Completions. "Your account" engines run the user's own CLI headless and let it call Lumen's tools over MCP: `src/ai/claude-code.js` (Claude Code) `src/ai/grok-build.js` (Grok Build, experimental) and `src/ai/antigravity.js` (Google Antigravity's `agy`, which replaces Gemini CLI; experimental). Each is launched with Lumen's tools only (see [settings](settings.md#antigravity-in-the-sidebar)).
 - **Tools** are defined once in `src/ai/agent.js` (`TOOLS`) and shared with every engine and with MCP clients. Page scripts live in `src/ai/page-scripts.js`; the token-efficient tools (`compact` reads, diffs, `find`, `batch`) are in `src/ai/snapshot.js`. The full list is in the [MCP tool reference](mcp-tools.md).
 - **Approval gate.** The first time the AI acts on a site in a chat, the sidebar shows an approval card. Once the AI has read page content, opening, fetching or searching a site not yet approved in that chat asks too. Approvals last for the chat. Content from pages is treated as untrusted data. What is asked and when: [Asking before it acts](../README.md#asking-before-it-acts).
 - **Background reading** (`read_urls`, `web_search`) uses hidden views in an in-memory session with none of the user's cookies. That session refuses permission requests and downloads. The exception is `read_urls` with `as_user` (`src/features/signed-in-sites.js`): after the user allows a host (once, or always from Settings → You and AI; banks, payments and password managers only once), that page is read in a background tab of the user's own session, locked to that host (any redirect elsewhere is read signed out instead) and closed when the run ends. Outside agents over MCP and background tasks never get it.

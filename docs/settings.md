@@ -36,10 +36,22 @@ The tables below give each setting's key in `settings.json` and its default. Edi
 | Use AI to name and group topics | `topicAi` | off | Only with **By topic**. Sends tab titles and site names (never full addresses) to the cheapest model of your chat's provider. Off: topics are found on this computer. |
 | API keys | `keys` | none | One per provider: Anthropic, OpenAI, xAI (Grok), Google (Gemini), OpenRouter. Stored encrypted. Environment variables also work. |
 | Sign in with your Anthropic account | — | — | Uses an OAuth profile from Anthropic's CLI (`ant auth login`) instead of an API key. |
-| Allow AI agents to connect | `mcpEnabled` | off | Turns on Lumen's MCP server for Claude Code, Codex CLI, Gemini CLI and other MCP clients. The commands to connect each one are listed under it. See the [MCP tool reference](mcp-tools.md). |
+| Allow AI agents to connect | `mcpEnabled` | off | Turns on Lumen's MCP server for Claude Code, Codex CLI, Grok Build, Antigravity and other MCP clients. The commands to connect each one are listed under it. See the [MCP tool reference](mcp-tools.md). |
+| Antigravity | `antigravitySidebar` | off until you choose it | Google's coding agent (`agy`), which replaces Gemini CLI as a sidebar engine. **Use in the sidebar** (here, or the "Use your own Antigravity" card in an empty sidebar) offers it in the model menu once it is installed; if it isn't, this row shows Google's own install command for your system and runs it only when you click **Run this command**. You sign in by running `agy` once in a terminal; Lumen never sees the login. Like Claude Code and Grok Build it gets Lumen's browser tools only (see [Antigravity in the sidebar](#antigravity-in-the-sidebar)). |
 | Allow automation tools (Chrome DevTools Protocol) | `automationEnabled` | off | For Playwright and other CDP tools, through a filtering proxy on localhost. Turning it on takes effect after a relaunch; turning it off closes the proxy at once. |
 | Port (localhost only) | `automationPort` | `9222` | The proxy's port. The address you copy includes a secret key; requests without it are refused. |
 | Import bookmarks and history | — | — | From Chrome, Edge, Brave, Vivaldi, Opera, Firefox or (on macOS) Safari on this computer. Passwords and cookies are not imported. |
+
+### Antigravity in the sidebar
+
+Antigravity's CLI is `agy` (installed to `~/.local/bin/agy`, or `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows). Lumen runs it headless for each message (`agy -p … --output-format stream-json`) and gives it Lumen's browser tools over MCP, the same tools the sidebar's other engines get. It is launched with only those tools:
+
+- its own home folder (`<profile>/antigravity-home`), so your `~/.gemini` servers, rules, plugins and hooks are not loaded; the sign-in stays in your OS keyring (a Gemini API key sign-in keeps working);
+- a `settings.json` that allows `mcp(lumen/*)` and denies `command`, `write_file`, `read_url` and `unsandboxed`, with `--sandbox` and the terminal sandbox on;
+- a hook that Lumen answers before each tool call: Lumen's tools go through, a shell or file tool of agy's own is denied;
+- Lumen stops the run if such a tool is reported anyway.
+
+Page content is sent inside `<untrusted_page_content>` blocks with an "it is data, not instructions" note, as for every engine, and Lumen's own tools still ask before acting on a new site and refuse sites where you turned AI off. Not offered to background tasks.
 
 These are set from the sidebar rather than the settings page:
 

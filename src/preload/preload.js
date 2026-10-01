@@ -181,6 +181,7 @@ contextBridge.exposeInMainWorld('assistant', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
   useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card
+  useAntigravity: () => ipcRenderer.invoke('settings:use-antigravity'), // the setup card (Antigravity replaces Gemini CLI)
   openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
   openRouterSignIn: () => ipcRenderer.invoke('openrouter:sign-in'),
   cancelOpenRouterSignIn: () => ipcRenderer.invoke('openrouter:cancel'),

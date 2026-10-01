@@ -165,6 +165,12 @@ const BRAND_KEYS = new Set([...BRAND_WORDS].map(stem));
 const GENERIC_KEYS = new Set(knowledge.GENERIC_WORDS.split(/\s+/).filter(Boolean).map(stem));
 // ...and a few that may still link ("job" in a job search) but are no evidence of a topic on their own, and never name a group.
 const WEAK_KEYS = new Set(knowledge.WEAK_WORDS.split(/\s+/).filter(Boolean).map(stem));
+// Words that name several things (mars, mercury, bank, cell, python ...): never a link or a name on their own (knowledge.AMBIGUOUS_WORDS).
+const AMBIGUOUS_KEYS = new Set(knowledge.AMBIGUOUS_WORDS.split(/\s+/).filter(Boolean).map(stem));
+const VAGUE_NAME_KEYS = new Set('sierra trail trails album preorder order orders access info list lists plan plans guide guides review reviews'.split(' ').map(stem));
+const CODE_AMBIGUOUS_KEYS = new Set(knowledge.CODE_AMBIGUOUS.split(/\s+/).filter(Boolean).map(stem));
+// All-caps names of three letters (PCT, SAT) that are no names: a country, a file kind, a job title, a shouted word.
+const GENERIC_ACRONYMS = new Set('usa faq pdf new the and for you not all any can how why who but now top diy tip vip ceo cto cfo api url css html gpu cpu app web sms gif jpg png mp3 mp4 faq pro max one two ten men fun hot sex xxx faq uk eu us'.split(' '));
 const isGenericKey = (k) => GENERIC_KEYS.has(k) || WEAK_KEYS.has(k);
 
 // Endings of Russian (and Ukrainian) nouns and adjectives: "Берлин", "Берлина", "в Берлине" are one word.
@@ -528,13 +534,19 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
     if (weight < 0.7 || !isRealKey(key)) continue;
     const country = PLACE_OF.get(key);
     if (country && !region.has(key) && !words.has(stem(country))) words.set(stem(country), { weight: PLACE_WEIGHT, surface: country.charAt(0).toUpperCase() + country.slice(1) });
-    for (const concept of CONCEPTS_OF.get(key) || []) addConcept(concept);
+    // "chicken coop", "river bank": the word alone says no concept; "chicken thighs", "chicken soup recipe" do (food beside it)
+    if (AMBIGUOUS_KEYS.has(key) && !CODE_AMBIGUOUS_KEYS.has(key) && !(key === 'chicken' && /\b(recipes?|cook\w*|bak(e|ed|ing)|roast\w*|grill\w*|fried|dinners?|lunch|meals?|thighs?|breasts?|wings?|soup|salad|sheet pan|marinade|burritos?|prep|crispy|slow cooker|instant pot)\b/i.test(`${plainTitle} ${q}`))) continue;
+    for (const concept of CONCEPTS_OF.get(key) || []) {
+      // "Python", "Java" and "Swift" are programming only with code beside them (a tutorial, an API, a docs site): not a ball python, coffee or a singer.
+      if (concept === 'programming' && CODE_AMBIGUOUS_KEYS.has(key) && !(knowledge.CODE_CONTEXT.test(`${plainTitle} ${q}`) || categoriesOfSite(url).includes('programming'))) continue;
+      addConcept(concept);
+    }
   }
   for (const category of categoriesOfSite(url)) addConcept(category);
   // A coin is money too: with fewer than three crypto tabs in the window they are Finance's (conceptGroups takes Crypto first, and apart only with three).
   if (words.has('%crypto')) addConcept('finance');
   // Phrases that say a concept ("closing costs"), and what a brand is ("Hilton Garden Inn": travel), and pages whose address says what they are.
-  for (const [re, concept] of knowledge.PHRASE_CONCEPTS) if (re.test(`${plainTitle} ${q} ${subText}`)) addConcept(concept);
+  for (const [re, concept] of knowledge.PHRASE_CONCEPTS) if (re.test(`${plainTitle} ${q} ${subText} ${isTransientTitle(title) ? '' : title}`)) addConcept(concept); // (the whole title too: a site's own name before the dash says "Toast POS", "College Board")
   for (const concept of brands.concepts) addConcept(concept);
   // A nurse's job, degree or loan is a job, a degree or a loan before it is nursing: it joins those tabs, not the clinical ones ("Nurse salary" is not
   // beside NCLEX prep). Only the tabs about the work itself keep the concept.
@@ -559,16 +571,18 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
     const segments = maskBrands(String(shownTitle).replace(/\S+@\S+\.\S+/g, ' ')).text.split(/\s+[-|–—·:]\s+/);
     const restored = segments.filter((seg) => seg.trim().split(/[^\p{L}\p{N}]+/u).filter(Boolean).length >= 2).join(' ');
     for (const raw of `${cleanTitle} ${restored}`.split(/[^\p{L}\p{N}]+/u)) {
-      if (raw.length < 4 || !/^\p{L}+$/u.test(raw) || CJK.test(raw)) continue;
+      if (raw.length < 3 || !/^\p{L}+$/u.test(raw) || CJK.test(raw)) continue;
       const lower = raw.toLowerCase();
       const key = stemWord(lower);
       const acronym = !shouting && /^\p{Lu}+$/u.test(raw);
-      const name = /^\p{Lu}\p{Ll}+$/u.test(raw) && words.capital.has(key) && !COMMON_CAPS.has(lower);
+      if (raw.length === 3 && (!acronym || GENERIC_ACRONYMS.has(lower))) continue; // PCT, SAT: three letters, all capitals, and only where three titles say it (vectorize)
+      // (a capital that only opens the title says nothing, and an adjective or a verb opening it least: "Affordable laptops", "Cooking for two")
+      const name = /^\p{Lu}\p{Ll}+$/u.test(raw) && words.capital.has(key) && !COMMON_CAPS.has(lower) && (words.proper.has(key) || !NOT_A_NOUN.test(lower));
       // A brand written with a capital inside (GitHub, iPhone, PyTorch, OpenAI) is a rare proper noun too.
       const camel = /^\p{Lu}\p{Ll}+(\p{Lu}\p{Ll}*)+$|^\p{Ll}+\p{Lu}\p{L}*$/u.test(raw) && !shouting;
       if (!acronym && !name && !camel) continue;
       // (a page's own site's name is no name another page can share, unless it is an acronym: ASGCT's own pages say it)
-      if (STOPWORDS.has(lower) || isGenericKey(key) || NAV_WORDS.has(key) || (BRAND_KEYS.has(key) && !camel) || isPlaceKey(key) || (!acronym && hostLabels.some((l) => l.replace(/[^a-z0-9]/g, '') === lower))) continue;
+      if (STOPWORDS.has(lower) || AMBIGUOUS_KEYS.has(key) || isGenericKey(key) || NAV_WORDS.has(key) || (BRAND_KEYS.has(key) && !camel) || isPlaceKey(key) || (!acronym && hostLabels.some((l) => l.replace(/[^a-z0-9]/g, '') === lower))) continue;
       if (acronym && !words.has(key)) words.set(key, { weight: 1, surface: raw });
       if ((words.get(key)?.weight ?? 0) >= 0.8) { words.distinct.add(key); if (acronym || camel || words.proper.has(key)) words.solid.add(key); }
     }
@@ -684,6 +698,12 @@ function vectorize(entries, { allowCommon = false } = {}) {
   docs.df = df;
   docs.n = n;
   for (const d of docs) d.nameKey = siteNameKey(d);
+  // A three-letter acronym is a name only when three titles say it.
+  {
+    const short = new Map();
+    for (const d of docs) for (const k of d.words.distinct) if (k.length === 3) short.set(k, (short.get(k) || 0) + 1);
+    for (const d of docs) for (const k of [...d.words.distinct]) if (k.length === 3 && short.get(k) < 3) { d.words.distinct.delete(k); d.words.solid.delete(k); }
+  }
   docs.distinct = new Map(); // distinctive name -> the tabs (doc indices) that say it in their title
   docs.forEach((d, i) => { for (const k of d.words.distinct || []) { if (!docs.distinct.has(k)) docs.distinct.set(k, []); docs.distinct.get(k).push(i); } });
   return docs;
@@ -1283,6 +1303,71 @@ function distinctGroups(clusters, docs) {
   return { clusters: kept.concat([...formed.keys()]), formed };
 }
 
+// Eighth stage: the word most of a window's loose tabs share. A topical noun that no ordinary English list knows ("newborn", "dovetail", "sourdough",
+// "monitor") in the TITLES of three or more loose tabs (of two sites or more) is what those tabs are about. One word still never links a pair: it takes
+// three, and never a word of a kind of page ("guide", "best", "review", "plan", "list", "tips", "near", a year), a verb or an adjective (by its ending,
+// unless a concept's own vocabulary has it), a place, a brand or a nav label. The tabs may not split into two concepts of their own (a "monitor" that is
+// a baby's, a server's and a heart's). The group is named for the word; supportsOf takes the same word as evidence (docs.tokenKeys) so that cohesion keeps it.
+const TOKEN_MIN = 3;
+const TOKEN_MAX_SHARE = 0.4; // a word this share of the window carries is the window's, not a group's
+const NOT_A_NOUN = /(?:ly|ed|ing|ive|ous|ful|able|ible|less|ish|ward|wise)$/;
+function tokenGroups(clusters, docs) {
+  const out = clusters.map((c) => [...c]);
+  const formed = new Map();
+  const loose = new Set(out.filter((c) => c.length === 1).map((c) => c[0]));
+  if (loose.size < TOKEN_MIN) return { clusters: out, formed };
+  const byWord = new Map();
+  for (const i of loose) {
+    for (const [k, e] of docs[i].words) {
+      if (!isRealKey(k) || e.weight < 0.8 || CJK.test(k)) continue;
+      const surface = String(e.surface || k);
+      if (surface.length < (docs.distinct.has(k) ? 3 : 4) || !/^\p{L}+$/u.test(surface) || surface.length > 18) continue;
+      if (!byWord.has(k)) byWord.set(k, []);
+      byWord.get(k).push(i);
+    }
+  }
+  const conceptsOf = (i) => [...docs[i].words.keys()].filter((k) => k[0] === '%' && k !== '%shopping');
+  const cands = [];
+  for (const [k, list] of byWord) {
+    if (list.length < TOKEN_MIN || list.length > docs.length * TOKEN_MAX_SHARE) continue;
+    const surface = String(docs[list[0]].words.get(k).surface).toLowerCase();
+    const inConcept = CONCEPT_OF.has(k);
+    const shown = String(docs[list[0]].words.get(k).surface);
+    const acronym = docs.distinct.has(k) && shown === shown.toUpperCase() && shown.length <= 6; // PCT, SAT: capitals in three titles, an identity of its own
+    // (an ambiguous word is a group's only when every tab that says it carries one concept: "chicken" in three cooking tabs, not beside a coop)
+    if (AMBIGUOUS_KEYS.has(k) && !conceptsOf(list[0]).some((x) => list.every((i) => conceptsOf(i).includes(x)))) continue;
+    if (STOPWORDS.has(surface) || ORDINARY_KEYS.has(k) || isGenericKey(k) || NAV_WORDS.has(k) || BRAND_KEYS.has(k) || isPlaceKey(k) || GENERIC_PAIR_STEMS.has(k)) continue;
+    if (!inConcept && NOT_A_NOUN.test(surface)) continue;
+    if (new Set(list.map((i) => docs[i].siteKey || docs[i].url)).size < 2) continue; // one site's template word
+    // The word is what every tab is about: it is no word of a site's own name or address (a brand's tabs say it on every page).
+    // No two members of different concepts (the word means something else in one of them), and a second thing the tabs share: another content word, a
+    // concept or a site hint, or the word is a topic word of a concept's own vocabulary ("newborn"), or an acronym.
+    const sets = list.map((i) => conceptsOf(i)).filter((x) => x.length);
+    if (!acronym && sets.some((a, x) => sets.some((b, y) => y > x && !a.some((c) => b.includes(c))))) continue;
+    if (!inConcept && !acronym) {
+      const held = new Map();
+      for (const i of list) {
+        const e = evidenceOf(docs[i]);
+        for (const w of new Set([...e.words, ...e.concepts, ...(e.hint ? [`hint:${e.hint}`] : [])])) if (w !== k && !ORDINARY_KEYS.has(w) && !AMBIGUOUS_KEYS.has(w)) held.set(w, (held.get(w) || 0) + 1);
+      }
+      if (![...held.values()].some((n) => n >= 2)) continue;
+    }
+    cands.push([k, list]);
+  }
+  cands.sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1));
+  const taken = new Set();
+  docs.tokenKeys = new Set();
+  for (const [k, list] of cands) {
+    const free = list.filter((i) => !taken.has(i));
+    if (free.length < TOKEN_MIN) continue;
+    free.forEach((i) => taken.add(i));
+    docs.tokenKeys.add(k);
+    formed.set(free, docs[free[0]].words.get(k).surface);
+  }
+  const kept = out.filter((c) => !(c.length === 1 && taken.has(c[0])));
+  return { clusters: kept.concat([...formed.keys()]), formed };
+}
+
 // ---------- cohesion: what a group has to show before it is a group ----------
 //
 // Precision over recall: a wrong group costs the user more than a loose tab. Whatever stage put tabs together (a shared word, an anchor,
@@ -1301,14 +1386,18 @@ function evidenceOf(d) {
   const words = new Set();
   const concepts = new Set();
   const places = new Set();
+  const ambiguous = [];
   for (const [k, e] of d.words) {
     if (k[0] === '%') { if (k !== '%shopping') concepts.add(k); continue; }
     if (!isRealKey(k) || e.weight < 0.7) continue;
     if (d.words.regional?.has(k)) { places.add(d.words.regional.get(k)); continue; } // Naples beside Positano: the Amalfi Coast, not Italy
     if (isPlaceKey(k)) { places.add(placeId(k)); continue; }
     if (!(d.vec.has(k) || d.common.has(k)) || isGenericKey(k) || NAV_WORDS.has(k) || BRAND_KEYS.has(k)) continue;
+    if (AMBIGUOUS_KEYS.has(k)) { ambiguous.push(k); continue; }
     words.add(k);
   }
+  // A word that names several things (chicken, bank) is the same word in two tabs only when they are about the same kind of thing: it is shown with each concept the tab carries.
+  for (const k of ambiguous) for (const c of concepts) words.add(`${k}${c}`);
   // The tax office is money among retirement accounts (CONCEPT_JOINS): it shows the concept it may join.
   for (const [concept, joins] of Object.entries(knowledge.CONCEPT_JOINS)) if (joins.some((j) => concepts.has(`%${j}`))) concepts.add(`%${concept}`);
   const site = siteGroupable(d) && d.site ? d.site : '';
@@ -1330,7 +1419,9 @@ function supportsOf(c, docs) {
   // Travel is a broad concept: two tabs that are both "travel" are a trip only when they name one place (below); three or more of a group are a Travel group.
   const evOf = new Map(c.map((i, x) => [i, ev[x]]));
   const onePlace = (h) => h.some((i) => [...evOf.get(i).places].some((p) => h.filter((j) => evOf.get(j).places.has(p)).length >= 2));
-  for (const [k, h] of holdBy((e) => e.concepts)) if (k !== '%travel' || h.length >= 3 || onePlace(h)) out.push({ holders: h });
+  // Crypto with a group of its own (three tabs) is not Finance (CONCEPT_EXCLUDES): the money in a coin binds no retirement account to it.
+  const coins = c.filter((i) => docs[i].words.has('%crypto')).length >= 3;
+  for (const [k, h] of holdBy((e) => (coins && e.concepts.has('%crypto') ? [...e.concepts].filter((x) => x !== '%finance') : e.concepts))) if (k !== '%travel' || h.length >= 3 || onePlace(h)) out.push({ holders: h });
   // Two tabs of one place that are both about getting there or being there are a trip (see tripGroups), whatever else their words say.
   {
     const byPlace = new Map();
@@ -1354,6 +1445,11 @@ function supportsOf(c, docs) {
       if (label && docs.distinct.has(label)) { if (!named.has(label)) named.set(label, { titled: 0, all: new Set() }); named.get(label).all.add(i); }
     }
     for (const { titled, all } of named.values()) if (titled >= 1 && all.size >= 2) out.push({ holders: [...all] });
+  }
+  // A word three loose tabs say in their titles (tokenGroups): the group formed on it keeps the tabs that say it.
+  for (const k of docs.tokenKeys || []) {
+    const h = c.filter((i) => evidenceOf(docs[i]).words.has(k));
+    if (h.length >= TOKEN_MIN) out.push({ holders: h });
   }
   // Words held by 2+ tabs: one word is never evidence (sharedEvidence). Two tabs that hold two of them, one of which is no ordinary English word, are bound.
   const byWord = new Map();
@@ -1387,9 +1483,20 @@ function cohere(c, docs) {
   for (const { holders } of supportsOf(c, docs)) for (const h of holders) { bound.add(h); parent.set(find(h), find(holders[0])); }
   const parts = new Map();
   for (const i of c) if (bound.has(i)) { const r = find(i); parts.set(r, [...(parts.get(r) || []), i]); }
-  const out = [...parts.values()];
+  // Food context wins: a dinner or a restaurant among a language's or a band's tabs ("Korean BBQ near me" beside Korean lessons) shares only a word with
+  // them, however many times they say it, and no other tab of the group is about food.
+  const FOOD = ['%cooking', '%dining', '%baking'];
+  const foodOf = (i) => FOOD.filter((k) => docs[i].words.has(k));
+  const released = new Set();
+  const out = [...parts.values()].map((p) => {
+    if (p.length < 4) return p;
+    const otherConcept = (i) => [...docs[i].words.keys()].some((k) => k[0] === '%' && !FOOD.includes(k) && k !== '%shopping' && p.some((j) => j !== i && docs[j].words.has(k)));
+    const strays = p.filter((i) => foodOf(i).length && !otherConcept(i) && !p.some((j) => j !== i && foodOf(j).length));
+    strays.forEach((i) => released.add(i));
+    return p.filter((i) => !strays.includes(i));
+  });
   if (out.length === 1 && out[0].length === c.length) return [c];
-  return [...out, ...c.filter((i) => !bound.has(i)).map((i) => [i])];
+  return [...out, ...c.filter((i) => !bound.has(i) || released.has(i)).map((i) => [i])];
 }
 
 // ---------- trips ----------
@@ -1664,6 +1771,11 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     merged = named.clusters;
     for (const c of named.formed.keys()) conceptOf.set(idsKey(c), ''); // drawn together by a name, and named the usual way (the name's own spelling is not always the best: Москве, Москва)
   }
+  if (!process.env.NOTOKEN) {
+    const worded = tokenGroups(merged, docs);
+    merged = worded.clusters;
+    for (const c of worded.formed.keys()) conceptOf.set(idsKey(c), ''); // a word three tabs share: named the usual way too
+  }
   // Cohesion: whatever formed a group, most of its tabs must share something that says something (see cohere); then the trips.
   const rekey = (c, change) => { // change a cluster's tabs, keeping the name its old tabs earned it
     const was = idsKey(c);
@@ -1826,7 +1938,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     const bigramRanked = [...bigramScore.values()].filter((e) => e.count >= majority).sort((a, b) => b.score - a.score);
     const top = ranked[0];
     const nameTop = ranked.find(([k]) => !isGenericKey(k)); // "job" may link tabs, and keys the group, but never names it
-    const siteOnly = top && members.every((d) => registrableDomain(d.url) === registrableDomain(members[0].url)) && registrableDomain(members[0].url).startsWith(top[0]);
+    const siteOnly = top && members.every((d) => registrableDomain(d.url) === registrableDomain(members[0].url)) && registrableDomain(members[0].url).startsWith(top[0]) && members.every((d) => d.site === members[0].site);
     // A project's tabs: named for the repo ("Lumen PRs", "Lumen issues"), whatever else is in the group.
     const repoCount = new Map();
     for (const d of members) { const r = repoOf(d.url); if (r) repoCount.set(r.name, (repoCount.get(r.name) || 0) + 1); }
@@ -1842,7 +1954,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     const kindOfSite = (n) => knowledge.BROAD_HINTS.has(n) || knowledge.FALLBACK_CATEGORIES.some((k) => k.name === n); // a name that says a KIND of site
     // The name of last resort: the site's, when every tab is on one site; else what the tabs share (a concept). Tabs of different
     // sites with nothing to be named for are not a group ("Alpha" for a houseplant page and a resume template).
-    const oneSiteAll = members.every((d) => d.siteKey === members[0].siteKey);
+    const oneSiteAll = members.every((d) => d.siteKey === members[0].siteKey && d.site === members[0].site); // (dev servers on different ports are one siteKey, '': not one site)
     const fallbackName = () => {
       if (oneSiteAll) return siteName(members[0].url, members[0].title);
       const label = conceptLabel(c, docs) || categoryLabel(members);
@@ -1872,6 +1984,28 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     else name = sharedHint || fallbackName();
     // CJK words are bigrams, so two of them pasted together name a group badly ("파이 이썬"): use the longest run the
     // titles share, or the site's (category's) name when that run is only filler.
+    // A bare place ("Texas", "Austin") names a trip and nothing else: a group of tabs that only share where they are is named for what they are about
+    // (the next word they say, else their concept or category), and only a trip (tripGroups) or a place's own housing keeps the place.
+    if (wordNamed && !/\s/.test(name) && isPlaceKey(stem(name.toLowerCase())) && members.filter(tripEvidence).length * 2 < members.length && !['Travel', 'Housing'].includes(conceptLabel(c, docs))) {
+      const other = ranked.find(([k]) => !isGenericKey(k) && !isPlaceKey(k));
+      const label = conceptLabel(c, docs) || categoryLabel(members);
+      if (other) name = titleCase(bestSurface(other[0]));
+      else if (label) { name = label; wordNamed = false; }
+    }
+    // A vague word ("Permit", "Stray", "Sierra", "Mars") never names a group: the concept's name does, else the two tabs stay loose (a pair that only a
+    // vague word holds is inside a larger topic, or no topic at all); a proper two-word name the titles write ("Stray Kids") beats its first word.
+    if (wordNamed && !/\s/.test(name)) {
+      const key = stemWord(name.toLowerCase());
+      const oneConcept = [...docs[c[0]].words.keys()].some((x) => x[0] === '%' && x !== '%shopping' && c.every((i) => docs[i].words.has(x))); // "Chicken" over three cooking tabs
+      if ((AMBIGUOUS_KEYS.has(key) && !oneConcept) || VAGUE_NAME_KEYS.has(key)) {
+        const phrase = new RegExp(`\\b${name}\\s+(\\p{Lu}[\\p{Ll}]+)`, 'u');
+        const full = members.map((d) => phrase.exec(String(d.title))?.[1]).filter(Boolean);
+        const top = [...full.reduce((m, w) => m.set(w, (m.get(w) || 0) + 1), new Map())].sort((a, b) => b[1] - a[1])[0];
+        const label = conceptLabel(c, docs) || categoryLabel(members);
+        if (top && top[1] * 2 > members.length) name = `${name} ${top[0]}`;
+        else if (label) { name = label; wordNamed = false; } else if (members.length <= 2) return null;
+      }
+    }
     if (wordNamed) name = normalizeName(name, [conceptLabel(c, docs), categoryLabel(members), sharedHint], new Set(members.flatMap((d) => [...d.words].map(([, e]) => String(e.surface || '').toLowerCase()))));
     if (CJK.test(name)) name = sharedRun(members.map((d) => d.title), members.length) || sharedRun(members.map((d) => d.title), majority) || sharedHint || fallbackName();
     // One site's tabs named by a piece of the site's own name ("Hacker" from "Hacker News"): the whole name.

@@ -18,6 +18,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - Windows high contrast: the active tab, pressed toolbar buttons, focus rings and Settings' switches stay visible.
 - Settings → About Lumen has Copy version details and Report a problem, for bug reports. On a Mac, the toolbar's shortcut hints read ⌘T, ⇧⌘A and so on instead of Ctrl+.
 - Polish: the page and video right-click menus, spelling suggestions, the risky-download prompt, and the Open File and Export Chat dialogs use Lumen's translated strings instead of fixed English. The lock is a keyboard-focusable button with a focus ring and a name for screen readers.
+- Home page Smart Stack: a stack holds 2 to 10 widgets of any kind and cycles with the mouse wheel, a swipe, Up and Down, the page dots or the arrows. It can rotate by itself and surface the calendar, a countdown or the weather when they matter. Edit it from Edit layout, with Undo.
+- Smart Stack, easier to find and nicer to use: Add widget has a Smart Stack entry (a timer, a countdown and a note to start), the Edit stack panel opens from the card header, the page dots (right-click, Menu key or long-press) and outside Edit layout, and Edit layout shows how to stack once. Cards now slide a full card up and out inside the stack, the grid is not redrawn on a switch, the dots have their own gutter and show on hover, and a swipe at the end of a stack resists before it wraps.
 
 ## 0.4.4 (2026-10-01)
 

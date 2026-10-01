@@ -1035,6 +1035,12 @@ function animateTabs(before, container, landed = new Set()) {
     } else if (prev) {
       const dx = prev.rect.left - el.getBoundingClientRect().left;
       if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+    } else if (el.classList.contains('group-label')) {
+      // A new group's chip takes its room in the strip at once while the tabs around it are still sliding in from where they were: it stays
+      // invisible (and under them) until they have mostly settled, then fades in, so it never overlaps a tab's icon mid-slide.
+      el.style.zIndex = '0';
+      const fade = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 260, easing: 'ease-out', fill: 'backwards' });
+      fade.finished.then(() => { el.style.zIndex = ''; }, () => { el.style.zIndex = ''; });
     } else {
       el.animate([{ opacity: 0, transform: 'translateY(3px) scale(0.86)' }, { opacity: 1, transform: 'none' }], { duration: 480, easing: SPRING_SNAPPY });
     }
@@ -2519,7 +2525,7 @@ window.assistant.onSidebar?.((visible) => {
 startChat();
 
 // ---------- AI agents over MCP (session B) ----------
-// External agents (Claude Code, Codex, Gemini CLI…) drive the browser; their calls show here.
+// External agents (Claude Code, Codex, Antigravity…) drive the browser; their calls show here.
 
 const mcpSteps = new Map(); // step id -> row
 let mcpPillText = null;

@@ -123,7 +123,7 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, 'ai-keys': { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -376,11 +376,11 @@ async function buildAi(card) {
   const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
-  agents.append(row('Allow AI agents to connect', 'Off by default. When on, Claude Code, Codex, Gemini CLI and other MCP clients on this computer can drive Lumen. They still need your OK for each new site. The Add buttons below turn this on.', mcpToggle));
+  agents.append(row('Allow AI agents to connect', 'Off by default. When on, Claude Code, Codex, Grok Build, Antigravity and other MCP clients on this computer can drive Lumen. They still need your OK for each new site. The Add buttons below turn this on.', mcpToggle));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
-    // snip.addButton is the agent id ('claude' | 'codex' | 'grok' | 'gemini'); 'json' (other clients) has none.
+    // snip.addButton is the agent id ('claude' | 'codex' | 'grok' | 'antigravity'); 'json' (other clients) has none.
     const addLabel = `Add to ${snip.label}`;
     const add = snip.addButton ? h('button', {
       text: addLabel,
@@ -409,8 +409,10 @@ async function buildAi(card) {
       snip.secondary ? h('p', { class: 'note', text: snip.secondary }) : null,
       note);
   }));
-  agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Gemini CLI and other MCP clients.', 'mcp claude codex gemini grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+  agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
   agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
+
+  buildAntigravity(agents, refreshModels);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -1821,6 +1823,43 @@ async function buildPasswords(card) {
       h('button', { class: 'danger', id: 'passwords-delete-all', text: 'Delete all saved passwords', onclick: async () => { pw = await P.removeAll(); renderLogins(); } }))));
   page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
   renderLogins();
+}
+
+// Settings → AI → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
+// command is shown, and runs only on the click.
+function buildAntigravity(slot, refreshModels) {
+  const agyNote = status('ai-agy-status');
+  const agyCommand = h('pre', { class: 'mono code', id: 'ai-agy-command', text: '' });
+  const agyButtons = h('div', { class: 'controls' });
+  const renderAgy = (s) => {
+    agyNote.className = 'note';
+    agyNote.textContent = !s.installed ? tr('settings.ai.agyMissing', 'Not installed.') : s.enabled ? tr('settings.ai.agyOn', 'Installed and offered in the model menu. If it asks you to sign in, run agy in a terminal and sign in with your Google account.') : tr('settings.ai.agyFound', 'Installed. Not offered in the model menu yet.');
+    agyCommand.textContent = s.installCommand || '';
+    agyCommand.hidden = Boolean(s.installed);
+    const buttons = [];
+    if (!s.installed) {
+      buttons.push(h('button', {
+        id: 'ai-agy-install', class: 'primary', text: tr('settings.ai.agyInstall', 'Run this command'),
+        onclick: async (e) => {
+          const btn = e.target;
+          btn.disabled = true;
+          btn.textContent = tr('settings.ai.agyInstalling', 'Installing…');
+          const r = await S.ai.antigravityInstall().catch((err) => ({ ok: false, output: err.message }));
+          renderAgy(await S.ai.antigravityStatus(true));
+          if (!r.ok) flash(agyNote, r.output || tr('settings.ai.agyInstallFailed', 'The installer did not finish.'), 'err');
+          await refreshModels();
+        },
+      }));
+    } else if (!s.enabled) {
+      buttons.push(h('button', { id: 'ai-agy-use', class: 'primary', text: tr('settings.ai.agyUse', 'Use in the sidebar'), onclick: async () => { await S.ai.useAntigravity(); renderAgy(await S.ai.antigravityStatus(true)); await refreshModels(); } }));
+    }
+    buttons.push(h('button', { id: 'ai-agy-check', text: tr('settings.ai.agyCheck', 'Check again'), onclick: async () => { renderAgy(await S.ai.antigravityStatus(true)); await refreshModels(); } }));
+    agyButtons.replaceChildren(...buttons);
+  };
+  const agyRow = row(tr('settings.ai.agy', 'Antigravity (replaces Gemini CLI)'), tr('settings.ai.agyDesc', 'Google’s coding agent, signed in with your own Google account: Lumen never sees the login. In the sidebar it gets Lumen’s browser tools only, like Claude Code and Grok Build. The install command below is Google’s own; it runs only when you click the button.'), agyButtons);
+  agyRow.querySelector('.text').append(agyCommand, agyNote);
+  S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
+  slot.append(agyRow);
 }
 
 async function buildDownloads(card) {
