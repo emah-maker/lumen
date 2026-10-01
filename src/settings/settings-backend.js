@@ -12,6 +12,7 @@ const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
 const { requestedHints, withHints } = require('../browser/chrome-identity');
 const { createSiteZoom } = require('../features/site-zoom');
+const siteData = require('../features/site-data');
 const { t } = require('../features/i18n');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
@@ -21,7 +22,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
 const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
-  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers', 'passwords'];
+  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -832,6 +833,9 @@ function create(deps) {
       const i = key.lastIndexOf('|');
       return { origin: key.slice(0, i), permission: key.slice(i + 1), label: PERMISSIONS[key.slice(i + 1)] || key.slice(i + 1), allowed };
     }));
+    // Site data (features/site-data.js): the sites with cookies, and removing one of them.
+    handle('prefs:site-data', async () => siteData.groupCookies(await ses().cookies.get({}), registrableDomain));
+    handle('prefs:clear-site', async (site) => ({ removed: await siteData.clearSite(ses(), String(site || '')), list: siteData.groupCookies(await ses().cookies.get({}), registrableDomain) }));
     handle('prefs:revoke-permission', (origin, permission) => {
       const removed = deps.permissionDecisions.delete(`${origin}|${permission}`);
       savePermissions(deps.permissionDecisions);

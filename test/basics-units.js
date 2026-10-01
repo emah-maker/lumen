@@ -10,6 +10,8 @@ const CR = require('../src/features/crash-recovery');
 const PI = require('../src/features/page-info');
 const LM = require('../src/features/link-menu');
 const SZ = require('../src/features/site-zoom');
+const SD = require('../src/features/site-data');
+const { registrableDomain } = require('../src/browser/tab-groups');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
@@ -142,6 +144,25 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   check('site zoom: keeps at most MAX hosts, dropping the oldest', Object.keys(store.siteZoom).length === SZ.MAX && !('h0.example' in store.siteZoom) && store.siteZoom['newest.example'] === 2, Object.keys(store.siteZoom).length);
   zoom.set('h5.example', 3);
   check('site zoom: zooming a site again makes it the newest', Object.keys(store.siteZoom).at(-1) === 'h5.example', Object.keys(store.siteZoom).at(-1));
+
+  // ---- Settings → Site data
+  const jar = [
+    { domain: '.bbc.co.uk', name: 'a', path: '/', secure: true }, { domain: 'news.bbc.co.uk', name: 'b', path: '/', secure: true },
+    { domain: 'www.example.com', name: 'c', path: '/x', secure: false }, { domain: '.example.com', name: 'd', path: '/', secure: true },
+    { domain: '.example.com', name: 'e', path: '/', secure: true }, { domain: '127.0.0.1', name: 'f', path: '/', secure: false }, { domain: '', name: 'g' },
+  ];
+  const grouped = SD.groupCookies(jar, registrableDomain);
+  check('site data: cookies group by site, most first, subdomains folded in', JSON.stringify(grouped.map((g) => [g.site, g.cookies])) === '[["example.com",3],["bbc.co.uk",2],["127.0.0.1",1]]', JSON.stringify(grouped));
+  check('site data: each site lists the hosts its cookies came from', grouped[1].hosts.join() === 'bbc.co.uk,news.bbc.co.uk', grouped[1].hosts.join());
+  check('site data: a cookie belongs to its site and subdomains only', SD.belongsTo('news.bbc.co.uk', 'bbc.co.uk') && !SD.belongsTo('notbbc.co.uk', 'bbc.co.uk'), '');
+  check('site data: storage is cleared for the site, www and the cookie hosts, both schemes', ['https://example.com', 'http://example.com', 'https://www.example.com', 'https://shop.example.com'].every((o) => SD.originsFor('example.com', ['shop.example.com']).includes(o)), SD.originsFor('example.com', ['shop.example.com']).join());
+  const removedCookies = [];
+  const cleared = [];
+  const fakeJar = { cookies: { get: async () => jar, remove: async (url, name) => { removedCookies.push(`${url}|${name}`); } }, clearStorageData: async ({ origin }) => { cleared.push(origin); } };
+  const n = await SD.clearSite(fakeJar, 'example.com');
+  check('site data: clearSite removes only that site\'s cookies, at their own address', n === 3 && removedCookies.join() === 'http://www.example.com/x|c,https://example.com/|d,https://example.com/|e', removedCookies.join());
+  check('site data: and clears its storage', cleared.includes('https://example.com') && cleared.includes('https://www.example.com') && !cleared.some((o) => o.includes('bbc')), cleared.join());
+  check('site data: a bad site name clears nothing', (await SD.clearSite(fakeJar, 'a b/c')) === 0 && (await SD.clearSite(fakeJar, '')) === 0, '');
 
   // ---- shortcut hints in the UI's strings read the Mac way on macOS (renderer/i18n.js)
   const vm = require('vm');

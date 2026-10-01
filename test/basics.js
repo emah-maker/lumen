@@ -134,6 +134,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const left = await app.evaluate(async ({ session }, url) => (await session.defaultSession.cookies.get({ url })).length, base);
     check('page info: Clear Cookies and Site Data removes the site\'s cookies', removed === 2 && left === 0, `${removed} removed, ${left} left`);
 
+    // Settings → Privacy and security → Site data lists the site, and Remove clears it.
+    await openIn(app, `${base}/cookie`);
+    const sid = await app.evaluate(() => global.__settings.open('site-data'));
+    const inSettings = (code) => app.evaluate((_e, [id, c]) => global.__settings.contents(id).executeJavaScript(c), [sid, code]);
+    const listed = await waitFor(() => inSettings("[...document.querySelectorAll('#site-data .item')].map((i) => i.textContent)").then((l) => l && l.length && l));
+    check('site data: the site is listed with its two cookies', Array.isArray(listed) && listed.some((l) => /^127\.0\.0\.1 · 2 cookies/.test(l)), JSON.stringify(listed));
+    await inSettings("document.querySelector('#site-data .item[data-site=\"127.0.0.1\"] button').click()");
+    const gone = await waitFor(async () => (await app.evaluate(async ({ session }, url) => (await session.defaultSession.cookies.get({ url })).length, base)) === 0);
+    const after = await waitFor(() => inSettings("document.querySelector('#site-data')?.textContent || ''").then((t) => !t.includes('127.0.0.1') && (t || 'empty')));
+    check('site data: Remove deletes the site\'s cookies and drops it from the list', Boolean(gone) && Boolean(after), String(after));
+    await app.evaluate((_e, id) => global.__agent.browser.closeTab?.(id), sid).catch(() => {});
+
     // Keyboard Shortcuts sheet.
     await press(app, '/', [mod, 'shift']);
     const kind = await waitFor(() => app.evaluate(() => global.__dialogs.currentKind()));
