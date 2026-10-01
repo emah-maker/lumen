@@ -29,6 +29,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       LUMEN_BUILD_DIR: ${{ github.workspace }}/dist
+      # No certificate is picked up from the keychain on its own; a Developer ID build opts in through
+      # CSC_LINK (scripts/build.js turns discovery back on for it).
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for t in units updates-units agentic-units catalog-units clock-style-units github-units gmail-units highlight-units local-custom-units markets-units math-units model-route-units password-units settings-async-units setup-units signed-in-units slack-units small-screen-units spotify-units tradingview-units whats-new-units widget-edit-units widget-summary-units widget-units; do
+          for t in units updates-units agentic-units catalog-units clock-style-units github-units gmail-units highlight-units local-custom-units markets-units math-units model-route-units password-units settings-async-units setup-units signing-unitssigned-in-units slack-units small-screen-units spotify-units tradingview-units whats-new-units widget-edit-units widget-summary-units widget-units; do
             echo "::group::$t"
             node "test/$t.js"
             echo "::endgroup::"
@@ -92,6 +94,37 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # macOS signing is opt-in by secret (docs/mac-signing.md). With a Developer ID certificate the
+      # app is signed with the hardened runtime, notarized and stapled; without one the build is
+      # ad-hoc / self-signed exactly as before. scripts/signing.js only tests that values are present;
+      # nothing is printed. The API key secret is the .p8 file's text: notarytool wants a path, so it
+      # is written to a private temp file (removed in the last step) and only the path is exported.
+      - name: Detect macOS signing
+        id: sign
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          LUMEN_SIGN_P12: ${{ secrets.LUMEN_SIGN_P12 }}
+          LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
+        run: |
+          set -e
+          node scripts/signing.js --github-output >> "$GITHUB_OUTPUT"
+          node scripts/signing.js
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
+            umask 077
+            key="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8"
+            printf '%s\n' "$APPLE_API_KEY" > "$key"
+            echo "api_key_path=$key" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
         shell: bash
         env:
@@ -100,6 +133,17 @@ jobs:
           # macOS: a stable self-signed identity keeps the Keychain's "Always Allow" across updates (scripts/after-sign.js).
           LUMEN_SIGN_P12: ${{ secrets.LUMEN_SIGN_P12 }}
           LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
+          # macOS Developer ID (mac job only; scripts/signing.js picks the mode from these). electron-builder
+          # imports the CSC_LINK .p12 into its own temporary keychain, signs, notarizes and staples.
+          CSC_LINK: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.CSC_KEY_PASSWORD || '' }}
+          # Notarization: the App Store Connect API key (preferred) or the Apple ID route.
+          APPLE_API_KEY: ${{ matrix.platform == 'mac' && steps.sign.outputs.api_key_path || '' }}
+          APPLE_API_KEY_ID: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_ID: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.APPLE_TEAM_ID || '' }}
           # Gmail widget's one-click "Sign in with Google": Lumen's own Google Desktop OAuth client
           # (src/features/google-client.js). Optional; without these secrets the build keeps the
           # paste-your-own-client flow. An installed app's client secret is not confidential (RFC 8252).
@@ -116,6 +160,48 @@ jobs:
       - name: List build output
         shell: bash
         run: ls -la dist
+
+      # Developer ID builds only: fail the release if the app Gatekeeper will see is not properly
+      # signed (and, with notarization credentials, notarized and stapled). Checks the unpacked .app
+      # and again the app inside each release zip, because that zip is what installed copies
+      # download and swap in. Signing details printed here are public (authority, team id, flags).
+      - name: Verify Developer ID signature and notarization
+        if: matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true'
+        shell: bash
+        env:
+          NOTARIZED: ${{ steps.sign.outputs.notarize != 'none' }}
+        run: |
+          set -eo pipefail
+          verify() {
+            app="$1"
+            echo "::group::$app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            info="$(codesign -dv --verbose=4 "$app" 2>&1)"
+            echo "$info" | grep -E '^(Authority|TeamIdentifier|Identifier|Timestamp)|flags=' || true
+            case "$info" in *flags=*runtime*) ;; *) echo "::error::$app is missing the hardened runtime"; exit 1 ;; esac
+            if [ "$NOTARIZED" = "true" ]; then
+              xcrun stapler validate "$app"
+              spctl -a -vvv -t exec "$app"
+            else
+              echo "::warning::not notarized (no APPLE_API_KEY* or APPLE_ID* secrets): Gatekeeper will still block the first launch"
+            fi
+            echo "::endgroup::"
+          }
+          found=0
+          for app in dist/mac*/*.app; do [ -d "$app" ] || continue; found=1; verify "$app"; done
+          [ "$found" = 1 ] || { echo "::error::no .app found under dist/"; exit 1; }
+          for zip in dist/*-mac-*.zip; do
+            [ -f "$zip" ] || continue
+            tmp="$(mktemp -d)"
+            ditto -x -k "$zip" "$tmp"
+            for app in "$tmp"/*.app; do verify "$app"; done
+            rm -rf "$tmp"
+          done
+
+      - name: Remove the notarization key
+        if: always() && matrix.platform == 'mac'
+        shell: bash
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

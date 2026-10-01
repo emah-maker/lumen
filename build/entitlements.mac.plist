@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the main Lumen executable (Developer ID builds with the hardened runtime, which
+  notarization requires). Helpers get entitlements.mac.inherit.plist. Each key below is here for a
+  reason; add nothing without one. Without a Developer ID certificate the build is ad-hoc signed
+  with the hardened runtime off (see scripts/signing.js) and none of this is enforced.
+-->
+<plist version="1.0">
+<dict>
+  <!-- V8 compiles JavaScript to machine code at run time (the hardened runtime blocks that by default). -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- Chromium and V8 map writable+executable memory (WebAssembly, JIT tiers). Electron's own apps need it. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- The Widevine CDM (libwidevinecdm.dylib, which castlabs bundles) is signed by Google, not by
+       Lumen's team. Library validation would refuse to load it, and Netflix, Disney+ and Spotify DRM
+       would fail. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- Web pages ask for the camera and microphone (getUserMedia; Lumen's permission prompt "use your
+       camera and microphone"). macOS shows its own prompt once these exist, and the Info.plist
+       usage strings (package.json mac.extendInfo) say why. -->
+  <key>com.apple.security.device.camera</key>
+  <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <!-- navigator.geolocation: Lumen's permission prompt offers "know your location"; CoreLocation
+       needs this under the hardened runtime. -->
+  <key>com.apple.security.personal-information.location</key>
+  <true/>
+  <!-- Deliberately absent: com.apple.security.cs.allow-dyld-environment-variables (nothing injects
+       DYLD_* into Lumen; leaving it out keeps dylib injection blocked), the App Sandbox (a browser
+       needs the whole file system and Lumen is not distributed through the Mac App Store), and the
+       network entitlements (com.apple.security.network.client/server only apply inside the App
+       Sandbox; outside it, the hardened runtime does not restrict sockets). -->
+</dict>
+</plist>

@@ -4,7 +4,8 @@
 // "Always Allow" on the "Lumen Safe Storage" Keychain item to that identity, so it asked again after
 // every update. Signing every build with the same certificate keeps the identity, and the answer,
 // stable. The certificate is self-signed: Gatekeeper still says "unidentified developer" (only a paid
-// Apple Developer ID changes that), and nothing here is notarized.
+// Apple Developer ID changes that), and nothing here is notarized. With a Developer ID certificate
+// (CSC_LINK, see docs/mac-signing.md) this whole step is skipped.
 //
 // The certificate comes from the repository secrets LUMEN_SIGN_P12 (base64 .p12) and
 // LUMEN_SIGN_PASSWORD. Without them, or if anything fails, the ad-hoc signature stays and the build
@@ -62,8 +63,15 @@ async function signWithLumenCert(appPath) {
   }
 }
 
+// electron-builder signs, and (with Developer ID credentials) notarizes and staples, BEFORE this hook
+// runs. Signing again here would replace the Developer ID signature and void the notarization
+// ticket, so the self-signed step only applies to the ad-hoc path (build.js passes identity "-").
+const isAdHocBuild = (identity) => identity === '-';
+
 exports.default = async (context) => {
   if (context.electronPlatformName !== 'darwin') return;
+  const identity = context.packager && context.packager.platformSpecificBuildOptions && context.packager.platformSpecificBuildOptions.identity;
+  if (!isAdHocBuild(identity)) return console.log('after-sign: Developer ID build; leaving the Apple signature (and notarization) untouched.');
   const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   try {
     await signWithLumenCert(appPath);
@@ -73,3 +81,4 @@ exports.default = async (context) => {
   }
 };
 exports.identityHash = identityHash;
+exports.isAdHocBuild = isAdHocBuild;
