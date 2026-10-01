@@ -11,6 +11,9 @@ const { registrableDomain } = require('../browser/tab-groups');
 const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
 const { requestedHints, withHints } = require('../browser/chrome-identity');
+const { createSiteZoom } = require('../features/site-zoom');
+const siteData = require('../features/site-data');
+const { t } = require('../features/i18n');
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -19,7 +22,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
 const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
-  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity'];
+  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -225,6 +228,7 @@ function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
   const launched = applyAtLaunch(app, readSettings());
   const userZoomed = new Set(); // hosts the user zoomed by hand: the default zoom leaves them alone
+  const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
   const upgraded = new Map(); // webContents id -> { from, to } while an HTTPS-only upgrade loads
   const httpAllowed = new Set(); // hosts the user chose to visit over http this session
   // Another in-memory session (a private window's, the research tabs') keeps its own of both: a site zoomed
@@ -262,6 +266,8 @@ function create(deps) {
     let host;
     try { host = new URL(wc.getURL()).host; } catch { return; }
     if (!/^https?:/.test(wc.getURL()) || setsOf(wc).userZoomed.has(host)) return;
+    const saved = siteZoom.levelFor(host); // zoomed by hand in an earlier run
+    if (saved !== null) { setsOf(wc).userZoomed.add(host); wc.setZoomLevel(saved); return; }
     wc.setZoomFactor(prefs().defaultZoom);
   }
   function uiPrefs() {
@@ -509,15 +515,19 @@ function create(deps) {
     });
     wc.once('destroyed', () => upgraded.delete(wc.id));
   }
-  function noteUserZoom(wc) {
-    try { setsOf(wc).userZoomed.add(new URL(wc.getURL()).host); } catch {}
+  // `level`: the zoom level the page is being set to, remembered for its host (features/site-zoom.js).
+  function noteUserZoom(wc, level) {
+    let host;
+    try { host = new URL(wc.getURL()).host; } catch { return; }
+    setsOf(wc).userZoomed.add(host);
+    // (Never from a private window: its session isn't persistent, and nothing it does is kept on disk.)
+    if (level !== undefined && /^https?:/.test(wc.getURL()) && wc.session?.isPersistent?.() !== false) siteZoom.set(host, level);
   }
   // "Actual size" means the default zoom from Settings for web pages (100% for Lumen's own pages),
   // and the site follows that default again from now on.
   function resetZoom(wc) {
-    try { setsOf(wc).userZoomed.delete(new URL(wc.getURL()).host); } catch {}
+    try { const host = new URL(wc.getURL()).host; setsOf(wc).userZoomed.delete(host); siteZoom.forget(host); } catch {}
     if (/^https?:/.test(wc.getURL())) wc.setZoomFactor(prefs().defaultZoom);
-    else wc.setZoomLevel(0);
   }
 
   // The settings tab: nothing but the settings page may load in it.
@@ -553,8 +563,8 @@ function create(deps) {
     return [
       ...(suggestions.length
         ? suggestions.map((word) => ({ label: word, click: () => wc.replaceMisspelling(word) }))
-        : [{ label: 'No spelling suggestions', enabled: false }]),
-      { label: 'Add to Dictionary', click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) },
+        : [{ label: t('spelling.none'), enabled: false }]),
+      { label: t('spelling.addToDictionary'), click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) },
       { type: 'separator' },
     ];
   }
@@ -769,7 +779,7 @@ function create(deps) {
   // ---- reset ----
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'siteZoom']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
     userZoomed.clear();
@@ -837,6 +847,9 @@ function create(deps) {
       const i = key.lastIndexOf('|');
       return { origin: key.slice(0, i), permission: key.slice(i + 1), label: PERMISSIONS[key.slice(i + 1)] || key.slice(i + 1), allowed };
     }));
+    // Site data (features/site-data.js): the sites with cookies, and removing one of them.
+    handle('prefs:site-data', async () => siteData.groupCookies(await ses().cookies.get({}), registrableDomain));
+    handle('prefs:clear-site', async (site) => ({ removed: await siteData.clearSite(ses(), String(site || '')), list: siteData.groupCookies(await ses().cookies.get({}), registrableDomain) }));
     handle('prefs:revoke-permission', (origin, permission) => {
       const removed = deps.permissionDecisions.delete(`${origin}|${permission}`);
       savePermissions(deps.permissionDecisions);
@@ -881,7 +894,7 @@ function create(deps) {
 
   return {
     prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
-    noteUserZoom, resetZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
+    noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };
 }

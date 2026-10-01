@@ -1697,6 +1697,24 @@ async function buildPrivacy(card) {
   permissions.append(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults));
   permissions.append(stackRow('Site permissions', 'What you allowed or blocked. Revoke to be asked again.', granted));
   renderGranted();
+
+  // [site data] Every site that keeps cookies, with Remove (features/site-data.js).
+  const sites = h('div', { class: 'list', id: 'site-data' });
+  const filter = h('input', { type: 'search', id: 'site-data-filter', placeholder: 'Filter sites', 'aria-label': 'Filter sites' });
+  let siteList = [];
+  const renderSites = () => {
+    const q = filter.value.trim().toLowerCase();
+    const shown = siteList.filter((s) => !q || s.site.includes(q));
+    sites.replaceChildren(...(shown.length ? shown.map((s) => h('div', { class: 'item', 'data-site': s.site },
+      h('span', { class: 'grow' }, s.site, h('span', { class: 'note', text: ` · ${s.cookies === 1 ? '1 cookie' : `${s.cookies} cookies`}` })),
+      h('button', { text: 'Remove', class: 'revoke', 'aria-label': `Remove cookies and site data for ${s.site}`, onclick: async () => { siteList = (await S.clearSite(s.site)).list; renderSites(); } })))
+      : [h('span', { class: 'note', text: q ? 'No sites match.' : 'No sites have stored cookies.' })]));
+  };
+  filter.addEventListener('input', renderSites);
+  const loadSites = async () => { siteList = await S.siteData(); renderSites(); };
+  const data = card.group('Site data').subpage('site-data', 'Site data', 'The sites that keep cookies on this computer, and removing one of them.', 'cookies storage website data remove manage');
+  data.append(stackRow('Sites with cookies', 'Remove deletes a site’s cookies (you’ll be signed out of it) and what it stored on this computer. Clear browsing data removes everything at once.', filter, sites));
+  loadSites();
 }
 
 // [passwords] Privacy and security → Passwords: the Save passwords switch, and a sub-page listing saved
@@ -2109,7 +2127,16 @@ async function buildAbout(card) {
     h('tr', {}, h('th', { text: 'Component' }), h('th', { text: 'Version' })),
     [['Lumen', a.version], ['Electron', a.versions.electron], ['Chromium', a.versions.chrome], ['Node.js', a.versions.node], ['V8', a.versions.v8], ['Anthropic CLI (pinned)', a.cliPinned], ['OS', a.os]]
       .map(([k, v]) => h('tr', { 'data-component': k }, h('td', { text: k }), h('td', { class: 'mono', text: v }))));
-  card.append(stackRow('Lumen', 'An AI browser.', versions));
+  card.append(stackRow('Lumen', 'Every AI, one browser. Free software under the GPL-3.0 license.', versions));
+  // For a bug report: the versions as plain text, and where to file it.
+  const details = () => [...versions.querySelectorAll('tr[data-component]')].map((r) => `${r.cells[0].textContent}: ${r.cells[1].textContent}`).join('\n');
+  const copyDetails = h('button', { id: 'about-copy', type: 'button', text: 'Copy version details', onclick: async () => {
+    try { await navigator.clipboard.writeText(details()); copyDetails.textContent = 'Copied'; } catch { copyDetails.textContent = 'Select the table to copy it'; }
+    setTimeout(() => { copyDetails.textContent = 'Copy version details'; }, 1600);
+  } });
+  const issues = 'https://github.com/emah-maker/lumen/issues';
+  const report = h('a', { id: 'about-report', href: issues, text: 'Report a problem', onclick: (e) => { e.preventDefault(); S.openUrl(issues); } });
+  card.append(row('Found a problem?', 'Copy the version details and include them in your report.', report, copyDetails));
   card.append(stackRow('Build', null, h('table', {},
     [['App', a.appPath], ['Executable', a.exePath], ['Profile', a.userData], ['Packaged', a.packaged ? 'Yes' : 'No (development)']]
       .map(([k, v]) => h('tr', {}, h('td', { text: k }), h('td', { class: 'mono', text: v }))))));

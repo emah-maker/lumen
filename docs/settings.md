@@ -67,6 +67,7 @@ These are set from the sidebar rather than the settings page:
 | Theme | `theme` | `system` | `system`, `light` or `dark`. Websites see it as `prefers-color-scheme`. |
 | Dark mode for all websites (experimental) | `forceDarkWebsites` | off | Chromium darkens sites that have no dark theme. Takes effect after a relaunch. |
 | Page zoom | `defaultZoom` | `1` | 50% to 200%. Sites you zoom by hand keep their own level. |
+| Zoom per site | `siteZoom` | none | `{ host: level }` for the sites you zoomed by hand (Chromium zoom levels, each a factor of 1.2), kept across restarts, at most 500. Actual Size (`Ctrl+0`) or the site's page info removes one; Reset settings clears them. |
 | Font size | `fontSize` | `16` | `9`, `12`, `16`, `20` or `24` px. Applies to new tabs. |
 | Show bookmark button | `showBookmarkButton` | on | The star in the address bar. Ctrl+D bookmarks either way. |
 | Compact tabs | `compactTabs` | off | Shorter tabs in the tab strip. |
@@ -83,6 +84,7 @@ These are set from the sidebar rather than the settings page:
 | Setting | Key | Default | What it does |
 |---|---|---|---|
 | What Lumen opens when it starts | `startup` | `restore` | `restore` (continue where you left off), `newtab` or `pages`. |
+| Restore after a crash | — | — | With `newtab` or `pages`, a launch after Lumen didn't quit normally (a `running` file left in the profile folder) offers to restore the tabs of the last run. |
 | Pages to open | `startupPages` | none | Up to 20 `http(s)` addresses, used with `pages`. |
 
 ## Privacy and security
@@ -102,6 +104,7 @@ These are set from the sidebar rather than the settings page:
 | Sites where ads are allowed | `adblockAllow` | none | Host names the blocker leaves alone. |
 | Default for new sites | `permissionDefaults` | ask | Per permission (location, camera and microphone, notifications, clipboard): `ask` or `block`. |
 | Site permissions | — | — | What you allowed or blocked per site. Revoke to be asked again. |
+| Site data | — | — | Every site that keeps cookies, grouped by site with its cookie count. Remove deletes that site's cookies and what it stored on this computer. |
 
 ## Downloads
 

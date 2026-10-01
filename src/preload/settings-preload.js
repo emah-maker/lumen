@@ -57,6 +57,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
+    siteData: call('prefs:site-data'), // [site data] the sites with cookies
+    clearSite: call('prefs:clear-site'),
     extensions: call('prefs:extensions'),
     removeExtension: call('prefs:remove-extension'),
     extensionOptions: call('prefs:extension-options'),
