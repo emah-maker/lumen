@@ -16,6 +16,7 @@
       --space-1: 8px; --space-2: 16px; --space-3: 24px; --space-4: 32px; --gutter: 24px; --margin: 24px; --row: 48px;
     }
     @media (min-width: 1240px) { :root { --margin: 32px; } }
+    :root { --rail-bg: color-mix(in srgb, var(--bg) 20%, transparent); --rail-bg-hot: color-mix(in srgb, var(--bg) 62%, transparent); --rail-dot: color-mix(in srgb, var(--text) 40%, transparent); --rail-dot-on: color-mix(in srgb, var(--text) 78%, transparent); }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #1c1c1e; --card: #2c2c2e; --field: rgba(255, 255, 255, 0.08); --hover: rgba(255, 255, 255, 0.08);
@@ -342,31 +343,101 @@
     .w-card.resizing { z-index: 4; transition: none; box-shadow: 0 0 0 1px var(--accent); }
     .w-ghost { position: absolute; left: 0; top: 0; z-index: 2; box-sizing: border-box; border-radius: 16px; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; transition: transform 160ms var(--ease), width 160ms var(--ease), height 160ms var(--ease); }
     .w-ghost.snap { border-style: solid; background: color-mix(in srgb, var(--accent) 22%, transparent); }
-    /* [widgets] Stacks (newtab-stacks.js): same-size widgets in one place. The shown one is the card; the others wait
-       under it, hidden. Page dots and a small arrow sit in the bottom corner beside the resize handle; the dots are
-       always faintly there (this card is a stack), the arrow comes with hover or focus. */
+    /* [widgets] Smart Stack (newtab-stacks.js): same-size widgets in one place. The shown one is the card; the others wait
+       under it, hidden, and only its two neighbors are drawn. A rail on the right edge has page dots (buttons) and, on
+       hover or focus, an up and a down arrow; the rail is the focusable stack. A card in flight (the wheel, a swipe, a
+       dot) slides and fades with transform and opacity only. */
     .w-card.w-under { visibility: hidden; pointer-events: none; z-index: 0; }
-    .w-card.w-under.w-leaving { visibility: visible; } /* fading out after a switch */
-    .w-stack { position: absolute; right: 22px; bottom: 5px; z-index: 2; display: flex; align-items: center; gap: 2px; height: 18px; }
-    .w-stack-dots { display: flex; gap: 3px; padding: 0 2px; opacity: 0.7; transition: opacity 150ms ease-out; }
-    .w-stack-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--faint); transition: background-color 200ms var(--ease), width 200ms var(--ease); }
-    .w-stack-dots i.on { width: 10px; border-radius: 999px; background: var(--muted); }
-    .w-stack-next { appearance: none; display: grid; place-items: center; width: 18px; height: 18px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; outline: none; cursor: default; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
-    .w-stack-next svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    .w-card:hover .w-stack-next, .w-stack-next:focus-visible { opacity: 1; }
-    .w-card:hover .w-stack-dots, .w-stack:focus-within .w-stack-dots { opacity: 1; }
-    .w-stack-next:hover { background: var(--hover); color: var(--text); }
-    .w-stack-next:active { scale: 0.9; }
-    .w-stack-next:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
-    .w-card.in-stack > .w-foot { padding-right: 72px; }
-    body.w-editing .w-stack { display: none; }
+    .w-card.w-under:not(.w-near):not(.w-peek) { content-visibility: hidden; }
+    .w-card.w-under.w-peek { visibility: visible; z-index: 1; }
+    .w-card.w-moving { will-change: transform, opacity; transition: none; }
+    /* The rail's gutter: the card's right padding holds the rail (a 24px column and the edge), so content never sits under the dots. */
+    .w-card.in-stack { padding-right: 34px; }
+    .w-card.in-stack:not(.w-under) { touch-action: pan-x pinch-zoom; }
+    /* The rail is faint at rest and shows fully on hover, focus, while the stack moves and for a moment after a switch (iOS's page indicator). */
+    .w-stack { position: absolute; right: 4px; top: 50%; z-index: 2; translate: 0 -50%; display: flex; flex-direction: column; align-items: center; width: 24px; max-height: calc(100% - 12px); box-sizing: border-box; padding: 2px 0; border-radius: 13px; outline: none; background: var(--rail-bg); opacity: 0.92; transition: opacity 240ms var(--ease), background-color 240ms var(--ease), box-shadow 240ms var(--ease); }
+    .w-card:hover .w-stack, .w-card:focus-within .w-stack, .w-card.rail-on .w-stack, .w-card.w-moving .w-stack { opacity: 1; background: var(--rail-bg-hot); box-shadow: 0 0 0 0.5px var(--border); }
+    .w-stack:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+    .w-stack-dots { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 0; }
+    .w-stack-dot { appearance: none; display: grid; place-items: center; flex: 0 1 24px; width: 24px; height: 24px; min-height: 13px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; outline: none; cursor: default; }
+    .w-stack-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rail-dot); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 60%, transparent); transition: scale 220ms var(--ease), background-color 220ms var(--ease); }
+    .w-stack-dot[aria-current="true"]::before { background: var(--rail-dot-on); scale: 1.25; }
+    .w-card:hover .w-stack-dot::before, .w-card:focus-within .w-stack-dot::before, .w-card.rail-on .w-stack-dot::before { background: color-mix(in srgb, var(--text) 52%, transparent); }
+    .w-card:hover .w-stack-dot[aria-current="true"]::before, .w-card:focus-within .w-stack-dot[aria-current="true"]::before, .w-card.rail-on .w-stack-dot[aria-current="true"]::before { background: var(--text); }
+    .w-stack-dot:hover::before { background: color-mix(in srgb, var(--text) 75%, transparent); }
+    .w-stack-dot[aria-current="true"]:hover::before { background: var(--text); }
+    .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accent); }
+    body.on-media .w-stack-dot::before { background: rgba(255, 255, 255, 0.62); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.34), 0 1px 3px rgba(0, 0, 0, 0.4); }
+    body.on-media .w-stack-dot[aria-current="true"]::before, body.on-media .w-stack-dot[aria-current="true"]:hover::before { background: #fff; }
+    body.on-media .w-stack-dot:hover::before { background: rgba(255, 255, 255, 0.9); }
+    body.on-media .w-card:hover .w-stack, body.on-media .w-card:focus-within .w-stack, body.on-media .w-card.rail-on .w-stack, body.on-media .w-card.w-moving .w-stack { background: rgba(0, 0, 0, 0.3); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2); }
+    body.on-media .w-stack { background: rgba(0, 0, 0, 0.14); }
+    body.on-media .w-card:hover .w-stack-dot::before, body.on-media .w-card:focus-within .w-stack-dot::before, body.on-media .w-card.rail-on .w-stack-dot::before { background: rgba(255, 255, 255, 0.78); }
+    body.on-media .w-card:hover .w-stack-dot[aria-current="true"]::before, body.on-media .w-card:focus-within .w-stack-dot[aria-current="true"]::before, body.on-media .w-card.rail-on .w-stack-dot[aria-current="true"]::before { background: #fff; }
+    .w-stack-scrim { position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.3); }
+    body.on-media .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 3.5px #fff; }
+    @media (hover: none) { .w-stack { opacity: 0.92; } }
+    @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-card.rail-intro .w-stack { animation: w-rail-intro 1.6s var(--ease) 1; } }
+    @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-card.rail-end .w-stack-dot[aria-current="true"]::before { animation: w-rail-end 600ms var(--ease) 1; } }
+    .w-card.rail-end .w-stack-dot[aria-current="true"]::before { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+    @keyframes w-rail-end { 0%, 100% { scale: 1.25; } 40% { scale: 1.9; } }
+    @keyframes w-rail-intro { 0%, 100% { scale: 1; opacity: 0.92; } 22%, 62% { scale: 1.14; opacity: 1; background: color-mix(in srgb, var(--bg) 58%, transparent); box-shadow: 0 0 0 0.5px var(--border), 0 0 0 5px color-mix(in srgb, var(--accent) 24%, transparent); } }
+    @container card (max-height: 150px) { .w-stack-dot { min-height: 11px; } .w-stack-nav { display: none; } }
+    .w-stack-nav { appearance: none; display: grid; place-items: center; flex: none; width: 24px; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; outline: none; cursor: default; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+    .w-stack-nav svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .w-card:hover .w-stack-nav, .w-stack:focus-within .w-stack-nav { opacity: 1; }
+    .w-stack-nav:hover { background: var(--hover); color: var(--text); }
+    .w-stack-nav:active { scale: 0.9; }
+    .w-stack-nav:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+    body.on-media .w-stack-nav { color: rgba(255, 255, 255, 0.85); }
+    .w-stack-open svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    body.w-editing .w-stack-open { display: none; }
+    .w-stack-menu { position: fixed; z-index: 31; min-width: 150px; box-sizing: border-box; padding: 4px; border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 10px 30px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; }
+    .w-stack-menu-item { appearance: none; display: block; width: 100%; margin: 0; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: 500 12.5px/1.3 system-ui, sans-serif; text-align: left; cursor: default; outline: none; }
+    .w-stack-menu-item:hover, .w-stack-menu-item:focus-visible { background: var(--hover); }
+    .w-stack-menu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+    .w-stack-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .w-stack-why { position: absolute; z-index: 3; left: 50%; top: -9px; translate: -50% 0; max-width: calc(100% - 32px); padding: 2px 9px; border-radius: 999px; background: var(--bg); color: var(--muted); box-shadow: 0 0 0 0.5px var(--border), 0 2px 8px var(--shadow); font: 500 10.5px/16px system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+    @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-stack-why { animation: w-pop 180ms ease-out; } }
+    body.w-editing .w-stack, body.w-editing .w-stack-why { display: none; }
     .w-stack-edit { display: none; position: absolute; z-index: 3; left: 50%; top: -8px; translate: -50% 0; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--shadow); cursor: default; outline: none; }
     .w-stack-edit svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
     .w-stack-edit:hover { background: var(--hover); }
     .w-stack-edit:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     body.w-editing .w-stack-edit { display: grid; pointer-events: auto; }
     .w-ghost.stack { border-style: solid; background: color-mix(in srgb, var(--accent) 16%, transparent); scale: 0.96; }
-    @media (prefers-reduced-motion: reduce) { .w-stack-dots i, .w-stack-next { transition: none; } }
+    @media (prefers-reduced-motion: reduce) { .w-stack, .w-stack-dot::before, .w-stack-nav { transition: none; } }
+    body.calm .w-stack, body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
+    /* Edit stack: a small panel beside the card (Edit layout) */
+    .w-stack-panel { position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
+    .w-sp-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 2px 8px; }
+    .w-stack-panel h2 { margin: 0; font-size: 13px; font-weight: 600; }
+    .w-stack-panel h3 { margin: 10px 0 2px; padding: 0 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+    .w-sp-hint, .w-sp-none { margin: 0; padding: 2px 8px 6px; color: var(--muted); font-size: 11.5px; }
+    .w-sp-done { appearance: none; margin: 0; padding: 3px 12px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; }
+    .w-sp-done:hover { background: var(--hover); }
+    .w-sp-list { display: flex; flex-direction: column; gap: 2px; }
+    .w-sp-row { position: relative; display: flex; align-items: center; gap: 2px; padding: 4px 4px 4px 2px; border-radius: 10px; }
+    .w-sp-row.shown { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .w-sp-row.lifted { z-index: 2; background: var(--bg); box-shadow: 0 0 0 1px var(--accent), 0 8px 20px var(--shadow); }
+    .w-sp-row.drop::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: -2px; height: 2px; border-radius: 2px; background: var(--accent); }
+    .w-sp-name { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+    .w-sp-name b, .w-sp-pick b { font: 600 12.5px/1.3 system-ui, sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .w-sp-name span, .w-sp-pick span { color: var(--muted); font-size: 11px; }
+    .w-sp-grip, .w-sp-btn { appearance: none; display: grid; place-items: center; flex: none; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); outline: none; cursor: default; }
+    .w-sp-grip { cursor: grab; touch-action: none; }
+    .w-sp-grip svg, .w-sp-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .w-sp-grip:hover, .w-sp-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+    .w-sp-btn:disabled { opacity: 0.35; }
+    .w-sp-grip:focus-visible, .w-sp-btn:focus-visible, .w-sp-done:focus-visible, .w-sp-pick:focus-visible, .w-sp-toggle input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .w-sp-opts { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+    .w-sp-toggle { display: flex; gap: 8px; align-items: flex-start; padding: 5px 8px; border-radius: 10px; }
+    .w-sp-toggle:hover { background: var(--hover); }
+    .w-sp-toggle input { appearance: auto; flex: none; width: 14px; height: 14px; min-width: 14px; margin: 2px 0 0; padding: 0; border: 0; background: none; box-shadow: none; accent-color: var(--accent); }
+    .w-sp-toggle b { display: block; font-weight: 600; }
+    .w-sp-toggle span span { display: block; color: var(--muted); font-size: 11px; }
+    .w-sp-pick { appearance: none; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; margin: 0; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; cursor: default; outline: none; }
+    .w-sp-pick:hover { background: var(--hover); }
     .w-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     header { position: relative; }
     .w-edit-btn { position: absolute; right: 0; top: 4px; appearance: none; margin: 0; padding: 4px 12px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; transition: background-color 150ms ease-out; }
@@ -838,6 +909,7 @@
   <script src="favicons.js"></script>
   <script src="../features/widget-layout.js"></script>
   <script src="../features/widget-stacks.js"></script>
+  <script src="../features/widget-stack-motion.js"></script>
   <script src="../features/widget-system.js"></script>
   <script src="../features/widget-edit.js"></script>
   <script src="../features/widget-colors.js"></script>

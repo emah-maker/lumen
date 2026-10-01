@@ -90,7 +90,7 @@ function render() {
   const shown = entries.filter((b) => !q || b.title.toLowerCase().includes(q) || b.url.toLowerCase().includes(q) || b.folder.toLowerCase().includes(q));
   list.replaceChildren();
   if (!shown.length) {
-    list.append(el('p', { className: 'empty', textContent: q ? 'No matches.' : 'No bookmarks yet. Press Ctrl+D on a page to bookmark it.' }));
+    list.append(el('p', { className: 'empty', textContent: q ? 'No matches.' : `No bookmarks yet. Press ${navigator.platform.startsWith('Mac') ? '⌘D' : 'Ctrl+D'} on a page to bookmark it.` }));
     return;
   }
   const folders = [''].concat([...new Set(shown.map((b) => b.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b)));

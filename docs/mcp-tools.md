@@ -1,6 +1,6 @@
 # MCP tool reference
 
-Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Gemini CLI](../README.md#use-lumen-from-claude-code-codex-gemini-cli)) offers the same 28 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
+Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../README.md#use-lumen-from-claude-code-codex-antigravity)) offers the same 28 tools the sidebar AI uses. This page lists them with their parameters, as returned by `tools/list`. The source of truth is the `TOOLS` array in [`src/ai/agent.js`](../agent.js); `web_search` is the client-side search tool defined next to it.
 
 A few things apply to every tool:
 
