@@ -1330,7 +1330,9 @@ function supportsOf(c, docs) {
   // Travel is a broad concept: two tabs that are both "travel" are a trip only when they name one place (below); three or more of a group are a Travel group.
   const evOf = new Map(c.map((i, x) => [i, ev[x]]));
   const onePlace = (h) => h.some((i) => [...evOf.get(i).places].some((p) => h.filter((j) => evOf.get(j).places.has(p)).length >= 2));
-  for (const [k, h] of holdBy((e) => e.concepts)) if (k !== '%travel' || h.length >= 3 || onePlace(h)) out.push({ holders: h });
+  // Crypto with a group of its own (three tabs) is not Finance (CONCEPT_EXCLUDES): the money in a coin binds no retirement account to it.
+  const coins = c.filter((i) => docs[i].words.has('%crypto')).length >= 3;
+  for (const [k, h] of holdBy((e) => (coins && e.concepts.has('%crypto') ? [...e.concepts].filter((x) => x !== '%finance') : e.concepts))) if (k !== '%travel' || h.length >= 3 || onePlace(h)) out.push({ holders: h });
   // Two tabs of one place that are both about getting there or being there are a trip (see tripGroups), whatever else their words say.
   {
     const byPlace = new Map();

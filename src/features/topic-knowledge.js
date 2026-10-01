@@ -61,10 +61,10 @@ const CONCEPTS = {
   cooking: 'борщ пирог пирожки блины котлеты суп салат плов recipe receita receitas receta recetas rezept rezepte recette recettes ricetta ricette ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast chicken burrito pasta soup stew casserole skillet 카페 맛집 레시 시피 요리',
   jobs: 'job career resume interview salary hiring recruiter internship applicant offer negotiate negotiation leetcode cscareerquestions grad',
   // A baby's first year, woodworking, crypto and a real-estate agent's paperwork (the phrases that say them beside these words are PHRASE_CONCEPTS).
-  baby: 'newborn newborns baby babies infant infants swaddle swaddles breastfeeding breastfeed diaper diapers postpartum pediatrician pediatricians babylist huckleberry crib cribs stroller strollers',
-  woodworking: 'woodworking woodworker woodworkers woodshop dovetail dovetails chisel chisels workbench walnut lumber jig jigs joinery rockler woodcraft sawdust',
-  crypto: 'crypto cryptocurrency bitcoin ethereum uniswap ledger etherscan defillama koinly coinbase kraken metamask wallet wallets defi',
-  realestate: 'docusign dotloop',
+  baby: 'newborn newborns baby babies infant infants swaddle swaddles breastfeeding breastfeed diaper diapers postpartum pediatrician pediatricians babylist huckleberry crib cribs stroller strollers bassinet bassinets nursery onesie onesies pacifier pacifiers lactation colic toddler toddlers maternity paternity swaddling babycenter thebump',
+  woodworking: 'woodworking woodworker woodworkers woodshop dovetail dovetails chisel chisels workbench walnut lumber jig jigs joinery rockler woodcraft sawdust titebond kreg plywood hardwood hardwoods roubo benchcrafted lumberjocks',
+  crypto: 'crypto cryptocurrency bitcoin ethereum uniswap ledger etherscan defillama koinly coinbase kraken metamask wallet wallets defi staking dex dao daos nft nfts solana altcoin altcoins blockchain web3 btcusd ethusd ethfinance bankless lido tvl stablecoin stablecoins',
+  realestate: 'docusign dotloop mls escrow',
   // ("lease", "moving" and "relocation" are not here: a car lease and a job relocation are not housing. A tab with one of them and no other housing word is not housing; with "apartment", "rent" or "tenant" it is, by those words.)
   housing: 'apartment apartments rent rental landlord realtor tenant renter renters movers uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento rightmove zoopla tenancy lettings flat flats accommodation homebuyer homebuyers homebuying preapproval 賃貸 不動 월세 전세 부동',
   sports: 'messi soccer football basketball baseball hudl ncaa teamworks cleats hamstring uswnt midfielder midfielders nba nfl mlb nhl playoff finals championship coach quarterback fussball fußball bundesliga spielplan laliga futebol cricket ipl bcci cricbuzz espncricinfo kohli dhoni rcb csk wicket innings premier league fixtures standings arsenal chelsea tottenham epl kbo 손흥 흥민 축구 야구 리그',
@@ -100,13 +100,13 @@ const CONCEPTS = {
   gamedev: 'lospec fmod wwise freesound gdc godot unreal aseprite sprite sprites devlog devlogs steamworks gamedev gamedeveloper playtest playtesting tilemap tilemaps cinemachine metroidvania unity3d shader shaders',
 };
 // Words that say a second concept besides the one they are listed under (tab-groups.js CONCEPTS_OF): buying a home is housing and a loan is finance.
-const CONCEPT_ALSO = { mortgage: 'housing', mortgages: 'housing' };
+const CONCEPT_ALSO = { mortgage: 'housing', mortgages: 'housing', pediatrician: 'baby', pediatricians: 'baby' };
 // Phrases that say a concept where their words alone would not ("closing costs", "Western blot"), and the ones that must not be read as the words they
 // are made of. [pattern, concept]; the concept is added to the tab as if one of its words were in the title.
 const PHRASE_CONCEPTS = [
-  [/\b(wake windows?|feeding schedules?|what to expect( when)?|baby (formula|monitors?)|infant formula|formula feeding)\b/i, 'baby'],
-  [/\b(hand planes?|router tables?|wood glue|fine woodworking|table saw|band saw)\b/i, 'woodworking'],
-  [/\b(buyer'?s? (representation|agency) agreements?|listing agreements?|open houses?|mls (listings?|numbers?|search|data|id)|(home|house) staging|staging (a )?(home|house|listing)|(sales |market )?comps|comparable sales|zillow (premier )?agent)\b/i, 'realestate'],
+  [/\b(wake windows?|feeding schedules?|what to expect( when)?|baby (formula|monitors?|tracker)|infant formula|formula feeding|sleep regressions?|tummy time|(vaccine|immunization) schedules?|(new|first-?time) parents?|parental leave|birth announcements?|breast pumps?|bottle[- ]feeding|feed(ing)? logs?)\b/i, 'baby'],
+  [/\b(hand planes?|(block|jack|smoothing|jointer|low[- ]angle) planes?|router tables?|wood glue|fine woodworking|table saw|band saw|pocket[- ]holes?|glue-?ups?|wood ?(finish|finishing|stain)|hand (cut|tools?)|sharpening (chisels?|stones?|plane)|lie-?nielsen)\b/i, 'woodworking'],
+  [/\b(buyer'?s? (representation|agency) agreements?|listing agreements?|open houses?|mls (listings?|numbers?|search|data|id)|(home|house) staging|staging (a )?(home|house|listing)|(sales |market )?comps|comparable sales|zillow (premier )?agent|follow up boss|(negotiat\w+|agent|realtor|buyer'?s?|seller'?s?|listing) commissions?|nar settlement|real estate (agents?|license|continuing education|ce)|(home|house)s? (that )?sell|staging tips)\b/i, 'realestate'],
   [/\b(pre-?approval|closing costs?|down payments?|first-?time home ?buyers?|mortgage rates?|home ?owner(ship)?)\b/i, 'housing'],
   [/\b(social security|required minimum distributions?|rmd)\b/i, 'finance'],
   [/\b(western blots?|gibson assembly|prime editing|base editing|cell culture|flow cytometry|gel electrophoresis|protocols\.io)\b/i, 'research'],
@@ -221,7 +221,7 @@ const WEAK_WORDS = `job jobs offer offers dashboard start started request reques
 // an agency are government ("Government" takes them, tab-groups.js FALLBACK_CATEGORIES).
 // A concept whose own group (three or more tabs) keeps its tabs out of the broader one: crypto is not Finance once it has a group of its own.
 const CONCEPT_EXCLUDES = { finance: ['crypto'] };
-const CONCEPT_JOINS = { finance: ['tax'] };
+const CONCEPT_JOINS = { finance: ['tax'], realestate: ['housing'] };
 
 // registrable domain (or full host) -> category. Same category names as CONCEPTS where they overlap.
 const SITE_CATEGORIES = {
@@ -254,9 +254,9 @@ const SITE_CATEGORIES = {
   freelance: 'upwork.com fiverr.com freshbooks.com toggl.com track.toggl.com and.co bonsai.co',
   nursing: 'nurseslabs.com nursingcenter.com nurse.org medscape.com uptodate.com ayahealthcare.com vivian.com amnhealthcare.com kronos.net nursing.uworld.com',
   baby: 'babylist.com whattoexpect.com huckleberrycare.com babycenter.com thebump.com',
-  woodworking: 'rockler.com woodcraft.com finewoodworking.com woodmagazine.com lumberjocks.com popularwoodworking.com',
-  crypto: 'uniswap.org app.uniswap.org ledger.com etherscan.io defillama.com koinly.io coinbase.com kraken.com metamask.io coingecko.com coinmarketcap.com',
-  realestate: 'docusign.com docusign.net dotloop.com mlslistings.com',
+  woodworking: 'rockler.com woodcraft.com finewoodworking.com woodmagazine.com lumberjocks.com popularwoodworking.com lie-nielsen.com benchcrafted.com woodworkerssource.com ana-white.com randomlengths.com',
+  crypto: 'uniswap.org app.uniswap.org ledger.com etherscan.io defillama.com koinly.io coinbase.com kraken.com metamask.io coingecko.com coinmarketcap.com stake.lido.fi lido.fi messari.io farside.co.uk bankless.com',
+  realestate: 'docusign.com docusign.net dotloop.com mlslistings.com followupboss.com app.followupboss.com inman.com homelight.com texasrealestate.com trec.texas.gov kapre.com',
   gamedev: 'lospec.com itch.io gamedeveloper.com freesound.org fmod.com audiokinetic.com godotengine.org unity.com unity3d.com docs.unity3d.com discussions.unity.com unrealengine.com aseprite.org gdcvault.com gdconf.com partner.steamgames.com howtomarketagame.com',
 };
 // Ordinary English words (beside COMMON_CAPS): tab-groups.js sharedEvidence never lets two of these alone link tabs.
