@@ -1575,7 +1575,22 @@ function renderTabs(state) {
     const next = queuedTabState;
     queuedTabState = null;
     if (next) renderTabsNow(next);
+    updateStripFades();
   });
+}
+// A strip with more tabs than fit scrolls sideways (tabs keep a minimum width); soft edges show which side has more.
+// Classes only, so the mask costs nothing while every tab fits.
+let stripFadeFrame = 0;
+function updateStripFades() {
+  const strip = $('tabs');
+  const over = strip.scrollWidth - strip.clientWidth > 1;
+  strip.classList.toggle('fade-start', over && strip.scrollLeft > 1);
+  strip.classList.toggle('fade-end', over && strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1);
+}
+{
+  const queueFades = () => { if (!stripFadeFrame) stripFadeFrame = requestAnimationFrame(() => { stripFadeFrame = 0; updateStripFades(); }); };
+  $('tabs').addEventListener('scroll', queueFades, { passive: true });
+  new ResizeObserver(queueFades).observe($('tabs'));
 }
 // What decides where tabs sit and how wide they are. While it is unchanged, an update is only titles,
 // icons, loading flags and the like: those are patched in place, with no measuring and no FLIP.
@@ -2036,7 +2051,7 @@ function clearReveal() {
 }
 
 // While the page is a still image, main's last-resort thaw timer is told every second that motion goes on.
-let lastFreezeAlive = 0;
+let lastFreezeAlive = -Infinity;
 function freezeAlive() {
   const now = performance.now();
   if (now - lastFreezeAlive < 1000) return;
@@ -2093,10 +2108,10 @@ async function freezePage({ fade = false } = {}) {
   img.style.width = `${r.width}px`;
   img.style.height = `${r.height}px`;
   const decoded = await img.decode().then(() => true, () => false);
-  if (token !== freezeToken) { URL.revokeObjectURL(url); return; }
-  if (!decoded) { // a broken image must not replace the live page: revoke it and show the live view again
+  const arrival = snapshotArrival({ token, current: freezeToken, decoded });
+  if (arrival !== 'show') { // superseded while decoding, or a broken image: never replace the live page with it
     URL.revokeObjectURL(url);
-    thawPage();
+    if (arrival === 'thaw') thawPage();
     return;
   }
   if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
@@ -2106,6 +2121,7 @@ async function freezePage({ fade = false } = {}) {
   viewport.append(img);
 }
 
+const SNAPSHOT_REMOVE_DELAY_MS = 80; // the live page is back a moment before the still image leaves, so no blank frame shows
 function thawPage() {
   freezeToken++;
   const img = snapshot;
@@ -2113,7 +2129,7 @@ function thawPage() {
   // Swap the live page back a frame after the motion has settled, not on its last frame.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     window.browser.thawView?.();
-    if (img) setTimeout(() => { img.remove(); URL.revokeObjectURL(img.src); viewport.style.removeProperty('--snapshot-edge'); }, 80);
+    if (img) setTimeout(() => { img.remove(); URL.revokeObjectURL(img.src); viewport.style.removeProperty('--snapshot-edge'); }, SNAPSHOT_REMOVE_DELAY_MS);
   }));
 }
 
@@ -2221,6 +2237,8 @@ resizer.addEventListener('pointerdown', (e) => {
     frozen.then(() => { if (!ended && !snapshot && heldRect) { heldRect = null; reportBounds(); } }); // no snapshot came: don't leave the page at a stale size
   }
   let frame = 0;
+  // A still pointer sends no moves, and main thaws a freeze that has been quiet for 6 s: keep it alive until the drag ends.
+  const alive = setInterval(freezeAlive, 1000);
   const move = (ev) => {
     cancelAnimationFrame(frame);
     freezeAlive();
@@ -2228,6 +2246,7 @@ resizer.addEventListener('pointerdown', (e) => {
   };
   const up = async () => {
     ended = true;
+    clearInterval(alive);
     resizer.removeEventListener('pointermove', move);
     document.body.classList.remove('resizing');
     localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)));

@@ -4665,6 +4665,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   // the tab pages too, or a video or call kept playing with no window to stop it.
   w.on('closed', () => {
     uiReady = false;
+    clearTimeout(freezeTimers.get(rec)); // no freeze timer outlives its window
+    freezeTimers.delete(rec);
     dropDeadWindowViews();
     winRecs.delete(rec);
     if (rec === spareRec) spareRec = null;
@@ -5411,6 +5413,7 @@ function armFreezeTimeout(rec, seq) {
   clearTimeout(freezeTimers.get(rec));
   freezeTimers.set(rec, setTimeout(() => {
     if (freezeSeq.get(rec) !== seq || !rcAlive(rec)) return;
+    console.warn(`[lumen] page freeze timed out after ${FREEZE_MAX_MS} ms without a thaw; showing the live page again`);
     freezeSeq.set(rec, ++freezeCounter);
     withWindow(rec, () => { viewFrozen = false; layout(); });
   }, FREEZE_MAX_MS));
