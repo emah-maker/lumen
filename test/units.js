@@ -77,7 +77,7 @@ for (const [input, want] of [
   ['https://node.js', 'https://node.js'],
   ['about:blank', 'about:blank'],
   // A typed or pasted path opens the file, as in Chrome (spaces included).
-  ['/Users/me/My Page.html', process.platform === 'win32' ? 'file:///C:/Users/me/My%20Page.html' : 'file:///Users/me/My%20Page.html'],
+  ['/Users/me/My Page.html', require('url').pathToFileURL('/Users/me/My Page.html').href], // Windows: on the current drive
   [`~/Downloads/a b.pdf`, require('url').pathToFileURL(require('os').homedir() + '/Downloads/a b.pdf').href],
   ['C:\\Users\\me\\page one.html', 'file:///C:/Users/me/page%20one.html'],
 ]) check(`"${input}" opens ${want}`, resolveInput(input, 'google') === want, resolveInput(input, 'google'));
@@ -599,7 +599,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 // ---- updates (features/updates.js): who may update, how, and what to download
 {
   const zu = require('../src/features/zip-update');
-  const zp = zu.swapPaths(path.join('C:', 'Apps', 'Lumen', 'Lumen.exe'));
+  const zp = zu.swapPaths(path.join('C:', 'Apps', 'Lumen', 'Lumen.exe'), 'win32');
   check('zip update: staging and old copy sit next to the install folder', path.dirname(zp.staging) === path.join('C:', 'Apps') && zp.staging.endsWith('Lumen.update') && zp.old.endsWith('Lumen.old') && zp.script === null, JSON.stringify(zp));
   check('zip update: the expected hash comes from the matching latest.yml entry', zu.expectedHash([{ url: 'a.exe', sha512: 'x' }, { url: 'Lumen-1.0.0-win-x64.zip', sha512: 'zz' }], 'Lumen-1.0.0-win-x64.zip') === 'zz' && zu.expectedHash([], 'a.zip') === '', 'hash');
   check('zip update: a missing or different hash is refused', zu.hashMatches('a', 'a') && !zu.hashMatches('a', 'b') && !zu.hashMatches('', ''), 'match');
@@ -654,7 +654,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     // a staged update left by an earlier run: reused only while it is complete
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-staged-unit-'));
     const exe = path.join(d, 'Lumen', 'Lumen.exe');
-    const sp = zu.swapPaths(exe);
+    const sp = zu.swapPaths(exe, 'win32');
     const root = path.join(sp.staging, 'files', 'Lumen');
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, 'Lumen.exe'), 'x');
@@ -681,8 +681,8 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const okAccess = () => {};
   const winExe = 'C:\\Users\\me\\AppData\\Local\\Programs\\Lumen\\Lumen.exe';
   check('install location: writable folder and parent can be replaced', zu.canReplace(winExe, 'win32', okProbe, okAccess), 'ok');
-  check('install location: a folder that is not writable can not (Program Files style)', !zu.canReplace('C:\\Program Files\\Lumen\\Lumen.exe', 'win32', okProbe, (d) => { if (/Program Files/.test(d)) throw new Error('EACCES'); }), 'dir');
-  check('install location: a writable folder inside an unwritable parent can not', !zu.canReplace('C:\\Program Files\\Lumen\\Lumen.exe', 'win32', okProbe, (d) => { if (d === 'C:\\Program Files') throw new Error('EACCES'); }), 'parent');
+  check('install location: a folder that is not writable can not (Program Files style)', !zu.canReplace('C:/Program Files/Lumen/Lumen.exe', 'win32', okProbe, (d) => { if (/Program Files/.test(d)) throw new Error('EACCES'); }), 'dir');
+  check('install location: a writable folder inside an unwritable parent can not', !zu.canReplace('C:/Program Files/Lumen/Lumen.exe', 'win32', okProbe, (d) => { if (d === 'C:/Program Files') throw new Error('EACCES'); }), 'parent');
   check('install location: access() passing but a real write failing (ACLs) can not', !zu.canReplace(winExe, 'win32', badProbe, okAccess), 'probe');
   check('install location (mac): /Applications not writable can not; writable can', !zu.canReplace('/Applications/Lumen.app/Contents/MacOS/Lumen', 'darwin', okProbe, (d) => { if (d === '/Applications') throw new Error('EACCES'); }) && zu.canReplace('/Applications/Lumen.app/Contents/MacOS/Lumen', 'darwin', okProbe, okAccess), 'mac');
   {
