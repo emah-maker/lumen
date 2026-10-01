@@ -2509,7 +2509,7 @@ window.assistant.onSidebar?.((visible) => {
 startChat();
 
 // ---------- AI agents over MCP (session B) ----------
-// External agents (Claude Code, Codex, Gemini CLI…) drive the browser; their calls show here.
+// External agents (Claude Code, Codex, Antigravity…) drive the browser; their calls show here.
 
 const mcpSteps = new Map(); // step id -> row
 let mcpPillText = null;

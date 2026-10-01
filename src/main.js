@@ -4,7 +4,7 @@ const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
 if (TEST) global.__perf = perf;
 
-// `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
+// `Lumen --mcp`: an AI agent (Claude Code, Codex, Antigravity…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
 if (process.argv.includes('--mcp')) {
   if (TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);

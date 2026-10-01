@@ -39,10 +39,10 @@ function gateDecision(toolName, toolNames) {
 // Grok Build session to capture one from live; every plausible key is tried, and the raw input is
 // shown as JSON if none match, so the approval card never renders blank).
 function terminalCommand(msg) {
-  const input = msg?.toolInput ?? msg?.tool_input ?? msg?.input ?? msg?.arguments ?? msg?.tool_call?.rawInput ?? msg?.toolCall?.rawInput ?? null;
+  const input = msg?.toolInput ?? msg?.tool_input ?? msg?.input ?? msg?.arguments ?? msg?.tool_call?.rawInput ?? msg?.toolCall?.rawInput ?? msg?.toolCall?.args ?? null; // (toolCall.args: Antigravity's hook payload)
   if (input == null) return '(Lumen could not read the command Grok wants to run.)';
   if (typeof input === 'string') return input.slice(0, 4000);
-  const cmd = input.command ?? input.cmd ?? input.script ?? input.shellCommand ?? input.shell_command;
+  const cmd = input.command ?? input.cmd ?? input.script ?? input.shellCommand ?? input.shell_command ?? input.CommandLine;
   if (typeof cmd === 'string') return cmd.slice(0, 4000);
   try { return JSON.stringify(input, null, 2).slice(0, 4000); } catch { return '(Lumen could not read the command Grok wants to run.)'; }
 }
@@ -52,6 +52,7 @@ function terminalCommand(msg) {
 // the sub-agent and background-process tools stay denied (nothing could watch them); everything else (the
 // terminal, file writes and edits, any tool this list doesn't know) is allowed outright when "Ask before running
 // commands" is off, and asks the user per call when it is on (the same card as the terminal's).
+const SHELL_TOOL = /command|terminal|shell|bash|exec/i; // run_terminal_command (Grok), run_command (Antigravity)
 const FREE_NATIVE = new Set(['read_file', 'list_dir', 'grep', 'todo_write', 'ask_user_question', 'enter_plan_mode', 'exit_plan_mode']);
 const ALWAYS_DENIED = new Set(['spawn_subagent', 'kill_command_or_subagent', 'get_command_or_subagent_output']);
 // { tools, callTool, enabled, onEvent, onTerminalApproval }: as mcp.js startServer, plus
@@ -74,7 +75,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
   // deny -- same fail-closed default as an unreachable gate). No onTerminalApproval wired up (a
   // caller that never expects Grok to reach this far): deny, same as before this existed.
   async function terminalDecision(run, msg, tool = 'run_terminal_command') {
-    const kind = `${run.chatSessionId}:${tool === 'run_terminal_command' ? 'shell' : 'edit'}`;
+    const kind = `${run.chatSessionId}:${SHELL_TOOL.test(tool) ? 'shell' : 'edit'}`;
     if (run.chatSessionId && chatSessionsAllowed.has(kind)) return null;
     if (!onTerminalApproval) return DENY("Lumen isn't set up to approve terminal commands here.");
     const command = terminalCommand(msg);
@@ -89,7 +90,23 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
     }
     if (answer === 'always') { if (run.chatSessionId) chatSessionsAllowed.add(kind); return null; }
     if (answer === 'once' || answer === true) return null;
-    return DENY(tool === 'run_terminal_command' ? 'The user did not approve this terminal command.' : `The user did not approve this ${String(tool).slice(0, 40)} call.`);
+    return DENY(SHELL_TOOL.test(tool) ? 'The user did not approve this terminal command.' : `The user did not approve this ${String(tool).slice(0, 40)} call.`);
+  }
+
+  // Antigravity's hooks (antigravity.js hooksFor): PreToolUse posts { toolCall: { name, args } } and reads { decision, reason }; PreInvocation
+  // posts no toolCall and only marks the run as seen. Lumen's own MCP tools (any name with "lumen" in it) go through. Without computer
+  // access a shell or file tool is denied; with it, such a tool is allowed outright when asking is off and asks the user (the same
+  // card as Grok's) when it is on. Tool names are agy's, lowercased step types (run_command, write_to_file, view_file...).
+  const AGY_ACTING = /(command|terminal|shell|bash|exec|run_|write|edit|replace|delete|remove|create|move|rename|file|url|browser)/i;
+  const AGY_READS = /^(view_file|view_file_outline|view_code_item|view_content_chunk|list_dir|grep_search|find_by_name|command_status|read_terminal|list_resources|read_resource)$/i;
+  async function agyDecision(run, msg) {
+    if (!msg?.toolCall) { run.armed = true; return {}; }
+    const name = String(msg.toolCall.name || '');
+    const answer = (decision, reason) => ({ decision, ...(reason ? { reason } : {}) });
+    if (/lumen/i.test(name)) return answer('allow');
+    if (!run.access?.enabled) return AGY_ACTING.test(name) ? answer('deny', `Only Lumen's browser tools are allowed here (${name.slice(0, 60) || 'unnamed tool'} is not one of them).`) : answer('allow');
+    if (AGY_READS.test(name) || !AGY_ACTING.test(name) || !run.access.askBefore) return answer('allow');
+    return (await terminalDecision(run, msg, name)) ? answer('deny', 'The user did not approve this.') : answer('allow');
   }
 
   // PreToolUse for a run with full computer access (see FREE_NATIVE above).
@@ -139,6 +156,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
         const run = byHook(hookToken);
         const event = String(msg?.hook_event_name || msg?.hookEventName || '');
         if (!run) return json(200, DENY('This Grok run has ended.'));
+        if (run.agy) return json(200, await agyDecision(run, msg));
         if (/^user_?prompt_?submit$/i.test(event)) return json(200, await armed(run));
         if (/^pre_?tool_?use$/i.test(event)) {
           const name = msg?.toolName ?? msg?.tool_name;
@@ -167,8 +185,8 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       port = server.address().port;
       resolve({
         port,
-        open(tag, chatSessionId = null, access = null) {
-          const run = { tag, chatSessionId, access: access?.enabled ? { enabled: true, askBefore: access.askBefore !== false } : null, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
+        open(tag, chatSessionId = null, access = null, { agy = false } = {}) {
+          const run = { tag, chatSessionId, agy, access: access?.enabled ? { enabled: true, askBefore: access.askBefore !== false } : null, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
           runs.set(tag, run);
           return { mcpUrl: `http://127.0.0.1:${port}/mcp`, mcpToken: run.mcpToken, hookUrl: `http://127.0.0.1:${port}/hook/${run.hookToken}` };
         },

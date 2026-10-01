@@ -185,13 +185,14 @@ function setupAiAgents(deps) {
   let antigravityFound = false;
   let antigravitySignedIn = 'unknown'; // true | false | 'unknown' — mirrors antigravity.status().signedIn
   let antigravityModels = []; // the slugs `agy models` lists, when known
+  let antigravityNames = {}; // and their display names ("Gemini 3.1 Pro (High)")
   const antigravityModule = () => require('../ai/antigravity');
   // Offered in the sidebar once the user has chosen it (the setup card, Settings → AI), or with LUMEN_AGY_SIDEBAR=1.
   const antigravitySidebar = () => process.env.LUMEN_AGY_SIDEBAR === '1' || (process.env.LUMEN_AGY_SIDEBAR !== '0' && readSettings().antigravitySidebar === true);
   const antigravityEngine = () => {
     if (!antigravity) {
       const { AntigravityEngine } = antigravityModule();
-      antigravity = new AntigravityEngine({ userData: app.getPath('userData'), gate: startGrokGate, access: cliAccess, spawn: cliSpawn(), onFresh: freshReads });
+      antigravity = new AntigravityEngine({ userData: app.getPath('userData'), gate: startGrokGate, access: cliAccess, bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
     }
     return antigravity;
   };
@@ -202,8 +203,10 @@ function setupAiAgents(deps) {
   // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
   // With full computer access (cli-access.js) it also asks for Grok's file-writing tools: `tool` names the one.
   async function onTerminalApproval(tag, command, tool = 'run_terminal_command') {
-    const owner = grokBuild?.owns(tag) ? grokBuild : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
+    const owner = grokBuild?.owns(tag) ? grokBuild : antigravity?.owns(tag) ? antigravity : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
     const engineRun = owner ? owner.active : null;
+    const who = owner?.kind === 'antigravity' ? 'Antigravity' : 'Grok';
+    const shell = /command|terminal|shell|bash|exec/i.test(String(tool));
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
     if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
@@ -212,7 +215,7 @@ function setupAiAgents(deps) {
     try {
       answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
         action: 'terminal',
-        title: tool === 'run_terminal_command' ? 'Grok wants to run a terminal command' : `Grok wants to use ${String(tool).slice(0, 40)}`,
+        title: shell ? `${who} wants to run a terminal command` : `${who} wants to use ${String(tool).slice(0, 40)}`,
         args,
       });
       return answer === 'always' ? 'always' : answer ? 'once' : 'deny';
@@ -399,7 +402,7 @@ function setupAiAgents(deps) {
         { id: 'codex', label: 'Codex CLI', hint: 'One click, or run this in a terminal', text: `${win ? 'codex.cmd' : 'codex'} mcp add lumen --env ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'codex', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.codex/config.toml.' },
         { id: 'grok', label: 'Grok Build', hint: 'One click, or run this in a terminal (needs SuperGrok or X Premium+)', text: `grok mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'grok', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.grok/config.toml.' },
         // Antigravity (agy) reads its MCP servers from ~/.gemini/config/mcp_config.json (antigravity.google/docs/mcp); the one click merges this entry into that file.
-        { id: 'antigravity', label: 'Antigravity', hint: 'One click, or add this under mcpServers in ~/.gemini/config/mcp_config.json', text: json, addButton: 'antigravity', secondary: 'Replaces Gemini CLI. Or run /mcp inside agy to manage servers.' },
+        { id: 'antigravity', label: 'Antigravity', hint: 'One click, or run this in a terminal (replaces Gemini CLI)', text: `agy mcp add -e ELECTRON_RUN_AS_NODE=1 lumen -- ${quoted}`, addButton: 'antigravity', secondary: 'Or add the JSON of Other MCP clients (below) under mcpServers in ~/.gemini/config/mcp_config.json.' },
         { id: 'json', label: 'Other MCP clients', hint: 'Cursor, Claude Desktop, etc.', text: json },
       ],
     };
@@ -456,15 +459,6 @@ function setupAiAgents(deps) {
     });
   });
 
-  // Antigravity's global MCP config (antigravity.google/docs/mcp). Unreadable or not JSON: treated as having no servers, and left alone unless added to.
-  const agyMcpFile = () => path.join(os.homedir(), '.gemini', 'config', 'mcp_config.json');
-  function readAgyMcp() {
-    try {
-      const { mcpServers = {}, ...rest } = JSON.parse(fs.readFileSync(agyMcpFile(), 'utf8'));
-      return { servers: mcpServers && typeof mcpServers === 'object' ? mcpServers : {}, rest };
-    } catch { return { servers: {}, rest: {} }; }
-  }
-
   const AGENTS = {
     claude: {
       label: 'Claude Code',
@@ -486,23 +480,14 @@ function setupAiAgents(deps) {
       },
       add: (run, argv) => run(['mcp', 'add', 'lumen', '--env', 'ELECTRON_RUN_AS_NODE=1', '--', ...argv]),
     },
-    // Google Antigravity's CLI (`agy`), which replaces Gemini CLI. Its `agy mcp add` arguments aren't documented, so Lumen does what the docs
-    // describe instead: it merges a `lumen` entry (command, args, env) into the global mcp_config.json, keeping every other server.
+    // Google Antigravity's CLI (`agy`), which replaces Gemini CLI: `agy mcp add [flags] <name> <commandOrUrl> [args...]` (flags before the name;
+    // checked against agy 1.2.14's own --help). On Windows agy is installed to %LOCALAPPDATA%\agy\bin, which is not on PATH: findAgy looks there.
     antigravity: {
       label: 'Antigravity',
       find: async () => { const bin = await antigravityEngine().detect(true); return bin ? { command: bin, args: [] } : null; },
       installHint: () => `Antigravity isn't installed. ${antigravityModule().INSTALL_HINT}`,
-      check: async () => ({ ok: Boolean(readAgyMcp().servers?.lumen) }),
-      add: async (_run, argv) => {
-        try {
-          const file = agyMcpFile();
-          const { servers, rest } = readAgyMcp();
-          const { env } = mcpCommand();
-          fs.mkdirSync(path.dirname(file), { recursive: true });
-          fs.writeFileSync(file, JSON.stringify({ ...rest, mcpServers: { ...servers, lumen: { command: argv[0], args: argv.slice(1), env } } }, null, 2));
-          return { ok: true, out: '' };
-        } catch (err) { return { ok: false, out: String(err?.message || err) }; }
-      },
+      check: async (run) => { const list = await run(['mcp', 'list']); return { ok: list.ok && /\blumen\b/.test(list.out) }; },
+      add: (run, argv) => run(['mcp', 'add', '-e', 'ELECTRON_RUN_AS_NODE=1', 'lumen', '--', ...argv]),
     },
     // xAI's Grok Build (native installer, signs in with the user's own SuperGrok / X Premium+ account).
     // Node-mode bridge like the others (`grok mcp add -e`): it connects at once, where the env-free
@@ -627,6 +612,7 @@ function setupAiAgents(deps) {
       antigravityFound = s.installed;
       antigravitySignedIn = s.signedIn;
       antigravityModels = s.models || [];
+      antigravityNames = s.names || {};
       if (s.installed) ui()?.send('models-updated');
       return s;
     });
@@ -719,7 +705,7 @@ function setupAiAgents(deps) {
     modelOptions: () => [
       ...(claudeCodeFound ? claudeCodeOptions({ signedIn: claudeCodeSignedIn, accountDetail: claudeCodeDetail }) : []),
       ...(grokSidebar() && grokBuildFound ? grokBuildOptions({ signedIn: grokBuildSignedIn, accountDetail: grokBuildDetail, models: grokBuildModels, saved: readSettings().model }) : []),
-      ...(antigravitySidebar() && antigravityFound ? antigravityOptions({ signedIn: antigravitySignedIn, models: antigravityModels, saved: readSettings().model }) : []),
+      ...(antigravitySidebar() && antigravityFound ? antigravityOptions({ signedIn: antigravitySignedIn, models: antigravityModels, names: antigravityNames, saved: readSettings().model }) : []),
     ],
   };
 }
@@ -769,7 +755,7 @@ function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models =
 
 // The picker entries for the user's own Antigravity CLI (agy, which replaces Gemini CLI): its default, then each model `agy models`
 // lists. A saved pick the CLI didn't list this time stays offered, as for Grok Build.
-function antigravityOptions({ signedIn = 'unknown', models = [], saved = null } = {}) {
+function antigravityOptions({ signedIn = 'unknown', models = [], names = {}, saved = null } = {}) {
   const list = models.filter((m) => m !== 'default' && validModel(m));
   const pick = /^antigravity:(.+)$/.exec(String(saved || ''))?.[1];
   if (pick && pick !== 'default' && validModel(pick) && !list.includes(pick)) list.push(pick);
@@ -777,7 +763,7 @@ function antigravityOptions({ signedIn = 'unknown', models = [], saved = null } 
   return ['default', ...list].map((model) => ({
     id: `antigravity:${model}`,
     label: model === 'default' ? 'Antigravity (experimental)' : `Antigravity · ${model} (experimental)`,
-    name: model === 'default' ? 'Antigravity' : require('./model-names').prettyModel(model) || model,
+    name: model === 'default' ? 'Antigravity' : names[model] || require('./model-names').prettyModel(model) || model,
     provider: 'Antigravity',
     badges: [...(signedIn === false ? ['sign in'] : []), ...(model === 'default' ? ['experimental'] : [])],
     detail: signedIn === false

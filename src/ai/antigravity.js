@@ -7,12 +7,16 @@
 // is the only thing that talks to Google.
 //
 // ---------------------------------------------------------------------------------------------
-// WHAT THIS IS BUILT FROM (read from Google's docs and install scripts, 2026-10-01; NOT yet run against a
-// real `agy`: no binary was installed while this was written, so every item under "UNVERIFIED" is a reading
-// of the docs, kept in one place so it is easy to check against a real install)
+// WHAT THIS IS BUILT FROM (2026-10-01)
 // ---------------------------------------------------------------------------------------------
-// Sources: antigravity.google/docs/cli/install, /docs/cli/headless, /docs/mcp, /docs/permissions?tab=cli and the
-// install scripts antigravity.google/cli/install.sh and install.ps1.
+// Sources: Google's docs (antigravity.google/docs/cli/install, /docs/cli/headless, /docs/mcp, /docs/permissions?tab=cli),
+// the install scripts antigravity.google/cli/install.sh and install.ps1, and the documentation `agy` ships inside itself
+// (builtin/skills/agy-customizations/docs: hooks.md, mcp_servers.md). VERIFIED against a real agy 1.2.14 that was already on
+// the machine, using a throwaway HOME and read-only commands only (--help, --version, models, mcp add/list; NO model call was
+// made, so nothing was sent to Google): the flag names below, `agy models` (a slug, a tab, a display name per line, listed
+// signed out), `agy mcp add [flags] <name> <commandOrUrl> [args...]`, that HOME / USERPROFILE moves agy's whole .gemini folder
+// (config, state, built-in docs) and that mcp_config.json has the shape written here. NOT verified (no model call): everything
+// about a live headless run, listed under UNVERIFIED below.
 //  - Binary: `agy` (agy.exe). Installed to ~/.local/bin (macOS, Linux) or %LOCALAPPDATA%\\agy\\bin (Windows) by
 //    `curl -fsSL https://antigravity.google/cli/install.sh | bash` or `irm https://antigravity.google/cli/install.ps1 | iex`.
 //  - Headless: `agy -p "<prompt>" --output-format stream-json` prints NDJSON events: {event:"init",conversation_id,
@@ -44,20 +48,30 @@
 //                      Antigravity this setting means "read and browse, nothing is changed or run unasked".
 //   ask off:           --dangerously-skip-permissions plus allow rules for everything.
 //
-// UNVERIFIED (check against a real agy before relying on them):
-//   1. The exact tool name agy gives an MCP tool (offToolOf accepts any name containing "lumen").
-//   2. That serverUrl accepts http://127.0.0.1 with an Authorization header (the docs list serverUrl + headers).
-//   3. That HOME / USERPROFILE moves agy's config folder and the OS keyring sign-in survives it.
-//   4. The system prompt: there is no flag, so it rides at the top of the first message (see promptFor).
-//   5. Images: no documented way, so they are written to files in the working folder and named in the prompt.
-//   6. settings.json keys toolPermission and trustedWorkspaces (from a third-party reference, not Google's docs).
-//   7. `agy models` output (parseModels reads slug-like tokens at the start of lines) and what a signed-out run says.
+// HOOKS. agy has PreToolUse hooks (hooks.md): a command that gets { toolCall: { name, args } } on stdin and answers
+// { decision: allow | deny | ask | force_ask, reason }, run before the permission layer. Lumen writes one to hooks.json
+// in its home (hooksFor): the same curl gate script Grok Build uses posts the call to Lumen (mcp-http.js agyDecision), which
+// denies a shell or file tool when access is off, and with access on and "Ask before running commands" on asks the user
+// with the same approval card as Claude Code and Grok Build before answering allow. A PreInvocation hook marks the run
+// as seen. Hooks are an addition: if agy does not load or honour them, the permission rules above still decline instead.
+//
+// UNVERIFIED (needs a live headless run; check before relying on them):
+//   1. The tool name agy gives an MCP tool (offToolOf and agyDecision accept any name containing "lumen").
+//   2. That serverUrl takes http://127.0.0.1 with an Authorization header and plain JSON answers (mcp_servers.md calls
+//      serverUrl "SSE"; the public docs say "Streamable HTTP or SSE"). LUMEN_AGY_MCP=stdio switches to the stdio bridge.
+//   3. That the OS keyring sign-in survives the HOME move (the docs say credentials live in the keyring) and what a signed-out run says.
+//   4. That hooks.json in ~/.gemini/config is loaded, and that a hook's "allow" skips the permission prompt.
+//   5. The system prompt: there is no flag, so it rides at the top of the first message (see promptFor).
+//   6. Images: no documented way, so they are written to files in the working folder and named in the prompt.
+//   7. settings.json keys toolPermission and trustedWorkspaces (from a third-party reference, not Google's docs).
+//   8. The stream-json event shapes (from the headless docs; parsed defensively).
 const { spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel } = require('./cli-utils');
+const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
 const { accessOf, workingFolder } = require('./cli-access');
 const { isLimitText, limitOf } = require('../features/grok-limit');
 
@@ -105,7 +119,8 @@ function describeFailure(text, code) {
 
 // Models the picker offers when `agy models` gives none: the slugs the headless docs list as examples.
 const FALLBACK_MODELS = ['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.1-pro-high', 'claude-sonnet-4-6'];
-// `agy models`: one model slug per line, maybe with a bullet, a "(default)" mark or a description after it.
+// `agy models` (agy 1.2.14, listed even signed out): one model per line, "<slug>\t<display name>", e.g.
+// "gemini-3.1-pro-high\tGemini 3.1 Pro (High)". A bullet or "(default)" mark would do no harm.
 function parseModels(stdout) {
   const out = [];
   for (const line of String(stdout || '').replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
@@ -113,6 +128,15 @@ function parseModels(stdout) {
     if (m && validModel(m[1]) && !out.includes(m[1])) out.push(m[1]);
   }
   return out;
+}
+// The display names from the same output: { slug: 'Gemini 3.1 Pro (High)' }.
+function modelNames(stdout) {
+  const names = {};
+  for (const line of String(stdout || '').replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
+    const m = /^\s*(?:[*>•-]\s+)?([a-z][\w.-]*\d[\w.-]*)\t+(\S.*?)\s*$/i.exec(line);
+    if (m && validModel(m[1])) names[m[1]] = m[2];
+  }
+  return names;
 }
 
 // ---------- what each run is given ----------
@@ -126,9 +150,21 @@ function accessFolder(access) {
   return os.homedir();
 }
 
+// The stdio form of the same file (LUMEN_AGY_MCP=stdio): Lumen's bridge process, which names this run by its tag.
+function stdioConfig(bridge, userData, tag) {
+  const { command, args, env } = bridge;
+  return { mcpServers: { lumen: { command, args, env: { ...env, LUMEN_USERDATA: userData, LUMEN_ENGINE: tag } } } };
+}
+
 // mcp_config.json of Lumen's home: only Lumen's own server, with this run's URL and token.
 function mcpConfig(run) {
   return { mcpServers: { lumen: { serverUrl: run.mcpUrl, headers: { Authorization: `Bearer ${run.mcpToken}` } } } };
+}
+
+// hooks.json of Lumen's home: Lumen's gate (the curl script) before every tool call and before every model call (hooks.md).
+function hooksFor(gatePath, platform = process.platform) {
+  const command = platform === 'win32' ? `"${gatePath}"` : `'${String(gatePath).replace(/'/g, "'\\''")}'`;
+  return { 'lumen-gate': { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 120 }] }], PreInvocation: [{ type: 'command', command, timeout: 30 }] } };
 }
 
 // settings.json of Lumen's home (see "WHAT THE MODEL MAY DO" above). `provider`: the user's own modelProvider
@@ -183,9 +219,10 @@ const offToolOf = (name) => (name && !LUMEN_NAME.test(String(name)) && ACTING_NA
 // The only variables of Lumen's environment the agy child gets: what a process needs to start and reach the network, plus
 // the API-key sign-in settings. Everything else of the user's shell environment stays behind.
 const ENV_KEEP = /^(GEMINI_API_KEY|GOOGLE_CLOUD_PROJECT|GOOGLE_GEMINI_BASE_URL|PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSPEC|TEMP|TMP|TMPDIR|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|OS|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|USERNAME|USERDOMAIN|COMPUTERNAME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|DISPLAY|WAYLAND_DISPLAY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|__CF_USER_TEXT_ENCODING|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
-function buildEnv({ home, base = process.env }) {
+// run: this run's { hookUrl } from Lumen's gate, which the hook's curl script reads from here.
+function buildEnv({ home, base = process.env, run = null }) {
   const kept = Object.fromEntries(Object.entries(base).filter(([k]) => ENV_KEEP.test(k)));
-  return { ...kept, HOME: home, USERPROFILE: home, NO_COLOR: '1' };
+  return { ...kept, ...(run ? { LUMEN_HOOK_URL: run.hookUrl } : {}), HOME: home, USERPROFILE: home, NO_COLOR: '1' };
 }
 
 // The user's own modelProvider (e.g. "gemini"), the one key of their settings.json that is carried over.
@@ -229,11 +266,14 @@ class AntigravityEngine {
   // userData; gate(): Lumen's local HTTP MCP server (mcp-http.js startHttp); access(): the "Let CLI agents use this
   // computer" setting now ({ enabled, askBefore, folder }); spawn / kill / exec: swappable for tests (child_process spawn,
   // cli-utils killTree, child_process execFile); onFresh({ conversation, resume }): a new agy process starts (snapshot's read cache).
-  constructor({ userData, gate, access = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
+  // bridge(): { command, args, env } for the stdio MCP bridge (only with LUMEN_AGY_MCP=stdio); ensureServer(): starts its server.
+  constructor({ userData, gate, access = null, bridge = null, ensureServer = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
     this.kind = 'antigravity';
     this.userData = userData;
     this.gate = gate;
     this.accessNow = () => (access ? access() : null);
+    this.bridge = bridge;
+    this.ensureServer = ensureServer;
     this.onFresh = onFresh;
     this.watchdogMs = watchdogMs;
     this.spawn = spawnChild;
@@ -267,13 +307,14 @@ class AntigravityEngine {
     if (!refresh && this.statusCache && Date.now() - this.statusCache.at < 30000) return { installed: true, ...this.statusCache.value };
     fs.mkdirSync(this.home, { recursive: true, mode: 0o700 });
     fs.mkdirSync(this.dir, { recursive: true });
-    const models = await new Promise((resolve) => {
+    const listed = await new Promise((resolve) => {
       try {
-        this.exec(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd: this.dir, env: buildEnv({ home: this.home }) }, (err, stdout) => resolve(err ? [] : parseModels(stdout)));
-      } catch { resolve([]); }
+        this.exec(bin, ['models'], { shell: false, windowsHide: true, timeout: 20000, cwd: this.dir, env: buildEnv({ home: this.home }) }, (err, stdout) => resolve(err ? { models: [], names: {} } : { models: parseModels(stdout), names: modelNames(stdout) }));
+      } catch { resolve({ models: [], names: {} }); }
     });
-    if (models.length) this.lastModels = models;
-    const value = { signedIn: this.signedOut ? false : 'unknown', detail: null, models: models.length ? models : this.lastModels || FALLBACK_MODELS };
+    const { models } = listed;
+    if (models.length) { this.lastModels = models; this.lastNames = listed.names; }
+    const value = { signedIn: this.signedOut ? false : 'unknown', detail: null, models: models.length ? models : this.lastModels || FALLBACK_MODELS, names: models.length ? listed.names : this.lastNames || {} };
     this.statusCache = { at: Date.now(), value };
     return { installed: true, ...value };
   }
@@ -331,13 +372,18 @@ class AntigravityEngine {
     await fs.promises.mkdir(this.dir, { recursive: true });
     const resume = Boolean(sessionId);
     const tag = crypto.randomBytes(18).toString('hex');
-    const gateRun = gate.open(tag, sessionId || tag, access);
+    const gateRun = gate.open(tag, sessionId || tag, access, { agy: true });
     const files = []; // everything written for this run, removed after it
     try {
       await writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ access, folder, provider: userProvider() }), null, 2));
       await fs.promises.mkdir(path.join(home, '.gemini', 'config'), { recursive: true });
+      const gateFile = path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh');
+      await writeIfChanged(gateFile, gateScript(), 0o700);
+      await writeIfChanged(path.join(home, '.gemini', 'config', 'hooks.json'), JSON.stringify(hooksFor(gateFile), null, 2));
       const mcpFile = path.join(home, '.gemini', 'config', 'mcp_config.json');
-      await fs.promises.writeFile(mcpFile, JSON.stringify(mcpConfig(gateRun)), { mode: 0o600 }); // holds this run's token
+      const stdio = process.env.LUMEN_AGY_MCP === 'stdio' && this.bridge; // the fallback if the HTTP form is not accepted (UNVERIFIED 2)
+      if (stdio) this.ensureServer?.();
+      await fs.promises.writeFile(mcpFile, JSON.stringify(stdio ? stdioConfig(this.bridge(), this.userData, tag) : mcpConfig(gateRun)), { mode: 0o600 }); // holds this run's token
       files.push(mcpFile);
       const imageFiles = [];
       const kept = capImages(images, emit);
@@ -356,16 +402,16 @@ class AntigravityEngine {
       }
       return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model, access, folder }), folder, access, sessionId, resume, model, signal, emit, runAgent });
     } finally {
-      for (const f of files) fs.promises.rm(f, { force: true }).catch(() => {});
+      await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {}))); // (the run's token file included)
     }
   }
 
-  async attempt({ bin, gate, tag, argv, folder, access, sessionId, resume, model, signal, emit, runAgent }) {
+  async attempt({ bin, gate, gateRun, tag, argv, folder, access, sessionId, resume, model, signal, emit, runAgent }) {
     if (signal.aborted) { gate.close(tag); return { text: '', sessionId, stopped: true }; }
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
     const watchdogMs = access ? Math.max(this.watchdogMs, ACCESS_WATCHDOG_MS) : this.watchdogMs;
-    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home: this.home }), cwd: folder });
+    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home: this.home, run: gateRun }), cwd: folder });
     const active = { tag, emit, signal, child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
     let over = false;
@@ -440,6 +486,7 @@ class AntigravityEngine {
     clearTimeout(active.dog);
     signal.removeEventListener('abort', onAbort);
     if (this.active?.tag === tag) this.active = null;
+    const hookSeen = Boolean(gate.armed?.(tag)); // Lumen's PreInvocation hook ran in this process
     gate.close(tag);
 
     if (offTool) {
@@ -459,7 +506,8 @@ class AntigravityEngine {
     const served = initModel && validModel(initModel) ? initModel : null;
     // Headless agy declines what needs approval and says so on stderr: with "Ask before running commands" on that is by design.
     const declined = /(denied|declined|approval|permission)/i.test(stderr) ? stderr.split(/\r?\n/).filter((l) => /(denied|declined|approval|permission)/i.test(l)).slice(-1)[0] : null;
-    if (declined && access?.askBefore) emit({ type: 'notice', text: `Antigravity can't ask you in Lumen, so it skipped something that needs approval (${declined.trim().slice(0, 160)}). Turn off "Ask before running commands" in Settings to let it go ahead.` });
+    // (When Lumen's hook was seen by this run the question was asked in Lumen, and a decline here is the user's own "Deny".)
+    if (declined && access?.askBefore && !hookSeen) emit({ type: 'notice', text: `Antigravity didn't ask you in Lumen, so it skipped something that needs approval (${declined.trim().slice(0, 160)}). Turn off "Ask before running commands" in Settings to let it go ahead.` });
     const status = String(result?.status || '');
     if (result && status === 'SUCCESS') {
       this.signedOut = false;
@@ -477,4 +525,4 @@ class AntigravityEngine {
   }
 }
 
-module.exports = { AntigravityEngine, findAgy, buildArgs, buildEnv, promptFor, settingsFor, mcpConfig, parseModels, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, accessFolder, accessOf, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
+module.exports = { AntigravityEngine, findAgy, buildArgs, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, accessFolder, accessOf, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
