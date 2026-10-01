@@ -468,7 +468,7 @@ const PAGE_BLOCK = /<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*
 // window, and from then on every message failed until New chat. Past this budget the oldest turns
 // are left out of the request (never out of the chat itself), cut at a message the user typed so the
 // history stays valid. Characters, not tokens: close enough, and free to compute.
-const CONTEXT_CHARS = { anthropic: 600_000, other: 320_000 }; // ~150k / ~80k tokens
+const CONTEXT_CHARS = { anthropic: 510_000, other: 320_000 }; // ~130k / ~80k tokens: the fallbacks when a model's window is unknown (a known one: fallback.contextChars)
 const IMAGE_CHARS = 6000; // an image costs about 1.5k tokens, whatever its base64 length
 function blockChars(block) {
   if (!block || typeof block !== 'object') return String(block ?? '').length;
@@ -1243,8 +1243,9 @@ class Agent {
   // as before when it is not known.
   contextBudget(model) {
     const id = String(model);
-    if (providers.splitModel(id).provider === 'anthropic') return CONTEXT_CHARS.anthropic;
-    const chars = fallback.contextChars(id, this.fallbackOptionsList());
+    const options = this.fallbackOptionsList();
+    if (providers.splitModel(id).provider === 'anthropic' && fallback.capsOf(id, options).context === 0) return CONTEXT_CHARS.anthropic; // a Claude id the table doesn't know
+    const chars = fallback.contextChars(id, options);
     return Number.isFinite(chars) ? chars : CONTEXT_CHARS.other;
   }
 

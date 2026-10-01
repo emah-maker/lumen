@@ -42,7 +42,7 @@ const TEXT_LIMIT_RE = /\busage limit|\brate[ _-]?limit(ed)? (exceeded|reached)|\
 const TEXT_RESET_RE = /\bresets?\s+(at|in|on|today|tomorrow|\d|[a-z]{3,9}\.?\s+\d|mon|tue|wed|thu|fri|sat|sun)/i; // "resets 5pm", "resets Oct 5": with a limit word
 const TEXT_LIMIT_WORD_RE = /limit|usage|quota|plan|credits?/i;
 const textLimit = (text) => TEXT_LIMIT_RE.test(text) || (TEXT_RESET_RE.test(text) && TEXT_LIMIT_WORD_RE.test(text));
-const TEXT_AUTH_RE = /not (signed|logged)[ -]?in|sign(ed)?[ -]?in (has )?expired|please (run|sign) ?in|\/login|run `?grok login|add your [\w ]*api key|no api key|invalid (x-)?api[ -]?key|api key (was )?(rejected|invalid|not valid|missing)|no api key|unauthori[sz]ed|authentication[_ ]error|invalid[_ ]authentication|permission[_ ]error|oauth token (has )?expired|credentials/i;
+const TEXT_AUTH_RE = /not (signed|logged)[ -]?in|sign(ed)?[ -]?in (has )?expired|please (run|sign) ?in|\/login|run `?grok login|add your [\w ]*api key|no api key|invalid (x-)?api[ -]?key|api key (was )?(rejected|invalid|not valid|missing)|no api key|unauthori[sz]ed|authentication[_ ]error|invalid[_ ]authentication|permission[_ ]error|oauth token (has )?expired|(invalid|bad|missing|no|wrong) credentials|credentials (are |is |were )?(invalid|missing|expired|incorrect|rejected)/i;
 const TEXT_NET_RE = /fetch failed|connection (error|failed|refused|reset|closed|lost|timed out|timeout)|(lost|no|failed|dropped) (internet |network )?connection|network (error|is unreachable|request failed|failure|changed|unreachable)|socket hang up|(request|connect|connection|read|gateway|stream) (timed? ?out|timeout)|ETIMEDOUT|ENOTFOUND|getaddrinfo|ECONN(RESET|REFUSED|ABORTED)|EAI_AGAIN|ENETUNREACH|ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_\w+|NETWORK_\w+|TIMED_OUT|PROXY_\w+|EMPTY_RESPONSE)|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|stopped responding|(could not|couldn.t|can.t|cannot|unable to) (reach|connect)|no (internet|network) connection|server (error|is having trouble)|internal server error|at capacity/i;
 const STATUS_NO_FALLBACK = new Set([400, 404, 405, 409, 413, 415, 422]); // a bad request is the request's fault: another model gets the same answer
 
@@ -77,18 +77,34 @@ function resetFromHeaders(err, at) {
 // Everything an error carries that could name its kind: HTTP status, system code, API error type and
 // every message in the chain (SDK message, API body message, `cause`).
 function facts(input) {
-  if (typeof input === 'string') return { status: null, codes: [], types: [], text: input, name: '' };
+  if (typeof input === 'string') return withTextFacts({ status: null, codes: [], types: [], text: input, name: '' });
   const err = input && typeof input === 'object' ? input : {};
   const body = err.error && typeof err.error === 'object' ? err.error : {};
   const inner = body.error && typeof body.error === 'object' ? body.error : {};
   const cause = err.cause && typeof err.cause === 'object' ? err.cause : {};
-  const status = num(err.status ?? err.statusCode ?? err.response?.status ?? body.status ?? inner.status);
+  // OpenRouter (and some gateways) put the HTTP status in a numeric `code` of the body: { error: { code: 429, message } }.
+  const httpCode = (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 400 && v <= 599 ? v : null);
+  const status = num(err.status ?? err.statusCode ?? err.response?.status ?? body.status ?? inner.status) ?? httpCode(body.code) ?? httpCode(inner.code) ?? httpCode(err.code);
   const codes = [err.code, cause.code, cause.cause?.code, err.errno, cause.errno, body.code, inner.code].filter((c) => typeof c === 'string');
   const types = [err.type, body.type, inner.type, body.code, inner.code, err.code].filter((c) => typeof c === 'string').map((s) => s.toLowerCase());
   // The SDKs repeat the API's message inside their own ("429 <message>"): each text once, so a "6m0s" is not counted twice.
   const parts = [err.name, err.message, body.message, inner.message, cause.message, cause.cause?.message, typeof err.error === 'string' ? err.error : ''].filter((p) => typeof p === 'string' && p);
   const text = [...new Set(parts)].sort((a, b) => b.length - a.length).reduce((all, p) => (all.some((q) => q.includes(p)) ? all : [...all, p]), []).join(' | ');
-  return { status, codes, types, text, name: String(err.name || '') };
+  return withTextFacts({ status, codes, types, text, name: String(err.name || '') });
+}
+
+// Claude Code (and other CLIs) report an API failure as a sentence with the status and the body inside it:
+//   API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"..."}}
+// With no structured status or type, take them from the text.
+function withTextFacts(f) {
+  const out = { ...f };
+  if (out.status === null) {
+    const m = /\bAPI Error:?\s*\(?(\d{3})\b/i.exec(out.text);
+    if (m) out.status = Number(m[1]);
+  }
+  const types = [...out.text.matchAll(/\\?"type\\?"\s*:\s*\\?"([a-z_]+_error)\\?"/gi)].map((m) => m[1].toLowerCase());
+  if (types.length) out.types = [...out.types, ...types.filter((t) => !out.types.includes(t))];
+  return out;
 }
 
 // What kind of failure this is. `input` is an Error (an SDK's, a fetch's, a CLI's) or just its text.
@@ -117,8 +133,12 @@ function classify(input, { now = Date.now(), model = '' } = {}) {
   };
 
   // Strong limit signals: status, API error type, billing text.
-  const creditText = /credit balance is too low|insufficient[_ ]quota|exceeded your current quota|credits? (have )?(run|ran) out|out of credits|insufficient (credits|funds|balance)/i.test(text) || types.some((t) => /insufficient_quota|billing|resource_exhausted/.test(t)) || codes.some((c) => /insufficient_quota|resource_exhausted/i.test(c));
-  if (status === 429 || status === 402 || types.some((t) => /rate_limit|ratelimit|rate-limit|too_many_requests/.test(t)) || creditText) return limit(status !== null || types.length > 0);
+  const creditText = /credit balance is too low|insufficient[_ ]quota|exceeded your current quota|credits? (have )?(run|ran) out|out of credits|insufficient (credits|funds|balance)|used all (of )?(its |your |the )?(available )?credits|(reached|exceeded|hit) (its|your|the) (monthly )?(spend(ing)? |credit )?limit|(monthly|spend(ing)?|credit) (spend(ing)? )?limit/i.test(text) || types.some((t) => /insufficient_quota|billing|resource_exhausted/.test(t)) || codes.some((c) => /insufficient_quota|resource_exhausted/i.test(c));
+  // Out of credit is the account's, whatever the status says (xAI answers it with a 403, Anthropic with a 400): it comes
+  // before the auth branch, and no model of that provider will do until it is topped up.
+  const rated = types.some((t) => /rate_limit|ratelimit|rate-limit|too_many_requests/.test(t));
+  if (creditText && !rated) return limit(false);
+  if (status === 429 || status === 402 || rated) return limit(status !== null || types.length > 0);
 
   if (status === 401 || status === 403 || types.some((t) => /authentication_error|permission_error|invalid_api_key|invalid_x-api-key|unauthorized|forbidden/.test(t))) return out('auth');
 
@@ -203,21 +223,39 @@ function createCooldowns() {
 // history, so only their vision counts.
 const CAPS = [
   [/^claude|^anthropic\//, { context: 200_000, vision: true }],
-  [/^gpt-5|^o[134](-|$)|^chatgpt/, { context: 400_000, vision: true }],
+  [/^o1-(mini|preview)/, { context: 128_000, vision: false }],
+  [/^o3-mini/, { context: 200_000, vision: false }],
+  [/^o[134](-|$)/, { context: 200_000, vision: true }], // o1, o1-pro, o3, o3-pro, o4-mini
+  [/^gpt-5-chat/, { context: 128_000, vision: true }],
+  [/^gpt-5/, { context: 400_000, vision: true }],
   [/^gpt-4\.1/, { context: 1_000_000, vision: true }],
-  [/^gpt-4o|^gpt-4-turbo/, { context: 128_000, vision: true }],
-  [/^gpt-3|^gpt-4$/, { context: 16_000, vision: false }],
+  [/^gpt-4o|^chatgpt-4o|^gpt-4\.5|^gpt-4-turbo|^gpt-4-vision/, { context: 128_000, vision: true }],
+  [/^gpt-4-32k/, { context: 32_768, vision: false }],
+  [/^gpt-4(-0314|-0613)?$/, { context: 8_192, vision: false }],
+  [/^gpt-3/, { context: 16_000, vision: false }],
   [/^grok-4-fast|^grok-4\.1-fast/, { context: 2_000_000, vision: true }],
   [/^grok-code/, { context: 256_000, vision: false }],
   [/^grok-4/, { context: 256_000, vision: true }],
   [/^grok-3/, { context: 131_072, vision: false }],
   [/^grok-2-vision/, { context: 32_768, vision: true }],
   [/^grok-2|^grok-beta/, { context: 131_072, vision: false }],
-  [/^gemini/, { context: 1_000_000, vision: true }],
-  [/deepseek|codestral|gpt-oss|^o1-mini/, { context: 128_000, vision: false }],
+  [/^gemini-1\.5-pro/, { context: 2_000_000, vision: true }],
+  [/^gemini-(1\.0-pro|pro$)/, { context: 32_768, vision: false }],
+  [/^gemini/, { context: 1_000_000, vision: true }], // 1.5 Flash, 2.x, 3
+  [/llama-4-scout/, { context: 10_000_000, vision: true }],
+  [/llama-4-maverick/, { context: 1_000_000, vision: true }],
+  [/llama-3\.2-(11|90)b-vision/, { context: 128_000, vision: true }],
+  [/llama-3\.[1-3]/, { context: 128_000, vision: false }],
+  [/llama-?3(-|$)/, { context: 8_192, vision: false }],
+  [/pixtral/, { context: 128_000, vision: true }],
+  [/codestral/, { context: 256_000, vision: false }],
+  [/mistral-(large|medium|small)|ministral/, { context: 128_000, vision: null }],
+  [/mixtral|mistral-7b|open-mistral|mistral-nemo/, { context: 32_768, vision: false }],
+  [/deepseek|gpt-oss/, { context: 128_000, vision: false }],
 ];
 const DEFAULT_CAPS = { context: 0, vision: null }; // unknown size: the old flat budget (see contextChars)
-const CHARS_PER_TOKEN = 3; // a request's characters per context token, with room left for the system prompt, tools and the reply
+const CHARS_PER_TOKEN = 3; // a request's characters per context token (English runs nearer 4: the rest is slack for the reply)
+const HEADROOM = 0.85; // of the window the history may take: the system prompt and tool definitions use the other ~15%
 const UNKNOWN_CHARS = 320_000; // the flat budget for a model nobody knows the size of
 const MAX_CHARS = 1_200_000; // however large the window, the request itself stays this size
 
@@ -238,7 +276,7 @@ function capsOf(id, options = []) {
 function contextChars(id, options = []) {
   const { context, engine } = capsOf(id, options);
   if (engine) return Infinity;
-  return context > 0 ? Math.min(context * CHARS_PER_TOKEN, MAX_CHARS) : UNKNOWN_CHARS;
+  return context > 0 ? Math.min(Math.round(context * CHARS_PER_TOKEN * HEADROOM), MAX_CHARS) : UNKNOWN_CHARS;
 }
 
 // ---------- choosing the next model ----------

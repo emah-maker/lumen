@@ -119,12 +119,34 @@ const cases = [
   ['structured: a status 502 with text that says nothing', Object.assign(new Error('x'), { status: 502 }), 'unreachable'],
   ['structured: error.type overloaded_error', Object.assign(new Error('x'), { error: { type: 'overloaded_error' } }), 'unreachable'],
   ['structured: status 429 with unrelated text', Object.assign(new Error('Tool timed out'), { status: 429 }), 'limit'],
+  // ---- round 3: credit exhaustion is a limit whatever the status, a CLI's embedded status and type, numeric body codes
+  ['xai 403 used all credits or monthly spending limit', oai(403, null, 'Your team 1a2b3c has either used all available credits or reached its monthly spending limit. To continue making API requests, please purchase more credits or raise your spending limit.'), 'limit', (c) => c.scope === 'provider'],
+  ['xai 403 monthly spending limit (no status, text only)', new Error('Your team has either used all available credits or reached its monthly spending limit.'), 'limit'],
+  ['xai 403 a plain permission denial stays auth', oai(403, null, 'The API key does not have permission to access this model'), 'auth'],
+  ['openai 429 insufficient_quota, real body', Object.assign(new Error('429 You exceeded your current quota, please check your plan and billing details.'), { name: 'RateLimitError', status: 429, code: 'insufficient_quota', type: 'insufficient_quota', error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', param: null, code: 'insufficient_quota' } }), 'limit', (c) => c.scope === 'provider'],
+  ['anthropic 400 credit balance too low, real body', api('BadRequestError', 400, 'invalid_request_error', 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'), 'limit'],
+  ['claude code text-only 429 rate_limit_error', new Error('API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account’s rate limit. Please try again later."},"request_id":"req_011CTx"}'), 'limit', (c) => c.status === 429],
+  ['claude code text-only rate_limit_error without a status', 'API Error: {"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}', 'limit'],
+  ['claude code text-only overloaded_error', new Error('API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'), 'unreachable'],
+  ['claude code text-only overloaded_error without a status', 'API Error: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}', 'unreachable'],
+  ['claude code text-only authentication_error', new Error('API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'), 'auth'],
+  ['claude code text-only 400 invalid_request_error is not a switch', new Error('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages: text content blocks must be non-empty"}}'), 'other'],
+  ['claude code text-only 500 api_error', new Error('API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}'), 'unreachable'],
+  ['openrouter numeric body code 429', Object.assign(new Error('Provider returned error'), { error: { code: 429, message: 'Provider returned error' } }), 'limit', (c) => c.status === 429],
+  ['openrouter numeric inner code 402', Object.assign(new Error('x'), { error: { error: { code: 402, message: 'x' } } }), 'limit', (c) => c.status === 402],
+  ['openrouter numeric body code 503', Object.assign(new Error('No instances available'), { error: { code: 503, message: 'No instances available' } }), 'unreachable'],
+  ['openrouter numeric body code 401', Object.assign(new Error('No auth credentials found'), { error: { code: 401, message: 'No auth credentials found' } }), 'auth'],
+  ['openrouter numeric body code 400 is not a switch', Object.assign(new Error('Provider returned error'), { error: { code: 400, message: 'max_tokens limit is 4096' } }), 'other'],
+  ['text: "invalid credentials" is auth', 'Error: invalid credentials', 'auth'],
+  ['text: "credentials expired" is auth', 'Your credentials expired', 'auth'],
+  ['text: "credentials" in a tool message is not auth', 'The page asked for credentials in a form; I left it blank', 'other'],
+  ['text: "credentials" in an unrelated sentence is not auth', 'Saved credentials for this site are in the password manager', 'other'],
 ];
 for (const [label, input, kind, extra] of cases) {
   const c = classify(input, { now: NOW });
   check(`classify: ${label} -> ${kind}`, c.kind === kind && (!extra || extra(c)), J({ ...c }));
 }
-check(`classify: ${cases.length} shapes covered`, cases.length >= 90, String(cases.length));
+check(`classify: ${cases.length} shapes covered`, cases.length >= 110, String(cases.length));
 
 // ---- the picker's list, as main.js modelOptions() builds it
 const claude = (id, label) => ({ id, label, name: label, group: 'Claude', provider: 'Claude' });
@@ -440,6 +462,24 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
       check('API unreachable after a tool ran: it may not move to an engine (the tool is not repeated), the error stands', Boolean(thrown) && w.log.tools.length === 1 && w.log.cc.length === 0 && m2.settings.model === 'claude-opus-5-5', J({ tools: w.log.tools, cc: w.log.cc, thrown: thrown?.message }));
     }
 
+// ---- the chat's "Switch back" button belongs to the newest fallback notice only
+{
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'renderer', 'chat-core.js'), 'utf8');
+  const fn = /function retireFallbackButtons\(except = null\) \{[\s\S]*?\r?\n\}/.exec(src);
+  check('chat: older fallback buttons are retired when a newer notice arrives', Boolean(fn) && /if \(event\.fallback\) retireFallbackButtons\(\)/.test(src));
+  check('chat: picking a model by hand retires them before the pick is sent', /retireFallbackButtons\(\);[^\n]*\r?\n\s*const switched = await window\.assistant\.setModel\(select\.value\)/.test(src));
+  check('chat: pressing one retires the others', /retireFallbackButtons\(button\)/.test(src) && /fallbackButtons\.add\(button\)/.test(src));
+  const buttons = new Set();
+  const mk = () => ({ removed: false, remove() { this.removed = true; } });
+  const retire = new Function('fallbackButtons', `${fn[0]}; return retireFallbackButtons;`)(buttons);
+  const [a, b, c] = [mk(), mk(), mk()];
+  buttons.add(a); buttons.add(b);
+  retire(); buttons.add(c);
+  check('chat: retire removes every older button and keeps the new one', a.removed && b.removed && !c.removed && buttons.size === 1);
+  retire(c);
+  check('chat: retire(except) leaves the one pressed', !c.removed && buttons.size === 1);
+}
+
 // ---- what a model can take: context size and images
 {
   const { capsOf, contextChars, choose } = fallback;
@@ -455,7 +495,29 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
   check('caps: an OpenRouter row carries its own numbers', capsOf('openrouter:vendor/small-text', O).context === 8000 && capsOf('openrouter:vendor/small-text', O).vision === false);
   check('caps: unknown is unknown (not text-only)', capsOf('openrouter:vendor/unknown', O).vision === null && capsOf('openrouter:vendor/unknown', O).context === 0);
   check('caps: engines see images (Claude Code) or are unknown (Grok Build), and manage their own history', capsOf('claudecode:opus', O).vision === true && capsOf('grokbuild:default', O).vision === null && contextChars('claudecode:opus', O) === Infinity);
-  check('budget: Claude keeps 600k characters, a 128k model about 384k, unknown the old 320k, huge windows are capped', contextChars('claude-opus-5-5', O) === 600_000 && contextChars('openai:gpt-4o', O) === 384_000 && contextChars('openrouter:vendor/unknown', O) === 320_000 && contextChars('openrouter:vendor/big-vision', O) === 1_200_000, J([contextChars('claude-opus-5-5', O), contextChars('openai:gpt-4o', O), contextChars('openrouter:vendor/unknown', O), contextChars('openrouter:vendor/big-vision', O)]));
+  // one check per row of the table (published context windows; vision null: not known either way)
+  const ROWS = [
+    ['claude-opus-5-5', 200_000, true], ['claude-3-5-haiku-latest', 200_000, true], ['openrouter:anthropic/claude-sonnet-4', 200_000, true],
+    ['openai:o1-mini', 128_000, false], ['openai:o1-preview', 128_000, false], ['openai:o1', 200_000, true], ['openai:o1-pro', 200_000, true],
+    ['openai:o3', 200_000, true], ['openai:o3-pro', 200_000, true], ['openai:o3-mini', 200_000, false], ['openai:o4-mini', 200_000, true],
+    ['openai:gpt-5.6', 400_000, true], ['openai:gpt-5-mini', 400_000, true], ['openai:gpt-5-chat-latest', 128_000, true],
+    ['openai:gpt-4.1', 1_000_000, true], ['openai:gpt-4.1-mini', 1_000_000, true],
+    ['openai:gpt-4o', 128_000, true], ['openai:gpt-4o-mini', 128_000, true], ['openai:chatgpt-4o-latest', 128_000, true], ['openai:gpt-4.5-preview', 128_000, true], ['openai:gpt-4-turbo', 128_000, true],
+    ['openai:gpt-4', 8_192, false], ['openai:gpt-4-0613', 8_192, false], ['openai:gpt-4-32k', 32_768, false], ['openai:gpt-3.5-turbo', 16_000, false],
+    ['xai:grok-4', 256_000, true], ['xai:grok-4-fast-reasoning', 2_000_000, true], ['xai:grok-code-fast-1', 256_000, false],
+    ['xai:grok-3', 131_072, false], ['xai:grok-3-mini', 131_072, false], ['xai:grok-2-vision-1212', 32_768, true], ['xai:grok-2-1212', 131_072, false],
+    ['gemini:gemini-1.5-pro', 2_000_000, true], ['gemini:gemini-1.5-flash', 1_000_000, true], ['gemini:gemini-2.0-flash', 1_000_000, true], ['gemini:gemini-2.5-pro', 1_000_000, true], ['gemini:gemini-1.0-pro', 32_768, false],
+    ['openrouter:meta-llama/llama-3.3-70b-instruct', 128_000, false], ['openrouter:meta-llama/llama-3.1-405b-instruct', 128_000, false], ['openrouter:meta-llama/llama-3.2-11b-vision-instruct', 128_000, true],
+    ['openrouter:meta-llama/llama-3-8b-instruct', 8_192, false], ['openrouter:meta-llama/llama-4-maverick', 1_000_000, true], ['openrouter:meta-llama/llama-4-scout', 10_000_000, true],
+    ['openrouter:mistralai/mistral-large-2411', 128_000, null], ['openrouter:mistralai/pixtral-large-2411', 128_000, true], ['openrouter:mistralai/codestral-2501', 256_000, false],
+    ['openrouter:mistralai/mixtral-8x7b-instruct', 32_768, false], ['openrouter:mistralai/mistral-7b-instruct', 32_768, false],
+    ['openrouter:deepseek/deepseek-chat', 128_000, false], ['openrouter:openai/gpt-oss-120b', 128_000, false],
+  ];
+  for (const [id, context, vision] of ROWS) {
+    const c = capsOf(id, []);
+    check(`caps row: ${id} is ${context / 1000}k, ${vision === null ? 'vision unknown' : vision ? 'sees images' : 'text-only'}`, c.context === context && c.vision === vision, J(c));
+  }
+  check('budget: 85% of the window at 3 characters a token (Claude 510k, a 128k model 326k), unknown the old 320k, huge windows are capped', contextChars('claude-opus-5-5', O) === 510_000 && contextChars('openai:gpt-4o', O) === 326_400 && contextChars('openrouter:vendor/unknown', O) === 320_000 && contextChars('openrouter:vendor/big-vision', O) === 1_200_000, J([contextChars('claude-opus-5-5', O), contextChars('openai:gpt-4o', O), contextChars('openrouter:vendor/unknown', O), contextChars('openrouter:vendor/big-vision', O)]));
   const cd = createCooldowns();
   const only = (...ids) => O.filter((o) => ids.includes(o.id));
 
@@ -546,7 +608,7 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
   // the budget follows the model
   {
     const { agent } = makeAgent({ options: [...OP, { id: 'openrouter:v/tiny', label: 'tiny', name: 'tiny', group: 'OpenRouter', provider: 'OpenRouter', context: 8000 }] });
-    check('contextBudget: by the model\u2019s window', agent.contextBudget('claude-opus-5-5') === 600_000 && agent.contextBudget('openai:gpt-4o') === 384_000 && agent.contextBudget('openrouter:v/tiny') === 24_000 && agent.contextBudget('openai:unheard-of') === 320_000, J([agent.contextBudget('claude-opus-5-5'), agent.contextBudget('openai:gpt-4o'), agent.contextBudget('openrouter:v/tiny'), agent.contextBudget('openai:unheard-of')]));
+    check('contextBudget: by the model\u2019s window', agent.contextBudget('claude-opus-5-5') === 510_000 && agent.contextBudget('openai:gpt-4o') === 326_400 && agent.contextBudget('openrouter:v/tiny') === 20_400 && agent.contextBudget('openai:unheard-of') === 320_000, J([agent.contextBudget('claude-opus-5-5'), agent.contextBudget('openai:gpt-4o'), agent.contextBudget('openrouter:v/tiny'), agent.contextBudget('openai:unheard-of')]));
   }
   // a reply that had started says it restarts
   {
