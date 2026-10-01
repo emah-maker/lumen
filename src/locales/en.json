@@ -1232,5 +1232,19 @@
   "welcome.default.confirm": "Confirm in the dialog your system opened.",
   "welcome.default.devBuild": "This copy runs from source: use an installed Lumen to make it the default.",
   "welcome.default.ask": "Want links from other apps to open here?",
-  "settings.default.button": "Make default"
+  "settings.default.button": "Make default",
+  "setup.antigravity": "Use your own Antigravity",
+  "setup.antigravity.detail": "Google’s coding agent (it replaces Gemini CLI), with your own Google sign-in.",
+  "setup.antigravity.install": "Not installed yet: click here to see Google’s install command in Settings.",
+  "setup.antigravity.signedOut": "Not signed in yet: open a terminal, run agy, and sign in with your Google account when it asks. Then click here.",
+  "settings.ai.agy": "Antigravity (replaces Gemini CLI)",
+  "settings.ai.agyDesc": "Google’s coding agent, signed in with your own Google account: Lumen never sees the login. In the sidebar it gets Lumen’s browser tools only, like Claude Code and Grok Build. The install command below is Google’s own; it runs only when you click the button.",
+  "settings.ai.agyMissing": "Not installed.",
+  "settings.ai.agyOn": "Installed and offered in the model menu. If it asks you to sign in, run agy in a terminal and sign in with your Google account.",
+  "settings.ai.agyFound": "Installed. Not offered in the model menu yet.",
+  "settings.ai.agyInstall": "Run this command",
+  "settings.ai.agyInstalling": "Installing…",
+  "settings.ai.agyInstallFailed": "The installer did not finish.",
+  "settings.ai.agyUse": "Use in the sidebar",
+  "settings.ai.agyCheck": "Check again"
 }

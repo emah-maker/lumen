@@ -4,7 +4,7 @@ const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
 if (TEST) global.__perf = perf;
 
-// `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
+// `Lumen --mcp`: an AI agent (Claude Code, Codex, Antigravity…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
 if (process.argv.includes('--mcp')) {
   if (TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
@@ -160,7 +160,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|skills):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -2110,10 +2110,11 @@ const ORGANIZE_SCHEMA = {
 };
 const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has an id, title, host and path words; "group" is the name of the group it is in now; "hint" is what its site is nearly always used for (School for Canvas or Gradescope, Job search for Indeed). Tabs of one host, and tabs with the same hint, usually belong in one group: keep them together unless their titles are clearly different topics (two courses, two projects), and when such a group has no better name, the hint is a good one. Where tabs already belong together in a group, reuse that exact group name for them. The tab marked "active" is what the user is doing right now: keep it with its related tabs. Make 2 to 8 groups of at least 2 tabs each. Name each group specifically in 1-3 words (Title Case), like "Flights to Tokyo" or "React docs", never just a website. A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON only: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
 
-// Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' picks) answer
+// Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' / 'antigravity:…' picks) answer
 // it as a one-shot, tool-less run (cli-json.js), so no API key is needed. An API model without a
 // key goes to Claude Code instead, when it's installed and not known to be signed out.
-const LOCAL_ENGINE = /^(claudecode|grokbuild):/;
+const LOCAL_ENGINE = /^(claudecode|grokbuild|antigravity):/;
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity' };
 // [model fallback] The same rules for the one-shot AI calls outside the chat (topic naming, Organize's refine, a skill's
 // proposal, page translation). standInOf: the model to start on while `model` cools down. withFallback: a call that
 // fails on a usage limit or a lost connection is asked once more on the next usable model (never on other failures,
@@ -2154,7 +2155,7 @@ async function groupingRoute(model) {
 // the chat's own Claude Code model is tried once.
 async function proposeGroupsLocal({ engine, model }, list) {
   const bin = await agent.engines[engine].detect();
-  if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+  if (!bin) throw new Error(`${ENGINE_NAMES[engine]} isn’t installed.`);
   const ask = (m) => cliJson.completeJSON({ engine, bin, model: m, system: ORGANIZE_PROMPT, user: `Tabs:\n${JSON.stringify(list)}`, schema: ORGANIZE_SCHEMA, userData: app.getPath('userData') });
   const fast = engine === 'claudecode' ? 'haiku' : model;
   try {
@@ -2236,7 +2237,7 @@ async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_
   if (route.engine) {
     const { engine, model: engineModelId } = route;
     const bin = await agent.engines[engine].detect();
-    if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+    if (!bin) throw new Error(`${ENGINE_NAMES[engine]} isn’t installed.`);
     // The whole answer has `timeoutMs` (organize-ai's wait, minus a little): a fast model first (Claude Code: Haiku)
     // gets most of it, and the chat's own model is tried only with what is left, never after a timeout.
     const deadline = Date.now() + Math.max(5000, timeoutMs - 2000);
@@ -2923,6 +2924,7 @@ function homeAssistant() {
   const modelId = options.some((o) => o.id === saved) ? saved : options[0].id;
   if (String(modelId).startsWith('claudecode:')) return { name: 'Claude', agentUsable: true };
   if (String(modelId).startsWith('grokbuild:')) return { name: 'Grok', agentUsable: true };
+  if (String(modelId).startsWith('antigravity:')) return { name: 'Antigravity', agentUsable: true };
   const { provider } = providers.splitModel(modelId);
   return { name: ASSISTANT_NAMES[provider] || 'AI', agentUsable: true };
 }
@@ -5300,6 +5302,7 @@ const agent = new Agent({
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
+  takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
@@ -5977,7 +5980,15 @@ ipcMain.handle('agent:auto-allow', (_e, on) => {
 // model that isn't connected anymore (key removed, CLI gone) falls back to the first connected
 // option, or none (null) — never a model the user can't use. A saved Claude Code / Grok Build pick
 // is kept while Lumen is still looking for that CLI at startup.
+// Gemini CLI was replaced by Antigravity (Google's own successor to it): a saved pick of the old CLI moves to Antigravity once, and the
+// first Antigravity reply says so (agent.js antigravityTurn, via takeNotice).
+function migrateGeminiCli(model) {
+  if (!/^(geminicli|gemini-cli|gemini_cli):/.test(String(model))) return model;
+  writeSettings({ ...readSettings(), model: 'antigravity:default', antigravitySidebar: true, antigravityNotice: true });
+  return 'antigravity:default';
+}
 function effectiveModel(preferred = readSettings().model) {
+  preferred = migrateGeminiCli(preferred);
   const options = modelOptions().filter((o) => o.id !== 'openrouter:__more');
   // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
   const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
@@ -6016,9 +6027,11 @@ ipcMain.handle('settings:get', () => {
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
     grokBuild: aiAgents.cliStatus().grokbuild, // { installed, signedIn, enabled }: the setup card offers it once found
+    antigravity: aiAgents.cliStatus().antigravity, // same, for Antigravity (which replaces Gemini CLI)
   };
 });
 ipcMain.handle('settings:use-grok-build', () => aiAgents.useGrokBuild());
+ipcMain.handle('settings:use-antigravity', () => aiAgents.useAntigravity());
 // A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
 // the first message. Offline (can't check), it's saved anyway, and the caller is told so.
 // Safe Browsing's status and key, for the settings page's Privacy section. The key is kept
@@ -6265,6 +6278,7 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab,
   tools: EXTERNAL_TOOLS,
   validateToolInput,
+  isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
 });

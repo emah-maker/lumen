@@ -29,7 +29,7 @@ function setupError(text) {
   el.textContent = text;
 }
 function clearSetupError() { optional('setup').querySelector?.('.setup-error')?.remove(); }
-for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok']) optional(id).addEventListener('click', clearSetupError, true);
+for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok', 'setup-antigravity']) optional(id).addEventListener('click', clearSetupError, true);
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
   if (s.model) clearSetupError();
@@ -49,6 +49,10 @@ async function refreshSetup() {
   const grok = s.grokBuild || {};
   optional('setup-grok').hidden = !grok.installed || !window.assistant.useGrokBuild;
   optional('setup-grok-detail').textContent = grok.signedIn === false ? t('setup.grok.signedOut') : t('setup.grok.detail');
+  // Antigravity (Google's CLI, which replaces Gemini CLI): always offered in the sidebar; not found, it leads to Settings, where the install command is.
+  const agy = s.antigravity || {};
+  optional('setup-antigravity').hidden = !window.assistant.useAntigravity;
+  optional('setup-antigravity-detail').textContent = !agy.installed ? t('setup.antigravity.install') : agy.signedIn === false ? t('setup.antigravity.signedOut') : t('setup.antigravity.detail');
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -158,6 +162,13 @@ optional('setup-grok').onclick = async () => {
   if (await window.assistant.setModel('grokbuild:default')) await loadModels();
   refreshSetup();
 };
+optional('setup-antigravity').onclick = async () => {
+  const r = await window.assistant.useAntigravity?.().catch(() => null);
+  if (!r?.installed) { window.lumenPrefs?.openSettingsPage('antigravity'); return; } // not installed: Settings shows Google's install command and a button
+  if (!r.signedIn) { setupError(t('setup.antigravity.signedOut')); return; }
+  if (await window.assistant.setModel('antigravity:default')) await loadModels();
+  refreshSetup();
+};
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
@@ -216,6 +227,12 @@ const ASSISTANTS = {
     // A neutral routing glyph: one line branching to three.
     svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M2.5 8h4.5M7 8c2 0 2.5-4 5-4M7 8c2 0 2.5 4 5 4M7 8h5"/><circle cx="13" cy="4" r="1"/><circle cx="13" cy="8" r="1"/><circle cx="13" cy="12" r="1"/></svg>',
   },
+  Antigravity: {
+    name: 'Antigravity',
+    tint: 'currentColor',
+    // A neutral mark: an arch with a spark above it.
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M3 13.2 8 3.4l5 9.8"/><path d="M5.6 9.6h4.8"/><circle cx="8" cy="1.8" r=".8"/></svg>',
+  },
   Gemini: {
     name: 'Gemini',
     tint: 'url(#gemini-grad)',
@@ -227,7 +244,7 @@ let assistantIdentity = null;
 function setAssistantIdentity(group) {
   // Claude Code answers as Claude, Grok Build as Grok. No group (nothing connected) or an unknown
   // one: the neutral mark.
-  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group] || ASSISTANTS.AI;
+  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group === 'Your Google account' ? 'Antigravity' : group] || ASSISTANTS.AI;
   if (assistantIdentity === who) return;
   const first = assistantIdentity === null;
   assistantIdentity = who;
@@ -235,7 +252,7 @@ function setAssistantIdentity(group) {
   const empty = document.querySelector('#empty .empty-title');
   if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(who.name) : t('sidebar.empty', { name: who.name });
   const pill = $('agent-pill-text');
-  if (pill) pill.textContent = t('agent.usingTab', { name: who.name });
+  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
 }
 
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
