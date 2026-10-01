@@ -903,6 +903,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('cli args: Grok always has a cap: the chosen one, else 100', flag(gbArgs(120)) === '120' && flag(gbArgs(0)) === '100' && !gb.ARGS_BASE.includes('--max-turns'), '');
     const { DEFAULTS } = require('../src/settings/settings-backend');
     check('setting: maxSteps defaults to unlimited', DEFAULTS.maxSteps === 0, '');
+    check('setting: three chats work at once by default (one per tab, features/tab-chats.js)', DEFAULTS.maxChatRuns === 3 && require('../src/features/tab-chats').DEFAULT_MAX_RUNS === 3, '');
   }
 
   const { ReadCache } = require('../src/ai/snapshot');
@@ -3568,7 +3569,7 @@ async function backgroundChatRuns() {
   check('chat runs: notification text', CR.notification('done', { reply: '## Found **3** flights\nmore' }).title === 'Lumen finished: Found 3 flights' && CR.notification('failed', { error: 'Rate limited.\nlater' }).title === 'Lumen stopped: Rate limited.' && CR.notification('approval', {}).title === 'Lumen needs your OK' && CR.notification('done', { reply: '' }).title === 'Lumen finished', JSON.stringify(CR.notification('done', { reply: '## Found **3** flights\nmore' })));
   check('chat runs: notification text uses the UI language when it has the string', CR.notification('done', { reply: 'ok' }, (k, v) => (k === 'agent.notify.done' ? `Fertig: ${v.reply}` : k)).title === 'Fertig: ok', '');
   check('chat runs: first line is cut on a long reply and skips rules and links', CR.firstLine('x'.repeat(200)).length === 90 && CR.firstLine('---\n[Docs](https://a.b) here') === 'Docs here', CR.firstLine('---\n[Docs](https://a.b) here'));
-  check('chat runs: at most two at once; a message in a running chat replaces its run', CR.canStart({ busy: 1 }) && !CR.canStart({ busy: 2 }) && CR.canStart({ busy: 2, sameChatRunning: true }) && CR.MAX_RUNS === 2, '');
+  check('chat runs: at most three at once by default; a message in a running chat replaces its run', CR.canStart({ busy: 2 }) && !CR.canStart({ busy: 3 }) && CR.canStart({ busy: 3, sameChatRunning: true }) && CR.MAX_RUNS === 3, '');
   check('chat runs: the button mark: an OK outranks an unread reply', CR.attention({ approvals: 1, unread: 3 }) === 'approval' && CR.attention({ unread: 1 }) === 'unread' && CR.attention({}) === null, '');
   check('chat runs: a chat row: needs OK, running, unread', CR.chatBadge({ running: true, approvals: 1 }) === 'approval' && CR.chatBadge({ running: true, unread: true }) === 'running' && CR.chatBadge({ unread: true }) === 'unread' && CR.chatBadge({}) === null, '');
   const TC = require('../src/features/tab-capture');

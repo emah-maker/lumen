@@ -8,9 +8,9 @@
 // failures still come.
 const bg = require('./background-agents');
 
-// At most this many sidebar runs at once (the open chat's and chats left running). Each drives its own
-// tab; more would mean more tabs changing behind the user's back than anyone can follow.
-const MAX_RUNS = 2;
+// The default cap on sidebar runs at once (Settings > AI: Chats working at once; one chat per tab, each
+// driving its own tab). The next one waits its turn (features/tab-chats.js createRunSlots).
+const MAX_RUNS = 3;
 
 // May a new message start a run? A message in a chat that is already running replaces that run.
 function canStart({ busy = 0, sameChatRunning = false, max = MAX_RUNS } = {}) {
@@ -68,10 +68,11 @@ function attention({ approvals = 0, unread = 0 } = {}) {
   return null;
 }
 
-// A chat's row in the list: running, waiting for an OK, or finished and not seen yet.
-function chatBadge({ running = false, approvals = 0, unread = false } = {}) {
+// A chat's row in the list: running, waiting for its turn, waiting for an OK, or finished and not seen yet.
+function chatBadge({ running = false, queued = false, approvals = 0, unread = false } = {}) {
   if (approvals > 0) return 'approval';
   if (running) return 'running';
+  if (queued) return 'queued';
   if (unread) return 'unread';
   return null;
 }

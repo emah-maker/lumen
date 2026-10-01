@@ -75,6 +75,7 @@ const instance = require('./features/instance');
 const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
+const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
 const { ACCOUNT_URL: TVW_ACCOUNT_URL } = require('./features/tradingview-view'); // [widgets] TradingView watchlist import
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
@@ -269,8 +270,11 @@ let settingsGen = 0; // bumped by every write: an async write that is no longer 
 // Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
 // with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
 let settingsPending = false; // an async write not yet known to be on disk
+// [chat per tab] Set where the run slots exist: a changed cap acts at once (a higher one starts the chats waiting).
+let onSettingsWritten = null;
 function writeSettings(settings) {
   settingsCache = { ...settings };
+  onSettingsWritten?.(settingsCache);
   settingsPending = true;
   const gen = ++settingsGen;
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen)
@@ -282,6 +286,7 @@ if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache)
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   settingsCache = { ...settings };
+  onSettingsWritten?.(settingsCache);
   settingsPending = false;
   settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
@@ -1434,6 +1439,7 @@ function tabState() {
           groupId: t.groupId || null,
           pinned: Boolean(t.pinned),
           sleeping: true,
+          chat: tabChatMark(t.id),
           ...tabTools.state(t, false),
         };
       }
@@ -1460,6 +1466,7 @@ function tabState() {
         pinned: Boolean(t.pinned),
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
+        chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
         ...tabTools.state(t, true), // audible, muted
       };
     }),
@@ -2255,6 +2262,7 @@ function switchTab(id, { wake = true } = {}) {
   if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
   layout();
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
+  if (!agent.currentScope()) followTabChat(tab); // [chat per tab] the sidebar shows this tab's chat (a tool's own tab change moves the run, not the sidebar)
   sendTabs();
   return true;
 }
@@ -2276,6 +2284,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   if (index === -1) return;
   if (chatFullTab === id) chatFullTab = null;
   const [tab] = tabs.splice(index, 1);
+  chatBind.unbindTab(id); // [chat per tab]
   finishLeaving(tab);
   tabGroups.cleanup();
   // `pendingCloseUrl` (set by requestCloseTab) covers the case where this runs from the 'destroyed'
@@ -2306,6 +2315,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   }
   if (activeId === id) switchTab(tabs[Math.min(index, tabs.length - 1)].id);
   else sendTabs();
+  chatTabGone(id); // [chat per tab] a chat still working there goes on in a background tab
 }
 
 // The interactive "close this tab" entry points (the tab strip's ✕, Ctrl/Cmd+W, the tab menu) go
@@ -3748,11 +3758,12 @@ function loadChat() {
 // Leaves the open chat (it stays in the list) for another one, or for a fresh one (id null).
 // A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
 // that chat again shows it live. Returns what the sidebar needs to show the chat.
-function switchChat(id) {
+// `ensure` (a tab's own chat that has no file yet: it is still empty): shown as an empty chat under that id.
+function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id && id === chatId) return chatView();
-  const live = id ? chatRuns.get(id) : null; // still running: its live messages, not the file
+  const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
   const snapshot = id && !live ? chats().load(id) : null;
-  if (id && !snapshot && !live) return null;
+  if (id && !snapshot && !live && !ensure) return null;
   saveChat();
   chatGeneration++;
   clearTimeout(saveChatTimer);
@@ -3764,7 +3775,8 @@ function switchChat(id) {
   chatId = id || chats().newId();
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   unreadChats.delete(chatId);
-  chats().setCurrent(id || null);
+  if (id && (snapshot || live)) chats().setCurrent(id);
+  else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
   pushAttention();
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);
@@ -3775,7 +3787,8 @@ function switchChat(id) {
 // approval card it waits on.
 function chatView() {
   const run = chatRuns.get(chatId);
-  const live = run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo() } : null;
+  const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
+    : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
   return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), ...(live ? { live } : {}) };
 }
 
@@ -3829,10 +3842,11 @@ function pushAttention() {
     w.webContents.send('chats:changed', null); // the list's running / needs-OK / unread marks
   }
   chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
+  refreshTabMarks(); // [chat per tab]
 }
 const chatBadges = () => new Map(chats().list().map((c) => {
   const run = chatRuns.get(c.id);
-  return [c.id, chatRunsLib.chatBadge({ running: Boolean(run && agent.runningFor(run.messages)), approvals: run?.pending.size || 0, unread: unreadChats.has(c.id) })];
+  return [c.id, chatRunsLib.chatBadge({ running: Boolean(run && !run.queued && agent.runningFor(run.messages)), queued: Boolean(run?.queued), approvals: run?.pending.size || 0, unread: unreadChats.has(c.id) })];
 }));
 // Tells the user about a run: a system notification (clicking it brings the window and that chat
 // back), and the unread mark when the reply isn't in view.
@@ -3856,6 +3870,167 @@ function tellUser(run, kind) {
     n.show();
   } catch {}
 }
+// ---------- [chat per tab] a sidebar chat in each tab, working at the same time (features/tab-chats.js)
+// Each tab shows its own chat in the sidebar. Switching tabs switches the sidebar to that tab's chat at once, and a
+// chat keeps working in its tab while another is in front; a mark on the tab says so. The agent already runs
+// each chat on its own messages and its own task scope pinned to a tab (agent.js); this is the layer that binds
+// tabs to chats, decides who may run (the cap, the waiting line) and keeps every window's sidebar on its tab's chat.
+//
+// The open chat (`chatId`, agent.messages) is the one the last-used window's sidebar shows; each window's
+// sidebar remembers what it shows (shownChat) and is brought up to date when its tab or its focus changes,
+// and an IPC from a window first brings the open chat in line with that window's tab (syncToSender).
+const chatBind = tabChatsLib.createBindings();
+const runSlots = tabChatsLib.createRunSlots();
+onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); };
+const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
+const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
+const chatBusy = (id) => runIsLive(chatRuns.get(id));
+const waitingText = (run) => t(run.waitReason === 'cli' ? 'agent.waitingCli' : 'agent.waiting');
+// The chat of a running task that works in this tab, whichever chat that is.
+function pinnedChat(tabId) {
+  for (const r of chatRuns.values()) if (!r.deleted && !r.queued && agent.runTabIdFor(r.messages) === tabId) return r.chatId;
+  return null;
+}
+// The mark a tab shows: 'approval' | 'running' | 'waiting' | 'done' | null.
+function tabChatMark(tabId) {
+  const bound = chatBind.chatOf(tabId);
+  const rank = { approval: 4, running: 3, waiting: 2, done: 1 };
+  let best = null;
+  for (const id of new Set([bound, pinnedChat(tabId)].filter(Boolean))) {
+    const run = chatRuns.get(id);
+    const live = runIsLive(run) ? (run.queued ? 'queued' : 'running') : null;
+    const s = tabChatsLib.tabStatus({ run: live, approvals: run?.pending.size || 0, unread: id === bound && unreadChats.has(id) });
+    if (s && (!best || rank[s] > rank[best])) best = s;
+  }
+  return best;
+}
+// The strips redraw when a mark changes (a chat started, waited, finished, needs an OK, was viewed).
+let tabMarksKey = '';
+function refreshTabMarks() {
+  const key = [...winRecs].filter(rcAlive).map((rec) => tabsOf(rec).map((x) => `${x.id}:${tabChatMark(x.id) || ''}`).join(',')).join('|');
+  if (key === tabMarksKey) return;
+  tabMarksKey = key;
+  for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, sendTabsSoon);
+}
+function pushChatView(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  shownChat.set(wc, chatId);
+  const run = chatRuns.get(chatId);
+  if (runIsLive(run)) run.sender = wc; // its events go to the sidebar that shows it now
+  const view = chatView();
+  wc.send('chat:sync', { view });
+  chatPageRt?.broadcast('chat:sync', { view }, wc);
+}
+// The sidebar of the window just entered shows the chat of its front tab.
+// `push`: tell the sidebar (false when the sender already shows it).
+function followTabChat(tab, { push = true } = {}) {
+  if (!tab || tab.managerPage === 'chat' || tab.isolated || tab.settings) return; // the chat page and Settings keep whatever chat is open
+  const own = chatBind.chatOf(tab.id) || pinnedChat(tab.id);
+  const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId) });
+  const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
+  const unseen = (id) => unreadChats.has(id) && !sidebarOpen; // a finished reply stays "done" on its tab until the sidebar is looked at
+  if (plan.chat) {
+    chatBind.bind(tab.id, plan.chat);
+    const keep = unseen(plan.chat);
+    if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true, quiet: true });
+    if (keep) unreadChats.add(chatId);
+    else if (sidebarOpen) unreadChats.delete(chatId);
+  } else if (plan.adopt) {
+    chatBind.bind(tab.id, plan.adopt);
+  } else {
+    switchChat(null, { quiet: true });
+    chatBind.bind(tab.id, chatId);
+  }
+  const wc = ui();
+  if (wc && !wc.isDestroyed()) {
+    if (push && uiReady && shownChat.get(wc) !== chatId) pushChatView(wc);
+    else if (!push) shownChat.set(wc, chatId);
+  }
+  refreshTabMarks();
+}
+function followFront(opts) {
+  followTabChat(tabs.find((x) => x.id === activeId), opts);
+}
+// A message from a window's sidebar: the open chat is that window's tab's chat before anything is done with it.
+function syncToSender(event) {
+  const rec = recOfSender(event?.sender);
+  if (rec) withWindow(rec, () => followFront({ push: false }));
+}
+// Every other window's sidebar follows its own tab again (a chat moved away from a tab it was showing in).
+function refreshSidebars() {
+  if (winRecs.size < 2) return;
+  const home = curRec;
+  for (const rec of [...winRecs]) if (rec !== home && rcAlive(rec)) withWindow(rec, () => followFront());
+  if (home && winRecs.has(home)) withWindow(home, () => followFront({ push: false }));
+}
+// The open chat now belongs to the tab in front ("Move chat to this tab", a chat chosen from the list, a new chat).
+function bindOpenChatHere(sender) {
+  const run = chatRuns.get(chatId);
+  chatBind.move(chatId, activeId);
+  if (run && !run.deleted) {
+    if (run.queued) run.homeTab = activeId;
+    else agent.repinRun(run.messages, activeId, { rec: curRec });
+    run.rec = curRec;
+    if (sender) run.sender = sender;
+  }
+  if (sender && !sender.isDestroyed()) shownChat.set(sender, chatId);
+  pushAttention();
+  refreshSidebars();
+}
+// A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
+// tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
+// chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
+function chatTabGone(id) {
+  chatBind.unbindTab(id);
+  for (const r of chatRuns.values()) {
+    if (r.deleted) continue;
+    if (r.queued && r.homeTab === id) r.homeTab = null;
+    if (r.queued || agent.runTabIdFor(r.messages) !== id || !tabs.length) continue;
+    const tab = openTab(undefined, { background: true });
+    agent.repinRun(r.messages, tab.id, { rec: curRec });
+    r.rec = curRec;
+    r.homeTab = tab.id;
+    chatBind.bind(tab.id, r.chatId);
+  }
+  pushAttention();
+}
+// A tab moved to another window (a drag, the tab menu, merging windows): its chat follows it, and a task working in it
+// goes on there with that window's tabs.
+function chatTabMoved(tabId, dstRec) {
+  for (const r of chatRuns.values()) {
+    if (r.deleted) continue;
+    if (r.queued ? r.homeTab === tabId : agent.runTabIdFor(r.messages) === tabId) {
+      if (!r.queued) agent.repinRun(r.messages, tabId, { rec: dstRec });
+      r.rec = dstRec;
+    }
+  }
+}
+// The tab a chat's run starts in: where it is bound; a tab that closed while it waited gets a fresh background one.
+function runHomeTab(run) {
+  if (run.homeTab != null && tabAnywhere(run.homeTab)) return run.homeTab;
+  const rec = run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec;
+  if (!rec) return null;
+  const id = withWindow(rec, () => openTab(undefined, { background: true }).id);
+  run.homeTab = id;
+  run.rec = rec;
+  chatBind.bind(id, run.chatId);
+  return id;
+}
+// open_tab / switch_tab may bring a tab to the front only when the user is looking at the run's own tab; a chat
+// working in a tab the user is not on never pulls them away from the tab they are in.
+function runWatched() {
+  const s = agent.currentScope();
+  if (!s || !s.chat) return true;
+  return tabChatsLib.mayTakeFront({ runTabId: s.tabId ?? activeId, activeId });
+}
+// The tab the user was watching the run in now shows the tab the run moved to: that tab shows this chat too.
+function bindRunChatTo(tabId) {
+  const s = agent.currentScope();
+  const id = s?.chat ? [...chatRuns.values()].find((r) => r.messages === s.chat)?.chatId : null;
+  if (id) chatBind.bind(tabId, id);
+}
+if (TEST) global.__tabChats = { bindings: chatBind, slots: runSlots, mark: tabChatMark, chatId: () => chatId, shown: () => (ui() ? shownChat.get(ui()) : null), runs: () => [...chatRuns.values()].map((r) => ({ chatId: r.chatId, queued: Boolean(r.queued), tab: r.queued ? r.homeTab : agent.runTabIdFor(r.messages), live: runIsLive(r) })) };
+
 // Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
 // on in a tab behind another one (a screenshot, wait_for); back on once no run works there.
 const unthrottled = new Map(); // tab id -> webContents
@@ -3895,6 +4070,7 @@ function sessionEntry() {
     active: Math.max(0, saved.findIndex((t) => t.id === activeId)),
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
+    chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart)
     groups: tabGroups.snapshot(),
   };
 }
@@ -3944,6 +4120,7 @@ function restoreTabsFrom(saved) {
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
     if (saved.pinned?.[i] && !tab.groupId) tab.pinned = true;
+    chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid)); // [chat per tab]
   });
   tabGroups.cleanup();
   tabGroups.arrange();
@@ -4162,6 +4339,7 @@ function moveTabBetween(src, dst, tabId, index, { focus = true, keepSrc = false,
   if (!tab) return false;
   if (!withWindow(src, () => releaseTab(tab, { keepFlags }))) return false;
   withWindow(dst, () => adoptTab(tab, index, show));
+  chatTabMoved(tabId, dst); // [chat per tab] its chat, and a task working in it, go along
   enterWindow(dst);
   if (focus) dst.win.focus(); // a drag in progress keeps the focus where the mouse is captured
   if (!keepSrc && !tabsOf(src).length) src.win.close(); // it just lost its last tab
@@ -5259,10 +5437,12 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.on('did-finish-load', () => {
     if (!uiReady) return; // the first load: set up below
     sendTabs(); // a reload after a crash: bring the fresh UI up to date
+    followFront({ push: false }); // [chat per tab] this window's tab's chat
     const items = agent.transcript();
+    if (ui()) shownChat.set(ui(), chatId);
     if (items.length) ui()?.send('agent:history', { items });
   });
-  w.on('focus', () => ui()?.send('window-focus', true));
+  w.on('focus', () => { ui()?.send('window-focus', true); if (uiReady) followFront(); }); // [chat per tab] the sidebar shows the chat of the tab in front here
   w.on('blur', () => ui()?.send('window-focus', false));
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   w.on('blur', hideSuggestions);
@@ -5340,8 +5520,14 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     afterSettle();
   }
   function afterSettle() {
-    const items = agent.transcript();
-    if (items.length) ui()?.send('agent:history', { items });
+    // [chat per tab] Restoring the tabs (or the tab that moved in) brought the open chat to the front tab's. A chat still working
+    // there (a tab that moved here mid-task) shows live, and its events come to this window from now on.
+    if (ui() && runIsLive(chatRuns.get(chatId))) pushChatView(ui());
+    else {
+      const items = agent.transcript();
+      if (ui()) shownChat.set(ui(), chatId);
+      if (items.length) ui()?.send('agent:history', { items });
+    }
     uiReady = true;
     perf.mark('uiReady');
     downloads.send(); // last session's downloads: the toolbar button shows when there are any
@@ -5465,16 +5651,26 @@ const agentActiveTab = () => {
   return t && agentOffLimits(tabs.find((x) => x.id === t.id)) ? null : t;
 };
 // ...and its tabs open and switch out of sight, so the user stays on the chat page.
+// [chat per tab] ...and so do a chat's tabs when the user is looking at another tab than the one it works in.
 const agentOpenTab = (url, opts) => {
-  const tab = openTab(url, chatPageRt?.runTarget() != null ? { ...opts, background: true } : opts);
-  if (chatPageRt?.runTarget() != null) chatPageRt.retarget(tab.id);
+  const fromPage = chatPageRt?.runTarget() != null;
+  const watched = runWatched();
+  const tab = openTab(url, fromPage || !watched ? { ...opts, background: true } : opts);
+  if (fromPage) chatPageRt.retarget(tab.id);
+  else if (watched) bindRunChatTo(tab.id);
   return tab;
 };
 const agentSwitchTab = (id) => {
-  if (chatPageRt?.runTarget() == null) return switchTab(id);
+  const fromPage = chatPageRt?.runTarget() != null;
+  if (!fromPage && runWatched()) {
+    const ok = switchTab(id);
+    if (ok) bindRunChatTo(id);
+    return ok;
+  }
   const t = tabs.find((x) => x.id === id);
   if (!t || agentOffLimits(t)) return false;
-  chatPageRt.retarget(id);
+  if (t.sleeping) wakeTab(t); // (the run is about to use it)
+  if (fromPage) chatPageRt.retarget(id);
   return true;
 };
 // Why there's no page to work on while one of those is in front (instead of "No tab is open").
@@ -6218,22 +6414,35 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   const valid = (Array.isArray(images) ? images : [])
     .filter((img) => IMAGE_TYPES.has(img?.media_type) && typeof img.data === 'string' && img.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(img.data))
     .slice(0, 5);
+  syncToSender(event); // [chat per tab] the chat of the tab this was typed in
   // [background chats] The run belongs to the chat it started in, wherever the user goes meanwhile:
   // another tab, another window, a closed sidebar or another chat (switchChat leaves it running).
   const runChat = chatId;
-  const same = chatRuns.get(runChat);
-  if (!chatRunsLib.canStart({ busy: agent.busyCount, sameChatRunning: Boolean(same && agent.runningFor(same.messages)) })) {
-    const send = (msg) => chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId });
-    send({ type: 'error', text: t('agent.tooManyRuns', { n: chatRunsLib.MAX_RUNS }) });
-    send({ type: 'done' });
-    return;
-  }
-  const run = { chatId: runChat, messages: agent.messages, runId, rec: curRec, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null };
+  const messages = agent.messages;
+  const hosts = agent.approvedHosts;
+  const askText = String(text || '');
+  const fromChatPage = chatPageRt.isChatSender(event);
+  // [chat per tab] Starting a chat in a tab binds it there: its tools act on this tab, not on whichever is in front later.
+  const homeTab = fromChatPage ? null : activeId;
+  if (homeTab != null) chatBind.bind(homeTab, runChat);
+  const run = { chatId: runChat, messages, runId, rec: curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
-  chatPageRt.beginRun(event, { text: String(text || ''), runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
-  agent.run(String(text || ''), (msg) => {
+  const to = () => (run.sender && !run.sender.isDestroyed() ? run.sender : event.sender);
+  chatPageRt.beginRun(event, { text: askText, runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
+  const finishQueued = () => { // a run that never got a slot (stopped, or its chat deleted while it waited)
+    runSlots.cancel(runChat);
+    if (chatRuns.get(runChat) === run) chatRuns.delete(runChat);
+    run.queued = false;
+    run.stopped = true;
+    if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
+    chatPageRt.emit(to(), 'agent:event', { type: 'notice', text: 'Stopped.', stopped: true, runId });
+    chatPageRt.emit(to(), 'agent:event', { type: 'done', runId });
+    pushAttention();
+  };
+  run.cancelQueued = finishQueued;
+  const emit = (msg) => {
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     if (msg.type === 'text') run.reply += msg.text;
@@ -6243,10 +6452,12 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     if (msg.type === 'approval') { run.pending.set(msg.approvalId, msg); tellUser(run, 'approval'); }
     else if (msg.type === 'approval_done' && run.pending.delete(msg.approvalId)) pushAttention();
     if (msg.type === 'done') {
-      if (chatRuns.get(runChat) === run) chatRuns.delete(runChat);
+      const mine = chatRuns.get(runChat) === run;
+      if (mine) chatRuns.delete(runChat);
+      if (mine) runSlots.release(runChat); // the next chat in line may start
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
     }
-    chatPageRt.emit(event.sender, 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
+    chatPageRt.emit(to(), 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
@@ -6254,9 +6465,29 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
-  // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-  }, valid, { tabs: tabsAsk.cleanIds(tabIds), meta: { rec: curRec } }, skillsFeature.takeRun(String(text || '')));
-  pushAttention(); // the chat list shows it running
+  };
+  const skillRun = skillsFeature.takeRun(askText);
+  const tabsPicked = tabsAsk.cleanIds(tabIds);
+  const start = () => {
+    if (run.deleted) { runSlots.release(runChat); return; }
+    const wasQueued = run.queued;
+    run.queued = false;
+    if (wasQueued) chatPageRt.emit(to(), 'agent:event', { type: 'status', text: '', runId }); // the waiting line goes
+    const tabId = fromChatPage ? undefined : runHomeTab(run); // [chat per tab] where this chat is bound, not the tab in front now
+    // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
+    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec } }, skillRun);
+    pushAttention(); // the chat list shows it running
+  };
+  // [chat per tab] How many chats may work at once is a setting; the next waits its turn. Claude Code and Grok Build
+  // take turns one chat at a time (their tools reach Lumen through one connection that finds its run through one pin).
+  runSlots.setMax(readSettings().maxChatRuns);
+  const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel());
+  if (runSlots.request(runChat, { kind, start }) === 'queued') {
+    run.queued = true;
+    run.waitReason = runSlots.reason(runChat);
+    chatPageRt.emit(to(), 'agent:event', { type: 'status', text: waitingText(run), runId });
+    pushAttention(); // the tab and the chat list show it waiting
+  }
 });
 // The tabs the "@" picker offers: this window's readable tabs, never a private window's.
 ipcMain.handle('tabs:ask-list', (event) => {
@@ -6265,28 +6496,90 @@ ipcMain.handle('tabs:ask-list', (event) => {
     .filter((t) => tabsAsk.ineligible({ ...t, aiOff: aiSites.isOff(t.url) }) === null)
     .map((t) => ({ id: t.id, title: t.title, host: hostOf(t.url) || t.url, favicon: t.favicon, active: t.active, sleeping: t.sleeping }));
 });
-ipcMain.on('agent:stop', () => agent.stop());
+// Stops a chat's run: one waiting for a slot leaves the line, one working is aborted. `id`: any chat (the chat list's
+// "Stop waiting"); none: the open chat (the Stop button).
+function stopChat(id) {
+  const run = chatRuns.get(id);
+  if (!run || run.deleted) return false;
+  if (run.queued) run.cancelQueued();
+  else agent.stopFor(run.messages);
+  return true;
+}
+ipcMain.on('agent:stop', (event, id) => {
+  if (typeof id === 'string' && id) { stopChat(id); return; }
+  syncToSender(event);
+  const run = chatRuns.get(chatId);
+  if (run?.queued) run.cancelQueued(); // it never started: leaves the waiting line
+  else agent.stop();
+});
 // "Working in: …" in the sidebar: jump to the tab the task works in.
-ipcMain.on('agent:show-target', () => { const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
+ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.
 ipcMain.handle('agent:rewind', (_e, expected) => {
-  if (agent.runningFor(agent.messages)) return false; // never mid-run
+  syncToSender(_e);
+  if (agent.runningFor(agent.messages) || chatRuns.get(chatId)?.queued) return false; // never mid-run
   const result = agent.rewindLast(typeof expected === 'string' ? expected : '');
   if (result === 'rewound') { saveChatSoon(chatGeneration); chatPageRt.broadcast('chat:sync', { view: chatView() }, _e.sender); } // the other view drops it too
   return result;
 });
-ipcMain.on('agent:reset', (event) => { switchChat(null); chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); });
+ipcMain.on('agent:reset', (event) => {
+  syncToSender(event);
+  switchChat(null);
+  chatBind.bind(activeId, chatId); // [chat per tab] the tab shows its new chat; the old one stays in the list (and keeps working if it is)
+  if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
+  pushAttention();
+  chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
+});
 
 // ---- the sidebar's chat history list (features/chat-store.js)
-ipcMain.handle('chats:list', () => ({
-  current: chatId,
-  currentUsage: describeUsage(agent.messages.settings?.usage),
-  chats: (() => { const badges = chatBadges(); return chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null })); })(),
-}));
+// [chat per tab] Where a chat lives: the tab it is bound to (or, while it works, the tab it works in).
+// { id, title, here } ('here': it is the tab in front), or null.
+function chatPlaceOf(id) {
+  const working = chatRuns.get(id);
+  const bound = chatBind.tabsOf(id);
+  const pinned = working && !working.queued ? agent.runTabIdFor(working.messages) : null;
+  const candidates = [...(pinned != null ? [pinned] : []), ...bound.slice().reverse()];
+  const tabId = candidates.includes(activeId) ? activeId : candidates.find((tid) => tabAnywhere(tid));
+  if (tabId == null) return null;
+  const found = tabAnywhere(tabId);
+  if (!found) return null;
+  return { id: tabId, title: withWindow(found.rec, () => tabTitle(found.t)) || '', here: tabId === activeId && found.rec === curRec, place: tabChatsLib.chatPlace({ tabId, here: tabId === activeId && found.rec === curRec }) };
+}
+ipcMain.handle('chats:list', (event) => {
+  syncToSender(event);
+  return {
+    current: chatId,
+    currentUsage: describeUsage(agent.messages.settings?.usage),
+    maxRuns: runSlots.limit,
+    chats: (() => {
+      const badges = chatBadges();
+      return chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id) }));
+    })(),
+  };
+});
+// "Move chat to this tab" (and opening a chat that lives in no tab): the chat now belongs to the tab in front.
 ipcMain.handle('chats:open', (event, id) => {
+  syncToSender(event);
   const view = switchChat(String(id));
-  if (view) chatPageRt.broadcast('chat:sync', { view }, event.sender); // the other view shows the chat that was opened
+  if (view) {
+    bindOpenChatHere(event.sender);
+    chatPageRt.broadcast('chat:sync', { view }, event.sender); // the other view shows the chat that was opened
+  }
   return view;
+});
+// "Open chat in its tab": show the tab the chat lives in (its window comes to the front).
+ipcMain.handle('chats:show-tab', (event, id) => {
+  id = String(id);
+  const place = (() => {
+    const working = chatRuns.get(id);
+    const pinned = working && !working.queued ? agent.runTabIdFor(working.messages) : null;
+    for (const tid of [...(pinned != null ? [pinned] : []), ...chatBind.tabsOf(id).slice().reverse()]) { const f = tabAnywhere(tid); if (f) return { tid, ...f }; }
+    return null;
+  })();
+  if (!place) return false;
+  withWindow(place.rec, () => { switchTab(place.tid); });
+  if (rcAlive(place.rec)) { if (place.rec.win.isMinimized()) place.rec.win.restore(); place.rec.win.focus(); }
+  return true;
 });
 ipcMain.handle('chats:rename', (_e, id, title) => chats().rename(String(id), String(title ?? '')));
 // Deleting the open chat leaves an empty one in its place.
@@ -6295,12 +6588,18 @@ ipcMain.handle('chats:delete', (event, id) => {
   approvedByChat.delete(id);
   unreadChats.delete(id);
   const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again
-  if (running) { running.deleted = true; agent.stopFor(running.messages); clearTimeout(detachedSaves.get(id)); }
+  if (running) {
+    running.deleted = true;
+    if (running.queued) { running.cancelQueued?.(); chatRuns.delete(id); } else agent.stopFor(running.messages);
+    clearTimeout(detachedSaves.get(id));
+  }
+  chatBind.unbindChat(id); // [chat per tab]
   if (id === chatId) {
     chatGeneration++;
     clearTimeout(saveChatTimer);
     agent.reset();
     chatId = chats().newId();
+    chatBind.bind(activeId, chatId);
     chats().remove(id);
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
     return { cleared: true, view: chatView() };

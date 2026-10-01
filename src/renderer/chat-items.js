@@ -26,6 +26,8 @@
     export: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M5 5.5l3-3 3 3M3.5 10.5v3h9v-3"/></svg>',
     delete: '<svg viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 9h5l.5-9"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+    showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
+    movehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 11V8.5M6.5 10L8 11.5 9.5 10"/></svg>',
   };
   const iconButton = (name, label) => {
     const b = document.createElement('button');
@@ -114,11 +116,18 @@
       openBtn.className = 'chat-open';
       if (isCurrent) openBtn.setAttribute('aria-current', 'true');
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
+      // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
+      const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') });
+      if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
+      // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
+      const place = inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : '');
+      if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
       // Still running (it was left mid-reply), waiting for an OK, or finished and not seen yet.
       if (chat.badge) {
-        const label = { running: tr('chats.badge.running', 'Working'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
+        const label = { running: tr('chats.badge.running', 'Working'), queued: tr('chats.badge.queued', 'Waiting for its turn'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
         if (label) {
           const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge}`, title: label });
           badge.setAttribute('role', 'img');
@@ -127,7 +136,9 @@
           li.classList.add(`has-${chat.badge}`);
         }
       }
-      openBtn.onclick = () => onOpen(chat.id);
+      // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
+      const working = ['running', 'queued', 'approval'].includes(chat.badge);
+      openBtn.onclick = () => (elsewhere && working && api.showTab ? api.showTab(chat.id).then(() => window.chatList?.close?.(false)) : onOpen(chat.id));
 
       const actions = document.createElement('div');
       actions.className = 'chat-actions';
@@ -155,8 +166,23 @@
         if (out?.cleared) cleared();
         await rerender();
       };
-      actions.append(rename, exportBtn, del);
-      li.append(openBtn, actions);
+      const tabActions = [];
+      if (elsewhere && api.showTab) {
+        const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
+        show.onclick = async () => { await api.showTab(chat.id); window.chatList?.close?.(false); };
+        const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
+        move.onclick = () => onOpen(chat.id);
+        tabActions.push(show, move);
+      }
+      actions.append(...tabActions, rename, exportBtn, del);
+      li.append(openBtn);
+      // Waiting for its turn: it can be taken out of the line from here.
+      if (chat.badge === 'queued' && api.stopChat) {
+        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
+        stop.onclick = (e) => { e.stopPropagation(); api.stopChat(chat.id); };
+        li.append(stop);
+      }
+      li.append(actions);
       return li;
     };
   };
