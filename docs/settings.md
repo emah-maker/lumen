@@ -73,6 +73,23 @@ These are set from the sidebar rather than the settings page:
 | What Lumen opens when it starts | `startup` | `restore` | `restore` (continue where you left off), `newtab` or `pages`. |
 | Pages to open | `startupPages` | none | Up to 20 `http(s)` addresses, used with `pages`. |
 
+## Translation
+
+Settings → General → Translation. Translating is always a click (the address-bar button, the page menu or the bar); nothing is sent anywhere before that.
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Offer to translate pages | `translateOffer` | on | A button and a bar appear when a page is in another language than yours. The language is detected on your computer (the page's `lang`, else its letters and common words). |
+| Translate pages into | `translateTarget` | Lumen's language | One of 23 languages. |
+| Translate with | `translateEngine` | `local` | `local`: on this device, with Mozilla's open-source Bergamot engine (the one in Firefox Translations), running in its own process. The page's text never leaves your computer. `ai`: your connected AI first. Either one falls back to the other when it can't take the page (no language pack for the pair, or none connected), and the page menu always lets you pick: Translate on this device, Translate with your AI, Google Translate. |
+| Download language packs without asking | `translateLocalAuto` | off | On-device translation needs a language pack per direction (about 20 to 55 MB, downloaded once from Mozilla's servers and checked against Mozilla's published SHA-256). Off: the bar asks first ("Download the French → English language pack (37 MB)?"), with an "Always download" button that turns this on. Two languages with no pack between them are translated through English, as Firefox does, which needs both packs. |
+| Sites never offered translation | `translateNever` | none | Hosts where the bar stays away. |
+| Allowed to receive page text | `translateConsent` | none | Providers (your AI, Google Translate) you let receive a page's text or address. On-device translation needs no entry here. |
+| Language packs on this device | — | — | Each downloaded pack with its size and a Delete button, the total, and Delete all. Packs live in `translation-models/` in Lumen's data folder. |
+| Download for offline | — | — | Download a language's packs (to and from English) ahead of time, with progress and Cancel. |
+
+Private windows: an unclicked offer never happens there; a click translates on this device with no consent card.
+
 ## Privacy and security
 
 | Setting | Key | Default | What it does |

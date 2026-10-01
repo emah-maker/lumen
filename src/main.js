@@ -96,7 +96,7 @@ function translateLocal() {
     const local = require('./features/translate-local');
     const store = require('./features/translate-models').createModelStore({
       dir: path.join(app.getPath('userData'), 'translation-models'),
-      fetch: (url, options) => net.fetch(url, options),
+      fetch: (url, options) => (TEST && global.__translateNetHook ? global.__translateNetHook(url, options) : net.fetch(url, { ...options, headers: { ...options?.headers, 'user-agent': `Lumen/${app.getVersion()}` } })), // (Mozilla's CDN answers 406 to a browser user agent)
     });
     translateLocalInstance = local.createLocal({ store, fork: local.electronFork(require('electron').utilityProcess) });
     app.once('before-quit', () => translateLocalInstance.stop());

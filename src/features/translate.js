@@ -374,7 +374,7 @@ function createTranslate(deps) {
     const st = states.get(tab);
     if (!st) return null;
     const { phase, lang, target, progress, provider, error, dismissed, translated, via, size, pair } = st;
-    return { phase, lang, langName: lang ? langName(lang) : '', target, targetName: target ? langName(target) : '', progress: progress || 0, provider: provider || '', via: via || '', size: size || '', pair: pair || '', error: error || '', dismissed: Boolean(dismissed), translated: Boolean(translated) };
+    return { phase, lang, langName: lang ? langName(lang) : '', target, targetName: target ? langName(target) : '', progress: progress || 0, detail: st.detail || '', provider: provider || '', via: via || '', size: size || '', pair: pair || '', error: error || '', dismissed: Boolean(dismissed), translated: Boolean(translated) };
   };
 
   const script = (tab, op, arg) => {
@@ -567,7 +567,7 @@ function createTranslate(deps) {
       stopRun(tab);
       script(tab, 'restore').catch(() => {});
       if (via === 'local' && fallsBackToAi(err?.message, { want, aiOk: Boolean(engine(tab)) })) { start(tab, { target, want: 'ai' }); return; }
-      set(tab, { phase: 'error', error: String(err?.message || err).slice(0, 200), translated: false });
+      set(tab, { phase: 'error', error: String(err?.message || err).slice(0, 200), detail: String(err?.detail || '').slice(0, 300), translated: false });
     }
   }
 
