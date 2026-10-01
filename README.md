@@ -24,7 +24,7 @@ Download the latest build from [Releases](https://github.com/emah-maker/lumen/re
 
 **Windows:** the builds aren't code-signed. SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. On PCs with Smart App Control turned on, the zip is the one that runs. Its `Lumen.exe` is the untouched Electron binary, which Windows recognises, while a freshly built installer isn't. Or build and install locally (below).
 
-**Mac:** the app is self-signed (not Developer ID), so the first launch is blocked. On **macOS 15 Sequoia and later**, open Lumen once (it is refused), then go to **System Settings → Privacy & Security**, scroll to Security and click **Open Anyway** next to Lumen, and confirm. On older macOS, right-click **Lumen** in Applications and choose **Open**, then **Open** again (Sequoia removed that shortcut for self-signed apps). If you open Lumen straight from the disk image or Downloads, it offers to move itself to Applications at launch (Settings → About Lumen → Updates keeps a **Move to Applications** button). When a new version is out, the toolbar says **Move to Applications to update**: one click installs the update into Applications (or into `~/Applications` if you aren't an administrator), opens it and you're done, with no disk image and no second step. It never overwrites a newer Lumen that is already there, and asks you to quit another running Lumen first. If Open Anyway doesn't appear, or macOS says the app "is damaged", run:
+**Mac:** from 0.4.4 the app is signed with an Apple Developer ID and notarized by Apple, so it opens with no prompt and needs no **Open Anyway** step (maintainers: [docs/mac-signing.md](docs/mac-signing.md)). If you are updating from an older version, macOS asks once on the first launch to allow Lumen access to its Keychain item. Versions before 0.4.4 are self-signed, so their first launch is blocked: on **macOS 15 Sequoia and later**, open Lumen once (it is refused), then go to **System Settings → Privacy & Security**, scroll to Security and click **Open Anyway** next to Lumen; on older macOS, right-click **Lumen** in Applications and choose **Open**. If you open Lumen straight from the disk image or Downloads, it offers to move itself to Applications at launch (Settings → About Lumen → Updates keeps a **Move to Applications** button). When a new version is out, the toolbar says **Move to Applications to update**: one click installs the update into Applications (or into `~/Applications` if you aren't an administrator), opens it and you're done, with no disk image and no second step. It never overwrites a newer Lumen that is already there, and asks you to quit another running Lumen first. If an older version won't open, or macOS says the app "is damaged", run:
 
 ```
 xattr -dr com.apple.quarantine /Applications/Lumen.app
@@ -142,7 +142,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | Ask the AI about selected text | right-click → Ask Claude About Selection |
 | Tab devtools | `F12` |
 
-## Use Lumen from Claude Code, Codex, Gemini CLI
+## Use Lumen from Claude Code, Codex, Antigravity
 
 Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 28 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → AI and agents → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
 
@@ -166,7 +166,7 @@ env = { ELECTRON_RUN_AS_NODE = "1" }
 ```
 
 ```json
-// Gemini CLI (~/.gemini/settings.json), Cursor, Claude Desktop and other MCP clients
+// Antigravity (~/.gemini/config/mcp_config.json), Cursor, Claude Desktop and other MCP clients
 { "mcpServers": { "lumen": {
   "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\Lumen.exe",
   "args": ["C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\resources\\app\\mcp.js"],

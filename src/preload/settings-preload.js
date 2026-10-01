@@ -123,6 +123,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       cliLogout: call('cli:logout'),
       cliCancel: call('cli:cancel'),
       claudeCodeStatus: call('claudecode:status'),
+      antigravityStatus: call('antigravity:status'), // Settings → AI → CLI agents: found? the install command
+      antigravityInstall: call('antigravity:install'), // runs Google's installer, only from the click that follows seeing it
+      useAntigravity: call('settings:use-antigravity'),
       mcpInfo: call('mcp:info'),
       setMcpEnabled: call('mcp:set-enabled'),
       addToAgent: call('mcp:add-to-agent'),
