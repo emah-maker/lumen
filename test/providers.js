@@ -179,11 +179,23 @@ const path = require('path');
   const last = orRequests[orRequests.length - 1];
   check('openrouter: chat-only model gets no tools', last.body.model === 'acme/chat-1' && !last.body.tools, JSON.stringify(last.body).slice(0, 200));
   check('openrouter: chat-only model says it cannot act', events.some((e) => e.type === 'notice' && /chat only/.test(e.text)), JSON.stringify(events.filter((e) => e.type === 'notice')));
-  // 402: no credits.
+  // 402: no credits. With automatic switching off (Settings > AI), the error stands and says why; on (the
+  // default), the turn moves to another connected model instead (ai/fallback.js), covered after.
   await app.evaluate(() => global.__agent.setModel('openrouter:acme/broke'));
-  const failed = await app.evaluate(() => new Promise((resolve) => { const seen = []; global.__agent.run('hi', (e) => { seen.push(e); if (e.type === 'done') resolve(seen); }); }));
+  const failed = await app.evaluate(() => {
+    const b = global.__agent.browser;
+    const own = Object.prototype.hasOwnProperty.call(b, 'autoFallback');
+    const before = b.autoFallback;
+    b.autoFallback = () => false;
+    const restore = () => { if (own) b.autoFallback = before; else delete b.autoFallback; };
+    return new Promise((resolve) => { const seen = []; global.__agent.run('hi', (e) => { seen.push(e); if (e.type === 'done') { restore(); resolve(seen); } }); });
+  });
   const errText = failed.find((e) => e.type === 'error')?.text || '';
-  check('openrouter: 402 explains the credits', /credits have run out/.test(errText), errText);
+  check('openrouter: 402 explains the credits (automatic switching off)', /credits have run out/.test(errText), errText);
+  await app.evaluate(() => global.__agent.setModel('openrouter:acme/broke'));
+  const switched = await app.evaluate(() => new Promise((resolve) => { const seen = []; global.__agent.run('hi', (e) => { seen.push(e); if (e.type === 'done') resolve(seen); }); }));
+  const moved = switched.find((e) => e.type === 'notice' && e.fallback);
+  check('openrouter: 402 with automatic switching on moves the turn to another model, not an error', moved?.fallback.from === 'openrouter:acme/broke' && moved.fallback.kind === 'limit' && moved.fallback.to !== 'openrouter:acme/broke' && /limit/.test(moved.text) && !switched.some((e) => e.type === 'error'), JSON.stringify(switched.filter((e) => e.type === 'notice' || e.type === 'error')));
   orServer.close();
 
   check('no UI errors', errors.length === 0, errors.join('; '));
