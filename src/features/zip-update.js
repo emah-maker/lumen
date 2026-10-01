@@ -96,7 +96,11 @@ function findApp(dir, appName, ls = (d) => fs.readdirSync(d, { withFileTypes: tr
 
 const sq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`; // POSIX single-quoting
 
-// The macOS swap script (run with /bin/sh). Waits for Lumen (pid) to exit, clears quarantine flags
+// The macOS swap script (run with /bin/sh). It only renames whole bundles and clears extended
+// attributes (`xattr -cr` removes com.apple.quarantine and friends from files, never anything inside
+// the code signature), so a Developer ID signature and a stapled notarization ticket arrive intact;
+// it never runs codesign, so it can't strip or replace one. With no signature to keep (ad-hoc builds)
+// clearing quarantine is what stops Gatekeeper from blocking the swapped-in copy. Waits for Lumen (pid) to exit, clears quarantine flags
 // on the new bundle, moves Lumen.app aside as .old and the new one in, relaunches with `open`. If a
 // move fails the old bundle is put back and errFile explains. `orig` is the bundle this run came
 // from: a relocated install (from the dmg) that fails has no $APP to reopen, so the original is.

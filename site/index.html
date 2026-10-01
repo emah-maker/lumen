@@ -183,7 +183,8 @@ const page = browser.contexts()[0].pages()[0]; // your open tabs</code></pre>
           </tbody>
         </table>
         <p class="note"><b>Windows:</b> the builds aren't code-signed, so SmartScreen may warn you. Choose <i>More info → Run anyway</i>. With Smart App Control on, use the zip.</p>
-        <p class="note"><b>Mac:</b> the app is ad-hoc signed, so the first launch is blocked. On macOS 15 Sequoia or later, try to open Lumen once, then go to <i>System Settings → Privacy &amp; Security</i>, scroll to Security and click <i>Open Anyway</i>. On older macOS, right-click Lumen in Applications and choose <i>Open</i>. If it still won't open, run <code>xattr -dr com.apple.quarantine /Applications/Lumen.app</code> in Terminal. After that, updates download in the background and install with one <i>Restart to update</i>; there is never a new installer to run. More in the <a href="docs.html?p=readme#install">install guide</a>.</p>
+        <!-- TODO(first notarized release): once releases are Developer ID signed and notarized, replace this note with "opens with no prompt" (see docs/mac-signing.md). -->
+        <p class="note"><b>Mac:</b> until releases are Developer ID signed and notarized (docs/mac-signing.md), the app is ad-hoc signed, so the first launch is blocked. On macOS 15 Sequoia or later, try to open Lumen once, then go to <i>System Settings → Privacy &amp; Security</i>, scroll to Security and click <i>Open Anyway</i>. On older macOS, right-click Lumen in Applications and choose <i>Open</i>. If it still won't open, run <code>xattr -dr com.apple.quarantine /Applications/Lumen.app</code> in Terminal. After that, updates download in the background and install with one <i>Restart to update</i>; there is never a new installer to run. More in the <a href="docs.html?p=readme#install">install guide</a>.</p>
       </div>
     </section>
 

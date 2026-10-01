@@ -12,6 +12,7 @@ const PAGES = {
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
+  'mac-signing': { title: 'macOS signing', file: 'docs/mac-signing.md' },
   changelog: { title: 'Changelog', file: 'CHANGELOG.md' },
 };
 const BY_FILE = Object.fromEntries(Object.entries(PAGES).map(([id, p]) => [p.file.toLowerCase(), id]));
