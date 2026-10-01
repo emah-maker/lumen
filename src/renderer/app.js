@@ -1528,15 +1528,15 @@ window.browser.onOrganizing?.((busy) => {
   organizeBtn.querySelector('span').textContent = busy === 'refine' ? t('tabs.refining') : busy ? t('tabs.organizing') : t('tabs.organize');
 });
 // "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
-window.browser.onOrganizeNote?.(({ text, undo }) => {
+window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle }) => {
   document.querySelector('.organize-note')?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note', role: 'status' });
   note.append(Object.assign(document.createElement('span'), { textContent: text }));
   if (undo) {
-    note.append(Object.assign(document.createElement('button'), { textContent: t('organize.undo'), onclick: () => { window.browser.undoOrganize(); note.remove(); } }));
+    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { window.browser.undoOrganize(); note.remove(); } })); // (a merge's note brings its own wording)
   }
   organizeBtn.after(note); // in the strip's own row: web pages cover everything below it
-  setTimeout(() => note.remove(), 9000);
+  setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000); // main's undo window is the same length as the note's life
 });
 
 // State pushes arrive in bursts (a page loading fires title, favicon and loading updates back to back):

@@ -99,6 +99,63 @@ module.exports = function windowMergeUnits(check) {
     check('undo: the window merged into always keeps a tab', tight.reduce((n, w) => n + w.ids.length, 0) <= 8 && tight.length >= 1, JSON.stringify(tight.map((w) => w.ids)));
   }
 
+  // ---- round 2: the menu's state, the tabs that go along, the undo window, the flags a tab keeps
+  {
+    const wins = (...extra) => [make()[0], ...extra];
+    check('availability: one window beside a private and a spare one is disabled, with the reason "single"',
+      JSON.stringify(wm.availability([make()[0], make()[3], make()[4]], 1)) === JSON.stringify({ enabled: false, reason: 'single', eligible: 1 }), JSON.stringify(wm.availability([make()[0], make()[3], make()[4]], 1)));
+    check('availability: two eligible windows enable it (eligible count 2), three count 3',
+      wm.availability(wins(make()[1]), 1).enabled === true && wm.availability(wins(make()[1]), 1).eligible === 2 && wm.availability(make(), 2).eligible === 3, '');
+    check('availability: a window still restoring is not eligible, and the reason is "restoring" while it is the only other one',
+      (() => { const a = wm.availability(wins({ id: 4, busy: true, activeId: 40, tabs: [tab(40)], groups: [] }), 1); return !a.enabled && a.reason === 'restoring' && a.eligible === 1; })(), '');
+    check('availability: a restoring window beside two ready ones does not block the merge',
+      wm.availability([...wins(make()[1]), { id: 4, busy: true, tabs: [tab(40)], groups: [] }], 1).enabled === true, '');
+    check('availability: when the current window itself is restoring the reason is "restoring"',
+      wm.blocker([{ id: 1, busy: true, tabs: [], groups: [] }, make()[1]], 1) === 'restoring', '');
+    check('availability: no focused normal window (null) uses the first eligible one', wm.availability(make(), null).enabled === true && wm.blocker([make()[3]], null) === 'single', '');
+    check('availability: a private window as the target is never enabled', wm.availability(make(), 9).enabled === false, '');
+    check('availability: other windows without tabs give "empty"', wm.blocker([make()[0], { id: 5, activeId: null, tabs: [], groups: [] }], 1) === 'empty', '');
+    check('blocker: a named source that is restoring says "restoring", a named source that is gone "single"',
+      wm.blocker([make()[0], { id: 6, busy: true, tabs: [tab(60)], groups: [] }], 1, [6]) === 'restoring' && wm.blocker(make(), 1, [99]) === 'single', '');
+    check('blocker: nothing blocks a real merge', wm.blocker(make(), 1) === null && wm.blocker(make(), 1, [2]) === null, '');
+    const reasons = ['single', 'restoring', 'empty'];
+    const en = require('../src/locales/en.json');
+    check('availability: each reason has a menu label and a toast of its own (merge wording, not organize)',
+      reasons.every((r) => typeof en[`menu.mergeAllWindows.${r}`] === 'string' && typeof en[`merge.none.${r}`] === 'string') && /only one window open/.test(en['menu.mergeAllWindows.single']) && /restoring/.test(en['menu.mergeAllWindows.restoring']) && typeof en['merge.none.organizing'] === 'string', '');
+    check('merge strings: undo and the restored line are the merge\'s own keys',
+      ['merge.undo', 'merge.undoTitle', 'merge.undone', 'merge.undone.one', 'merge.undone.none', 'merge.failed', 'merge.failed.one'].every((k) => typeof en[k] === 'string') && /Restored 1 window/.test(en['merge.undone.one']) && /\{windows\}/.test(en['merge.undone']) && /couldn.t move/.test(en['merge.failed.one']), '');
+  }
+  {
+    const dt = wm.describeTab;
+    check('tabs: a running tab and a sleeping tab go along', JSON.stringify(dt({ alive: true })) === '{"unloaded":false}' && JSON.stringify(dt({ sleeping: true })) === '{"unloaded":false}', '');
+    check('tabs: a tab neither running nor asleep goes along when it has an address, marked unloaded', JSON.stringify(dt({ url: 'https://a.example/' })) === '{"unloaded":true}', '');
+    check('tabs: no address, or a destroyed page, or a closing tab, does not go', dt({}) === null && dt({ url: 'https://a.example/', destroyed: true }) === null && dt({ alive: true, closing: true }) === null && dt({ sleeping: true, closing: true }) === null, '');
+    const windows = [
+      { id: 1, activeId: 1, tabs: [tab(1)], groups: [] },
+      { id: 2, activeId: 2, tabs: [tab(2, { sleeping: true }), tab(3, { unloaded: true }), tab(4)], groups: [] },
+    ];
+    const plan = wm.planMerge(windows, 1);
+    check('tabs: an unloaded tab is moved and recorded as unloaded for Undo', plan.tabCount === 3 && plan.sources[0].moves.some((m) => m.id === 3) && plan.sources[0].tabs.find((x) => x.id === 3).unloaded === true && plan.sources[0].tabs.find((x) => x.id === 4).unloaded === false, JSON.stringify(plan.sources[0].tabs));
+    const entries = plan.sources.map((s) => ({ ...s, bounds: null }));
+    check('undo: an unloaded or sleeping tab is not the one shown when the active one is gone (nothing wakes or breaks)',
+      wm.undoPlan([{ ...entries[0], activeId: 99, tabs: [{ id: 2, sleeping: true }, { id: 3, unloaded: true }, { id: 4 }] }], [1, 2, 3, 4])[0].lead === 4, '');
+  }
+  {
+    const T0 = 1000000;
+    check('undo window: valid for the whole life of the toast', wm.undoValid(T0, T0) && wm.undoValid(T0, T0 + wm.NOTE_MS - 1), '');
+    check('undo window: a click a moment after the toast faded still counts (grace), a late one does not', wm.undoValid(T0, T0 + wm.NOTE_MS + wm.UNDO_GRACE_MS - 1) && !wm.undoValid(T0, T0 + wm.NOTE_MS + wm.UNDO_GRACE_MS) && !wm.undoValid(T0, T0 + 15000), '');
+    check('undo window: it matches the strip\'s toast (the strip is told the same length)', wm.NOTE_MS === 9000 && wm.UNDO_GRACE_MS < 1000, '');
+    check('undo window: no time, or a clock that went back, is not valid', !wm.undoValid(undefined, T0) && !wm.undoValid(NaN, T0) && !wm.undoValid(T0 + 5, T0), '');
+  }
+  {
+    const looseAuto = { id: 1, userRemoved: false, groupId: 7 };
+    const looseHand = { id: 2, userRemoved: true, groupId: null };
+    check('flags: a hand move marks the tab placed and ungroups it', JSON.stringify(wm.releaseFlags(looseAuto)) === '{"groupId":null,"userRemoved":true}', '');
+    check('flags: a merge keeps a tab that automatic grouping may still group', JSON.stringify(wm.releaseFlags(looseAuto, { keep: true })) === '{"groupId":null,"userRemoved":false}', '');
+    check('flags: a merge keeps a tab the user placed by hand as placed', JSON.stringify(wm.releaseFlags(looseHand, { keep: true })) === '{"groupId":null,"userRemoved":true}', '');
+    check('flags: a tab with no flag set counts as not placed under a merge', wm.releaseFlags({ id: 3 }, { keep: true }).userRemoved === false, '');
+  }
+
   // ---- the tab strip's selection (Chrome's rules)
   {
     const order = [1, 2, 3, 4, 5, 6];

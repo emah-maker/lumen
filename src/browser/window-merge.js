@@ -17,6 +17,50 @@
 const eligible = (w) => Boolean(w) && !w.private && !w.spare && !w.busy;
 const liveTabs = (w) => (w.tabs || []).filter((t) => !t.closing);
 
+// How long the merge toast (and so its Undo button) stays up; main.js tells the tab strip to use the same time.
+// A click that was sent just as the toast faded still arrives, hence the short grace.
+const NOTE_MS = 9000;
+const UNDO_GRACE_MS = 500;
+const undoValid = (at, now = Date.now()) => Number.isFinite(at) && now - at >= 0 && now - at < NOTE_MS + UNDO_GRACE_MS;
+
+// Whether a tab goes along, and in what state. `alive`: its page is running; `sleeping`: put to sleep (it wakes
+// when shown); neither: restored but not loaded yet, which still has an address and moves like a sleeping tab.
+// Null: it does not move (closing, or nothing left to move: no page and no address).
+function describeTab({ closing = false, alive = false, sleeping = false, destroyed = false, url = '' } = {}) {
+  if (closing) return null;
+  if (alive || sleeping) return { unloaded: false };
+  return url && !destroyed ? { unloaded: true } : null;
+}
+
+// What a tab keeps when it leaves its window: it always leaves its group; a hand-placed move marks it as placed
+// ("userRemoved": automatic grouping leaves it alone), but a merge is not the user placing every tab, so it keeps
+// the flag it had and automatic grouping still sees it.
+function releaseFlags(tab, { keep = false } = {}) {
+  return { groupId: null, userRemoved: keep ? Boolean(tab && tab.userRemoved) : true };
+}
+
+// Why "Merge All Windows" (or "Merge Window Into", with `sourceIds`) cannot do anything now, or null if it can:
+// 'single' (no other window), 'restoring' (the windows that are there are still bringing their tabs back),
+// 'empty' (the others have no tabs). `targetId` null: the first window that may take part.
+function blocker(windows, targetId = null, sourceIds = null) {
+  const all = (windows || []).filter((w) => w && !w.private && !w.spare);
+  const target = targetId == null ? all.find(eligible) : all.find((w) => w.id === targetId);
+  if (!target) return all.some((w) => w.busy) ? 'restoring' : 'single';
+  if (target.busy) return 'restoring';
+  const wanted = sourceIds ? new Set(sourceIds) : null;
+  const pool = all.filter((w) => w !== target && (!wanted || wanted.has(w.id)));
+  if (!pool.length) return 'single';
+  const ready = pool.filter(eligible);
+  if (!ready.length) return 'restoring';
+  return ready.some((w) => liveTabs(w).length) ? null : 'empty';
+}
+
+// For the menus: { enabled, reason, eligible }. Enabled only when two or more windows may take part.
+function availability(windows, currentId = null) {
+  const reason = blocker(windows, currentId);
+  return { enabled: reason === null, reason, eligible: eligibleWindows(windows).length };
+}
+
 // The windows that may be merged, in window order.
 function eligibleWindows(windows) {
   return (windows || []).filter(eligible);
@@ -75,7 +119,7 @@ function planSource(src, dst) {
     id: src.id,
     activeId: active ? active.id : null,
     tabIds: tabs.map((t) => t.id),
-    tabs: tabs.map((t) => ({ id: t.id, pinned: Boolean(t.pinned), sleeping: Boolean(t.sleeping) })),
+    tabs: tabs.map((t) => ({ id: t.id, pinned: Boolean(t.pinned), sleeping: Boolean(t.sleeping), unloaded: Boolean(t.unloaded) })),
     moves,
     groups,
   };
@@ -114,7 +158,7 @@ function undoPlan(entries, liveIds) {
     const tabs = (e.tabs || []).filter((t) => live.has(t.id));
     if (!tabs.length) continue;
     const ids = tabs.map((t) => t.id);
-    const lead = ids.includes(e.activeId) ? e.activeId : (tabs.find((t) => !t.sleeping) || tabs[0]).id;
+    const lead = ids.includes(e.activeId) ? e.activeId : (tabs.find((t) => !t.sleeping && !t.unloaded) || tabs[0]).id;
     const groups = (e.groups || []).map((g) => ({ ids: g.ids.filter((id) => live.has(id)), group: g.group })).filter((g) => g.ids.length);
     out.push({ id: e.id, bounds: e.bounds || null, ids, lead, groups, pinnedIds: tabs.filter((t) => t.pinned).map((t) => t.id) });
   }
@@ -132,4 +176,4 @@ function undoPlan(entries, liveIds) {
   return out.filter((w) => w.ids.length);
 }
 
-module.exports = { eligibleWindows, pickTarget, mergeIntoChoices, planMerge, undoPlan };
+module.exports = { NOTE_MS, UNDO_GRACE_MS, undoValid, describeTab, releaseFlags, blocker, availability, eligibleWindows, pickTarget, mergeIntoChoices, planMerge, undoPlan };
