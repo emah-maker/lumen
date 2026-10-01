@@ -63,6 +63,12 @@ function canReplace(execPath, platform = process.platform, probe = probeWrite, a
   }
 }
 
+// Can this user create things in `dir` (Applications, ~/Applications)? Creating and removing a real
+// file is the only test that follows ACLs; `probe` is injectable for tests.
+function canWriteDir(dir, probe = probeWrite) {
+  try { probe(dir); return true; } catch { return false; }
+}
+
 // The sha512 (base64) latest.yml lists for `name`, or ''.
 function expectedHash(files = [], name) {
   const f = files.find((x) => { const u = String(x?.url || ''); return u === name || u.endsWith(`/${name}`); });
@@ -92,9 +98,11 @@ const sq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`; // POSIX single-quoti
 
 // The macOS swap script (run with /bin/sh). Waits for Lumen (pid) to exit, clears quarantine flags
 // on the new bundle, moves Lumen.app aside as .old and the new one in, relaunches with `open`. If a
-// move fails the old bundle is put back and errFile explains.
-function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch = true }) {
+// move fails the old bundle is put back and errFile explains. `orig` is the bundle this run came
+// from: a relocated install (from the dmg) that fails has no $APP to reopen, so the original is.
+function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch = true, orig = '' }) {
   const open = relaunch ? 'open "$APP"' : ':'; // quit-apply: the user quit, so nothing reopens
+  const reopen = relaunch ? 'if [ -d "$APP" ]; then open "$APP"; elif [ -n "$ORIG" ] && [ -d "$ORIG" ]; then open "$ORIG"; fi' : ':';
   return [
     '#!/bin/sh',
     `PID=${Number(pid)}`,
@@ -104,23 +112,26 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     `ERR=${sq(errFile)}`,
     `STAGING=${sq(staging)}`,
     `SELF=${sq(self)}`,
+    `ORIG=${sq(orig)}`,
+    // errFile holds only a short cause; Settings and the pill put it in their own sentence
     'fail() {',
-    '  echo "Lumen couldn\'t replace its files (is the Applications folder writable for you?). The old version was kept." > "$ERR"',
-    `  ${open}`,
+    '  echo "${1:-the update couldn’t be installed}" > "$ERR"',
+    `  ${reopen}`,
     '  rm -f "$SELF"',
     '  exit 1',
     '}',
     'n=0',
     'while kill -0 "$PID" 2>/dev/null; do',
     '  n=$((n + 1))',
-    '  [ "$n" -ge 60 ] && fail',
+    '  [ "$n" -ge 60 ] && fail "Lumen didn’t quit in time"',
     '  sleep 1',
     'done',
     // quit-apply: the staged bundle is gone (already swapped or cleaned up), so there is nothing to do
-    ...(relaunch ? [] : ['[ -d "$NEW" ] || { rm -f "$SELF"; exit 0; }']),
+    ...(relaunch ? ['if [ ! -d "$NEW" ]; then fail "the update files were missing"; fi'] : ['[ -d "$NEW" ] || { rm -f "$SELF"; exit 0; }']),
     'rm -rf "$OLD"',
     'xattr -cr "$NEW" 2>/dev/null',
-    'if mv "$APP" "$OLD"; then',
+    // a fresh install into Applications (a misplaced copy's update) has no $APP to move aside
+    'if [ ! -d "$APP" ] || mv "$APP" "$OLD"; then',
     '  if mv "$NEW" "$APP"; then',
     '    xattr -cr "$APP" 2>/dev/null',
     '    rm -rf "$OLD" "$STAGING"',
@@ -128,9 +139,10 @@ function macSwapScript({ pid, dir, root, old, errFile, staging, self, relaunch =
     '    rm -f "$SELF"',
     '    exit 0',
     '  fi',
-    '  mv "$OLD" "$APP"',
+    '  [ -d "$OLD" ] && mv "$OLD" "$APP"',
+    '  fail "the update couldn’t be moved into place"',
     'fi',
-    'fail',
+    'fail "the Applications folder isn’t writable"',
     '',
   ].join('\n');
 }
@@ -268,7 +280,7 @@ function helperCommand({ staged, execPath, errFile, pid, relaunch = true }) {
 // swaps without starting Lumen again.
 function launchSwap({ staged, execPath, errFile, relaunch = true, platform = process.platform, pid = process.pid, spawnFn = spawn }) {
   if (platform === 'darwin') {
-    const script = macSwapScript({ pid, dir: staged.dir, root: staged.root, old: staged.old, errFile, staging: staged.staging, self: staged.script, relaunch });
+    const script = macSwapScript({ pid, dir: staged.dir, root: staged.root, old: staged.old, errFile, staging: staged.staging, self: staged.script, relaunch, orig: macBundle(execPath) });
     fs.writeFileSync(staged.script, script, { mode: 0o755 });
     spawnFn('/bin/sh', [staged.script], { detached: true, stdio: 'ignore' }).unref();
     return;
@@ -277,4 +289,4 @@ function launchSwap({ staged, execPath, errFile, relaunch = true, platform = pro
   spawnFn(c.command, c.args, c.options).unref();
 }
 
-module.exports = { swapPaths, macBundle, canReplace, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
+module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };

@@ -726,7 +726,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('updates: Apple silicon stages the arm64 zip and Intel the x64 zip', stageAsset({ kind: 'mac', version: '0.3.0', arch: 'arm64' }).url === `${base}Lumen-0.3.0-mac-arm64.zip` && stageAsset({ kind: 'mac', version: '0.3.0', arch: 'x64' }).name === 'Lumen-0.3.0-mac-x64.zip', 'mac zip');
   check('updates: installed and zip Windows copies stage the win zip', stageAsset({ kind: 'nsis', version: '0.3.0', arch: 'x64' }).name === 'Lumen-0.3.0-win-x64.zip' && stageAsset({ kind: 'zip', version: '0.3.0' }).name === 'Lumen-0.3.0-win-x64.zip' && stageAsset({ kind: 'portable', version: '0.3.0' }) === null, 'win zip');
   check("updates: the staged zip's hash comes from the release info (latest-mac.yml lists both zips)", zu.expectedHash([{ url: 'Lumen-0.3.0-mac-arm64.zip', sha512: 'A' }, { url: 'Lumen-0.3.0-mac-x64.zip', sha512: 'X' }, { url: 'Lumen-0.3.0-mac-x64.dmg', sha512: 'D' }], 'Lumen-0.3.0-mac-x64.zip') === 'X', 'yml');
-  check('updates: a per-machine installed copy has no file to drop in, so the releases page', manualAsset({ kind: 'nsis', version: '0.3.0' }) === null, 'nsis manual');
+  check('updates: a per-machine installed copy links straight to the Setup exe (no file to drop in)', manualAsset({ kind: 'nsis', version: '0.3.0' })?.name === 'Lumen-Setup-0.3.0.exe' && manualAsset({ kind: 'nsis', version: '0.3.0' }).url === 'https://github.com/emah-maker/lumen/releases/download/v0.3.0/Lumen-Setup-0.3.0.exe', 'nsis manual');
   check('updates: a zip or portable copy gets the zip', manualAsset({ kind: 'zip', version: '0.3.0', arch: 'x64' }).url === `${base}Lumen-0.3.0-win-x64.zip` && manualAsset({ kind: 'portable', version: '0.3.0' }).name === 'Lumen-0.3.0-win-x64.zip', 'zip');
   const listed = manualAsset({ kind: 'mac', version: '0.3.0', arch: 'arm64', files: [{ url: 'Lumen-0.3.0-mac-arm64.zip' }, { url: 'https://example.com/x/Lumen-0.3.0-mac-arm64.dmg' }] });
   check('updates: a full URL listed in the release info is used as is', listed.url === 'https://example.com/x/Lumen-0.3.0-mac-arm64.dmg', listed.url);
@@ -2437,7 +2437,7 @@ async function swapHelperRuns() {
   check('swap helper: the normal apply still starts the new exe', r3 === 'swapped' && started.length === 1 && started[0][0] === opts().exe, `${r3} ${started.length}`);
   mk('Lumen.update/files/Lumen.exe', 'tiny');
   const r4 = await swap(opts({ relaunch: false, minBytes: 1000 }), start);
-  check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
+  check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && /^the update looked incomplete \(.*too small.*\)\n$/.test(fs.readFileSync(path.join(d, 'err.txt'), 'utf8')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
   fs.rmSync(d, { recursive: true, force: true });
 }
 
