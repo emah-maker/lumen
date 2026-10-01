@@ -987,6 +987,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
         { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
+        ...mergeWindowItems(curRec),
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
         { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
@@ -2217,6 +2218,7 @@ async function refineGroups(model, wire, signal) {
 
 // A short line about what just happened, with an Undo button (the tab strip shows it as a toast).
 function organizeNote(text, { undo = false } = {}) {
+  mergeUndo = null; // the Undo button on this note undoes the organize, not an older merge
   ui()?.send('tabs:organize-note', { text, undo });
 }
 
@@ -2484,6 +2486,7 @@ function moveWindowItems(id) {
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
   if (others.length) items.push({ label: n > 1 ? t('menu.moveTabsToWindow', { n }) : t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => { if (moveTabsBetween(src, r, ids, undefined, { active: id })) arrivedFromMenu(r, ids); } })) });
+  items.push(...mergeWindowItems(src));
   return items;
 }
 
@@ -3490,7 +3493,7 @@ function sessionEntry() {
 // Every normal window is saved: the first one in the session's own fields (as before, so older
 // versions still read it), the others under `more`. Private windows are never here.
 function saveSession({ excluding = null, background = false } = {}) {
-  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r));
+  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r) && !r.mergedAway); // (a window merged into another is closing: its tabs are saved there)
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
@@ -3608,7 +3611,13 @@ function macMenu() {
       ],
     },
     { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
-    { role: 'windowMenu' },
+    { role: 'window', label: t('menu.window'), submenu: [
+      { role: 'minimize' }, { role: 'zoom' },
+      { type: 'separator' },
+      { label: t('menu.mergeAllWindows'), click: () => { if (curRec) mergeWindows(curRec); } }, // (does nothing with a single window)
+      { type: 'separator' },
+      { role: 'front' },
+    ] },
     { role: 'help', submenu: [{ label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
 }
@@ -3868,6 +3877,113 @@ ipcMain.on('tab:selection', (event, ids) => {
 function moveTabToWindowId(src, tabId, windowId, index) {
   const dst = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win.id === windowId);
   return dst ? moveTabBetween(src, dst, tabId, index) : false;
+}
+// ---- merging windows: "Merge All Windows", "Merge Window Into" (the ⋯ menu and the tab menu) and their Undo.
+// browser/window-merge.js plans it (the order, pinned tabs, groups, which windows may take part); this carries it
+// out with moveTabBetween, so every page keeps running (media included) and a sleeping tab stays asleep. Private
+// windows never take part (they are not in winRecs, and their sessions stay apart by design).
+const windowMerge = require('./browser/window-merge');
+let mergeUndo = null; // { dstId, entries, at }: what the toast's Undo puts back, while that toast is up
+const MERGE_UNDO_MS = 15000; // the toast shows for 9 s; a click just as it fades still works
+
+// Each normal window as plain data, for the planner.
+function describeWindows() {
+  return [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).map((rec) => withWindow(rec, () => ({
+    id: rec.win.id,
+    busy: Boolean(rec.pendingRestore), // its saved tabs are still coming back
+    activeId,
+    tabs: tabs.filter((t) => !t.closing && (alive(t) || t.sleeping)).map((t) => ({ id: t.id, pinned: Boolean(t.pinned), sleeping: Boolean(t.sleeping), groupId: t.groupId || null })),
+    groups: [...tabGroups.groups.values()].map((g) => ({ id: g.id, name: g.name, color: g.color, userNamed: g.userNamed, colorLocked: g.colorLocked, collapsed: g.collapsed })),
+  })));
+}
+const recByWindowId = (id) => [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win.id === id);
+// "Merged 3 windows · 14 tabs" (the string table has no plural rules, so the singular forms are keys of their own).
+function mergedNote(windows, count) {
+  return t(`merge.done${windows === 1 ? '.oneWindow' : ''}${count === 1 ? '.oneTab' : ''}`, { windows, tabs: count });
+}
+
+// Moves every tab of the planned source windows (default: all the other normal windows) into `dst`, then closes
+// the emptied windows. `dst` keeps its active tab, unless `activate` is 'source': the (first) source window's active
+// tab then comes forward, for "Merge Window Into" (that is the page you were looking at). Returns { windows, tabs } or null.
+function mergeWindows(dst, { sourceIds = null, activate = null } = {}) {
+  if (!rcAlive(dst) || !winRecs.has(dst) || isSpare(dst)) return null;
+  const plan = windowMerge.planMerge(describeWindows(), dst.win.id, { sourceIds });
+  if (!plan) return null;
+  const entries = []; // what Undo needs, per window actually merged
+  const emptied = [];
+  let count = 0;
+  batchTabs(() => {
+    for (const s of plan.sources) {
+      const src = recByWindowId(s.id);
+      if (!src) continue;
+      const b = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+      const moved = new Set();
+      for (const m of s.moves) {
+        if (moveTabBetween(src, dst, m.id, m.index ?? undefined, { focus: false, keepSrc: true, show: false })) moved.add(m.id);
+      }
+      if (!moved.size) continue;
+      const groups = s.groups.map((g) => ({ ids: g.ids.filter((id) => moved.has(id)), group: g.group })).filter((g) => g.ids.length);
+      for (const g of groups) regroup(dst, g.ids, g.group); // the group again, with its name, colour and collapsed state
+      entries.push({ id: s.id, bounds: { x: b.x, y: b.y, width: b.width, height: b.height }, activeId: s.activeId, tabs: s.tabs.filter((x) => moved.has(x.id)), groups });
+      count += moved.size;
+      if (!tabsOf(src).length) emptied.push(src);
+    }
+  });
+  if (!entries.length) return null;
+  for (const src of emptied) src.mergedAway = true; // saveSession leaves it out while it closes
+  for (const src of emptied) if (rcAlive(src)) src.win.close();
+  enterWindow(dst);
+  const want = activate === 'source' ? entries[0].activeId : plan.targetActiveId;
+  withWindow(dst, () => {
+    if (want != null && activeId !== want && tabs.some((x) => x.id === want && !x.closing)) switchTab(want); // (an active tab is never asleep)
+    else sendTabs();
+  });
+  if (dst.win.isMinimized()) dst.win.restore();
+  dst.win.show();
+  dst.win.focus();
+  saveSession({ background: true }); // the merged state is what a restart restores
+  withWindow(dst, () => organizeNote(mergedNote(entries.length, count), { undo: true }));
+  mergeUndo = { dstId: dst.win.id, entries, at: Date.now() }; // after organizeNote, which forgets an older one
+  return { windows: entries.length, tabs: count };
+}
+
+// Undo: each merged window comes back as a window of its own, where it was, with its tabs (those still open),
+// their groups and pinned tabs, and the tab it was showing. Nothing reloads: the pages are moved again.
+function undoMerge() {
+  const m = mergeUndo;
+  mergeUndo = null;
+  const dst = m && Date.now() - m.at < MERGE_UNDO_MS ? recByWindowId(m.dstId) : null;
+  if (!dst) return false;
+  const live = withWindow(dst, () => tabs.filter((x) => !x.closing).map((x) => x.id));
+  const plan = windowMerge.undoPlan(m.entries, live);
+  for (const w of plan) {
+    const base = w.bounds || { ...cascadedWindowPoint(dst.win), ...dst.win.getBounds() };
+    const area = screen.getDisplayMatching(base).workArea;
+    const fit = tabDragMath.fitToDisplay({ width: base.width, height: base.height }, area);
+    const at = tabDragMath.placeOnWorkArea({ x: base.x, y: base.y, width: fit.width, height: fit.height }, area);
+    const rec = createWindow({
+      size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: dst,
+      adopt: { src: dst, tabId: w.lead, ids: w.ids, focus: false, done: (ok) => {
+        if (!ok || !rcAlive(rec)) return;
+        for (const g of w.groups) regroup(rec, g.ids, g.group);
+        revealNewWindow(rec, w.lead);
+      } },
+    });
+  }
+  return plan.length > 0;
+}
+
+// "Merge All Windows" and "Merge Window Into ›" for the window `src`, when there is another normal window to merge with.
+function mergeWindowItems(src) {
+  if (!src || !rcAlive(src)) return [];
+  const windows = describeWindows();
+  if (windowMerge.pickTarget(windows, { currentId: src.win.id }) !== src.win.id) return [];
+  const others = windowMerge.mergeIntoChoices(windows, src.win.id).map((w) => recByWindowId(w.id)).filter(Boolean);
+  if (!others.length) return [];
+  return [
+    { label: t('menu.mergeAllWindows'), click: () => mergeWindows(src) },
+    { label: t('menu.mergeWindowInto'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => mergeWindows(r, { sourceIds: [src.win.id], activate: 'source' }) })) },
+  ];
 }
 // ---- dragging a tab out of the strip (Chrome's behaviour, Safari's look): main.js drives the drag
 // Past the renderer's tear-off threshold a card follows the cursor: the page's snapshot under the tab's
@@ -5487,7 +5603,7 @@ ipcMain.on('group:rename', (_e, id, name) => {
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);
-ipcMain.on('tabs:undo-organize', undoOrganize);
+ipcMain.on('tabs:undo-organize', () => { if (mergeUndo) undoMerge(); else undoOrganize(); }); // the note's one Undo: a merge, else an organize
 // The toolbar button toggles the downloads panel (the ⋯ menu keeps its Downloads submenu).
 ipcMain.on('downloads:menu', (_e, anchor) => {
   // A click on the button while the panel is open first blurs (closes) it: that click means close.
