@@ -1895,6 +1895,35 @@ $('app-menu').onclick = () => {
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
   window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom), right: Math.round(r.right) });
 };
+// Extension icons past the list's width cap are clipped: a "..." button lists them, and a pick triggers the
+// extension as its icon does. (The list is a custom element with an open shadow root of one button per action.)
+{
+  const list = $('extension-actions');
+  const more = $('actions-overflow');
+  const hiddenActions = () => {
+    const lr = list.getBoundingClientRect();
+    return [...(list.shadowRoot?.querySelectorAll('.action') || [])].filter((n) => n.getBoundingClientRect().right > lr.right + 1);
+  };
+  let frame = 0;
+  const refresh = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; more.hidden = !hiddenActions().length; });
+  };
+  new ResizeObserver(refresh).observe(list);
+  customElements.whenDefined('browser-action-list').then(() => {
+    if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true });
+    refresh();
+  });
+  more.onclick = () => {
+    const r = more.getBoundingClientRect();
+    window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, hiddenActions().map((n) => ({ id: n.id, title: n.title || n.id })));
+  };
+  window.browser.onActionsOverflowPick?.((id) => {
+    const node = [...(list.shadowRoot?.querySelectorAll('.action') || [])].find((n) => n.id === id);
+    const r = more.getBoundingClientRect();
+    window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+  });
+}
 $('agent-stop').onclick = () => window.assistant.stop();
 // The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
 // it, so the field's padding has to clear however many are showing: styles.css reads their width
