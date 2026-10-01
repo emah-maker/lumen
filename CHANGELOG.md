@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Windows releases can be code-signed through SignPath (opt-in by repository secrets; see docs/windows-signing.md). Nothing changes until the secrets are set and the application to SignPath Foundation is approved.
+
 ## 0.4.4 (2026-10-01)
 
 - The Mac app is now signed with an Apple Developer ID and notarized by Apple, so it opens without the "Open Anyway" step. On the first launch after updating, macOS asks once to allow Lumen access to its Keychain item.

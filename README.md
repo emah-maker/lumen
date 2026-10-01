@@ -22,7 +22,7 @@ Download the latest build from [Releases](https://github.com/emah-maker/lumen/re
 | Mac with Apple silicon (M1 and later) | `Lumen-<version>-mac-arm64.dmg`: open it and drag Lumen onto Applications |
 | Mac with Intel | `Lumen-<version>-mac-x64.dmg`: open it and drag Lumen onto Applications |
 
-**Windows:** the builds aren't code-signed. SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. On PCs with Smart App Control turned on, the zip is the one that runs. Its `Lumen.exe` is the untouched Electron binary, which Windows recognises, while a freshly built installer isn't. Or build and install locally (below).
+**Windows:** the builds aren't code-signed yet (signing through SignPath is being set up: [Code signing policy](#code-signing-policy)). SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. On PCs with Smart App Control turned on, the zip is the one that runs. Its `Lumen.exe` is the untouched Electron binary, which Windows recognises, while a freshly built installer isn't. Or build and install locally (below).
 
 **Mac:** from 0.4.4 the app is signed with an Apple Developer ID and notarized by Apple, so it opens with no prompt and needs no **Open Anyway** step (maintainers: [docs/mac-signing.md](docs/mac-signing.md)). If you are updating from an older version, macOS asks once on the first launch to allow Lumen access to its Keychain item. Versions before 0.4.4 are self-signed, so their first launch is blocked: on **macOS 15 Sequoia and later**, open Lumen once (it is refused), then go to **System Settings → Privacy & Security**, scroll to Security and click **Open Anyway** next to Lumen; on older macOS, right-click **Lumen** in Applications and choose **Open**. If you open Lumen straight from the disk image or Downloads, it offers to move itself to Applications at launch (Settings → About Lumen → Updates keeps a **Move to Applications** button). When a new version is out, the toolbar says **Move to Applications to update**: one click installs the update into Applications (or into `~/Applications` if you aren't an administrator), opens it and you're done, with no disk image and no second step. It never overwrites a newer Lumen that is already there, and asks you to quit another running Lumen first. If an older version won't open, or macOS says the app "is damaged", run:
 
@@ -30,7 +30,7 @@ Download the latest build from [Releases](https://github.com/emah-maker/lumen/re
 xattr -dr com.apple.quarantine /Applications/Lumen.app
 ```
 
-**Updates:** Lumen looks for a new release shortly after it starts and every few hours (**Settings → About Lumen → Updates** shows the result and has **Check for updates**). Every copy that can write to the folder it is installed in (the setup's per-user install, the zip, a hand-copied folder, the Mac app in Applications) updates itself the same way: it downloads the release's zip in the background ("Downloading Lumen vX…"), checks it, unpacks it next to the install, and shows **Restart to update** in the toolbar (and in Settings). One click applies it and relaunches; click it while it is still downloading and it restarts by itself the moment it is ready. On restart the old folder is swapped for the new one and Lumen reopens with your tabs; your settings, chats and shortcuts are not touched, and if the swap can't happen Lumen keeps the old version and says why in Settings. Turn off **Download updates automatically** to be asked first. A Mac copy outside Applications, or in an `/Applications` you can't write to, installs its update into `/Applications` or `~/Applications` the same one-click way. Copies that can't replace themselves (a per-machine install under Program Files, the portable exe) show **Lumen vX is available** with a **Download** button for the Setup exe, the zip or the releases page instead. Downloads are checked against the SHA-512 hash in the release's `latest.yml` / `latest-mac.yml`; the builds aren't code-signed, so an update is only as trustworthy as the GitHub release it comes from. Lumen 0.2.4 and earlier have no updater: download a newer version by hand once.
+**Updates:** Lumen looks for a new release shortly after it starts and every few hours (**Settings → About Lumen → Updates** shows the result and has **Check for updates**). Every copy that can write to the folder it is installed in (the setup's per-user install, the zip, a hand-copied folder, the Mac app in Applications) updates itself the same way: it downloads the release's zip in the background ("Downloading Lumen vX…"), checks it, unpacks it next to the install, and shows **Restart to update** in the toolbar (and in Settings). One click applies it and relaunches; click it while it is still downloading and it restarts by itself the moment it is ready. On restart the old folder is swapped for the new one and Lumen reopens with your tabs; your settings, chats and shortcuts are not touched, and if the swap can't happen Lumen keeps the old version and says why in Settings. Turn off **Download updates automatically** to be asked first. A Mac copy outside Applications, or in an `/Applications` you can't write to, installs its update into `/Applications` or `~/Applications` the same one-click way. Copies that can't replace themselves (a per-machine install under Program Files, the portable exe) show **Lumen vX is available** with a **Download** button for the Setup exe, the zip or the releases page instead. Downloads are checked against the SHA-512 hash in the release's `latest.yml` / `latest-mac.yml`; the Windows builds aren't code-signed yet (see [Code signing policy](#code-signing-policy)), so a Windows update is only as trustworthy as the GitHub release it comes from. Lumen 0.2.4 and earlier have no updater: download a newer version by hand once.
 
 On first launch the sidebar opens on a short welcome: connect an AI and bring your bookmarks and history from another browser (both can wait; **Start browsing** closes it). One optional line under it offers to make Lumen your default browser; it says nothing unless you click it. A question typed before any AI is connected is kept and sent once one is.
 
@@ -293,6 +293,7 @@ The images in this README are captured from a throwaway profile by `node scripts
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
+- [Windows code signing](docs/windows-signing.md): SignPath setup checklist for maintainers
 
 ## Layout
 
@@ -329,3 +330,18 @@ site/                   the website on GitHub Pages; its docs pages render READM
 ## License
 
 GPL-3.0 (see [LICENSE](LICENSE)), because it uses `electron-chrome-extensions` (GPL-3.0).
+
+Copyright (C) 2026 emah-maker. Lumen is free software under the GNU General Public License, version 3 or (at your option) any later version. Third-party components and their licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Code signing policy
+
+> **Status: pending.** Lumen's application to SignPath Foundation is pending and has not been approved. No Windows release is signed yet; this section describes the policy the signed releases will follow once the application is approved. Mac builds are signed by Apple Developer ID, not by SignPath.
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- **Scope:** only Lumen's own Windows binaries are signed: `Lumen.exe` and the `Lumen-Setup-<version>.exe` installer, built by [the Release workflow](.github/workflows/release.yml) from this repository's tagged source. Chromium and Electron libraries that ship next to `Lumen.exe` are not signed with this certificate.
+- **Roles:**
+  - Authors and reviewers: [emah-maker](https://github.com/emah-maker) (the maintainer). Changes from anyone else are reviewed and merged by the maintainer.
+  - Approvers: [emah-maker](https://github.com/emah-maker). Every release signing request is approved by hand.
+- **Privacy policy:** [PRIVACY.md](PRIVACY.md). Lumen has no telemetry; what leaves your computer, and to whom, is listed there.
+- Maintainers: the setup is described in [docs/windows-signing.md](docs/windows-signing.md).
