@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Home page Smart Stack: a stack holds 2 to 10 widgets of any kind and cycles with the mouse wheel, a swipe, Up and Down, the page dots or the arrows. It can rotate by itself and surface the calendar, a countdown or the weather when they matter. Edit it from Edit layout, with Undo.
+- Smart Stack, easier to find and nicer to use: Add widget has a Smart Stack entry (a timer, a countdown and a note to start), the Edit stack panel opens from the card header, the page dots (right-click, Menu key or long-press) and outside Edit layout, and Edit layout shows how to stack once. Cards now slide a full card up and out inside the stack, the grid is not redrawn on a switch, the dots have their own gutter and show on hover, and a swipe at the end of a stack resists before it wraps.
+
 ## 0.4.4 (2026-10-01)
 
 - The Mac app is now signed with an Apple Developer ID and notarized by Apple, so it opens without the "Open Anyway" step. On the first launch after updating, macOS asks once to allow Lumen access to its Keychain item.

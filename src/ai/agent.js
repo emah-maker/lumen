@@ -373,10 +373,12 @@ function systemFor(settings) {
   // A Grok Build pick ('grokbuild:…') has no provider of its own, so splitModel reads it as Claude's:
   // it is told it is Grok instead (its model is named in GROK_BUILD_NOTE, see grokBuildNote).
   const onGrokBuild = String(settings.model || '').startsWith('grokbuild:');
-  const onClaude = !onGrokBuild && providers.splitModel(settings.model).provider === 'anthropic';
+  // An Antigravity pick ('antigravity:…') likewise: the model behind it is Gemini or Claude, whichever the user chose in agy.
+  const onAntigravity = String(settings.model || '').startsWith('antigravity:');
+  const onClaude = !onGrokBuild && !onAntigravity && providers.splitModel(settings.model).provider === 'anthropic';
   const base = onClaude
     ? SYSTEM
-    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : 'You are the AI assistant built into Lumen, a web browser.')
+    : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : onAntigravity ? 'You are the AI assistant built into Lumen, a web browser, running in Google Antigravity.' : 'You are the AI assistant built into Lumen, a web browser.')
       + '\n\nweb_search returns top results from DuckDuckGo; open results with read_urls or navigate.';
   return settings.adhdMode ? base + ADHD_STYLE : base;
 }
@@ -412,6 +414,27 @@ function grokBuildNote(model) {
   return model ? `${note} The model answering is ${model} (xAI's Grok); if the user asks which model you are, say ${model}.` : note;
 }
 
+// ---- [antigravity engine] extra guidance when the user's own Antigravity CLI answers (antigravity.js). agy names an MCP
+// tool after its server, so the tools are listed by their plain names; the note does not guess the prefix.
+const ANTIGRAVITY_NOTE = `
+
+You are running inside Google Antigravity (agy), connected to the user's Lumen browser over MCP, through the server named lumen. Lumen's browser tools are the tools of that server: {TOOLS} (arguments in brackets, ? = optional). Use them to read and act in the browser; web_search returns DuckDuckGo results. You have no shell, file or other tools; never try one. Your reply appears in Lumen's sidebar chat.`;
+let antigravityTools = null;
+function antigravityToolList() {
+  return (antigravityTools ||= EXTERNAL_TOOLS.map((tool) => {
+    const props = tool.input_schema?.properties || {};
+    const required = new Set(tool.input_schema?.required || []);
+    return `${tool.name}(${Object.keys(props).map((k) => (required.has(k) ? k : `${k}?`)).join(', ')})`;
+  }).join(', '));
+}
+// ANTIGRAVITY_NOTE plus today's date and the model when Lumen knows it (agy has no system-prompt flag: antigravity.js puts this on the chat's first message).
+function antigravityNote(model = null, now = new Date()) {
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const note = `${ANTIGRAVITY_NOTE.replace('{TOOLS}', antigravityToolList())} Today's date is ${day}.`;
+  return model ? `${note} The model answering is ${model}; if the user asks which model you are, say ${model}.` : note;
+}
+// ---- [/antigravity engine]
+
 // CLAUDE_CODE_NOTE plus what Claude Code's own system prompt used to give before --system-prompt
 // replaced it (claude-code.js buildArgs): today's date, and the model when Lumen knows it.
 // `model`: the `claude --model` alias this run gets ('default': the CLI's choice, unnamed).
@@ -426,7 +449,7 @@ function claudeCodeNote(model = 'default', now = new Date()) {
 // is saved as the task's result instead of showing in the sidebar chat (features/background-runner.js).
 function cliSystemPrompt(settings, engine, { background = false } = {}) {
   const picked = engineModel(settings.model);
-  const note = engine === 'grokbuild' ? grokBuildNote(picked === 'default' ? null : picked) : claudeCodeNote(picked);
+  const note = engine === 'grokbuild' ? grokBuildNote(picked === 'default' ? null : picked) : engine === 'antigravity' ? antigravityNote(picked === 'default' ? null : picked) : claudeCodeNote(picked);
   return systemFor(settings) + (background ? note.replace("Your reply appears in Lumen's sidebar chat.", "You are running as a background task: your final reply is saved as the task's result.") : note);
 }
 
@@ -1102,7 +1125,7 @@ class Agent {
       m.simpleTurn = null;
       repairHistory(m);
       // A local engine (Claude Code, Grok Build) keeps its own copy of the conversation: it starts over from ours.
-      if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; }
+      if (m.settings) { delete m.settings.ccSession; delete m.settings.gbSession; delete m.settings.agySession; }
       this.onEngineReset?.(); // its kept Claude Code process holds the old session (features/ai-agents.js)
       return 'rewound';
     }
@@ -1319,6 +1342,12 @@ class Agent {
     // ---- [claude code engine] + [grok build engine] + [page context]
     const viaClaudeCode = String(messages.settings.model).startsWith('claudecode:') && Boolean(this.engines?.claudecode);
     const viaGrokBuild = String(messages.settings.model).startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
+    const viaAntigravity = String(messages.settings.model).startsWith('antigravity:') && Boolean(this.engines?.antigravity);
+    // An Antigravity conversation stays on the model it was started with (agyModel), like Grok Build's.
+    if (viaAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) {
+      delete messages.settings.agySession;
+      delete messages.settings.agyModel;
+    }
     // A Grok Build session stays on the model it was started with (gbModel; sessions from before the
     // picker offered models were all 'grokbuild:default'): after a switch to another Grok model the
     // next message starts a new session, handed the conversation so far, instead of relying on how
@@ -1337,17 +1366,18 @@ class Agent {
     if (ccPlan) this.engines.claudecode.warm?.(ccPlan.spawn);
     // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
     if (viaGrokBuild && !this.engineRunScope) this.engines.grokbuild.prepare?.().catch?.(() => {});
+    if (viaAntigravity && !this.engineRunScope) this.engines.antigravity.prepare?.().catch?.(() => {});
     // [mcp client] An API model's first request waits for the user's own MCP servers to start (externalToolDefs):
     // they start now, alongside the page read, instead of after it. (Starting is shared: the turn's own call
     // waits for the same start and reports a failure as before.)
     const apiPick = providers.splitModel(String(messages.settings.model));
-    if (!viaClaudeCode && !viaGrokBuild && providers.canUseTools(apiPick.provider, apiPick.model)) this.browser.externalTools?.tools?.().catch?.(() => {});
+    if (!viaClaudeCode && !viaGrokBuild && !viaAntigravity && providers.canUseTools(apiPick.provider, apiPick.model)) this.browser.externalTools?.tools?.().catch?.(() => {});
     let attached;
     let page;
     try {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
-      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) }), controller.signal);
+      page = wanted.includes(tab?.id) ? '' : await abortable(this.pageContextFor(tab, { fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engines.claudecode.release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
@@ -1378,13 +1408,15 @@ class Agent {
       const model = String(messages.settings.model);
       const toClaudeCode = model.startsWith('claudecode:') && Boolean(this.engines?.claudecode);
       const toGrokBuild = model.startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
-      if (!toClaudeCode && !toGrokBuild) {
+      const toAntigravity = model.startsWith('antigravity:') && Boolean(this.engines?.antigravity);
+      if (!toClaudeCode && !toGrokBuild && !toAntigravity) {
         try { await this.loop(messages, controller.signal, emit, fb); return; } catch (err) { if (err === REDISPATCH) continue; throw err; }
       }
       // (A switch to another Grok model starts a new session: see above.)
       if (toGrokBuild && messages.settings.gbSession && (messages.settings.gbModel || 'grokbuild:default') !== messages.settings.model) { delete messages.settings.gbSession; delete messages.settings.gbModel; }
       // One engine run at a time: its MCP tool calls find their run through engineScope().
-      if (this.engineRunScope) throw new Error(`${toClaudeCode ? 'Claude Code' : 'Grok Build'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
+      if (toAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) { delete messages.settings.agySession; delete messages.settings.agyModel; }
+      if (this.engineRunScope) throw new Error(`${toClaudeCode ? 'Claude Code' : toAntigravity ? 'Antigravity' : 'Grok Build'} is still working on a task in another chat. Wait for it to finish, or pick another model for this chat.`);
       this.engineRunScope = taskScope.getStore();
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
       const held = { error: null, shown: false };
@@ -1395,6 +1427,7 @@ class Agent {
       };
       try {
         if (toClaudeCode) await this.claudeCodeTurn(messages, state + page + attached.block + note, images, controller.signal, gate, { userText, tabCount: wanted.length, plan });
+        else if (toAntigravity) await this.antigravityTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
         else await this.grokBuildTurn(messages, state + page + attached.block + note, images, controller.signal, gate);
       } finally {
         this.engineRunScope = null;
@@ -1613,6 +1646,44 @@ class Agent {
   }
   // ---- [/grok build engine]
 
+  // ---- [antigravity engine] One message through the user's Antigravity CLI (antigravity.js). Its conversation id lives in the
+  // chat's settings (agySession): follow-ups continue it, New chat starts a new one. Its first message carries the system note.
+  async antigravityTurn(messages, prompt, images, signal, emit) {
+    const settings = messages.settings;
+    const resume = Boolean(settings.agySession);
+    const picked = engineModel(settings.model);
+    let text = prompt;
+    let historyImages = [];
+    if (!resume && messages.length > 1) {
+      // Switched to Antigravity mid-chat: hand it the conversation so far, same as grokBuildTurn.
+      const priorItems = transcriptFor(messages).slice(0, -1);
+      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
+      historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
+    }
+    emit({ type: 'turn_start' });
+    if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
+    const out = await this.engines.antigravity.run({
+      prompt: text,
+      images: [...historyImages, ...images],
+      sessionId: settings.agySession || null,
+      model: picked, // 'default' or one of `agy models`' slugs
+      systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked),
+      signal,
+      emit,
+    });
+    recordUsage(messages, { model: settings.model, cost: 0 }, emit);
+    if (out.sessionId === null) { delete settings.agySession; delete settings.agyModel; }
+    else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; }
+    if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
+    if (out.text) {
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
+      producedBy.set(turn, settings.model);
+      messages.push(turn);
+    }
+  }
+  // ---- [/antigravity engine]
+
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
     const params = requestFor(messages.settings, messages, budget);
@@ -1675,7 +1746,7 @@ class Agent {
       emit({ type: 'turn_start' });
       const model = messages.settings.model;
       // Never sent to the API as a Claude model id (setModel defers switches mid-run, so this is a guard).
-      if (/^(claudecode|grokbuild):/.test(String(model))) throw new Error('This reply can’t switch to Claude Code or Grok Build partway through. Send your message again.');
+      if (/^(claudecode|grokbuild|antigravity):/.test(String(model))) throw new Error('This reply can’t switch to Claude Code, Grok Build or Antigravity partway through. Send your message again.');
       const onClaude = providers.splitModel(model).provider === 'anthropic';
       // This turn's streamed text, kept in the chat if the stream breaks off (keepPartialReply).
       let streamed = '';
@@ -2912,4 +2983,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
+module.exports = { requestFor, Agent, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
