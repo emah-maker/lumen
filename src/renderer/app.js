@@ -1352,36 +1352,19 @@ function setSelection(ids) {
 }
 
 function clickTab(e, id) {
-  const activeId = lastTabState?.activeId;
-  const order = stripOrder();
-  if (e.shiftKey) {
-    const anchor = order.includes(selectionAnchor) ? selectionAnchor : activeId;
-    const a = order.indexOf(anchor), b = order.indexOf(id);
-    if (a !== -1 && b !== -1) {
-      selectionAnchor = anchor;
-      setSelection(order.slice(Math.min(a, b), Math.max(a, b) + 1));
-    }
-  } else if (isMac ? e.metaKey : e.ctrlKey) {
-    const current = new Set(selectedTabs.size ? selectedTabs : [activeId]);
-    if (current.has(id)) {
-      if (current.size === 1) return; // the last selected tab stays selected
-      current.delete(id);
-      setSelection([...current]);
-      if (id !== activeId) return;
-      // Taking the active tab out: the next selected tab along (else the one before) takes over.
-      const i = order.indexOf(id);
-      id = order.slice(i + 1).find((x) => current.has(x)) ?? order.slice(0, i).reverse().find((x) => current.has(x)) ?? id;
-    } else {
-      current.add(id);
-      setSelection([...current]);
-    }
-    selectionAnchor = id;
-  } else {
-    selectionAnchor = id;
-    setSelection([]);
-  }
-  window.browser.switchTab(id);
+  const r = window.tabSelection.selectionAfterClick({
+    order: stripOrder(), selected: [...selectedTabs], anchorId: selectionAnchor, activeId: lastTabState?.activeId, id,
+    shift: e.shiftKey, toggle: isMac ? e.metaKey : e.ctrlKey,
+  });
+  selectionAnchor = r.anchor;
+  setSelection(r.selection);
+  if (r.activate != null) window.browser.switchTab(r.activate);
 }
+
+// Escape ends the selection (when the strip, not a page, has the keyboard).
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && selectedTabs.size && !drag) setSelection([]);
+});
 
 // Tabs that closed leave the selection; so does everything, when another tab becomes active some
 // other way (the keyboard, a link opening a tab, the tab search).
