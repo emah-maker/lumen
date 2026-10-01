@@ -42,22 +42,6 @@ function onLines(stream, handler) {
 
 // ---------------------------------------------------------------- app side
 
-// The permission prompt of Claude Code's "Let CLI agents use this computer" mode (ai/cli-access.js,
-// claude-code.js accessArgs): `--permission-prompt-tool mcp__lumen__approval_prompt`. Claude Code calls it,
-// with { tool_name, input, tool_use_id }, for every action its own rules don't already allow, and acts on the
-// JSON it returns ({ behavior: 'allow', updatedInput } or { behavior: 'deny', message }). Served only to a
-// session started by one of Lumen's own engines (session.engine), and answered by features/ai-agents.js
-// with Lumen's approval card; never offered to an outside agent.
-const APPROVAL_TOOL = {
-  name: 'approval_prompt',
-  description: "Lumen's permission prompt: asks the user whether a tool call may run. Used by Claude Code's permission system, never call it yourself.",
-  input_schema: {
-    type: 'object',
-    properties: { tool_name: { type: 'string' }, input: { type: 'object' }, tool_use_id: { type: 'string' } },
-    required: ['tool_name', 'input'],
-  },
-};
-
 // One MCP session (one connected agent). `tools` are Lumen's tool definitions
 // ({ name, description, input_schema }); `callTool(name, args, session)` runs one and returns
 // { content, isError }. `enabled()` reflects the "Allow AI agents to connect" setting.
@@ -94,12 +78,12 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
         case 'tools/list':
           session.listed = true; // the agent now has Lumen's tools (grok-build.js waits for this)
           return reply(id, {
-            tools: (session.engine ? [...tools, APPROVAL_TOOL] : tools).map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema })),
+            tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema })),
           });
         case 'tools/call': {
           if (!enabled(session)) return reply(id, { content: [{ type: 'text', text: 'AI agent connections are turned off in Lumen settings.' }], isError: true });
           const name = String(params.name || '');
-          if (!tools.some((t) => t.name === name) && !(session.engine && name === APPROVAL_TOOL.name)) return fail(id, -32602, `Unknown tool: ${name}`);
+          if (!tools.some((t) => t.name === name)) return fail(id, -32602, `Unknown tool: ${name}`);
           return reply(id, await callTool(name, params.arguments || {}, session));
         }
         default:
@@ -311,4 +295,4 @@ function runBridge({ app }) {
 
 if (require.main === module) relay();
 
-module.exports = { runBridge, relay, startServer, createSession, APPROVAL_TOOL, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it
+module.exports = { runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it

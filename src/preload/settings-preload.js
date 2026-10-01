@@ -12,8 +12,6 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     clearDownloads: call('prefs:clear-downloads'),
     showDownload: call('prefs:open-download'),
     pickDownloadDir: call('prefs:pick-download-dir'),
-    setCliAccess: call('prefs:set-cli-access'), // [cli access] on shows a confirmation first
-    pickCliFolder: call('prefs:pick-cli-folder'),
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
     // [widgets] Appearance → Widgets

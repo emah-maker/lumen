@@ -104,9 +104,6 @@ const DEFAULTS = {
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
-  cliAccess: false, // [ai] CLI agents (Claude Code, Grok Build, Antigravity) also get their own shell and file tools, not just Lumen's (ai/cli-access.js); off unless the user confirms
-  cliAccessAsk: true, // [ai] with cliAccess: commands and file changes ask for approval first (each CLI's own approval mode)
-  cliAccessFolder: '', // [ai] with cliAccess: the folder CLI agents work in ('' = the user's home folder)
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
@@ -179,10 +176,6 @@ function validate(key, value) {
     case 'permissionDefaults':
       if (!value || typeof value !== 'object') return null;
       return Object.fromEntries(Object.keys(PERMISSIONS).filter((p) => value[p]).map((p) => [p, pick(value[p], ['ask', 'block'], 'ask')]));
-    case 'cliAccessFolder': {
-      const dir = String(value || '').trim();
-      return dir === '' || (path.isAbsolute(dir) && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) ? dir : null;
-    }
     case 'downloadDir': {
       const dir = String(value || '');
       return dir === '' || (path.isAbsolute(dir) && fs.existsSync(dir)) ? dir : null;
@@ -587,30 +580,10 @@ function create(deps) {
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
-    if (key === 'cliAccess' && value !== false) throw new Error('Turning on computer access for CLI agents needs the confirmation dialog (prefs:set-cli-access)'); // [cli access]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
     writeSettings({ ...readSettings(), [key]: valid });
     await apply(key);
-    return state();
-  }
-
-  // [cli access] "Let CLI agents use this computer": off needs nothing; on shows a warning first and is saved only when the user
-  // confirms. Tests answer the dialog with global.__cliAccessAnswer (default: confirm).
-  const CLI_ACCESS_WARNING = {
-    message: 'Let CLI agents use this computer?',
-    detail: 'Agents can read, change and delete files and run programs on your computer. Only turn this on if you trust the model and the pages it reads; a malicious page can try to instruct it.\n\nThis applies to Claude Code, Grok Build and Antigravity in the sidebar. Lumen still treats page content as untrusted data and still keeps AI off on the sites you turned it off for.',
-  };
-  async function setCliAccess(on) {
-    if (!on) return set('cliAccess', false);
-    let confirmed;
-    if (require('../test-mode').isTest()) confirmed = global.__cliAccessAnswer !== false;
-    else {
-      const { response } = await dialog.showMessageBox(deps.win(), { type: 'warning', buttons: ['Turn on', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true, title: 'Lumen', ...CLI_ACCESS_WARNING });
-      confirmed = response === 0;
-    }
-    if (!confirmed) return state();
-    writeSettings({ ...readSettings(), cliAccess: true });
     return state();
   }
 
@@ -845,11 +818,6 @@ function create(deps) {
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
       return canceled || !filePaths[0] ? state() : set('downloadDir', filePaths[0]);
-    });
-    handle('prefs:set-cli-access', (on) => setCliAccess(on === true));
-    handle('prefs:pick-cli-folder', async () => {
-      const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory'], defaultPath: readSettings().cliAccessFolder || app.getPath('home') });
-      return canceled || !filePaths[0] ? state() : set('cliAccessFolder', filePaths[0]);
     });
     handle('prefs:site-permissions', () => [...deps.permissionDecisions].map(([key, allowed]) => {
       const i = key.lastIndexOf('|');

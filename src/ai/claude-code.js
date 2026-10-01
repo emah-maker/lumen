@@ -65,23 +65,6 @@ const ARGS_BASE = [
   '--permission-mode', 'dontAsk',
 ];
 
-// "Let CLI agents use this computer" (ai/cli-access.js) on: Claude Code keeps its own built-in tools (no
-// --tools "" and no dontAsk) and works in the chosen folder; only Lumen's MCP server is loaded still
-// (--strict-mcp-config), so the user's other MCP servers are not. Ask before running commands (the default)
-// is Claude Code's own permission flow: --permission-mode default, with every request that isn't
-// pre-approved sent to Lumen's approval_prompt tool (--permission-prompt-tool, see mcp.js APPROVAL_TOOL), which
-// shows the same approval card as any Lumen action. Off: --permission-mode bypassPermissions, no prompts at all.
-function accessArgs(access) {
-  return [
-    '-p',
-    '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
-    '--input-format', 'stream-json',
-    '--strict-mcp-config',
-    '--allowedTools', 'mcp__lumen',
-    ...(access.askBefore ? ['--permission-mode', 'default', '--permission-prompt-tool', 'mcp__lumen__approval_prompt'] : ['--permission-mode', 'bypassPermissions']),
-  ];
-}
-
 // The picker's Claude Code choices (the part after 'claudecode:'). 'default' passes no --model, so
 // the CLI's own choice applies (its /model setting, else the plan's default); the rest are the family
 // aliases `claude --model` accepts (claude --help, 2.1.283), each following that family's latest model.
@@ -98,9 +81,9 @@ const MODELS = [
 // --system-prompt replaces Claude Code's own (coding) system prompt, as cli-json.js does: Lumen's
 // prompt plus CLAUDE_CODE_NOTE (agent.js) names the mcp__lumen__ tools. Tool use itself needs no
 // prompt: the tool definitions come from the MCP server.
-function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, access = null }) {
+function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0 }) {
   return [
-    ...(access?.enabled ? accessArgs(access) : ARGS_BASE),
+    ...ARGS_BASE,
     ...(maxTurns > 0 ? ['--max-turns', String(maxTurns)] : []), // unset: no cap
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--mcp-config', mcpConfig, '--system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId,
@@ -136,8 +119,7 @@ function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
 // turn cap and system prompt (a new chat, a model or settings change starts another one). Today's date
 // (agent.js claudeCodeNote) is left out of the key: a kept CLI serves on past midnight with the date it
 // started with rather than respawning, and a warm start made before midnight stays usable after it.
-const accessKey = (access) => (access?.enabled ? [1, access.askBefore ? 1 : 0, access.folder || ''] : 0);
-const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, access = null }) => JSON.stringify([bin, sessionId, model, maxTurns, accessKey(access), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
+const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0 }) => JSON.stringify([bin, sessionId, model, maxTurns, crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
 
 // A step row shown while the model is still writing a tool call's input (a long fill_form or batch):
 // it appears after EARLY_STEP_MS, and Lumen's MCP side takes it over when the call arrives
@@ -277,7 +259,7 @@ class ClaudeCodeEngine {
   }
 
   // Starts one CLI process: its own tag, its own MCP token (revoked when it ends), its own empty folder.
-  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, access = null }) {
+  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns }) {
     const tag = crypto.randomBytes(18).toString('hex');
     let http = null;
     if (this.gate) {
@@ -287,7 +269,7 @@ class ClaudeCodeEngine {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cc-'));
     const mcpConfig = path.join(dir, 'mcp.json');
     fs.writeFileSync(mcpConfig, JSON.stringify(mcpConfigFor({ http, bridge: http ? null : this.mcpCommand(), userData: this.userData, tag })), { mode: 0o600 });
-    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, access });
+    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     // single: takes one message, then stdin closes. A turn cap (--max-turns) may count across a
@@ -298,7 +280,7 @@ class ClaudeCodeEngine {
     proc.fresh = { sessionId, resume }; // onFresh's args, run when a message takes this process (turn)
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
-    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns, access }); };
+    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns }); };
     const finish = (code) => {
       if (proc.exited) return;
       proc.exited = true;
@@ -311,7 +293,7 @@ class ClaudeCodeEngine {
       proc.turn?.exit(code);
     };
     try {
-      proc.child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: access?.enabled ? this.accessDir(access) : dir }); // an empty folder (no project settings or files), or the folder the user chose for full access
+      proc.child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: dir }); // an empty folder: no project settings or files
     } catch (err) {
       proc.stderr = err.message;
       finish(err.code === 'ENOENT' ? 'ENOENT' : -1);
@@ -527,21 +509,13 @@ class ClaudeCodeEngine {
     }
   }
 
-  // The working folder of a full-access process: the chosen folder when it still exists, else the home folder.
-  accessDir(access) {
-    const { workingFolder } = require('./cli-access');
-    const dir = workingFolder(access);
-    try { if (fs.statSync(dir).isDirectory()) return dir; } catch { /* gone: the home folder */ }
-    return os.homedir();
-  }
-
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, access = null, signal, emit, runAgent = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     };
     if (!await this.ensureBin()) return notInstalled();
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, access }, { fresh, emit });
+    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
     // pre-started one that no message takes must not wipe the chat's reads.
@@ -633,7 +607,7 @@ class ClaudeCodeEngine {
       // A capped chat: its next message's process starts now, resuming this session, once this one has ended.
       // Only when the caller knows the next message will want the same process (prestart: a picked model, or
       // an auto-routed top tier that can't go higher); otherwise it would start for a key that may not match.
-      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns, access };
+      const next = { sessionId: newSession, resume: true, systemPrompt, model, maxTurns };
       const go = () => setImmediate(() => this.warm(next));
       if (proc.exited) go(); else proc.child.once('close', go);
     }
@@ -662,4 +636,4 @@ class ClaudeCodeEngine {
   }
 }
 
-module.exports = { ClaudeCodeEngine, findClaude, buildArgs, accessArgs, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, IDLE_MS, EARLY_STEP_MS };
+module.exports = { ClaudeCodeEngine, findClaude, buildArgs, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, IDLE_MS, EARLY_STEP_MS };

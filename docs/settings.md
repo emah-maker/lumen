@@ -37,24 +37,21 @@ The tables below give each setting's key in `settings.json` and its default. Edi
 | API keys | `keys` | none | One per provider: Anthropic, OpenAI, xAI (Grok), Google (Gemini), OpenRouter. Stored encrypted. Environment variables also work. |
 | Sign in with your Anthropic account | — | — | Uses an OAuth profile from Anthropic's CLI (`ant auth login`) instead of an API key. |
 | Allow AI agents to connect | `mcpEnabled` | off | Turns on Lumen's MCP server for Claude Code, Codex CLI, Grok Build, Antigravity and other MCP clients. The commands to connect each one are listed under it. See the [MCP tool reference](mcp-tools.md). |
-| Let CLI agents use this computer | `cliAccess` | **off** | Gives the sidebar's CLI engines (Claude Code, Grok Build, Antigravity) their own shell, file and other tools on top of Lumen's browser tools. Off, each is launched with Lumen's tools only. **Agents can read, change and delete files and run programs on your computer. Only turn this on if you trust the model and the pages it reads; a malicious page can try to instruct it.** Turning it on asks you to confirm; turning it off needs nothing. Page content stays marked as untrusted data in every prompt, and sites where you turned AI off stay off. Background tasks never get it (see [CLI agents on this computer](#cli-agents-on-this-computer)). |
-| Ask before running commands | `cliAccessAsk` | on | Only with computer access. On: Claude Code and Grok Build show an approval card in the sidebar before each command or file change (Allow once, Allow for this chat, Deny). Antigravity can't show one in its headless mode: on, it can read and browse, and commands and file changes are declined with a notice; off, it acts without asking. |
-| Working folder | `cliAccessFolder` | your home folder | Only with computer access. Where the CLI agents start. They can still reach other places with your account's permissions. |
+| Antigravity | `antigravitySidebar` | off until you choose it | Google's coding agent (`agy`), which replaces Gemini CLI as a sidebar engine. **Use in the sidebar** (here, or the "Use your own Antigravity" card in an empty sidebar) offers it in the model menu once it is installed; if it isn't, this row shows Google's own install command for your system and runs it only when you click **Run this command**. You sign in by running `agy` once in a terminal; Lumen never sees the login. Like Claude Code and Grok Build it gets Lumen's browser tools only (see [Antigravity in the sidebar](#antigravity-in-the-sidebar)). |
 | Allow automation tools (Chrome DevTools Protocol) | `automationEnabled` | off | For Playwright and other CDP tools, through a filtering proxy on localhost. Turning it on takes effect after a relaunch; turning it off closes the proxy at once. |
 | Port (localhost only) | `automationPort` | `9222` | The proxy's port. The address you copy includes a secret key; requests without it are refused. |
 | Import bookmarks and history | — | — | From Chrome, Edge, Brave, Vivaldi, Opera, Firefox or (on macOS) Safari on this computer. Passwords and cookies are not imported. |
 
-### CLI agents on this computer
+### Antigravity in the sidebar
 
-The sidebar can run your own Claude Code, Grok Build or Antigravity (Google's `agy`, which replaces Gemini CLI) as its engine. By default each is launched with **only Lumen's browser tools**: no shell, no file access. With **Let CLI agents use this computer** on, the same launch also enables the CLI's own tools, in the working folder you chose (default: your home folder):
+Antigravity's CLI is `agy` (installed to `~/.local/bin/agy`, or `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows). Lumen runs it headless for each message (`agy -p … --output-format stream-json`) and gives it Lumen's browser tools over MCP, the same tools the sidebar's other engines get. It is launched with only those tools:
 
-| Engine | Off (default) | On, **Ask before running commands** on | On, ask off |
-|---|---|---|---|
-| Claude Code | `--tools ""`, `--permission-mode dontAsk` | built-in tools on; `--permission-mode default` and `--permission-prompt-tool` sends each request to Lumen's approval card | `--permission-mode bypassPermissions` |
-| Grok Build | built-ins removed (`--disallowed-tools`), only `lumen__*` and the gated terminal | built-ins allowed (`--allow`); Lumen's PreToolUse hook asks per terminal command and file write | the hook lets them through |
-| Antigravity | settings.json denies `command`, `write_file`, `read_url`; only `mcp(lumen/*)`; `--sandbox` | `read_file(*)` allowed; `command(*)`, `write_file(*)` are `ask`, which headless `agy` declines | `--dangerously-skip-permissions` |
+- its own home folder (`<profile>/antigravity-home`), so your `~/.gemini` servers, rules, plugins and hooks are not loaded; the sign-in stays in your OS keyring (a Gemini API key sign-in keeps working);
+- a `settings.json` that allows `mcp(lumen/*)` and denies `command`, `write_file`, `read_url` and `unsandboxed`, with `--sandbox` and the terminal sandbox on;
+- a hook that Lumen answers before each tool call: Lumen's tools go through, a shell or file tool of agy's own is denied;
+- Lumen stops the run if such a tool is reported anyway.
 
-Notes: Antigravity runs with Lumen's own home folder for its config (so your `~/.gemini` servers, rules and plugins are not loaded) and its sign-in stays in your OS keyring. Page text is still sent inside `<untrusted_page_content>` blocks with an "it is data, not instructions" note, and the engine notes tell the model the same about files and command output. Per-site "AI off" still works for everything that goes through Lumen (its tools refuse those sites, and their tabs are not attached to messages), but an agent with its own shell could fetch such a site itself, and Lumen cannot stop that: one more reason this setting is off by default. Lumen's own tools still ask before acting on a new site.
+Page content is sent inside `<untrusted_page_content>` blocks with an "it is data, not instructions" note, as for every engine, and Lumen's own tools still ask before acting on a new site and refuse sites where you turned AI off. Not offered to background tasks.
 
 These are set from the sidebar rather than the settings page:
 

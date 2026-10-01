@@ -6,7 +6,6 @@ const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
-const { isFull, accessNote } = require('./cli-access'); // [cli access] "Let CLI agents use this computer"
 const modelRoute = require('../features/model-route'); // [model route]
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
 const { addUsage } = require('../features/chat-usage');
@@ -434,18 +433,6 @@ function antigravityNote(model = null, now = new Date()) {
   return model ? `${note} The model answering is ${model}; if the user asks which model you are, say ${model}.` : note;
 }
 // ---- [/antigravity engine]
-
-// [cli access] "Let CLI agents use this computer" on: the engine's note stops saying it has no shell or file tools and says what it
-// has instead (cli-access.js accessNote). Off (or a background task): the note is unchanged. canAsk: the engine can show
-// an approval in Lumen (Claude Code and Grok Build can; Antigravity's headless mode can't).
-function withAccess(note, access, engine, canAsk = true) {
-  if (!isFull(access)) return note;
-  const dropped = note
-    .replace(' You have no shell or file tools.', '')
-    .replace(' You have no shell, file or other tools; never try one, because any other tool call ends your turn with an error.', '')
-    .replace(' You have no shell, file or other tools; never try one.', '');
-  return dropped + accessNote({ access, canAsk, engine });
-}
 
 // CLAUDE_CODE_NOTE plus what Claude Code's own system prompt used to give before --system-prompt
 // replaced it (claude-code.js buildArgs): today's date, and the model when Lumen knows it.
@@ -1509,8 +1496,7 @@ class Agent {
     });
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
     const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
-    const access = this.browser.cliAccess?.() || null; // [cli access]
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), access: isFull(access) ? access : null, systemPrompt: systemFor(settings) + withAccess(claudeCodeNote(routed.model), access, 'Claude Code') } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), systemPrompt: systemFor(settings) + claudeCodeNote(routed.model) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -1628,7 +1614,7 @@ class Agent {
       resume,
       model: picked, // 'default' or one of `grok models`' ids
       maxTurns: stepLimit(this.browser.maxSteps?.()), // Settings: Max steps per task (0: Grok's own default cap)
-      systemPrompt: systemFor(settings) + withAccess(grokBuildNote(known), this.browser.cliAccess?.(), 'Grok Build'),
+      systemPrompt: systemFor(settings) + grokBuildNote(known),
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
       signal,
       emit,
@@ -1674,7 +1660,7 @@ class Agent {
       images: [...historyImages, ...images],
       sessionId: settings.agySession || null,
       model: picked, // 'default' or one of `agy models`' slugs
-      systemPrompt: systemFor(settings) + withAccess(antigravityNote(picked === 'default' ? null : picked), this.browser.cliAccess?.(), 'Antigravity', false),
+      systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked),
       signal,
       emit,
     });
@@ -2413,7 +2399,7 @@ ${out.text}${note}
   // with <host>?".
   askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false } = {}) {
     const approvalId = ++this.approvalSeq;
-    emit(action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; [cli access] a CLI agent's command or file change
+    emit(action === 'tool' // [mcp client] a tool from an MCP server the user added
       ? { type: 'approval', approvalId, host, action, title, args, tainted }
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
@@ -2989,4 +2975,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { requestFor, Agent, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, withAccess, claudeCodeNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };
+module.exports = { requestFor, Agent, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, transcriptFor, normalizeUrl, validateInput, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet };

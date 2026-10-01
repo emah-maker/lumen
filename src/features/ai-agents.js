@@ -12,7 +12,6 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { exists, lookup: which, validModel } = require('../ai/cli-utils');
-const { accessOf } = require('../ai/cli-access');
 const launcher = require('../automation/launcher');
 // `electron` is only there in the main process; units.js loads this file in plain Node.
 const webContents = { getAllWebContents: () => require('electron').webContents.getAllWebContents() };
@@ -94,8 +93,6 @@ function setupAiAgents(deps) {
   // ---------- MCP ----------
 
   let mcpServer = null;
-  // [cli access] "Let CLI agents use this computer", read for every message so the toggle needs no restart.
-  const cliAccess = () => accessOf(readSettings());
   // Sessions opened by the sidebar's own Claude Code engine (event.engine) are not "external agents".
   const mcpEvent = (event) => { if (!event.engine) ui()?.send('mcp:event', event); };
   // Off until the user turns it on (Settings, or an "Add to <agent>" button): nothing outside Lumen
@@ -160,7 +157,7 @@ function setupAiAgents(deps) {
       const { GrokBuildEngine } = grokBuildModule();
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
-      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, access: cliAccess, spawn: cliSpawn(), onFresh: freshReads });
+      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
     }
     return grokBuild;
   };
@@ -192,7 +189,7 @@ function setupAiAgents(deps) {
   const antigravityEngine = () => {
     if (!antigravity) {
       const { AntigravityEngine } = antigravityModule();
-      antigravity = new AntigravityEngine({ userData: app.getPath('userData'), gate: startGrokGate, access: cliAccess, bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
+      antigravity = new AntigravityEngine({ userData: app.getPath('userData'), gate: startGrokGate, bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
     }
     return antigravity;
   };
@@ -201,12 +198,9 @@ function setupAiAgents(deps) {
   // run_terminal_command call through: the same approval card as an MCP tool's (renderer/app.js
   // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
   // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
-  // With full computer access (cli-access.js) it also asks for Grok's file-writing tools: `tool` names the one.
-  async function onTerminalApproval(tag, command, tool = 'run_terminal_command') {
-    const owner = grokBuild?.owns(tag) ? grokBuild : antigravity?.owns(tag) ? antigravity : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
+  async function onTerminalApproval(tag, command) {
+    const owner = grokBuild?.owns(tag) ? grokBuild : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
     const engineRun = owner ? owner.active : null;
-    const who = owner?.kind === 'antigravity' ? 'Antigravity' : 'Grok';
-    const shell = /command|terminal|shell|bash|exec/i.test(String(tool));
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
     let args = String(command || '');
     if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
@@ -215,7 +209,7 @@ function setupAiAgents(deps) {
     try {
       answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
         action: 'terminal',
-        title: shell ? `${who} wants to run a terminal command` : `${who} wants to use ${String(tool).slice(0, 40)}`,
+        title: 'Grok wants to run a terminal command',
         args,
       });
       return answer === 'always' ? 'always' : answer ? 'once' : 'deny';
@@ -253,37 +247,7 @@ function setupAiAgents(deps) {
   const LABEL_FIRST = new Set(['click', 'type_text', 'fill_form', 'press_key']); // their labels are read from the page before the action runs
   const LABEL_WAIT_MS = 150;
   const OUTSIDE_LABEL_WAIT_MS = 1500; // outside agents (no early row): the label goes in the first event, for up to this long
-  // [cli access] Claude Code's permission prompt (mcp.js APPROVAL_TOOL, claude-code.js accessArgs): asks the user with the same approval card as a
-  // terminal command, and answers in the JSON Claude Code reads: { behavior: 'allow', updatedInput } or { behavior: 'deny', message }.
-  async function approvalPrompt(args, session) {
-    const answerWith = (body) => ({ content: [{ type: 'text', text: JSON.stringify(body) }], isError: false });
-    const owner = engineForSession(session);
-    const run = owner?.active;
-    const access = cliAccess();
-    if (!run || owner.background || owner.kind !== 'claudecode' || !access.enabled || !access.askBefore) return answerWith({ behavior: 'deny', message: 'No approval is being asked for here.' });
-    const tool = String(args?.tool_name || 'a tool').slice(0, 80);
-    const input = args?.input && typeof args.input === 'object' ? args.input : {};
-    run.alwaysTools ||= new Set();
-    if (run.alwaysTools.has(tool)) return answerWith({ behavior: 'allow', updatedInput: input });
-    const body = (v) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
-    let summary = typeof input.command === 'string' ? input.command
-      : typeof input.file_path === 'string' ? `${input.file_path}${input.content ? `\n\n${body(input.content).slice(0, 1500)}` : input.new_string ? `\n\n${body(input.new_string).slice(0, 1500)}` : ''}`
-        : body(input);
-    if (summary.length > 4000) summary = `${summary.slice(0, 4000)}\n…`;
-    owner.callBegin?.(run); // the card can wait on the user: the inactivity watchdog waits too
-    let answer = false;
-    try {
-      answer = await agent.askApproval('run_terminal_command', run.emit, run.signal, { action: 'terminal', title: `Claude wants to use ${tool}`, args: summary });
-    } catch {
-      answer = false; // the user hit Stop while the card was up
-    } finally {
-      if (!answer) owner.callEnd?.(run);
-    }
-    if (answer === 'always') run.alwaysTools.add(tool);
-    return answerWith(answer ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'The user did not approve this.' });
-  }
   async function mcpCallTool(name, args, session) {
-    if (name === 'approval_prompt') return approvalPrompt(args, session);
     session.approvedHosts ||= new Set();
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
@@ -401,7 +365,7 @@ function setupAiAgents(deps) {
         { id: 'claude', label: 'Claude Code', hint: 'One click, or run this in a terminal', text: `${win ? 'claude.cmd' : 'claude'} mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'claude' },
         { id: 'codex', label: 'Codex CLI', hint: 'One click, or run this in a terminal', text: `${win ? 'codex.cmd' : 'codex'} mcp add lumen --env ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'codex', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.codex/config.toml.' },
         { id: 'grok', label: 'Grok Build', hint: 'One click, or run this in a terminal (needs SuperGrok or X Premium+)', text: `grok mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'grok', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.grok/config.toml.' },
-        // Antigravity (agy) reads its MCP servers from ~/.gemini/config/mcp_config.json (antigravity.google/docs/mcp); the one click merges this entry into that file.
+        // Antigravity (agy) keeps its MCP servers in ~/.gemini/config/mcp_config.json; the one click runs `agy mcp add`, which writes that file.
         { id: 'antigravity', label: 'Antigravity', hint: 'One click, or run this in a terminal (replaces Gemini CLI)', text: `agy mcp add -e ELECTRON_RUN_AS_NODE=1 lumen -- ${quoted}`, addButton: 'antigravity', secondary: 'Or add the JSON of Other MCP clients (below) under mcpServers in ~/.gemini/config/mcp_config.json.' },
         { id: 'json', label: 'Other MCP clients', hint: 'Cursor, Claude Desktop, etc.', text: json },
       ],
@@ -759,7 +723,7 @@ function antigravityOptions({ signedIn = 'unknown', models = [], names = {}, sav
   const list = models.filter((m) => m !== 'default' && validModel(m));
   const pick = /^antigravity:(.+)$/.exec(String(saved || ''))?.[1];
   if (pick && pick !== 'default' && validModel(pick) && !list.includes(pick)) list.push(pick);
-  const note = 'experimental: only Lumen’s browser tools are allowed unless you turn on computer access for CLI agents in Settings';
+  const note = 'experimental: only Lumen’s browser tools are allowed';
   return ['default', ...list].map((model) => ({
     id: `antigravity:${model}`,
     label: model === 'default' ? 'Antigravity (experimental)' : `Antigravity · ${model} (experimental)`,

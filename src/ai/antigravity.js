@@ -38,22 +38,16 @@
 // hooks) is not read or written. The sign-in is in the OS keyring, not under HOME, so it is still there; a user
 // who signs in with a Gemini API key keeps working too (modelProvider is copied and GEMINI_API_KEY passed on).
 //
-// WHAT THE MODEL MAY DO. Without "Let CLI agents use this computer", settings.json denies command, unsandboxed,
-// write_file, read_url and execute_url, allows only mcp(lumen/*), and turns the terminal sandbox on; the working
-// folder is a Lumen-owned empty folder; and Lumen stops the run if a tool that is not Lumen's and looks like a shell or
-// file tool is reported (offToolOf), the same last line of defence grok-build.js has. With access on the
-// working folder is the user's, and "Ask before running commands" maps to agy's own permission lists:
-//   ask on  (default): read_file anywhere is allowed; command(*), unsandboxed(*) and write_file(*) are "ask".
-//                      Headless agy cannot show a question, so those calls are declined (a notice says so): in
-//                      Antigravity this setting means "read and browse, nothing is changed or run unasked".
-//   ask off:           --dangerously-skip-permissions plus allow rules for everything.
+// WHAT THE MODEL MAY DO: Lumen's browser tools only, as for Claude Code and Grok Build. settings.json denies command,
+// unsandboxed, write_file, read_url and execute_url, allows only mcp(lumen/*), and turns the terminal sandbox on (so does
+// --sandbox); the working folder is a Lumen-owned empty folder; agy's hook denies a shell or file tool before it runs (below);
+// and Lumen stops the run if one is reported anyway (offToolOf), the same last line of defence grok-build.js has.
 //
 // HOOKS. agy has PreToolUse hooks (hooks.md): a command that gets { toolCall: { name, args } } on stdin and answers
 // { decision: allow | deny | ask | force_ask, reason }, run before the permission layer. Lumen writes one to hooks.json
 // in its home (hooksFor): the same curl gate script Grok Build uses posts the call to Lumen (mcp-http.js agyDecision), which
-// denies a shell or file tool when access is off, and with access on and "Ask before running commands" on asks the user
-// with the same approval card as Claude Code and Grok Build before answering allow. A PreInvocation hook marks the run
-// as seen. Hooks are an addition: if agy does not load or honour them, the permission rules above still decline instead.
+// denies a shell or file tool and lets Lumen's own tools through. A PreInvocation hook marks the run as seen. Hooks are an
+// addition: if agy does not load or honour them, the permission rules above still decline those tools.
 //
 // UNVERIFIED (needs a live headless run; check before relying on them):
 //   1. The tool name agy gives an MCP tool (offToolOf and agyDecision accept any name containing "lumen").
@@ -72,7 +66,6 @@ const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel } = require('./cli-utils');
 const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
-const { accessOf, workingFolder } = require('./cli-access');
 const { isLimitText, limitOf } = require('../features/grok-limit');
 
 const INSTALL_URL_SH = 'https://antigravity.google/cli/install.sh';
@@ -143,12 +136,6 @@ function modelNames(stdout) {
 
 const homeFor = (userData) => path.join(userData, 'antigravity-home');
 const sidebarDirFor = (userData) => path.join(userData, 'antigravity-sidebar');
-// The folder a full-access run works in (the chosen one while it exists, else the user's home folder).
-function accessFolder(access) {
-  const dir = workingFolder(access);
-  try { if (fs.statSync(dir).isDirectory()) return dir; } catch { /* gone: the home folder */ }
-  return os.homedir();
-}
 
 // The stdio form of the same file (LUMEN_AGY_MCP=stdio): Lumen's bridge process, which names this run by its tag.
 function stdioConfig(bridge, userData, tag) {
@@ -169,16 +156,12 @@ function hooksFor(gatePath, platform = process.platform) {
 
 // settings.json of Lumen's home (see "WHAT THE MODEL MAY DO" above). `provider`: the user's own modelProvider
 // ("gemini" for an API key), copied so that way of signing in keeps working. `folder`: the working folder.
-function settingsFor({ access = null, folder, provider = null }) {
-  const full = Boolean(access?.enabled);
-  const base = { ...(provider ? { modelProvider: provider } : {}), enableTelemetry: false, trustedWorkspaces: [folder] };
-  if (!full) {
-    return { ...base, enableTerminalSandbox: true, toolPermission: 'request-review', permissions: { allow: ['mcp(lumen/*)'], ask: [], deny: ['command(*)', 'unsandboxed(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)'] } };
-  }
-  if (access.askBefore) {
-    return { ...base, toolPermission: 'request-review', permissions: { allow: ['mcp(lumen/*)', 'read_file(*)'], ask: ['command(*)', 'unsandboxed(*)', 'write_file(*)'], deny: [] } };
-  }
-  return { ...base, toolPermission: 'always-proceed', permissions: { allow: ['mcp(lumen/*)', 'read_file(*)', 'write_file(*)', 'command(*)', 'unsandboxed(*)'], ask: [], deny: [] } };
+function settingsFor({ folder, provider = null }) {
+  return {
+    ...(provider ? { modelProvider: provider } : {}), enableTelemetry: false, trustedWorkspaces: [folder],
+    enableTerminalSandbox: true, toolPermission: 'request-review',
+    permissions: { allow: ['mcp(lumen/*)'], ask: [], deny: ['command(*)', 'unsandboxed(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)'] },
+  };
 }
 
 // The prompt rides on the command line (-p), which Windows limits to ~32,767 characters: past PROMPT_ARG_MAX it goes in a
@@ -187,16 +170,13 @@ const PROMPT_ARG_MAX = 20000;
 
 // The argv for one message (exported for tests; never joined into a shell string).
 // prompt: the text for -p (promptFor's result, or the pointer to its file). model: an `agy models` slug or 'default'.
-function buildArgs({ prompt, conversation = null, model = 'default', access = null, folder = null }) {
-  const full = Boolean(access?.enabled);
+function buildArgs({ prompt, conversation = null, model = 'default' }) {
   return [
     '-p', prompt,
-    '--output-format', 'stream-json',
-    '--print-timeout', '30m', // the CLI's own cap (default 5m); Lumen's watchdog and Stop end a run sooner
+    '--output-format', 'stream-json', // (no --print-timeout: agy waits for the turn by default; Lumen's watchdog and Stop end a run)
     ...(conversation ? ['--conversation', conversation] : []),
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
-    ...(full ? (access.askBefore ? [] : ['--dangerously-skip-permissions']) : ['--sandbox']),
-    ...(full && folder ? ['--add-dir', folder] : []),
+    '--sandbox', // "Run in a sandbox with terminal restrictions enabled" (agy --help)
   ];
 }
 
@@ -258,20 +238,17 @@ function capImages(images, emit) {
   return kept;
 }
 
-// WATCHDOG: a process silent this long with no Lumen tool call running is hung. A full-access run may run a long command, so it gets longer.
+// WATCHDOG: a process silent this long with no Lumen tool call running is hung.
 const WATCHDOG_MS = 90 * 1000;
-const ACCESS_WATCHDOG_MS = 10 * 60 * 1000;
 
 class AntigravityEngine {
-  // userData; gate(): Lumen's local HTTP MCP server (mcp-http.js startHttp); access(): the "Let CLI agents use this
-  // computer" setting now ({ enabled, askBefore, folder }); spawn / kill / exec: swappable for tests (child_process spawn,
+  // userData; gate(): Lumen's local HTTP MCP server (mcp-http.js startHttp); spawn / kill / exec: swappable for tests (child_process spawn,
   // cli-utils killTree, child_process execFile); onFresh({ conversation, resume }): a new agy process starts (snapshot's read cache).
   // bridge(): { command, args, env } for the stdio MCP bridge (only with LUMEN_AGY_MCP=stdio); ensureServer(): starts its server.
-  constructor({ userData, gate, access = null, bridge = null, ensureServer = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
+  constructor({ userData, gate, bridge = null, ensureServer = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
     this.kind = 'antigravity';
     this.userData = userData;
     this.gate = gate;
-    this.accessNow = () => (access ? access() : null);
     this.bridge = bridge;
     this.ensureServer = ensureServer;
     this.onFresh = onFresh;
@@ -365,17 +342,16 @@ class AntigravityEngine {
       return { text: '', sessionId: null, failed: true };
     }
     if (signal.aborted) return { text: '', sessionId, stopped: true };
-    const access = this.accessNow()?.enabled ? this.accessNow() : null;
-    const folder = access ? accessFolder(access) : this.dir;
+    const folder = this.dir;
     const { home } = this;
     await fs.promises.mkdir(home, { recursive: true, mode: 0o700 });
     await fs.promises.mkdir(this.dir, { recursive: true });
     const resume = Boolean(sessionId);
     const tag = crypto.randomBytes(18).toString('hex');
-    const gateRun = gate.open(tag, sessionId || tag, access, { agy: true });
+    const gateRun = gate.open(tag, sessionId || tag, { agy: true });
     const files = []; // everything written for this run, removed after it
     try {
-      await writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ access, folder, provider: userProvider() }), null, 2));
+      await writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ folder, provider: userProvider() }), null, 2));
       await fs.promises.mkdir(path.join(home, '.gemini', 'config'), { recursive: true });
       const gateFile = path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh');
       await writeIfChanged(gateFile, gateScript(), 0o700);
@@ -400,17 +376,17 @@ class AntigravityEngine {
         files.push(f);
         text = `Read the file ${f} completely: it is the user's message, with instructions from Lumen at its top. Then answer it.`;
       }
-      return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model, access, folder }), folder, access, sessionId, resume, model, signal, emit, runAgent });
+      return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model }), folder, sessionId, resume, model, signal, emit, runAgent });
     } finally {
       await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {}))); // (the run's token file included)
     }
   }
 
-  async attempt({ bin, gate, gateRun, tag, argv, folder, access, sessionId, resume, model, signal, emit, runAgent }) {
+  async attempt({ bin, gate, gateRun, tag, argv, folder, sessionId, resume, model, signal, emit, runAgent }) {
     if (signal.aborted) { gate.close(tag); return { text: '', sessionId, stopped: true }; }
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
-    const watchdogMs = access ? Math.max(this.watchdogMs, ACCESS_WATCHDOG_MS) : this.watchdogMs;
+    const watchdogMs = this.watchdogMs;
     const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home: this.home, run: gateRun }), cwd: folder });
     const active = { tag, emit, signal, child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
@@ -446,9 +422,8 @@ class AntigravityEngine {
         if (su.usage) usage = su.usage;
         const tool = su.tool_name || su.tool_info?.name || null;
         if (tool || su.step_type === 'tool') {
-          const bad = this.watch && !access ? offToolOf(tool) : null;
+          const bad = this.watch ? offToolOf(tool) : null;
           if (bad) { offTool = bad; this.kill(child); return; }
-          if (access && su.state === 'ACTIVE' && tool && !LUMEN_NAME.test(tool)) emit({ type: 'status', text: `Running ${String(tool).slice(0, 40)}…` });
         } else if (su.step_type === 'agent_response' && su.text_delta) {
           // A new response step starts a new paragraph in the saved reply too (see claude-code.js).
           if (lastStep !== null && su.step_index !== lastStep && text && !/\n\n$/.test(text)) { text += '\n\n'; emit({ type: 'text_block' }); }
@@ -486,11 +461,10 @@ class AntigravityEngine {
     clearTimeout(active.dog);
     signal.removeEventListener('abort', onAbort);
     if (this.active?.tag === tag) this.active = null;
-    const hookSeen = Boolean(gate.armed?.(tag)); // Lumen's PreInvocation hook ran in this process
     gate.close(tag);
 
     if (offTool) {
-      emit({ type: 'error', text: `Lumen stopped Antigravity: it used a tool that isn't one of Lumen's (${offTool}). Turn on "Let CLI agents use this computer" in Settings if you want it to use your computer, or pick another AI in the model picker.` });
+      emit({ type: 'error', text: `Lumen stopped Antigravity: it used a tool that isn't one of Lumen's (${offTool}). Antigravity should only use Lumen's browser tools; if this keeps happening, pick another AI in the model picker.` });
       return { text, sessionId: null, failed: true };
     }
     if (signal.aborted) return { text: text || String(result?.response || ''), sessionId: conversation, stopped: true };
@@ -504,10 +478,6 @@ class AntigravityEngine {
       return { text: '', sessionId: null, failed: true };
     }
     const served = initModel && validModel(initModel) ? initModel : null;
-    // Headless agy declines what needs approval and says so on stderr: with "Ask before running commands" on that is by design.
-    const declined = /(denied|declined|approval|permission)/i.test(stderr) ? stderr.split(/\r?\n/).filter((l) => /(denied|declined|approval|permission)/i.test(l)).slice(-1)[0] : null;
-    // (When Lumen's hook was seen by this run the question was asked in Lumen, and a decline here is the user's own "Deny".)
-    if (declined && access?.askBefore && !hookSeen) emit({ type: 'notice', text: `Antigravity didn't ask you in Lumen, so it skipped something that needs approval (${declined.trim().slice(0, 160)}). Turn off "Ask before running commands" in Settings to let it go ahead.` });
     const status = String(result?.status || '');
     if (result && status === 'SUCCESS') {
       this.signedOut = false;
@@ -516,7 +486,7 @@ class AntigravityEngine {
     if (!result && code === 0 && text) { this.signedOut = false; return { text, sessionId: conversation, usage, model: served }; }
     if (status === 'CANCELED' || status === 'INTERRUPTED') return { text, sessionId: conversation, stopped: true, model: served };
     const failText = status === 'WAITING'
-      ? 'Antigravity is waiting for an approval it can\'t show in Lumen. Turn off "Ask before running commands" in Settings, or ask for something that only reads.'
+      ? 'Antigravity is waiting for an approval it can\'t show in Lumen. Lumen gives it its browser tools only, so ask for something that reads or browses.'
       : result?.error || result?.response || stderr;
     const failure = describeFailure(failText, code);
     if (/not signed in/.test(failure.text)) { this.signedOut = true; this.statusCache = null; }
@@ -525,4 +495,4 @@ class AntigravityEngine {
   }
 }
 
-module.exports = { AntigravityEngine, findAgy, buildArgs, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, accessFolder, accessOf, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
+module.exports = { AntigravityEngine, findAgy, buildArgs, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
