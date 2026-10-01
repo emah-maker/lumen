@@ -4,6 +4,9 @@
 // Checks: the offer, the one-time consent card gating the first send, applying to text nodes only
 // (code, translate="no", notranslate and form fields untouched), text added later, Show original,
 // Never for this site, the Google fallback URL, and refusals (private session, non-web pages).
+// The on-device engine (Bergamot) is stood in for by a fake with the same interface (a test hook), so its
+// choice, the download card, progress, no-consent rule, cancel, pivot-free fallback to the AI and caching all
+// run; the real engine and models are exercised by test/translate-local-real.js (network).
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -57,6 +60,8 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
       },
     });
   });
+  // The AI path first: no on-device engine (a test hook), so the click goes to the fake AI as before.
+  await app.evaluate(() => global.__translate.api.setTestLocal(false));
   const calls = () => app.evaluate(() => global.__trCalls.length);
   const open = (url) => app.evaluate(async (_e, u) => {
     const t = global.__agent.browser.openTab(u);
@@ -84,7 +89,7 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
   check('the infobar names the page language and offers Translate, Not now, Never for this site', /Spanish.*Translate to English/.test(offerText) && /Translate.*Not now.*Never for this site/.test(offerText), offerText);
   check('offering sent nothing to any AI', (await calls()) === 0, await calls());
   const labels = await app.evaluate((_e, i) => global.__translate.api.menuItems(global.__translate.tab(i)).map((m) => m.label).filter(Boolean), es);
-  check('the page menu offers Translate to English and Translate to…', labels.includes('Translate to English') && labels.includes('Translate to…'), labels.join(' | '));
+  check('the page menu offers Translate to… and Translate with the AI (no on-device engine here)', labels.includes('Translate with FakeAI') && labels.includes('Translate to…') && !labels.includes('Translate on this device'), labels.join(' | '));
   const pageItem = await app.evaluate((_e, i) => global.__translate.api.pageMenuItem(global.__translate.tab(i)).map((m) => m.label), es);
   check('the page menu item is "Translate Page…"', pageItem.join() === 'Translate Page…', pageItem.join());
 
@@ -147,6 +152,105 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
   await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'original'), es);
   await waitFor(async () => (await text(es, '#h')) === 'Hola mundo');
 
+  // ---- the on-device engine (a stand-in with the real interface) ----
+  await app.evaluate(() => {
+    global.__localLog = { plan: 0, ensure: 0, translate: [], cancelled: 0, installed: false };
+    global.__translate.api.setTestLocal({
+      supports: () => true,
+      readyRoute: () => null,
+      plan: async (src, tgt) => { global.__localLog.plan++; return src === 'xx' ? null : { route: [[src, tgt]], missing: global.__localLog.installed ? 0 : 24e6, total: 24e6 }; },
+      ensure: async (route, { onProgress, signal }) => {
+        global.__localLog.ensure++;
+        for (let i = 1; i <= 4; i++) {
+          await new Promise((r) => setTimeout(r, global.__localHold ? 700 : 60));
+          if (signal.aborted) { global.__localLog.cancelled++; const e = new Error('cancelled'); e.code = 'cancelled'; throw e; }
+          onProgress(i / 4, i * 6e6, 24e6);
+        }
+        global.__localLog.installed = true;
+      },
+      translate: async (route, texts) => { global.__localLog.translate.push({ route, texts }); return texts.map((t) => (t === 'Hola mundo' ? 'Hello world' : `[LOCAL] ${t}`)); },
+    });
+  });
+  const aiCallsBefore = await calls();
+  const consentsBefore = JSON.stringify(settingsFile().translateConsent);
+  const loc = await open(`${base}/es3`);
+  await waitFor(async () => (await stateOf(loc))?.phase === 'offer');
+  const localItems = await app.evaluate((_e, i) => global.__translate.api.menuItems(global.__translate.tab(i)).map((m) => m.label).filter(Boolean), loc);
+  check('the page menu leads with Translate on this device, then the AI', localItems[0] === 'Translate on this device' && localItems.includes('Translate with FakeAI'), localItems.join(' | '));
+  await barClick('Translate');
+  const ask = await waitFor(async () => (await stateOf(loc))?.phase === 'download-consent');
+  const askText = await waitFor(async () => (await barText()).includes('language pack') && (await barText()));
+  check('the first on-device translation asks to download the language pack, with its size', Boolean(ask) && /Download the Spanish → English language pack \(24 MB\)/.test(askText) && /Download and translate/.test(askText) && /Always download/.test(askText), askText);
+  check('nothing is translated or downloaded while it asks, and no AI consent is involved', (await app.evaluate(() => global.__localLog.ensure + global.__localLog.translate.length)) === 0 && (await text(loc, '#h')) === 'Hola mundo', await barText());
+  await app.evaluate(() => { global.__localHold = true; });
+  await barClick('Download and translate');
+  const dl = await waitFor(async () => (await stateOf(loc))?.phase === 'download');
+  const dlText = await waitFor(async () => (await barText()).includes('Downloading') && (await barText()));
+  check('the infobar shows the download with progress and a Cancel', Boolean(dl) && /Downloading Spanish → English \(24 MB\)/.test(dlText) && /Cancel/.test(dlText), dlText);
+  await barClick('Cancel');
+  const cancelled = await waitFor(async () => (await app.evaluate(() => global.__localLog.cancelled)) === 1 && (await stateOf(loc))?.phase === 'offer');
+  check('Cancel stops the download and leaves the page as written', Boolean(cancelled) && (await text(loc, '#h')) === 'Hola mundo', JSON.stringify(await stateOf(loc)));
+  await app.evaluate(() => { global.__localHold = false; });
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'translate'), loc);
+  await waitFor(async () => (await barText()).includes('Download and translate'));
+  await barClick('Download and translate');
+  const localDone = await waitFor(async () => (await stateOf(loc))?.phase === 'done');
+  check('after the download the page is translated on this device', Boolean(localDone) && (await text(loc, '#h')) === 'Hello world' && (await text(loc, '#p')).startsWith('[LOCAL] Esta es una página'), JSON.stringify(await stateOf(loc)));
+  const doneText = await waitFor(async () => (await barText()).includes('on this device') && (await barText()));
+  check('the infobar says it was translated on this device', /Translated to English on this device/.test(doneText), doneText);
+  check('the AI was never asked and no consent was stored', (await calls()) === aiCallsBefore && JSON.stringify(settingsFile().translateConsent) === consentsBefore, `${await calls()} ${JSON.stringify(settingsFile().translateConsent)}`);
+  const sentLocal = await app.evaluate(() => global.__localLog.translate.flatMap((c) => c.texts).join(' '));
+  check('code, translate="no", notranslate and form text never reached the engine', !/saludo|función|Marca Registrada|No traducir|editable|Borrador/.test(sentLocal), sentLocal);
+  check('the title went with the first batch and the visible text before the rest', await app.evaluate(() => global.__localLog.translate[0].texts[0].startsWith('Página') || global.__localLog.translate[0].texts.includes('Hola mundo')), '');
+  const tm = await app.evaluate((_e, i) => global.__translate.api.timings(global.__translate.tab(i)), loc);
+  check('the run records how long it took to first text and in total', tm && tm.via === 'local' && tm.toFirstTextMs >= 0 && tm.totalMs >= tm.toFirstTextMs, JSON.stringify(tm));
+  await inTab(loc, "document.querySelector('#add').click()");
+  const lateLocal = await waitFor(async () => (await text(loc, '#late')).startsWith('[LOCAL] Texto nuevo'));
+  check('text added later is translated by the same engine', Boolean(lateLocal), await text(loc, '#late'));
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'original'), loc);
+  await waitFor(async () => (await text(loc, '#h')) === 'Hola mundo');
+  // A pack already on disk: straight through, and "Always download" is remembered.
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'translate-local'), loc);
+  const direct = await waitFor(async () => (await stateOf(loc))?.phase === 'done');
+  check('with the pack on disk it translates with no question', Boolean(direct) && (await app.evaluate(() => global.__localLog.ensure)) === 2, JSON.stringify(await stateOf(loc)));
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'original'), loc);
+  await app.evaluate(() => { global.__localLog.installed = false; });
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'translate'), loc);
+  await waitFor(async () => (await barText()).includes('Always download'));
+  await barClick('Always download');
+  await waitFor(async () => (await stateOf(loc))?.phase === 'done');
+  check('"Always download" is saved as a setting', settingsFile().translateLocalAuto === true, JSON.stringify(settingsFile().translateLocalAuto));
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'original'), loc);
+  await app.evaluate(() => { global.__localLog.installed = false; });
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'translate'), loc);
+  const auto = await waitFor(async () => (await stateOf(loc))?.phase === 'done');
+  check('once allowed, the next download starts without asking', Boolean(auto), JSON.stringify(await stateOf(loc)));
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'original'), loc);
+  // No pack for a pair: falls back to the AI (which asks for consent as before), unless local was demanded.
+  await app.evaluate(() => { global.__translate.api.setTestLocal({ supports: () => true, plan: async () => null, ensure: async () => {}, translate: async () => [] }); });
+  const unsupported = await app.evaluate((_e, i) => { global.__translate.api.act(global.__translate.tab(i), 'translate-local'); return null; }, loc);
+  const noPair = await waitFor(async () => (await stateOf(loc))?.phase === 'error' && (await stateOf(loc))?.error === 'unsupported-pair');
+  check('demanding the on-device engine with no pack for the pair says so and does not use the AI', unsupported === null && Boolean(noPair), JSON.stringify(await stateOf(loc)));
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'translate'), loc);
+  const fell = await waitFor(async () => ['consent', 'working', 'done'].includes((await stateOf(loc))?.phase) && (await stateOf(loc))?.via === 'ai');
+  check('by default a pair with no pack hands over to the connected AI', Boolean(fell), JSON.stringify(await stateOf(loc)));
+  await app.evaluate((_e, i) => global.__translate.api.act(global.__translate.tab(i), 'cancel'), loc);
+  // Private window: an explicit click runs on device with no consent; an unclicked start is refused.
+  await app.evaluate(() => { global.__localLog.installed = true; global.__translate.api.setTestLocal({ supports: () => true, plan: async (s, t) => ({ route: [[s, t]], missing: 0, total: 0 }), ensure: async () => {}, translate: async (r, texts) => texts.map((t) => `[LOCAL] ${t}`) }); });
+  const privLocal = await app.evaluate(async ({ BrowserWindow, session }, url) => {
+    const w = new BrowserWindow({ show: false, webPreferences: { session: session.fromPartition('translate-private-local'), sandbox: true } });
+    await w.loadURL(url);
+    const tab = { view: { webContents: w.webContents } };
+    const api = global.__translate.api;
+    const plain = api.start(tab, { explicit: false });
+    const clicked = api.start(tab);
+    w.destroy();
+    return { plain, clicked };
+  }, `${base}/es`);
+  check('private window: an unclicked on-device start is refused, a click is not asked for consent', privLocal.plain.ok === false && privLocal.plain.reason === 'private' && privLocal.clicked.ok === true && !privLocal.clicked.pending, JSON.stringify(privLocal));
+
+  await app.evaluate(() => global.__translate.api.setTestLocal(false));
+
   // ---- Never for this site ----
   const es2 = await open(`${base}/es2`);
   await waitFor(async () => (await stateOf(es2))?.phase === 'offer');
@@ -181,6 +285,7 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
   check('private consent is not stored', !(settingsFile().translateConsent || []).some((p) => p !== 'test:fake'), JSON.stringify(settingsFile().translateConsent));
 
   // ---- fallback: no AI connected ----
+  await app.evaluate(() => global.__translate.api.setTestLocal(false));
   await app.evaluate(() => global.__translate.api.setTestEngine(false));
   const noAi = await app.evaluate((_e, i) => ({ items: global.__translate.api.menuItems(global.__translate.tab(i)), google: global.__translate.api.google(global.__translate.tab(i)) }), es);
   check('with no AI and a local page, the item explains instead of offering', noAi.items.length === 1 && noAi.items[0].enabled === false && /connect an AI/i.test(noAi.items[0].label) && noAi.google === false, JSON.stringify(noAi));

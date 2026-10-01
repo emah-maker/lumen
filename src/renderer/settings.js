@@ -1974,11 +1974,67 @@ function buildTranslate(card) {
     return stackRow(title, null, list);
   };
   card.group('Translation').append(
-    toggle('translateOffer', tr('settings.translate.offer', 'Offer to translate pages'), tr('settings.translate.offerDesc', 'When a page is in another language than yours, show a translate button and a bar. Nothing is sent anywhere until you click Translate, and the first time Lumen asks before sending a page’s text to your AI provider.')),
+    toggle('translateOffer', tr('settings.translate.offer', 'Offer to translate pages'), tr('settings.translate.offerDesc', 'When a page is in another language than yours, show a translate button and a bar. Nothing is sent anywhere until you click Translate. Translating on this device never sends the page’s text anywhere; before Lumen sends it to your AI provider, or opens Google Translate, it asks.')),
     select('translateTarget', tr('settings.translate.target', 'Translate pages into'), null,
       [['', tr('settings.translate.targetDefault', 'Lumen’s language')], ...TARGETS.map(([code, name]) => [code, `${langName(code)}` === code ? name : langName(code)])]),
+    select('translateEngine', tr('settings.translate.engine', 'Translate with'), tr('settings.translate.engineDesc', 'On this device uses Mozilla’s open-source translator (the one in Firefox): private, and works offline once a language pack is downloaded. Your connected AI is the other choice, and the fallback when there is no pack for a language.'),
+      [['local', tr('settings.translate.engine.local', 'On this device')], ['ai', tr('settings.translate.engine.ai', 'My connected AI')]]),
+    toggle('translateLocalAuto', tr('settings.translate.auto', 'Download language packs without asking'), tr('settings.translate.autoDesc', 'On-device translation needs a language pack from Mozilla, about 20 to 55 MB for each direction, downloaded once. Off: Lumen asks before each download.')),
     listRow('translateNever', tr('settings.translate.never', 'Sites never offered translation'), tr('settings.translate.neverNone', 'No sites.')),
     listRow('translateConsent', tr('settings.translate.consent', 'Allowed to receive page text'), tr('settings.translate.consentNone', 'None yet: Lumen asks the first time you translate.'), (v) => (v === 'google' ? 'Google Translate' : v)),
+  );
+  buildTranslatePacks(card);
+}
+
+// Settings → Translation → the language packs on this device (features/translate-local.js): what is
+// downloaded and how big, delete, and "Download for offline".
+function buildTranslatePacks(card) {
+  if (!S.translatePacks) return;
+  const list = h('div', { class: 'list', id: 'translate-packs' });
+  const total = h('span', { class: 'note', id: 'translate-packs-total' });
+  const pickLang = h('select', { id: 'translate-offline-language', 'aria-label': tr('settings.translate.offline', 'Download for offline') });
+  const go = h('button', { id: 'translate-offline-go', text: tr('settings.translate.offline.go', 'Download') });
+  const stop = h('button', { id: 'translate-offline-cancel', text: tr('settings.translate.offline.cancel', 'Cancel'), hidden: true });
+  const note = status('translate-offline-status');
+  let busy = false;
+  const arrow = (a, b) => `${a === 'en' ? langName('en') : langName(a)} → ${b === 'en' ? langName('en') : langName(b)}`;
+  const render = (data) => {
+    list.replaceChildren(...(data.installed.length ? data.installed.map((p) => h('div', { class: 'item' },
+      h('span', { class: 'grow', text: `${arrow(p.from, p.to)} · ${bytes(p.bytes)}` }),
+      h('button', { class: 'danger', text: tr('settings.translate.packs.delete', 'Delete'), onclick: async () => render(await S.translatePacks.remove(p.from, p.to)) })))
+      : [h('span', { class: 'note', text: tr('settings.translate.packs.none', 'None yet. A pack downloads the first time you translate to or from a language.') })]));
+    total.textContent = data.installed.length ? tr('settings.translate.packs.total', 'Using {size} in total.', { size: bytes(data.used) }) : '';
+    const chosen = pickLang.value;
+    pickLang.replaceChildren(...data.languages.map((l) => h('option', { value: l.code, text: `${langName(l.code)}${l.missing ? ` (${bytes(l.missing)})` : ` (${tr('settings.translate.offline.have', 'downloaded')})`}`, disabled: !l.missing })));
+    if (chosen && data.languages.some((l) => l.code === chosen && l.missing)) pickLang.value = chosen;
+    go.disabled = busy || !data.languages.some((l) => l.missing);
+    if (data.error && !data.languages.length) flash(note, tr('settings.translate.offline.registry', 'Couldn’t reach Mozilla’s list of language packs. Check your connection.'), 'err');
+  };
+  S.translatePacks.onProgress((info) => {
+    if (busy) flash(note, tr('settings.translate.offline.progress', 'Downloading… {percent}%', { percent: Math.round(info.fraction * 100) }), 'note');
+  });
+  go.addEventListener('click', async () => {
+    if (busy || !pickLang.value) return;
+    busy = true;
+    go.disabled = true;
+    stop.hidden = false;
+    flash(note, tr('settings.translate.offline.progress', 'Downloading… {percent}%', { percent: 0 }), 'note');
+    let out;
+    try { out = await S.translatePacks.download(pickLang.value); } catch (err) { out = { failed: String(err?.message || err), ...(await S.translatePacks.list()) }; }
+    busy = false;
+    stop.hidden = true;
+    render(out);
+    if (out.failed) flash(note, tr('settings.translate.offline.failed', 'Couldn’t download: {error}', { error: out.failed }), 'err');
+    else if (out.cancelled) flash(note, tr('settings.translate.offline.cancelled', 'Cancelled.'), 'note');
+    else flash(note, tr('settings.translate.offline.done', 'Downloaded.'));
+  });
+  stop.addEventListener('click', () => S.translatePacks.cancel());
+  S.translatePacks.list().then(render).catch(() => {});
+  card.append(
+    stackRow(tr('settings.translate.packs', 'Language packs on this device'), tr('settings.translate.packsDesc', 'Downloaded from Mozilla, stored in Lumen’s data folder, and used only by on-device translation.'), list,
+      h('div', { class: 'controls' }, total, h('button', { class: 'danger', id: 'translate-packs-delete-all', text: tr('settings.translate.packs.deleteAll', 'Delete all'), onclick: async () => render(await S.translatePacks.removeAll()) }))),
+    stackRow(tr('settings.translate.offline', 'Download for offline'), tr('settings.translate.offlineDesc', 'Get a language’s packs (to and from English) now, so translating works with no connection. Two languages without a pack between them go through English.'),
+      h('div', { class: 'controls start' }, pickLang, go, stop, note)),
   );
 }
 
