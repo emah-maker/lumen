@@ -439,7 +439,7 @@
   "newtab.stack.make": "Stack {title} with another widget",
   "newtab.stack.make.title": "Stack with another widget",
   "newtab.stack.panel": "Edit stack",
-  "newtab.stack.panel.hint": "Drag the handle or use the arrows to reorder. The pencil on a card edits the widget shown.",
+  "newtab.stack.panel.hint": "Drag the handle or use the arrows to reorder. The pencil on a card edits that widget; the stacked-squares button edits the stack.",
   "newtab.stack.done": "Done",
   "newtab.stack.new": "New stack",
   "newtab.stack.new.hint": "Pick a widget to stack with. It resizes to match if needed.",

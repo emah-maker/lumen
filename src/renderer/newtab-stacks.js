@@ -42,13 +42,13 @@
   let groups = new Map(); // widget id -> { sid, members: [ids], top, rotate, smart }
   let lastRaw = [];
   let eng = null; // the swipe or switch in progress: { sid, topId, p (drawn), raw (swipe, before resistance), edge, v, target, jump, samples, raf, h, px }
+  let endCarry = null; // { sid, raw, t }: a wheel notch that met the end of a stack and sprang back, kept for the next one
   let expecting = null; // Add widget > Smart Stack was chosen: { sids: the stacks there were, until }, so the new one's panel opens
 
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   // Small line icons, built with DOM calls (no markup strings).
   const SVG = 'http://www.w3.org/2000/svg';
   const ICON_STACK = ['M3.5 4.5h4a1.2 1.2 0 0 1 1.2 1.2v3.1a1.2 1.2 0 0 1-1.2 1.2h-4a1.2 1.2 0 0 1-1.2-1.2V5.7a1.2 1.2 0 0 1 1.2-1.2Z', 'M4.5 2.5h4a1 1 0 0 1 1 1v3.5'];
-  const ICON_MORE = ['M2.6 6h0M6 6h0M9.4 6h0'];
   const ICON_UP = ['M3 7.5 6 4.5l3 3'];
   const ICON_DOWN = ['M3 4.5 6 7.5l3-3'];
   const ICON_GRIP = ['M4.5 3.5h0M7.5 3.5h0M4.5 6h0M7.5 6h0M4.5 8.5h0M7.5 8.5h0'];
@@ -158,7 +158,7 @@
       b = el('button', 'w-icon-btn w-stack-open');
       b.type = 'button';
       b.setAttribute('aria-haspopup', 'dialog');
-      b.append(icon(ICON_MORE)); // the "…" a stacked card's header shows on hover or focus
+      b.append(icon(ICON_STACK)); // stacked squares, not a "…": the pencil beside it edits the widget, this edits the stack
       b.addEventListener('click', (e) => { e.stopPropagation(); openPanel(card, b); });
       head.append(b);
     }
@@ -342,7 +342,9 @@
     eng.raw = Math.max(-1, Math.min(1, eng.raw + step));
     const sign = Math.sign(eng.raw);
     if (eng.exempt && eng.exempt !== sign) eng.exempt = 0;
+    const was = eng.edge;
     eng.edge = !eng.exempt && SM.atEnd(g.members.indexOf(g.top), g.members.length, sign);
+    if (eng.edge && !was) pulseEnd(cardOf(eng.topId), sign);
     eng.p = SM.resist(eng.raw, eng.edge);
   }
   const groupOfEng = () => (eng ? groups.get(eng.topId) : null);
@@ -475,6 +477,14 @@
     }
     window.widgetAct(toId, 'cycle');
   }
+  // Met the end of the stack: the end dot pulses so the resistance reads as deliberate, not stuck.
+  function pulseEnd(card) {
+    if (!card) return;
+    flashRail(card);
+    card.classList.add('rail-end');
+    clearTimeout(card._endT);
+    card._endT = setTimeout(() => card.classList.remove('rail-end'), 650);
+  }
   // The rail shows fully for a moment (iOS shows its page indicator when the page changes, then lets it fade).
   function flashRail(card) {
     if (!card) return;
@@ -523,7 +533,12 @@
       if (now - lockT > 140) locked = false; else { lockT = now; return; }
     }
     if (eng && eng.sid !== g.sid) settleNow();
+    const back = eng && eng.edge && eng.target === 0 ? eng.releasedRaw : undefined; // springing back from an end: the next notch adds to what this one pushed
+    const fresh = !eng;
     if (eng) grab(); else begin(g); // a new swipe, or the card in flight is grabbed where it is
+    if (fresh && endCarry && endCarry.sid === g.sid && Date.now() - endCarry.t < 700) eng.raw = endCarry.raw; // wheel notches at an end add up until they wrap
+    if (back !== undefined) eng.raw = back;
+    if (fresh) endCarry = null;
     eng.drag = true;
     eng.jump = eng.jump && Math.sign(eng.p) === eng.jump.dir ? eng.jump : null;
     touched(g.sid);
@@ -544,7 +559,10 @@
       if (eng !== owner) return;
       const v = SM.velocityOf(owner.samples, owner.samples[owner.samples.length - 1].t, 120);
       owner.drag = false;
-      release(SM.settleTarget(owner.raw, v, owner.px, owner.edge), v / owner.px);
+      const target = SM.settleTarget(owner.raw, v, owner.px, owner.edge);
+      owner.releasedRaw = owner.raw;
+      endCarry = owner.edge && target === 0 && Math.abs(owner.raw) > 0.05 ? { sid: g.sid, raw: owner.raw, t: Date.now() } : null; // the next notch at this end adds to this one
+      release(target, v / owner.px);
     }, 90);
   }
 
@@ -751,11 +769,11 @@
     return true;
   }
   // `id` (with its stack) stacked onto `onto`: dropped on it in Edit layout, or picked in the panel.
-  function join(id, onto) {
+  function join(id, onto, anchored = false) { // anchored: the stack keeps `id`'s place and size (started from its panel)
     const ids = [...new Set([...withMembers(id), ...withMembers(onto)])];
     if (!groups.has(id) && !groups.has(onto)) watchIntro(); // a new stack (not one more card in a stack)
     record(id, ids, txt('newtab.edit.stacked', { title: titleOfId(id), onto: titleOfId(onto) }));
-    window.widgetAct(id, 'stack', { onto });
+    window.widgetAct(id, 'stack', anchored ? { onto, anchor: id } : { onto });
   }
   function leave(id) {
     record(id, withMembers(id), txt('newtab.edit.unstacked', { title: titleOfId(id) }));
@@ -862,17 +880,19 @@
   }
   // What joining does to sizes: '' when `id` already has the place's size, else a short note ("Resizes to 3×3", or
   // "Stack grows to 3×3" when a kind needs more than the stack has). `into` is a shown card of the place it joins.
-  function sizeNote(id, into) {
+  function sizeNote(id, into, anchored = false) {
     const WL = window.WidgetLayout;
     const list = pageList();
     const a = list.find((it) => it.id === id);
     const b = list.find((it) => it.id === into);
     if (!WL || !a || !b || ST.stackBlock(list, id, into, WL)) return '';
     const ids = [...new Set([...withMembers(id), ...withMembers(into)])];
-    const size = ST.stackSize(list, ids, b, WL);
+    const base = anchored ? a : b; // the stack takes the size of the card it is started from (anchored), else of the stack it joins
+    const size = ST.stackSize(list, ids, base, WL);
+    const picked = anchored ? b : a; // the widget the row names: the one whose size changes
     const fmt = (s) => `${s.w}×${s.h}`;
-    if (size.w !== b.w || size.h !== b.h) return txt('newtab.stack.grows', { size: fmt(size) });
-    return a.w !== size.w || a.h !== size.h ? txt('newtab.stack.fits', { size: fmt(size) }) : '';
+    if (size.w !== base.w || size.h !== base.h) return txt('newtab.stack.grows', { size: fmt(size) });
+    return picked.w !== size.w || picked.h !== size.h ? txt('newtab.stack.fits', { size: fmt(size) }) : '';
   }
   function pickRow(id, label, onPick, note = '') {
     const b = el('button', 'w-sp-pick');
@@ -891,9 +911,9 @@
     if (!ids.length) s.append(el('p', 'w-sp-none', txt('newtab.stack.new.none')));
     for (const onto of ids) {
       s.append(pickRow(onto, txt('newtab.stack.new.one', { title: titleOfId(id), onto: titleOfId(onto) }), () => {
-        join(id, onto);
+        join(id, onto, true);
         closePanel();
-      }, sizeNote(id, onto)));
+      }, sizeNote(id, onto, true)));
     }
     return s;
   }

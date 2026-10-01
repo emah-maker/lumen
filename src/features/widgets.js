@@ -1949,6 +1949,9 @@ function createWidgets(deps) {
     if (action.do === 'stack') { // Edit layout: this widget (and its stack) dropped onto another of the same size
       action.onto = params.get('onto');
       if (!/^w[0-9a-z]{4,20}$/.test(action.onto || '') || action.onto === id) return { invalid: true };
+      const anchor = params.get('anchor');
+      if (anchor && anchor !== id) return { invalid: true }; // the card the stack takes its size from: the one being dragged or started from
+      if (anchor) action.anchor = anchor;
     }
     if (action.do === 'restack') { // a stack's panel (order, options) and Undo of a stack change: s=<json [{ id, x, y, w, h, snap?, stack?, top?, rotate?, smart? }]>
       const raw = params.get('s') || '';
@@ -2023,7 +2026,7 @@ function createWidgets(deps) {
   // "Remove from stack" (unstack). The choice of what is shown is stored, so every new tab shows it.
   function stackAct(action) {
     const widgets = list();
-    const next = action.do === 'cycle' ? ST.select(widgets, action.id) : action.do === 'stack' ? ST.join(widgets, action.id, action.onto, WL) : ST.leave(widgets, action.id, WL);
+    const next = action.do === 'cycle' ? ST.select(widgets, action.id) : action.do === 'stack' ? ST.join(widgets, action.id, action.onto, WL, action.anchor) : ST.leave(widgets, action.id, WL);
     if (!next) return false;
     save(next);
     deps.onUpdate?.();

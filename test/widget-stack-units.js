@@ -233,6 +233,13 @@ module.exports = async function widgetStackUnits(check) {
   check('stack sizes: a kind that needs more (Muse is at least 3 by 3) raises the whole stack to the nearest size all support', ST.stackSize(rSmall, ['wa000001', 'wm000001'], { w: 2, h: 2 }, WL).w === 3 && ST.stackSize(rSmall, ['wa000001', 'wm000001'], { w: 2, h: 2 }, WL).h === 3 && rMuseStored.filter((w) => w.stack).length === 2 && rMuseStored.filter((w) => w.stack).every((w) => w.w === 3 && w.h === 3), JSON.stringify(rMuseStored.map((w) => [w.id, w.w, w.h, w.stack, w.was])));
   check('stack sizes: the members that grew remember their size, so they can leave at it', byId(rMuseStored, 'wa000001').was.w === 2 && byId(rMuseStored, 'wm000001').was.w === 4 && byId(rMuseStored, 'wm000001').was.h === 4, '');
   check('stack sizes: a full stack still says full', ST.stackBlock(cleanList(N(10)).concat([rA]), 'wa000001', 'wt0000', WL) === 'full', '');
+  // started from a card's panel: the stack keeps that card's place and size (the anchor), the picked widget adapts
+  const rAnch = ST.join(rList, 'wa000001', 'wb000001', WL, 'wa000001');
+  check('stack anchor: a stack started from a card keeps that card\'s place and size; the picked widget adapts and remembers its own', ['wa000001', 'wb000001'].every((id) => byId(rAnch, id).w === 4 && byId(rAnch, id).h === 3 && byId(rAnch, id).x === 0) && byId(rAnch, 'wa000001').top === true && byId(rAnch, 'wb000001').was.w === 3 && byId(rAnch, 'wa000001').was === undefined, JSON.stringify(rAnch.slice(0, 2)));
+  const rNoAnch = ST.join(rList, 'wa000001', 'wb000001', WL);
+  check('stack anchor: without it the stack takes the target\'s size (a drop)', byId(rNoAnch, 'wa000001').w === 3 && byId(rNoAnch, 'wa000001').was.w === 4, '');
+  const rAnchUndo = cleanList(ST.restack(cleanList(rAnch), ST.snapshot(rList, ['wa000001', 'wb000001'])));
+  check('stack anchor: Undo puts both sizes back', byId(rAnchUndo, 'wb000001').w === 3 && byId(rAnchUndo, 'wb000001').x === 4 && !byId(rAnchUndo, 'wa000001').stack, '');
   // Undo: the arrangement from before (what the page sends, do=restack) puts sizes back
   const rBefore = ST.snapshot(rList, ['wa000001', 'wb000001', 'wc000001']);
   const rUndone = cleanList(ST.restack(rStored, rBefore));
@@ -271,10 +278,10 @@ module.exports = async function widgetStackUnits(check) {
   // the page files
   const r3src = read('src/renderer/newtab-stacks.js');
   const r3html = read('src/renderer/newtab.html');
-  check('stack page: the card header\'s button is a "…" (opens Edit stack…), a right-click on the card opens the same menu as the rail', /ICON_MORE/.test(r3src) && /b\.append\(icon\(ICON_MORE\)\)/.test(r3src) && /card\.addEventListener\('contextmenu'/.test(r3src) && /function onCardMenu/.test(r3src), '');
+  check('stack page: the card header\'s button is a "…" (opens Edit stack…), a right-click on the card opens the same menu as the rail', /b\.append\(icon\(ICON_STACK\)\)/.test(r3src) && /card\.addEventListener\('contextmenu'/.test(r3src) && /function onCardMenu/.test(r3src), '');
   check('stack page: the panel shows Smart rotate only when a member can use it, else a hint', /ST\.canSmart\(/.test(r3src) && /newtab\.stack\.smart\.none/.test(r3src), '');
   check('stack page: the first-use pulse and peek (12%) run once per new stack, not with Reduce motion or Performance mode, and a swipe takes over', /const PEEK = 0\.12/.test(r3src) && /function playIntro/.test(r3src) && /introduced\.has/.test(r3src) && /reduced\(\) \|\| calm\(\)/.test(r3src) && /rail-intro/.test(r3html) && /prefers-reduced-motion: no-preference\) \{ body:not\(\.calm\) \.w-card\.rail-intro/.test(r3html), '');
-  check('stack page: the drop and the panel use the layout module (any size stacks)', /ST\.canStack\(pageList\(\), id, onto, window\.WidgetLayout\)/.test(r3src) && !/it\.w !== me\.w/.test(read('src/renderer/newtab-widgets-grid.js')) && /ST\.join\(widgets, action\.id, action\.onto, WL\)/.test(read('src/features/widgets.js')), '');
+  check('stack page: the drop and the panel use the layout module (any size stacks)', /ST\.canStack\(pageList\(\), id, onto, window\.WidgetLayout\)/.test(r3src) && !/it\.w !== me\.w/.test(read('src/renderer/newtab-widgets-grid.js')) && /ST\.join\(widgets, action\.id, action\.onto, WL, action\.anchor\)/.test(read('src/features/widgets.js')), '');
 
   // ---- the page files ----
   const src = read('src/renderer/newtab-stacks.js');

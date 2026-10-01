@@ -160,18 +160,19 @@ function freshId(list, from) {
 // Stack `id` onto `onto`: it (and its stack) joins `onto`'s stack, or the two start one. What was dropped
 // is shown, at `onto`'s place. With WL every member takes the stack's size (a member of another size remembers its
 // own in `was`). -> the new list, or null when they can't stack.
-function join(list, id, onto, WL) {
+function join(list, id, onto, WL, anchor) {
   if (!canStack(list, id, onto, WL)) return null;
   const target = list.find((w) => w.id === onto);
   const src = list.find((w) => w.id === id);
   const sid = target.stack || freshId(list, target.id);
   const moving = new Set(groupOf(list, src));
   const all = new Set([...moving, ...groupOf(list, target)]);
-  let rect = { x: target.x, y: target.y, w: target.w, h: target.h };
+  const base = (anchor && list.find((w) => w.id === anchor)) || target; // the card whose place and size the stack takes (the target, unless `anchor` names one)
+  let rect = { x: base.x, y: base.y, w: base.w, h: base.h };
   if (WL) {
     const size = stackSize(list, [...all], rect, WL);
-    const fit = WL.cleanRect(target.type, { x: target.x, y: target.y, ...size });
-    rect = { x: fit ? fit.x : target.x, y: target.y, ...size };
+    const fit = WL.cleanRect(base.type, { x: base.x, y: base.y, ...size });
+    rect = { x: fit ? fit.x : base.x, y: base.y, ...size };
   }
   const shown = src.stack ? list.find((w) => w.stack === src.stack && w.top)?.id || id : id;
   const opts = optionsOf(list, target.stack); // the stack that was there keeps its options; a new one has both on
@@ -182,7 +183,7 @@ function join(list, id, onto, WL) {
     if (was) next.was = was;
     if (!opts.rotate) next.rotate = false;
     if (!opts.smart) next.smart = false;
-    if (target.snap) next.snap = target.snap; else delete next.snap;
+    if (base.snap) next.snap = base.snap; else delete next.snap;
     if (w.id === shown) next.top = true;
     return next;
   });

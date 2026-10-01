@@ -147,6 +147,8 @@
 
   let editing = false;
   let stacked = false;
+  let hintTimer = 0; // the stack tip waits for the general tip to have had its turn
+  let hintStack = false;
   let stackHintShown = false; // the stack hint was on screen during this Edit layout
   const history = WE.createHistory(20);
 
@@ -209,9 +211,13 @@
     undoBtn.hidden = !editing;
     undoBtn.disabled = !history.some((e) => !staleEntry(e)); // only steps that would still do something
     resetBtn.hidden = !editing;
-    hint.hidden = !editing;
+    // The two tips take turns: the general one first, then (once, for a few seconds) how to stack.
+    const stackDue = editing && !stacked && store.get(STACK_HINT_KEY) !== '1';
+    if (!editing) { clearTimeout(hintTimer); hintTimer = 0; hintStack = false; }
+    else if (stackDue && !hintTimer && !hintStack) hintTimer = setTimeout(() => { hintStack = true; update(); }, 6000);
+    hint.hidden = !editing || (stackDue && hintStack);
     first.hidden = editing || real > 0 || stacked || store.get('lumen.home.editHint') === '1';
-    stackHint.hidden = !editing || stacked || store.get(STACK_HINT_KEY) === '1';
+    stackHint.hidden = !stackDue || !hintStack;
     if (!stackHint.hidden) stackHintShown = true;
     dock.hidden = stacked; // one column: no editing, and nothing to add to
     placeToast(); // the toolbar's height changed (its hint came or went)
