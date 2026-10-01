@@ -520,9 +520,9 @@ if (TEST) global.__screenshot = { tool: screenshotTool, qr: qrTool, overlay: too
 const siteSecurity = createSiteSecurity({
   dialogs,
   win: () => win,
-  isTab: (wc) => Boolean(tabByContents(wc)),
+  isTab: (wc) => Boolean(tabByContents(wc)) || privateWindows.ownsTab(wc), // (a private window's tabs too)
   certUrl: CERT_URL,
-  onChange: () => { if (tabs.length) sendTabs(); },
+  onChange: (wc) => { if (tabs.length) sendTabs(); if (wc) privateWindows.refresh(wc); },
 });
 app.on('certificate-error', siteSecurity.onCertificateError);
 if (TEST) global.__siteSecurity = siteSecurity;
@@ -534,7 +534,7 @@ const safeBrowsing = createSafeBrowsing({
   apiKey: () => safeBrowsingKey(),
   dir: () => path.join(app.getPath('userData'), 'safe-browsing'),
   fetch: (url) => session.fromPartition('lumen-safe-browsing').fetch(url, { cache: 'no-store' }),
-  isTab: (wc) => Boolean(tabByContents(wc)),
+  isTab: (wc) => Boolean(tabByContents(wc)) || privateWindows.ownsTab(wc), // (a private window's tabs too)
   dialogs,
   win: () => win,
   warnUrl: SAFE_BROWSING_URL,
@@ -687,14 +687,14 @@ function setupPermissions() {
 // run script, or are known to launch Windows tools with attacker-chosen input are never opened.
 const BLOCKED_SCHEMES = new Set(['file', 'javascript', 'vbscript', 'data', 'blob', 'filesystem', 'about', 'chrome', 'chrome-extension', 'devtools', 'view-source', 'jar', 'res', 'hcp', 'shell', 'search', 'search-ms', 'ms-msdt', 'ms-officecmd', 'ms-appinstaller', 'ms-cxh', 'ms-cxh-full', 'ms-settings', 'lumen']);
 const externalDecisions = new Map(); // `${origin}|${scheme}` -> true (allowed for this session)
-async function askOpenExternal(wc, details) {
+async function askOpenExternal(wc, details, decisions = externalDecisions) { // decisions: a private window keeps its own
   let scheme;
   let origin = '';
   try { scheme = new URL(details.externalURL).protocol.slice(0, -1).toLowerCase(); } catch { return false; }
   try { origin = new URL(details.requestingUrl || wc.getURL()).origin; } catch {}
   if (!/^[a-z][a-z0-9+.-]*$/.test(scheme) || BLOCKED_SCHEMES.has(scheme)) return false;
   const key = `${origin}|${scheme}`;
-  if (externalDecisions.get(key)) return true;
+  if (decisions.get(key)) return true;
   let host = '';
   try { host = new URL(origin).host; } catch {}
   const label = ['mailto', 'tel', 'sms'].includes(scheme) ? t(`external.${scheme}`) : t('external.other', { scheme });
@@ -708,22 +708,23 @@ async function askOpenExternal(wc, details) {
     owner: wc,
   });
   if (cancelled || response !== 1) return false;
-  externalDecisions.set(key, true);
+  decisions.set(key, true);
   return true;
 }
 
 // Screen sharing (Meet, Zoom, Teams on the web) failed outright: there was no handler for
 // getDisplayMedia. The user picks an entire screen or one window from a menu of thumbnails;
-// closing the menu shares nothing.
-async function pickScreenToShare(request, callback) {
+// closing the menu shares nothing. `owner`: the window asking, when it isn't the current one (a private window).
+async function pickScreenToShare(request, callback, owner = null) {
+  const shown = owner && !owner.isDestroyed() ? owner : win;
   let done = false;
   const answer = (streams) => { if (!done) { done = true; callback(streams); } };
   try {
     const { desktopCapturer, nativeImage } = require('electron');
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 96, height: 60 }, fetchWindowIcons: false });
-    const lumen = win && !win.isDestroyed() ? win.getMediaSourceId() : '';
+    const lumen = shown && !shown.isDestroyed() ? shown.getMediaSourceId() : '';
     const pickable = sources.filter((s) => s.id !== lumen);
-    if (!pickable.length || !win || win.isDestroyed()) return answer({});
+    if (!pickable.length || !shown || shown.isDestroyed()) return answer({});
     let host = '';
     try { host = new URL(request.securityOrigin || request.frame?.url || '').host; } catch {}
     let picked = null;
@@ -738,7 +739,7 @@ async function pickScreenToShare(request, callback) {
       { type: 'separator' },
       { label: t('menu.cancel') },
     ]).popup({
-      window: win,
+      window: shown,
       // The click runs just after the menu closes; give it a moment before answering.
       callback: () => setTimeout(() => answer(picked ? { video: picked, ...(request.audioRequested && process.platform === 'win32' && picked.id.startsWith('screen:') ? { audio: 'loopback' } : {}) } : {}), 50),
     });
@@ -822,14 +823,48 @@ const adblock = createAdblock({
 });
 
 // ---------- private windows (features/private-window.js) ----------
-// Native dialogs there: Lumen's in-window dialogs (features/dialogs.js) draw over the main window.
+// Native dialogs there for permissions and downloads; Safe Browsing and certificate warnings use Lumen's
+// own (features/dialogs.js draws them in the private window, the tab's own window).
 const privateWindows = createPrivateWindows({
-  BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
+  BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl, Menu, clipboard, shell,
   resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
+  t, strings: () => i18n().strings, locale: () => i18n().locale,
+  testBackground: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND), // (TEST_BACKGROUND is declared further down)
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
-  // Private sessions get the profile's proxy, Do Not Track / Global Privacy Control, languages and Chrome hints.
-  mirrorSession: (ses) => settingsBackend.mirrorSession(ses),
-  Menu,
+  // The protections a normal tab has: Safe Browsing (until the ad blocker takes over onBeforeRequest, which
+  // sends pages to the same gate), the ad blocker's filters, readable dropdowns, and the profile's proxy,
+  // Do Not Track / Global Privacy Control, languages and Chrome hints.
+  prepareSession: (ses) => {
+    ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
+    ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+    settingsBackend.mirrorSession(ses);
+    adblock.attachSession(ses);
+  },
+  releaseSession: (ses) => { adblock.detachSession(ses); settingsBackend.unmirrorSession(ses); },
+  // Each private tab: HTTPS-only and the default zoom, Safe Browsing's and the certificate warning's way past,
+  // mixed-content reports, and the error pages a normal tab shows (offline, unsafe, bad certificate, crashed).
+  prepareTab: (wc) => {
+    settingsBackend.attachTab(wc);
+    safeBrowsing.attachTab(wc);
+    siteSecurity.attachTab(wc);
+    tabFailPage(wc);
+  },
+  tabWebPreferences: () => settingsBackend.tabWebPreferences(false), // font sizes, spell check, plugins for protected video
+  // Permissions as in a normal window, except that answers are kept for the window only: Settings' "Block" defaults,
+  // the screen-sharing picker (over the private window), and "Open the app for mailto: links?".
+  permissionDefault: (permission) => settingsBackend.permissionDefault(permission),
+  pickScreen: (request, callback, owner) => pickScreenToShare(request, callback, owner),
+  askOpenExternal: (wc, details, decisions) => askOpenExternal(wc, details, decisions),
+  defaultZoom: () => settingsBackend.prefs().defaultZoom,
+  realUrl: (wc) => realUrl(wc),
+  securityState: (wc) => siteSecurity.stateOf(wc),
+  zoom: (wc, step) => zoomBy(wc, step),
+  searchFor: (text) => ({ engine: engineFor(readSettings().searchEngine).label, url: searchUrlFor(readSettings().searchEngine, text) }),
+  downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
+  askWhereToSave: () => settingsBackend.askWhereToSave(),
+  // Settings (Cmd+,) open in a normal window, as Chrome does from Incognito.
+  openSettings: () => { const rec = focusedRec(); if (!rec) return; enterWindow(rec); openSettingsPage(); rec.win.show(); rec.win.focus(); },
+  onFocusChange: () => refreshWindowMenu(), // the macOS menu bar's commands follow the focused window
   // Private tabs present themselves as Chrome too (the same identity and request headers as normal tabs), or
   // Google sign-in in a private window is refused as an unknown browser.
   chromeIdentity: (wc) => applyChromeIdentity(wc),
@@ -1611,16 +1646,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     tab.favicon = tab.favicons[0] || null;
   });
   wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc); });
-  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
-    if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
-    const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
-    if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
-    if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
-    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
-    if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
-    const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
-    wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
-  });
+  tabFailPage(wc);
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
@@ -3123,6 +3149,20 @@ function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
   wc.on('did-navigate', check);
   wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads
 }
+// A tab's page that fails to load: the Safe Browsing warning, the HTTPS-only page, the certificate warning or the
+// error page, in that order (normal tabs and private ones).
+function tabFailPage(wc) {
+  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
+    const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
+    if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
+    if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
+    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
+    if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
+    const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
+    wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
+  });
+}
 // A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
 function popupFailPage(wc) {
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
@@ -3657,45 +3697,50 @@ function refreshWindowMenu() {
 function macMenu() {
   const shown = (accelerator) => ({ accelerator, registerAccelerator: false });
   const wc = () => activeTab()?.webContents;
+  // A private window in front: a command it has goes to it (features/private-window.js); one it lacks is
+  // greyed out (and does nothing), never sent to the normal window behind it.
+  const priv = privateWindows.focused();
+  const pv = (name, fn) => () => { if (!privateWindows.command(name)) fn(); };
+  const normal = (item) => ({ ...item, enabled: !priv && item.enabled !== false, ...(item.click ? { click: (...args) => { if (!privateWindows.focused()) item.click(...args); } } : {}) });
   return Menu.buildFromTemplate([
     { role: 'appMenu' },
     {
       label: t('menu.file'),
       submenu: [
-        { label: t('menu.newTab'), ...shown('Cmd+T'), click: () => openTab() },
+        { label: t('menu.newTab'), ...shown('Cmd+T'), click: pv('newTab', () => openTab()) },
         { label: t('menu.newPrivateWindow'), ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
-        { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: reopenLastClosed },
-        { label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch },
-        { label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog },
-        { label: t('menu.openLocation'), ...shown('Cmd+L'), click: focusAddress },
+        { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: pv('reopenTab', reopenLastClosed) },
+        normal({ label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch }),
+        normal({ label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog }),
+        { label: t('menu.openLocation'), ...shown('Cmd+L'), click: pv('focusAddress', focusAddress) },
         { type: 'separator' },
-        { label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
-        { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: () => takeScreenshot(wc()) },
-        { label: t('menu.qrCode'), click: () => showQrCode(wc()) },
-        { label: t('menu.print'), ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
+        normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),
+        { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: pv('screenshot', () => takeScreenshot(wc())) },
+        normal({ label: t('menu.qrCode'), click: () => showQrCode(wc()) }),
+        { label: t('menu.print'), ...shown('Cmd+P'), click: pv('print', () => wc()?.print({}, () => {})) },
         { type: 'separator' },
-        { label: t('menu.closeTab'), ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
+        { label: t('menu.closeTab'), ...shown('Cmd+W'), click: pv('closeTab', () => { if (activeId) requestCloseTab(activeId); }) },
       ],
     },
     { role: 'editMenu' },
     {
       label: t('menu.view'),
       submenu: [
-        { label: t('menu.reload'), ...shown('Cmd+R'), click: () => reloadActive() },
-        { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: () => reloadActive({ ignoreCache: true }) },
-        { label: t('menu.find'), ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
-        { label: t('menu.readerMode'), click: () => toggleReaderActive() },
-        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
-        { label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
+        { label: t('menu.reload'), ...shown('Cmd+R'), click: pv('reload', () => reloadActive()) },
+        { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: pv('forceReload', () => reloadActive({ ignoreCache: true })) },
+        { label: t('menu.find'), ...shown('Cmd+F'), click: pv('find', () => { ui()?.focus(); ui()?.send('find:open'); }) },
+        normal({ label: t('menu.readerMode'), click: () => toggleReaderActive() }),
+        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))).map(normal),
+        normal({ label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } }),
         { type: 'separator' },
-        { label: t('menu.zoomIn'), ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
-        { label: t('menu.zoomOut'), ...shown('Cmd+-'), click: () => zoomBy(wc(), -0.5) },
-        { label: t('menu.actualSize'), ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
+        { label: t('menu.zoomIn'), ...shown('Cmd+='), click: pv('zoomIn', () => zoomBy(wc(), 0.5)) },
+        { label: t('menu.zoomOut'), ...shown('Cmd+-'), click: pv('zoomOut', () => zoomBy(wc(), -0.5)) },
+        { label: t('menu.actualSize'), ...shown('Cmd+0'), click: pv('actualSize', () => zoomBy(wc(), 0)) },
         { type: 'separator' },
-        { label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
-        { label: t('menu.newSidebarChat'), ...shown('Shift+Cmd+K'), click: newSidebarChat },
-        { label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage },
-        { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
+        normal({ label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') }),
+        normal({ label: t('menu.newSidebarChat'), ...shown('Shift+Cmd+K'), click: newSidebarChat }),
+        normal({ label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage }),
+        { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: pv('devTools', () => wc()?.toggleDevTools()) },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
@@ -3703,24 +3748,24 @@ function macMenu() {
     {
       label: t('menu.history'),
       submenu: [
-        { label: t('menu.back'), ...shown('Cmd+['), click: () => wc()?.navigationHistory.goBack() },
-        { label: t('menu.forward'), ...shown('Cmd+]'), click: () => wc()?.navigationHistory.goForward() },
-        { label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage },
+        { label: t('menu.back'), ...shown('Cmd+['), click: pv('back', () => wc()?.navigationHistory.goBack()) },
+        { label: t('menu.forward'), ...shown('Cmd+]'), click: pv('forward', () => wc()?.navigationHistory.goForward()) },
+        normal({ label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage }),
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [{ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }, { label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }, { label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }] },
+    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') })] },
     // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
     {
       label: t('menu.tab'),
       submenu: [
-        { label: t('menu.nextTab'), ...shown('Alt+Cmd+Right'), click: () => cycleTab(1) },
-        { label: t('menu.previousTab'), ...shown('Alt+Cmd+Left'), click: () => cycleTab(-1) },
+        { label: t('menu.nextTab'), ...shown('Alt+Cmd+Right'), click: pv('nextTab', () => cycleTab(1)) },
+        { label: t('menu.previousTab'), ...shown('Alt+Cmd+Left'), click: pv('previousTab', () => cycleTab(-1)) },
         { type: 'separator' },
-        { label: t('menu.newTabRight'), click: () => { if (activeId) newTabRightOf(activeId); } },
-        { label: t('menu.duplicateTab'), click: () => { if (activeId) duplicateTab(activeId); } },
+        normal({ label: t('menu.newTabRight'), click: () => { if (activeId) newTabRightOf(activeId); } }),
+        normal({ label: t('menu.duplicateTab'), click: () => { if (activeId) duplicateTab(activeId); } }),
       ],
     },
-    { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
+    { label: t('menu.downloads'), submenu: [normal({ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') })] },
     // The standard Window menu, written out (a role's own submenu can't take an extra item); macOS adds the window list to the menu with this role.
     { role: 'window', label: t('menu.window'), submenu: [
       { role: 'minimize' }, { role: 'zoom' },
@@ -5304,6 +5349,7 @@ const agent = new Agent({
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
+  claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
