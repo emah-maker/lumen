@@ -4,6 +4,10 @@ const { getDomain } = require('tldts-experimental');
 const knowledge = require('../features/topic-knowledge');
 
 const GROUP_COLORS = ['blue', 'purple', 'pink', 'red', 'orange', 'yellow', 'green', 'gray'];
+// The order new groups are coloured in, and the colours that read as one another at a glance (red and pink, blue and purple ...): two groups side by side
+// never share a colour, and take a look-alike only when the strip has no other left (spreadColors).
+const COLOR_CYCLE = ['blue', 'orange', 'green', 'pink', 'purple', 'yellow', 'red', 'gray'];
+const LOOKALIKE = { red: ['pink', 'orange'], pink: ['red', 'purple'], orange: ['red', 'yellow'], yellow: ['orange'], blue: ['purple'], purple: ['blue', 'pink'], green: [], gray: [] };
 
 const KNOWN_SITES = {
   youtube: 'YouTube', github: 'GitHub', wikipedia: 'Wikipedia', google: 'Google', reddit: 'Reddit',
@@ -141,6 +145,8 @@ const camelWords = (s) => String(s).replace(/([a-z0-9])([A-Z])/g, '$1 $2').repla
 // ("running" -> "runn" -> "run"). Approximate on purpose - only used as a matching key, never shown.
 function stem(w) {
   if (/^careers?$/.test(w)) return 'career'; // not "care" ("Houseplant care" is no job search)
+  if (/^programm(ing|ers?)$/.test(w)) return 'programming'; // not "program" (a degree program, a TV program, a loyalty program is no coding)
+  if (w === 'canvas') return w; // the school site, never "Canva" (the design tool): stems match exactly, no prefix or edit-distance links
   if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
   let s = w;
   if (s.length > 5 && s.endsWith('ing') && /[aeiou]/.test(s.slice(0, -3))) s = s.slice(0, -3);
@@ -161,12 +167,14 @@ const GENERIC_KEYS = new Set(knowledge.GENERIC_WORDS.split(/\s+/).filter(Boolean
 const WEAK_KEYS = new Set(knowledge.WEAK_WORDS.split(/\s+/).filter(Boolean).map(stem));
 const isGenericKey = (k) => GENERIC_KEYS.has(k) || WEAK_KEYS.has(k);
 
+// Endings of Russian (and Ukrainian) nouns and adjectives: "Берлин", "Берлина", "в Берлине" are one word.
+const CYRILLIC_ENDING = /(?:ами|ями|ого|его|ому|ему|ыми|ими|ией|ии|ах|ях|ов|ев|ей|ой|ом|ем|ую|юю|ая|яя|ое|ее|ые|ие|ых|их|ам|ям|ым|им|ый|ий|ию|ия|ью|а|я|ь|у|ю|ы|и|е|о)$/;
 // Built-in knowledge (features/topic-knowledge.js) keyed by stem: city -> country, word -> concept,
 // domain -> category.
 const PLACE_OF = new Map();
 for (const [country, cities] of Object.entries(knowledge.PLACES)) for (const city of cities.split(/\s+/)) PLACE_OF.set(stem(city), country);
 const CONCEPT_OF = new Map();
-for (const [concept, words] of Object.entries(knowledge.CONCEPTS)) for (const w of words.split(/\s+/)) CONCEPT_OF.set(stem(w), concept);
+for (const [concept, words] of Object.entries(knowledge.CONCEPTS)) for (const w of words.split(/\s+/)) CONCEPT_OF.set(stemWord(w), concept); // (stemWord: a Russian dish is one key in every case)
 // A word may say a second concept besides its own (knowledge.CONCEPT_ALSO: "mortgage" is finance and housing).
 const CONCEPTS_OF = new Map([...CONCEPT_OF].map(([k, c]) => [k, [c]]));
 for (const [w, concept] of Object.entries(knowledge.CONCEPT_ALSO)) { const k = stem(w); CONCEPTS_OF.set(k, [...new Set([...(CONCEPTS_OF.get(k) || []), concept])]); }
@@ -338,8 +346,6 @@ function sharedRun(titles, need) {
   const script = '\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}\\p{scx=Hangul}';
   return best.replace(new RegExp(`([A-Za-z0-9])(?=[${script}])|([${script}])(?=[A-Za-z0-9])`, 'gu'), (m) => `${m} `); // "Python編程" -> "Python 編程"
 }
-// Endings of Russian (and Ukrainian) nouns and adjectives: "Берлин", "Берлина", "в Берлине" are one word.
-const CYRILLIC_ENDING = /(?:ами|ями|ого|его|ому|ему|ыми|ими|ией|ии|ах|ях|ов|ев|ей|ой|ом|ем|ую|юю|ая|яя|ое|ее|ые|ие|ых|их|ам|ям|ым|им|ый|ий|ию|ия|ью|а|я|ь|у|ю|ы|и|е|о)$/;
 // Words that say what kind of page it is, not what it is about ("Рецепт борща", "Купить iPhone", "Погода в Москве"): the Russian
 // counterpart of CJK_FILLER_WORDS. Written in any case (compared by stemWord's key), so one form of each is enough.
 const RU_FILLER = new Set(`рецепт купить покупка цена погода новости лучший отзыв отзывы скачать смотреть онлайн бесплатно сегодня
@@ -404,12 +410,15 @@ function courseCodes(text) {
 
 // A title (or address words) with its brand phrases taken out -> { text, concepts }: see knowledge.BRAND_PHRASES.
 const COMMON_CAPS = new Set(knowledge.COMMON_CAPS.split(/\s+/).filter(Boolean));
+// Ordinary English words ("practice", "shift", "sheet", "night"): two of them shared by two tabs are a coincidence, so a pair of shared words is only
+// evidence when one of them is more than that (see sharedEvidence).
+const ORDINARY_KEYS = new Set(`${knowledge.COMMON_CAPS} ${knowledge.ORDINARY_WORDS}`.split(/\s+/).filter(Boolean).map(stem));
 function maskBrands(text) {
   const concepts = new Set();
   let out = String(text || '');
   for (const [re, concept] of knowledge.BRAND_PHRASES) {
     if (!re.test(out)) continue;
-    if (concept) concepts.add(concept);
+    for (const c of String(concept).split(' ')) if (c) concepts.add(c); // a phrase may say more than one concept ("jobs nursing")
     out = out.replace(new RegExp(re.source, 'gi'), ' ');
   }
   return { text: out, concepts };
@@ -525,6 +534,9 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   // Phrases that say a concept ("closing costs"), and what a brand is ("Hilton Garden Inn": travel), and pages whose address says what they are.
   for (const [re, concept] of knowledge.PHRASE_CONCEPTS) if (re.test(`${plainTitle} ${q} ${subText}`)) addConcept(concept);
   for (const concept of brands.concepts) addConcept(concept);
+  // A nurse's job, degree or loan is a job, a degree or a loan before it is nursing: it joins those tabs, not the clinical ones ("Nurse salary" is not
+  // beside NCLEX prep). Only the tabs about the work itself keep the concept.
+  if (words.has('%nursing') && ['jobs', 'education', 'finance'].some((c) => words.has(`%${c}`))) words.delete('%nursing');
   const host = hostname(url);
   for (const [re, concept] of knowledge.URL_CATEGORIES) if (re.test(`${host.replace(/^www\./, '')}${pathname}`)) addConcept(concept);
   for (const [site, city] of knowledge.SITE_PLACES) if (host === site || host.endsWith(`.${site}`)) placed.add(city);
@@ -536,6 +548,7 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   // Distinctive names: an acronym (ASGCT, CRISPR) or a capitalised word that is not an ordinary one (Medicare, Lipofectamine) is a topic by itself when
   // another tab says it too (see distinctGroups). A shouted title or a Title Case one says nothing by its capitals.
   words.distinct = new Set();
+  words.solid = new Set(); // ...of which these are no mere sentence-initial capital ("Sheet pan chicken"): acronyms, camel-case brands, names written mid-sentence
   {
     const letters = cleanTitle.replace(/[^\p{L}]/gu, '');
     const shouting = letters.length >= 8 && letters.replace(/[^\p{Lu}]/gu, '').length > letters.length * 0.6;
@@ -549,11 +562,13 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
       const key = stemWord(lower);
       const acronym = !shouting && /^\p{Lu}+$/u.test(raw);
       const name = /^\p{Lu}\p{Ll}+$/u.test(raw) && words.capital.has(key) && !COMMON_CAPS.has(lower);
-      if (!acronym && !name) continue;
+      // A brand written with a capital inside (GitHub, iPhone, PyTorch, OpenAI) is a rare proper noun too.
+      const camel = /^\p{Lu}\p{Ll}+(\p{Lu}\p{Ll}*)+$|^\p{Ll}+\p{Lu}\p{L}*$/u.test(raw) && !shouting;
+      if (!acronym && !name && !camel) continue;
       // (a page's own site's name is no name another page can share, unless it is an acronym: ASGCT's own pages say it)
-      if (STOPWORDS.has(lower) || isGenericKey(key) || NAV_WORDS.has(key) || BRAND_KEYS.has(key) || isPlaceKey(key) || (!acronym && hostLabels.some((l) => l.replace(/[^a-z0-9]/g, '') === lower))) continue;
+      if (STOPWORDS.has(lower) || isGenericKey(key) || NAV_WORDS.has(key) || (BRAND_KEYS.has(key) && !camel) || isPlaceKey(key) || (!acronym && hostLabels.some((l) => l.replace(/[^a-z0-9]/g, '') === lower))) continue;
       if (acronym && !words.has(key)) words.set(key, { weight: 1, surface: raw });
-      if ((words.get(key)?.weight ?? 0) >= 0.8) words.distinct.add(key);
+      if ((words.get(key)?.weight ?? 0) >= 0.8) { words.distinct.add(key); if (acronym || camel || words.proper.has(key)) words.solid.add(key); }
     }
   }
   return words;
@@ -590,8 +605,23 @@ function vectorize(entries, { allowCommon = false } = {}) {
     for (const variant of new Set([b, b.replace(/(js|hq|io|py|css|ui|dev|lang|cli)$/, '')])) {
       if (variant.length < 3) continue;
       const key = stem(variant);
-      if (docs.some((o) => o.site !== d.site && (o.words.get(key)?.weight ?? 0) >= 0.8)) d.words.set(key, { weight: 1, surface: d.words.get(key)?.surface || variant.charAt(0).toUpperCase() + variant.slice(1) });
+      const namers = docs.filter((o) => o.site !== d.site && (o.words.get(key)?.weight ?? 0) >= 0.8);
+      if (namers.length) {
+        d.words.set(key, { weight: 1, surface: d.words.get(key)?.surface || variant.charAt(0).toUpperCase() + variant.slice(1) });
+        // A site called Zod, and pages of other sites that name it: a rare proper noun, a topic by itself for every tab that says it (see sharedEvidence).
+        if (!COMMON_CAPS.has(key) && !ORDINARY_KEYS.has(key) && !isGenericKey(key)) for (const t of [d, ...namers]) { t.words.distinct.add(key); t.words.solid.add(key); }
+      }
     }
+  }
+  // A three-letter name (a site called Zod) is too short for tabWords' `distinct`, but it is one when a page of another site writes it as a name.
+  for (const d of docs) {
+    const label = (d.site || '').split('.')[0];
+    const key = label.length === 3 && /^[a-z]+$/.test(label) ? stem(label) : '';
+    if (!key || STOPWORDS.has(label) || COMMON_CAPS.has(label) || ORDINARY_KEYS.has(key) || isGenericKey(key) || BRAND_KEYS.has(key)) continue;
+    const namers = docs.filter((o) => o.site !== d.site && o.words.capital.has(key) && (o.words.get(key)?.weight ?? 0) >= 0.8);
+    if (!namers.length) continue;
+    if (!d.words.has(key)) d.words.set(key, { weight: 1, surface: label.charAt(0).toUpperCase() + label.slice(1) });
+    for (const t of [d, ...namers]) { t.words.distinct.add(key); t.words.solid.add(key); }
   }
   const df = new Map();
   for (const d of docs) for (const key of d.words.keys()) df.set(key, (df.get(key) || 0) + 1);
@@ -651,6 +681,7 @@ function vectorize(entries, { allowCommon = false } = {}) {
   for (const d of docs) { d.named = named; d.exempt = exempt; }
   docs.df = df;
   docs.n = n;
+  for (const d of docs) d.nameKey = siteNameKey(d);
   docs.distinct = new Map(); // distinctive name -> the tabs (doc indices) that say it in their title
   docs.forEach((d, i) => { for (const k of d.words.distinct || []) { if (!docs.distinct.has(k)) docs.distinct.set(k, []); docs.distinct.get(k).push(i); } });
   return docs;
@@ -685,7 +716,7 @@ const strongCounts = (list) => {
 };
 // -> { key, score } for the best shared word, or null. ca/cb: precomputed strongCounts (optional).
 function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
-  let best = null;
+  const cands = []; // the shared words that pass every test below: one of them is never enough (see sharedEvidence), so they are weighed together at the end
   // No word in common, no link (and no need to work out what either group is characterised by).
   if (!(ca.size <= cb.size ? [...ca.keys()].some((k) => cb.has(k)) : [...cb.keys()].some((k) => ca.has(k)))) return null;
   // A group (3+ tabs) characterised by a word the other never has (a kitchen renovation, a Tokyo
@@ -699,8 +730,8 @@ function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
   for (const [k, a] of ca) {
     const b = cb.get(k);
     if (!b || (n >= 8 && df.get(k) / n > ANCHOR_MAX_DF && !A[0].exempt.has(k))) continue;
-    // A city is one topic's anchor only for tabs that are about travel or housing (a bus to Boston and a Boston flat are not the ramen in Boston).
-    if (isCityKey(k) && !['travel', 'housing'].some((c) => A.filter((d) => d.words.has(`%${c}`)).length * 2 > A.length && B.filter((d) => d.words.has(`%${c}`)).length * 2 > B.length)) continue;
+    // A place is one topic's anchor only for tabs that are about travel or housing (a bus to Boston and a Boston flat are not the ramen in Boston).
+    if (isPlaceKey(k) && !['travel', 'housing'].some((c) => A.filter((d) => d.words.has(`%${c}`)).length * 2 > A.length && B.filter((d) => d.words.has(`%${c}`)).length * 2 > B.length)) continue;
     // A lone tab that names a product or brand and only shares a place with the group ("Купить iPhone в Москве" among
     // Moscow weather and news) is not of that topic: same rule as cosine()'s.
     const lone = A.length === 1 ? A[0] : B.length === 1 ? B[0] : null;
@@ -715,13 +746,73 @@ function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
       if (process.env.DBG_ANCHOR) console.error(`VETO [${A.map((d) => d.title.slice(0, 14)).join(' / ')}] + [${B.map((d) => d.title.slice(0, 14)).join(' / ')}] via ${k} fa=${fa.toFixed(2)} fb=${fb.toFixed(2)} own=${ownA.toFixed(2)},${ownB.toFixed(2)} cos=${cosine(centroidOf(A), centroidOf(B)).toFixed(2)}`);
       continue;
     }
-    const score = Math.min(fa, fb) * (Math.log((n + 1) / (df.get(k) + 1)) + 1);
-    if (!best || score > best.score) best = { key: k, score };
+    cands.push({ key: k, score: Math.min(fa, fb) * (Math.log((n + 1) / (df.get(k) + 1)) + 1) });
   }
+  // A place beside travel or housing words on both sides (checked above) and a distinctive name (an acronym, a rare proper noun) link alone; any other word
+  // needs a second one, one of them no ordinary English word.
+  const distinct = (k) => [...A, ...B].some((d) => d.words.solid?.has(k)) || ([...A, ...B].filter((d) => holdsName(d, k)).length >= 2 && [...A, ...B].some((d) => d.words.distinct?.has(k)));
+  const alone = cands.filter((c) => isPlaceKey(c.key) || distinct(c.key));
+  const plain = cands.filter((c) => !alone.includes(c) && !NAV_WORDS.has(c.key) && !BRAND_KEYS.has(c.key) && !isGenericKey(c.key));
+  const pooled = plain.length >= 2 && plain.some((c) => !ORDINARY_KEYS.has(c.key)) ? plain : [];
+  let best = null;
+  for (const c of [...alone, ...pooled]) if (!best || c.score > best.score) best = c;
   return best;
 }
 
-function cosine(a, b) {
+// ---------- the one rule: what two tabs (or a tab and a group, or two groups) must share before they are linked ----------
+//
+// A SINGLE shared word is never enough, anywhere ("sheet" in a cheat sheet and a sheet-pan recipe, "practice", "shift", "study"): twelve rounds of
+// patching one word at a time never converged. Two things link only with one of
+//   1. a shared concept (knowledge.CONCEPTS: nursing, travel, finance ...) that most of each side carries;
+//   2. the same site (the existing same-site rules decide how much it is worth: siteJoin, SAME_SITE_LINK);
+//   3. two shared topic words, exact stems (no prefix or edit-distance matches: "Canva" is not "Canvas"), at least one of them no ordinary English word;
+//   4. a shared run of CJK characters (dropFragmentLinks keeps only whole runs);
+//   5. a distinctive name (an acronym or a rare proper noun: tabWords `distinct`) one of them says and the other has too, or a shared repository.
+// A place is never one of these words: it links tabs only beside travel or housing words, which are a concept (1). Every path that links tabs asks
+// this one function: cosine (and so the clustering, the centroid merge, the absorb, the pulls and the mega-group split), anchorLink, pairShares and
+// the cohesion check (supportsOf) - so nothing a stage lets through can stay a group on one coincidental word.
+// Does this tab (or group) hold the distinctive name k: its title says it, or it is on the site called that (ASGCT's own pages)?
+const holdsName = (x, k) => Boolean(x.words?.distinct?.has(k) || x.nameKey === k || x.words?.nameKeys?.has(k));
+// A distinctive name is shared by two tabs: one of them writes it as a name (an acronym, a camel-case brand, a capital mid-sentence) and the other has the word;
+// or both hold it (a capital at the start of a title is a name only when another title or a site of that name says it too: "Sheet pan chicken" is no "Sheet").
+const sharesName = (a, b, k) => Boolean(a.words?.solid?.has(k) || b.words?.solid?.has(k)) || (holdsName(a, k) && holdsName(b, k) && Boolean(a.words?.distinct?.has(k) || b.words?.distinct?.has(k)));
+const SHARE_WORD = 0.25; // a group's word counts as shared when this share of its tabs carry it
+const SHARE_CONCEPT = 0.5; // ...and its concept when most of them do
+function sharedEvidence(a, b) {
+  if (a.siteKey && a.siteKey === b.siteKey && siteGroupable(a)) return true;
+  let words = 0;
+  let uncommon = false;
+  let travel = false; // travel is a broad concept: a trip needs a place both name (below)
+  let place = false;
+  for (const k of a.vec.keys()) {
+    if (!b.vec.has(k)) continue;
+    const lead = k[0];
+    if (lead === '#' || lead === '^' || lead === '~') continue; // letter fragments, a site's own name and word pairs are never words of their own
+    const [sa, sb] = [a.share ? a.share.get(k) || 0 : 1, b.share ? b.share.get(k) || 0 : 1]; // a group: the share of its tabs that carry it
+    if (lead === '%') { if (k !== '%shopping' && sa >= SHARE_CONCEPT && sb >= SHARE_CONCEPT) { if (k === '%travel' && Math.max(a.n || 1, b.n || 1) < 3) travel = true; else return true; } continue; }
+    if (lead === '@') return true; // a repository both name
+    if (CJK.test(k)) return true;
+    if (isRealKey(k) && isPlaceKey(k)) { place = true; continue; }
+    if (!isRealKey(k) || NAV_WORDS.has(k) || isGenericKey(k) || Math.min(sa, sb) < SHARE_WORD) continue;
+    if (sharesName(a, b, k)) return true; // a distinctive name (a brand too, GitHub, when a page that is not its own names it)
+    if (a.exempt?.has(k)) return true; // the window's own topic: a word that every tab carries and several sites write in their titles (vectorize keeps it only then)
+    if (BRAND_KEYS.has(k)) continue;
+    words++;
+    if (!ORDINARY_KEYS.has(k)) uncommon = true;
+  }
+  // A place counts as one of the two words, beside a topic word that is no ordinary one ("Kyoto temples"); never twice (Tokyo and Japan), never alone.
+  return (uncommon && (words >= 2 || place)) || (travel && place) || joinsBigTrip(a, b) || joinsBigTrip(b, a);
+}
+// A big trip (a Japan trip of SPLIT_PLACE_TOPIC+ tabs, most of them its place) takes in a tab that names that place and nothing else of its own - a
+// map pin, a restaurant list ("Tokyo - Google Maps") - the one case where a place alone links. Never a tab that is about something else: a job, a flat.
+function joinsBigTrip(group, tab) {
+  if (!group.share || group.n < SPLIT_PLACE_TOPIC || tab.n >= SPLIT_PLACE_TOPIC || (group.share.get('%travel') || 0) < SHARE_CONCEPT) return false;
+  for (const k of tab.vec.keys()) if (k[0] === '%' && k !== '%shopping') return false;
+  for (const k of tab.vec.keys()) if (isRealKey(k) && isPlaceKey(k) && (group.share.get(k) || 0) >= 0.6) return true;
+  return false;
+}
+
+function cosine(a, b, gated = true) {
   if (!a.norm || !b.norm) return 0;
   const sameSite = Boolean(a.site) && a.site === b.site;
   let dot = 0;
@@ -747,6 +838,7 @@ function cosine(a, b) {
   if (cities && !beyondPlaces) return 0;
   // Three letter fragments alone ("documentation" / "compilation") are a coincidence unless there are many.
   if (trigrams === sharedReal && trigrams < 5) return 0;
+  if (gated && !sharedEvidence(a, b)) return 0; // one word, or letter fragments, or a place: no link (see sharedEvidence)
   // Two otherwise-unrelated tabs whose only REAL overlap is one word: trust it only if that word
   // was strong (title/query weight) in both, same reasoning as the solo-dimension case above. A
   // template-discounted word doesn't count towards "real" overlap, so it can't pad the count and
@@ -787,7 +879,12 @@ function centroidOf(docs) {
   words.retail = docs.filter((d) => d.words?.retail).length * 2 > docs.length;
   words.capital = new Set([...vec.keys()].filter((k) => docs.every((d) => !d.vec.has(k) || d.words?.capital?.has(k))));
   words.proper = new Set([...words.capital].filter((k) => docs.some((d) => d.words?.proper?.has(k))));
-  return { vec, norm: Math.hypot(...vec.values()), words, own: docs.reduce((n, d) => n + ownWords(d), 0) / docs.length };
+  words.distinct = new Set([...vec.keys()].filter((k) => docs.some((d) => d.words?.distinct?.has(k))));
+  words.nameKeys = new Set(docs.map((d) => d.nameKey).filter(Boolean)); // the sites' own names (see holdsName)
+  words.solid = new Set([...vec.keys()].filter((k) => docs.some((d) => d.words?.solid?.has(k))));
+  const share = new Map(); // how many of the group's tabs carry each word (sharedEvidence: a word one tab of twenty has is not the group's)
+  for (const d of docs) for (const k of d.vec.keys()) share.set(k, (share.get(k) || 0) + 1 / docs.length);
+  return { vec, norm: Math.hypot(...vec.values()), words, share, n: docs.length, exempt: docs[0]?.exempt, own: docs.reduce((n, d) => n + ownWords(d), 0) / docs.length };
 }
 
 // A cluster's centroid, remembered per cluster array: a cluster that has not grown is not pooled again (the merge loops compare every
@@ -1187,24 +1284,11 @@ function distinctGroups(clusters, docs) {
 // a site, a concept), every group is checked once more, here, against evidence that does not depend on how it formed. Tabs of a group are
 // kept when they share, with other tabs of the group, at least one of:
 //   - a concept (knowledge.CONCEPTS: finance, travel, housing ...), a hint of their site, or the same registrable site (a third of the group, or two tabs);
-//   - two or more topic words (not generic ones, not a place, not a site's name);
-//   - one topic word that says something (written in the title, and the tabs do not belong to different concepts);
+//   - two or more topic words (not generic ones, not a place, not a site's name), one of them no ordinary English word;
+//   - a distinctive name (an acronym or a rare proper noun) two of them say;
 //   - for Chinese, Japanese and Korean, a shared run of two characters or more (those are words of their own: see tokens()).
 // A place alone, a brand alone and a generic word ("student", "sales", "calendar", "post") are never evidence. A tab that shares nothing with
 // any other tab of its group is let go (and so is a pair that shares nothing): it stays loose rather than sit in a group it does not belong to.
-const CONCEPT_FAMILY = (() => {
-  // Tech concepts overlap on every page that names a tool (Docker is devops and programming): they do not contradict each other.
-  const tech = new Set(['programming', 'devops', 'observability', 'worktools', 'research', 'ml']);
-  return (concept) => (tech.has(concept) ? 'tech' : concept);
-})();
-// The topic concepts (knowledge.CONCEPT_GROUPS) a tab carries, as families.
-function topicFamilies(d) {
-  if (!d.families) {
-    d.families = new Set();
-    for (const concept of Object.keys(knowledge.CONCEPT_GROUPS)) if (d.words.has(`%${concept}`)) d.families.add(CONCEPT_FAMILY(concept));
-  }
-  return d.families;
-}
 const placeId = (k) => (PLACE_OF.has(k) ? stem(PLACE_OF.get(k)) : k);
 // -> { words, concepts, places, site, hint }: what a tab can show another tab (cached on the doc).
 function evidenceOf(d) {
@@ -1217,7 +1301,7 @@ function evidenceOf(d) {
     if (!isRealKey(k) || e.weight < 0.7) continue;
     if (d.words.regional?.has(k)) { places.add(d.words.regional.get(k)); continue; } // Naples beside Positano: the Amalfi Coast, not Italy
     if (isPlaceKey(k)) { places.add(placeId(k)); continue; }
-    if (!(d.vec.has(k) || d.common.has(k)) || isGenericKey(k) || NAV_WORDS.has(k)) continue;
+    if (!(d.vec.has(k) || d.common.has(k)) || isGenericKey(k) || NAV_WORDS.has(k) || BRAND_KEYS.has(k)) continue;
     words.add(k);
   }
   // The tax office is money among retirement accounts (CONCEPT_JOINS): it shows the concept it may join.
@@ -1232,12 +1316,16 @@ function supportsOf(c, docs) {
   const ev = c.map((i) => evidenceOf(docs[i]));
   const out = [];
   const need = Math.max(2, Math.ceil(c.length / 3)); // a concept or site has to be a third of the group's (two tabs of a small one)
-  const hold = (pick) => {
+  const holdBy = (pick) => {
     const m = new Map();
     c.forEach((i, x) => { for (const k of pick(ev[x])) { if (!m.has(k)) m.set(k, []); m.get(k).push(i); } });
-    return [...m.values()].filter((h) => h.length >= need);
+    return [...m].filter(([, h]) => h.length >= need);
   };
-  for (const h of hold((e) => e.concepts)) out.push({ holders: h });
+  const hold = (pick) => holdBy(pick).map(([, h]) => h);
+  // Travel is a broad concept: two tabs that are both "travel" are a trip only when they name one place (below); three or more of a group are a Travel group.
+  const evOf = new Map(c.map((i, x) => [i, ev[x]]));
+  const onePlace = (h) => h.some((i) => [...evOf.get(i).places].some((p) => h.filter((j) => evOf.get(j).places.has(p)).length >= 2));
+  for (const [k, h] of holdBy((e) => e.concepts)) if (k !== '%travel' || h.length >= 3 || onePlace(h)) out.push({ holders: h });
   // Two tabs of one place that are both about getting there or being there are a trip (see tripGroups), whatever else their words say.
   {
     const byPlace = new Map();
@@ -1248,7 +1336,7 @@ function supportsOf(c, docs) {
   // getting there or living there. A small one needs more than a place (a city beside nothing is no topic).
   if (c.length >= SPLIT_PLACE_TOPIC) {
     const trips = c.filter((i) => docs[i].words.has('%travel') || docs[i].words.has('%housing')).length;
-    if (trips * 3 >= c.length) for (const h of hold((e) => e.places)) if (h.length * 5 >= c.length * 3) out.push({ holders: h });
+    if (trips * 3 >= c.length) for (const h of hold((e) => e.places)) { const held = h.filter((i) => !jobLike(docs[i])); if (held.length * 5 >= c.length * 3) out.push({ holders: held }); } // (a job or a nursing tab never joins a trip on a shared city)
   }
   for (const h of hold((e) => (e.site ? [e.site] : []))) out.push({ holders: h });
   for (const h of hold((e) => (e.hint ? [e.hint] : []))) out.push({ holders: h });
@@ -1262,26 +1350,24 @@ function supportsOf(c, docs) {
     }
     for (const { titled, all } of named.values()) if (titled >= 1 && all.size >= 2) out.push({ holders: [...all] });
   }
-  // A word held by 2+ tabs: alone it counts when it says something (and nothing about the tabs contradicts it), otherwise it needs a second one.
+  // Words held by 2+ tabs: one word is never evidence (sharedEvidence). Two tabs that hold two of them, one of which is no ordinary English word, are bound.
   const byWord = new Map();
   c.forEach((i, x) => { for (const k of ev[x].words) { if (!byWord.has(k)) byWord.set(k, []); byWord.get(k).push(i); } });
   const shared = [...byWord].filter(([, h]) => h.length >= 2);
-  const contradict = (h) => {
-    for (let a = 0; a < h.length; a++) for (let b = a + 1; b < h.length; b++) {
-      const fa = topicFamilies(docs[h[a]]), fb = topicFamilies(docs[h[b]]);
-      if (fa.size && fb.size && ![...fa].some((f) => fb.has(f))) return true;
-    }
-    return false;
-  };
-  for (const [k, h] of shared) {
-    const written = h.some((i) => (docs[i].words.get(k)?.weight ?? 0) >= 0.8); // in a title or a search, by one of them at least
-    if (written && !contradict(h)) out.push({ holders: h });
-  }
+  for (const [k, h] of shared) if (CJK.test(k)) out.push({ holders: h }); // a run of CJK characters is a word of its own (dropFragmentLinks kept only whole runs)
   for (let a = 0; a < shared.length; a++) {
     for (let b = a + 1; b < shared.length; b++) {
+      if (ORDINARY_KEYS.has(shared[a][0]) && ORDINARY_KEYS.has(shared[b][0])) continue;
       const both = shared[a][1].filter((i) => shared[b][1].includes(i));
       if (both.length >= 2) out.push({ holders: both });
     }
+  }
+  // A place counts as one of the two words, beside a topic word that is no ordinary one ("Kyoto temples", "Kyoto temple guide").
+  const byPlace = new Map();
+  c.forEach((i, x) => { for (const p of ev[x].places) { if (!byPlace.has(p)) byPlace.set(p, []); byPlace.get(p).push(i); } });
+  for (const [k, h] of shared) {
+    if (ORDINARY_KEYS.has(k)) continue;
+    for (const holders of byPlace.values()) { const both = h.filter((i) => holders.includes(i)); if (both.length >= 2) out.push({ holders: both }); }
   }
   return out;
 }
@@ -1307,8 +1393,12 @@ function cohere(c, docs) {
 // the sights, a tour) are one trip, named for the place, whatever else their words say: "Edinburgh hotels", "Things to do in Edinburgh" and
 // "Edinburgh Fringe tickets" share one word and a bit of travel. "Train" is a travel word only here, beside a place: elsewhere it is a machine
 // learning verb ("train a model").
-const TRIP_TITLE = /\b(things to do|what to (?:see|do|eat)|tickets?|trains?|rail|subway|ferry|sights?|sightseeing|tours?|itinerary|attractions?|hostels?|hotels?|flights?|airport|visit|visa|hik(?:e|es|ing)|trails?|camping|campsites?)\b/i;
-const tripEvidence = (d) => d.words.has('%travel') || TRIP_TITLE.test(String(d.title || ''));
+const TRIP_TITLE = /\b(things to do|what to (?:see|do|eat)|where to (?:eat|stay|go)|o que fazer|qu[eé] hacer|que faire|cosa vedere|tickets?|trains?|rail|subway|ferry|sights?|sightseeing|tours?|itinerary|attractions?|hostels?|hotels?|flights?|airport|visit|visa|hik(?:e|es|ing)|trails?|camping|campsites?)\b/i;
+// A tab about a job or a nursing career is never a trip tab, whatever city it names ("Travel nurse jobs Denver" beside flights to Maui).
+const jobLike = (d) => d.words.has('%jobs') || d.words.has('%nursing');
+// The travel words themselves (not only the site's category): a trip's tab says it is about getting there or being there.
+const travelWord = (d) => TRIP_TITLE.test(String(d.title || '')) || [...d.words].some(([k, e]) => e.weight >= 0.7 && isRealKey(k) && CONCEPTS_OF.get(k)?.includes('travel'));
+const tripEvidence = (d) => travelWord(d) && !jobLike(d);
 function placesOf(d) {
   const e = evidenceOf(d);
   return e.places;
@@ -1356,9 +1446,11 @@ function tripGroups(clusters, docs, rekey, nameOf) {
     const host = hosts[0];
     const own = host ? host.filter((i) => tabs.includes(i)).length : 0;
     if (host && host.filter((i) => trip[i]).length * 2 <= host.length) continue; // it is about something else
-    // This place's trip when it is big (a Japan trip with its restaurants) or most of it is this place's trips; a small one that is not is two
-    // trips' tabs together: they are taken out and make a trip of their own.
-    if (host && (host.length >= SPLIT_PLACE_TOPIC || own * 2 > host.length)) {
+    // This place's trip when it is big (a Japan trip with its restaurants: the place is in most of it) or most of it is this place's trips; a group that is
+    // neither (Edinburgh's flights and trains beside Dublin's hostel, joined by the travel concept) is two trips' tabs together: they are taken out and make a trip
+    // of their own.
+    const placeShare = host ? host.filter((i) => places[i].has(best.p)).length / host.length : 0;
+    if (host && ((host.length >= SPLIT_PLACE_TOPIC && placeShare >= 0.6) || own * 2 > host.length)) {
       if (host.length < SPLIT_PLACE_TOPIC) { // a small trip holds only this place's tabs (the visa of a student beside a Dublin hostel is not Dublin's)
         for (const i of host.filter((j) => !tabs.includes(j) && !places[j].has(best.p))) { rekey(host, () => host.splice(host.indexOf(i), 1)); clusters.push([i]); }
       }
@@ -1407,15 +1499,15 @@ function pairShares(c, docs, drawn) {
   if (drawn) return true;
   const [a, b] = c.map((i) => docs[i]);
   if (a.siteKey && a.siteKey === b.siteKey && knowledge.SAAS_DOMAINS[a.siteKey]) return true; // two pages of one SaaS workspace
-  // ...a stem that says something: not a generic one ("price", "plan"), and a city only beside a travel or housing word.
-  const shared = [...a.vec.keys()].filter((k) => k[0] !== '#' && k[0] !== '^' && b.vec.has(k));
-  const trip = shared.some((k) => k === '%travel' || k === '%housing');
-  // A pair is a group when it shares a concept (not "shopping"), a site or a hint, or two topic words; one word is enough only when both titles (or
-  // searches) wrote it and it is not a generic one ("brand", "design", "price"). A place is a word only beside a trip ("Austin", "Cheyenne" say where, not what).
-  if (shared.some((k) => k[0] === '%' && !GENERIC_PAIR_STEMS.has(k))) return true;
-  const words = shared.filter((k) => /^[\p{L}\p{N}]/u.test(k) && !GENERIC_PAIR_STEMS.has(k) && (trip || !isCityKey(k)));
-  if (words.length >= 2) return true;
-  if (words.length === 1 && (a.words.get(words[0])?.weight ?? 0) >= 0.8 && (b.words.get(words[0])?.weight ?? 0) >= 0.8) return true;
+  // A pair is a group when it shares what sharedEvidence asks of every link: a concept (not "shopping"), a repository, a site, or a site hint, or a
+  // distinctive name, or two topic words one of which is no ordinary English word - never one word. Not generic ones ("price", "plan", "design") and no place.
+  const shared = [...a.vec.keys()].filter((k) => k[0] !== '#' && k[0] !== '^' && k[0] !== '~' && b.vec.has(k));
+  const place = shared.some((k) => isRealKey(k) && isPlaceKey(k));
+  if (shared.some((k) => (k[0] === '%' || k[0] === '@') && !GENERIC_PAIR_STEMS.has(k) && (k !== '%travel' || place))) return true; // (two "travel" tabs are a trip only beside a place both name)
+  const words = shared.filter((k) => /^[\p{L}\p{N}]/u.test(k) && !GENERIC_PAIR_STEMS.has(k) && !isPlaceKey(k) && !BRAND_KEYS.has(k));
+  if (words.some((k) => CJK.test(k))) return true; // a whole run of CJK characters is a word of its own
+  if (words.some((k) => !ORDINARY_KEYS.has(k)) && (words.length >= 2 || place)) return true; // (a place is one of the two words, beside a topic word)
+  if (shared.some((k) => isRealKey(k) && !NAV_WORDS.has(k) && !isGenericKey(k) && sharesName(a, b, k))) return true;
   if (a.siteKey && a.siteKey === b.siteKey && siteGroupable(a)) return true;
   return Boolean(a.siteHint && a.siteHint === b.siteHint && !knowledge.BROAD_HINTS.has(a.siteHint));
 }
@@ -1446,6 +1538,35 @@ function conceptLabel(c, docs) {
     return subName(concept, c, docs) || label;
   }
   return '';
+}
+
+// ---------- group names: one normalization ----------
+//
+// The same set of tabs always gets the same name, however it was found: a name made of title words is singular ("Program", not "Programs"), and a name
+// that is only an ordinary word or says the same as the group's concept or category ("Recipe" beside "Recipes", "Study", "Shift", "Practice") is the concept's or
+// the category's name instead: concept names beat title words. `label`: the concept, category or hint name the group has, or ''.
+const KEEP_PLURAL = new Set(['news', 'series', 'species', 'canvas', 'atlas', 'bias', 'gas', 'plus', 'bonus', 'campus', 'focus', 'status', 'virus', 'lens', 'physics', 'mathematics', 'economics', 'politics', 'analytics', 'ethics', 'electronics', 'logistics', 'statistics', 'chess', 'ios', 'kubernetes', 'jenkins', 'docs', 'diabetes', 'mass']);
+function singularWord(w) {
+  const lower = w.toLowerCase();
+  if (lower.length <= 3 || KEEP_PLURAL.has(lower) || /[^a-z]/.test(lower) || /[A-Z]/.test(w.slice(1)) || !/s$/.test(lower) || /(ss|us|is|ous)$/.test(lower) || CONCEPT_OF.has(stemWord(lower))) return w; // acronyms (PRs), brands (iPhones), "glass", "campus", "analysis"
+  if (/ies$/.test(lower) && lower.length > 4) return w.slice(0, -3) + (w.slice(-3, -2) === 'I' ? 'Y' : 'y');
+  if (/(ches|shes|sses|xes|zes)$/.test(lower)) return w.slice(0, -2);
+  return w.slice(0, -1);
+}
+// `forms`: the (lower case) words the group's titles are written with. A word is made singular only when that gives a word the titles say or an ordinary
+// English one: "Programs" -> "Program", but "Oposiciones" stays.
+function normalizeName(name, labels = [], forms = new Set()) {
+  const words = String(name).split(/\s+/).filter(Boolean);
+  if (!words.length) return name;
+  const one = singularWord(words[words.length - 1]);
+  if (one !== words[words.length - 1] && (forms.has(one.toLowerCase()) || ORDINARY_KEYS.has(stem(one.toLowerCase())) || CONCEPT_OF.has(stem(one.toLowerCase())))) words[words.length - 1] = one;
+  const out = words.join(' ');
+  const key = nameTokens(out).join(' ');
+  const known = labels.filter(Boolean);
+  const same = known.find((l) => nameTokens(l).join(' ') === key); // "Recipe" is the category's "Recipes": one name whichever way the group was found
+  if (same) return same;
+  if (words.length === 1 && known.length && nameTokens(out).every((w) => ORDINARY_KEYS.has(w) && !CONCEPT_OF.has(w))) return known[0]; // (a concept's own word, "Recipe" or "Finals", is already a concept name)
+  return out;
 }
 
 // entries: [{ id, title, url }] -> [{ name, ids, key }] with 2+ tabs each (loose tabs left out).
@@ -1726,6 +1847,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
       return siteName(lead.url, lead.title);
     };
     let name;
+    let wordNamed = false; // named for words its titles say (not for a site, a repo, a concept or a hint): see normalizeName
     if (conceptOf.get(idsKey(c))) name = conceptOf.get(idsKey(c));
     else if (oneSite && !(topRepo && topRepoCount >= 2 && topRepoCount >= members.length / 2) && (!top || kindOfSite(hintOf.get(idsKey(c)) || sharedHint))) {
       const lead = members.find((d) => d.siteKey === topSite);
@@ -1740,11 +1862,12 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     } else if (siteOnly) name = sharedHint || siteName(members[0].url, members[0].title);
     else if (nameTop && isPlaceKey(nameTop[0]) && conceptLabel(c, docs) === 'Housing') name = `${bestSurface(nameTop[0])} housing`; // flats in Edinburgh are not the Edinburgh trip
     else if (libraryName(members, majority)) name = libraryName(members, majority);
-    else if (bigramRanked.length) name = titleCasePhrase(words2(bigramRanked[0]));
-    else if (nameTop) name = titleCase(bestSurface(nameTop[0]));
+    else if (bigramRanked.length) { name = titleCasePhrase(words2(bigramRanked[0])); wordNamed = true; }
+    else if (nameTop) { name = titleCase(bestSurface(nameTop[0])); wordNamed = true; }
     else name = sharedHint || fallbackName();
     // CJK words are bigrams, so two of them pasted together name a group badly ("파이 이썬"): use the longest run the
     // titles share, or the site's (category's) name when that run is only filler.
+    if (wordNamed) name = normalizeName(name, [conceptLabel(c, docs), categoryLabel(members), sharedHint], new Set(members.flatMap((d) => [...d.words].map(([, e]) => String(e.surface || '').toLowerCase()))));
     if (CJK.test(name)) name = sharedRun(members.map((d) => d.title), members.length) || sharedRun(members.map((d) => d.title), majority) || sharedHint || fallbackName();
     // One site's tabs named by a piece of the site's own name ("Hacker" from "Hacker News"): the whole name.
     if (members.every((d) => d.siteKey === members[0].siteKey) && !oneSite) {
@@ -1922,7 +2045,9 @@ function nameSimilarity(a, b) {
 function sameTopicLater(A, B) {
   const major = (D, pred) => { const m = new Map(); for (const d of D) for (const k of d.vec.keys()) if (pred(k)) m.set(k, (m.get(k) || 0) + 1); return new Set([...m].filter(([, n]) => n / D.length > 0.5).map(([k]) => k)); };
   const ca = major(A, (k) => COUNTRY_KEYS.has(k));
-  if ([...major(B, (k) => COUNTRY_KEYS.has(k))].some((k) => ca.has(k))) return true;
+  // A shared country is only a trip when most of both groups are about travel or housing (a place alone links nothing: see sharedEvidence).
+  const trips = (D) => ['%travel', '%housing'].some((c) => major(D, (k) => k === c).size);
+  if (trips(A) && trips(B) && [...major(B, (k) => COUNTRY_KEYS.has(k))].some((k) => ca.has(k))) return true;
   const [small, big] = A.length <= B.length ? [A, B] : [B, A];
   if (small.length > ABSORB_MAX || big.length < 4) return false;
   const cs = major(small, (k) => k[0] === '%');
@@ -1958,7 +2083,7 @@ function mergeSimilarGroups(groups) {
       // Two groups are one only when tabs of both share something that says something (see cohere): a place or a generic word is not enough.
       if (!bound(c, g)) return false;
       if (!kind) return Boolean(anchorLink(c.flatMap(docsOf), docsOf(g), docs.df, docs.n)) || sameTopicLater(c.flatMap(docsOf), docsOf(g)); // groups formed at different times, one topic
-      const sim = cosine(centroid.get(root.id), centroid.get(g.id));
+      const sim = cosine(centroid.get(root.id), centroid.get(g.id), false); // (bound above by the same evidence rule: no second gate)
       return kind === 'weak' ? sim >= CENTROID_MERGE_THRESHOLD : sim >= 0.1;
     });
     if (home) home.push(g); else clusters.push([g]);
@@ -2054,7 +2179,7 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
     const group = {
       id: nextId++,
       name: String(name || 'Group').slice(0, 40),
-      color: GROUP_COLORS.includes(color) ? color : GROUP_COLORS[colorIndex++ % GROUP_COLORS.length],
+      color: GROUP_COLORS.includes(color) ? color : COLOR_CYCLE[colorIndex++ % COLOR_CYCLE.length],
       collapsed: false,
       domain,
       topic, // the shared word a topic group was formed on; later tabs with it join
@@ -2280,9 +2405,11 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
       const g = groups.get(id);
       if (!g || !newIds.has(id) || g.colorLocked) return;
       const near = [order[i - 1], order[i + 1]].map((n) => groups.get(n)?.color).filter(Boolean);
-      if (!near.includes(g.color)) return;
-      const pick = GROUP_COLORS.filter((c) => !near.includes(c)).sort((a, b) => (used.get(a) || 0) - (used.get(b) || 0))[0];
-      if (pick) { used.set(g.color, used.get(g.color) - 1); used.set(pick, (used.get(pick) || 0) + 1); g.color = pick; }
+      const clash = (c) => near.includes(c) || near.some((n) => (LOOKALIKE[n] || []).includes(c));
+      if (!clash(g.color)) return;
+      const rank = (c) => (used.get(c) || 0) * 10 + COLOR_CYCLE.indexOf(c) / 10; // the least used first, then the cycle's order: deterministic
+      const pick = COLOR_CYCLE.filter((c) => !clash(c)).sort((a, b) => rank(a) - rank(b))[0] || COLOR_CYCLE.filter((c) => !near.includes(c)).sort((a, b) => rank(a) - rank(b))[0];
+      if (pick && pick !== g.color) { used.set(g.color, used.get(g.color) - 1); used.set(pick, (used.get(pick) || 0) + 1); g.color = pick; }
     });
   }
   const applyProposal = organizeByTopic; // the older name: "Organize with AI"

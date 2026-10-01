@@ -806,6 +806,194 @@ const en = require('../src/locales/en.json');
   check('summary strings read "1 group." and "1 group, 1 tab left loose." and "3 groups, 4 tabs left loose."', say(1, 0) === '1 group.' && say(1, 1) === '1 group, 1 tab left loose.' && say(3, 4) === '3 groups, 4 tabs left loose.' && say(3, 1) === '3 groups, 1 tab left loose.' && say(2, 0) === '2 groups.', `${say(1, 0)} / ${say(1, 1)}`);
 }
 let asked = 0;
+// Round 12: one rule for every link - a single shared word is never enough. The round-12 persona sets (a night-shift nurse, a college athlete, an indie game
+// developer) are the fixtures: [title, url, what the tab is about (acceptable labels, '|' apart)]. A tab is misgrouped when its group's topic (the label most of
+// its tabs carry) is none of its own.
+{
+  const R12 = {
+    nurse: [
+      ['NCLEX-RN practice questions - UWorld', 'https://nursing.uworld.com/qbank', 'work'],
+      ['Pharmacology cheat sheet: beta blockers - Nurseslabs', 'https://nurseslabs.com/beta-blockers', 'work'],
+      ['ACLS algorithms 2026 - AHA', 'https://cpr.heart.org/acls', 'work'],
+      ['Sepsis bundle nursing interventions', 'https://www.nursingcenter.com/sepsis', 'work'],
+      ['Night shift nurse sleep tips - Healthline', 'https://www.healthline.com/night-shift-sleep', 'work|sleep'],
+      ['Blackout curtains - Amazon.com', 'https://www.amazon.com/s?k=blackout+curtains', 'sleep|shopping'],
+      ['Best blackout curtains for day sleeping - Wirecutter', 'https://www.wirecutter.com/blackout-curtains', 'sleep'],
+      ['Melatonin dosage shift work - WebMD', 'https://www.webmd.com/melatonin', 'sleep'],
+      ['Kronos Workforce - Schedule', 'https://mercy.kronos.net/wfc', 'work'],
+      ['Epic Hyperspace', 'https://epic.mercy.org/', 'work'],
+      ['Shift swap request - Mercy HR', 'https://hr.mercy.org/swap', 'work'],
+      ['Travel nurse jobs Denver - Aya Healthcare', 'https://www.ayahealthcare.com/denver', 'jobs'],
+      ['Travel nurse pay comparison - Vivian', 'https://www.vivian.com/pay', 'jobs'],
+      ['Nurse salary Colorado - Indeed', 'https://www.indeed.com/salaries/nurse-co', 'jobs'],
+      ['BSN to DNP programs - Johns Hopkins', 'https://nursing.jhu.edu/dnp', 'school'],
+      ['FNP program tuition - Walden University', 'https://www.waldenu.edu/fnp', 'school'],
+      ['Meal prep high protein for 12 hour shifts', 'https://www.budgetbytes.com/meal-prep-protein', 'meals'],
+      ['Overnight oats 5 ways - Minimalist Baker', 'https://minimalistbaker.com/overnight-oats', 'meals'],
+      ['Sheet pan chicken thighs recipe - Serious Eats', 'https://www.seriouseats.com/sheet-pan-chicken', 'meals'],
+      ['Compression socks for nurses - Amazon', 'https://www.amazon.com/s?k=compression+socks', 'work|shopping'],
+      ['Best nursing shoes 2026 - Dansko vs Hoka', 'https://www.runnersworld.com/nursing-shoes', 'work|shopping'],
+      ['Hoka Clifton 10 - Zappos', 'https://www.zappos.com/hoka-clifton', 'work|shopping'],
+      ['Gmail', 'https://mail.google.com/mail/u/0', 'mail'],
+      ['Google Calendar - Week of Oct 6', 'https://calendar.google.com/', 'mail'],
+      ['Spotify - Night Shift Playlist', 'https://open.spotify.com/playlist/1', 'media'],
+      ['Reddit - r/nursing', 'https://www.reddit.com/r/nursing', 'work'],
+      ['Reddit - r/nightshift', 'https://www.reddit.com/r/nightshift', 'work|sleep|media'],
+      ['Chase - Accounts', 'https://secure.chase.com/web/auth', 'bank'],
+      ['Student loan forgiveness PSLF nurses - studentaid.gov', 'https://studentaid.gov/pslf', 'loans'],
+      ['PSLF employment certification form', 'https://studentaid.gov/pslf/employer', 'loans'],
+      ['Flights Denver to Maui - Google Flights', 'https://www.google.com/travel/flights', 'maui'],
+      ['Maui hotels - Booking.com', 'https://www.booking.com/maui', 'maui'],
+      ['Things to do in Maui - TripAdvisor', 'https://www.tripadvisor.com/Maui', 'maui'],
+      ['Netflix', 'https://www.netflix.com/browse', 'media'],
+      ['Untitled', 'about:blank', ''],
+    ],
+    athlete: [
+      ['Canvas - Dashboard', 'https://nu.instructure.com/', 'school'],
+      ['BIOL 2101 Anatomy - Canvas', 'https://nu.instructure.com/courses/22', 'school'],
+      ['Anatomy and Physiology Chapter 9 - Quizlet', 'https://quizlet.com/anatomy-ch9', 'school'],
+      ['Organic Chemistry Practice Exam - Khan Academy', 'https://www.khanacademy.org/orgo', 'school'],
+      ['Study guide: muscle contraction - Kenhub', 'https://www.kenhub.com/muscle', 'school'],
+      ['NCAA Eligibility Center', 'https://web3.ncaa.org/ecwr3', 'sport'],
+      ['NCAA transfer portal rules 2026', 'https://www.ncaa.org/transfer', 'sport'],
+      ['Team travel itinerary - Away at Duke', 'https://teamworks.com/travel', 'sport'],
+      ['Teamworks - Practice Schedule', 'https://app.teamworks.com/schedule', 'sport'],
+      ['Hudl - Game film vs Syracuse', 'https://www.hudl.com/video/3/film', 'sport'],
+      ['Hudl - Highlights reel', 'https://www.hudl.com/profile/hi', 'sport'],
+      ['Soccer positioning drills - Coerver', 'https://www.coerver.com/drills', 'sport|fitness'],
+      ['Interval training for midfielders - Breaking Muscle', 'https://breakingmuscle.com/intervals', 'sport|fitness'],
+      ['Hamstring injury recovery timeline - Mayo Clinic', 'https://www.mayoclinic.org/hamstring-strain', 'fitness|sport'],
+      ['Sports nutrition for college athletes - Gatorade Sports Science Institute', 'https://www.gssiweb.org/nutrition', 'fitness|sport'],
+      ['Creatine monohydrate dosage - Examine', 'https://examine.com/creatine', 'fitness'],
+      ['Protein powder - Optimum Nutrition Gold Standard - Amazon', 'https://www.amazon.com/optimum-nutrition', 'fitness'],
+      ['Nike Phantom GX cleats - Nike.com', 'https://www.nike.com/phantom-gx', 'sport|shopping'],
+      ['Soccer cleats review - Pro-Direct Soccer', 'https://www.prodirectsoccer.com/cleats', 'sport|shopping'],
+      ['Premier League table - BBC Sport', 'https://www.bbc.com/sport/football/tables', 'sport'],
+      ['Champions League fixtures - ESPN', 'https://www.espn.com/soccer/fixtures', 'sport'],
+      ['USWNT roster announced - The Athletic', 'https://www.nytimes.com/athletic/uswnt', 'sport'],
+      ['NIL deal contract review - Opendorse', 'https://opendorse.com/nil', 'sport|money'],
+      ['Sponsorship pitch deck template - Canva', 'https://www.canva.com/templates/pitch', 'sport|design'],
+      ['Instagram', 'https://www.instagram.com/', 'social'],
+      ['TikTok - For You', 'https://www.tiktok.com/foryou', 'social'],
+      ['Venmo', 'https://venmo.com/', 'money'],
+      ['Spring internship - Handshake', 'https://app.joinhandshake.com/jobs', 'jobs'],
+      ['Sports management internships - LinkedIn Jobs', 'https://www.linkedin.com/jobs/sports', 'jobs'],
+      ['Resume template - Overleaf', 'https://www.overleaf.com/latex/resume', 'jobs'],
+      ['Dining hall menu - Northeastern', 'https://nu.sodexomyway.com/menu', 'dining'],
+      ['Gmail', 'https://mail.google.com/mail/u/0', 'mail'],
+      ['YouTube - Messi best dribbles', 'https://www.youtube.com/watch?v=9', 'sport|media'],
+      ['YouTube - Lofi study beats', 'https://www.youtube.com/watch?v=8', 'media'],
+      ['Spotify - Pregame playlist', 'https://open.spotify.com/playlist/2', 'media'],
+      ['New Tab', 'chrome://newtab', ''],
+    ],
+    gamedev: [
+      ['Unity Manual - Cinemachine', 'https://docs.unity3d.com/Packages/com.unity.cinemachine', 'gamedev'],
+      ['Unity Discussions - Tilemap collider jitter', 'https://discussions.unity.com/t/tilemap', 'gamedev'],
+      ['Stack Overflow - Unity 2D raycast ignore layer', 'https://stackoverflow.com/questions/111', 'gamedev'],
+      ['GitHub - me/pixel-heist', 'https://github.com/me/pixel-heist', 'project'],
+      ['Pull request 14 - enemy AI patrol - pixel-heist', 'https://github.com/me/pixel-heist/pull/14', 'project'],
+      ['Issues - pixel-heist', 'https://github.com/me/pixel-heist/issues', 'project'],
+      ['Aseprite - Pixel art tool', 'https://www.aseprite.org/', 'gamedev'],
+      ['Lospec - Palette list', 'https://lospec.com/palette-list', 'gamedev'],
+      ['itch.io - Pixel art assets free', 'https://itch.io/game-assets/free/tag-pixel-art', 'gamedev'],
+      ['itch.io - Dashboard - Pixel Heist', 'https://itch.io/dashboard/game/1', 'project'],
+      ['Steamworks - Pixel Heist app admin', 'https://partner.steamgames.com/apps/1', 'project'],
+      ['Steam - Wishlists report', 'https://partner.steamgames.com/wishlists', 'gamedev|project'],
+      ['How to market your indie game - GDC Vault', 'https://www.gdcvault.com/play/marketing', 'gamedev'],
+      ['How many wishlists do you need - HOWTOMARKETAGAME', 'https://howtomarketagame.com/wishlists', 'gamedev'],
+      ['Game Developer - Postmortem: Celeste', 'https://www.gamedeveloper.com/celeste', 'gamedev'],
+      ['Reddit - r/gamedev', 'https://www.reddit.com/r/gamedev', 'gamedev'],
+      ['Reddit - r/IndieDev', 'https://www.reddit.com/r/IndieDev', 'gamedev'],
+      ['Discord - Pixel Heist community', 'https://discord.com/channels/1', 'project'],
+      ['Twitter / X - screenshotsaturday', 'https://x.com/search?q=screenshotsaturday', 'gamedev|project'],
+      ['FMOD Studio - Documentation', 'https://www.fmod.com/docs', 'gamedev'],
+      ['Freesound - door creak', 'https://freesound.org/search/?q=door', 'gamedev'],
+      ['Epidemic Sound - Heist music', 'https://www.epidemicsound.com/music', 'project|gamedev'],
+      ['Trello - Pixel Heist roadmap', 'https://trello.com/b/abc', 'project'],
+      ['Notion - GDD Pixel Heist', 'https://www.notion.so/gdd', 'project'],
+      ['Mailchimp - Devlog newsletter', 'https://admin.mailchimp.com/campaigns', 'gamedev|project'],
+      ['Press kit - Pixel Heist', 'https://pixelheist.dev/presskit', 'project|gamedev'],
+      ['Wikipedia - Metroidvania', 'https://en.wikipedia.org/wiki/Metroidvania', 'gamedev'],
+      ['YouTube - Hollow Knight level design analysis', 'https://www.youtube.com/watch?v=5', 'gamedev'],
+      ['YouTube - Brackeys Unity tutorial', 'https://www.youtube.com/watch?v=6', 'gamedev'],
+      ['Mac mini M4 - Apple', 'https://www.apple.com/mac-mini', 'hardware'],
+      ['Mac mini M4 review - The Verge', 'https://www.theverge.com/mac-mini-m4', 'hardware'],
+      ['Gmail', 'https://mail.google.com/mail/u/0', 'mail'],
+      ['Stripe - Dashboard', 'https://dashboard.stripe.com/', 'biz'],
+      ['Quarterly estimated tax - IRS Direct Pay', 'https://www.irs.gov/payments/direct-pay', 'biz'],
+      ['Spotify - Focus', 'https://open.spotify.com/playlist/3', 'media'],
+      ['Untitled', 'about:blank', ''],
+    ],
+  };
+  // -> { w, wrong: [tab titles in a group of another topic], group: (re) => the name of the group of the tab whose title matches }
+  const judge = (set) => {
+    const w = window_(set.map(([title, url]) => [title, url, { userRemoved: true }]));
+    w.g.organizeByTopic();
+    const names = new Map(w.g.state().map((g) => [g.id, g.name]));
+    const by = new Map();
+    w.tabs().forEach((t) => { if (t.groupId) { if (!by.has(t.groupId)) by.set(t.groupId, []); by.get(t.groupId).push(t.id - 1); } });
+    const wrong = [];
+    for (const idx of by.values()) {
+      const count = new Map();
+      for (const i of idx) for (const l of set[i][2].split('|').filter(Boolean)) count.set(l, (count.get(l) || 0) + 1);
+      const top = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+      for (const i of idx) if (!set[i][2].split('|').includes(top)) wrong.push(set[i][0]);
+    }
+    const gid = (re) => { const i = set.findIndex(([t]) => re.test(t)); if (i < 0) throw new Error(`no tab ${re}`); return at(w, i + 1).groupId; };
+    return { w, wrong, names, gid, together: (a, b) => Boolean(gid(a)) && gid(a) === gid(b), nameOf: (re) => names.get(gid(re)) || '', loose: set.filter((_s, i) => !at(w, i + 1).groupId).length };
+  };
+  const nurse = judge(R12.nurse);
+  const athlete = judge(R12.athlete);
+  const dev = judge(R12.gamedev);
+  check('r12 precision: no tab of the three persona sets is in a group of another topic', nurse.wrong.length + athlete.wrong.length + dev.wrong.length === 0, JSON.stringify([...nurse.wrong, ...athlete.wrong, ...dev.wrong]));
+  check('r12 nurse: "sheet" (a cheat sheet, a sheet-pan recipe) links nothing', !nurse.together(/cheat sheet/, /Sheet pan/) && !/sheet/i.test(nurse.nameOf(/cheat sheet/)), nurse.nameOf(/cheat sheet/));
+  check('r12 nurse: "shift" (sleep tips, a swap request, a playlist, a meal prep) links nothing', !nurse.together(/Melatonin/, /Spotify - Night/) && !nurse.together(/Shift swap/, /Meal prep/) && !/^shift/i.test(nurse.nameOf(/Shift swap/)), nurse.nameOf(/Shift swap/));
+  check('r12 nurse: NCLEX, ACLS, Kronos and Epic are one Nursing group', nurse.together(/NCLEX/, /ACLS/) && nurse.together(/ACLS/, /Kronos/) && nurse.together(/Kronos/, /Epic/) && nurse.nameOf(/NCLEX/) === 'Nursing', nurse.nameOf(/NCLEX/));
+  check('r12 nurse: travel-nurse jobs are a job search, not the Maui trip (a city alone never joins one)', nurse.together(/Aya Healthcare/, /Vivian/) && nurse.together(/Vivian/, /Nurse salary/) && !nurse.together(/Aya Healthcare/, /Flights Denver to Maui/) && /job/i.test(nurse.nameOf(/Aya Healthcare/)), nurse.nameOf(/Aya Healthcare/));
+  check('r12 nurse: the Maui flights, hotels and things to do are one trip', nurse.together(/Flights Denver to Maui/, /Maui hotels/) && nurse.together(/Maui hotels/, /Things to do in Maui/), nurse.nameOf(/Maui hotels/));
+  check('r12 nurse: a nurse\'s degree and loans are not the clinical Nursing group', !nurse.together(/BSN to DNP/, /NCLEX/) && !nurse.together(/PSLF nurses/, /NCLEX/) && !nurse.together(/BSN to DNP/, /Aya Healthcare/), `${nurse.nameOf(/BSN/)}|${nurse.nameOf(/PSLF nurses/)}`);
+  check('r12 athlete: "practice" (an exam, a team schedule) and "study" (a guide, lofi beats) link nothing', !athlete.together(/Practice Exam/, /Practice Schedule/) && !athlete.together(/Study guide/, /Lofi study/), `${athlete.nameOf(/Practice Exam/)}|${athlete.nameOf(/Practice Schedule/)}`);
+  check('r12 athlete: Canva (a pitch deck) is not Canvas (the school site)', !athlete.together(/Canvas - Dashboard/, /pitch deck/) && tg.tokens('Canvas')[0].key !== tg.tokens('Canva')[0].key, athlete.nameOf(/pitch deck/));
+  check('r12 athlete: Canvas, the anatomy chapter and the orgo exam are one School group', athlete.together(/Canvas - Dashboard/, /BIOL 2101/) && athlete.together(/BIOL 2101/, /Anatomy and Physiology/) && athlete.together(/Anatomy and Physiology/, /Organic Chemistry/), athlete.nameOf(/Canvas - Dashboard/));
+  check('r12 athlete: Hudl, NCAA, cleats and the practice schedule are the team\'s Sports group', athlete.together(/Hudl - Game film/, /Hudl - Highlights/) && athlete.together(/NCAA Eligibility/, /Hudl - Game film/) && athlete.together(/Nike Phantom/, /Practice Schedule/) && athlete.nameOf(/Hudl - Game film/) === 'Sports', athlete.nameOf(/Hudl - Game film/));
+  check('r12 athlete: recovery, creatine and sports nutrition are Fitness, apart from the internships', athlete.together(/Hamstring/, /Creatine/) && !athlete.together(/Hamstring/, /internship/i), athlete.nameOf(/Hamstring/));
+  check('r12 game dev: Lospec, Aseprite, itch.io, FMOD, Freesound, GDC and Game Developer are one Game dev group', ['Aseprite', 'Lospec', 'itch.io - Pixel art', 'FMOD', 'Freesound', 'GDC Vault', 'Game Developer'].every((x) => dev.together(new RegExp(x), /Unity Manual/)) && dev.nameOf(/Lospec/) === 'Game dev', dev.nameOf(/Lospec/));
+  check('r12 game dev: the project\'s own repo, store pages and board are Pixel Heist, apart from the pixel art tools', dev.together(/GitHub - me\/pixel-heist/, /Steamworks/) && dev.together(/Steamworks/, /Trello/) && !dev.together(/Aseprite/, /GitHub - me\/pixel-heist/) && dev.nameOf(/Trello/) === 'Pixel Heist', dev.nameOf(/Trello/));
+  // The structural rule itself, on small windows: none of these shares more than one word.
+  const one = (a, b, c) => organized([[a, 'https://x1.example/a'], [b, 'https://x2.example/b'], [c, 'https://x3.example/c']]);
+  const sheets = one('Python cheat sheet', 'Sheet pan salmon dinner', 'Weather in Lima');
+  check('a single shared word never links two tabs ("sheet")', !sheets.same(0, 1), sheets.name(0));
+  const pairs = organized([['Spring practice schedule', 'https://a.example/1'], ['Piano practice tips', 'https://b.example/2'], ['Chess endgame study', 'https://c.example/3'], ['Study abroad deadlines', 'https://d.example/4']]);
+  check('"practice" and "study" alone link nothing, in any window', !pairs.same(0, 1) && !pairs.same(2, 3), `${pairs.name(0)}|${pairs.name(2)}`);
+  const shared2 = organized([['Kitten vaccine schedule', 'https://a.example/1'], ['Kitten vaccine costs', 'https://b.example/2'], ['Pasta carbonara', 'https://c.example/3']]);
+  check('two shared words (one of them no ordinary one) do link', shared2.same(0, 1), shared2.name(0));
+  const city = organized([['Best ramen in Boston', 'https://a.example/1'], ['Boston rent prices', 'https://b.example/2'], ['Boston to NYC bus tickets', 'https://c.example/3']]);
+  check('a shared city alone links nothing', !city.same(0, 1) && !city.same(1, 2) && !city.same(0, 2), city.name(0));
+  // Names: one normalization. The same tabs in any order get the same name; Program and Programs are one.
+  const prog = (order) => { const specs = [['Nursing programs near me', 'https://p1.example/a'], ['Nursing program tuition costs', 'https://p2.example/b'], ['Pasta carbonara', 'https://p3.example/c']]; return organized(order.map((i) => specs[i])).name(order.indexOf(0)); };
+  check('a group of title words is named in one form whatever the tab order ("Program" and "Programs" are one name)', prog([0, 1, 2]) === prog([1, 0, 2]) && prog([2, 1, 0]) === prog([0, 1, 2]) && !/s$/i.test(prog([0, 1, 2])), `${prog([0, 1, 2])}|${prog([1, 0, 2])}|${prog([2, 1, 0])}`);
+  check('group names say a concept before an ordinary title word: nursing sleep tips and "shift" tabs are not named "Shift"', !/^(shift|practice|study|sheet)$/i.test(nurse.nameOf(/Night shift nurse/)), nurse.nameOf(/Night shift nurse/));
+  // Speed: 300 tabs in well under 400 ms.
+  {
+    const topics = ['react hooks', 'pasta carbonara', 'tokyo hotels', 'mortgage rates', 'yoga poses', 'tesla model', 'python pandas', 'garden soil', 'guitar chords', 'camera lenses', 'neural network', 'sourdough starter', 'movie reviews', 'novel recommendations'];
+    const specs = Array.from({ length: 300 }, (_v, i) => [`${topics[i % topics.length]} ${['tips', 'review', 'explained', 'how to'][i % 4]} ${i}`, `https://site${i % 40}.example/${i}`]);
+    const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }]));
+    const t0 = Date.now();
+    w.g.organizeByTopic();
+    const ms = Date.now() - t0;
+    check('organize: 300 tabs take under 400 ms', ms < 400, `${ms} ms`);
+  }
+  // Group colours: neighbours never share a colour, nor read as one (red and pink, blue and purple).
+  {
+    const w = window_(R12.nurse.map(([title, url]) => [title, url, { userRemoved: true }]));
+    w.g.organizeByTopic();
+    const colors = w.g.state().map((g) => g.color);
+    const like = { red: ['pink', 'orange'], pink: ['red', 'purple'], orange: ['red', 'yellow'], yellow: ['orange'], blue: ['purple'], purple: ['blue', 'pink'] };
+    const bad = colors.filter((c, i) => i > 0 && (c === colors[i - 1] || (like[c] || []).includes(colors[i - 1])));
+    check('organize: neighbouring new groups get distinct colours', colors.length >= 5 && bad.length === 0, colors.join());
+  }
+}
+
 (async () => {
   // topicAi off (or no route): the model is never asked and nothing is reported as a failure.
   const ask = () => { asked++; return Promise.resolve({}); };

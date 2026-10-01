@@ -878,10 +878,14 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .group-label .group-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .group-label .group-count { font-weight: 500; font-variant-numeric: tabular-nums; opacity: 0.8; }
 .group-label:not(.collapsed) .group-count { display: none; }
-.group-label.crowded { padding: 0 7px; }
-.group-label.crowded .group-name { display: none; }
-.group-label.crowded::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--group-color); }
-.group-label.crowded:not(.collapsed) .group-count { display: none; }
+/* Many tabs: a compact chip that still says what the group is (the name clipped with an ellipsis, never below 36px). */
+.group-label.crowded { flex: none; min-width: 36px; max-width: 84px; padding: 0 7px; gap: 4px; font-size: 11.5px; }
+.group-label.crowded .group-count { flex: none; }
+/* Only when the chips themselves would fill the strip: a coloured dot (the name stays in the tooltip and the accessible name). */
+.group-label.dot { padding: 0 7px; }
+.group-label.dot .group-name { display: none; }
+.group-label.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--group-color); }
+.group-label.dot:not(.collapsed) .group-count { display: none; }
 .group-label input { width: 96px; padding: 0; border: none; border-radius: 3px; background: transparent; color: inherit; font: inherit; outline: none; }
 .group-label input:focus-visible { box-shadow: var(--focus-ring); }
 /* A group reads as one run: its colour line starts under the label and carries on, unbroken across
@@ -909,9 +913,11 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .organize-tabs.busy svg { animation: spin 1.1s linear infinite; }
 /* Sits in the tab strip's own row, next to the Organize button: web pages cover everything below the strip. */
 .organize-note {
-  flex: none; display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
+  flex: none; max-width: min(380px, 40vw); display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
   border-radius: 8px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap;
 }
+.organize-note .organize-note-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.organize-note button { flex: none; }
 .organize-note button { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
 .organize-note button:hover { background: var(--hover); }
 .organize-note button:focus-visible { outline: 2px solid var(--accent); }
