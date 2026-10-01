@@ -248,7 +248,7 @@
         if (entry.kind === 'section') {
           window.widgetAct(entry.id, 'restore');
           say(T('newtab.edit.restored', { title: entry.label }));
-        } else if (window.widgetSetup?.can(entry.type)) {
+        } else if (window.widgetSetup?.canAdd(entry.type)) {
           window.widgetSetup.open({ type: entry.type }); // set up right here on the page (renderer/newtab-setup.js)
         } else {
           window.widgetAct('wcreate', 'create', { type: entry.type });
@@ -292,7 +292,7 @@
     toastTimer = setTimeout(hideToast, 8000);
   }
   // Passed over by Undo: a removal the browser let go of, and a size changed again since (in Settings, another tab).
-  const staleEntry = (e) => (e.kind === 'remove' && Date.now() - e.at > REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
+  const staleEntry = (e) => ((e.kind === 'remove' || e.kind === 'config') && Date.now() - e.at > REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
   function undo() {
     let entry = history.pop();
     // Passed over: a removal the browser let go of, and a size changed again since (in Settings, another tab).
@@ -306,6 +306,9 @@
     } else if (entry.kind === 'remove') {
       window.widgetAct(entry.id, 'restore');
       say(T('newtab.edit.restored', { title: entry.title }));
+    } else if (entry.kind === 'config') { // a form save on a card: the browser still holds the settings it had (do=restore on a card that is there)
+      window.widgetAct(entry.id, 'restore');
+      say(T('newtab.edit.undone', { what: entry.title }));
     } else {
       ok = Boolean(grid()?.undoLayout(entry));
       if (entry.look) ok = restoreLook(entry.look) || ok; // Reset layout also put the clock and the search bar back
@@ -707,6 +710,13 @@
       showToast(T(info.system ? 'newtab.edit.hidden' : 'newtab.edit.removed', { title: info.title }));
       update();
       setTimeout(update, REMOVE_UNDO_MS + 50); // once the browser lets go of it, Undo stops offering it
+    },
+    // A card's form was saved: the same Undo toast as a removal; Undo puts its earlier settings back.
+    configChanged(info) {
+      history.push({ kind: 'config', id: info.id, title: info.title, at: Date.now() });
+      showToast(info.message);
+      update();
+      setTimeout(update, REMOVE_UNDO_MS + 50);
     },
     guides(item, list, obstacle, m) {
       if (!item || !m) return;
