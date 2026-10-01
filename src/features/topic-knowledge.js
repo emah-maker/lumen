@@ -53,18 +53,20 @@ const PLACES = {
 // concept -> words (lower case; matched after stemming, so plurals and -ing forms count). Travel and housing also carry the same errands in
 // German, Spanish, Portuguese, French and Italian, and Japanese and Korean as the two-character pieces tab-groups reads those scripts in.
 const CONCEPTS = {
-  travel: 'amtrak flixbus megabus greyhound flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover boarding attractions flug flüge flughafen bahn zug reise reisen urlaub unterkunft ferienwohnung vuelo vuelos billete billetes alojamiento viaje viajes pasaje pasajes passagem passagens voo voos viagem viagens vol vols billet sncf voyage volo voli treno albergo viaggio 旅行 航空 ホテ 항공 숙소 여행 호텔',
+  travel: 'amtrak flixbus megabus greyhound ryanair easyjet jet2 flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover boarding attractions flug flüge flughafen bahn zug reise reisen urlaub unterkunft ferienwohnung vuelo vuelos billete billetes alojamiento viaje viajes pasaje pasajes passagem passagens voo voos viagem viagens vol vols billet sncf voyage volo voli treno albergo viaggio 旅行 航空 ホテ 항공 숙소 여행 호텔',
   education: 'lecture homework syllabus assignment textbook exam midterm semester professor course quiz lab tutor gradebook',
   shopping: 'price buy deal discount coupon cart checkout shipping warranty unboxing',
   entertainment: 'movie movies film films cinema trailer trailers imdb letterboxd goodreads rotten tomatoes tomato book books novel novels author series season episode episodes tv sitcom documentary actor director',
   baking: 'sourdough bread loaf dough starter flour yeast crumb bake baking knead proofing levain baguette pastry dutch oven hydration scoring banneton cake cookie cookies',
-  cooking: 'recipe ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast chicken burrito pasta soup stew casserole skillet',
+  cooking: 'recipe ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast chicken burrito pasta soup stew casserole skillet 카페 맛집 레시 시피 요리',
   jobs: 'job career resume interview salary hiring recruiter internship applicant offer negotiate negotiation leetcode cscareerquestions grad',
-  housing: 'apartment apartments rent rental lease landlord realtor tenant renter renters moving movers relocation relocating uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento 賃貸 不動 월세 전세 부동',
-  sports: 'nba nfl mlb nhl playoff finals championship coach quarterback fussball fußball bundesliga spielplan laliga futebol cricket ipl bcci cricbuzz espncricinfo kohli dhoni rcb csk wicket innings',
+  housing: 'apartment apartments rent rental lease landlord realtor tenant renter renters moving movers relocation relocating uhaul wohnung wohnungen mieten miete mietvertrag zimmer vermieter nebenkosten alquiler alquilar piso pisos inquilino loyer logement affitto appartamento aluguel apartamento rightmove zoopla tenancy lettings flat flats accommodation 賃貸 不動 월세 전세 부동',
+  sports: 'nba nfl mlb nhl playoff finals championship coach quarterback fussball fußball bundesliga spielplan laliga futebol cricket ipl bcci cricbuzz espncricinfo kohli dhoni rcb csk wicket innings premier league fixtures standings arsenal chelsea tottenham epl kbo 손흥 흥민 축구 야구 리그',
   health: 'symptom diagnosis medication doctor clinic therapy nutrition workout',
   finance: 'stock invest investing investor bond dividend portfolio inflation savings loan mortgage mortgages yield yields roth ira 401k 403b rollover retirement retire brokerage dividends index etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase zerodha groww hdfc icici phonepe paytm nifty sensex upstox nubank itaú itau bradesco bovespa ibovespa sparkasse volksbank commerzbank revolut monzo n26 degiro trading212 etoro barclays hsbc santander bbva',
-  tax: 'tax taxes irs',
+  dining: 'cafe cafes 카페 맛집',
+  tax: 'tax taxes irs turbotax hrblock comptroller legalzoom llc incorporation bookkeeping quickbooks',
+  ecommerce: 'shopify etsy squareup shipstation pirateship usps fedex ups seller sellers storefront listings dropshipping',
   ml: 'machine neural reinforcement rlhf gradient backpropagation pytorch tensorflow keras llm llms gpt transformer transformers attention embedding embeddings huggingface arxiv kaggle tensor deeplearning cuda gpu gpus vram nanogpt lora oom finetune finetuning tuning tokenizer diffusion classifier backprop supervised unsupervised convolutional rnn lstm gan autoencoder overfitting regularization hyperparameter dataset pretraining inference mlp bert langchain',
   fitness: 'fitness gym cardio run running runner runners marathon jog jogging c25k couch strava garmin pegasus parkrun triathlon yoga pilates crossfit deadlift squat hiit hypertrophy macros macro protein lifting weightlifting powerlifting barbell dumbbell creatine bench',
   plants: 'plant plants monstera fiddle pothos philodendron fern ferns moss succulent succulents orchid orchids bonsai garden gardening seedling houseplant houseplants cactus cacti repot repotting prune pruning compost fertilizer perennial',
@@ -98,7 +100,7 @@ const PORTAL_BRANDS = { naver: '네이버', yahoo: 'ヤフー', rakuten: '楽天
 // else took those tabs: "Roth IRA", "Vanguard funds" and "401k rollover" share no word, but are one errand. concept -> group name.
 // Only concepts that name one topic; "shopping" words turn up in tabs about anything, and the broad ones (programming, travel) are held to
 // stricter terms (CONCEPT_LOOSE_ONLY). Cooking is left out: a window of a baker's and a meal-prepper's tabs is two topics.
-const CONCEPT_GROUPS = { finance: 'Finance', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports' };
+const CONCEPT_GROUPS = { finance: 'Finance', jobs: 'Job search', tax: 'Taxes & legal', ecommerce: 'Store', dining: 'Cafes & restaurants', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', devops: 'Cloud & DevOps', worktools: 'Work tools', observability: 'Observability', research: 'Research', entertainment: 'Movies & books', travel: 'Travel', housing: 'Housing', sports: 'Sports' };
 // Concepts too broad to merge groups: they only draw LOOSE tabs together, from different sites, and want this many (the docs of every
 // project are "programming": three of them beside a project's own tabs are that project's; two groups that formed on their own words are two projects).
 const CONCEPT_LOOSE_ONLY = { programming: 4, travel: 4, devops: 3 };
@@ -116,27 +118,43 @@ const CONCEPT_SUBNAMES = {
     ['SQL', 'sql postgres postgresql mysql sqlite mongodb redis'],
   ],
 };
+// Concepts whose site category is strong enough that two loose tabs make a group (tab-groups.js conceptGroups): two monitoring tools, or the
+// tax office and the state comptroller, are one errand whatever their titles say.
+const CONCEPT_PAIR_SITE = { observability: true, ecommerce: true, tax: true, housing: true, sports: true };
+// Words that say what KIND of page or errand a tab is, never what it is about ("Student visa", "Student accommodation" and "Part-time jobs for
+// students" are three errands, not one topic; "Sales" is a column of a dashboard and a tax). They never link tabs and never name a group
+// (tab-groups.js vectorize drops them from every tab's vector): a pair needs a word that says something, a concept, or a site.
+const GENERIC_WORDS = `student students part parttime post posts calendar calendars sale sales business businesses application applications applicant apply plan plans
+planning planner table tables guide guides tip tips near nearby buy schedule schedules template templates form forms order orders report reports data tool
+tools service services info information center centre team rate rates price prices cost costs quote quotes ticket tickets support update updates class classes
+work works working search account accounts manager management project projects notes note list lists checklist resource resources member members status
+download downloads get getting open view portal booking bookings deal deals daily weekly monthly annual annually
+online free new best top official page pages details detail summary overview setup login signin signup register registration`;
+
+// Words that may still link two tabs (a job search is "job" this and "job" that) but are no evidence of a topic by themselves and never name a group.
+const WEAK_WORDS = `job jobs offer offers dashboard start started request requests api january february april june july august september october november december`;
 // Concepts whose tabs may JOIN such a group but never start one: the tax office beside a Roth IRA and a 401k is money, three pages of
 // an agency are government ("Government" takes them, tab-groups.js FALLBACK_CATEGORIES).
 const CONCEPT_JOINS = { finance: ['tax'] };
 
 // registrable domain (or full host) -> category. Same category names as CONCEPTS where they overlap.
 const SITE_CATEGORIES = {
-  travel: 'amtrak.com flixbus.com bahn.de thetrainline.com sncf-connect.com trenitalia.com renfe.com italotreno.it omio.com rome2rio.com disneyworld.disney.go.com universalorlando.com booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com lonelyplanet.com klook.com hotels.com vrbo.com agoda.com viator.com getyourguide.com nomadicmatt.com japan-guide.com travel.state.gov flights.google.com',
+  travel: 'amtrak.com flixbus.com bahn.de thetrainline.com lner.co.uk nationalrail.co.uk ryanair.com easyjet.com jet2.com hostelworld.com visitscotland.com visitbritain.com skyscanner.net kayak.co.uk sncf-connect.com trenitalia.com renfe.com italotreno.it omio.com rome2rio.com disneyworld.disney.go.com universalorlando.com booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com lonelyplanet.com klook.com hotels.com vrbo.com agoda.com viator.com getyourguide.com nomadicmatt.com japan-guide.com travel.state.gov flights.google.com',
   education: 'canvas.northeastern.edu instructure.com blackboard.com zybooks.com khanacademy.org coursera.org edx.org chegg.com quizlet.com piazza.com gradescope.com brightspace.com coursehero.com ocw.mit.edu',
   shopping: 'amazon.com bestbuy.com walmart.com target.com ebay.com etsy.com newegg.com rtings.com wirecutter.com camelcamelcamel.com costco.com homedepot.com lowes.com',
   baking: 'kingarthurbaking.com bobsredmill.com theclevercarrot.com',
   cooking: 'seriouseats.com allrecipes.com budgetbytes.com epicurious.com bonappetit.com instacart.com eatingwell.com foodnetwork.com cooking.nytimes.com',
   jobs: 'indeed.com glassdoor.com levels.fyi lever.co greenhouse.io ziprecruiter.com handshake.com zety.com leetcode.com hackerrank.com',
-  housing: 'zillow.com apartments.com redfin.com streeteasy.com trulia.com realtor.com',
+  housing: 'zillow.com apartments.com redfin.com streeteasy.com trulia.com realtor.com rightmove.co.uk zoopla.co.uk spareroom.co.uk onthemarket.com unitestudents.com',
   dev: 'github.com gitlab.com dev.to',
   // Language and library docs, Q&A and package registries: programming itself, as opposed to a code host (a repo's pages are that project's).
   programming: 'stackoverflow.com stackexchange.com developer.mozilla.org npmjs.com pypi.org docs.python.org readthedocs.io nextjs.org typescriptlang.org react.dev nodejs.org rust-lang.org go.dev pkg.go.dev docs.rs numpy.org pandas.pydata.org matplotlib.org scipy.org djangoproject.com docs.djangoproject.com flask.palletsprojects.com realpython.com w3schools.com css-tricks.com',
   devops: 'kubernetes.io docs.docker.com hub.docker.com docker.com aws.amazon.com docs.aws.amazon.com terraform.io registry.terraform.io developer.hashicorp.com helm.sh nginx.org nginx.com docs.ansible.com ansible.com cloud.google.com azure.microsoft.com jenkins.io prometheus.io grafana.com',
   entertainment: 'imdb.com rottentomatoes.com letterboxd.com goodreads.com metacritic.com themoviedb.org',
-  sports: 'espn.com basketball-reference.com nba.com nfl.com mlb.com cricbuzz.com espncricinfo.com iplt20.com bcci.tv ge.globo.com lance.com.br bundesliga.com kicker.de sportschau.de',
+  sports: 'espn.com sports.naver.com skysports.com theathletic.com basketball-reference.com nba.com nfl.com mlb.com cricbuzz.com espncricinfo.com iplt20.com bcci.tv ge.globo.com lance.com.br bundesliga.com kicker.de sportschau.de',
   finance: 'reuters.com bloomberg.com cnbc.com wsj.com marketwatch.com federalreserve.gov fidelity.com vanguard.com schwab.com robinhood.com etrade.com nerdwallet.com investopedia.com coinbase.com zerodha.com groww.in hdfcbank.com icicibank.com phonepe.com paytm.com upstox.com nubank.com.br itau.com.br bradesco.com.br xpi.com.br b3.com.br n26.com revolut.com monzo.com degiro.com trading212.com',
-  tax: 'irs.gov',
+  tax: 'irs.gov qbo.intuit.com quickbooks.intuit.com turbotax.intuit.com hrblock.com legalzoom.com comptroller.texas.gov taxes.ny.gov ftb.ca.gov',
+  ecommerce: 'shopify.com admin.shopify.com myshopify.com squareup.com square.site dashboard.stripe.com stripe.com usps.com cns.usps.com ups.com fedex.com shipstation.com pirateship.com ship.pirateship.com shippo.com sellercentral.amazon.com',
   ml: 'arxiv.org wandb.ai huggingface.co distill.pub 3blue1brown.com paperswithcode.com pytorch.org tensorflow.org kaggle.com fast.ai deeplearning.ai',
   fitness: 'strava.com runnersworld.com myfitnesspal.com bodybuilding.com garmin.com parkrun.com',
   worktools: 'atlassian.net atlassian.com jira.com linear.app asana.com notion.so notion.site slack.com app.slack.com trello.com monday.com clickup.com',
@@ -199,7 +217,7 @@ const GOV_HOST = /\.(gov|mil)$|\.(gov|gouv)\.[a-z]{2}$|(^|\.)gov\.uk$/;
 const SHOP_TITLE = /\b(price|prices|pricing|buy|buying|cart|checkout|coupons?|discounts?|sale|shipping|laptops?|phones?|iphones?|headphones?|earbuds|airpods|monitors?|keyboards?|mouse|tvs?|televisions?|cameras?|tablets?|ipads?|speakers?|shoes|sneakers|chairs?|desks?|mattress(es)?|vacuums?|blenders?|watch(es)?|smartwatch|backpacks?|jackets?|appliances?|gadgets?)\b|通販|купить|скидк|할인|优惠/i;
 const FALLBACK_CATEGORIES = [
   { name: 'Mail & notes', hosts: 'mail.google.com gmail.com calendar.google.com drive.google.com docs.google.com sheets.google.com slides.google.com keep.google.com outlook.live.com outlook.office.com outlook.office365.com mail.yahoo.com proton.me notion.so evernote.com todoist.com trello.com asana.com slack.com airtable.com mail.*', title: /\b(inbox|(?<!(?:district|academic|school|holiday) )calendar|to-?do|agenda)\b|受信トレイ|メール|почта|входящие|письм|받은편지함|收件箱/i },
-  { name: 'Recipes', join: true, hosts: 'allrecipes.com seriouseats.com kingarthurbaking.com budgetbytes.com epicurious.com bonappetit.com foodnetwork.com cooking.nytimes.com eatingwell.com', title: /\b(recipes?|cookies?|bak(e|ing)|sourdough|dough|dinner ideas|meal prep|ingredients?)\b|レシピ|рецепт|레시피|食谱/i },
+  { name: 'Recipes', join: true, hosts: 'allrecipes.com seriouseats.com kingarthurbaking.com budgetbytes.com epicurious.com bonappetit.com foodnetwork.com cooking.nytimes.com eatingwell.com', title: /\b(recipes?|cookies?|bak(e|ing)(?! sale)|sourdough|dough|dinner ideas|meal prep|ingredients?)\b|レシピ|рецепт|레시피|食谱/i },
   { name: 'School', join: true, hosts: 'instructure.com canvas.* blackboard.com moodle.* brightspace.com gradescope.com piazza.com edstem.org zybooks.com quizlet.com chegg.com khanacademy.org coursera.org edx.org classroom.google.com schoology.com', hostRe: EDU_HOST, title: /\b(lectures?|homework|syllabus|assignments?|exams?|midterm|calculus|linear algebra|matri(x|ces)|eigen\w*|theorems?|physics|chemistry|biology|statistics|cs ?\d{3,4})\b|講義|宿題|試験|授業|лекци|домашн|экзамен|семестр|강의|숙제|课程|作业/i },
   // Government: agencies are not schools. Hosts by suffix (hostRe) and a few by name; the title words are the ones that say it alone.
   { name: 'Government', hosts: 'europa.eu canada.ca gc.ca usa.gov', hostRe: GOV_HOST, title: /\b(tax returns?|dmv|passport renewal|social security|voter registration|driver'?s licen[sc]e)\b|確定申告|налог|госуслуги/i },
@@ -210,4 +228,4 @@ const FALLBACK_CATEGORIES = [
   { name: 'News & social', weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
 ];
 
-module.exports = { PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };
+module.exports = { GENERIC_WORDS, WEAK_WORDS, CONCEPT_PAIR_SITE, PORTAL_BRANDS, SUFFIX_CATEGORIES, PLACE_ALIASES, SITE_PLACES, CITIES, RETAIL_HOSTS, SAAS_DOMAINS, SSO_HOSTS, CONCEPT_SAME_SITE_OK, SHOP_TITLE, HINT_EXCEPTIONS, FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

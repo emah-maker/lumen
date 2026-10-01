@@ -494,6 +494,157 @@ const en = require('../src/locales/en.json');
   const ipl = organized([['IPL 2026 Points Table', 'https://www.espncricinfo.com/ipl/points-table'], ['RCB vs CSK live score', 'https://www.cricbuzz.com/live-cricket-scores/1'], ['Virat Kohli stats', 'https://www.espncricinfo.com/player/virat-kohli'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
   check('IPL, Cricbuzz and Kohli are one Sports group', [1, 2].every((i) => ipl.same(0, i)) && ipl.name(0) === 'Sports' && !ipl.same(0, 3), ipl.name(0));
 }
+// 20. Round 9: precision over recall. A group needs two real topic words, a shared concept, one site (or a CJK run); generic words ("student",
+// "sales", "calendar", "post") and a place or a brand alone link nothing and name nothing; trips keep their place; the stores, taxes, monitoring and
+// housing errands are concepts. The sets are trimmed from the raters' personas (a parent, an engineer, a student abroad, a candle seller, a Leeds renter).
+{
+  const knowledge = require('../src/features/topic-knowledge');
+  const PERSONAS = {
+    parent: [
+      ['Summer camps near Austin - ActivityHero', 'https://www.activityhero.com/austin'], ['YMCA Camp Austin registration', 'https://www.ymca.org/camp'],
+      ['AISD school calendar 2026-27', 'https://www.austinisd.org/calendar'], ['ParentSquare - Mrs Lee class update', 'https://www.parentsquare.com/feed'],
+      ['PTA bake sale signup - SignUpGenius', 'https://www.signupgenius.com/go/bake'], ['Pediatrician appointment - MyChart', 'https://mychart.example.com/appt'],
+      ['Kids birthday party ideas - Pinterest', 'https://www.pinterest.com/ideas/kids-party'], ['Chuck E. Cheese party packages', 'https://www.chuckecheese.com/party'],
+      ['Disney World vacation planning - Disney', 'https://disneyworld.disney.go.com/plan'], ['Orlando hotels family - Booking.com', 'https://www.booking.com/city/us/orlando.html'],
+      ['Flights Austin to Orlando - Google Flights', 'https://www.google.com/travel/flights'], ['Disney Genie+ tips - Mouse Hacks', 'https://www.mousehacks.com/genie'],
+      ['Easy weeknight dinners kids will eat - Budget Bytes', 'https://www.budgetbytes.com/easy-dinners'], ['Chicken nuggets homemade recipe', 'https://www.allrecipes.com/chicken-nuggets'],
+      ['Target - school supplies list', 'https://www.target.com/school-supplies'], ['Amazon - Lego Star Wars set', 'https://www.amazon.com/lego-star-wars'],
+      ['Prodigy math - login', 'https://play.prodigygame.com/'], ['IXL - 3rd grade math', 'https://www.ixl.com/math/grade-3'],
+      ['Google Calendar', 'https://calendar.google.com/calendar'], ['Zillow - Austin homes for sale', 'https://www.zillow.com/austin-tx'],
+      ['529 plan - Fidelity', 'https://www.fidelity.com/529'], ['Pay water bill - Austin Utilities', 'https://www.austintexas.gov/utilities'],
+    ],
+    swe: [
+      ['Pull requests - lumen', 'https://github.com/me/lumen/pulls'], ['Fix race in tab restore #412', 'https://github.com/me/lumen/pull/412'],
+      ['Electron BrowserView API', 'https://www.electronjs.org/docs/latest/api/browser-view'], ['Stack Overflow - electron webContents destroyed', 'https://stackoverflow.com/questions/1/electron-destroyed'],
+      ['Datadog - APM traces', 'https://app.datadoghq.com/apm'], ['Sentry - TypeError', 'https://sentry.io/issues/123'],
+      ['AWS Console - Lambda', 'https://console.aws.amazon.com/lambda'], ['Terraform registry - aws_s3_bucket', 'https://registry.terraform.io/aws_s3_bucket'], ['Kubernetes docs - Deployments', 'https://kubernetes.io/docs/deployments'],
+      ['Designing Data-Intensive Applications notes', 'https://notes.example.com/ddia'], ['Hacker News', 'https://news.ycombinator.com/'],
+      ['Greenhouse - Stripe SWE application', 'https://boards.greenhouse.io/stripe'], ['Glassdoor - Stripe interviews', 'https://www.glassdoor.com/stripe'],
+      ['Mechanical keyboard - Keychron Q1', 'https://www.keychron.com/q1'], ['r/MechanicalKeyboards', 'https://www.reddit.com/r/MechanicalKeyboards'],
+      ['Flights SFO to Tokyo', 'https://www.google.com/travel/flights'], ['Tokyo itinerary 7 days', 'https://www.tripadvisor.com/tokyo'], ['Chase - Accounts', 'https://secure.chase.com/'],
+    ],
+    abroad: [
+      ['University of Edinburgh - Learn', 'https://www.learn.ed.ac.uk/'], ['INFR08026 lecture 5 slides', 'https://www.learn.ed.ac.uk/infr08026'],
+      ['Student visa UK - gov.uk', 'https://www.gov.uk/student-visa'], ['Student accommodation Edinburgh - Unite Students', 'https://www.unitestudents.com/edinburgh'],
+      ['Flat to rent Marchmont - SpareRoom', 'https://www.spareroom.co.uk/edinburgh'], ['Council tax exemption student', 'https://www.edinburgh.gov.uk/council-tax'],
+      ['Flights Edinburgh to Delhi - Skyscanner', 'https://www.skyscanner.net/edi-del'], ['Hostel Dublin - Hostelworld', 'https://www.hostelworld.com/dublin'],
+      ['Things to do in Dublin - TripAdvisor', 'https://www.tripadvisor.com/Dublin'], ['Trains Edinburgh to London - LNER', 'https://www.lner.co.uk/'],
+      ['Arthur Seat hike guide', 'https://www.alltrails.com/arthurs-seat'], ['Butter chicken recipe - Hebbars Kitchen', 'https://hebbarskitchen.com/butter-chicken'],
+      ['Part-time jobs for students Edinburgh - Indeed', 'https://uk.indeed.com/jobs?q=student&l=edinburgh'], ['Machine learning - Andrew Ng', 'https://www.coursera.org/learn/ml'],
+    ],
+    smallbiz: [
+      ['Square Dashboard - Sales', 'https://squareup.com/dashboard/sales'], ['Shopify admin - Orders', 'https://admin.shopify.com/orders'],
+      ['Etsy Shop Manager - Listings', 'https://www.etsy.com/your/shops/me/tools/listings'], ['QuickBooks - Profit and Loss', 'https://app.qbo.intuit.com/app/reports'],
+      ['IRS - Estimated taxes', 'https://www.irs.gov/estimated-taxes'], ['Texas Comptroller - Sales tax', 'https://comptroller.texas.gov/taxes/sales'],
+      ['LegalZoom - LLC annual report', 'https://www.legalzoom.com/llc'], ['Candle wax supplier - CandleScience', 'https://www.candlescience.com/wax'],
+      ['USPS - Click-N-Ship', 'https://cns.usps.com/'], ['Pirate Ship - label', 'https://ship.pirateship.com/'], ['Canva - Instagram post', 'https://www.canva.com/design/ig'],
+      ['Instagram - Business Insights', 'https://business.instagram.com/insights'], ['Craft fair applications 2026 - Zapplication', 'https://www.zapplication.org/'],
+      ['Indeed - post a job: part-time packer', 'https://employers.indeed.com/'], ['Small business loan - SBA', 'https://www.sba.gov/loans'], ['Roth IRA limits - Fidelity', 'https://www.fidelity.com/roth'],
+    ],
+    uk: [
+      ['Trains from London to Edinburgh - Trainline', 'https://www.thetrainline.com/trains/london/edinburgh'], ['Edinburgh hotels - Booking.com', 'https://www.booking.com/city/gb/edinburgh.html'],
+      ['Things to do in Edinburgh - VisitScotland', 'https://www.visitscotland.com/edinburgh'], ['Edinburgh Fringe 2026 tickets', 'https://www.edfringe.com/tickets'],
+      ['Rightmove - houses to rent in Leeds', 'https://www.rightmove.co.uk/property-to-rent/leeds'], ['Zoopla - flats to rent Leeds', 'https://www.zoopla.co.uk/to-rent/leeds'],
+      ['Tenancy agreement template - Citizens Advice', 'https://www.citizensadvice.org.uk/tenancy'], ['HMRC - Self Assessment', 'https://www.gov.uk/self-assessment-tax-returns'],
+      ['Premier League table - BBC Sport', 'https://www.bbc.co.uk/sport/football/premier-league/table'], ['Arsenal vs Chelsea live - Sky Sports', 'https://www.skysports.com/arsenal'],
+      ['Arsenal transfer news - The Athletic', 'https://theathletic.com/arsenal'], ['BBC News', 'https://www.bbc.co.uk/news'], ['Guardian - Politics', 'https://www.theguardian.com/politics'],
+      ['Tesco - groceries', 'https://www.tesco.com/groceries'], ['Monzo', 'https://app.monzo.com/'],
+    ],
+    korea: [
+      ['서울 맛집 추천 - 망고플레이트', 'https://www.mangoplate.com/seoul'], ['성수동 카페 추천', 'https://blog.naver.com/cafe1'], ['홍대 맛집 베스트', 'https://blog.naver.com/hongdae'],
+      ['손흥민 경기 결과 - 네이버 스포츠', 'https://sports.naver.com/son'], ['EPL 순위', 'https://sports.naver.com/epl'], ['파이썬 기초 강의 - 인프런', 'https://www.inflearn.com/python'],
+      ['제주도 항공권 - 스카이스캐너', 'https://www.skyscanner.co.kr/jeju'], ['제주도 숙소 추천 - 야놀자', 'https://www.yanolja.com/jeju'], ['제주도 3박4일 여행 코스', 'https://blog.naver.com/jeju'],
+    ],
+  };
+  // "r9" helper: tabs are found by a word of their title; `loose` is a tab in no group.
+  const setOf = (key) => {
+    const specs = PERSONAS[key];
+    const o = organized(specs);
+    const ix = (re) => { const i = specs.findIndex(([t]) => re.test(t)); if (i < 0) throw new Error(`no tab ${re}`); return i; };
+    return { ...o, ix, together: (a, b) => o.same(ix(a), ix(b)), nameOf: (re) => o.name(ix(re)), loose: (re) => !o.name(ix(re)) };
+  };
+  const parent = setOf('parent');
+  check('r9: "529 plan - Fidelity" does not join Disney (a finance tab on "plan")', !parent.together(/529/, /Disney World/) && !/disney|orlando/i.test(parent.nameOf(/529/)), parent.nameOf(/529/));
+  check('r9: Disney World planning, the Orlando hotels and the flight are one trip, without the 529 plan', parent.together(/Disney World/, /Orlando hotels/) && parent.together(/Disney World/, /Flights Austin/) && parent.nameOf(/Disney World/) === 'Orlando', parent.nameOf(/Disney World/));
+  check('r9: the school calendar and Google Calendar are not a group called "Calendar"', !/^calendar$/i.test(parent.nameOf(/AISD/)) && !/^calendar$/i.test(parent.nameOf(/Google Calendar/)), parent.nameOf(/AISD/));
+  check('r9: "bake sale" is a fundraiser, not Recipes', !/recipe/i.test(parent.nameOf(/bake sale/)), parent.nameOf(/bake sale/));
+  check('r9: two camp pages and two party pages still group', parent.together(/Summer camps/, /YMCA/) && parent.together(/birthday party/, /Chuck E/), `${parent.nameOf(/Summer camps/)}|${parent.nameOf(/birthday/)}`);
+  const swe = setOf('swe');
+  check('r9: Datadog and Sentry are one Observability group (two monitoring tools)', swe.together(/Datadog/, /Sentry/) && swe.nameOf(/Datadog/) === 'Observability', swe.nameOf(/Datadog/));
+  check('r9: "Applications" (a book, a job application) is not a group', !swe.together(/Designing Data/, /Greenhouse/) && !/application/i.test(swe.nameOf(/Greenhouse/)), swe.nameOf(/Greenhouse/));
+  check('r9: Chase beside Tokyo flights and Kubernetes stays loose', swe.loose(/Chase/));
+  const abroad = setOf('abroad');
+  check('r9: no "Student" lump: the visa, the accommodation, council tax and part-time jobs are not linked by "student"', !abroad.together(/Student visa/, /accommodation/) && !abroad.together(/accommodation/, /Council tax/) && !abroad.together(/Council tax/, /Part-time/) && !abroad.together(/Student visa/, /Part-time/), ['Student visa', 'accommodation', 'Council', 'Part-time'].map((w) => abroad.nameOf(new RegExp(w))).join('|'));
+  check('r9: no group is called "Student"', ![/Student visa/, /accommodation/, /Council tax/, /Part-time/].some((re) => /student/i.test(abroad.nameOf(re))));
+  check('r9: the Dublin hostel and the Dublin sights are one trip named Dublin, not pulled into a visa group', abroad.together(/Hostel Dublin/, /Things to do in Dublin/) && abroad.nameOf(/Hostel Dublin/) === 'Dublin' && !abroad.together(/Hostel Dublin/, /Student visa/), abroad.nameOf(/Hostel Dublin/));
+  check('r9: the Delhi flight and the London trains of an Edinburgh stay are one trip named Edinburgh', abroad.together(/Delhi/, /Trains Edinburgh/) && abroad.nameOf(/Delhi/) === 'Edinburgh', abroad.nameOf(/Delhi/));
+  check('r9: student accommodation and a flat to rent are Housing', abroad.together(/accommodation/, /Flat to rent/) && /housing/i.test(abroad.nameOf(/Flat to rent/)), abroad.nameOf(/Flat to rent/));
+  const uk = setOf('uk');
+  check('r9: Edinburgh trains, hotels, things to do and Fringe tickets are one trip named Edinburgh', [/Edinburgh hotels/, /Things to do/, /Fringe/].every((re) => uk.together(/Trains from London/, re)) && uk.nameOf(/Fringe/) === 'Edinburgh', uk.nameOf(/Fringe/));
+  check('r9: the Premier League table goes with Arsenal in Sports, not News & social', uk.together(/Premier League table/, /Arsenal vs Chelsea/) && uk.together(/Premier League table/, /Arsenal transfer/) && uk.nameOf(/Premier League table/) === 'Sports', uk.nameOf(/Premier League table/));
+  check('r9: Rightmove, Zoopla and the tenancy agreement are Housing', uk.together(/Rightmove/, /Zoopla/) && uk.together(/Rightmove/, /Tenancy/) && uk.nameOf(/Rightmove/) === 'Housing', uk.nameOf(/Rightmove/));
+  const biz = setOf('smallbiz');
+  check('r9: Square and the Texas Comptroller are not a "Sales" group', !biz.together(/Square/, /Comptroller/) && !/sales/i.test(biz.nameOf(/Square/)) && !/sales/i.test(biz.nameOf(/Comptroller/)), `${biz.nameOf(/Square/)}|${biz.nameOf(/Comptroller/)}`);
+  check('r9: Square, Shopify, Etsy seller, USPS and Pirate Ship are the Store', [/Shopify/, /Etsy/, /USPS/, /Pirate/].every((re) => biz.together(/Square/, re)) && biz.nameOf(/Square/) === 'Store', biz.nameOf(/Square/));
+  check('r9: the IRS, the comptroller and LegalZoom are Taxes & legal, and the Roth IRA and the 529-style money tabs are not', [/Comptroller/, /LegalZoom/].every((re) => biz.together(/IRS/, re)) && biz.nameOf(/IRS/) === 'Taxes & legal' && !biz.together(/IRS/, /Roth IRA/), biz.nameOf(/IRS/));
+  check('r9: "Post" and "Business" are not group names ("post a job" is not "Instagram post")', !biz.together(/Instagram post/, /post a job/) && !biz.together(/Business Insights/, /Small business loan/), `${biz.nameOf(/Instagram post/)}|${biz.nameOf(/Business Insights/)}`);
+  const kr = setOf('korea');
+  check('r9: Korean football (손흥민, EPL) is Sports', kr.together(/손흥민/, /EPL/) && kr.nameOf(/EPL/) === 'Sports', kr.nameOf(/EPL/));
+  check('r9: the Korean cafe and restaurant tabs are one group', kr.together(/성수동 카페/, /서울 맛집/) && kr.together(/서울 맛집/, /홍대 맛집/), kr.nameOf(/카페/));
+  check('r9: the Jeju trip stays whole', kr.together(/항공권/, /숙소/) && kr.together(/항공권/, /3박4일/), kr.nameOf(/항공권/));
+  // Generic words, a place and a brand never link two tabs on their own.
+  const lone = organized([['Student discounts - UNiDAYS', 'https://www.myunidays.com/'], ['Student loans explained', 'https://studentaid.gov/loans'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r9: two tabs that share only "student" stay loose', !lone.same(0, 1), `${lone.name(0)}|${lone.name(1)}`);
+  const sales = organized([['Sales dashboard - Looker', 'https://looker.example.com/sales'], ['Sales tax rates by state', 'https://www.salestaxinstitute.com/rates'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r9: two tabs that share only "sales" stay loose', !sales.same(0, 1), `${sales.name(0)}|${sales.name(1)}`);
+  const place = organized([['Weather Austin', 'https://weather.com/austin'], ['Austin farmers market vendor form', 'https://www.sfcmarket.com/vendor'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r9: two tabs that share only a place stay loose', !place.same(0, 1), `${place.name(0)}|${place.name(1)}`);
+  check('r9: the generic list says student, jobs-adjacent and sales words', ['student', 'sales', 'calendar', 'post', 'business', 'applications', 'plan', 'dashboard', 'table', 'guide', 'tips', 'near', 'buy', 'schedule'].every((w) => new RegExp(`\\b${w}\\b`).test(`${knowledge.GENERIC_WORDS} ${knowledge.WEAK_WORDS} guide tips near buy schedule`)));
+  // "train" is a travel word only beside a place: "train a model" is machine learning.
+  const train = organized([['How to train a neural network from scratch', 'https://blog.example.com/train'], ['Train times Boston to New York - Amtrak', 'https://www.amtrak.com/schedule'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r9: "train a model" and a train timetable are not one topic', !train.same(0, 1));
+  const trip = organized([['Trains Edinburgh to London - LNER', 'https://www.lner.co.uk/'], ['Edinburgh hotels', 'https://www.booking.com/city/gb/edinburgh.html'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r9: trains beside a shared place link (Edinburgh trains and hotels)', trip.same(0, 1) && trip.name(0) === 'Edinburgh', trip.name(0));
+  // A group's name is a topic word most of its tabs carry, a concept or a place; never a generic word.
+  const names = Object.values(PERSONAS).flatMap((specs) => { const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }])); w.g.organizeByTopic(); return w.g.state().map((g) => g.name); });
+  const genericName = /^(post|calendar|business|applications?|student|students|sales|plan|table|guide|tips?|near|buy|schedule|jobs?|dashboard|orders?|tickets?|template|form|report)$/i;
+  check('r9: no group in any persona is named with a generic word', !names.some((n) => genericName.test(n)), names.filter((n) => genericName.test(n)).join());
+  // Precision: tabs placed in a group where most of the other members share no concept, topic word, site or hint with them.
+  const docsOf = (specs) => tg._vectorize(specs.map(([title, url], id) => ({ id, title, url })));
+  const generic = new Set(`${knowledge.GENERIC_WORDS} ${knowledge.WEAK_WORDS}`.split(/\s+/).filter(Boolean).map((w) => tg.tokens(w)[0]?.key || w));
+  const shares = (a, b) => {
+    if (a.site && a.site === b.site) return true;
+    if (a.siteHint && a.siteHint === b.siteHint && !knowledge.BROAD_HINTS.has(a.siteHint)) return true;
+    for (const [k, v] of a.words) {
+      if (!b.words.has(k)) continue;
+      if (k[0] === '%') { if (k !== '%shopping') return true; continue; }
+      if (v.weight >= 0.7 && b.words.get(k).weight >= 0.7 && /^[\p{L}\p{N}]/u.test(k) && !generic.has(k)) return true;
+    }
+    return (a.words.has('%tax') && b.words.has('%finance')) || (a.words.has('%finance') && b.words.has('%tax'));
+  };
+  const categoryNames = new Set(knowledge.FALLBACK_CATEGORIES.map((c) => c.name)); // "Video & music", "News & social" ... are kinds of site: their tabs share the kind
+  let placed = 0;
+  let strangers = 0;
+  const odd = [];
+  for (const specs of Object.values(PERSONAS)) {
+    const w = window_(specs.map(([a, b]) => [a, b, { userRemoved: true }]));
+    w.g.organizeByTopic();
+    const docs = docsOf(specs);
+    const by = new Map();
+    w.tabs().forEach((t) => { if (t.groupId) by.set(t.groupId, [...(by.get(t.groupId) || []), t.id - 1]); }); // strip order is not the order given: tabs by id
+    const names = new Map(w.g.state().map((g) => [g.id, g.name]));
+    for (const [gid, members] of by) {
+      for (const i of members) {
+        placed++;
+        if (categoryNames.has(names.get(gid))) continue;
+        const others = members.filter((j) => j !== i);
+        if (others.filter((j) => !shares(docs[i], docs[j])).length * 2 > others.length) { strangers++; odd.push(`${names.get(gid)}: ${specs[i][0]}`); }
+      }
+    }
+  }
+  check(`r9: precision: tabs in a group that most of it shares nothing with (${strangers} of ${placed}) are at most 2`, strangers <= 2, odd.join(' ; '));
+}
+
 {
   // The note reads "1 group", not "1 groups"; every key exists.
   const keys = [[1, 0], [3, 0], [1, 1], [1, 4], [3, 1], [3, 4]].map(([g, l]) => oai.summaryKey(g, l));

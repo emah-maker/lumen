@@ -143,6 +143,12 @@ function stem(w) {
 // Words of a site's chrome rather than of a page's subject, and site names: never exempt from the too-common cutoff (vectorize).
 const NAV_WORDS = new Set('dashboard overview settings account accounts pricing profile menu contact support cart inbox feed explore browse catalog store shop products product category categories directory archive portal'.split(' ').map(stem));
 const BRAND_KEYS = new Set([...BRAND_WORDS].map(stem));
+// Words of a KIND of errand or page ("student", "sales", "calendar", "post", "plan"): they never link two tabs and never name a group, so they are
+// left out of every tab's vector (vectorize). A concept the word belongs to still counts (a "jobs" tab is still a jobs tab).
+const GENERIC_KEYS = new Set(knowledge.GENERIC_WORDS.split(/\s+/).filter(Boolean).map(stem));
+// ...and a few that may still link ("job" in a job search) but are no evidence of a topic on their own, and never name a group.
+const WEAK_KEYS = new Set(knowledge.WEAK_WORDS.split(/\s+/).filter(Boolean).map(stem));
+const isGenericKey = (k) => GENERIC_KEYS.has(k) || WEAK_KEYS.has(k);
 
 // Built-in knowledge (features/topic-knowledge.js) keyed by stem: city -> country, word -> concept,
 // domain -> category.
@@ -536,7 +542,11 @@ function vectorize(entries, { allowCommon = false } = {}) {
   const idf = (key) => Math.log((n + 1) / (df.get(key) + 1)) + 1;
   for (const d of docs) {
     d.vec = new Map();
-    for (const [key, { weight }] of d.words) if (informative(key)) d.vec.set(key, weight * idf(key));
+    d.common = new Set(); // words several tabs carry but too many to tell groups apart: still shared evidence within one group (see evidenceOf)
+    for (const [key, { weight }] of d.words) {
+      if (informative(key) && !GENERIC_KEYS.has(key)) d.vec.set(key, weight * idf(key));
+      else if (df.get(key) >= 2 && !GENERIC_KEYS.has(key)) d.common.add(key);
+    }
     // A single shared dimension makes cosine similarity exactly 1 no matter how small its weight
     // is - two tabs whose only overlap is the low-weight site label (a "youtube"/"github" that
     // was the ONLY thing they had in common) would look like a perfect match. A solo word from
@@ -1028,8 +1038,9 @@ function conceptGroups(clusters, docs) {
       home = parts[0];
       formed.set(home, label);
     }
-    // Two loose tabs that both say the concept strongly, with nowhere better to go.
-    if (!home && parts.length === 2 && parts.every((c) => c.length === 1 && hitsOf(c[0], concept, false) >= CONCEPT_PAIR_HITS)) {
+    // Two loose tabs that both say the concept strongly (or, for a concept of tools and agencies, sit on its sites), with nowhere better to go.
+    const pairBySite = Boolean((knowledge.CONCEPT_PAIR_SITE || {})[concept]);
+    if (!home && parts.length === 2 && parts.every((c) => c.length === 1 && (hitsOf(c[0], concept, false) >= CONCEPT_PAIR_HITS || (pairBySite && categoriesOfSite(docs[c[0]].url).includes(concept))))) {
       home = parts[0];
       formed.set(home, label);
     }
@@ -1063,6 +1074,194 @@ function conceptGroups(clusters, docs) {
     formed.set(c, subName(concepts.get(c), c, docs) || label);
   }
   return { clusters: out, formed };
+}
+
+// ---------- cohesion: what a group has to show before it is a group ----------
+//
+// Precision over recall: a wrong group costs the user more than a loose tab. Whatever stage put tabs together (a shared word, an anchor,
+// a site, a concept), every group is checked once more, here, against evidence that does not depend on how it formed. Tabs of a group are
+// kept when they share, with other tabs of the group, at least one of:
+//   - a concept (knowledge.CONCEPTS: finance, travel, housing ...), a hint of their site, or the same registrable site (a third of the group, or two tabs);
+//   - two or more topic words (not generic ones, not a place, not a site's name);
+//   - one topic word that says something (written in the title, and the tabs do not belong to different concepts);
+//   - for Chinese, Japanese and Korean, a shared run of two characters or more (those are words of their own: see tokens()).
+// A place alone, a brand alone and a generic word ("student", "sales", "calendar", "post") are never evidence. A tab that shares nothing with
+// any other tab of its group is let go (and so is a pair that shares nothing): it stays loose rather than sit in a group it does not belong to.
+const CONCEPT_FAMILY = (() => {
+  // Tech concepts overlap on every page that names a tool (Docker is devops and programming): they do not contradict each other.
+  const tech = new Set(['programming', 'devops', 'observability', 'worktools', 'research', 'ml']);
+  return (concept) => (tech.has(concept) ? 'tech' : concept);
+})();
+// The topic concepts (knowledge.CONCEPT_GROUPS) a tab carries, as families.
+function topicFamilies(d) {
+  if (!d.families) {
+    d.families = new Set();
+    for (const concept of Object.keys(knowledge.CONCEPT_GROUPS)) if (d.words.has(`%${concept}`)) d.families.add(CONCEPT_FAMILY(concept));
+  }
+  return d.families;
+}
+const placeId = (k) => (PLACE_OF.has(k) ? stem(PLACE_OF.get(k)) : k);
+// -> { words, concepts, places, site, hint }: what a tab can show another tab (cached on the doc).
+function evidenceOf(d) {
+  if (d.evidence) return d.evidence;
+  const words = new Set();
+  const concepts = new Set();
+  const places = new Set();
+  for (const [k, e] of d.words) {
+    if (k[0] === '%') { if (k !== '%shopping') concepts.add(k); continue; }
+    if (!isRealKey(k) || e.weight < 0.7) continue;
+    if (isPlaceKey(k)) { places.add(placeId(k)); continue; }
+    if (!(d.vec.has(k) || d.common.has(k)) || isGenericKey(k) || NAV_WORDS.has(k)) continue;
+    words.add(k);
+  }
+  // The tax office is money among retirement accounts (CONCEPT_JOINS): it shows the concept it may join.
+  for (const [concept, joins] of Object.entries(knowledge.CONCEPT_JOINS)) if (joins.some((j) => concepts.has(`%${j}`))) concepts.add(`%${concept}`);
+  const site = siteGroupable(d) && d.site ? d.site : '';
+  const hint = d.siteHint && !knowledge.BROAD_HINTS.has(d.siteHint) ? d.siteHint : '';
+  return (d.evidence = { words, concepts, places, site, hint });
+}
+const CJK_KEY = /[^\u0000-ɏ]/;
+// Every way two or more of the tabs c (doc indices) hold something in common: [{ holders: [doc index] }].
+function supportsOf(c, docs) {
+  const ev = c.map((i) => evidenceOf(docs[i]));
+  const out = [];
+  const need = Math.max(2, Math.ceil(c.length / 3)); // a concept or site has to be a third of the group's (two tabs of a small one)
+  const hold = (pick) => {
+    const m = new Map();
+    c.forEach((i, x) => { for (const k of pick(ev[x])) { if (!m.has(k)) m.set(k, []); m.get(k).push(i); } });
+    return [...m.values()].filter((h) => h.length >= need);
+  };
+  for (const h of hold((e) => e.concepts)) out.push({ holders: h });
+  // Two tabs of one place that are both about getting there or being there are a trip (see tripGroups), whatever else their words say.
+  {
+    const byPlace = new Map();
+    c.forEach((i, x) => { if (tripEvidence(docs[i])) for (const p of ev[x].places) { if (!byPlace.has(p)) byPlace.set(p, []); byPlace.get(p).push(i); } });
+    for (const h of byPlace.values()) if (h.length >= 2) out.push({ holders: h });
+  }
+  // A big group of one place (a Japan trip with its subway pass and restaurant pages): the place is in most of it and a third of it is about
+  // getting there or living there. A small one needs more than a place (a city beside nothing is no topic).
+  if (c.length >= SPLIT_PLACE_TOPIC) {
+    const trips = c.filter((i) => docs[i].words.has('%travel') || docs[i].words.has('%housing')).length;
+    if (trips * 3 >= c.length) for (const h of hold((e) => e.places)) if (h.length * 5 >= c.length * 3) out.push({ holders: h });
+  }
+  for (const h of hold((e) => (e.site ? [e.site] : []))) out.push({ holders: h });
+  for (const h of hold((e) => (e.hint ? [e.hint] : []))) out.push({ holders: h });
+  // A word held by 2+ tabs: alone it counts when it says something (and nothing about the tabs contradicts it), otherwise it needs a second one.
+  const byWord = new Map();
+  c.forEach((i, x) => { for (const k of ev[x].words) { if (!byWord.has(k)) byWord.set(k, []); byWord.get(k).push(i); } });
+  const shared = [...byWord].filter(([, h]) => h.length >= 2);
+  const contradict = (h) => {
+    for (let a = 0; a < h.length; a++) for (let b = a + 1; b < h.length; b++) {
+      const fa = topicFamilies(docs[h[a]]), fb = topicFamilies(docs[h[b]]);
+      if (fa.size && fb.size && ![...fa].some((f) => fb.has(f))) return true;
+    }
+    return false;
+  };
+  for (const [k, h] of shared) {
+    const written = h.some((i) => (docs[i].words.get(k)?.weight ?? 0) >= 0.8); // in a title or a search, by one of them at least
+    if (written && !contradict(h)) out.push({ holders: h });
+  }
+  for (let a = 0; a < shared.length; a++) {
+    for (let b = a + 1; b < shared.length; b++) {
+      const both = shared[a][1].filter((i) => shared[b][1].includes(i));
+      if (both.length >= 2) out.push({ holders: both });
+    }
+  }
+  return out;
+}
+// A cluster -> the clusters it holds: [c] when its tabs are all bound together, by what they share (two tabs that share something are bound,
+// and so are the tabs of a chain of such pairs). Tabs bound to no one are single tabs; two bundles of tabs bound only by a place or a generic
+// word ("Edinburgh" over a student's flat and the trains home) are two groups.
+function cohere(c, docs) {
+  if (c.length < 2) return [c];
+  const parent = new Map(c.map((i) => [i, i]));
+  const find = (i) => (parent.get(i) === i ? i : (parent.set(i, find(parent.get(i))), parent.get(i)));
+  const bound = new Set();
+  for (const { holders } of supportsOf(c, docs)) for (const h of holders) { bound.add(h); parent.set(find(h), find(holders[0])); }
+  const parts = new Map();
+  for (const i of c) if (bound.has(i)) { const r = find(i); parts.set(r, [...(parts.get(r) || []), i]); }
+  const out = [...parts.values()];
+  if (out.length === 1 && out[0].length === c.length) return [c];
+  return [...out, ...c.filter((i) => !bound.has(i)).map((i) => [i])];
+}
+
+// ---------- trips ----------
+//
+// Tabs that share a place and are about getting there or being there (a hotel, a hostel, flights, things to do, tickets, trains, an itinerary,
+// the sights, a tour) are one trip, named for the place, whatever else their words say: "Edinburgh hotels", "Things to do in Edinburgh" and
+// "Edinburgh Fringe tickets" share one word and a bit of travel. "Train" is a travel word only here, beside a place: elsewhere it is a machine
+// learning verb ("train a model").
+const TRIP_TITLE = /\b(things to do|what to (?:see|do|eat)|tickets?|trains?|rail|subway|ferry|sights?|sightseeing|tours?|itinerary|attractions?|hostels?|hotels?|flights?|airport|visit|visa)\b/i;
+const tripEvidence = (d) => d.words.has('%travel') || TRIP_TITLE.test(String(d.title || ''));
+function placesOf(d) {
+  const e = evidenceOf(d);
+  return e.places;
+}
+// A trip's name: the city its tabs name most, else the country.
+function placeLabel(id, members) {
+  const count = new Map();
+  for (const d of members) for (const [k, e] of d.words) if (isRealKey(k) && e.weight >= 0.7 && isPlaceKey(k) && placeId(k) === id && !COUNTRY_KEYS.has(k)) count.set(e.surface, (count.get(e.surface) || 0) + 1);
+  const city = [...count].sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)[0];
+  if (city && count.size === 1) return city[0];
+  if (city && [...count.values()].filter((n) => n === city[1]).length === 1) return city[0];
+  const country = members.map((d) => d.words.get(id)?.surface).find(Boolean);
+  return country || city?.[0] || id.charAt(0).toUpperCase() + id.slice(1);
+}
+// clusters: arrays of doc indices (changed in place; rekey(c, change) renames one that is changed; nameOf(c) is the concept name a cluster has).
+// -> [[cluster, label]] the trips it made, or the generic "Travel" groups it names for their place.
+function tripGroups(clusters, docs, rekey, nameOf) {
+  const trip = docs.map(tripEvidence);
+  const places = docs.map(placesOf);
+  const byPlace = new Map();
+  docs.forEach((d, i) => { if (trip[i]) for (const p of places[i]) { if (!byPlace.has(p)) byPlace.set(p, []); byPlace.get(p).push(i); } });
+  const used = new Set();
+  const made = [];
+  const homeOf = (i) => clusters.find((c) => c.includes(i));
+  for (;;) {
+    let best = null;
+    for (const [p, list] of byPlace) {
+      const free = list.filter((i) => !used.has(i));
+      if (free.length < 2) continue;
+      // Tabs that name another place with trips of its own go there first; the ones only this place has decide it.
+      const only = free.filter((i) => [...places[i]].every((q) => q === p || (byPlace.get(q) || []).filter((j) => !used.has(j)).length < 2)).length;
+      if (!best || free.length > best.free.length || (free.length === best.free.length && only > best.only)) best = { p, free, only };
+    }
+    if (!best) break;
+    const tabs = [...best.free];
+    tabs.forEach((i) => used.add(i));
+    // The tab a trip tab was paired with (the Genie tips beside the Disney World page) goes with it, when what bound them is more than the place.
+    for (const i of best.free) {
+      const from = homeOf(i);
+      const partner = from && from.length === 2 ? from.find((j) => j !== i) : null;
+      if (partner != null && !tabs.includes(partner) && supportsOf([i, partner], docs).length) tabs.push(partner);
+    }
+    // A cluster that already holds most of them and is about travel takes the others; one that is about something else is left to the cohesion check.
+    const hosts = clusters.filter((c) => c.filter((i) => tabs.includes(i)).length >= 2).sort((a, b) => b.filter((i) => tabs.includes(i)).length - a.filter((i) => tabs.includes(i)).length);
+    const host = hosts[0];
+    const own = host ? host.filter((i) => tabs.includes(i)).length : 0;
+    if (host && host.filter((i) => trip[i]).length * 2 <= host.length) continue; // it is about something else
+    // This place's trip when it is big (a Japan trip with its restaurants) or most of it is this place's trips; a small one that is not is two
+    // trips' tabs together: they are taken out and make a trip of their own.
+    if (host && (host.length >= SPLIT_PLACE_TOPIC || own * 2 > host.length)) {
+      if (host.length < SPLIT_PLACE_TOPIC) { // a small trip holds only this place's tabs (the visa of a student beside a Dublin hostel is not Dublin's)
+        for (const i of host.filter((j) => !tabs.includes(j) && !places[j].has(best.p))) { rekey(host, () => host.splice(host.indexOf(i), 1)); clusters.push([i]); }
+      }
+      for (const i of tabs) {
+        if (host.includes(i) || host.length >= MAX_GROUP) continue;
+        const from = homeOf(i);
+        if (from) rekey(from, () => from.splice(from.indexOf(i), 1));
+        rekey(host, () => host.push(i));
+      }
+      if (nameOf(host) === 'Travel') made.push([host, placeLabel(best.p, host.map((i) => docs[i]))]); // "Travel" says less than the place
+      continue;
+    }
+    for (const i of tabs) { const from = homeOf(i); if (from) rekey(from, () => from.splice(from.indexOf(i), 1)); }
+    const fresh = [...tabs];
+    clusters.push(fresh);
+    made.push([fresh, placeLabel(best.p, tabs.map((i) => docs[i]))]);
+  }
+  for (let x = clusters.length - 1; x >= 0; x--) if (!clusters[x].length) clusters.splice(x, 1);
+  return made;
 }
 
 // The broad category of a tab (knowledge.FALLBACK_CATEGORIES) from its host, then its title: a category object or null.
@@ -1195,6 +1394,33 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     merged = drawn.clusters;
     for (const [c, label] of drawn.formed) conceptOf.set(idsKey(c), label);
   }
+  // Cohesion: whatever formed a group, most of its tabs must share something that says something (see cohere); then the trips.
+  const rekey = (c, change) => { // change a cluster's tabs, keeping the name its old tabs earned it
+    const was = idsKey(c);
+    const [concept, hint] = [conceptOf.get(was), hintOf.get(was)];
+    change();
+    if (concept || hint) {
+      conceptOf.delete(was);
+      hintOf.delete(was);
+      if (concept) conceptOf.set(idsKey(c), concept);
+      if (hint) hintOf.set(idsKey(c), hint);
+    }
+  };
+  {
+    merged = merged.flatMap((c) => {
+      const parts = cohere(c, docs);
+      if (parts.length === 1 && parts[0].length === c.length) return [c];
+      const was = idsKey(c);
+      const [concept, hint] = [conceptOf.get(was), hintOf.get(was)];
+      conceptOf.delete(was);
+      hintOf.delete(was);
+      const main = parts.filter((p) => p.length >= 2).sort((x, y) => y.length - x.length)[0];
+      if (main && concept) conceptOf.set(idsKey(main), concept);
+      if (main && hint) hintOf.set(idsKey(main), hint);
+      return parts;
+    });
+    for (const [c, label] of tripGroups(merged, docs, rekey, (c) => conceptOf.get(idsKey(c)))) conceptOf.set(idsKey(c), label);
+  }
   // No mega-groups: a cluster past MAX_GROUP is re-split at a stricter threshold (a few times); tabs
   // that no longer belong with anyone stay loose rather than being forced into a group.
   const split = (c, at, depth) => (c.length <= MAX_GROUP || depth >= 4 ? [c] : agglomerate(c, at).flatMap((part) => (part.length < 2 ? [] : split(part, at + 0.1, depth + 1))));
@@ -1279,7 +1505,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
         seen.add(key);
         const [k1, k2] = key.split('|');
         const v1 = d.vec.get(k1), v2 = d.vec.get(k2);
-        if (!v1 || !v2) continue;
+        if (!v1 || !v2 || isGenericKey(k1) || isGenericKey(k2)) continue; // a name is never made of "jobs" or "dashboard"
         const e = bigramScore.get(key) || { score: 0, count: 0, surface: bsurface, key };
         e.score += v1 + v2;
         e.count++;
@@ -1288,6 +1514,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     }
     const bigramRanked = [...bigramScore.values()].filter((e) => e.count >= majority).sort((a, b) => b.score - a.score);
     const top = ranked[0];
+    const nameTop = ranked.find(([k]) => !isGenericKey(k)); // "job" may link tabs, and keys the group, but never names it
     const siteOnly = top && members.every((d) => registrableDomain(d.url) === registrableDomain(members[0].url)) && registrableDomain(members[0].url).startsWith(top[0]);
     // A project's tabs: named for the repo ("Lumen PRs", "Lumen issues"), whatever else is in the group.
     const repoCount = new Map();
@@ -1309,7 +1536,8 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
       if (oneSiteAll) return siteName(members[0].url, members[0].title);
       const label = conceptLabel(c, docs) || categoryLabel(members);
       if (label || members.length < 3) return label; // a pair of two sites with nothing to be named for is no group
-      const lead = members.find((d) => d.siteKey === topSite) || members[0]; // three or more: the site most of them are on
+      if (topSiteCount < 3) return ''; // three or more: the site three of them are on, else they are not a group (a name no tab says is worse than none)
+      const lead = members.find((d) => d.siteKey === topSite) || members[0];
       return siteName(lead.url, lead.title);
     };
     let name;
@@ -1323,9 +1551,10 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
       const kind = kinds.size === 1 ? [...kinds][0] : '';
       name = `${titleCasePhrase(topRepo.replace(/[-_]+/g, ' '))}${kind ? ` ${kind}` : ''}`;
     } else if (siteOnly) name = sharedHint || siteName(members[0].url, members[0].title);
+    else if (nameTop && isPlaceKey(nameTop[0]) && conceptLabel(c, docs) === 'Housing') name = `${bestSurface(nameTop[0])} housing`; // flats in Edinburgh are not the Edinburgh trip
     else if (libraryName(members, majority)) name = libraryName(members, majority);
     else if (bigramRanked.length) name = titleCasePhrase(words2(bigramRanked[0]));
-    else if (top) name = titleCase(bestSurface(top[0]));
+    else if (nameTop) name = titleCase(bestSurface(nameTop[0]));
     else name = sharedHint || fallbackName();
     // CJK words are bigrams, so two of them pasted together name a group badly ("파이 이썬"): use the longest run the
     // titles share, or the site's (category's) name when that run is only filler.
@@ -1527,12 +1756,20 @@ function mergeSimilarGroups(groups) {
   const owned = (g) => !g.auto || g.userNamed;
   const clusters = [];
   const docsOf = (g) => g.members.map((m) => doc.get(m.id));
+  const place = new Map(docs.map((d, i) => [d.id, i]));
+  const bound = (c, g) => {
+    const A = c.flatMap((o) => o.members.map((m) => place.get(m.id)));
+    const B = g.members.map((m) => place.get(m.id));
+    return supportsOf([...A, ...B], docs).some((s) => s.holders.some((h) => A.includes(h)) && s.holders.some((h) => B.includes(h)));
+  };
   for (const g of list) {
     const home = clusters.find((c) => {
       const root = c[0];
       const kind = nameSimilarity(root.name, g.name);
-      if (kind === 'exact') return true;
+      if (kind === 'exact') return c.some(owned) || owned(g) || bound(c, g); // a trip pair and a housing pair that both say "Edinburgh" are two groups
       if (c.some(owned) || owned(g)) return false;
+      // Two groups are one only when tabs of both share something that says something (see cohere): a place or a generic word is not enough.
+      if (!bound(c, g)) return false;
       if (!kind) return Boolean(anchorLink(c.flatMap(docsOf), docsOf(g), docs.df, docs.n)) || sameTopicLater(c.flatMap(docsOf), docsOf(g)); // groups formed at different times, one topic
       const sim = cosine(centroid.get(root.id), centroid.get(g.id));
       return kind === 'weak' ? sim >= CENTROID_MERGE_THRESHOLD : sim >= 0.1;
