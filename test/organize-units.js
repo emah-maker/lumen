@@ -585,12 +585,54 @@ const en = require('../src/locales/en.json');
       ['Weather.com - 10 day', 'https://weather.com/forecast'], ['Gmail', 'https://mail.google.com/mail/u/0'],
     ],
   });
+  // Round 11 personas (trimmed from the raters' freelance designer, high-school teacher and retired trucker): added to the precision sets too.
+  Object.assign(PERSONAS, {
+    designer: [
+      ['Dribbble - logo design inspiration', 'https://dribbble.com/search/logo'], ['Behance - branding projects', 'https://www.behance.net/search/projects/branding'],
+      ['Figma - Client Acme brand kit', 'https://www.figma.com/file/a1'], ['Figma - Bakery website mockup', 'https://www.figma.com/file/b2'],
+      ['Adobe Fonts - Browse', 'https://fonts.adobe.com/fonts'], ['Google Fonts - Playfair Display', 'https://fonts.google.com/specimen/Playfair+Display'],
+      ['Coolors - color palette generator', 'https://coolors.co/'], ['Pantone color of the year', 'https://www.pantone.com/color-of-the-year'],
+      ['Invoice template - FreshBooks', 'https://www.freshbooks.com/invoice-template'], ['Toggl Track - timer', 'https://track.toggl.com/timer'],
+      ['Upwork - messages', 'https://www.upwork.com/messages'], ['Quarterly taxes for freelancers - IRS', 'https://www.irs.gov/businesses/small-businesses-self-employed/estimated-taxes'],
+      ['Canva - Instagram post', 'https://www.canva.com/design/x'], ['Reddit - r/graphic_design', 'https://www.reddit.com/r/graphic_design'],
+      ['Wacom Intuos Pro review', 'https://www.theverge.com/wacom-review'], ['Wacom Intuos Pro - Best Buy', 'https://www.bestbuy.com/wacom-intuos'],
+      ['Sourdough bread recipe - King Arthur', 'https://www.kingarthurbaking.com/recipes/sourdough'], ['Easy weeknight pasta - NYT Cooking', 'https://cooking.nytimes.com/pasta'],
+      ['Gmail', 'https://mail.google.com/mail/u/0'], ['Google Calendar', 'https://calendar.google.com/'], ['Untitled', 'about:blank'],
+    ],
+    teacher: [
+      ['Canvas - Gradebook Period 3', 'https://school.instructure.com/courses/1/gradebook'], ['Canvas - Assignments', 'https://school.instructure.com/courses/1/assignments'],
+      ['Google Classroom - AP Lit', 'https://classroom.google.com/c/abc'], ['Google Classroom - English 10', 'https://classroom.google.com/c/def'],
+      ['Lesson plan: Macbeth Act 3 - ReadWriteThink', 'https://www.readwritethink.org/macbeth'], ['Macbeth full text - Folger', 'https://www.folger.edu/macbeth'],
+      ['SparkNotes - Macbeth Act 3 summary', 'https://www.sparknotes.com/shakespeare/macbeth/section6'], ['Macbeth film 2015 - IMDb', 'https://www.imdb.com/title/tt2884018'],
+      ['Turnitin - Submissions', 'https://www.turnitin.com/t_inbox.asp'], ['Quizlet - Literary devices', 'https://quizlet.com/literary-devices'],
+      ['Kahoot - create quiz', 'https://create.kahoot.it/'], ['Teachers Pay Teachers - poetry unit', 'https://www.teacherspayteachers.com/poetry'],
+      ['Massachusetts curriculum framework ELA - DESE', 'https://www.doe.mass.edu/frameworks/ela'], ['Payroll - ADP', 'https://my.adp.com/'],
+      ['Soccer coach - team schedule', 'https://www.teamsnap.com/teams/123'], ['Girls soccer scores - MaxPreps', 'https://www.maxpreps.com/ma/soccer'],
+      ['Summer vacation: Acadia National Park', 'https://www.nps.gov/acad/planyourvisit'], ['Acadia camping reservations - recreation.gov', 'https://www.recreation.gov/camping/acadia'],
+      ['Hiking trails Mount Desert Island - AllTrails', 'https://www.alltrails.com/acadia'], ['Cabin rentals Bar Harbor - Vrbo', 'https://www.vrbo.com/bar-harbor'],
+      ['Linkedin Learning - Excel', 'https://www.linkedin.com/learning/excel'], ['Facebook', 'https://www.facebook.com/'], ['Netflix', 'https://www.netflix.com/browse'],
+    ],
+    trucker: [
+      ['Weigh station status - DriveWyze', 'https://www.drivewyze.com/map'], ['Truck stops near me - Pilot Flying J', 'https://pilotflyingj.com/locations'],
+      ['Loves Travel Stops - Fuel prices', 'https://www.loves.com/fuel'], ['Trucker Path - parking', 'https://truckerpath.com/parking'],
+      ['FMCSA - hours of service rules', 'https://www.fmcsa.dot.gov/regulations/hours-of-service'], ['DAT load board', 'https://one.dat.com/loads'],
+      ['I-80 road conditions Wyoming - WYDOT', 'https://www.wyoroad.info/'], ['Wyoming weather forecast - NWS', 'https://forecast.weather.gov/wy'],
+      ['Diesel prices - GasBuddy', 'https://www.gasbuddy.com/diesel'], ['CDL renewal - DMV', 'https://www.dmv.ca.gov/cdl-renewal'],
+      ['DOT medical card exam near Cheyenne', 'https://www.yelp.com/search?find=dot+physical'], ['Medicare Advantage plans 2027', 'https://www.medicare.gov/plan-compare'],
+      ['Social Security - my account', 'https://www.ssa.gov/myaccount'], ['Holland America - Alaska cruise 2027', 'https://www.hollandamerica.com/alaska'],
+      ['Princess Cruises - Alaska Inside Passage', 'https://www.princess.com/alaska'], ['Cruise Critic - Alaska cruise reviews', 'https://www.cruisecritic.com/alaska'],
+      ['Flights to Seattle - Southwest', 'https://www.southwest.com/air/booking'], ['Hotels near Seattle cruise terminal - Hilton', 'https://www.hilton.com/seattle'],
+      ['Cowboys vs Eagles - ESPN', 'https://www.espn.com/nfl/game/1'], ['NFL standings', 'https://www.espn.com/nfl/standings'],
+      ['Facebook - Marketplace', 'https://www.facebook.com/marketplace'], ['Facebook', 'https://www.facebook.com/'], ['Walmart pharmacy - refill', 'https://www.walmart.com/pharmacy'],
+      ['Weather Cheyenne WY', 'https://weather.com/cheyenne'], ['Costco - tires', 'https://www.costco.com/tires'],
+    ],
+  });
   // "r9" helper: tabs are found by a word of their title; `loose` is a tab in no group.
   const setOf = (key) => {
     const specs = PERSONAS[key];
     const o = organized(specs);
     const ix = (re) => { const i = specs.findIndex(([t]) => re.test(t)); if (i < 0) throw new Error(`no tab ${re}`); return i; };
-    return { ...o, ix, together: (a, b) => o.same(ix(a), ix(b)), nameOf: (re) => o.name(ix(re)), loose: (re) => !o.name(ix(re)) };
+    return { ...o, specs, ix, together: (a, b) => o.same(ix(a), ix(b)), nameOf: (re) => o.name(ix(re)), loose: (re) => !o.name(ix(re)) };
   };
   const parent = setOf('parent');
   check('r9: "529 plan - Fidelity" does not join Disney (a finance tab on "plan")', !parent.together(/529/, /Disney World/) && !/disney|orlando/i.test(parent.nameOf(/529/)), parent.nameOf(/529/));
@@ -718,6 +760,42 @@ const en = require('../src/locales/en.json');
     }
     check('r10: no group in any persona escapes the cohesion check (cohere keeps it whole)', escaped.length === 0, escaped.join(' ; '));
   }
+  // ---- Round 11 ----
+  const des = setOf('designer');
+  check('r11: Dribbble, Behance, Figma, Canva, Adobe Fonts and r/graphic_design are one Design group (a concept, not a lone word)', [/Behance/, /Figma - Client/, /Canva/, /Adobe Fonts/, /Google Fonts/, /graphic_design/].every((re) => des.together(/Dribbble/, re)) && des.nameOf(/Dribbble/) === 'Design', des.nameOf(/Dribbble/));
+  check('r11: no group is called "Branding" or "Color" (a lone word)', !des.specs.some(([t]) => /^(branding|color)$/i.test(des.nameOf(new RegExp(t.replace(/[^\w ]/g, '.'))))), des.nameOf(/Behance/));
+  check('r11: freelance tools (invoice, timer, Upwork, taxes for freelancers) are one Freelance group', [/Toggl/, /Upwork/, /Quarterly taxes/].every((re) => des.together(/Invoice/, re)), des.nameOf(/Invoice/));
+  const tea = setOf('teacher');
+  check('r11: Turnitin, Kahoot, Teachers Pay Teachers and a state DESE curriculum page join the Canvas and Classroom School group', [/Turnitin/, /Kahoot/, /Teachers Pay/, /curriculum framework/, /Quizlet/, /Classroom - AP/].every((re) => tea.together(/Canvas - Gradebook/, re)) && tea.nameOf(/Canvas - Gradebook/) === 'School', tea.nameOf(/curriculum framework/));
+  check('r11: the Acadia pages, AllTrails (Mount Desert Island) and Vrbo (Bar Harbor) are one Acadia trip', [/Acadia camping/, /Hiking trails/, /Cabin rentals/].every((re) => tea.together(/Summer vacation/, re)) && tea.nameOf(/Summer vacation/) === 'Acadia', tea.nameOf(/Hiking trails/));
+  check('r11: "LinkedIn Learning - Excel" is not filed as News & social', !/news/i.test(tea.nameOf(/Linkedin Learning/)) && !tea.together(/Linkedin Learning/, /Facebook/), tea.nameOf(/Linkedin Learning/));
+  const truck = setOf('trucker');
+  check('r11: truck stops, weigh stations, Trucker Path, FMCSA, DAT, I-80, diesel, CDL and a DOT medical exam are one Trucking group', [/Truck stops/, /Loves/, /Trucker Path/, /FMCSA/, /DAT load/, /I-80/, /Diesel/, /CDL/, /DOT medical/].every((re) => truck.together(/Weigh station/, re)) && truck.nameOf(/Weigh station/) === 'Trucking', truck.nameOf(/Weigh station/));
+  check('r11: a place alone is no group: "DOT medical card exam near Cheyenne" and "Weather Cheyenne WY" are not one', !truck.together(/DOT medical/, /Weather Cheyenne/) && !/cheyenne/i.test(truck.nameOf(/Weather Cheyenne/)), truck.nameOf(/Weather Cheyenne/));
+  check('r11: Facebook Marketplace is Shopping, not News & social', truck.nameOf(/Marketplace/) === 'Shopping' && truck.together(/Marketplace/, /Costco/), truck.nameOf(/Marketplace/));
+  check('r11: an agency host alone is no Government group: "CDL renewal - DMV" and "Social Security" stay apart', !truck.together(/CDL renewal/, /Social Security/) && !/government/i.test(truck.nameOf(/Social Security/)), truck.nameOf(/Social Security/));
+  // Two tabs that share a service word (renewal) are a Government group
+  const gov = organized([['Driver license renewal - California DMV', 'https://www.dmv.ca.gov/portal/'], ['Vehicle registration renewal - Texas DMV', 'https://www.txdmv.gov/renew'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r11: two agency tabs that share a service word (DMV renewal) are Government', gov.same(0, 1) && gov.name(0) === 'Government', gov.name(0));
+  // cohereAll: a group whose only shared tokens are place keys is rejected
+  {
+    const specs = [['Weather Cheyenne WY', 'https://weather.com/cheyenne'], ['DOT medical card exam near Cheyenne', 'https://www.yelp.com/search?find=dot+physical'], ['Hours Laramie Library', 'https://www.laramielibrary.org/hours'], ['Laramie farmers market', 'https://www.example.org/market']];
+    const docs = docsOf(specs);
+    check('r11: cohere rejects a group whose only shared tokens are place keys (Cheyenne, Laramie)', tg._cohere([0, 1], docs).length === 2 && tg._cohere([2, 3], docs).length === 2, JSON.stringify([tg._cohere([0, 1], docs), tg._cohere([2, 3], docs)]));
+    const placeOnly = organized([['Weather Cheyenne WY', 'https://weather.com/cheyenne'], ['Cheyenne dentist appointment', 'https://www.example.org/dentist'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+    check('r11: a city key links tabs only beside a shared topic word or concept', !placeOnly.same(0, 1), `${placeOnly.name(0)}|${placeOnly.name(1)}`);
+  }
+  // Thin pairs: one generic word ("brand", "design") makes no two-tab group; two shared words, a concept or a site do
+  const thin = organized([['Behance - branding projects', 'https://www.example.net/a'], ['Acme brand kit - Notion', 'https://www.notion.so/brand'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r11: two tabs sharing only "brand" are no group', !thin.same(0, 1), `${thin.name(0)}|${thin.name(1)}`);
+  const generic1 = organized([['Garden design ideas', 'https://www.example.net/a'], ['Kitchen design software', 'https://www.example.org/b'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r11: two tabs sharing only "design" are no group', !generic1.same(0, 1), `${generic1.name(0)}|${generic1.name(1)}`);
+  check('r11: Dribbble and r/graphic_design are Design on concept evidence', des.together(/Dribbble/, /graphic_design/) && des.nameOf(/graphic_design/) === 'Design');
+  // Learning sites
+  const learn = organized([['Excel for beginners - LinkedIn Learning', 'https://www.linkedin.com/learning/excel'], ['Python basics - Udemy', 'https://www.udemy.com/course/python'], ['Intro to statistics - Khan Academy', 'https://www.khanacademy.org/math/statistics'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('r11: LinkedIn Learning, Udemy and Khan Academy are one Learning group', learn.same(0, 1) && learn.same(0, 2) && learn.name(0) === 'Learning', learn.name(0));
+  // Hosts
+  check('r11: state education hosts (doe.mass.edu, dese.mo.gov, a k12 district) are School; doe.gov is not', ['https://www.doe.mass.edu/x', 'https://dese.mo.gov/x', 'https://springfield.k12.ma.us/x'].every((u) => tg.siteHint(u) === 'School') && tg.siteHint('https://www.doe.gov/x') !== 'School');
 }
 
 {

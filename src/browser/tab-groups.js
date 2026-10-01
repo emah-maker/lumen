@@ -185,6 +185,7 @@ const HINT_RULES = Object.entries(knowledge.SITE_HINTS).flatMap(([hint, sites]) 
 function siteHint(url) {
   const host = hostname(url).replace(/^www\./, '');
   if (!host || knowledge.HINT_EXCEPTIONS.split(' ').some((x) => host === x || host.endsWith(`.${x}`))) return '';
+  if (knowledge.STATE_EDU_HOST.test(host)) return 'School'; // a state's education department (doe.mass.edu, dese.mo.gov) and a school district's site
   let pathname = '/';
   try { ({ pathname } = new URL(url)); } catch {}
   for (const r of HINT_RULES) {
@@ -433,9 +434,11 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   const label = domain.split('.')[0] || domain;
   // Reddit: the subreddit is the topic ("r/JapanTravel" = Japan Travel), whatever the thread says.
   let shownTitle = title;
+  let subText = ''; // the subreddit's words ("graphic design"): they say a concept the way a title's phrase does
   if (domain === 'reddit.com') {
     const sub = /^\/r\/([^/]+)/i.exec(pathname)?.[1] || /^r\/(\w+)/i.exec(String(title))?.[1];
     if (sub) {
+      subText = camelWords(sub);
       add(tokens(camelWords(sub)), 0.9);
       shownTitle = String(title).replace(/^r\/\w+\s*[-:·|]?\s*/i, '');
     }
@@ -509,12 +512,12 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   }
   for (const category of categoriesOfSite(url)) addConcept(category);
   // Phrases that say a concept ("closing costs"), and what a brand is ("Hilton Garden Inn": travel), and pages whose address says what they are.
-  for (const [re, concept] of knowledge.PHRASE_CONCEPTS) if (re.test(`${plainTitle} ${q}`)) addConcept(concept);
+  for (const [re, concept] of knowledge.PHRASE_CONCEPTS) if (re.test(`${plainTitle} ${q} ${subText}`)) addConcept(concept);
   for (const concept of brands.concepts) addConcept(concept);
   const host = hostname(url);
   for (const [re, concept] of knowledge.URL_CATEGORIES) if (re.test(`${host.replace(/^www\./, '')}${pathname}`)) addConcept(concept);
   for (const [site, city] of knowledge.SITE_PLACES) if (host === site || host.endsWith(`.${site}`)) placed.add(city);
-  for (const city of placed) if (!words.has(stem(city))) words.set(stem(city), { weight: 0.9, surface: city.replace(/(^|\s)\S/g, (c) => c.toUpperCase()) });
+  for (const city of placed) if ((words.get(stem(city))?.weight ?? 0) < 0.9) words.set(stem(city), { weight: 0.9, surface: city.replace(/(^|\s)\S/g, (c) => c.toUpperCase()) });
   words.retail = ownedByHost(host.replace(/^www\./, ''), knowledge.RETAIL_HOSTS);
   words.brand = label && label.length >= 4 && !BRAND_WORDS.has(label) && !SEARCH_DOMAINS.has(domain) ? label : '';
   if (titleTokens.length <= 2) for (const g of charTrigrams(cleanTitle)) if (!words.has(g)) words.set(g, { weight: 0.4, surface: g });
@@ -722,7 +725,7 @@ function cosine(a, b) {
     if (!templated && k[0] !== '^') { sharedReal++; soleKey = k; } // a shared site name never counts as a second word
     if (k[0] === '#') trigrams++;
     else if (!templated && k[0] !== '^') {
-      if (k === '%travel' || k === '%housing' || (k[0] !== '%' && !isPlaceKey(k))) beyondPlaces = true;
+      if ((k[0] === '%' && k !== '%shopping') || (k[0] !== '%' && !isPlaceKey(k))) beyondPlaces = true; // a city links tabs only beside a topic word or a (non-shopping) concept they share
       else if (k[0] !== '%' && isCityKey(k)) cities++;
       else if (k[0] !== '%' && !(a.title !== undefined && b.title !== undefined)) beyondPlaces = true; // a country shared by a group's pooled words (Japan) is a topic; a city with no country (Boston) is not
     }
@@ -1293,7 +1296,7 @@ function cohere(c, docs) {
 // the sights, a tour) are one trip, named for the place, whatever else their words say: "Edinburgh hotels", "Things to do in Edinburgh" and
 // "Edinburgh Fringe tickets" share one word and a bit of travel. "Train" is a travel word only here, beside a place: elsewhere it is a machine
 // learning verb ("train a model").
-const TRIP_TITLE = /\b(things to do|what to (?:see|do|eat)|tickets?|trains?|rail|subway|ferry|sights?|sightseeing|tours?|itinerary|attractions?|hostels?|hotels?|flights?|airport|visit|visa)\b/i;
+const TRIP_TITLE = /\b(things to do|what to (?:see|do|eat)|tickets?|trains?|rail|subway|ferry|sights?|sightseeing|tours?|itinerary|attractions?|hostels?|hotels?|flights?|airport|visit|visa|hik(?:e|es|ing)|trails?|camping|campsites?)\b/i;
 const tripEvidence = (d) => d.words.has('%travel') || TRIP_TITLE.test(String(d.title || ''));
 function placesOf(d) {
   const e = evidenceOf(d);
@@ -1386,7 +1389,7 @@ function categoryOf({ url, title }) {
 // of two unrelated tabs stays loose.
 // Words that link tabs but never name a group ("Tickets" for a bus, a train and a flat: the group is Travel).
 const NAME_GENERIC = new Set(['ticket', 'price', 'cost', 'quote'].map(stem));
-const GENERIC_PAIR_STEMS = new Set(['price', 'cost', 'plan', 'tool', 'service', 'info', 'data', 'report', 'center', 'team', 'rate', 'tip', 'review', 'rental', 'rent'].map(stem).concat('%shopping'));
+const GENERIC_PAIR_STEMS = new Set(['price', 'cost', 'plan', 'tool', 'service', 'info', 'data', 'report', 'center', 'team', 'rate', 'tip', 'review', 'rental', 'rent', 'brand', 'branding', 'design', 'color', 'colour', 'logo', 'creative', 'style', 'inspiration', 'portfolio'].map(stem).concat('%shopping'));
 function pairShares(c, docs, drawn) {
   if (drawn) return true;
   const [a, b] = c.map((i) => docs[i]);
@@ -1394,8 +1397,27 @@ function pairShares(c, docs, drawn) {
   // ...a stem that says something: not a generic one ("price", "plan"), and a city only beside a travel or housing word.
   const shared = [...a.vec.keys()].filter((k) => k[0] !== '#' && k[0] !== '^' && b.vec.has(k));
   const trip = shared.some((k) => k === '%travel' || k === '%housing');
-  if (shared.some((k) => !GENERIC_PAIR_STEMS.has(k) && (trip || !isCityKey(k))) && !(shared.every((k) => GENERIC_PAIR_STEMS.has(k) || isCityKey(k)) && !trip)) return true;
+  // A pair is a group when it shares a concept (not "shopping"), a site or a hint, or two topic words; one word is enough only when both titles (or
+  // searches) wrote it and it is not a generic one ("brand", "design", "price"). A place is a word only beside a trip ("Austin", "Cheyenne" say where, not what).
+  if (shared.some((k) => k[0] === '%' && !GENERIC_PAIR_STEMS.has(k))) return true;
+  const words = shared.filter((k) => /^[\p{L}\p{N}]/u.test(k) && !GENERIC_PAIR_STEMS.has(k) && (trip || !isCityKey(k)));
+  if (words.length >= 2) return true;
+  if (words.length === 1 && (a.words.get(words[0])?.weight ?? 0) >= 0.8 && (b.words.get(words[0])?.weight ?? 0) >= 0.8) return true;
+  if (a.siteKey && a.siteKey === b.siteKey && siteGroupable(a)) return true;
   return Boolean(a.siteHint && a.siteHint === b.siteHint && !knowledge.BROAD_HINTS.has(a.siteHint));
+}
+// The tabs of `part` (doc indices) that say the same service word as another tab of it (`service`: a global RegExp, group 1 the word), as
+// the groups they form: two tabs that share "renewal" or "Medicare" are one, a tab that shares none with any other is let go.
+function serviceParts(part, service, docs) {
+  const said = new Map(part.map((i) => [i, new Set([...String(docs[i].title || '').toLowerCase().matchAll(service)].map((m) => stem(m[1])))]));
+  const root = new Map(part.map((i) => [i, i]));
+  const find = (i) => (root.get(i) === i ? i : (root.set(i, find(root.get(i))), root.get(i)));
+  const byWord = new Map();
+  for (const [i, words] of said) for (const w of words) byWord.set(w, [...(byWord.get(w) || []), i]);
+  for (const holders of byWord.values()) if (holders.length >= 2) holders.forEach((j) => root.set(find(j), find(holders[0])));
+  const by = new Map();
+  for (const i of part) if ([...said.get(i)].some((w) => byWord.get(w).length >= 2)) by.set(find(i), [...(by.get(find(i)) || []), i]);
+  return [...by.values()].filter((p) => p.length >= 2);
 }
 // The category (School, Travel ...) most of a cluster's tabs are filed under, or ''.
 function categoryLabel(members) {
@@ -1574,7 +1596,8 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     };
     for (const i of lone) {
       if (!cat[i]) { rest.push(i); continue; }
-      const home = cat[i].join ? groupsNow.filter((c) => majorCat(c) === cat[i] && c.length < MAX_GROUP && holds(c, [i])).sort((a, b) => b.length - a.length)[0] : null;
+      // (a course site's tab, Coursera, may also join a School group: `joinsAlso`)
+      const home = cat[i].join ? groupsNow.filter((c) => (majorCat(c) === cat[i] || (cat[i].joinsAlso && majorCat(c)?.name === cat[i].joinsAlso)) && c.length < MAX_GROUP && holds(c, [i])).sort((a, b) => b.length - a.length)[0] : null;
       if (home) grow(home, [i]);
       else byCat.set(cat[i], [...(byCat.get(cat[i]) || []), i]);
     }
@@ -1590,6 +1613,9 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
         const by = new Map();
         for (const i of list) by.set(find(i), [...(by.get(find(i)) || []), i]);
         parts = [...by.values()].filter((p) => p.length >= 2);
+        // A host or one word of its own never makes an agency's group (an .gov host, a "DMV" title and a "Social Security" title are three errands): its
+        // tabs must say the same service ("renewal", "tax", "Medicare"). See knowledge.FALLBACK_CATEGORIES `service`.
+        if (c.service) parts = parts.flatMap((part) => serviceParts(part, c.service, docs));
       }
       for (const part of parts) {
         hintOf.set(idsKey(part), c.name === 'Dev docs' && part.every((i) => docs[i].siteKey === docs[part[0]].siteKey) ? siteName(docs[part[0]].url, docs[part[0]].title) : c.name); // two GitHub pages: "GitHub"
