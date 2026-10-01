@@ -114,8 +114,8 @@ const atEnd = (index, count, sign) => count >= 2 && ((sign > 0 && index === coun
 // a vertical page of two cards sliding through a window. Opacity overlaps (neither drops below HOLD) and the
 // outgoing card recedes a little (scale), so the stack is never empty. With Reduce motion nothing moves, the two
 // crossfade. -> { out, in } each { ty (px), scale, opacity, clip: [top, bottom] (px inset, in the card's own space) }
-const HOLD = 0.5; // the lowest opacity a card has while it is sliding
-const RECEDE = 0.04; // how much smaller the outgoing card gets by the time it is gone (and the incoming starts)
+const HOLD = 0.7; // the lowest opacity a card has while it is sliding
+const RECEDE = 0.02; // how much smaller the outgoing card gets by the time it is gone (and the incoming starts): barely, so it reads as depth, not a gap
 const ease = (k) => k * k * (3 - 2 * k); // smoothstep: the opacity and the scale settle at both ends
 function clipFor(ty, scale, h) {
   // The stack's frame is screen rows 0..h; the card is drawn scaled about its centre and moved by ty.
@@ -129,8 +129,11 @@ function slide(k, sign, h, reduced = false) {
   const s = sign < 0 ? -1 : 1;
   if (reduced) return { out: { ty: 0, scale: 1, opacity: 1 - t, clip: [0, 0] }, in: { ty: 0, scale: 1, opacity: Math.min(1, t * 1.5), clip: [0, 0] } };
   const e = ease(t);
-  const out = { ty: -s * t * h, scale: 1 - RECEDE * e, opacity: 1 - (1 - HOLD) * e };
-  const inn = { ty: s * (1 - t) * h, scale: 1 - RECEDE * (1 - e), opacity: HOLD + (1 - HOLD) * e };
+  // The two scales always add up to 2 - RECEDE, so moving both by the same distance D = (1 - RECEDE / 2) h keeps the
+  // outgoing card's far edge exactly on the incoming card's near edge: no gap at any point, however much they recede.
+  const d = (1 - RECEDE / 2) * h;
+  const out = { ty: -s * t * d, scale: 1 - RECEDE * e, opacity: 1 - (1 - HOLD) * e };
+  const inn = { ty: s * (1 - t) * d, scale: 1 - RECEDE * (1 - e), opacity: HOLD + (1 - HOLD) * e };
   out.clip = clipFor(out.ty, out.scale, h);
   inn.clip = clipFor(inn.ty, inn.scale, h);
   return { out, in: inn };

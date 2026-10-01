@@ -1436,7 +1436,7 @@ function createWidgets(deps) {
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
-      const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
+      const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}), ...(w.was ? { was: w.was } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
       return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
@@ -2023,7 +2023,7 @@ function createWidgets(deps) {
   // "Remove from stack" (unstack). The choice of what is shown is stored, so every new tab shows it.
   function stackAct(action) {
     const widgets = list();
-    const next = action.do === 'cycle' ? ST.select(widgets, action.id) : action.do === 'stack' ? ST.join(widgets, action.id, action.onto) : ST.leave(widgets, action.id, WL);
+    const next = action.do === 'cycle' ? ST.select(widgets, action.id) : action.do === 'stack' ? ST.join(widgets, action.id, action.onto, WL) : ST.leave(widgets, action.id, WL);
     if (!next) return false;
     save(next);
     deps.onUpdate?.();
@@ -2042,7 +2042,7 @@ function createWidgets(deps) {
   async function starterStack() {
     if (!ST.canStarter(list(), MAX_WIDGETS)) return false;
     const made = [];
-    for (const input of ST.starterKinds(now())) made.push((await resolveInput(input)).widget);
+    for (const input of ST.starterKinds(now(), ST.starterWeather(list(), savedPlaces()))) made.push((await resolveInput(input)).widget);
     const out = ST.starter(list(), made, WL, null);
     if (!out) return false;
     save(out.list);

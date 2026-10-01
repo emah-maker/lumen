@@ -214,7 +214,8 @@ function server(opts) {
   await W('flush');
   await app.evaluate(() => { global.__widgetRateMax = 5000; });
   const set = (k, v) => app.evaluate((_e, [key2, val]) => global.__settings.backend.set(key2, val).then(() => 'ok', (err) => `ERROR ${err.message}`), [k, v]);
-  const settingsFile = () => { try { return fs.readFileSync(path.join(profile, 'settings.json'), 'utf8'); } catch { return '{}'; } };
+  // settings.json is written off the main thread, so the file can lag the cache: flush first (main.js __settingsFlush), then read.
+  const settingsFile = async () => { await app.evaluate(() => { if (global.__settingsFlush) global.__settingsFlush(); }); try { return fs.readFileSync(path.join(profile, 'settings.json'), 'utf8'); } catch { return '{}'; } };
   const logCount = (p) => fake.log.filter((l) => l.path === p).length;
   // Only the centre column and the widgets: a short page keeps every drag target on screen.
   for (const k of ['newTabFavorites', 'newTabFrequent', 'newTabPrivacy']) await set(k, false);
@@ -244,7 +245,7 @@ function server(opts) {
   check('todoist: the token is checked with one call (today and overdue by default)', r.ok && /3 tasks are due today or overdue/.test(r.message), JSON.stringify(r));
   r = await W('test', { type: 'todoist', token: TOKEN, todo: { source: 'inbox' } });
   check('todoist: Check counts for the chosen filter', r.ok && /1 task is in the Inbox/.test(r.message), JSON.stringify(r));
-  check('…and nothing was stored by a check', !settingsFile().includes('widget:todoist'), 'stored');
+  check('…and nothing was stored by a check', !(await settingsFile()).includes('widget:todoist'), 'stored');
   check('requests carry no cookies, and the token only goes to Todoist', fake.log.every((l) => !l.cookie) && fake.log.filter((l) => l.auth).every((l) => l.path.startsWith('/todoist/')), JSON.stringify(fake.log.slice(-3)));
   check('no location request before anyone agreed', logCount('/locate') === 0, String(logCount('/locate')));
 
@@ -254,7 +255,7 @@ function server(opts) {
   check('migration: four widgets, same order', list.map((x) => x.id).join() === 'wweath01,wcal00001,wemb00001,wemb00002', JSON.stringify(list.map((x) => x.id)));
   check('migration: sizes carried over (half, a third, full width) and cells assigned in flow order', cells(list) === '0,0,6,3 6,0,4,5 0,5,12,4 0,9,12,6', cells(list));
   check('migration: span and height still mirrored for an older Lumen', list[0].span === 3 && list[1].span === 2 && list[2].span === 6 && list[2].height === 'small' && list[3].height === 'medium', JSON.stringify(list.map((x) => [x.span, x.height])));
-  check('migration: the Todoist token and unrelated settings are untouched', JSON.parse(settingsFile()).homeWidgets.length === 4, settingsFile().slice(0, 100));
+  check('migration: the Todoist token and unrelated settings are untouched', JSON.parse((await settingsFile())).homeWidgets.length === 4, (await settingsFile()).slice(0, 100));
 
   // ---- adding widgets from the Settings page (its own preload and IPC) ----
   const settingsId = await app.evaluate(() => global.__settings.open('appearance'));
@@ -284,7 +285,7 @@ function server(opts) {
   for (let i = 0; i < 40 && (await sp("Boolean(document.getElementById('widget-form'))")); i++) await sleep(150);
   s = await listState();
   check('Settings: a Todoist widget is added with its token (today and overdue by default)', s.items.length === 6 && /Today and overdue/.test(s.items[5]) && /3 tasks/.test(s.note), JSON.stringify(s));
-  const saved = settingsFile();
+  const saved = (await settingsFile());
   check('the token is not in settings.json in plain text (only encrypted)', !saved.includes(TOKEN) && !saved.includes(TOKEN.slice(4, 20)) && Boolean(JSON.parse(saved).keys?.['widget:todoist']), 'plain or missing');
   check('the Settings page never gets the token back', !(await sp('JSON.stringify(document.body.innerText) + JSON.stringify(window.lumenSettings && Object.keys(window.lumenSettings))')).includes(TOKEN), 'leaked');
   const state = await sp('window.lumenSettings.widgets.state().then((s) => JSON.stringify(s))');
@@ -506,7 +507,7 @@ function server(opts) {
   check('any size from 2x2 up is accepted and stored (no fixed steps)', anySize.w === 2 && anySize.h === 2, JSON.stringify(anySize));
   await W('layout', [{ id: ID.deny, x: 0, y: 0, w: 7, h: 13 }]);
   check('…up to the whole width and twenty rows (7x13 kept)', (await W('list')).find((x) => x.id === ID.deny).h === 13, '');
-  check('the last size used per kind is remembered for new widgets', JSON.stringify(JSON.parse(settingsFile()).homeWidgetSizes?.embed) === '{"w":7,"h":13}', settingsFile().slice(-200));
+  check('the last size used per kind is remembered for new widgets', JSON.stringify(JSON.parse((await settingsFile())).homeWidgetSizes?.embed) === '{"w":7,"h":13}', (await settingsFile()).slice(-200));
 
   // ---- free placement: drag, push, cancel; frames stay put ----
   await W('resetLayout');
@@ -752,7 +753,7 @@ function server(opts) {
 
   // ---- removing the last Todoist widget forgets the token ----
   await W('remove', ID.todo);
-  const after = JSON.parse(settingsFile());
+  const after = JSON.parse((await settingsFile()));
   check('removing the Todoist widget removes its token', !after.keys?.['widget:todoist'] && !after.homeWidgets.some((x) => x.type === 'todoist'), JSON.stringify(after.keys || {}));
 
   await app.close();

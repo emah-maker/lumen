@@ -163,8 +163,8 @@ module.exports = async function widgetStackUnits(check) {
   for (let k = 0; k <= 1.0001; k += 0.02) minCover = Math.min(minCover, SM.coverage(k, 190));
   check('smart stack slide: the frame is never empty (coverage stays at or above 0.6 all the way)', minCover >= 0.6, String(minCover));
   const r2mid = SM.slide(0.5, 1, 200);
-  check('smart stack slide: next goes up and out while the other comes up from below, edge to edge', r2mid.out.ty === -100 && r2mid.in.ty === 100 && SM.slide(0, 1, 200).out.ty === 0 && SM.slide(1, 1, 200).in.ty === 0 && SM.slide(1, 1, 200).out.ty === -200, JSON.stringify(r2mid));
-  check('smart stack slide: previous mirrors it (down and out, in from above)', SM.slide(0.5, -1, 200).out.ty === 100 && SM.slide(0.5, -1, 200).in.ty === -100, '');
+  check('smart stack slide: next goes up and out while the other comes up from below, edge to edge', r2mid.out.ty === -99 && r2mid.in.ty === 99 && SM.slide(0, 1, 200).out.ty === 0 && SM.slide(1, 1, 200).in.ty === 0 && SM.slide(1, 1, 200).out.ty === -198, JSON.stringify(r2mid));
+  check('smart stack slide: previous mirrors it (down and out, in from above)', SM.slide(0.5, -1, 200).out.ty === 99 && SM.slide(0.5, -1, 200).in.ty === -99, '');
   check('smart stack slide: each card is clipped to the frame (the cut is where the other begins), and a card at rest is not clipped', r2mid.out.clip[0] > 90 && r2mid.out.clip[1] === 0 && r2mid.in.clip[1] > 90 && r2mid.in.clip[0] === 0 && SM.slide(0, 1, 200).out.clip.every((c) => c === 0), JSON.stringify(r2mid));
   check('smart stack slide: opacity overlaps and never drops below the floor; the outgoing card recedes a little', SM.slide(0.5, 1, 200).out.opacity >= SM.HOLD && SM.slide(1, 1, 200).out.opacity >= SM.HOLD && SM.slide(0, 1, 200).in.opacity >= SM.HOLD && SM.slide(1, 1, 200).out.scale < 1 && SM.slide(1, 1, 200).in.scale === 1, '');
   check('smart stack slide: Reduce motion crossfades with no movement', (() => { const f = SM.slide(0.5, 1, 200, true); return f.out.ty === 0 && f.in.ty === 0 && f.out.scale === 1 && f.out.opacity === 0.5 && f.in.opacity === 0.75 && SM.coverage(0.5, 200, true) >= 0.6; })(), '');
@@ -173,7 +173,7 @@ module.exports = async function widgetStackUnits(check) {
   check('smart stack end: the elastic curve inverts (to take over a card in flight)', Math.abs(SM.unelastic(SM.elastic(0.6)) - 0.6) < 1e-9 && Math.abs(SM.unelastic(SM.elastic(-0.2)) + 0.2) < 1e-9 && Number.isFinite(SM.unelastic(0.9)), '');
   check('smart stack end: wrapping at an end needs a firmer pull (0.8 of a card) or a flick, elsewhere half a card', SM.settleTarget(0.6, 0, 120, true) === 0 && SM.settleTarget(0.85, 0, 120, true) === 1 && SM.settleTarget(0.6, 0, 120, false) === 1 && SM.settleTarget(0.1, 3000, 120, true) === 1 && SM.settleTarget(-0.6, 0, 120, true) === 0 && SM.settleTarget(-0.85, 0, 120, true) === -1, '');
   const r2kinds = ST.starterKinds(Date.UTC(2026, 9, 1, 12));
-  check('smart stack starter: a timer, a countdown to the next New Year and a note, no account or network', r2kinds.map((k) => k.type).join() === 'timer,countdown,notes' && r2kinds[1].cd.date === '2027-01-01' && ST.starterKinds(Date.UTC(2026, 11, 31, 12))[1].cd.date === '2027-01-01', JSON.stringify(r2kinds));
+  check('smart stack starter: weather, a countdown to the next New Year and a note, no account or network', r2kinds.map((k) => k.type).join() === 'weather,countdown,notes' && r2kinds[0].wx.places.length === 1 && r2kinds[1].cd.date === '2027-01-01' && ST.starterKinds(Date.UTC(2026, 11, 31, 12))[1].cd.date === '2027-01-01', JSON.stringify(r2kinds));
   const r2made = r2kinds.map((k, i) => ({ id: `wst${i}0001`, ...k }));
   const r2exist = [{ id: 'wnote0001', type: 'notes', note: { text: '' }, x: 0, y: 0, w: 3, h: 3 }];
   const r2started = ST.starter(r2exist, r2made, WL, null);
@@ -204,6 +204,77 @@ module.exports = async function widgetStackUnits(check) {
   const r2t2 = WE.placeToast({ size: { w: 420, h: 40 }, view: { w: 1000, h: 800 }, obstacles: [r2dock, panelR], base: r2dock.top - 10 });
   check('toast placement: it never lands on the toolbar or the Edit stack panel', WE.overlapArea(toastBox(r2t2), r2dock) === 0 && WE.overlapArea(toastBox(r2t2), panelR) === 0 && r2t2.top >= 16, JSON.stringify(r2t2));
   check('picker: Smart Stack is offered first and only when asked', WE.pickerEntries({ types: ['weather'], hidden: [{ id: 'sys-x', label: 'X' }], stack: true })[0].kind === 'stack' && !WE.pickerEntries({ types: ['weather'], stack: false }).some((e) => e.kind === 'stack') && WE.pickerEntries({ types: [], stack: true }).length === 1, '');
+
+  // ---- round 3: stacking is forgiving (sizes), the starter has something to rotate, smart rotate shows only when it can act, the slide is flush ----
+  const rA = { id: 'wa000001', type: 'todoist', x: 0, y: 0, w: 4, h: 3 };
+  const rB = { id: 'wb000001', type: 'notes', note: { text: '' }, x: 4, y: 0, w: 3, h: 3 };
+  const rC = { id: 'wc000001', type: 'countdown', cd: { date: '2030-01-01', time: '', label: 'L' }, x: 7, y: 0, w: 2, h: 2 };
+  const rMuse = { id: 'wm000001', type: 'muse', x: 0, y: 6, w: 4, h: 4 };
+  const rList = [rA, rB, rC];
+  check('stack sizes: different sizes cannot stack without the layout module (the old rule), any can with it', !ST.canStack(rList, 'wb000001', 'wa000001') && ST.canStack(rList, 'wb000001', 'wa000001', WL) && ST.stackBlock(rList, 'wb000001', 'wa000001') === 'size' && ST.stackBlock(rList, 'wb000001', 'wa000001', WL) === '', '');
+  check('stack sizes: system cards, itself and the same stack are refused with a reason', ST.stackBlock([...rList, { id: 'sys-clock', type: 'sys-clock' }], 'sys-clock', 'wa000001', WL) === 'system' && ST.stackBlock(rList, 'wa000001', 'wa000001', WL) === 'missing', '');
+  const rJ = ST.join(rList, 'wb000001', 'wa000001', WL);
+  const rbJ = byId(rJ, 'wb000001');
+  check('stack sizes: a widget of another size that joins adopts the stack size and remembers its own', rbJ.w === 4 && rbJ.h === 3 && rbJ.x === 0 && rbJ.y === 0 && rbJ.was.w === 3 && rbJ.was.h === 3 && byId(rJ, 'wa000001').was === undefined && rbJ.stack === byId(rJ, 'wa000001').stack, JSON.stringify(rbJ));
+  const rJ3 = ST.join(rJ, 'wc000001', 'wa000001', WL);
+  check('stack sizes: a smaller third widget adopts it too; the stack stays 4 by 3 and every member has the same cells', ['wa000001', 'wb000001', 'wc000001'].every((id) => byId(rJ3, id).w === 4 && byId(rJ3, id).h === 3 && byId(rJ3, id).x === 0) && byId(rJ3, 'wc000001').was.w === 2, '');
+  const rStored = cleanList(rJ3);
+  check('stack sizes: the stored list keeps the sizes, the remembered ones and one place for the stack', rStored.filter((w) => w.stack).every((w) => w.w === 4 && w.h === 3) && byId(rStored, 'wb000001').was.w === 3 && byId(rStored, 'wc000001').was.h === 2, JSON.stringify(rStored.map((w) => [w.id, w.w, w.h, w.was])));
+  const rLeft = ST.leave(rStored, 'wb000001', WL);
+  check('stack sizes: leaving restores the size it had, and forgets it', byId(rLeft, 'wb000001').w === 3 && byId(rLeft, 'wb000001').h === 3 && byId(rLeft, 'wb000001').was === undefined && !byId(rLeft, 'wb000001').stack && byId(rLeft, 'wa000001').w === 4, JSON.stringify(byId(rLeft, 'wb000001')));
+  const rNoWas = cleanList(ST.leave(cleanList([{ ...rA, stack: 'sabcd1', top: true }, { ...rA, id: 'wz000001', type: 'notes', note: { text: '' }, stack: 'sabcd1' }, rC]), 'wz000001', WL));
+  check('stack sizes: a member with no remembered size keeps the stack size when it leaves', byId(rNoWas, 'wz000001').w === 4 && byId(rNoWas, 'wz000001').h === 3, '');
+  const rDrop = cleanList(ST.drop(rStored, 'wa000001').filter((w) => w.id !== 'wc000001'));
+  check('stack sizes: when a stack falls to one widget it gets its own size back', !byId(rDrop, 'wb000001').stack && byId(rDrop, 'wb000001').w === 3 && byId(rDrop, 'wb000001').was === undefined, JSON.stringify(byId(rDrop, 'wb000001')));
+  // a kind that cannot render at the stack's size: the whole stack goes to the nearest size everyone supports
+  const rSmall = cleanList([{ ...rA, w: 2, h: 2 }, { ...rB, x: 4, y: 0, w: 2, h: 2 }, { ...rMuse, x: 0, y: 4 }]);
+  const rMuseJoin = ST.join(rSmall, 'wm000001', 'wa000001', WL);
+  const rMuseStored = cleanList(rMuseJoin);
+  check('stack sizes: a kind that needs more (Muse is at least 3 by 3) raises the whole stack to the nearest size all support', ST.stackSize(rSmall, ['wa000001', 'wm000001'], { w: 2, h: 2 }, WL).w === 3 && ST.stackSize(rSmall, ['wa000001', 'wm000001'], { w: 2, h: 2 }, WL).h === 3 && rMuseStored.filter((w) => w.stack).length === 2 && rMuseStored.filter((w) => w.stack).every((w) => w.w === 3 && w.h === 3), JSON.stringify(rMuseStored.map((w) => [w.id, w.w, w.h, w.stack, w.was])));
+  check('stack sizes: the members that grew remember their size, so they can leave at it', byId(rMuseStored, 'wa000001').was.w === 2 && byId(rMuseStored, 'wm000001').was.w === 4 && byId(rMuseStored, 'wm000001').was.h === 4, '');
+  check('stack sizes: a full stack still says full', ST.stackBlock(cleanList(N(10)).concat([rA]), 'wa000001', 'wt0000', WL) === 'full', '');
+  // Undo: the arrangement from before (what the page sends, do=restack) puts sizes back
+  const rBefore = ST.snapshot(rList, ['wa000001', 'wb000001', 'wc000001']);
+  const rUndone = cleanList(ST.restack(rStored, rBefore));
+  check('stack sizes: Undo of the stacking puts every size, place and stack field back', rUndone.every((w) => !w.stack && !w.was) && byId(rUndone, 'wb000001').w === 3 && byId(rUndone, 'wb000001').x === 4 && byId(rUndone, 'wc000001').w === 2 && byId(rUndone, 'wa000001').w === 4, JSON.stringify(rUndone.map((w) => [w.id, w.x, w.y, w.w, w.h, w.stack])));
+  const rLeaveBefore = ST.snapshot(rStored, ['wa000001', 'wb000001', 'wc000001']);
+  const rRejoined = cleanList(ST.restack(rLeft, rLeaveBefore));
+  check('stack sizes: Undo of leaving puts the stack back with the remembered sizes', byId(rRejoined, 'wb000001').stack === byId(rStored, 'wb000001').stack && byId(rRejoined, 'wb000001').w === 4 && byId(rRejoined, 'wb000001').was.w === 3, JSON.stringify(rLeaveBefore));
+  check('stack sizes: the remembered size is checked (garbage is dropped)', ST.cleanFields({ stack: 'sabcd1', was: { w: 'x', h: 3 } }).was === undefined && ST.cleanFields({ stack: 'sabcd1', was: { w: 1, h: 3 } }).was === undefined && ST.cleanFields({ stack: 'sabcd1', was: { w: 3, h: 4 } }).was.h === 4 && ST.cleanFields({ was: { w: 3, h: 4 } }).was === undefined, '');
+
+  // the starter: weather first (the user's own place when there is one), a countdown, notes
+  const rDef = ST.starterKinds(Date.UTC(2026, 9, 1, 12), ST.starterWeather([], []));
+  check('starter weather: no place anywhere gives the built-in default (no lookup), in Fahrenheit', rDef[0].type === 'weather' && rDef[0].wx.places[0].name === ST.DEFAULT_PLACE.name && Number.isFinite(rDef[0].wx.places[0].lat) && rDef[0].wx.units === 'f', JSON.stringify(rDef[0]));
+  const rOwnW = ST.starterWeather([{ id: 'wo000001', type: 'weather', wx: { units: 'c', places: [{ name: 'Oslo', lat: 59.9, lon: 10.7 }, { name: 'Rome', lat: 41.9, lon: 12.5 }] } }], [{ name: 'Paris', lat: 48.8, lon: 2.3 }]);
+  check('starter weather: an existing weather widget\'s place and units win', rOwnW.places.length === 1 && rOwnW.places[0].name === 'Oslo' && rOwnW.units === 'c', JSON.stringify(rOwnW));
+  const rSavedW = ST.starterWeather([todo('wt000001')], [{ name: 'Paris', lat: 48.8, lon: 2.3 }]);
+  check('starter weather: else the first place saved in Settings', rSavedW.places[0].name === 'Paris' && rSavedW.units === 'f', JSON.stringify(rSavedW));
+  const rHere = ST.starterWeather([{ id: 'wo000001', type: 'weather', wx: { units: 'f', places: [{ here: true, name: 'My location' }] } }], []);
+  check('starter weather: a "My location" widget carries over (it asks nothing new)', rHere.places[0].here === true, '');
+  check('starter: the stack has a member smart rotate can act on (weather, countdown)', ST.canSmart(r2kinds.map((k) => k.type)) && ST.canSmart(['weather']), '');
+  check('smart rotate visibility: weather, calendar or a countdown make it available; timer, notes, todo and the like do not', ST.canSmart(['notes', 'calendar']) && ST.canSmart(['countdown', 'timer']) && !ST.canSmart(['notes', 'timer', 'todoist']) && !ST.canSmart([]) && !ST.canSmart(undefined) && ST.SMART_TYPES.join() === 'weather,calendar,countdown', '');
+  check('smart rotate: the starter\'s weather is what the morning shows (and nothing at 15:00)', SM.smartPick({ items: r2kinds.map((k, i) => ({ id: 'wst' + i, type: k.type, data: k.type === 'countdown' ? { target: Date.UTC(2027, 0, 1) } : {} })), now: Date.UTC(2026, 9, 1, 12), hour: 7, day: '2026-10-01' }).id === 'wst0' && SM.smartPick({ items: r2kinds.map((k, i) => ({ id: 'wst' + i, type: k.type, data: {} })), now: Date.UTC(2026, 9, 1, 12), hour: 15, day: '2026-10-01' }) === null, '');
+  // flush slide
+  let rGap = 0;
+  for (const sign of [1, -1]) {
+    for (let k = 0; k <= 1.0001; k += 0.01) {
+      const f = SM.slide(Math.min(k, 1), sign, 240);
+      const edge = (c) => [120 + c.ty - (c.scale * 240) / 2, 120 + c.ty + (c.scale * 240) / 2];
+      const o = edge(f.out);
+      const n = edge(f.in);
+      rGap = Math.max(rGap, sign > 0 ? Math.abs(o[1] - n[0]) : Math.abs(n[1] - o[0]));
+    }
+  }
+  check('smart stack slide: flush all the way, no gap between the outgoing and the incoming card', rGap < 1e-6, String(rGap));
+  check('smart stack slide: the outgoing card recedes 2% at most', SM.slide(1, 1, 200).out.scale >= 0.98 && SM.slide(0.5, 1, 200).out.scale >= 0.98, String(SM.slide(1, 1, 200).out.scale));
+
+  // the page files
+  const r3src = read('src/renderer/newtab-stacks.js');
+  const r3html = read('src/renderer/newtab.html');
+  check('stack page: the card header\'s button is a "…" (opens Edit stack…), a right-click on the card opens the same menu as the rail', /ICON_MORE/.test(r3src) && /b\.append\(icon\(ICON_MORE\)\)/.test(r3src) && /card\.addEventListener\('contextmenu'/.test(r3src) && /function onCardMenu/.test(r3src), '');
+  check('stack page: the panel shows Smart rotate only when a member can use it, else a hint', /ST\.canSmart\(/.test(r3src) && /newtab\.stack\.smart\.none/.test(r3src), '');
+  check('stack page: the first-use pulse and peek (12%) run once per new stack, not with Reduce motion or Performance mode, and a swipe takes over', /const PEEK = 0\.12/.test(r3src) && /function playIntro/.test(r3src) && /introduced\.has/.test(r3src) && /reduced\(\) \|\| calm\(\)/.test(r3src) && /rail-intro/.test(r3html) && /prefers-reduced-motion: no-preference\) \{ body:not\(\.calm\) \.w-card\.rail-intro/.test(r3html), '');
+  check('stack page: the drop and the panel use the layout module (any size stacks)', /ST\.canStack\(pageList\(\), id, onto, window\.WidgetLayout\)/.test(r3src) && !/it\.w !== me\.w/.test(read('src/renderer/newtab-widgets-grid.js')) && /ST\.join\(widgets, action\.id, action\.onto, WL\)/.test(read('src/features/widgets.js')), '');
 
   // ---- the page files ----
   const src = read('src/renderer/newtab-stacks.js');

@@ -492,7 +492,9 @@ async function stackUnits(check, { it, noOverlap }) {
   const parse = (q) => w.actionFrom(`file:///newtab.html?${q}#x`);
   const now = () => settings.homeWidgets;
   check('stacks: the page actions parse (and a stack needs another widget to go onto)', parse('widget=wwx0001&do=cycle').do === 'cycle' && parse('widget=wwx0001&do=stack&onto=wtd0001').onto === 'wtd0001' && parse('widget=wwx0001&do=stack').invalid && parse('widget=wwx0001&do=stack&onto=wwx0001').invalid && parse('widget=wwx0001&do=stack&onto=../x').invalid && parse('widget=wwx0001&do=unstack').do === 'unstack', '');
-  check('stacks: stacking different sizes is refused and changes nothing', (await w.act(parse('widget=wwx0001&do=stack&onto=wtd0002'))) === false && now().every((x) => !x.stack), '');
+  check('stacks: stacking a different size is forgiving: the dropped widget adopts the stack\'s size and remembers its own', (await w.act(parse('widget=wwx0001&do=stack&onto=wtd0002'))) === true && row(byId(now(), 'wwx0001')).startsWith('wwx0001 0 12 6 5') && byId(now(), 'wwx0001').stack === byId(now(), 'wtd0002').stack && byId(now(), 'wwx0001').was.w === 4 && byId(now(), 'wwx0001').was.h === 3, rows(now()));
+  await w.act(parse('widget=wwx0001&do=unstack'));
+  check('stacks: "Remove from stack" gives it the size it had before it joined', !byId(now(), 'wwx0001').stack && byId(now(), 'wwx0001').w === 4 && byId(now(), 'wwx0001').h === 3 && byId(now(), 'wwx0001').was === undefined && now().every((x) => !x.stack), rows(now()));
   await w.act(parse('widget=wwx0001&do=stack&onto=wtd0001'));
   const sid = byId(now(), 'wtd0001').stack;
   check('stacks: a drop is stored: both on the target\'s cells, the dropped one shown', sid && byId(now(), 'wwx0001').stack === sid && byId(now(), 'wwx0001').top === true && row(byId(now(), 'wwx0001')).startsWith('wwx0001 8 0 4 3'), rows(now()));
@@ -520,7 +522,9 @@ async function stackUnits(check, { it, noOverlap }) {
   await w.act(parse(`widget=wwx0003&do=layout&l=wwx0003:${at.x},${at.y},2,2`));
   check('stacks: a member whose kind can\'t take the new size leaves the stack, keeps its size, overlaps nothing', !byId(now(), 'wmuse01').stack && !byId(now(), 'wwx0003').stack && byId(now(), 'wmuse01').w === 3 && byId(now(), 'wwx0003').w === 2 && noOverlap(now().filter((x) => !ST.isHidden(x))), rows(now()));
   await w.act(parse('widget=wwx0003&do=stack&onto=wtd0001'));
-  check('stacks: stacking is refused once the sizes differ', !byId(now(), 'wwx0003').stack, rows(now()));
+  check('stacks: a 2 by 2 card joins a 5 by 4 stack and takes its size; leaving gives 2 by 2 back', byId(now(), 'wwx0003').stack === sid && byId(now(), 'wwx0003').w === 5 && byId(now(), 'wwx0003').h === 4 && byId(now(), 'wwx0003').was.w === 2, rows(now()));
+  await w.act(parse('widget=wwx0003&do=unstack'));
+  check('stacks: it leaves at 2 by 2 and the stack is whole again', !byId(now(), 'wwx0003').stack && byId(now(), 'wwx0003').w === 2 && byId(now(), 'wwx0003').h === 2 && ST.membersOf(now(), sid).length === 2, rows(now()));
   // A third member, unstacking and removing.
   settings.homeWidgets = cleanList([...now(), wx('wwx0004', { x: 0, y: 30, w: 5, h: 4 })]);
   await w.act(parse('widget=wwx0004&do=stack&onto=wtd0001'));

@@ -322,7 +322,7 @@
       const onto = stackTarget(d, ev);
       d.onto = onto ? onto.id : null;
       if (onto) {
-        preview = d.base; // held over the middle of a card of the same size: dropping stacks them, nothing moves
+        preview = d.base; // held over the middle of a card: dropping stacks them, nothing moves
       } else if (zone && window.scrollY < m.pitchY && WL.snapRectFor(zone, it, o)) {
         snap = zone;
         preview = WL.snapMove(d.base, id, { snap: zone, frac: ev.clientY / window.innerHeight }, o);
@@ -370,17 +370,16 @@
       if (step) { window.scrollBy(0, step); d.raf = requestAnimationFrame(tick); }
     }
   }
-  // A move held over the middle half of another card of the same size (and not already in one stack with
-  // it): that card, which a drop stacks it onto (newtab-stacks.js, features/widget-stacks.js).
+  // A move held over the middle half of another card of any size (and not already in one stack with
+  // it): that card, which a drop stacks it onto; the card adopts the stack's size (newtab-stacks.js, features/widget-stacks.js).
   function stackTarget(d, ev) {
     const stacks = window.newtabStacks;
     if (!stacks || WS.isSystemId(d.id)) return null;
-    const me = d.base.find((i) => i.id === d.id);
     const r = boxEl().getBoundingClientRect();
     const px = ev.clientX - r.left;
     const py = ev.clientY - r.top;
     for (const it of d.base) {
-      if (it.id === d.id || it.w !== me.w || it.h !== me.h || WS.isSystemId(it.id)) continue;
+      if (it.id === d.id || WS.isSystemId(it.id)) continue;
       const b = WL.cellToPx(it, m);
       if (px < b.left + b.width / 4 || px > b.left + (b.width * 3) / 4 || py < b.top + b.height / 4 || py > b.top + (b.height * 3) / 4) continue;
       return stacks.canStack(d.id, it.id) ? it : null;

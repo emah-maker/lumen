@@ -48,6 +48,7 @@
   // Small line icons, built with DOM calls (no markup strings).
   const SVG = 'http://www.w3.org/2000/svg';
   const ICON_STACK = ['M3.5 4.5h4a1.2 1.2 0 0 1 1.2 1.2v3.1a1.2 1.2 0 0 1-1.2 1.2h-4a1.2 1.2 0 0 1-1.2-1.2V5.7a1.2 1.2 0 0 1 1.2-1.2Z', 'M4.5 2.5h4a1 1 0 0 1 1 1v3.5'];
+  const ICON_MORE = ['M2.6 6h0M6 6h0M9.4 6h0'];
   const ICON_UP = ['M3 7.5 6 4.5l3 3'];
   const ICON_DOWN = ['M3 4.5 6 7.5l3-3'];
   const ICON_GRIP = ['M4.5 3.5h0M7.5 3.5h0M4.5 6h0M7.5 6h0M4.5 8.5h0M7.5 8.5h0'];
@@ -157,7 +158,7 @@
       b = el('button', 'w-icon-btn w-stack-open');
       b.type = 'button';
       b.setAttribute('aria-haspopup', 'dialog');
-      b.append(icon(ICON_STACK));
+      b.append(icon(ICON_MORE)); // the "…" a stacked card's header shows on hover or focus
       b.addEventListener('click', (e) => { e.stopPropagation(); openPanel(card, b); });
       head.append(b);
     }
@@ -212,6 +213,7 @@
     c.addEventListener('pointerdown', (e) => onRailPress(e, card, c));
     card.append(c, why);
     card.addEventListener('pointerdown', (e) => onTouchStart(e, card));
+    card.addEventListener('contextmenu', (e) => onCardMenu(e, card, c)); // a right-click anywhere on the card is the rail's menu
     return c;
   }
 
@@ -283,6 +285,13 @@
     document.addEventListener('pointerdown', menuOutside, true);
     document.addEventListener('keydown', menuKeys, true);
     item.focus({ preventScroll: true });
+  }
+  // A right-click on the card's face (not on a field the person types in) opens the same menu as the rail.
+  function onCardMenu(e, card, rail) {
+    if (e.defaultPrevented || editing() || card.classList.contains('w-under')) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"], .w-stack-edit')) return;
+    e.preventDefault();
+    openRailMenu(card, rail, e.clientX, e.clientY);
   }
   // A press that stays on the rail for LONG_PRESS_MS opens the panel (a touch screen has no right-click). The click that
   // would end it (a dot) is dropped.
@@ -653,6 +662,7 @@
     }
     if (document.body.classList.contains('w-editing')) editBadges();
     openNew();
+    noticeIntro();
     if (panel) refreshPanel();
   }
   // What the page knows as a list the model can check: the places on the grid and the hidden members.
@@ -666,14 +676,14 @@
     }
     return out;
   }
-  const canStack = (id, onto) => ST.canStack(pageList(), id, onto);
+  const canStack = (id, onto) => ST.canStack(pageList(), id, onto, window.WidgetLayout);
   // The places `id` could be stacked onto, nearest first (centre to centre).
   function candidatesFor(id) {
     const list = pageList();
     const me = list.find((it) => it.id === id);
     if (!me) return [];
     return list
-      .filter((it) => !ST.isHidden(it) && ST.canStack(list, id, it.id) && !(groups.has(it.id) && groups.get(it.id).top !== it.id))
+      .filter((it) => !ST.isHidden(it) && ST.canStack(list, id, it.id, window.WidgetLayout) && !(groups.has(it.id) && groups.get(it.id).top !== it.id))
       .sort((a, b) => Math.hypot(a.x + a.w / 2 - (me.x + me.w / 2), a.y + a.h / 2 - (me.y + me.h / 2)) - Math.hypot(b.x + b.w / 2 - (me.x + me.w / 2), b.y + b.h / 2 - (me.y + me.h / 2)))
       .map((it) => it.id);
   }
@@ -716,6 +726,7 @@
       if (L?.snap) e.snap = L.snap;
       if (g) {
         e.stack = g.sid;
+        if (raw.was) e.was = raw.was;
         if (g.top === id) e.top = true;
         if (!(change.rotate ?? g.rotate)) e.rotate = false;
         if (!(change.smart ?? g.smart)) e.smart = false;
@@ -742,6 +753,7 @@
   // `id` (with its stack) stacked onto `onto`: dropped on it in Edit layout, or picked in the panel.
   function join(id, onto) {
     const ids = [...new Set([...withMembers(id), ...withMembers(onto)])];
+    if (!groups.has(id) && !groups.has(onto)) watchIntro(); // a new stack (not one more card in a stack)
     record(id, ids, txt('newtab.edit.stacked', { title: titleOfId(id), onto: titleOfId(onto) }));
     window.widgetAct(id, 'stack', { onto });
   }
@@ -848,11 +860,25 @@
     if (hint) wrap.append(el('p', 'w-sp-hint', hint));
     return wrap;
   }
-  function pickRow(id, label, onPick) {
+  // What joining does to sizes: '' when `id` already has the place's size, else a short note ("Resizes to 3×3", or
+  // "Stack grows to 3×3" when a kind needs more than the stack has). `into` is a shown card of the place it joins.
+  function sizeNote(id, into) {
+    const WL = window.WidgetLayout;
+    const list = pageList();
+    const a = list.find((it) => it.id === id);
+    const b = list.find((it) => it.id === into);
+    if (!WL || !a || !b || ST.stackBlock(list, id, into, WL)) return '';
+    const ids = [...new Set([...withMembers(id), ...withMembers(into)])];
+    const size = ST.stackSize(list, ids, b, WL);
+    const fmt = (s) => `${s.w}×${s.h}`;
+    if (size.w !== b.w || size.h !== b.h) return txt('newtab.stack.grows', { size: fmt(size) });
+    return a.w !== size.w || a.h !== size.h ? txt('newtab.stack.fits', { size: fmt(size) }) : '';
+  }
+  function pickRow(id, label, onPick, note = '') {
     const b = el('button', 'w-sp-pick');
     b.type = 'button';
     b.dataset.focus = `pick-${id}`;
-    b.append(el('b', null, titleOfId(id)), el('span', null, typeLabel(rawOf(id)?.type)));
+    b.append(el('b', null, titleOfId(id)), el('span', null, note ? `${typeLabel(rawOf(id)?.type)} · ${note}` : typeLabel(rawOf(id)?.type)));
     b.setAttribute('aria-label', label);
     b.addEventListener('click', onPick);
     return b;
@@ -867,7 +893,7 @@
       s.append(pickRow(onto, txt('newtab.stack.new.one', { title: titleOfId(id), onto: titleOfId(onto) }), () => {
         join(id, onto);
         closePanel();
-      }));
+      }, sizeNote(id, onto)));
     }
     return s;
   }
@@ -904,14 +930,17 @@
     });
     s.append(list);
     const opts = el('div', 'w-sp-opts');
-    opts.append(toggle(g, 'rotate', txt('newtab.stack.rotate'), txt('newtab.stack.rotate.hint')), toggle(g, 'smart', txt('newtab.stack.smart'), txt('newtab.stack.smart.hint')));
+    opts.append(toggle(g, 'rotate', txt('newtab.stack.rotate'), txt('newtab.stack.rotate.hint')));
+    // Smart rotate only means something with a member it can act on (weather, calendar, countdown): otherwise a hint.
+    if (ST.canSmart(g.members.map((m) => rawOf(m)?.type))) opts.append(toggle(g, 'smart', txt('newtab.stack.smart'), txt('newtab.stack.smart.hint')));
+    else opts.append(el('p', 'w-sp-none w-sp-smart-none', txt('newtab.stack.smart.none')));
     s.append(opts);
     const more = candidatesFor(g.top).filter((c) => !groups.has(c));
     const add = el('div', 'w-sp-add');
     add.append(el('h3', null, txt('newtab.stack.add')));
     if (n >= ST.MAX_STACK) add.append(el('p', 'w-sp-none', txt('newtab.stack.full', { max: ST.MAX_STACK })));
     else if (!more.length) add.append(el('p', 'w-sp-none', txt('newtab.stack.add.none')));
-    else for (const id of more) add.append(pickRow(id, txt('newtab.stack.add.one', { title: titleOfId(id) }), () => join(id, g.top)));
+    else for (const id of more) add.append(pickRow(id, txt('newtab.stack.add.one', { title: titleOfId(id) }), () => join(id, g.top), sizeNote(id, g.top)));
     s.append(add);
     return s;
   }
@@ -969,9 +998,57 @@
   // Leaving Edit layout removes the badges (an open Edit stack panel stays: it works outside Edit layout too). Entering: badges.
   document.addEventListener('w-mode', (e) => {
     if (e.detail?.editing) editBadges(); else if (panel && !panel.sid) closePanel(false); // the "New stack" picker is part of Edit layout
+    if (!e.detail?.editing) setTimeout(noticeIntro, 300); // back at rest: a stack made in Edit layout shows how it works
   });
+  // ---- first use: a stack that was just made shows how it works ----
+  // Once per new stack, when it is on screen at rest (after Edit layout, which hides the rail): the rail pulses and the
+  // next card slides up about 12% and back, like a page turn started and thought better of. Not with Reduce motion
+  // or in Performance mode; a person's own swipe takes over at once.
+  const PEEK = 0.12; // of the card's height
+  const PEEK_MS = 950;
+  const INTRO_PULSE_MS = 1700;
+  const introduced = new Set(); // stack ids already shown
+  let introWatch = null; // { sids: the stacks there were, until }: a stack that is new now was just made
+  let introDue = []; // stack ids waiting for the page to be at rest
+  function watchIntro() { introWatch = { sids: new Set(uniqueGroups().map((g) => g.sid)), until: Date.now() + 8000 }; }
+  function noticeIntro() {
+    if (introWatch) {
+      if (Date.now() > introWatch.until) introWatch = null;
+      else {
+        const fresh = uniqueGroups().find((x) => !introWatch.sids.has(x.sid) && !introduced.has(x.sid));
+        if (fresh) { introduced.add(fresh.sid); introDue.push(fresh.sid); introWatch = null; }
+      }
+    }
+    if (introDue.length && !editing()) {
+      const sid = introDue.shift();
+      setTimeout(() => playIntro(sid), 500); // the cards have landed
+    }
+  }
+  function playIntro(sid) {
+    if (reduced() || calm() || document.hidden) return;
+    if (editing()) { introDue.push(sid); return; }
+    const g = uniqueGroups().find((x) => x.sid === sid);
+    const card = g && cardOf(g.top);
+    if (!card || eng) return;
+    card.classList.add('rail-intro');
+    setTimeout(() => card.classList.remove('rail-intro'), INTRO_PULSE_MS);
+    const next = ST.neighbour(g.members, g.top, 1);
+    if (!next) return;
+    const e = begin(g, { jump: { id: next, dir: 1 } });
+    const t0 = performance.now();
+    const step = (now) => {
+      if (eng !== e) return; // a swipe or a key took over
+      const k = Math.min(1, (now - t0) / PEEK_MS);
+      e.p = PEEK * Math.sin(Math.PI * k) ** 1.5;
+      draw();
+      if (eng !== e) return;
+      if (k >= 1) { abort(); return; }
+      e.raf = requestAnimationFrame(step);
+    };
+    e.raf = requestAnimationFrame(step);
+  }
   // Add widget > Smart Stack: the page asked the browser for a new stack; when it arrives its Edit stack panel opens.
-  function expectNew() { expecting = { sids: new Set(uniqueGroups().map((g) => g.sid)), until: Date.now() + 8000 }; }
+  function expectNew() { watchIntro(); expecting = { sids: new Set(uniqueGroups().map((g) => g.sid)), until: Date.now() + 8000 }; }
   function openNew() {
     if (!expecting) return;
     if (Date.now() > expecting.until) { expecting = null; return; }
