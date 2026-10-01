@@ -2103,14 +2103,14 @@ const LOCAL_ENGINE = /^(claudecode|grokbuild):/;
 function standInOf(model) {
   return fallbackOn() ? aiFallback.resolve({ preferred: String(model), options: modelOptions(), cooldowns: aiFallback.shared }).model : model;
 }
-async function withFallback(model, run, { engines = true } = {}) {
+async function withFallback(model, run, { engines = true, signal = null } = {}) {
   let current = String(model);
   const tried = new Set();
   for (;;) {
     try {
       return await run(current, tried.size === 0);
     } catch (err) {
-      if (!fallbackOn()) throw err;
+      if (!fallbackOn() || signal?.aborted) throw err; // a Stop is never a reason to switch
       const info = aiFallback.classify(err);
       if (info.kind !== 'limit' && info.kind !== 'unreachable') throw err;
       aiFallback.shared.mark(current, info);
@@ -2267,7 +2267,7 @@ async function organizeTabs() {
       skipId: aiOffTab, // [ai controls] those tabs' titles aren't sent
       alwaysAsk: TEST && global.__organizeAlwaysAsk === true,
       maxTabs: MAX_ORGANIZE_TABS * 4,
-      ask: (wire, { signal } = {}) => withFallback(cheapTopicModel(), (m) => refineGroups(m, wire, signal)),
+      ask: (wire, { signal } = {}) => withFallback(cheapTopicModel(), (m) => refineGroups(m, wire, signal), { signal }),
       // Sites no hint is known for go along as host names; what the model says they are for is kept in
       // the profile (organizeLearning.aiHints) and used by local grouping too. Never over the fixed table.
       hints: { lookup: (url) => organizeLearner.aiHint(url), learn: (answers) => organizeLearner.learnAiHints(answers) },

@@ -74,6 +74,27 @@ function resetFromHeaders(err, at) {
   return retryMs !== null ? at + retryMs : null;
 }
 
+// RetryInfo's "54s" / "1.5s" / "250ms" from a Gemini error's details array -> ms | null
+function retryDelayOf(details) {
+  for (const d of Array.isArray(details) ? details : []) {
+    const m = /^\s*(\d+(?:\.\d+)?)\s*(ms|s)\s*$/i.exec(String(d?.retryDelay ?? ''));
+    if (m) return Math.round(Number(m[1]) * (m[2].toLowerCase() === 'ms' ? 1 : 1000));
+  }
+  return null;
+}
+
+// OpenRouter's metadata.raw (the upstream provider's own answer, JSON or text): a 429 or 5xx in it -> that status.
+function upstreamStatus(meta) {
+  const raw = meta && typeof meta === 'object' ? meta.raw : null;
+  if (raw == null || raw === '') return null;
+  const ok = (v) => { const n = num(v); return n !== null && Number.isInteger(n) && (n === 429 || (n >= 500 && n <= 599)) ? n : null; };
+  let obj = raw;
+  if (typeof raw === 'string') { try { obj = JSON.parse(raw); } catch { obj = null; } }
+  if (obj && typeof obj === 'object') return ok(obj.status) ?? ok(obj.code) ?? ok(obj.error?.code) ?? ok(obj.error?.status) ?? ok(obj.statusCode) ?? null;
+  const m = /\b(429|5\d\d)\b/.exec(String(raw));
+  return m ? Number(m[1]) : null;
+}
+
 // Everything an error carries that could name its kind: HTTP status, system code, API error type and
 // every message in the chain (SDK message, API body message, `cause`).
 function facts(input) {
@@ -84,13 +105,17 @@ function facts(input) {
   const cause = err.cause && typeof err.cause === 'object' ? err.cause : {};
   // OpenRouter (and some gateways) put the HTTP status in a numeric `code` of the body: { error: { code: 429, message } }.
   const httpCode = (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 400 && v <= 599 ? v : null);
-  const status = num(err.status ?? err.statusCode ?? err.response?.status ?? body.status ?? inner.status) ?? httpCode(body.code) ?? httpCode(inner.code) ?? httpCode(err.code);
+  let status = num(err.status ?? err.statusCode ?? err.response?.status ?? body.status ?? inner.status) ?? httpCode(body.code) ?? httpCode(inner.code) ?? httpCode(err.code);
+  // OpenRouter answers 400 when the upstream provider failed: its own status (429, 5xx) is in `metadata.raw`.
+  if (status === 400) status = upstreamStatus(body.metadata ?? inner.metadata ?? err.metadata) ?? status;
+  // Gemini: error.details[] holds a RetryInfo { retryDelay: "54s" } on a 429.
+  const retryDelayMs = retryDelayOf(inner.details ?? body.details ?? err.details);
   const codes = [err.code, cause.code, cause.cause?.code, err.errno, cause.errno, body.code, inner.code].filter((c) => typeof c === 'string');
   const types = [err.type, body.type, inner.type, body.code, inner.code, err.code].filter((c) => typeof c === 'string').map((s) => s.toLowerCase());
   // The SDKs repeat the API's message inside their own ("429 <message>"): each text once, so a "6m0s" is not counted twice.
   const parts = [err.name, err.message, body.message, inner.message, cause.message, cause.cause?.message, typeof err.error === 'string' ? err.error : ''].filter((p) => typeof p === 'string' && p);
   const text = [...new Set(parts)].sort((a, b) => b.length - a.length).reduce((all, p) => (all.some((q) => q.includes(p)) ? all : [...all, p]), []).join(' | ');
-  return withTextFacts({ status, codes, types, text, name: String(err.name || '') });
+  return withTextFacts({ status, codes, types, text, name: String(err.name || ''), retryDelayMs });
 }
 
 // Claude Code (and other CLIs) report an API failure as a sentence with the status and the body inside it:
@@ -117,11 +142,16 @@ function classify(input, { now = Date.now(), model = '' } = {}) {
 
   if (name === 'AbortError' || name === 'APIUserAbortError' || /request was aborted/i.test(text)) return out('other');
   if (CONTEXT_RE.test(text)) return out('other');
+  // A bad argument (Node's ERR_INVALID_URL, ERR_INVALID_ARG_TYPE, ...) is the request's fault, not the network's.
+  if (codes.some((c) => /^ERR_INVALID_/i.test(c))) return out('other');
+  // undici's bare "terminated" (the connection closed mid-stream, no cause). A user Stop is an AbortError, handled above
+  // (and agent.js never asks while the turn's signal is aborted).
+  if (status === null && !codes.length && !(typeof input === 'object' && input?.cause) && /^terminated$/i.test(String(typeof input === 'string' ? input : input?.message || '').trim())) return out('unreachable', { resetsAt: now + COOLDOWN.unreachable });
 
   const reset = () => {
     const header = typeof input === 'object' ? resetFromHeaders(input, now) : null;
     const epoch = /limit reached\|(\d{10})/i.exec(text); // Claude's older "Claude AI usage limit reached|1790640600"
-    const parsed = header ?? (epoch ? Number(epoch[1]) * 1000 : null) ?? limitOf(text, now)?.resetsAt ?? parseResetTime(text, now);
+    const parsed = header ?? (f.retryDelayMs != null ? now + f.retryDelayMs : null) ?? (epoch ? Number(epoch[1]) * 1000 : null) ?? limitOf(text, now)?.resetsAt ?? parseResetTime(text, now);
     return parsed && parsed > now ? Math.min(parsed, now + COOLDOWN.max) : null;
   };
   const named = /\b(fable|opus|sonnet|haiku)\b/i.exec(text)?.[1]?.toLowerCase() || null; // "Opus limit reached": that family only
@@ -133,7 +163,7 @@ function classify(input, { now = Date.now(), model = '' } = {}) {
   };
 
   // Strong limit signals: status, API error type, billing text.
-  const creditText = /credit balance is too low|insufficient[_ ]quota|exceeded your current quota|credits? (have )?(run|ran) out|out of credits|insufficient (credits|funds|balance)|used all (of )?(its |your |the )?(available )?credits|(reached|exceeded|hit) (its|your|the) (monthly )?(spend(ing)? |credit )?limit|(monthly|spend(ing)?|credit) (spend(ing)? )?limit/i.test(text) || types.some((t) => /insufficient_quota|billing|resource_exhausted/.test(t)) || codes.some((c) => /insufficient_quota|resource_exhausted/i.test(c));
+  const creditText = /credit balance is too low|insufficient[_ ]quota|exceeded your current quota|credits? (have )?(run|ran) out|out of credits|insufficient (credits|funds|balance)|used all (of )?(its |your |the )?(available )?credits|(reached|exceeded|hit) (its|your|the) (monthly )?(spend(ing)? |credit )?limit|(reached|exceeded|hit|used)( up)? (the |your |its )?(monthly|spend(ing)?|credit) (spend(ing)? )?limit|(monthly|spend(ing)?|credit) (spend(ing)? )?limit (has been |was |is |got )?(reached|exceeded|hit|used)/i.test(text) || types.some((t) => /insufficient_quota|billing|resource_exhausted/.test(t)) || codes.some((c) => /insufficient_quota|resource_exhausted/i.test(c));
   // Out of credit is the account's, whatever the status says (xAI answers it with a 403, Anthropic with a 400): it comes
   // before the auth branch, and no model of that provider will do until it is topped up.
   const rated = types.some((t) => /rate_limit|ratelimit|rate-limit|too_many_requests/.test(t));

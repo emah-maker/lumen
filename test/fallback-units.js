@@ -77,6 +77,21 @@ const cases = [
   ['a destroyed tab', new Error('Object has been destroyed'), 'other'],
   ['a CLI crash with no cause', 'Claude Code stopped (exit 1): segmentation oddity', 'other'],
   ['an ordinary Error', new Error('boom'), 'other'],
+  // ---- polish: rater's minor fixes
+  ['text: "spend limit field" is not a credit limit', 'The spend limit field is empty, enter a number', 'other'],
+  ['text: "credit limit" in a form message', 'Edit the credit limit for this card', 'other'],
+  ['text: "monthly spend limit reached" is a limit', 'Your monthly spend limit reached', 'limit'],
+  ['text: "hit your credit limit" is a limit', 'You have hit your credit limit', 'limit'],
+  ['undici ERR_INVALID_URL is a bad URL is the request fault', Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new TypeError('Invalid URL'), { code: 'ERR_INVALID_URL' }) }), 'other'],
+  ['ERR_INVALID_ARG_TYPE is not the network', net('fetch failed', 'ERR_INVALID_ARG_TYPE'), 'other'],
+  ['gemini 429 with RetryInfo retryDelay "54s"', Object.assign(new Error('429 quota'), { status: 429, error: { error: { code: 429, status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.Help' }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '54s' }] } } }), 'limit', (c) => c.resetsAt === NOW + 54e3 && c.exact],
+  ['undici bare "terminated" mid-stream', Object.assign(new TypeError('terminated'), {}), 'unreachable'],
+  ['bare "terminated" text', 'terminated', 'unreachable'],
+  ['"terminated" from a user Stop (AbortError) stays other', Object.assign(new Error('terminated'), { name: 'AbortError' }), 'other'],
+  ['"terminated" with a cause is judged by the cause', Object.assign(new TypeError('terminated'), { cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }) }), 'unreachable'],
+  ['openrouter 400 whose metadata.raw carries an upstream 429', Object.assign(new Error('400 Provider returned error'), { status: 400, error: { message: 'Provider returned error', code: 400, metadata: { raw: '{"error":{"code":429,"message":"rate limited"}}', provider_name: 'X' } } }), 'limit', (c) => c.status === 429],
+  ['openrouter 400 whose metadata.raw carries an upstream 503 (text)', Object.assign(new Error('400 Provider returned error'), { status: 400, error: { message: 'Provider returned error', code: 400, metadata: { raw: 'upstream said 503 Service Unavailable' } } }), 'unreachable', (c) => c.status === 503],
+  ['openrouter 400 with an upstream 400 stays other', Object.assign(new Error('400 Provider returned error'), { status: 400, error: { message: 'Provider returned error', code: 400, metadata: { raw: '{"error":{"code":400,"message":"bad schema"}}' } } }), 'other'],
   ['undefined', undefined, 'other'],
   ['null', null, 'other'],
   ['an empty string', '', 'other'],
@@ -470,7 +485,7 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
   check('chat: picking a model by hand retires them before the pick is sent', /retireFallbackButtons\(\);[^\n]*\r?\n\s*const switched = await window\.assistant\.setModel\(select\.value\)/.test(src));
   check('chat: pressing one retires the others', /retireFallbackButtons\(button\)/.test(src) && /fallbackButtons\.add\(button\)/.test(src));
   const buttons = new Set();
-  const mk = () => ({ removed: false, remove() { this.removed = true; } });
+  const mk = () => ({ removed: false, isConnected: true, remove() { this.removed = true; } });
   const retire = new Function('fallbackButtons', `${fn[0]}; return retireFallbackButtons;`)(buttons);
   const [a, b, c] = [mk(), mk(), mk()];
   buttons.add(a); buttons.add(b);
@@ -478,6 +493,9 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
   check('chat: retire removes every older button and keeps the new one', a.removed && b.removed && !c.removed && buttons.size === 1);
   retire(c);
   check('chat: retire(except) leaves the one pressed', !c.removed && buttons.size === 1);
+  const stale = mk(); stale.isConnected = false; buttons.add(stale);
+  retire(c);
+  check('chat: retire prunes detached buttons (not isConnected)', stale.removed && !buttons.has(stale) && !c.removed && buttons.size === 1);
 }
 
 // ---- what a model can take: context size and images

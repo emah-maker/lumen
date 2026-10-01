@@ -308,7 +308,7 @@ function openModelSearch(query = '') {
 // override the model answering now, or one the user picked since.
 const fallbackButtons = new Set();
 function retireFallbackButtons(except = null) {
-  for (const b of fallbackButtons) if (b !== except) { b.remove(); fallbackButtons.delete(b); }
+  for (const b of fallbackButtons) if (b !== except || !b.isConnected) { b.remove(); fallbackButtons.delete(b); }
 }
 
 $('model').addEventListener('change', async (e) => {
