@@ -22,8 +22,9 @@ window.addEventListener('DOMContentLoaded', () => document.documentElement.class
 
 contextBridge.exposeInMainWorld('browser', {
   setContentBounds: (bounds) => ipcRenderer.send('content-bounds', bounds),
-  freezeView: () => ipcRenderer.invoke('view:freeze'),
+  freezeView: (size) => ipcRenderer.invoke('view:freeze', size),
   thawView: () => ipcRenderer.send('view:thaw'),
+  freezeAlive: () => ipcRenderer.send('view:freeze-alive'),
   setChatFull: (on) => ipcRenderer.send('chat:full', on),
   warmView: () => ipcRenderer.invoke('view:warm'),
   newTab: (url) => ipcRenderer.send('tab:new', url),
@@ -80,6 +81,8 @@ contextBridge.exposeInMainWorld('browser', {
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
+  openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items), // the extension icons that don't fit the toolbar
+  onActionsOverflowPick: on('actions:overflow-pick'),
   suggest: (query) => ipcRenderer.invoke('suggest:query', query),
   showSuggestions: (rect, payload) => ipcRenderer.send('suggest:show', rect, payload),
   hideSuggestions: () => ipcRenderer.send('suggest:hide'),

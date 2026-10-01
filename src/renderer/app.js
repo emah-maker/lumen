@@ -99,6 +99,21 @@ function prettyUrl(url) {
   return url.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
 }
 
+// innerHTML is only touched when the markup differs: tab updates call this on every state push, and a
+// rewrite throws away and rebuilds the same icon nodes.
+function setMarkup(el, html) {
+  if (el.dataset.markup === html) return;
+  el.dataset.markup = html;
+  el.innerHTML = html;
+}
+
+// The indicator collapses to icon-only at narrow or zoomed widths, so it needs a name beyond its tooltip.
+function setSecurityName(el, name) {
+  el.title = name;
+  el.setAttribute('aria-label', name);
+  el.setAttribute('role', 'img');
+}
+
 function showAddress() {
   const security = $('security');
   if (document.activeElement === address) return;
@@ -107,24 +122,25 @@ function showAddress() {
     security.hidden = true; // an error page (or Lumen's own reader/source page) has no connection to vouch for
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'broken') {
     security.className = 'security danger';
-    security.innerHTML = WARN + '<span>Not secure</span>';
-    security.title = "This site's certificate isn't trusted. You chose to continue anyway.";
+    setMarkup(security, WARN + '<span>' + t('security.notSecureLabel').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]) + '</span>');
+    setSecurityName(security, t('security.broken'));
     security.hidden = false;
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'mixed') {
     security.className = 'security insecure';
-    security.innerHTML = WARN;
-    security.title = 'Not fully secure: parts of this page (such as images) were loaded over an unencrypted connection';
+    setMarkup(security, WARN);
+    setSecurityName(security, t('security.mixed'));
     security.hidden = false;
   } else if (currentUrl.startsWith('https:')) {
     security.className = 'security';
-    security.innerHTML = LOCK;
-    security.title = t('security.secure');
+    setMarkup(security, LOCK);
+    setSecurityName(security, t('security.secure'));
     security.hidden = false;
   } else if (currentUrl.startsWith('http:')) {
     security.className = 'security insecure';
+    security.dataset.markup = ''; // built by hand below: not what setMarkup last wrote
     security.innerHTML = WARN;
     security.append(Object.assign(document.createElement('span'), { textContent: t('security.notSecure') }));
-    security.title = t('security.notEncrypted');
+    setSecurityName(security, t('security.notEncrypted'));
     security.hidden = false;
   } else {
     security.hidden = true;
@@ -333,7 +349,7 @@ function moveConfirmed() {
   if (!awaitingMove) return;
   clearTimeout(awaitingMove);
   awaitingMove = null;
-  if (pendingState && !drag) { const state = pendingState; pendingState = null; renderTabs(state); }
+  if (pendingState && !drag) { const state = pendingState; pendingState = null; renderTabsNow(state); }
 }
 let heldTab = null; // { id, ids, timer }: dropped tabs kept hidden in this strip until main has placed them
 function holdDroppedTab(id, ids = [id]) {
@@ -982,7 +998,7 @@ function endTabDrag(e) {
   if (pendingState) {
     const state = pendingState;
     pendingState = null;
-    renderTabs(state);
+    renderTabsNow(state);
   }
 }
 
@@ -1180,12 +1196,14 @@ function releaseStrip() {
     if (pendingState && !drag && renamingGroup === null) {
       const held = pendingState;
       pendingState = null;
-      renderTabs(held);
+      renderTabsNow(held);
     }
   }, 0);
 }
 $('tabs').addEventListener('pointerdown', () => {
   stripPressed = true;
+  lastLayoutSig = null; // a press can become a drag that moves tabs: the next update measures
+
   clearTimeout(stripPressTimer);
   stripPressTimer = setTimeout(releaseStrip, 4000); // a release that never arrives can't freeze the strip
 }, true);
@@ -1234,7 +1252,7 @@ function startRename(groupId) {
     if (pendingState) {
       const held = pendingState;
       pendingState = null;
-      renderTabs(held);
+      renderTabsNow(held);
     }
   };
   input.addEventListener('keydown', (e) => {
@@ -1538,7 +1556,30 @@ window.browser.onOrganizeNote?.(({ text, undo }) => {
   setTimeout(() => note.remove(), 9000);
 });
 
+// State pushes arrive in bursts (a page loading fires title, favicon and loading updates back to back):
+// they are coalesced into one render per frame, the latest state winning.
+let queuedTabState = null;
+let tabsFrame = 0;
 function renderTabs(state) {
+  queuedTabState = state;
+  if (tabsFrame) return;
+  tabsFrame = requestAnimationFrame(() => {
+    tabsFrame = 0;
+    const next = queuedTabState;
+    queuedTabState = null;
+    if (next) renderTabsNow(next);
+  });
+}
+// What decides where tabs sit and how wide they are. While it is unchanged, an update is only titles,
+// icons, loading flags and the like: those are patched in place, with no measuring and no FLIP.
+let lastLayoutSig = null;
+function layoutSig(state) {
+  const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}`).join(',');
+  return `${state.activeId}#${groups}#${tabs}`;
+}
+
+function renderTabsNow(state) {
   // Updates wait while tabs are being moved here, but not while they are out on the card: the strip then
   // shows the window as it is (the tab beside the dragged one active, say), keeping the dragged tabs folded.
   const out = drag?.handed && !drag.single;
@@ -1549,8 +1590,11 @@ function renderTabs(state) {
   lastTabState = state;
   if (!drag?.handed) pruneSelection(state);
   const container = $('tabs');
+  const sig = layoutSig(state);
+  const patchOnly = tabsRendered && sig === lastLayoutSig && !landingSlot && !dropSlot && !drag && !heldTab && !arriving.size && !widthsHeld && !container.querySelector('.tab-drop-slot');
+  lastLayoutSig = sig;
   const before = new Map();
-  for (const el of container.querySelectorAll('.tab, .group-label')) before.set(el.dataset.id, { el, rect: el.getBoundingClientRect() });
+  for (const el of container.querySelectorAll('.tab, .group-label')) before.set(el.dataset.id, { el, rect: patchOnly ? null : el.getBoundingClientRect() });
   // A drop slot left open for a tab that was just released over this strip (onTabDropAt): measured open
   // above, so the tabs close up from there, and the tab that arrives (or, back in its own strip, the one
   // that was held hidden) takes its place.
@@ -1588,6 +1632,11 @@ function renderTabs(state) {
     wanted.push(updateTabEl(before.get(String(tab.id))?.el || createTabEl(tab.id), tab, group, state.activeId));
   }
   const keep = new Set(wanted);
+  if (patchOnly && wanted.length === before.size && wanted.every((el) => before.get(el.dataset.id)?.el === el)) {
+    finishTabsRender(state, before, container, switched);
+    return;
+  }
+  if (patchOnly) for (const v of before.values()) v.rect = v.el.getBoundingClientRect(); // the strip did differ after all
   for (const { el } of before.values()) if (!keep.has(el)) el.remove();
   // Drop slots aren't tabs: they step out while the tabs are put in order (or they'd end up last), and the
   // open one goes back in front of the same tab. A closing one is simply gone.
@@ -1620,6 +1669,11 @@ function renderTabs(state) {
     const first = state.tabs.find((x) => String(x.id) === landedIds[0]);
     if (live) live.textContent = landedIds.length > 1 ? t('tabs.movedHereMany', { n: landedIds.length }) : t('tabs.movedHere', { title: first?.title || '' });
   }
+  finishTabsRender(state, before, container, switched);
+}
+
+// Everything after the strip itself: the indicator, the toolbar state of the active tab.
+function finishTabsRender(state, before, container, switched) {
   updateHoverCard();
   const activeId = container.querySelector('.tab.active')?.dataset.id;
   placeIndicator(tabsRendered && !motionReduced() && [...before.keys()].includes(activeId));
@@ -1674,9 +1728,9 @@ function renderTabs(state) {
   document.body.classList.toggle('tab-loading', Boolean(active?.loading));
   $('back').disabled = !state.canGoBack;
   $('forward').disabled = !state.canGoForward;
-  $('reload-icon').innerHTML = active?.loading
+  setMarkup($('reload-icon'), active?.loading
     ? '<path d="M4 4l8 8M12 4l-8 8"/>'
-    : '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/>';
+    : '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/>');
   $('reload').title = active?.loading ? t('toolbar.stop') : t('toolbar.reload.title');
   $('reload').setAttribute('aria-label', active?.loading ? t('toolbar.stop') : t('toolbar.reload'));
 }
@@ -1840,6 +1894,36 @@ $('app-menu').onclick = () => {
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
   window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom), right: Math.round(r.right) });
 };
+// Extension icons past the list's width cap are clipped: a "..." button lists them, and a pick triggers the
+// extension as its icon does. (The list is a custom element with an open shadow root of one button per action.)
+{
+  const list = $('extension-actions');
+  const more = $('actions-overflow');
+  const hiddenActions = () => {
+    const lr = list.getBoundingClientRect();
+    return [...(list.shadowRoot?.querySelectorAll('.action') || [])].filter((n) => n.getBoundingClientRect().right > lr.right + 1);
+  };
+  let frame = 0;
+  const refresh = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; more.hidden = !hiddenActions().length; });
+  };
+  new ResizeObserver(refresh).observe(list);
+  customElements.whenDefined('browser-action-list').then(() => {
+    // subtree + attributes: a button's own size/visibility can change (badge, popup state) without a child being added
+    if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true, subtree: true, attributes: true });
+    refresh();
+  });
+  more.onclick = () => {
+    const r = more.getBoundingClientRect();
+    window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, hiddenActions().map((n) => ({ id: n.id, title: n.title || '' })));
+  };
+  window.browser.onActionsOverflowPick?.((id) => {
+    const node = [...(list.shadowRoot?.querySelectorAll('.action') || [])].find((n) => n.id === id);
+    const r = more.getBoundingClientRect();
+    window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+  });
+}
 $('agent-stop').onclick = () => window.assistant.stop();
 // The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
 // it, so the field's padding has to clear however many are showing: styles.css reads their width
@@ -1903,8 +1987,9 @@ $('find-close').onclick = closeFind;
 
 // ---------- sidebar ----------
 
-// The sidebar springs open from the window's trailing edge. Its width follows --reveal (0–1) each
-// frame and the native page view is resized with it, so the page makes room instead of jumping.
+// The sidebar springs open from the window's trailing edge. `reveal` (0–1) drives a transform and an
+// opacity on the sidebar element alone (it stays laid out at its final width, floating over the page
+// area while body.sidebar-moving), and the native page view keeps its final size (heldRect).
 let reveal = document.body.classList.contains('sidebar-hidden') ? 0 : 1;
 let revealAnim = null;
 
@@ -1931,20 +2016,33 @@ if (document.body.classList.contains('sidebar-hidden')) {
   }, { timeout: 1500 });
 }
 
-// Viewport rect with the sidebar at reveal x, measured without painting.
-function viewportAt(x) {
-  const sidebar = $('sidebar');
-  const before = sidebar.style.getPropertyValue('--reveal');
-  sidebar.style.setProperty('--reveal', String(x));
-  const r = viewport.getBoundingClientRect();
-  if (before) sidebar.style.setProperty('--reveal', before);
-  else sidebar.style.removeProperty('--reveal');
-  return r;
+// The sidebar's spring state is two inline properties on that one element.
+function revealStyles(x) {
+  const c = Math.min(1, Math.max(0, x));
+  return { transform: c >= 1 ? '' : `translate3d(${((1 - c) * 100).toFixed(3)}%, 0, 0)`, opacity: c >= 1 ? '' : String((0.25 + c * 0.75).toFixed(3)) };
+}
+function clearReveal() {
+  const st = $('sidebar').style;
+  st.transform = '';
+  st.opacity = '';
+}
+
+// While the page is a still image, main's last-resort thaw timer is told every second that motion goes on.
+let lastFreezeAlive = -Infinity;
+function freezeAlive() {
+  const now = performance.now();
+  if (now - lastFreezeAlive < 1000) return;
+  lastFreezeAlive = now;
+  window.browser.freezeAlive?.();
 }
 
 function setReveal(x) {
   reveal = x;
-  $('sidebar').style.setProperty('--reveal', String(Math.min(1, Math.max(0, x))));
+  if (snapshot) freezeAlive();
+  const st = $('sidebar').style;
+  const v = revealStyles(x);
+  st.transform = v.transform;
+  st.opacity = v.opacity;
   reportBounds();
 }
 
@@ -1971,25 +2069,40 @@ function edgeColor(img) {
   }
 }
 
-async function freezePage() {
+// fade: the snapshot eases in over --t-press (a shortcut-started spring, where the capture lands mid-animation).
+// The last page edge colour seen: a resize drag shows it in the area the page hasn't caught up with yet,
+// before its own snapshot (50-200 ms) is ready.
+let lastSnapshotEdge = '';
+async function freezePage({ fade = false } = {}) {
   const token = ++freezeToken;
-  const src = await window.browser.freezeView?.();
-  if (!src || token !== freezeToken) return;
-  const r = viewport.getBoundingClientRect();
+  // The area the snapshot fills, in CSS pixels: main captures it at that size, not at device size.
+  const r = heldRect || viewport.getBoundingClientRect();
+  const bytes = await window.browser.freezeView?.({ width: Math.round(r.width), height: Math.round(r.height) });
+  if (!bytes || token !== freezeToken) return;
+  // The JPEG arrives as bytes (not a base64 data URI): a blob URL costs no giant string to build or parse.
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
   const img = new Image();
   img.className = 'page-snapshot';
   img.alt = '';
-  img.src = src;
+  img.src = url;
   img.style.width = `${r.width}px`;
   img.style.height = `${r.height}px`;
-  await img.decode().catch(() => {});
-  if (token !== freezeToken) return;
-  snapshot?.remove();
+  const decoded = await img.decode().then(() => true, () => false);
+  const arrival = snapshotArrival({ token, current: freezeToken, decoded });
+  if (arrival !== 'show') { // superseded while decoding, or a broken image: never replace the live page with it
+    URL.revokeObjectURL(url);
+    if (arrival === 'thaw') thawPage();
+    return;
+  }
+  if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
-  viewport.style.setProperty('--snapshot-edge', edgeColor(img));
+  if (fade) img.classList.add('fade-in');
+  lastSnapshotEdge = edgeColor(img);
+  viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge);
   viewport.append(img);
 }
 
+const SNAPSHOT_REMOVE_DELAY_MS = 80; // the live page is back a moment before the still image leaves, so no blank frame shows
 function thawPage() {
   freezeToken++;
   const img = snapshot;
@@ -1997,53 +2110,62 @@ function thawPage() {
   // Swap the live page back a frame after the motion has settled, not on its last frame.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     window.browser.thawView?.();
-    if (img) setTimeout(() => { img.remove(); viewport.style.removeProperty('--snapshot-edge'); }, 80);
+    if (img) setTimeout(() => { img.remove(); URL.revokeObjectURL(img.src); viewport.style.removeProperty('--snapshot-edge'); }, SNAPSHOT_REMOVE_DELAY_MS);
   }));
 }
+
+const SPRING_OPEN_RESPONSE = 0.34, SPRING_CLOSE_RESPONSE = 0.28; // seconds: closing is a little quicker
 
 async function showSidebar(visible) {
   const body = document.body;
   $('sidebar').classList.remove('prewarm'); // never animate from the warm-up layout
   $('toggle-sidebar').setAttribute('aria-pressed', String(visible));
   window.assistant.sidebarState?.(visible); // main: when to notify about a reply, and the unread mark
+  const wasEarly = Boolean(earlyFreeze);
   if (earlyFreeze) {
     const pending = earlyFreeze;
     earlyFreeze = null;
     await pending;
-  } else if (!revealAnim && !motionReduced() && !snapshot) {
-    await freezePage();
-    if ($('toggle-sidebar').getAttribute('aria-pressed') !== String(visible)) return; // toggled again while capturing
   }
+  // No head start (a keyboard shortcut): the spring doesn't wait for the capture. The page area stays its
+  // background colour or the live page until the snapshot lands, and swaps in then (at the end of this function).
+  const lateFreeze = !wasEarly && !revealAnim && !motionReduced() && !snapshot;
   const velocity = revealAnim?.velocity || 0;
+  const interrupted = Boolean(revealAnim);
   revealAnim?.stop();
   revealAnim = null;
-  if (visible && body.classList.contains('sidebar-hidden')) {
-    setReveal(0);
-    body.classList.remove('sidebar-hidden');
-  }
+  const wasHidden = body.classList.contains('sidebar-hidden');
+  if (visible && wasHidden) body.classList.remove('sidebar-hidden');
   const target = visible ? 1 : 0;
-  // Opening: the page takes its narrower size now and the sidebar slides into the space.
+  // Opening: the page takes its narrower size now and the sidebar slides over the space.
   // Closing: the page keeps its size until the sidebar has gone, then widens once.
-  heldRect = visible ? viewportAt(1) : viewport.getBoundingClientRect();
+  // (Interrupted mid-spring, the page area is already floating at full size: keep the size held.)
+  if (!(interrupted && heldRect)) {
+    body.classList.remove('sidebar-moving'); // measure the settled layout
+    heldRect = viewport.getBoundingClientRect();
+  }
+  if (visible && wasHidden) setReveal(0);
+  if (!motionReduced()) body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
   reportBounds();
   const finish = () => {
     revealAnim = null;
     heldRect = null;
+    body.classList.remove('sidebar-moving');
     thawPage();
-    if (visible) $('sidebar').style.removeProperty('--reveal');
-    else {
-      body.classList.add('sidebar-hidden');
-      $('sidebar').style.removeProperty('--reveal');
-    }
+    clearReveal();
+    if (!visible) body.classList.add('sidebar-hidden');
     reveal = target;
     reportBounds();
   };
+  // Reduced motion: no spring, so heldRect is set above only to be cleared by finish() in the same tick;
+  // the single reportBounds() inside finish() then sends the final size and nothing animates.
   if (motionReduced()) finish();
   else {
     // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
     // motion begins, so any slow frame is a still frame, not a jump.
-    revealAnim = springTo(reveal, target, { response: visible ? 0.34 : 0.28, velocity, onUpdate: setReveal, onDone: finish });
+    revealAnim = springTo(reveal, target, { response: visible ? SPRING_OPEN_RESPONSE : SPRING_CLOSE_RESPONSE, velocity, onUpdate: setReveal, onDone: finish });
   }
+  if (lateFreeze && revealAnim) freezePage({ fade: true }); // sized from heldRect, the page's final size, already set above
   if (visible) $('prompt').focus({ preventScroll: true });
 }
 $('toggle-sidebar').onclick = () => {
@@ -2086,16 +2208,37 @@ resizer.addEventListener('pointerdown', (e) => {
   // The page is a native view: once the pointer is over it, it takes the mouse moves (the drag
   // stalls and the cursor changes). For the drag it is shown as a snapshot, like during the spring.
   const frozen = !snapshot && !motionReduced() ? freezePage() : null;
+  // Until the snapshot is up (a full-page capture takes 50-200 ms) the page is still live, and resizing it
+  // every frame made the site reflow on each one: the first moments of a drag stuttered. Its size is held for
+  // the whole drag and sent once at the end, as the sidebar's spring does (heldRect).
+  let ended = false;
+  const held = frozen && !heldRect;
+  if (held) {
+    heldRect = viewport.getBoundingClientRect();
+    if (lastSnapshotEdge) viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge); // body.resizing paints it behind the held page
+    frozen.then(() => { if (!ended && !snapshot && heldRect) { heldRect = null; reportBounds(); } }); // no snapshot came: don't leave the page at a stale size
+  }
   let frame = 0;
+  // A still pointer sends no moves, and main thaws a freeze that has been quiet for 6 s: keep it alive until the drag ends.
+  // Capped (freeze-keepalive.js): a pointer held for over a minute stops pinging and main thaws the page.
+  const alive = freezeKeepAlive(freezeAlive);
   const move = (ev) => {
     cancelAnimationFrame(frame);
+    freezeAlive();
     frame = requestAnimationFrame(() => setSidebarWidth(startWidth + (startX - ev.clientX)));
   };
   const up = async () => {
+    ended = true;
+    alive.stop();
     resizer.removeEventListener('pointermove', move);
     document.body.classList.remove('resizing');
     localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)));
-    if (frozen) { await frozen; thawPage(); }
+    if (frozen) {
+      await frozen;
+      if (held) { heldRect = null; reportBounds(); } // the page's final size, once, while it is still hidden
+      thawPage();
+    }
+    if (!snapshot) viewport.style.removeProperty('--snapshot-edge');
   };
   resizer.addEventListener('pointermove', move);
   // Fires after pointerup or pointercancel, and if capture is lost any other way: the drag always ends.
@@ -2140,11 +2283,12 @@ function enterFull() {
   revealAnim?.stop();
   revealAnim = null;
   heldRect = null;
+  document.body.classList.remove('sidebar-moving');
   if (snapshot) thawPage();
-  // Full mode ignores --reveal (CSS forces width: 100%), but reset it so docking back later — which
+  // Full mode ignores the spring (CSS forces width: 100%), but reset it so docking back later — which
   // does nothing but remove the chat-full class — lands on a fully open sidebar, not a stale partial one.
   document.body.classList.remove('sidebar-hidden');
-  $('sidebar').style.removeProperty('--reveal');
+  clearReveal();
   reveal = 1;
   $('toggle-sidebar').setAttribute('aria-pressed', 'true');
   window.assistant.sidebarState?.(true);

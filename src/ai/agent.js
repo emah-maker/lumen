@@ -247,7 +247,7 @@ const TOOLS = [
   },
   {
     name: 'group_tabs',
-    description: 'Put tabs into a new named tab group (shown as a coloured label in the tab strip). Tabs already in another group move to this one. Use short names (1-3 words). Get ids from list_tabs.',
+    description: 'Put tabs into a new named tab group (shown as a colored label in the tab strip). Tabs already in another group move to this one. Use short names (1-3 words). Get ids from list_tabs.',
     input_schema: {
       type: 'object',
       properties: {
@@ -2721,7 +2721,7 @@ function repairHistory(messages) {
   if (pending.length === 0) return;
   messages.push({
     role: 'user',
-    content: pending.map((b) => ({ type: 'tool_result', tool_use_id: b.id, is_error: true, content: 'Cancelled by the user.' })),
+    content: pending.map((b) => ({ type: 'tool_result', tool_use_id: b.id, is_error: true, content: 'Canceled by the user.' })),
   });
 }
 

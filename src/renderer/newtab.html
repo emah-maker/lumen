@@ -44,7 +44,7 @@
     #backdrop::before, #backdrop::after { content: ""; position: absolute; inset: -20%; }
     body[data-bg="plain"] #backdrop { display: none; }
     body[data-bg="aurora"] #backdrop { background: #06121f; }
-    body[data-bg="aurora"] #backdrop::before { background: radial-gradient(40% 50% at 20% 30%, rgba(46, 213, 170, 0.55), transparent 70%), radial-gradient(45% 55% at 75% 25%, rgba(94, 92, 230, 0.55), transparent 70%), radial-gradient(50% 50% at 55% 85%, rgba(191, 90, 242, 0.4), transparent 70%); filter: blur(30px); animation: drift 28s var(--ease) infinite alternate; }
+    body[data-bg="aurora"] #backdrop::before { background: radial-gradient(40% 50% at 20% 30%, rgba(46, 213, 170, 0.55), transparent 70%), radial-gradient(45% 55% at 75% 25%, rgba(94, 92, 230, 0.55), transparent 70%), radial-gradient(50% 50% at 55% 85%, rgba(191, 90, 242, 0.4), transparent 70%); animation: drift 28s var(--ease) infinite alternate; }
     body[data-bg="dusk"] #backdrop { background: linear-gradient(160deg, #1d1b4b 0%, #5b2a86 45%, #d9577b 80%, #f7a26a 100%); }
     body[data-bg="ocean"] #backdrop { background: linear-gradient(160deg, #031b34 0%, #0a4a7a 45%, #0e8fa8 80%, #6fd6c8 100%); }
     body[data-bg="forest"] #backdrop { background: linear-gradient(160deg, #07170f 0%, #164430 45%, #2f7d4f 80%, #9fcf7a 100%); }
@@ -107,6 +107,14 @@
     @media (prefers-reduced-motion: reduce) {
       main, #backdrop::before { animation: none !important; }
     }
+    /* The slow drift moves a layer that every frosted card behind-blurs, so the GPU resamples all of them each frame.
+       Aurora's layer is no longer filtered live: its radial gradients already fade to transparent on their own (a
+       blur(30px) over them changed nothing visible and was re-run on every drift frame). The drift runs for the first
+       seconds after the page shows (newtab-drift.js), then holds still, and holds while the page is hidden.
+       Performance mode's "calm" stops it, and it holds still while cards wiggle in edit mode. */
+    body.drift-paused #backdrop::before { animation-play-state: paused; }
+    body.calm #backdrop::before { animation: none; }
+    body.w-editing #backdrop::before { animation-play-state: paused; }
 
     header { margin-bottom: var(--space-3); }
     .date { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -314,6 +322,8 @@
     .w-presets { position: absolute; z-index: 3; left: 10px; bottom: 8px; gap: 3px; padding: 3px; border-radius: 10px; background: var(--bg); box-shadow: 0 0 0 1px var(--border), 0 4px 14px var(--shadow); }
     .w-presets button { appearance: none; margin: 0; padding: 2px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: 500 11px/16px system-ui, sans-serif; cursor: default; outline: none; }
     .w-presets button:hover { background: var(--hover); }
+    /* The wiggle rotates every card each frame: with a backdrop blur on, each rotation re-blurs what is behind it. */
+    html body.w-editing .w-card, html body.w-editing .w-card.tinted { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
     body.w-editing .w-card { touch-action: none; cursor: grab; user-select: none; }
     body.w-editing .w-card * { pointer-events: none; }
     body.w-editing .w-card .w-h, body.w-editing .w-card .w-resize, body.w-editing .w-card .w-remove, body.w-editing .w-card .w-gear, body.w-editing .w-card .w-presets, body.w-editing .w-card .w-presets *, body.w-editing .w-card .w-stack-edit { pointer-events: auto; }
@@ -807,5 +817,6 @@
   <script src="newtab-stacks.js"></script>
   <script src="newtab-edit.js"></script>
   <script src="newtab.js"></script>
+  <script src="newtab-drift.js"></script>
 </body>
 </html>

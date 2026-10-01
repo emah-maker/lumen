@@ -175,7 +175,7 @@ function login(ant) {
     child.stderr.on('data', (d) => { output += d; });
     child.on('error', (err) => done({ ok: false, message: err.message }));
     child.on('close', (code) => {
-      if (loginCancelled) return done({ ok: false, cancelled: true, message: 'Sign-in was cancelled.' });
+      if (loginCancelled) return done({ ok: false, cancelled: true, message: 'Sign-in was canceled.' });
       if (timedOut) return done({ ok: false, message: 'Sign-in timed out. Try again.' });
       done({ ok: code === 0 && freshProfileState().signedIn, message: output.trim().split(/\r?\n/).slice(-3).join(' ') });
     });

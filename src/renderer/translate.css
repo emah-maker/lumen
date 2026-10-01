@@ -11,3 +11,6 @@
 .infobar progress { width: 90px; height: 4px; accent-color: var(--accent); }
 .translate-btn svg { stroke-width: 1.3; }
 .translate-btn[aria-pressed="true"] { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
