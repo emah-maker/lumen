@@ -17,12 +17,16 @@
 // every call it makes arrives tagged with the run and is executed by THIS task's agent (features/
 // ai-agents.js mcpCallTool), so the work tab, allowed sites, taint, and approval cards (Tasks panel;
 // the tool call waits for the answer) are the task's, exactly as for an API run.
+// Routines (features/routines.js) are tasks on a calendar schedule. One timer wakes for the earliest
+// routine (runRoutines); a due one is queued like any task, so the concurrency cap, approvals and work
+// tab are the same. Missed times run once after a restart or a wake from sleep (powerMonitor 'resume').
 const crypto = require('crypto');
 const { WebContentsView, Notification, BrowserWindow } = require('electron');
 const { Agent, cliSystemPrompt } = require('../ai/agent');
 const { engineModel } = require('../ai/cli-utils');
 const { LIMIT_NOTICE } = require('../ai/loop-guard');
 const bg = require('./background-agents');
+const routines = require('./routines');
 
 const WORK_TAB = 1; // the id the agent sees for its one tab
 const CLAUDE_WORLD = 1001; // agent.js's isolated world: where page-scripts keep their element registry
@@ -80,6 +84,9 @@ function create(deps) {
   let broadcastTimer = null;
   let ticker = null;
   let started = false;
+  let routineTimer = null; // the one timer for every routine: set for the earliest next run (runRoutines)
+  let routinesOffline = []; // routines due while there is no connection: they start when it is back
+  let onlineCheck = () => (deps.isOnline ? deps.isOnline() : true);
 
   const settings = () => bg.normalizeSettings(deps.readSettings().bgTasks);
   const find = (id) => tasks.find((t) => t.id === String(id));
@@ -103,7 +110,7 @@ function create(deps) {
     const queue = bg.queueInfo(tasks, slots(), t);
     return {
       tasks: [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).map((x) => bg.summarize(x, t, pendingOf(x.id), { queue: queue[x.id], waitingSince: runtimes.get(x.id)?.waitingSince || 0 })),
-      badge: bg.badgeCounts(tasks), unseen: bg.unseenCount(tasks), settings: settings(), slots: slots(), running: runtimes.size,
+      badge: bg.badgeCounts(tasks), unseen: bg.unseenCount(tasks), settings: settings(), slots: slots(), running: runtimes.size, offline: routinesOffline.length > 0,
     };
   }
   function broadcast() {
@@ -173,7 +180,7 @@ function create(deps) {
   }
 
   // ---- creating, editing, deleting
-  function createTask({ title, prompt, schedule, sites, model, signedIn, allowMcp, confirmed, pageUrl }) {
+  function createTask({ title, prompt, schedule, sites, model, signedIn, allowMcp, confirmed, pageUrl, startUrl }) {
     if (!settings().enabled) throw new Error(deps.t('tasks.error.disabled'));
     if (confirmed !== true) throw new Error(deps.t('tasks.error.confirm'));
     if (!bg.fitsAnother(tasks)) throw new Error(deps.t('tasks.error.full'));
@@ -181,13 +188,14 @@ function create(deps) {
     const chosen = pickModel(model);
     if (!chosen) throw new Error(deps.t('tasks.error.noModel'));
     // The user's MCP tools reach API models only (a CLI run has Lumen's browser tools and nothing else).
-    const task = bg.makeTask({ title, prompt, model: chosen, schedule, allowedSites: Array.isArray(sites) ? sites : bg.allowedSitesFor(prompt, pageUrl), signedIn, allowMcp: Boolean(allowMcp) && Boolean(deps.externalTools) && !isLocalEngine(chosen), pageUrl, now: now() });
+    const task = bg.makeTask({ title, prompt, model: chosen, schedule, allowedSites: Array.isArray(sites) ? sites : bg.allowedSitesFor(prompt, pageUrl), signedIn, allowMcp: Boolean(allowMcp) && Boolean(deps.externalTools) && !isLocalEngine(chosen), pageUrl, startUrl, now: now() });
     tasks.push(task);
     tasks = bg.capTasks(tasks);
     saveSoon();
     broadcast();
     pump();
     tick();
+    if (task.routine) runRoutines();
     return task;
   }
 
@@ -198,6 +206,7 @@ function create(deps) {
     tasks = tasks.filter((t) => t !== task);
     saveSoon();
     broadcast();
+    if (task.routine) runRoutines();
     return true;
   }
 
@@ -211,6 +220,7 @@ function create(deps) {
     else if (task.status !== 'queued') task.resume = null;
     if (task.schedule.type === 'watch' && !task.judge) { checkWatch(task, { manual: true }); return true; }
     if (task.status !== 'queued' && !transition(task, 'queued')) return false;
+    if (task.routine && !task.routine.trigger) { task.routine.trigger = 'manual'; task.routine.scheduledFor = null; }
     task.queuedAt = now();
     task.unseen = false;
     touch(task);
@@ -235,9 +245,14 @@ function create(deps) {
     const task = find(id);
     if (!task) return { ok: false, error: 'No such task.' };
     let schedule;
-    try { schedule = bg.normalizeSchedule(raw, now()); } catch (err) { return { ok: false, error: err.message }; }
+    try {
+      schedule = bg.normalizeSchedule(raw, now());
+      if ((schedule.type === 'routine') !== Boolean(task.routine)) throw new Error(deps.t('routines.error.kind')); // a routine stays a routine
+      if (task.routine) routines.validateNew(schedule, now());
+    } catch (err) { return { ok: false, error: errorText(err) }; }
     task.schedule = schedule;
     task.enabled = true;
+    if (task.routine) { task.routine.lastDue = now(); touch(task); runRoutines(); return { ok: true }; } // from now on: an earlier time today doesn't run
     if (schedule.type === 'watch') {
       task.watch = { hash: null, holding: false, judgedHash: null, checkedAt: null, changedAt: null };
       task.allowedSites = [...new Set([...task.allowedSites, ...bg.withWww(bg.hostOfUrl(schedule.url))])].slice(0, bg.LIMITS.sites);
@@ -256,7 +271,9 @@ function create(deps) {
     const task = find(id);
     if (!task) return false;
     task.enabled = Boolean(on);
+    if (task.routine && task.enabled) task.routine.lastDue = now(); // resuming doesn't run the times it was paused for
     touch(task);
+    if (task.routine) runRoutines();
     return true;
   }
 
@@ -265,6 +282,7 @@ function create(deps) {
     if (!settings().enabled) return;
     const t = now();
     for (const task of tasks) {
+      if (task.schedule.type === 'routine') continue; // its own timer (runRoutines)
       if (task.schedule.type === 'watch') {
         // A watch is checked on its interval whatever it last showed, unless a check or a model run is under way.
         const busy = runtimes.has(task.id) || checking.has(task.id) || task.judge || bg.OCCUPYING.has(task.status);
@@ -281,6 +299,80 @@ function create(deps) {
       const task = find(id);
       if (task && !runtimes.has(id) && (task.schedule.type !== 'watch' || task.judge)) startRun(task, task.judge ? 'judge' : 'run');
     }
+  }
+
+  // ---- routines: one timer, set for the earliest next run of any routine (nothing polls while idle)
+  const errorText = (err) => (err?.key ? deps.t(err.key, err.params) : String(err?.message || err));
+  function armRoutines(ms) {
+    clearTimeout(routineTimer);
+    routineTimer = null;
+    if (ms === null || closed) return;
+    routineTimer = setTimeout(runRoutines, ms);
+    routineTimer.unref?.();
+  }
+  function runRoutines() {
+    if (closed) return;
+    const t = now();
+    const p = routines.plan(tasks, t, { online: onlineCheck() !== false, enabled: settings().enabled, isActive: (x) => bg.ACTIVE.has(x.status) || runtimes.has(x.id) || checking.has(x.id) });
+    for (const { id, dueAt, trigger } of p.queue) {
+      const task = find(id);
+      if (!task || !bg.canTransition(task.status, 'queued')) continue;
+      task.status = 'queued';
+      task.queuedAt = t;
+      task.resume = null;
+      Object.assign(task.routine, { lastDue: t, trigger, scheduledFor: dueAt }); // once, however many times were missed
+      touch(task);
+    }
+    for (const { id, dueAt } of p.skip) { // its previous run is still going: never two at once
+      const task = find(id);
+      if (!task) continue;
+      task.routine.lastDue = t;
+      task.routine.history = routines.addHistory(task.routine.history, { startedAt: t, endedAt: t, status: 'skipped', trigger: 'schedule', scheduledFor: dueAt, error: deps.t('routines.history.skipped') });
+      touch(task);
+    }
+    if (p.offline.join() !== routinesOffline.join()) { routinesOffline = p.offline; broadcast(); }
+    if (p.queue.length) pump();
+    armRoutines(routines.sleepFor(p.wakeAt, t));
+  }
+
+  // Create or change a routine (the Routines editor). Throws with a message for the user.
+  function saveRoutine(spec = {}) {
+    let schedule;
+    try { schedule = routines.validateNew(routines.normalizeRoutineSchedule(spec.schedule, now()), now()); } catch (err) { throw new Error(errorText(err)); }
+    const start = routines.webUrl(spec.startUrl);
+    if (start === null) throw new Error(deps.t('routines.error.startUrl'));
+    const sites = Array.isArray(spec.sites) ? spec.sites.map(String) : undefined;
+    if (!spec.id) return createTask({ title: spec.title, prompt: spec.prompt, schedule, sites, model: spec.model, signedIn: spec.signedIn, allowMcp: spec.allowMcp, confirmed: spec.confirmed, startUrl: start });
+    const task = find(spec.id);
+    if (!task?.routine) throw new Error(deps.t('routines.error.missing'));
+    if (bg.OCCUPYING.has(task.status)) throw new Error(deps.t('routines.error.busy'));
+    const next = bg.applyEdit(task, { title: spec.title, prompt: spec.prompt, sites: [...(sites || task.allowedSites), ...(start ? [start] : [])] }, now());
+    if (spec.model && spec.model !== task.model) {
+      if (isLocalEngine(spec.model) && cliError(spec.model)) throw new Error(cliError(spec.model));
+      if (pickModel(spec.model) !== spec.model) throw new Error(deps.t('tasks.error.noModel'));
+      next.model = spec.model;
+      next.engine = bg.engineOfModel(spec.model);
+    }
+    next.signedIn = spec.signedIn === undefined ? task.signedIn : Boolean(spec.signedIn);
+    next.allowMcp = Boolean(spec.allowMcp ?? task.allowMcp) && Boolean(deps.externalTools) && !isLocalEngine(next.model);
+    next.schedule = schedule;
+    next.enabled = spec.enabled !== false;
+    next.routine = { ...task.routine, startUrl: start, lastDue: now() };
+    Object.assign(task, next);
+    touch(task);
+    runRoutines();
+    return task;
+  }
+
+  // The editor's live line: the next three run times, or why the schedule can't be saved; and with
+  // `text`, a schedule read from "every weekday at 8am: ..." (the /routine command).
+  function routinePreview({ schedule, text } = {}) {
+    const out = { ok: true, next: [], error: '' };
+    if (typeof text === 'string') out.parsed = routines.parseScheduleText(text);
+    if (schedule) {
+      try { out.next = routines.upcoming(routines.validateNew(routines.normalizeRoutineSchedule(schedule, now()), now()), now(), 3); } catch (err) { out.ok = false; out.error = errorText(err); }
+    }
+    return out;
   }
 
   // ---- work tab
@@ -382,7 +474,10 @@ function create(deps) {
     task.notice = '';
     task.usage = null;
     task.judge = false;
-    const rt = { task, kind, started, previous, resume, pending: new Map(), turnText: '', stopped: false, timedOut: false, waitedMs: 0, waitingSince: 0, steps: new Map(), agent: null, view: null, wc: null, timer: null };
+    const trigger = task.routine?.trigger || 'manual';
+    const scheduledFor = task.routine?.scheduledFor ?? null;
+    if (task.routine) { task.routine.trigger = null; task.routine.scheduledFor = null; }
+    const rt = { task, kind, started, previous, resume, trigger, scheduledFor, pending: new Map(), turnText: '', stopped: false, timedOut: false, waitedMs: 0, waitingSince: 0, steps: new Map(), agent: null, view: null, wc: null, timer: null };
     runtimes.set(task.id, rt);
     touch(task);
 
@@ -401,18 +496,23 @@ function create(deps) {
       task.runs = [...task.runs, { startedAt: started, endedAt: ended, status, summary: (task.error || text).replace(/\s+/g, ' ').slice(0, 300), cost: task.usage?.cost ?? null, steps: task.stepCount, kind, ...(rt.session ? { session: rt.session } : {}) }].slice(-bg.LIMITS.runs);
       task.status = 'running'; // the state machine has the final say below
       transition(task, status);
+      if (task.routine && kind === 'run') task.routine.history = routines.addHistory(task.routine.history, { startedAt: started, endedAt: ended, status, trigger: rt.trigger, scheduledFor: rt.scheduledFor, result: task.resultOld ? '' : task.result, error: task.error });
+      const notify = task.routine ? 'routines.notify' : 'tasks.notify';
       if (kind === 'judge') applyVerdict(task, rt, text);
-      else if (status === 'done') announce(task, 'done', deps.t('tasks.notify.done', { title: task.title }));
-      else if (status === 'failed') announce(task, 'failed', deps.t('tasks.notify.failed', { title: task.title, error: task.error }));
+      else if (status === 'done') announce(task, 'done', deps.t(`${notify}.done`, { title: task.title }));
+      else if (status === 'failed') announce(task, 'failed', deps.t(`${notify}.failed`, { title: task.title, error: task.error }));
       saveSoon();
       broadcast();
       pump();
+      if (task.routine) runRoutines();
     };
 
     (async () => {
       try {
         if (deps.effectiveModel && deps.effectiveModel(task.model) !== task.model) throw new Error(deps.t('tasks.error.modelGone', { model: task.model }));
         if (isLocalEngine(task.model) && cliError(task.model)) throw new Error(cliError(task.model)); // signed out, or the CLI is gone
+        const start = task.routine?.startUrl;
+        if (start && deps.aiOff?.(start)) throw new Error(deps.t('tasks.error.aiOff', { host: bg.hostOfUrl(start) })); // a routine's start page with AI off: it doesn't run at all
         const agent = new TaskAgent(browserFor(rt), () => deps.getClient(), () => ({ adhdMode: false, model: task.model, pageContext: false }), (p) => deps.getKey(p), { riskOf });
         rt.agent = agent;
         agent.baseHosts = new Set(task.allowedSites);
@@ -526,7 +626,7 @@ function create(deps) {
         rt.pending.set(e.approvalId, { approvalId: e.approvalId, host: String(e.host || ''), action: e.action || 'interact', title: e.title || '', query: e.query, args: e.args ? String(e.args).slice(0, 1500) : '' });
         if (!rt.waitingSince) rt.waitingSince = now();
         const was = task.status;
-        if (transition(task, 'waiting-approval') && was !== 'waiting-approval') announce(task, 'approval', deps.t('tasks.notify.approval', { title: task.title })); // one message per wait, not per card
+        if (transition(task, 'waiting-approval') && was !== 'waiting-approval') announce(task, 'approval', deps.t(task.routine ? 'routines.notify.approval' : 'tasks.notify.approval', { title: task.title })); // one message per wait, not per card
         else broadcast();
         break;
       }
@@ -571,7 +671,7 @@ function create(deps) {
     if (!task) return false;
     const rt = runtimes.get(task.id);
     if (rt) { rt.stopped = true; rt.agent?.stop(); return true; }
-    if (task.status === 'queued') { transition(task, 'stopped'); task.lastRun = now(); return true; }
+    if (task.status === 'queued') { transition(task, 'stopped'); task.lastRun = now(); if (task.routine) Object.assign(task.routine, { trigger: null, scheduledFor: null }); return true; }
     return false;
   }
 
@@ -674,10 +774,15 @@ function create(deps) {
     ticker = setInterval(tick, deps.test ? 500 : 15000);
     ticker.unref?.();
     setTimeout(() => { tick(); }, 1500).unref?.();
+    // Routines missed while Lumen was closed run once, after the window has loaded; after the Mac wakes,
+    // a few seconds later (the network comes back first). A sleeping Mac's timers don't fire on time.
+    armRoutines(deps.test ? 300 : 3000);
+    deps.powerMonitor?.()?.on('resume', () => armRoutines(deps.test ? 0 : 5000));
   }
 
   function shutdown() {
     clearInterval(ticker);
+    armRoutines(null);
     saveNow(); // a running task is saved as running: the next start marks it interrupted
     closed = true;
     for (const rt of runtimes.values()) { rt.stopped = true; rt.agent?.stop(); }
@@ -711,7 +816,7 @@ function create(deps) {
       const task = find(id);
       if (!task) return null;
       if (task.unseen && !bg.ACTIVE.has(task.status)) { task.unseen = false; saveSoon(); broadcast(); } // looking at it is seeing it
-      return { ...bg.summarize(task, now(), pendingOf(task.id), { queue: bg.queueInfo(tasks, slots(), now())[task.id], waitingSince: runtimes.get(task.id)?.waitingSince || 0 }), prompt: task.prompt, steps: task.steps, result: task.result, runs: task.runs, pages: task.pages || [] };
+      return { ...bg.summarize(task, now(), pendingOf(task.id), { queue: bg.queueInfo(tasks, slots(), now())[task.id], waitingSince: runtimes.get(task.id)?.waitingSince || 0 }), prompt: task.prompt, steps: task.steps, result: task.result, runs: task.runs, pages: task.pages || [], ...(task.routine ? { routine: { startUrl: task.routine.startUrl, history: task.routine.history, runs: task.routine.history.length } } : {}) };
     });
     ipcMain.handle('tasks:run', (_e, id, opts) => run(id, { resume: Boolean(opts?.resume) }));
     ipcMain.handle('tasks:edit', (_e, id, patch, opts) => edit(id, patch && typeof patch === 'object' ? { title: patch.title, prompt: patch.prompt, sites: patch.sites } : {}, { andRun: Boolean(opts?.run) }));
@@ -732,18 +837,22 @@ function create(deps) {
       if (!next.enabled) for (const id of [...runtimes.keys()]) stop(id);
       broadcast();
       pump();
+      runRoutines();
       return next;
     });
+    ipcMain.handle('routines:save', ok((spec) => ({ id: saveRoutine(spec && typeof spec === 'object' ? spec : {}).id })));
+    ipcMain.handle('routines:preview', (_e, spec) => routinePreview(spec && typeof spec === 'object' ? spec : {}));
   }
 
   return {
-    init, shutdown, register, propose, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, tick, pump, saveNow,
-    // Test hooks (test/bgtasks.js); nothing in the app itself uses these.
+    init, shutdown, register, propose, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines,
+    // Test hooks (test/bgtasks.js, test/routines.js); nothing in the app itself uses these.
     tasks: () => tasks, notifications: () => notifications, runtimes: () => runtimes, find,
+    routineTimer: () => routineTimer, setOnline: (fn) => { onlineCheck = fn; },
   };
 }
 
 // The renderer-to-main channels above; main.js lists them in UI_ONLY_IPC.
-const CHANNELS = ['tasks:state', 'tasks:preview', 'tasks:create', 'tasks:get', 'tasks:run', 'tasks:edit', 'tasks:stop', 'tasks:delete', 'tasks:approve', 'tasks:schedule', 'tasks:enable', 'tasks:open-page', 'tasks:settings'];
+const CHANNELS = ['tasks:state', 'tasks:preview', 'tasks:create', 'tasks:get', 'tasks:run', 'tasks:edit', 'tasks:stop', 'tasks:delete', 'tasks:approve', 'tasks:schedule', 'tasks:enable', 'tasks:open-page', 'tasks:settings', 'routines:save', 'routines:preview'];
 
 module.exports = { create, TaskAgent, WORK_TAB, RISKY_CLICK, CHANNELS };

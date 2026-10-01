@@ -160,6 +160,8 @@ contextBridge.exposeInMainWorld('assistant', {
     enable: (id, on) => ipcRenderer.invoke('tasks:enable', id, on),
     openPage: (id) => ipcRenderer.invoke('tasks:open-page', id),
     settings: (patch) => ipcRenderer.invoke('tasks:settings', patch),
+    saveRoutine: (spec) => ipcRenderer.invoke('routines:save', spec), // routines (renderer/routines.js)
+    routinePreview: (spec) => ipcRenderer.invoke('routines:preview', spec),
     onState: on('tasks:state'),
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),

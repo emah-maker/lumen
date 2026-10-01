@@ -5933,6 +5933,7 @@ const bgTasks = require('./features/background-runner').create({
   cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
   activeUrl: () => { const u = activeTab()?.webContents.getURL(); return isWebUrl(u) ? u : ''; },
   openTab: (url) => openTab(url), focusApp: () => focusWindow(),
+  isOnline: () => net.isOnline(), powerMonitor: () => require('electron').powerMonitor, // routines: skip while offline, catch up after sleep
 });
 bgTasks.register(ipcMain);
 app.on('will-quit', () => bgTasks.shutdown());
