@@ -219,6 +219,8 @@ const fakeModel = (app) => app.evaluate(() => {
   await ui.waitForSelector('.tab');
   await fakeModel(app);
   await waitFor(() => tc(() => global.__tabChats.bindings.size() > 0));
+  // (The sidebar may come back closed: it draws a chat only while open, so it is opened as at the start.)
+  if (await ui.evaluate(() => document.body.classList.contains('sidebar-hidden'))) await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   const restored = await tc(() => ({ entries: global.__tabChats.bindings.entries(), runs: global.__tabChats.runs(), tabs: global.__windows.list()[0].tabs.length, active: global.__windows.list()[0].activeId }));
   check('after a restart the tabs are bound to their saved chats again', restored.entries.length >= 1 && restored.entries.every(([, c]) => beforeRestart.saved.includes(c)), JSON.stringify({ restored, wanted }));
   check('after a restart nothing is re-run', restored.runs.length === 0, JSON.stringify(restored.runs));
