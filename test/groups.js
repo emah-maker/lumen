@@ -9,7 +9,7 @@ const os = require('os');
 
 (async () => {
   let failures = 0;
-  const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
+  const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 1200)}`}`); };
 
   // Two "sites": 127.0.0.1 and localhost on the same port are different hosts.
   const server = http.createServer((req, res) => {
@@ -20,6 +20,7 @@ const os = require('os');
   const port = server.address().port;
   const siteA = `http://127.0.0.1:${port}`;
   const siteB = `http://localhost:${port}`;
+  const siteAName = `127.0.0.1:${port}`; // a loopback host is keyed by host:port (each port is a different dev server)
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-groups-'));
   // This suite checks grouping by site first; by topic (the default) is switched on where it is tested.
@@ -65,17 +66,17 @@ const os = require('os');
 
   // 2. Three tabs from one site group themselves.
   for (const p of ['alpha', 'beta', 'gamma']) await open(`${siteA}/${p}`);
-  await waitFor(async () => { const id = (await groupsNow()).find((x) => x.name === '127.0.0.1')?.id; return id && (await tabsNow()).filter((x) => x.groupId === id).length === 3; });
+  await waitFor(async () => { const id = (await groupsNow()).find((x) => x.name === siteAName)?.id; return id && (await tabsNow()).filter((x) => x.groupId === id).length === 3; });
   await ui.waitForSelector('.group-label', { timeout: 3000 }).catch(() => {});
   t = await tabsNow();
   g = await groupsNow();
-  const siteGroup = g.find((x) => x.name === '127.0.0.1');
+  const siteGroup = g.find((x) => x.name === siteAName);
   const siteTabs = t.filter((x) => siteGroup && x.groupId === siteGroup.id);
   check('3 tabs from one site form a group', siteTabs.length === 3, JSON.stringify({ t, g }));
   const idx = siteTabs.map((x) => t.findIndex((y) => y.id === x.id));
   check('grouped tabs sit together', idx.every((v, i) => i === 0 || v === idx[i - 1] + 1), JSON.stringify(idx));
   const labels = await ui.$$eval('.group-label', (els) => els.map((e) => ({ name: e.querySelector('.group-name')?.textContent, expanded: e.getAttribute('aria-expanded'), aria: e.getAttribute('aria-label') })));
-  check('group labels render in the tab strip', labels.length === 1 && labels.some((l) => l.aria === 'Group 127.0.0.1, 3 tabs'), JSON.stringify(labels));
+  check('group labels render in the tab strip', labels.length === 1 && labels.some((l) => l.aria === `Group ${siteAName}, 3 tabs`), JSON.stringify(labels));
 
   // 3. A 4th tab from the site joins the existing group.
   const fourth = await open(`${siteA}/delta`);
@@ -116,7 +117,13 @@ const os = require('os');
   r = await app.evaluate(async (_e, ids) => global.__agent.execute('ungroup_tabs', { tab_ids: ids }), [opener, fourth]);
   check('ungroup_tabs removes them and drops the empty group', !(await groupsNow()).some((x) => x.name === 'Research'), r);
 
-  // 7. Organize with AI (fake Claude returning structured JSON). A (fake) Anthropic key keeps these
+  // 7. Organize with AI (fake Claude returning structured JSON). The tabs start loose: a by-site group of dev-server tabs is the
+  // user's own by-site choice, and Organize puts it back when no topic joins its tabs (a loopback host is not a site in the topic sense).
+  await app.evaluate((_e, ids) => global.__agent.execute('ungroup_tabs', { tab_ids: ids }), siteTabs.map((x) => x.id));
+  // With no local group, the model is asked about tabs whose titles say something (two informative words: "alpha - Docs" is not one), so
+  // these four unrelated pages are what the fake model groups.
+  for (const p of ['Quarterly budget review', 'Garden planning notes', 'Bicycle repair guide', 'Piano lesson schedule']) await open(`${siteA}/${encodeURIComponent(p)}`);
+  // A (fake) Anthropic key keeps these
   // API-path steps on the API: with no key, Organize goes to Claude Code instead (7b).
   await app.evaluate(() => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-test-fake';
@@ -132,10 +139,12 @@ const os = require('os');
   await app.evaluate(() => global.__organizeTabs());
   g = await groupsNow();
   const req = await app.evaluate(() => global.__organizeRequest);
-  check('organize sends only compact summaries (ids, titles, hosts) with a strict JSON schema, small max_tokens and temperature 0', req?.output_config?.format?.type === 'json_schema' && req.max_tokens <= 800 && req.temperature === 0 && !/untrusted_page_content|PAGE TEXT|https?:\/\//.test(JSON.stringify(req.messages)), JSON.stringify(req).slice(0, 300));
+  check('organize sends only compact summaries (ids, titles, hosts) with a strict JSON schema, small max_tokens and temperature 0', req?.output_config?.format?.type === 'json_schema' && req.max_tokens <= 800 && req.temperature === 0 && !/untrusted_page_content|PAGE TEXT|https?:\/\//.test(JSON.stringify(req.messages)), JSON.stringify(req).slice(0, 1200));
   check('organize: the local groups apply first, the model then adds its group; singletons and unknown ids are dropped', g.length === 1 && g[0].name === 'Reading List Stuff', JSON.stringify(g));
 
   // 7b. Organize through the user's own Claude Code (fake CLI step): no API key involved.
+  // The first step grouped three of the new tabs and left one: three more pages with real titles give this step tabs to group.
+  for (const p of ['Mortgage rate comparison', 'Kayak paddle sizing', 'Sourdough starter feeding']) await open(`${siteA}/${encodeURIComponent(p)}`);
   const cli = await app.evaluate(async () => {
     const saved = { settings: global.__agent.messages.settings, run: global.__cliJson.completeJSON, openai: process.env.OPENAI_API_KEY, getClient: global.__agent.getClient };
     const cc = global.__agent.engines.claudecode;
@@ -181,8 +190,10 @@ const os = require('os');
   app = await launch();
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
-  await waitFor(async () => (await groupsNow()).length === before.groups.length, 5000);
-  const after = await groupsNow();
+  // The profile groups by site, so the loose dev-server tabs of the session form a by-site group once restored: only the groups saved before count here.
+  const savedGroups = async () => (await groupsNow()).filter((x) => x.name !== siteAName);
+  await waitFor(async () => (await savedGroups()).length === before.groups.length, 5000);
+  const after = await savedGroups();
   check('groups come back after a restart', after.length === before.groups.length && after[0]?.name === before.groups[0]?.name, JSON.stringify({ before: before.groups, after }));
   const restoredMembers = (await tabsNow()).filter((x) => x.groupId === after[0]?.id).length;
   check('restored group keeps its tabs', restoredMembers === before.tabs.filter((x) => x.groupId === before.groups[0]?.id).length, restoredMembers);
@@ -201,7 +212,7 @@ const os = require('os');
   const repos = [];
   for (const p of ['facebook react GitHub', 'microsoft vscode GitHub']) repos.push(await open(`${siteA}/${encodeURIComponent(p)}`));
   const unrelated = await open(`${siteA}/${encodeURIComponent('Weather forecast Boston')}`);
-  // A recipe tab the user grouped by hand, and one the user dragged: organizing leaves both alone.
+  // A recipe tab the user grouped by hand stays in its group; one the user dragged is regrouped by an explicit Organize (round 7).
   const mine = await open(`${siteA}/${encodeURIComponent('Lemon Tart Recipe')}`);
   await app.evaluate((_e, id) => global.__agent.execute('group_tabs', { name: 'Mine', tab_ids: [id] }), mine);
   const dragged = await open(`${siteA}/${encodeURIComponent('Apple Pie Recipe')}`);
@@ -217,7 +228,7 @@ const os = require('os');
   check('topic: the 2 GitHub tabs form another', repoGroup && repoGroup !== recipeGroup && repos.every((id) => groupOf(id) === repoGroup.id) && /github/i.test(repoGroup.name), JSON.stringify(g));
   check('topic: the unrelated tab stays loose', !groupOf(unrelated), groupOf(unrelated));
   check('topic: a tab the user grouped keeps its group', g.find((x) => x.id === groupOf(mine))?.name === 'Mine', JSON.stringify(g));
-  check('topic: a tab the user dragged is not regrouped', !groupOf(dragged), groupOf(dragged));
+  check('topic: an explicit Organize regroups a tab the user dragged (it is a recipe)', groupOf(dragged) === recipeGroup?.id, groupOf(dragged));
   check('topic: organize reports the groups it made', count >= 2, count);
   await app.evaluate(() => global.__undoOrganize());
   t = await tabsNow();
@@ -238,7 +249,14 @@ const os = require('os');
     global.__topicRequest = null;
     global.__agent.getClient = () => ({ messages: { create: async (params) => {
       global.__topicRequest = JSON.parse(JSON.stringify(params));
-      const list = JSON.parse(params.messages[0].content.split('Tabs:\n')[1]);
+      const body = params.messages[0].content;
+      // Organize only refines the local groups in place (it never proposes groups itself): the model renames the recipe group it is shown.
+      if (!body.includes('Tabs:\n')) {
+        const wire = JSON.parse(body);
+        const recipe = (wire.g || []).find((x) => (x.t || []).some((s) => /Banana|Cookie|Pancake/.test(s[1])));
+        return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ n: recipe ? [{ i: recipe.i, s: 'Weekend Baking' }] : [], p: [], m: [], g: [], h: [] }) }] };
+      }
+      const list = JSON.parse(body.split('Tabs:\n')[1]);
       const ids = list.filter((x) => /Banana|Cookie|Pancake/.test(x.title)).map((x) => x.id);
       return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ groups: [{ name: 'Weekend Baking', tab_ids: ids }] }) }] };
     } } });

@@ -176,6 +176,7 @@ function createSpotifyWeb(deps) {
     destroy: () => { stop(); destroy(); },
     owns: (wc) => Boolean(wc) && alive() && view.webContents === wc,
     isSignedIn: () => signedIn,
+    view: () => (alive() ? view : null), // for the window's overlay stacking (main.js raiseOverlays)
   };
 }
 

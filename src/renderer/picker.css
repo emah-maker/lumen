@@ -8,7 +8,7 @@
 .picker-text { flex: 0 1 auto; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .picker-menu {
-  position: fixed; z-index: 1000; display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; padding: 0;
+  position: fixed; z-index: var(--z-popover, 1000); display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; padding: 0;
   border-radius: 12px; background: var(--surface-raised, var(--surface)); color: var(--text);
   box-shadow: 0 0 0 0.5px var(--border), 0 16px 40px -10px rgb(0 0 0 / calc(0.6 * var(--shadow-k, 0.5)));
   animation: picker-in var(--t-fast) cubic-bezier(0.16, 1, 0.3, 1);
@@ -32,7 +32,7 @@
 
 /* Provider headings stay in view while their models scroll under them. */
 .picker-group {
-  position: sticky; top: -4px; z-index: 1; display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: -4px; z-index: var(--z-raised, 1); display: flex; align-items: center; justify-content: space-between;
   margin: 0 -4px; padding: 8px 14px 4px; background: var(--surface-raised, var(--surface));
   color: color-mix(in srgb, var(--text) 70%, transparent); font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
 }

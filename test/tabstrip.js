@@ -55,7 +55,7 @@ const os = require('os');
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 920));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(1440, 920));
 
   const open = (url, background = false) => app.evaluate(async (_e, { url, background }) => {
     const t = global.__agent.browser.openTab(url, { background });
@@ -111,7 +111,7 @@ const os = require('os');
 
   // ---- 2. an overflowing strip scrolls with the wheel and stays put during updates ----
   for (let i = 0; i < 26; i++) await open(`${base}/q${i}`, true);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 700));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(900, 700));
   await waitFor(() => ui.evaluate(() => { const s = document.getElementById('tabs'); return s.scrollWidth > s.clientWidth; }));
   const busyId = (await app.evaluate(() => global.__agent.browser.listTabs())).find((t) => /busy/.test(t.title))?.id;
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), busyId);
@@ -128,7 +128,7 @@ const os = require('os');
   await sleep(800); // the busy (active) tab keeps updating
   const still = await ui.evaluate(() => document.getElementById('tabs').scrollLeft);
   check('updates to the active tab don\'t scroll the strip back', Math.abs(still - scrolled) < 2, `${scrolled} -> ${still}`);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 920));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(1440, 920));
 
   // ---- 3. pinned tabs ----
   const list = await strip();
@@ -137,6 +137,7 @@ const os = require('os');
   await waitFor(async () => (await strip())[0].id === pinId);
   let now = await strip();
   check('a pinned tab moves to the front', now[0].id === pinId && now[0].pinned, JSON.stringify(now.slice(0, 2)));
+  await waitFor(() => ui.evaluate(() => document.querySelector('#tabs .tab')?.classList.contains('pinned')), 3000); // (the strip draws a frame after the state changes)
   const pinnedEl = await ui.evaluate(() => { const el = document.querySelector('#tabs .tab'); return { pinned: el.classList.contains('pinned'), width: el.getBoundingClientRect().width, title: getComputedStyle(el.querySelector('.tab-title')).display }; });
   check('it shows as a compact icon-only tab', pinnedEl.pinned && pinnedEl.width <= 41 && pinnedEl.title === 'none', JSON.stringify(pinnedEl));
   await app.evaluate(({ ipcMain }, id) => ipcMain.emit('tab:move', {}, id, 20), pinId);
@@ -186,8 +187,8 @@ const os = require('os');
 
   // ---- 6. F11 (Windows/Linux) ----
   if (process.platform !== 'darwin') {
-    const key = (k) => app.evaluate(({ BrowserWindow }, k) => { const wc = BrowserWindow.getAllWindows()[0].webContents; wc.sendInputEvent({ type: 'keyDown', keyCode: k }); wc.sendInputEvent({ type: 'keyUp', keyCode: k }); }, k);
-    const isFull = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen());
+    const key = (k) => app.evaluate(({ BrowserWindow }, k) => { const wc = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents; wc.sendInputEvent({ type: 'keyDown', keyCode: k }); wc.sendInputEvent({ type: 'keyUp', keyCode: k }); }, k);
+    const isFull = () => app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].isFullScreen());
     await key('F11');
     const full = await waitFor(isFull);
     await sleep(300); // let the window settle in full screen before leaving it
@@ -362,7 +363,7 @@ const os = require('os');
     const wc = webContents.getAllWebContents().find((w) => w.getURL() === url);
     return wc ? { title: wc.getTitle(), isDefault: wc.session === session.defaultSession, persistent: wc.session.isPersistent() } : null;
   }, `${base}/echo`);
-  await waitFor(async () => (await research())?.title, 8000);
+  await waitFor(async () => /^Cookie:/.test((await research())?.title || ''), 8000);
   const rs = await research();
   check('a research tab is not in the default session, and its session is memory only', rs && rs.isDefault === false && rs.persistent === false, JSON.stringify(rs));
   check('it sent none of the profile\'s cookies', rs && rs.title === 'Cookie: none', JSON.stringify(rs));

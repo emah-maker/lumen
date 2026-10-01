@@ -31,6 +31,24 @@
   --sidebar-width: 360px;
   --composer-h: 44px;
 
+  /* Stacking scale for the AI sidebar (and the full-page chat). .sidebar is an isolated stacking context, so these
+     only order things inside it. Higher paints over lower; every z-index in the sidebar uses one of these.
+       messages (auto) < sticky/raised < float (jump button) < composer < panel (chat list, tasks) < panel-over
+       < toast < modal < head (its menus must cover the panels below it) < resize (the edge grip, always grabbable)
+     Inside the header and composer (their own contexts): menu < tip; fixed model menus use --z-popover. */
+  --z-raised: 1;
+  --z-float: 2;
+  --z-composer: 3;
+  --z-panel: 4;
+  --z-panel-over: 5;
+  --z-toast: 6;
+  --z-modal: 7;
+  --z-head: 8;
+  --z-resize: 9;
+  --z-menu: 10;
+  --z-tip: 11;
+  --z-popover: 1000;
+
   /* Motion. Springs are sampled from damping/response pairs (Apple's two-parameter model):
      smooth = critically damped for routine UI; snappy = slight settle for things that arrive;
      bouncy = only where the user threw or summoned something. */
@@ -483,13 +501,13 @@ body.sidebar-moving:not(.chat-full) .sidebar { position: absolute; top: 0; botto
 body.sidebar-hidden .sidebar.prewarm { visibility: visible; position: fixed; top: var(--chrome-h); bottom: 0; right: 0; width: var(--sidebar-width); }
 /* Hidden, the sidebar stays laid out at zero width so opening it costs only a width change. */
 body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 0; }
-.sidebar-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; z-index: 3; cursor: col-resize; }
+.sidebar-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; z-index: var(--z-resize); cursor: col-resize; }
 .sidebar-resize::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: transparent; transition: background-color var(--t-fast) ease-out; }
 .sidebar-resize:hover::after, .sidebar-resize:focus-visible::after, body.resizing .sidebar-resize::after { background: var(--accent); }
 .sidebar-resize:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 
-.sidebar-head { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 8px 0 20px; }
+.sidebar-head { position: relative; z-index: var(--z-head); display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 8px 0 20px; }
 .sidebar-actions { display: flex; gap: 2px; flex: none; }
 /* The model name gives way to the buttons, not the other way round: at the 300px minimum width six
    buttons take ~190px, and a long name (up to 220px) used to push Settings and New chat out of the
@@ -515,8 +533,8 @@ body.chat-full .messages:has(#setup:not([hidden])) { display: flex; align-items:
 body.chat-full .messages:has(#setup:not([hidden])) .empty { margin: 0; width: min(340px, 100%); text-align: center; }
 .messages:has(#setup:not([hidden])) .chips { display: none; } /* nothing connected: starters that can't answer aren't offered */
 body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full .messages:has(#setup:not([hidden])) .chips { display: none; }
-/* Scrolled up while a reply streams: the way back down. */
-.jump-latest { position: absolute; left: 50%; bottom: calc(var(--composer-h, 64px) + 14px); transform: translateX(-50%); z-index: 3; width: 32px !important; max-width: 32px; height: 32px; padding: 0; border: none; border-radius: 50%; background: var(--card, var(--field)); color: var(--text); box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); font-size: 15px; cursor: pointer; transition: opacity var(--t-fast) ease-out, transform var(--t-fast) ease-out; }
+/* Scrolled up while a reply streams: the way back down. Clears the composer (bottom: 16px, --composer-h tall) by 10px, in body.chat-full too. */
+.jump-latest { position: absolute; left: 50%; bottom: calc(var(--composer-h, 64px) + 16px + 10px); transform: translateX(-50%); z-index: var(--z-float); width: 32px !important; max-width: 32px; height: 32px; padding: 0; border: none; border-radius: 50%; background: var(--card, var(--field)); color: var(--text); box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); font-size: 15px; cursor: pointer; transition: opacity var(--t-fast) ease-out, transform var(--t-fast) ease-out; }
 .jump-latest[hidden] { display: none; }
 .jump-latest:hover { transform: translateX(-50%) translateY(-1px); }
 /* Code blocks: a header bar (the language, Copy) above the code, which scrolls on its own. */
@@ -534,16 +552,18 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant .reply-regen:hover { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
 #auto-allow.armed { color: var(--warn, #d97706); box-shadow: inset 0 0 0 1px currentColor; }
 /* The header toggle, armed: says what a second click does, visibly. */
-#auto-allow.armed::after { content: attr(data-confirm); position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; white-space: nowrap; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+#auto-allow.armed::after { content: attr(data-confirm); position: absolute; top: calc(100% + 8px); left: -6px; z-index: var(--z-tip); white-space: normal; width: max-content; max-width: 150px; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+/* (relative: the armed tip hangs off the button and opens rightward; the button's left edge is ~133px into a 300px sidebar at its narrowest (~193px of 359px by default), so 150px wide keeps the box, its corners and shadow inside) */
+#auto-allow.armed::before { content: ""; position: absolute; top: calc(100% + 4px); left: 11px; z-index: var(--z-tip); width: 8px; height: 8px; background: var(--card, var(--field)); transform: rotate(45deg); box-shadow: -0.5px -0.5px 0 0 var(--border); pointer-events: none; }
 #auto-allow { position: relative; }
 .approval-always.armed { color: var(--warn, #d97706); }
 .approval-actions { flex-wrap: wrap; row-gap: 6px; }
 .approval-actions .btn { white-space: nowrap; }
-.msg.assistant .reply-regen.armed::after { content: attr(data-confirm); position: absolute; bottom: calc(100% + 6px); right: -4px; z-index: 5; white-space: normal; width: max-content; max-width: 220px; text-align: right; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+.msg.assistant .reply-regen.armed::after { content: attr(data-confirm); position: absolute; bottom: calc(100% + 6px); right: -4px; z-index: var(--z-tip); white-space: normal; width: max-content; max-width: 220px; text-align: right; padding: 5px 9px; border-radius: 8px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
 .msg.assistant .reply-model { max-width: calc(100% - 60px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The header's More menu. */
 .more-wrap { position: relative; display: inline-flex; }
-.more-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 190px; padding: 4px; border-radius: 10px; background: var(--card, var(--surface-raised, var(--field))); box-shadow: 0 10px 28px -8px rgba(0,0,0,.32), 0 0 0 0.5px var(--border); }
+.more-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-menu); min-width: 190px; padding: 4px; border-radius: 10px; background: var(--card, var(--surface-raised, var(--field))); box-shadow: 0 10px 28px -8px rgba(0,0,0,.32), 0 0 0 0.5px var(--border); }
 .more-menu[hidden] { display: none; }
 .more-menu .menu-item { display: flex !important; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 10px; border-radius: 7px; justify-content: flex-start; }
 .more-menu .menu-item::after { content: attr(aria-label); font-size: 12.5px; color: var(--text); white-space: nowrap; }
@@ -597,7 +617,7 @@ body.chat-full .setup { text-align: left; }
   animation: bubble-in var(--t-snappy) var(--spring-snappy);
 }
 @keyframes bubble-in { from { opacity: 0; transform: translateY(10px) scale(0.96); } }
-.msg.assistant { position: relative; word-wrap: break-word; line-height: 1.55; }
+.msg.assistant { position: relative; isolation: isolate; word-wrap: break-word; line-height: 1.55; } /* isolate: the regen tip's --z-tip stays inside the reply, not competing with the composer/panels/modal at the sidebar root */
 .msg.assistant p { margin: 0 0 8px; }
 .msg.assistant p:last-child { margin-bottom: 0; }
 .msg.assistant ul, .msg.assistant ol { margin: 0 0 8px; padding-left: 20px; }
@@ -678,7 +698,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 /* ---------- composer (a floating glass layer; messages pass underneath) ---------- */
 
 .composer {
-  position: absolute; z-index: 2; bottom: 16px; right: 16px; width: calc(var(--sidebar-width) - 33px) !important;
+  position: absolute; z-index: var(--z-composer); bottom: 16px; right: 16px; width: calc(var(--sidebar-width) - 33px) !important;
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 6px 6px 6px 12px;
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
@@ -719,7 +739,7 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .tabs-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0 6px; font-size: 12px; color: var(--text); }
 .tabs-confirm span { flex: 1 1 100%; }
 .tabs-picker {
-  position: absolute; z-index: 5; left: 0; right: 0; bottom: calc(100% + 6px); max-height: 260px; overflow-y: auto; padding: 4px;
+  position: absolute; z-index: var(--z-menu); left: 0; right: 0; bottom: calc(100% + 6px); max-height: min(260px, 50vh); overflow-y: auto; padding: 4px;
   border-radius: 12px; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
 }
 .tabs-opt { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
@@ -858,10 +878,14 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .group-label .group-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .group-label .group-count { font-weight: 500; font-variant-numeric: tabular-nums; opacity: 0.8; }
 .group-label:not(.collapsed) .group-count { display: none; }
-.group-label.crowded { padding: 0 7px; }
-.group-label.crowded .group-name { display: none; }
-.group-label.crowded::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--group-color); }
-.group-label.crowded:not(.collapsed) .group-count { display: none; }
+/* Many tabs: a compact chip that still says what the group is (the name clipped with an ellipsis, never below 36px). */
+.group-label.crowded { flex: none; min-width: 36px; max-width: 84px; padding: 0 7px; gap: 4px; font-size: 11.5px; }
+.group-label.crowded .group-count { flex: none; }
+/* Only when the chips themselves would fill the strip: a coloured dot (the name stays in the tooltip and the accessible name). */
+.group-label.dot { padding: 0 7px; }
+.group-label.dot .group-name { display: none; }
+.group-label.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--group-color); }
+.group-label.dot:not(.collapsed) .group-count { display: none; }
 .group-label input { width: 96px; padding: 0; border: none; border-radius: 3px; background: transparent; color: inherit; font: inherit; outline: none; }
 .group-label input:focus-visible { box-shadow: var(--focus-ring); }
 /* A group reads as one run: its colour line starts under the label and carries on, unbroken across
@@ -889,9 +913,13 @@ body.window-inactive .loadbar::before { animation-play-state: paused !important;
 .organize-tabs.busy svg { animation: spin 1.1s linear infinite; }
 /* Sits in the tab strip's own row, next to the Organize button: web pages cover everything below the strip. */
 .organize-note {
-  flex: none; display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
+  flex: none; max-width: min(380px, 40vw); display: inline-flex; align-items: center; gap: 8px; height: 26px; margin: 0 6px; padding: 0 6px 0 10px;
   border-radius: 8px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap;
 }
+.organize-note .organize-note-text { min-width: 0; display: inline-flex; white-space: pre; overflow: hidden; }
+.organize-note-lead, .organize-note-more, .organize-note-loose { flex: none; }
+.organize-note-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* only the names clip: the +N, the loose count and Undo stay whole */
+.organize-note button { flex: none; }
 .organize-note button { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
 .organize-note button:hover { background: var(--hover); }
 .organize-note button:focus-visible { outline: 2px solid var(--accent); }
@@ -959,7 +987,7 @@ body:not(.sidebar-hidden) #toggle-sidebar[data-attention="unread"]::before { dis
 .tk-com { color: var(--tk-com); font-style: italic; } .tk-type { color: var(--tk-type); } .tk-key { color: var(--tk-key); }
 
 /* Edit on the latest message you sent: a row under its bubble, on hover or focus; not while its reply runs. */
-.msg-user-actions { position: relative; height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
+.msg-user-actions { position: relative; z-index: var(--z-raised); height: 0; margin: 0; opacity: 0; transition: opacity var(--t-fast) ease-out; } /* no height: the gap under the bubble is the same with or without it */
 .msg-user-actions[hidden] { display: none; }
 .msg.user:hover + .msg-user-actions, .msg-user-actions:hover, .msg-user-actions:focus-within { opacity: 1; }
 .msg-user-actions .msg-edit { position: absolute; right: 2px; top: -16px; height: 16px; line-height: 16px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }

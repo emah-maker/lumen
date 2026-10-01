@@ -178,8 +178,8 @@ const { openSettingsTab } = require('./settings-tab');
   bridge.kill();
 
   // ---- 5. Organize Tabs with AI leaves those tabs out
-  // Two tabs where AI is on (the tabs above moved onto the off site), so there is something to group.
-  for (const page of ['first', 'second']) await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((res) => (t.webContents.isLoading() ? t.webContents.once('did-stop-loading', res) : res())); }, `${on}/${page}`);
+  // Three tabs where AI is on (the tabs above moved onto the off site): with no local group the model is asked only from 3 tabs up (organize-ai MIN_NEW_GROUP_TABS).
+  for (const page of ['garden-tomato-notes', 'garden-compost-notes', 'garden-pruning-notes']) await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((res) => (t.webContents.isLoading() ? t.webContents.once('did-stop-loading', res) : res())); }, `${on}/${page}`);
   const organized = await app.evaluate(async () => {
     const agent = global.__agent;
     const keyBefore = process.env.ANTHROPIC_API_KEY;
