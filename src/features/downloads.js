@@ -274,4 +274,4 @@ function createDownloads(deps) {
   return { list: downloads, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
 }
 
-module.exports = { createDownloads };
+module.exports = { createDownloads, RISKY_TYPES };

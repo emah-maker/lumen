@@ -1,4 +1,5 @@
 // ($ and the chat itself live in chat-core.js, loaded before this file.)
+/* global snapshotArrival, freezeKeepAlive */ // renderer/snapshot-arrival.js and freeze-keepalive.js, loaded before this file
 
 // ---------- layout: tell main where tab content goes ----------
 

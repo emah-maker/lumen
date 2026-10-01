@@ -106,6 +106,7 @@ const DEFAULTS = {
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
+  claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
@@ -230,6 +231,15 @@ function create(deps) {
   const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
   const upgraded = new Map(); // webContents id -> { from, to } while an HTTPS-only upgrade loads
   const httpAllowed = new Set(); // hosts the user chose to visit over http this session
+  // Another in-memory session (a private window's, the research tabs') keeps its own of both: a site zoomed
+  // or let through over http there is not remembered for normal tabs, and goes with that session.
+  const ownSets = new WeakMap(); // session -> { userZoomed, httpAllowed }
+  const setsOf = (wc) => {
+    const ses = wc?.session;
+    if (!ses || ses === session?.defaultSession || ses.isPersistent?.() !== false) return { userZoomed, httpAllowed };
+    if (!ownSets.has(ses)) ownSets.set(ses, { userZoomed: new Set(), httpAllowed: new Set() });
+    return ownSets.get(ses);
+  };
 
   function prefs() {
     const s = readSettings();
@@ -255,9 +265,9 @@ function create(deps) {
   function applyDefaultZoom(wc) {
     let host;
     try { host = new URL(wc.getURL()).host; } catch { return; }
-    if (!/^https?:/.test(wc.getURL()) || userZoomed.has(host)) return;
+    if (!/^https?:/.test(wc.getURL()) || setsOf(wc).userZoomed.has(host)) return;
     const saved = siteZoom.levelFor(host); // zoomed by hand in an earlier run
-    if (saved !== null) { userZoomed.add(host); wc.setZoomLevel(saved); return; }
+    if (saved !== null) { setsOf(wc).userZoomed.add(host); wc.setZoomLevel(saved); return; }
     wc.setZoomFactor(prefs().defaultZoom);
   }
   function uiPrefs() {
@@ -358,6 +368,10 @@ function create(deps) {
     applyProxy();
     setupHeaders(target);
   }
+  // A private window's session, as that window closes: proxy changes no longer go to it.
+  function unmirrorSession(target) {
+    mirrored.delete(target);
+  }
 
   // ---- request headers: the one onBeforeSendHeaders listener (the ad blocker owns the others) ----
   function isThirdParty(details) {
@@ -450,10 +464,10 @@ function create(deps) {
     if (!prefs().httpsOnly) return false;
     let u;
     try { u = new URL(url); } catch { return false; }
-    if (u.protocol !== 'http:' || isLocalHost(u.hostname) || httpAllowed.has(u.host)) return false;
+    if (u.protocol !== 'http:' || isLocalHost(u.hostname) || setsOf(wc).httpAllowed.has(u.host)) return false;
     const current = wc.getURL();
     if (current.startsWith(HTTPS_ONLY_URL) && new URL(current).searchParams.get('url') === url) {
-      httpAllowed.add(u.host); // "Continue to site" on the warning page
+      setsOf(wc).httpAllowed.add(u.host); // "Continue to site" on the warning page
       return false;
     }
     // A site whose https address sends you back to http (by redirect or script) looped forever:
@@ -505,16 +519,15 @@ function create(deps) {
   function noteUserZoom(wc, level) {
     let host;
     try { host = new URL(wc.getURL()).host; } catch { return; }
-    userZoomed.add(host);
+    setsOf(wc).userZoomed.add(host);
     // (Never from a private window: its session isn't persistent, and nothing it does is kept on disk.)
     if (level !== undefined && /^https?:/.test(wc.getURL()) && wc.session?.isPersistent?.() !== false) siteZoom.set(host, level);
   }
   // "Actual size" means the default zoom from Settings for web pages (100% for Lumen's own pages),
   // and the site follows that default again from now on.
   function resetZoom(wc) {
-    try { const host = new URL(wc.getURL()).host; userZoomed.delete(host); siteZoom.forget(host); } catch {}
+    try { const host = new URL(wc.getURL()).host; setsOf(wc).userZoomed.delete(host); siteZoom.forget(host); } catch {}
     if (/^https?:/.test(wc.getURL())) wc.setZoomFactor(prefs().defaultZoom);
-    else wc.setZoomLevel(0);
   }
 
   // The settings tab: nothing but the settings page may load in it.
@@ -880,7 +893,7 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, attachTab, mirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => deps.ui()?.send('prefs:ui', uiPrefs()), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };
