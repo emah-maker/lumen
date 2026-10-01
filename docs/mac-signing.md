@@ -57,4 +57,4 @@ For a real first-launch test, download the dmg in a browser (so it is quarantine
 
 ## After the first notarized release
 
-Update the Mac paragraph of README.md's Install section, the Mac note in `site/index.html` and the line in `site/site.js` (search for `TODO(first notarized release)`): say no Open Anyway step is needed. They still describe the unsigned flow until then.
+Done in 0.4.4: the Mac paragraph of README.md's Install section, the Mac note in `site/index.html` and `site/site.js` say no Open Anyway step is needed for 0.4.4 and later, and keep a short note for older versions. Because the signing identity changed, the first launch after updating from an earlier version asks once for Keychain access; the release notes say so.

@@ -4,6 +4,12 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.4.4 (2026-10-01)
+
+- The Mac app is now signed with an Apple Developer ID and notarized by Apple, so it opens without the "Open Anyway" step. On the first launch after updating, macOS asks once to allow Lumen access to its Keychain item.
+- The address bar is centered again.
+- Settings labels for Gmail, Advanced and Grok warm-up are fixed.
+
 ## 0.4.3 (2026-10-01)
 
 - Organize Tabs works on a full tab bar and with AI: no false "no tabs", and no "AI took too long" after 5 seconds. Grouping is more accurate and much faster, and the toast says plainly what happened.

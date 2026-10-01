@@ -117,8 +117,5 @@
     btn.href = links[chip.arch];
     const other = chip.arch === 'arm64' ? 'x64' : 'arm64';
     btn.insertAdjacentHTML('afterend', `<a class="btn ghost" href="${links[other]}">${other === 'x64' ? 'Intel Mac' : 'Apple silicon'}</a>`);
-    // TODO(first notarized release): drop the line below once releases are Developer ID signed and notarized.
-    // Until then the build isn't Developer ID signed, so the first launch needs one approval
-    btn.parentElement.insertAdjacentHTML('afterend', '<p class="meta">First launch: System Settings → Privacy &amp; Security → Open Anyway</p>');
   }
 })();
