@@ -27,6 +27,10 @@ jobs:
             platform: mac
             targets: ''
     runs-on: ${{ matrix.os }}
+    # actions: read lets the SignPath action read this run's job details and artifacts (Windows signing).
+    permissions:
+      contents: read
+      actions: read
     env:
       LUMEN_BUILD_DIR: ${{ github.workspace }}/dist
       # No certificate is picked up from the keychain on its own; a Developer ID build opts in through
@@ -70,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for t in units updates-units agentic-units catalog-units clock-style-units github-units gmail-units highlight-units local-custom-units markets-units math-units model-route-units password-units settings-async-units setup-units signing-units signed-in-units slack-units small-screen-units spotify-units tradingview-units whats-new-units widget-edit-units widget-summary-units widget-units; do
+          for t in units claudecode-full-units updates-units agentic-units catalog-units clock-style-units github-units gmail-units highlight-units local-custom-units markets-units math-units model-route-units password-units settings-async-units setup-units signing-units signed-in-units slack-units small-screen-units spotify-units tradingview-units whats-new-units widget-edit-units widget-summary-units widget-units; do
             echo "::group::$t"
             node "test/$t.js"
             echo "::endgroup::"
@@ -154,7 +158,29 @@ jobs:
           echo "path=$kc" >> "$GITHUB_OUTPUT"
           security find-identity -v -p codesigning "$kc" | grep -E 'Developer ID Application|valid identit'
 
+      # Windows signing is opt-in by secret too (docs/windows-signing.md): SIGNPATH_API_TOKEN and
+      # SIGNPATH_ORGANIZATION_ID (secrets) and SIGNPATH_PROJECT_SLUG (repository variable). Without them
+      # the Windows build is the unsigned build it has always been (the "Build" step below, unchanged).
+      # scripts/signing.js only tests that values are present; nothing is printed.
+      - name: Detect Windows signing
+        id: winsign
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_APP_CONFIG_SLUG: ${{ vars.SIGNPATH_APP_CONFIG_SLUG }}
+          SIGNPATH_INSTALLER_CONFIG_SLUG: ${{ vars.SIGNPATH_INSTALLER_CONFIG_SLUG }}
+          SIGNPATH_SIGN_APP: ${{ vars.SIGNPATH_SIGN_APP }}
+        run: |
+          set -e
+          node scripts/signing.js --win --github-output >> "$GITHUB_OUTPUT"
+          node scripts/signing.js --win
+
       - name: Build
+        if: steps.winsign.outputs.enabled != 'true'
         shell: bash
         env:
           EVS_ACCOUNT_NAME: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_ACCOUNT_NAME || '' }}
@@ -183,9 +209,186 @@ jobs:
         run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
       - name: List the zip in latest.yml
-        if: matrix.platform == 'win'
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled != 'true'
         shell: bash
         run: node scripts/add-zip-to-latest.js
+
+      # ---- Windows, signed through SignPath (only when "Detect Windows signing" said enabled) ----------
+      # Order matters (docs/windows-signing.md):
+      #   1. electron-builder packs win-unpacked only (target dir). Lumen.exe gets its icon and version info
+      #      (SignPath Foundation requires file metadata restrictions); VMP signing is deferred.
+      #   2. SignPath Authenticode-signs Lumen.exe (request 1), which is copied back into win-unpacked.
+      #   3. castlabs VMP signing, AFTER Authenticode (castlabs: on Windows VMP signs the exe's final bytes).
+      #   4. electron-builder builds the NSIS installer and the zip from that directory (--prepackaged), so the
+      #      installed app and the update zip carry the signed, VMP-signed Lumen.exe.
+      #   5. SignPath signs the Setup exe (request 2). Only the files SignPath signs are uploaded to it.
+      #   6. latest.yml and the Setup exe's blockmap are recomputed from the signed file, then the zip is listed.
+      # SIGNPATH_SIGN_APP=false skips 2 and 3 (the stock Electron exe stays, VMP-signed by the pack hook).
+      - name: Build the app directory (SignPath)
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        shell: bash
+        env:
+          SIGN_APP: ${{ steps.winsign.outputs.sign_app }}
+          EVS_ACCOUNT_NAME: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_ACCOUNT_NAME || '' }}
+          EVS_PASSWD: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_PASSWD || '' }}
+          LUMEN_GOOGLE_CLIENT_ID: ${{ secrets.LUMEN_GOOGLE_CLIENT_ID }}
+          LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}
+          LUMEN_GOOGLE_VERIFIED: ${{ vars.LUMEN_GOOGLE_VERIFIED }}
+        run: |
+          set -e
+          if [ "$SIGN_APP" = "true" ]; then flag="--signpath-app"; else flag=""; fi
+          node scripts/build.js --win dir $flag
+
+      - name: Stage Lumen.exe for SignPath
+        id: stage-app
+        if: matrix.platform == 'win' && steps.winsign.outputs.sign_app == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/to-sign-app | Out-Null
+          Copy-Item dist/win-unpacked/Lumen.exe dist/to-sign-app/Lumen.exe
+          # SignPath's metadata restriction compares against the version info electron-builder wrote.
+          $v = (Get-Item dist/to-sign-app/Lumen.exe).VersionInfo
+          if ($v.ProductName -ne 'Lumen') { throw "Lumen.exe has ProductName '$($v.ProductName)', expected 'Lumen'" }
+          "product_version=$($v.ProductVersion)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Lumen.exe to be signed
+        id: upload-app
+        if: matrix.platform == 'win' && steps.winsign.outputs.sign_app == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lumen-win-unsigned-app
+          path: dist/to-sign-app
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Sign Lumen.exe (SignPath)
+        if: matrix.platform == 'win' && steps.winsign.outputs.sign_app == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ steps.winsign.outputs.project }}
+          signing-policy-slug: ${{ steps.winsign.outputs.policy }}
+          artifact-configuration-slug: ${{ steps.winsign.outputs.app_config }}
+          github-artifact-id: ${{ steps.upload-app.outputs.artifact-id }}
+          parameters: |
+            productVersion: "${{ steps.stage-app.outputs.product_version }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600 # a release policy waits for a manual approval
+          output-artifact-directory: dist/signed-app
+
+      - name: Put the signed Lumen.exe back and VMP-sign it
+        if: matrix.platform == 'win' && steps.winsign.outputs.sign_app == 'true'
+        shell: bash
+        env:
+          EVS_ACCOUNT_NAME: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_ACCOUNT_NAME || '' }}
+          EVS_PASSWD: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_PASSWD || '' }}
+          VMP: ${{ steps.vmp.outputs.enabled }}
+        run: |
+          set -e
+          test -f dist/signed-app/Lumen.exe || { echo "::error::SignPath returned no Lumen.exe"; exit 1; }
+          cp dist/signed-app/Lumen.exe dist/win-unpacked/Lumen.exe
+          if [ "$VMP" = "true" ]; then
+            node scripts/vmp-sign.js --require dist/win-unpacked
+          else
+            echo "::warning::Widevine VMP signing skipped (no EVS secrets)"
+          fi
+
+      - name: Build the installer and zip from the signed directory
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        shell: bash
+        run: node scripts/build.js --win nsis zip --prepackaged dist/win-unpacked
+
+      - name: Stage the Setup exe for SignPath
+        id: stage-installer
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/to-sign-installer | Out-Null
+          $setup = Get-ChildItem dist -Filter 'Lumen-Setup-*.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'no Lumen-Setup-*.exe in dist' }
+          Copy-Item $setup.FullName dist/to-sign-installer/
+          $v = (Get-Item $setup.FullName).VersionInfo
+          if ($v.ProductName -ne 'Lumen') { throw "$($setup.Name) has ProductName '$($v.ProductName)', expected 'Lumen'" }
+          "product_version=$($v.ProductVersion)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload the Setup exe to be signed
+        id: upload-installer
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lumen-win-unsigned-installer
+          path: dist/to-sign-installer
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Sign the Setup exe (SignPath)
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ steps.winsign.outputs.project }}
+          signing-policy-slug: ${{ steps.winsign.outputs.policy }}
+          artifact-configuration-slug: ${{ steps.winsign.outputs.installer_config }}
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          parameters: |
+            productVersion: "${{ steps.stage-installer.outputs.product_version }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist/signed-installer
+
+      # The signed Setup exe replaces the unsigned one; latest.yml (sha512, size) and the .blockmap were
+      # written for the unsigned file, so they are recomputed before the zip is listed.
+      - name: Publish the signed Setup exe and refresh the update info
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -e
+          for f in dist/signed-installer/Lumen-Setup-*.exe; do
+            [ -f "$f" ] || { echo "::error::SignPath returned no Setup exe"; exit 1; }
+            cp "$f" "dist/$(basename "$f")"
+          done
+          node scripts/refresh-latest.js dist
+          node scripts/add-zip-to-latest.js
+          node scripts/refresh-latest.js --check dist
+
+      # Fails the release if what will be published is not what was signed: the Authenticode signature on
+      # the Setup exe, on Lumen.exe in win-unpacked and in the release zip (the file installed copies swap
+      # in), the VMP .sig next to it, and latest.yml's hashes. Signer details printed here are public.
+      # test-signing certificates are not trusted by Windows (status UnknownError, signer present); only a
+      # release policy must verify as Valid, with signtool as well.
+      - name: Verify the Windows signatures
+        if: matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          TRUSTED: ${{ steps.winsign.outputs.trusted }}
+          SIGN_APP: ${{ steps.winsign.outputs.sign_app }}
+          VMP: ${{ steps.vmp.outputs.enabled }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
+          function Test-Signed($file) {
+            $sig = Get-AuthenticodeSignature $file
+            Write-Host "$file : $($sig.Status) ; $($sig.SignerCertificate.Subject) ; issuer $($sig.SignerCertificate.Issuer)"
+            if (-not $sig.SignerCertificate) { throw "$file is not signed" }
+            if ($env:TRUSTED -eq 'true') {
+              if ($sig.Status -ne 'Valid') { throw "$file : signature status $($sig.Status): $($sig.StatusMessage)" }
+              if ($signtool) { & $signtool.FullName verify /pa /v $file; if ($LASTEXITCODE -ne 0) { throw "signtool verify failed for $file" } }
+              else { Write-Host '::warning::signtool.exe not found; Get-AuthenticodeSignature only' }
+            } elseif ($sig.Status -notin 'Valid', 'UnknownError') { throw "$file : signature status $($sig.Status): $($sig.StatusMessage)" }
+          }
+          $setup = Get-ChildItem dist -Filter 'Lumen-Setup-*.exe' | Select-Object -First 1
+          Test-Signed $setup.FullName
+          if ($env:SIGN_APP -eq 'true') {
+            Test-Signed (Resolve-Path dist/win-unpacked/Lumen.exe).Path
+            $tmp = Join-Path $env:RUNNER_TEMP 'zipcheck'
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            Expand-Archive (Get-ChildItem dist -Filter '*-win-x64.zip' | Select-Object -First 1).FullName $tmp
+            Test-Signed (Join-Path $tmp 'Lumen.exe')
+            if ((Get-FileHash $tmp/Lumen.exe).Hash -ne (Get-FileHash dist/win-unpacked/Lumen.exe).Hash) { throw 'Lumen.exe in the zip is not the signed Lumen.exe' }
+            if ($env:VMP -eq 'true' -and -not (Test-Path (Join-Path $tmp 'Lumen.exe.sig'))) { throw 'the zip has no Lumen.exe.sig (VMP)' }
+          }
 
       - name: List build output
         shell: bash

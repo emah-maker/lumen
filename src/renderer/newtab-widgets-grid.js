@@ -322,7 +322,7 @@
       const onto = stackTarget(d, ev);
       d.onto = onto ? onto.id : null;
       if (onto) {
-        preview = d.base; // held over the middle of a card of the same size: dropping stacks them, nothing moves
+        preview = d.base; // held over the middle of a card: dropping stacks them, nothing moves
       } else if (zone && window.scrollY < m.pitchY && WL.snapRectFor(zone, it, o)) {
         snap = zone;
         preview = WL.snapMove(d.base, id, { snap: zone, frac: ev.clientY / window.innerHeight }, o);
@@ -370,17 +370,16 @@
       if (step) { window.scrollBy(0, step); d.raf = requestAnimationFrame(tick); }
     }
   }
-  // A move held over the middle half of another card of the same size (and not already in one stack with
-  // it): that card, which a drop stacks it onto (newtab-stacks.js, features/widget-stacks.js).
+  // A move held over the middle half of another card of any size (and not already in one stack with
+  // it): that card, which a drop stacks it onto; the card adopts the stack's size (newtab-stacks.js, features/widget-stacks.js).
   function stackTarget(d, ev) {
     const stacks = window.newtabStacks;
     if (!stacks || WS.isSystemId(d.id)) return null;
-    const me = d.base.find((i) => i.id === d.id);
     const r = boxEl().getBoundingClientRect();
     const px = ev.clientX - r.left;
     const py = ev.clientY - r.top;
     for (const it of d.base) {
-      if (it.id === d.id || it.w !== me.w || it.h !== me.h || WS.isSystemId(it.id)) continue;
+      if (it.id === d.id || WS.isSystemId(it.id)) continue;
       const b = WL.cellToPx(it, m);
       if (px < b.left + b.width / 4 || px > b.left + (b.width * 3) / 4 || py < b.top + b.height / 4 || py > b.top + (b.height * 3) / 4) continue;
       return stacks.canStack(d.id, it.id) ? it : null;
@@ -413,8 +412,7 @@
       place(d.base, d.id);
       d.card._pos = null;
       setBox(d.card, WL.cellToPx(target, m));
-      say(txt('newtab.edit.stacked', { title: titleOf(d.card), onto: titleOfId(d.onto) }));
-      window.widgetAct(d.id, 'stack', { onto: d.onto });
+      window.newtabStacks.join(d.id, d.onto); // records Undo, says so and asks the browser
       deferred = null;
       setTimeout(() => { d.card._pos = null; relayout(); }, 1200); // if the browser said no, the card goes back to its place
       return;
@@ -600,7 +598,19 @@
     }
   }
 
-  window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, gridBottom(centreBottom())),
+  // A stack's switch, in place (newtab-stacks.js): `to` ({ id, type, title }) is shown, at the cells `fromId` had, and
+  // `card` is its card. The grid's records follow; nothing is drawn again but the layout hooks (the hidden members'
+  // places), which write nothing that has not changed.
+  function swapShown(fromId, to, card) {
+    const i = items.findIndex((it) => it.id === fromId);
+    if (i < 0 || !card || !to?.id) return false;
+    items[i] = { ...items[i], id: to.id, type: to.type || items[i].type, title: to.title ?? items[i].title };
+    if (cardsById) { cardsById.delete(fromId); cardsById.set(to.id, card); }
+    layoutNow();
+    return true;
+  }
+
+  window.widgetGrid = { attach, sync, swapShown, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, gridBottom(centreBottom())),
     // Does the centre column, at the size it has right now (a clock or search-bar resize being previewed), leave every
     // card where it is? False when it would run into one: the resize stops short instead of pushing cards around.
     // (Measured into copies: the grid's own state is left as it was, so a size that was tried and put back can't leave a

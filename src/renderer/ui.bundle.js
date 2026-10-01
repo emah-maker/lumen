@@ -7,7 +7,12 @@
   const table = (window.lumenI18n && window.lumenI18n.strings) || {};
   const format = (text, vars) => (vars ? text.replace(/\{(\w+)\}/g, (whole, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole)) : text);
   const has = (key) => typeof table[key] === 'string';
-  const t = (key, vars) => format(has(key) ? table[key] : key, vars);
+  // The strings name shortcuts the Windows way ("New tab (Ctrl+T)"); on macOS they read "⌘T", "⇧⌘K",
+  // as Mac menus write them. Ctrl+Tab stays: on a Mac that one really is the Control key.
+  const MAC = /^Mac/.test(navigator.platform || '');
+  const forMac = (text) => text.replace(/\bCtrl\+((?:Shift\+|Alt\+)*)(?!Tab\b)([A-Z0-9](?![A-Za-z])|F\d{1,2}\b|PageUp|PageDown|Enter|Delete|Backspace|[/=,\-[\]])/g,
+    (_m, mods, key) => `${mods.includes('Alt+') ? '⌥' : ''}${mods.includes('Shift+') ? '⇧' : ''}⌘${key}`);
+  const t = (key, vars) => { const text = format(has(key) ? table[key] : key, vars); return MAC ? forMac(text) : text; };
 
   // Static markup: data-i18n sets the text, data-i18n-<attr> sets that attribute (title, aria-label,
   // placeholder). The English stays in the HTML as the fallback.
@@ -1363,7 +1368,7 @@ function setupError(text) {
   el.textContent = text;
 }
 function clearSetupError() { optional('setup').querySelector?.('.setup-error')?.remove(); }
-for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok']) optional(id).addEventListener('click', clearSetupError, true);
+for (const id of ['setup-claude-code', 'setup-openrouter', 'setup-keys', 'setup-grok', 'setup-antigravity']) optional(id).addEventListener('click', clearSetupError, true);
 async function refreshSetup() {
   const s = await window.assistant.getSettings();
   if (s.model) clearSetupError();
@@ -1383,6 +1388,10 @@ async function refreshSetup() {
   const grok = s.grokBuild || {};
   optional('setup-grok').hidden = !grok.installed || !window.assistant.useGrokBuild;
   optional('setup-grok-detail').textContent = grok.signedIn === false ? t('setup.grok.signedOut') : t('setup.grok.detail');
+  // Antigravity (Google's CLI, which replaces Gemini CLI): always offered in the sidebar; not found, it leads to Settings, where the install command is.
+  const agy = s.antigravity || {};
+  optional('setup-antigravity').hidden = !window.assistant.useAntigravity;
+  optional('setup-antigravity-detail').textContent = !agy.installed ? t('setup.antigravity.install') : agy.signedIn === false ? t('setup.antigravity.signedOut') : t('setup.antigravity.detail');
   const ready = Boolean(s.model) && !pickSignedOut;
   if (welcoming) {
     $('setup').hidden = ready;
@@ -1492,6 +1501,13 @@ optional('setup-grok').onclick = async () => {
   if (await window.assistant.setModel('grokbuild:default')) await loadModels();
   refreshSetup();
 };
+optional('setup-antigravity').onclick = async () => {
+  const r = await window.assistant.useAntigravity?.().catch(() => null);
+  if (!r?.installed) { window.lumenPrefs?.openSettingsPage('antigravity'); return; } // not installed: Settings shows Google's install command and a button
+  if (!r.signedIn) { setupError(t('setup.antigravity.signedOut')); return; }
+  if (await window.assistant.setModel('antigravity:default')) await loadModels();
+  refreshSetup();
+};
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
@@ -1550,6 +1566,12 @@ const ASSISTANTS = {
     // A neutral routing glyph: one line branching to three.
     svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M2.5 8h4.5M7 8c2 0 2.5-4 5-4M7 8c2 0 2.5 4 5 4M7 8h5"/><circle cx="13" cy="4" r="1"/><circle cx="13" cy="8" r="1"/><circle cx="13" cy="12" r="1"/></svg>',
   },
+  Antigravity: {
+    name: 'Antigravity',
+    tint: 'currentColor',
+    // A neutral mark: an arch with a spark above it.
+    svg: '<svg viewBox="0 0 16 16" class="mark"><path d="M3 13.2 8 3.4l5 9.8"/><path d="M5.6 9.6h4.8"/><circle cx="8" cy="1.8" r=".8"/></svg>',
+  },
   Gemini: {
     name: 'Gemini',
     tint: 'url(#gemini-grad)',
@@ -1561,7 +1583,7 @@ let assistantIdentity = null;
 function setAssistantIdentity(group) {
   // Claude Code answers as Claude, Grok Build as Grok. No group (nothing connected) or an unknown
   // one: the neutral mark.
-  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group] || ASSISTANTS.AI;
+  const who = ASSISTANTS[group === 'Your Claude account' ? 'Claude' : group === 'Your Grok account' ? 'Grok' : group === 'Your Google account' ? 'Antigravity' : group] || ASSISTANTS.AI;
   if (assistantIdentity === who) return;
   const first = assistantIdentity === null;
   assistantIdentity = who;
@@ -1569,7 +1591,7 @@ function setAssistantIdentity(group) {
   const empty = document.querySelector('#empty .empty-title');
   if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(who.name) : t('sidebar.empty', { name: who.name });
   const pill = $('agent-pill-text');
-  if (pill) pill.textContent = t('agent.usingTab', { name: who.name });
+  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
 }
 
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
@@ -3550,6 +3572,7 @@ function startChat() {
 ;
 // ---- app.js
 // ($ and the chat itself live in chat-core.js, loaded before this file.)
+/* global snapshotArrival, freezeKeepAlive */ // renderer/snapshot-arrival.js and freeze-keepalive.js, loaded before this file
 
 // ---------- layout: tell main where tab content goes ----------
 
@@ -3659,10 +3682,13 @@ function setMarkup(el, html) {
 }
 
 // The indicator collapses to icon-only at narrow or zoomed widths, so it needs a name beyond its tooltip.
+// It is a button: it opens the site's page info (connection, permissions, cookies: features/page-info.js).
 function setSecurityName(el, name) {
-  el.title = name;
+  el.title = t('pageInfo.tooltip', { state: name });
   el.setAttribute('aria-label', name);
-  el.setAttribute('role', 'img');
+  el.setAttribute('role', 'button');
+  el.setAttribute('aria-haspopup', 'menu');
+  el.tabIndex = 0;
 }
 
 function showAddress() {
@@ -4583,6 +4609,12 @@ function animateTabs(before, container, landed = new Set()) {
     } else if (prev) {
       const dx = prev.rect.left - el.getBoundingClientRect().left;
       if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+    } else if (el.classList.contains('group-label')) {
+      // A new group's chip takes its room in the strip at once while the tabs around it are still sliding in from where they were: it stays
+      // invisible (and under them) until they have mostly settled, then fades in, so it never overlaps a tab's icon mid-slide.
+      el.style.zIndex = '0';
+      const fade = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 260, easing: 'ease-out', fill: 'backwards' });
+      fade.finished.then(() => { el.style.zIndex = ''; }, () => { el.style.zIndex = ''; });
     } else {
       el.animate([{ opacity: 0, transform: 'translateY(3px) scale(0.86)' }, { opacity: 1, transform: 'none' }], { duration: 480, easing: SPRING_SNAPPY });
     }
@@ -5474,6 +5506,13 @@ $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
+// The lock (or "Not secure") opens the site's page info under it.
+function openPageInfo() {
+  const r = $('security').getBoundingClientRect();
+  window.browser.openPageInfo?.({ x: Math.round(r.left), y: Math.round(r.bottom + 4) });
+}
+$('security').addEventListener('click', openPageInfo);
+$('security').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPageInfo(); } });
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
@@ -6031,7 +6070,7 @@ window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
-  button.title = `${who.name} (Ctrl+J)`;
+  button.title = `${who.name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
   button.dataset.assistant = who.name;
   button.setAttribute('aria-label', who.name);
   button.style.setProperty('--assistant-tint', who.tint);
@@ -6060,7 +6099,7 @@ window.assistant.onSidebar?.((visible) => {
 startChat();
 
 // ---------- AI agents over MCP (session B) ----------
-// External agents (Claude Code, Codex, Gemini CLI…) drive the browser; their calls show here.
+// External agents (Claude Code, Codex, Antigravity…) drive the browser; their calls show here.
 
 const mcpSteps = new Map(); // step id -> row
 let mcpPillText = null;
@@ -6886,7 +6925,7 @@ $('agent-stop')?.addEventListener('click', () => {
   // ---------- local agent engines: the placeholder ----------
 
   const select = $('model');
-  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }) };
+  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }), 'antigravity:': window.t('composer.ask', { name: 'Antigravity' }) };
   function syncEngine() {
     const value = String(select?.value || '');
     const prefix = Object.keys(ENGINE_PLACEHOLDERS).find((p) => value.startsWith(p));

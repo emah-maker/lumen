@@ -6,6 +6,12 @@
 // It gets only Lumen's tools: built-in tools are disabled (--tools ""), only mcp__lumen is allowed,
 // and --permission-mode dontAsk refuses anything else instead of prompting. Lumen's own approval
 // card still gates acting tools, because every call goes through the MCP server's callTool.
+//
+// [full access] Settings > AI > "Give Claude Code full access to this computer" (claudeCodeFullAccess,
+// off by default) runs the CLI the way it runs in a terminal instead: all its built-in tools (Bash,
+// file reads and edits), the user's own MCP servers, skills and slash commands, Claude Code's own
+// system prompt (Lumen's is appended), the home folder as its working directory, and no permission
+// prompts (bypassPermissions). Lumen's browser tools still go through the MCP server and its approval card.
 
 const { spawn, execFile } = require('child_process');
 const crypto = require('crypto');
@@ -64,6 +70,14 @@ const ARGS_BASE = [
   '--allowedTools', 'mcp__lumen',
   '--permission-mode', 'dontAsk',
 ];
+// [full access] The same stream-json session with everything Claude Code has in a terminal, unprompted.
+// --mcp-config's `lumen` replaces a user-scope server of that name (checked against the CLI, 2.1.287).
+const ARGS_FULL = [
+  '-p',
+  '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+  '--input-format', 'stream-json',
+  '--permission-mode', 'bypassPermissions',
+];
 
 // The picker's Claude Code choices (the part after 'claudecode:'). 'default' passes no --model, so
 // the CLI's own choice applies (its /model setting, else the plan's default); the rest are the family
@@ -81,12 +95,13 @@ const MODELS = [
 // --system-prompt replaces Claude Code's own (coding) system prompt, as cli-json.js does: Lumen's
 // prompt plus CLAUDE_CODE_NOTE (agent.js) names the mcp__lumen__ tools. Tool use itself needs no
 // prompt: the tool definitions come from the MCP server.
-function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0 }) {
+// [full access] Claude Code keeps its own system prompt (its tools, CLAUDE.md, skills): Lumen's is appended.
+function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false }) {
   return [
-    ...ARGS_BASE,
+    ...(fullAccess ? ARGS_FULL : ARGS_BASE),
     ...(maxTurns > 0 ? ['--max-turns', String(maxTurns)] : []), // unset: no cap
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
-    '--mcp-config', mcpConfig, '--system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId,
+    '--mcp-config', mcpConfig, fullAccess ? '--append-system-prompt' : '--system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId,
   ];
 }
 
@@ -119,7 +134,7 @@ function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
 // turn cap and system prompt (a new chat, a model or settings change starts another one). Today's date
 // (agent.js claudeCodeNote) is left out of the key: a kept CLI serves on past midnight with the date it
 // started with rather than respawning, and a warm start made before midnight stays usable after it.
-const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0 }) => JSON.stringify([bin, sessionId, model, maxTurns, crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
+const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false }) => JSON.stringify([bin, sessionId, model, maxTurns, Boolean(fullAccess), crypto.createHash('sha256').update(String(systemPrompt).replace(/Today's date is \d{4}-\d\d-\d\d\./g, "Today's date is (today).")).digest('hex')]);
 
 // A step row shown while the model is still writing a tool call's input (a long fill_form or batch):
 // it appears after EARLY_STEP_MS, and Lumen's MCP side takes it over when the call arrives
@@ -127,6 +142,29 @@ const procKey = ({ bin, sessionId, systemPrompt, model = 'default', maxTurns = 0
 const EARLY_STEP_MS = 300;
 const EARLY_LABELS = { navigate: 'Opening a page', open_tab: 'Opening a tab', click: 'Clicking', click_at: 'Clicking', type_text: 'Typing', press_key: 'Pressing a key', fill_form: 'Filling in a form', batch: 'Running steps', read_page: 'Reading the page', find: 'Searching the page', web_search: 'Searching the web', read_urls: 'Reading pages', screenshot: 'Taking a screenshot', run_script: 'Running a script on the page' };
 const earlyLabel = (name) => EARLY_LABELS[name] || `Using ${String(name).replace(/_/g, ' ')}`;
+
+// [full access] A step row for one of the CLI's own tools (Bash, file edits, another MCP server's tool).
+// They run inside the CLI, not through Lumen's MCP server, so their rows come from the stream instead.
+const clip = (v, n = 80) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+const fileName = (p) => clip(path.basename(String(p || '')) || p, 60);
+function builtinLabel(name, input = {}) {
+  const n = String(name);
+  if (n === 'Bash') return input.description ? clip(input.description) : `Running ${clip(input.command)}`;
+  if (n === 'Read') return `Reading ${fileName(input.file_path)}`;
+  if (n === 'Edit' || n === 'MultiEdit' || n === 'NotebookEdit') return `Editing ${fileName(input.file_path || input.notebook_path)}`;
+  if (n === 'Write') return `Writing ${fileName(input.file_path)}`;
+  if (n === 'Glob' || n === 'Grep') return `Searching files for ${clip(input.pattern, 60)}`;
+  if (n === 'WebFetch') return `Fetching ${clip(input.url, 60)}`;
+  if (n === 'WebSearch') return `Searching the web for ${clip(input.query, 60)}`;
+  if (n === 'Task' || n === 'Agent') return input.description ? `Subagent: ${clip(input.description, 60)}` : 'Running a subagent';
+  if (n === 'Skill') return `Using the ${clip(input.skill || input.command, 40)} skill`;
+  const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(n);
+  if (mcp) return `Using ${mcp[1]}: ${mcp[2].replace(/_/g, ' ')}`;
+  return `Using ${n}`;
+}
+const isLumenTool = (name) => /^mcp__lumen__/.test(String(name || ''));
+// [full access] The message as typed when it is a slash command ("/goal ship it", "/context"), else null.
+const slashCommand = (text) => (typeof text === 'string' && /^\/[A-Za-z][\w:.-]*(\s|$)/.test(text.trim()) ? text.trim() : null);
 
 // Newline-delimited JSON from a stream, one line at a time.
 function lineReader(onLine) {
@@ -259,7 +297,7 @@ class ClaudeCodeEngine {
   }
 
   // Starts one CLI process: its own tag, its own MCP token (revoked when it ends), its own empty folder.
-  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns }) {
+  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false }) {
     const tag = crypto.randomBytes(18).toString('hex');
     let http = null;
     if (this.gate) {
@@ -269,7 +307,7 @@ class ClaudeCodeEngine {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cc-'));
     const mcpConfig = path.join(dir, 'mcp.json');
     fs.writeFileSync(mcpConfig, JSON.stringify(mcpConfigFor({ http, bridge: http ? null : this.mcpCommand(), userData: this.userData, tag })), { mode: 0o600 });
-    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns });
+    const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess });
     const childEnv = { ...process.env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
     // single: takes one message, then stdin closes. A turn cap (--max-turns) may count across a
@@ -278,9 +316,10 @@ class ClaudeCodeEngine {
     // leftover output is being read off (take() waits for it).
     const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null };
     proc.fresh = { sessionId, resume }; // onFresh's args, run when a message takes this process (turn)
+    proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
-    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns }); };
+    proc.rekey = (id) => { proc.key = procKey({ bin, sessionId: id, systemPrompt, model, maxTurns, fullAccess }); };
     const finish = (code) => {
       if (proc.exited) return;
       proc.exited = true;
@@ -293,7 +332,7 @@ class ClaudeCodeEngine {
       proc.turn?.exit(code);
     };
     try {
-      proc.child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: dir }); // an empty folder: no project settings or files
+      proc.child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: fullAccess ? os.homedir() : dir }); // an empty folder: no project settings or files ([full access]: the home folder, as in a terminal)
     } catch (err) {
       proc.stderr = err.message;
       finish(err.code === 'ENOENT' ? 'ENOENT' : -1);
@@ -509,13 +548,13 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, quietExpired = false, lateUsage = null, prestart = true }, { fresh = false } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     };
     if (!await this.ensureBin()) return notInstalled();
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns }, { fresh, emit });
+    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
     // pre-started one that no message takes must not wipe the chat's reads.
@@ -525,7 +564,9 @@ class ClaudeCodeEngine {
     proc.turns++;
     const { tag } = proc;
     // tools: Lumen tool calls this message made (callBegin); inflight: those still running; dog/arm: the watchdog.
-    const active = { tag, emit, signal, child: proc.child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
+    // builtin: [full access] the CLI's own tool calls still running (each also counts in inflight: a long
+    // shell command prints nothing until it ends, and must not look hung).
+    const active = { tag, emit, signal, child: proc.child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null, builtin: new Set() };
     this.active = active;
 
     let text = '';
@@ -565,6 +606,21 @@ class ClaudeCodeEngine {
       } else if (msg.type === 'assistant') {
         const t = (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
         if (t) finalText = t;
+        for (const b of msg.message?.content || []) {
+          if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
+          active.builtin.add(b.id);
+          active.inflight++;
+          emit({ type: 'tool', id: `cc-${String(b.id).replace(/[^\w-]/g, '').slice(0, 60)}`, name: String(b.name), input: b.input || {}, label: builtinLabel(b.name, b.input || {}) });
+        }
+        active.arm();
+      } else if (msg.type === 'user' && active.builtin.size) {
+        for (const b of Array.isArray(msg.message?.content) ? msg.message.content : []) {
+          if (b.type !== 'tool_result' || !active.builtin.delete(b.tool_use_id)) continue;
+          active.inflight = Math.max(0, active.inflight - 1);
+          const err = b.is_error ? clip(Array.isArray(b.content) ? b.content.map((c) => c.text || '').join(' ') : b.content, 200) : '';
+          emit({ type: 'tool_done', id: `cc-${String(b.tool_use_id).replace(/[^\w-]/g, '').slice(0, 60)}`, ok: !b.is_error, ...(err ? { error: err } : {}) });
+        }
+        active.arm();
       } else if (msg.type === 'result') { // the end of this message's turn; a kept process then waits for the next line
         result = msg;
         newSession = msg.session_id || newSession;
@@ -636,4 +692,4 @@ class ClaudeCodeEngine {
   }
 }
 
-module.exports = { ClaudeCodeEngine, findClaude, buildArgs, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, IDLE_MS, EARLY_STEP_MS };
+module.exports = { ClaudeCodeEngine, findClaude, buildArgs, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, IDLE_MS, EARLY_STEP_MS };

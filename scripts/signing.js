@@ -44,6 +44,54 @@ function macSigning(env = process.env) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Windows: SignPath Authenticode signing (docs/windows-signing.md). Signing itself happens in the
+// release workflow (the SignPath action), not in electron-builder; this only reads the environment.
+// On when the secrets SIGNPATH_API_TOKEN and SIGNPATH_ORGANIZATION_ID and the variable
+// SIGNPATH_PROJECT_SLUG are all set; otherwise the build is the unsigned build it has always been
+// (the stock Electron exe, one electron-builder pass). Optional variables: SIGNPATH_SIGNING_POLICY_SLUG
+// (default release-signing on a v* tag, test-signing otherwise), SIGNPATH_APP_CONFIG_SLUG (default
+// lumen-app), SIGNPATH_INSTALLER_CONFIG_SLUG (default lumen-installer), SIGNPATH_SIGN_APP ("false"
+// signs only the Setup exe and keeps the stock Lumen.exe).
+const SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const WIN_REQUIRED = ['SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG'];
+
+function winSigning(env = process.env) {
+  const missing = WIN_REQUIRED.filter((k) => !has(env, k));
+  const val = (k, dflt) => (has(env, k) ? String(env[k]).trim() : dflt);
+  const tag = /^refs\/tags\/v/.test(String((env || {}).GITHUB_REF || ''));
+  const project = val('SIGNPATH_PROJECT_SLUG', '');
+  const policy = val('SIGNPATH_SIGNING_POLICY_SLUG', tag ? 'release-signing' : 'test-signing');
+  const appConfig = val('SIGNPATH_APP_CONFIG_SLUG', 'lumen-app');
+  const installerConfig = val('SIGNPATH_INSTALLER_CONFIG_SLUG', 'lumen-installer');
+  // These reach the workflow's outputs and the action's inputs: only plain slugs are accepted.
+  const invalid = [['SIGNPATH_PROJECT_SLUG', project, has(env, 'SIGNPATH_PROJECT_SLUG')], ['SIGNPATH_SIGNING_POLICY_SLUG', policy, true], ['SIGNPATH_APP_CONFIG_SLUG', appConfig, true], ['SIGNPATH_INSTALLER_CONFIG_SLUG', installerConfig, true]]
+    .filter(([, v, check]) => check && !SLUG.test(v)).map(([k]) => k);
+  const enabled = missing.length === 0 && invalid.length === 0;
+  const signApp = enabled && !/^(false|0|no|off)$/i.test(val('SIGNPATH_SIGN_APP', 'true'));
+  return {
+    enabled,
+    // Some, not all, of the required values are set: reported instead of silently building unsigned.
+    partial: missing.length > 0 && missing.length < WIN_REQUIRED.length ? missing : null,
+    invalid: invalid.length ? invalid : null,
+    signApp, // also sign Lumen.exe in win-unpacked (a first request) before the installer is built
+    policy,
+    // A test-signing certificate is not trusted by Windows, so only a release policy verifies as Valid.
+    trusted: policy !== 'test-signing',
+    project,
+    appConfig,
+    installerConfig,
+  };
+}
+
+// electron-builder flags for the first Windows pass of a SignPath build that signs Lumen.exe:
+// `--win dir` keeps the icon and version info on Lumen.exe (ProductName "Lumen": SignPath Foundation
+// requires file metadata restrictions) and skips electron-builder's own signing. The second pass
+// (`--win nsis zip --prepackaged <signed dir>`) takes no extra flags. The unsigned build passes none.
+function winBuilderArgs(phase) {
+  return phase === 'app' ? ['-c.win.signAndEditExecutable=true', '-c.win.signExecutable=false'] : [];
+}
+
 // electron-builder flags for the mode. package.json holds the shared mac settings; this picks the
 // rest. Without a Developer ID it is exactly the old build: ad-hoc identity "-", hardened runtime
 // off (package.json), notarization skipped even if stray APPLE_* variables exist. With one, the
@@ -77,8 +125,19 @@ exports.macSigning = macSigning;
 exports.builderArgs = builderArgs;
 exports.builderEnv = builderEnv;
 exports.notarization = notarization;
+exports.winSigning = winSigning;
+exports.winBuilderArgs = winBuilderArgs;
 
-if (require.main === module) {
+if (require.main === module && process.argv.includes('--win')) {
+  const w = winSigning();
+  if (process.argv.includes('--github-output')) {
+    console.log([`enabled=${w.enabled}`, `sign_app=${w.signApp}`, `trusted=${w.trusted}`, `policy=${w.policy}`, `project=${w.enabled ? w.project : ''}`, `app_config=${w.appConfig}`, `installer_config=${w.installerConfig}`].join('\n'));
+  } else {
+    console.log(`Windows signing: ${w.enabled ? `SignPath, policy ${w.policy}, ${w.signApp ? 'Lumen.exe and the Setup exe' : 'the Setup exe only'}` : 'off (unsigned build)'}`);
+  }
+  if (w.partial) console.warn(`::warning::SignPath is only partly set up (missing: ${w.partial.join(', ')}); building unsigned`);
+  if (w.invalid) console.warn(`::warning::${w.invalid.join(', ')} is not a plain SignPath slug; building unsigned`);
+} else if (require.main === module) {
   const s = macSigning();
   if (process.argv.includes('--github-output')) {
     console.log([`mode=${s.mode}`, `developer_id=${s.mode === 'developer-id'}`, `notarize=${s.notarize || 'none'}`, `evs=${s.evs}`].join('\n'));

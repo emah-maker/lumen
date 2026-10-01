@@ -107,5 +107,10 @@ for (const url of ['https://www.google.com/', 'https://mail.google.com/', 'https
   check('chrome identity script: still runs elsewhere', vm.runInContext('typeof chrome', other) === 'object' && vm.runInContext('navigator.webdriver', other) === false, 'elsewhere');
 }
 
+{
+  const g = require('../src/browser/google-auth-identity');
+  check('auth hosts: the dots are literal (a look-alike host is not an auth host)', g.isAuthHost('accounts.google.com') && g.isAuthHost('accounts.google.co.uk') && !g.isAuthHost('accountsxgoogle.com') && !g.isAuthHost('accounts-google.com') && !g.isAuthHost('gdsxgoogle.com') && !new RegExp(g.HOST_SOURCE, 'i').test('accountsXyoutube.com'), g.HOST_SOURCE);
+}
+
 assert.strictEqual(failures, 0, `${failures} google-auth-identity check(s) failed`);
 console.log('google-auth-identity units: all passed');

@@ -55,6 +55,7 @@
       "!**/.impeccable/**",
       "!scripts/**",
       "!.github/**",
+      "!.signpath/**",
       "!shot-*.png",
       "!docs/**",
       "!site/**",

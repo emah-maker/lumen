@@ -27,7 +27,13 @@ if (!platformFlag) {
   console.error('Lumen builds for Windows (--win) and macOS (--mac) only; on Linux, run it from source with npm start.');
   process.exit(1);
 }
-const rest = args.filter((a) => a !== platformFlag);
+// SignPath builds (docs/windows-signing.md) run electron-builder twice. `--signpath-app` marks the first
+// pass (`--win dir`): Lumen.exe keeps its icon and version info for SignPath's metadata checks, and
+// Widevine VMP signing is left for after SignPath has signed it. The second pass is
+// `--win nsis zip --prepackaged <the signed directory>`. Neither flag is used by the unsigned build.
+const signpathApp = args.includes('--signpath-app');
+const rest = args.filter((a) => a !== platformFlag && a !== '--signpath-app');
+const prepackaged = rest.some((a) => a === '--prepackaged' || a === '--pd');
 const out = outputDir();
 if (/onedrive/i.test(out)) console.warn(`warning: building into ${out}, which looks like a synced folder`);
 
@@ -76,6 +82,10 @@ console.log(`Building ${platformFlag.slice(2)} into ${out}`);
 // one the build is ad-hoc signed (or self-signed by scripts/after-sign.js) exactly as before.
 const signing = require('./signing');
 let builderEnv = process.env;
+if (platformFlag === '--win' && signpathApp) {
+  builderArgs.push(...signing.winBuilderArgs('app'));
+  builderEnv = { ...process.env, LUMEN_DEFER_VMP: '1' };
+}
 if (platformFlag === '--mac') {
   builderArgs.push(...signing.builderArgs());
   builderEnv = signing.builderEnv();
@@ -87,8 +97,10 @@ const result = spawnSync(process.execPath, [require.resolve('electron-builder/cl
 if (wroteGoogle) fs.rmSync(googleFile, { force: true });
 if (result.status !== 0) process.exit(result.status || 1);
 
-// The Windows exe must be the unmodified Electron binary.
-if (platformFlag === '--win') {
+// The Windows exe must be the unmodified Electron binary. Not checked for a SignPath build that edits
+// and signs it (its signature and version info are the point), nor for the pass that packages the
+// already signed directory.
+if (platformFlag === '--win' && !signpathApp && !prepackaged) {
   const sha = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const built = path.join(out, 'win-unpacked', 'Lumen.exe');
   const stock = path.join(electronDist, 'electron.exe');
