@@ -4,7 +4,8 @@
 // signing appends a signature, so both are stale. Installed copies check a downloaded update against
 // this sha512 (src/features/zip-update.js, electron-updater), so a stale value would reject the release.
 //
-// Usage: node scripts/refresh-latest.js [dist]  (run before scripts/add-zip-to-latest.js)
+// Usage: node scripts/refresh-latest.js [--check] [dist]  (run before scripts/add-zip-to-latest.js)
+// --check changes nothing and exits 1 if latest.yml disagrees with a file in dist.
 // Every `url:` entry whose file is in dist gets its sha512 and size recomputed, the top-level `sha512:`
 // follows the file named by `path:`, and each .exe's .blockmap is rebuilt with electron-builder's own
 // builder. Entries without a file in dist are left alone; `check()` reports any entry that disagrees.
@@ -41,11 +42,17 @@ const lookupIn = (dist) => (name) => {
   return fs.existsSync(file) ? { sha512: sha512Of(file), size: fs.statSync(file).size } : null;
 };
 
-async function main(dist = path.join(__dirname, '..', 'dist')) {
+async function main(argv) {
+  const check = argv.includes('--check');
+  const dist = argv.find((a) => !a.startsWith('--')) || path.join(__dirname, '..', 'dist');
   const ymlFile = path.join(dist, 'latest.yml');
   const lookup = lookupIn(dist);
   const before = fs.readFileSync(ymlFile, 'utf8');
   const stale = mismatches(before, lookup);
+  if (check) {
+    if (stale.length) { console.error(`latest.yml does not match: ${stale.join(', ')}`); process.exit(1); }
+    return console.log('latest.yml matches the files in dist');
+  }
   fs.writeFileSync(ymlFile, refreshYml(before, lookup));
   console.log(`latest.yml: ${stale.length ? `refreshed ${stale.join(', ')}` : 'already matched the files'}`);
   const { buildBlockMap } = require('app-builder-lib/out/targets/blockmap/blockmap');
@@ -55,5 +62,5 @@ async function main(dist = path.join(__dirname, '..', 'dist')) {
   }
 }
 
-if (require.main === module) main(process.argv[2]).catch((err) => { console.error(err.message); process.exit(1); });
+if (require.main === module) main(process.argv.slice(2)).catch((err) => { console.error(err.message); process.exit(1); });
 module.exports = { refreshYml, mismatches };
