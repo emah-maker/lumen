@@ -987,6 +987,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: () => openTab(closedTabs.pop()) },
         { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
+        ...mergeWindowItems(curRec),
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
         { label: t('menu.newSidebarChat'), accelerator: 'CmdOrCtrl+Shift+K', click: newSidebarChat },
@@ -2216,8 +2217,11 @@ async function refineGroups(model, wire, signal) {
 }
 
 // A short line about what just happened, with an Undo button (the tab strip shows it as a toast).
-function organizeNote(text, { undo = false } = {}) {
-  ui()?.send('tabs:organize-note', { text, undo });
+// `merge`: the note is the merge's own (its Undo wording; it keeps the merge's undo). Any other note that takes the
+// Undo button (`undo: true`) is the organize's, so an older merge can no longer be undone from it.
+function organizeNote(text, { undo = false, merge = false } = {}) {
+  if (undo && !merge) mergeUndo = null;
+  ui()?.send('tabs:organize-note', { text, undo, ttl: windowMerge.NOTE_MS, ...(merge && undo ? { undoLabel: t('merge.undo'), undoTitle: t('merge.undoTitle') } : {}) });
 }
 
 // "Organize Tabs with AI": the local organizer groups the tabs at once (one step of undo); the model then only
@@ -2484,6 +2488,7 @@ function moveWindowItems(id) {
   }
   const others = [...winRecs].filter((r) => r !== src && rcAlive(r) && !isSpare(r));
   if (others.length) items.push({ label: n > 1 ? t('menu.moveTabsToWindow', { n }) : t('menu.moveToWindow'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => { if (moveTabsBetween(src, r, ids, undefined, { active: id })) arrivedFromMenu(r, ids); } })) });
+  items.push(...mergeWindowItems(src));
   return items;
 }
 
@@ -3188,6 +3193,7 @@ function handleShortcut(event, input) {
   if (mod && input.shift && key === 'n') privateWindows.open();
   else if (mod && input.shift && key === 't') { if (closedTabs.length) openTab(closedTabs.pop()); }
   else if (mod && input.shift && key === 'a') openTabSearch();
+  else if (mod && input.shift && !input.alt && key === 'm') mergeWindows(focusedRec() || curRec); // Merge All Windows, into the focused window as the menu does (this window takes the others; the toast says why when it can't)
   else if (mod && input.shift && !input.alt && key === 'l') toggleChatPage(); // the sidebar's chat as a full page, and back
   else if (mod && key === 't') openTab();
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
@@ -3490,7 +3496,7 @@ function sessionEntry() {
 // Every normal window is saved: the first one in the session's own fields (as before, so older
 // versions still read it), the others under `more`. Private windows are never here.
 function saveSession({ excluding = null, background = false } = {}) {
-  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r));
+  const recs = [...winRecs].filter((r) => rcAlive(r) && r !== excluding && !isSpare(r) && !r.mergedAway); // (a window merged into another is closing: its tabs are saved there)
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   const next = { ...readSettings(), session: { ...first, ...(more.length ? { more } : {}) } };
@@ -3541,6 +3547,19 @@ function restoreTabsFrom(saved) {
 // ---------- macOS ----------
 // macOS needs an application menu: without one, Cmd+C/V/X/A/Z/Q don't work anywhere. Browser
 // shortcuts that handleShortcut() already handles are shown here but not registered twice.
+// "Merge All Windows" in the Window menu: on only with two or more windows that may take part, into the focused one.
+function mergeAllItem() {
+  const target = focusedRec();
+  const a = windowMerge.availability(describeWindows(), target ? target.win.id : null);
+  return { label: t(a.enabled ? 'menu.mergeAllWindows' : `menu.mergeAllWindows.${a.reason}`), accelerator: MERGE_ACCELERATOR, registerAccelerator: false, enabled: a.enabled, click: () => { const rec = focusedRec(); if (rec) mergeWindows(rec); } };
+}
+// The menu bar is built from the windows there are, so it is built again when one opens, closes or takes focus.
+let windowMenuTimer = null;
+function refreshWindowMenu() {
+  if (process.platform !== 'darwin') return;
+  clearTimeout(windowMenuTimer);
+  windowMenuTimer = setTimeout(() => { if (Menu.getApplicationMenu()) Menu.setApplicationMenu(macMenu()); }, 30);
+}
 function macMenu() {
   const shown = (accelerator) => ({ accelerator, registerAccelerator: false });
   const wc = () => activeTab()?.webContents;
@@ -3608,7 +3627,15 @@ function macMenu() {
       ],
     },
     { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
-    { role: 'windowMenu' },
+    // The standard Window menu, written out (a role's own submenu can't take an extra item); macOS adds the window list to the menu with this role.
+    { role: 'window', label: t('menu.window'), submenu: [
+      { role: 'minimize' }, { role: 'zoom' },
+      { label: t('menu.closeWindow'), click: () => BrowserWindow.getFocusedWindow()?.close() }, // (Cmd+W closes a tab: no accelerator here)
+      { type: 'separator' },
+      mergeAllItem(),
+      { type: 'separator' },
+      { role: 'front' },
+    ] },
     { role: 'help', submenu: [{ label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
 }
@@ -3679,13 +3706,12 @@ const activeIdOf = (rec) => (rec === curRec ? activeId : rec.activeId);
 // media and typed input. A pinned tab stays pinned; a tab leaves its group, and joins one in the new
 // window if it is dropped between two of its tabs. Runs in the tab's
 // current window and leaves the tab alive but held by no window.
-function releaseTab(tab) {
+function releaseTab(tab, { keepFlags = false } = {}) {
   const index = tabs.indexOf(tab);
   if (index === -1) return false;
   if (chatFullTab === tab.id) chatFullTab = null;
   tabs.splice(index, 1);
-  tab.groupId = null;
-  tab.userRemoved = true; // placed by hand: automatic grouping leaves it alone
+  Object.assign(tab, windowMerge.releaseFlags(tab, { keep: keepFlags })); // leaves its group; placed by hand (automatic grouping leaves it alone), unless a merge: the tab keeps the flag it had
   tabGroups.cleanup();
   if (tab.view) win.contentView.removeChildView(tab.view);
   if (tabs.length && activeId === tab.id) switchTab(tabs[Math.min(index, tabs.length - 1)].id);
@@ -3714,11 +3740,11 @@ function adoptTab(tab, index, show = true) {
   tab.view?.webContents.focus();
 }
 const closableTabCount = (rec) => withWindow(rec, () => tabs.filter((t) => !t.closing).length);
-function moveTabBetween(src, dst, tabId, index, { focus = true, keepSrc = false, show = true } = {}) {
+function moveTabBetween(src, dst, tabId, index, { focus = true, keepSrc = false, show = true, keepFlags = false } = {}) {
   if (!src || !dst || src === dst || !winRecs.has(src) || !winRecs.has(dst) || !rcAlive(src) || !rcAlive(dst)) return false;
   const tab = tabsOf(src).find((t) => t.id === tabId && !t.closing);
   if (!tab) return false;
-  if (!withWindow(src, () => releaseTab(tab))) return false;
+  if (!withWindow(src, () => releaseTab(tab, { keepFlags }))) return false;
   withWindow(dst, () => adoptTab(tab, index, show));
   enterWindow(dst);
   if (focus) dst.win.focus(); // a drag in progress keeps the focus where the mouse is captured
@@ -3869,6 +3895,162 @@ function moveTabToWindowId(src, tabId, windowId, index) {
   const dst = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win.id === windowId);
   return dst ? moveTabBetween(src, dst, tabId, index) : false;
 }
+// ---- merging windows: "Merge All Windows", "Merge Window Into" (the ⋯ menu and the tab menu) and their Undo.
+// browser/window-merge.js plans it (the order, pinned tabs, groups, which windows may take part); this carries it
+// out with moveTabBetween, so every page keeps running (media included) and a sleeping tab stays asleep. Private
+// windows never take part (they are not in winRecs, and their sessions stay apart by design).
+const windowMerge = require('./browser/window-merge');
+let mergeUndo = null; // { dstId, entries, at }: what the toast's Undo puts back, for as long as that toast is up (windowMerge.undoValid)
+let mergePending = false; // a merge waiting for an organize to stop
+const MERGE_ACCELERATOR = 'CmdOrCtrl+Shift+M'; // handled in handleShortcut (so it works without a menu bar); the menus only show it
+
+// Each normal window as plain data, for the planner. Tabs whose page is neither running nor asleep (restored but
+// not loaded yet) go along when they have an address (windowMerge.describeTab).
+function describeWindows() {
+  return [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).map((rec) => withWindow(rec, () => ({
+    id: rec.win.id,
+    busy: Boolean(rec.pendingRestore), // its saved tabs are still coming back
+    activeId,
+    tabs: tabs.map((t) => ({ t, kind: windowMerge.describeTab({ closing: t.closing, alive: alive(t), sleeping: t.sleeping, destroyed: Boolean(t.view?.webContents?.isDestroyed()), url: t.sleepUrl || '' }) }))
+      .filter((x) => x.kind)
+      .map(({ t, kind }) => ({ id: t.id, pinned: Boolean(t.pinned), sleeping: Boolean(t.sleeping), unloaded: kind.unloaded, groupId: t.groupId || null })),
+    groups: [...tabGroups.groups.values()].map((g) => ({ id: g.id, name: g.name, color: g.color, userNamed: g.userNamed, colorLocked: g.colorLocked, collapsed: g.collapsed })),
+  })));
+}
+const recByWindowId = (id) => [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win.id === id);
+// The normal window that has the keyboard focus; failing that (a private or chat window has it) the one focused last.
+function focusedRec() {
+  const f = BrowserWindow.getFocusedWindow();
+  return [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && r.win === f) || focusOrder.map(recByWindowId).find(Boolean) || null;
+}
+// A line in `rec`'s tab strip (the toast), if the window is still there.
+const noteIn = (rec, text, opts) => { if (rcAlive(rec) && winRecs.has(rec)) withWindow(rec, () => organizeNote(text, opts)); };
+// "Merged 3 windows · 14 tabs" (the string table has no plural rules, so the singular forms are keys of their own).
+function mergedNote(windows, count) {
+  return t(`merge.done${windows === 1 ? '.oneWindow' : ''}${count === 1 ? '.oneTab' : ''}`, { windows, tabs: count });
+}
+const mergeFailedNote = (n) => t(n === 1 ? 'merge.failed.one' : 'merge.failed', { n });
+
+// A merge asked for while an organize (or its AI refinement) is running: the organize is cancelled, and the merge
+// goes ahead once it has stopped (it keeps the groups made so far), with "Organizing…" cleared in every window.
+function mergeAfterOrganize(dst, opts) {
+  if (mergePending) return;
+  mergePending = true;
+  organizeAbort?.abort();
+  const started = Date.now();
+  const tick = () => {
+    if (organizing && Date.now() - started < 5000) { setTimeout(tick, 80); return; }
+    mergePending = false;
+    if (organizing) { noteIn(dst, t('merge.none.organizing')); return; } // it would not stop: say so rather than do nothing
+    for (const r of winRecs) if (rcAlive(r) && !isSpare(r)) r.win.webContents.send('tabs:organizing', false);
+    if (rcAlive(dst) && winRecs.has(dst)) mergeWindows(dst, opts);
+  };
+  setTimeout(tick, 0);
+}
+
+// Moves every tab of the planned source windows (default: all the other normal windows) into `dst`, then closes
+// the emptied windows. `dst` keeps its active tab, unless `activate` is 'source': the (first) source window's active
+// tab then comes forward, for "Merge Window Into" (that is the page you were looking at). Returns { windows, tabs } or null;
+// when it does nothing the toast says why (not while a tab is being dragged: that is left alone).
+function mergeWindows(dst, { sourceIds = null, activate = null } = {}) {
+  if (tabDrag) { if (rcAlive(dst)) noteIn(dst, t('merge.none.dragging')); return null; } // a drag is in progress: windows must not change under it
+  if (!rcAlive(dst) || !winRecs.has(dst) || isSpare(dst)) return null;
+  if (organizing) { mergeAfterOrganize(dst, { sourceIds, activate }); return null; }
+  const windows = describeWindows();
+  const plan = windowMerge.planMerge(windows, dst.win.id, { sourceIds });
+  if (!plan) { noteIn(dst, t(`merge.none.${windowMerge.blocker(windows, dst.win.id, sourceIds) || 'empty'}`)); return null; }
+  const entries = []; // what Undo needs, per window actually merged
+  const emptied = [];
+  let count = 0;
+  let failed = 0; // tabs that could not move
+  batchTabs(() => {
+    for (const s of plan.sources) {
+      const src = recByWindowId(s.id);
+      if (!src) continue;
+      const b = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+      const moved = new Set();
+      for (const m of s.moves) {
+        if (moveTabBetween(src, dst, m.id, m.index ?? undefined, { focus: false, keepSrc: true, show: false, keepFlags: true })) moved.add(m.id);
+        else failed++;
+      }
+      if (!moved.size) continue;
+      const groups = s.groups.map((g) => ({ ids: g.ids.filter((id) => moved.has(id)), group: g.group })).filter((g) => g.ids.length);
+      for (const g of groups) regroup(dst, g.ids, g.group); // the group again, with its name, colour and collapsed state
+      entries.push({ id: s.id, bounds: { x: b.x, y: b.y, width: b.width, height: b.height }, activeId: s.activeId, tabs: s.tabs.filter((x) => moved.has(x.id)), groups });
+      count += moved.size;
+      if (!tabsOf(src).length) emptied.push(src);
+    }
+  });
+  if (!entries.length) { noteIn(dst, failed ? mergeFailedNote(failed) : t('merge.none.empty')); return null; }
+  for (const src of emptied) src.mergedAway = true; // saveSession leaves it out while it closes
+  for (const src of emptied) if (rcAlive(src)) src.win.close();
+  // A close that did not happen (vetoed, or it failed) must not leave that window out of the saved session for good.
+  setTimeout(() => {
+    const stayed = emptied.filter((src) => rcAlive(src) && winRecs.has(src));
+    for (const src of stayed) src.mergedAway = false;
+    if (stayed.length) saveSession({ background: true });
+  }, 3000);
+  enterWindow(dst);
+  const want = activate === 'source' ? entries[0].activeId : plan.targetActiveId;
+  withWindow(dst, () => {
+    if (want != null && activeId !== want && tabs.some((x) => x.id === want && !x.closing)) switchTab(want); // (an active tab is never asleep)
+    else sendTabs();
+  });
+  if (dst.win.isMinimized()) dst.win.restore();
+  dst.win.show();
+  dst.win.focus();
+  saveSession({ background: true }); // the merged state is what a restart restores
+  const done = mergedNote(entries.length, count);
+  noteIn(dst, failed ? `${done} · ${mergeFailedNote(failed)}` : done, { undo: true, merge: true });
+  mergeUndo = { dstId: dst.win.id, entries, at: Date.now() }; // after the note, which forgets an older one
+  refreshWindowMenu();
+  return { windows: entries.length, tabs: count, failed };
+}
+
+// Undo: each merged window comes back as a window of its own, where it was, with its tabs (those still open),
+// their groups and pinned tabs, and the tab it was showing. Nothing reloads: the pages are moved again.
+// Only while the toast that offered it is up, and only from the window that showed it. Says how many came back.
+function undoMerge() {
+  const m = mergeUndo;
+  mergeUndo = null;
+  if (!m) return null;
+  const dst = recByWindowId(m.dstId);
+  if (!dst) return null;
+  if (!windowMerge.undoValid(m.at)) { noteIn(dst, t('merge.undone.late')); return null; }
+  const live = withWindow(dst, () => tabs.filter((x) => !x.closing).map((x) => x.id));
+  const plan = windowMerge.undoPlan(m.entries, live);
+  for (const w of plan) {
+    const base = w.bounds || { ...cascadedWindowPoint(dst.win), ...dst.win.getBounds() };
+    const area = screen.getDisplayMatching(base).workArea;
+    const fit = tabDragMath.fitToDisplay({ width: base.width, height: base.height }, area);
+    const at = tabDragMath.placeOnWorkArea({ x: base.x, y: base.y, width: fit.width, height: fit.height }, area);
+    const rec = createWindow({
+      size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, hidden: true, boundsFrom: dst,
+      adopt: { src: dst, tabId: w.lead, ids: w.ids, focus: false, done: (ok) => {
+        if (!ok || !rcAlive(rec)) return;
+        for (const g of w.groups) regroup(rec, g.ids, g.group);
+        revealNewWindow(rec, w.lead);
+      } },
+    });
+  }
+  noteIn(dst, plan.length ? t(plan.length === 1 ? 'merge.undone.one' : 'merge.undone', { windows: plan.length }) : t('merge.undone.none'));
+  return plan.length;
+}
+
+// "Merge All Windows" and "Merge Window Into ›" for the window `src`. With nothing to merge they stay in the menu,
+// greyed out, and say why ("only one window open", "restoring…"): a missing item looks like a missing feature.
+function mergeWindowItems(src) {
+  if (!src || !rcAlive(src)) return [];
+  const windows = describeWindows();
+  const a = windowMerge.availability(windows, src.win.id);
+  const others = a.enabled ? windowMerge.mergeIntoChoices(windows, src.win.id).map((w) => recByWindowId(w.id)).filter(Boolean) : [];
+  return [
+    { label: t(a.enabled ? 'menu.mergeAllWindows' : `menu.mergeAllWindows.${a.reason}`), accelerator: MERGE_ACCELERATOR, registerAccelerator: false, enabled: a.enabled, click: () => mergeWindows(src) },
+    others.length
+      ? { label: t('menu.mergeWindowInto'), submenu: others.map((r) => ({ label: windowLabel(r), click: () => mergeWindows(r, { sourceIds: [src.win.id], activate: 'source' }) })) }
+      : { label: t('menu.mergeWindowInto'), enabled: false },
+  ];
+}
 // ---- dragging a tab out of the strip (Chrome's behaviour, Safari's look): main.js drives the drag
 // Past the renderer's tear-off threshold a card follows the cursor: the page's snapshot under the tab's
 // icon and title, in a small click-through window. The tab itself stays where it is until the button is
@@ -3890,6 +4072,7 @@ app.on('browser-window-focus', (_e, w) => {
   const i = focusOrder.indexOf(w.id);
   if (i !== -1) focusOrder.splice(i, 1);
   focusOrder.unshift(w.id);
+  refreshWindowMenu(); // the focused window is the target of "Merge All Windows"
 });
 const frontRank = (w) => { const i = focusOrder.indexOf(w.id); return i === -1 ? focusOrder.length + w.id : i; };
 const DRAG_OVER_STRIP_OPACITY = 0; // all but gone over a strip: the slot and ghost there are what you see (Chrome hides it) // an only-tab window being dragged: see through it to the strip it is over
@@ -4608,6 +4791,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     w.once('show', taskbarDetails);
   }
   if (firstWindow) Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null);
+  else refreshWindowMenu(); // a window opened: "Merge All Windows" may now be possible
   w.webContents.on('before-input-event', (event, input) => handleShortcut(event, input));
   hardenOwnView(w.webContents, UI_URL);
   // will-navigate doesn't see loads started from the main process: if anything ever points the UI
@@ -4632,6 +4816,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
     const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
     if (next) enterWindow(next);
+    refreshWindowMenu(); // a window closed
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
   // dead window. The tabs themselves live in their own processes and are unaffected.
@@ -4697,6 +4882,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       restoreSession(restore);
     }
     rec.pendingRestore = false;
+    refreshWindowMenu(); // its tabs are back: it may take part in a merge now
     const items = agent.transcript();
     if (items.length) ui()?.send('agent:history', { items });
     uiReady = true;
@@ -5487,7 +5673,11 @@ ipcMain.on('group:rename', (_e, id, name) => {
   sendTabs();
 });
 ipcMain.on('tabs:organize', organizeTabs);
-ipcMain.on('tabs:undo-organize', undoOrganize);
+// The note's one Undo: the merge's, when this window's toast showed it; else the organize's.
+ipcMain.on('tabs:undo-organize', (event) => {
+  const rec = recOfSender(event.sender);
+  if (mergeUndo && (!rec || rec.win.id === mergeUndo.dstId)) undoMerge(); else undoOrganize();
+});
 // The toolbar button toggles the downloads panel (the ⋯ menu keeps its Downloads submenu).
 ipcMain.on('downloads:menu', (_e, anchor) => {
   // A click on the button while the panel is open first blurs (closes) it: that click means close.
