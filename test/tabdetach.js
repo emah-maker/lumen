@@ -48,6 +48,13 @@ const http = require('http');
     await new Promise((r) => (t.webContents.isLoading() ? t.webContents.once('did-finish-load', r) : r()));
     return { id: t.id, contentsId: t.webContents.id };
   }, url);
+  // The same, in a given window (new tabs open in the *current* window, and a late focus event can change that mid-test).
+  const openTabIn = (windowId, url) => app.evaluate(async ({ webContents }, [w, u]) => {
+    const t = global.__windows.open(w, u);
+    const wc = webContents.fromId(t.contentsId);
+    await new Promise((r) => (wc.isLoading() ? wc.once('did-finish-load', r) : r()));
+    return t;
+  }, [windowId, url]);
   // What the renderer sends during a drag (tab:dragstart / tab:dragend / tab:dragcancel), from that window's UI.
   const emit = (windowId, channel, ...args) => app.evaluate(({ ipcMain, BrowserWindow }, [id, ch, a]) => {
     const wc = BrowserWindow.fromId(id).webContents;
@@ -133,7 +140,8 @@ const http = require('http');
     check('it holds the same WebContents, still pinned, ungrouped; the source keeps its other tabs', w2?.tabs[0].contentsId === a.contentsId && w2.tabs[0].pinned && !w2.tabs[0].groupId && winOf(dropped, win1).tabs.some((t) => t.id === b.id), JSON.stringify(dropped));
     check('the page was not reloaded', stateOk(await keptState(a.contentsId)), JSON.stringify(await keptState(a.contentsId)));
     check('the new window opens with the tab under the release point (grab offset kept)', Boolean(await boundsAt(w2id, 1100 - 150, 600 - 15)), JSON.stringify(await winBounds(w2id)));
-    check('...at the size of the window it came from', (await winBounds(w2id)).width === srcSize.width && (await winBounds(w2id)).height === srcSize.height, JSON.stringify([await winBounds(w2id), srcSize]));
+    const w2Size = await winBounds(w2id); // (a pixel of slack: Windows rounds a window's size on a display with fractional scaling)
+    check('...at the size of the window it came from', Math.abs(w2Size.width - srcSize.width) <= 2 && Math.abs(w2Size.height - srcSize.height) <= 2, JSON.stringify([w2Size, srcSize]));
     await cursor({ x: 200, y: 200 });
     await sleep(150);
     check('and nothing follows the cursor after the release', Boolean(await boundsAt(w2id, 950, 585)), JSON.stringify(await winBounds(w2id)));
@@ -168,7 +176,8 @@ const http = require('http');
 
     // ---- over its own strip: the tab moves along it
     await emit(win1, 'tab:switch', initialId);
-    const c = await openTab(`${base}/c`);
+    const c = await openTabIn(win1, `${base}/c`);
+    await waitFor(async () => (await win1Tabs()).includes(c.id)); // (the new tab shows in its window's list a moment after it loads)
     const beforeOwn = await win1Tabs();
     check('(a second tab in the source window to reorder)', beforeOwn.length === 2 && beforeOwn[1] === c.id, JSON.stringify(beforeOwn));
     await cursor({ x: 900, y: 500 });
@@ -293,8 +302,9 @@ const http = require('http');
       const list0 = await windows();
       const home = list0.find((w) => w.windowId === win1) || list0[0];
       const away = list0.find((w) => w.windowId !== home.windowId);
-      const m1 = await openTab(`${base}/m1`);
-      const m2 = await openTab(`${base}/m2`);
+      const m1 = await openTabIn(home.windowId, `${base}/m1`);
+      const m2 = await openTabIn(home.windowId, `${base}/m2`);
+      await waitFor(async () => { const w = winOf(await windows(), home.windowId); return w?.tabs.some((t) => t.id === m1.id) && w.tabs.some((t) => t.id === m2.id); });
       const homeNow = winOf(await windows(), home.windowId);
       if (away && homeNow && homeNow.tabs.some((t) => t.id === m1.id)) {
         await app.evaluate((_e, [w, ids]) => global.__windows.setSelection(w, ids), [home.windowId, [m1.id, m2.id]]);
@@ -319,8 +329,9 @@ const http = require('http');
     {
       const list0 = await windows();
       const home = list0[0];
-      const g1 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g1`);
-      const g2 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g2`);
+      const g1 = (await openTabIn(home.windowId, `${base}/g1`)).id;
+      const g2 = (await openTabIn(home.windowId, `${base}/g2`)).id;
+      await waitFor(async () => { const w = winOf(await windows(), home.windowId); return w?.tabs.some((t) => t.id === g1) && w.tabs.some((t) => t.id === g2); });
       const w = winOf(await windows(), home.windowId);
       const inHome = w && w.tabs.some((t) => t.id === g1) && w.tabs.some((t) => t.id === g2);
       if (inHome && w.tabs.length >= 4) {

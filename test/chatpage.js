@@ -77,6 +77,7 @@ const fakeClient = (app) => app.evaluate(() => {
 
   // ---- 1. Open as full page from the sidebar
   check('the sidebar has an "Open as full page" button', await ui.evaluate(() => Boolean(document.getElementById('open-chat-page')?.getAttribute('aria-label'))), 'button');
+  await ui.click('#more-actions'); // "Open as full page" lives in the sidebar's More menu
   await ui.click('#open-chat-page');
   const chat = await waitFor(chatTab);
   const frontId = await waitFor(async () => { const id = await app.evaluate(() => global.__chatPage.activeId()); return id === chat?.id && id; });
@@ -97,7 +98,8 @@ const fakeClient = (app) => app.evaluate(() => {
   check('the page can ask main for the current chat', lonely === true, JSON.stringify(lonely));
   const parts = await inPage(`({ model: document.querySelectorAll('#model option').length, picker: Boolean(document.querySelector('.model-picker .picker-button')), meter: Boolean(document.getElementById('usage-meter')), stop: Boolean(document.getElementById('send')), attach: Boolean(document.getElementById('attachments')), auto: Boolean(document.getElementById('auto-allow')), landmarks: ['nav', 'main', 'header', '[role=log]', 'form'].map((s) => Boolean(document.querySelector(s))).join(), live: document.getElementById('messages').getAttribute('aria-live'), lang: document.documentElement.lang })`);
   check('model picker, usage bar, composer, attachments and auto-allow are all on the page', parts.model > 0 && parts.picker && parts.meter && parts.stop && parts.attach && parts.auto, JSON.stringify(parts));
-  check('landmarks (nav, main, header, log, form) and a polite live region', parts.landmarks === 'true,true,true,true,true' && parts.live === 'polite', JSON.stringify(parts));
+  const polite = await inPage("Boolean(document.querySelector('[role=status][aria-live=polite]'))"); // (the message list itself is quiet: streamed text isn't read piece by piece; a status region says a reply finished)
+  check('landmarks (nav, main, header, log, form) and a polite live region', parts.landmarks === 'true,true,true,true,true' && parts.live === 'off' && polite === true, JSON.stringify({ ...parts, polite }));
 
   const unnamed = await inPage(`[...document.querySelectorAll('button, input, select, textarea, a[href]')].filter((el) => el.offsetParent !== null || el.tagName === 'SELECT').filter((el) => !(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent.trim() || (el.labels && el.labels.length))).map((el) => el.outerHTML.slice(0, 100))`);
   check('every control on the page has a name', Array.isArray(unnamed) && unnamed.length === 0, JSON.stringify(unnamed));
@@ -237,6 +239,7 @@ const fakeClient = (app) => app.evaluate(() => {
   check('Ctrl+Shift+L opens the page', Boolean(await waitFor(chatTab)), JSON.stringify(await tabs()));
   await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'L', control: true, shift: true }));
   check('and Ctrl+Shift+L on the page goes back to the sidebar', await waitFor(async () => !(await chatTab())) && await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden'))), 'still open');
+  await ui.click('#more-actions'); // "Open as full page" lives in the sidebar's More menu
   await ui.click('#open-chat-page');
   await waitFor(chatTab);
   const oneChatTab = (await tabs()).filter((t) => t.chat).length === 1;

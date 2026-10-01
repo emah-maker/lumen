@@ -43,7 +43,7 @@ function toneWav() {
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 920));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(1440, 920));
   await ui.evaluate(() => window.assistant.setAutoGroup(false)); // one host's tabs would be grouped otherwise
 
   const open = (url, background = true) => app.evaluate(async (_e, { url, background }) => {
@@ -57,7 +57,7 @@ function toneWav() {
   const rectOf = (sel) => ui.evaluate((sel) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return r && { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height, x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, sel);
   const shot = async (name, rect = { x: 0, y: 0, width: 1440, height: 100 }) => {
     if (!shots) return;
-    const b64 = await app.evaluate(async ({ BrowserWindow }, rect) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage(rect)).toPNG().toString('base64'), rect);
+    const b64 = await app.evaluate(async ({ BrowserWindow }, rect) => (await [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents.capturePage(rect)).toPNG().toString('base64'), rect);
     fs.mkdirSync(shots, { recursive: true });
     fs.writeFileSync(path.join(shots, name), Buffer.from(b64, 'base64'));
   };

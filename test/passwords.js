@@ -67,7 +67,8 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
       await done;
     }, [id, user, pw]);
   };
-  const settingsJson = () => { try { return JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')); } catch { return {}; } };
+  // settings.json is written off the main thread: flush before reading it straight off disk.
+  const settingsJson = async () => { await app.evaluate(() => global.__settingsFlush()); try { return JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')); } catch { return {}; } };
 
   // ---- off by default ----
   const t0 = await open(`${base}/login`);
@@ -75,7 +76,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   check('off by default: no watcher in the page', (await pwWorld(t0, 'typeof window.__lumenPasswords')) === 'undefined', await pwWorld(t0, 'typeof window.__lumenPasswords'));
   await signIn(t0, 'alice@example.com', SECRET);
   await sleep(500);
-  check('off by default: a sign-in offers nothing and writes nothing', (await stateOf(t0)) === null && !fs.existsSync(vaultFile) && settingsJson().savePasswords === undefined, JSON.stringify(await stateOf(t0)));
+  check('off by default: a sign-in offers nothing and writes nothing', (await stateOf(t0)) === null && !fs.existsSync(vaultFile) && (await settingsJson()).savePasswords === undefined, JSON.stringify(await stateOf(t0)));
 
   // ---- turning it on ----
   const available = await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable());
@@ -87,7 +88,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
     server.close();
     process.exit(failures ? 1 : 0);
   }
-  check('turns on when OS encryption is available', on.enabled && settingsJson().savePasswords === true, JSON.stringify(on));
+  check('turns on when OS encryption is available', on.enabled && (await settingsJson()).savePasswords === true, JSON.stringify(on));
 
   // ---- the save offer ----
   const t1 = await open(`${base}/login`);
@@ -103,7 +104,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   await waitFor(() => fs.existsSync(vaultFile));
   const onDisk = fs.existsSync(vaultFile) ? fs.readFileSync(vaultFile) : Buffer.alloc(0);
   check('Save writes the encrypted file, with no password, username or site in plain text', onDisk.length > 0 && ![SECRET, 'alice@example.com', site].some((s) => onDisk.includes(Buffer.from(s))), onDisk.toString('utf8').slice(0, 60));
-  check('nothing about the login is in settings.json', !JSON.stringify(settingsJson()).includes('alice@example.com') && !JSON.stringify(settingsJson()).includes(SECRET), '');
+  check('nothing about the login is in settings.json', !JSON.stringify((await settingsJson())).includes('alice@example.com') && !JSON.stringify((await settingsJson())).includes(SECRET), '');
   const saved = await app.evaluate(() => global.__passwords.vault.list());
   check('the saved login is listed (site and username)', saved.length === 1 && saved[0].site === site && saved[0].username === 'alice@example.com', JSON.stringify(saved));
   check('the bar goes after Save', await waitFor(() => ui.$eval('#password-bar', (el) => el.hidden)), '');
@@ -161,7 +162,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   await signIn(t4, 'bob@example.com', 'bob-pw-123');
   await waitFor(async () => (await stateOf(t4))?.offer);
   await app.evaluate((_e, i) => { global.__agent.browser.switchTab(i); global.__passwords.act(global.__translate.tab(i), 'never'); }, t4);
-  check('Never for this site is remembered (site only) and nothing is saved', (settingsJson().passwordsNever || []).includes(site) && (await app.evaluate(() => global.__passwords.vault.count())) === 1, JSON.stringify(settingsJson().passwordsNever));
+  check('Never for this site is remembered (site only) and nothing is saved', ((await settingsJson()).passwordsNever || []).includes(site) && (await app.evaluate(() => global.__passwords.vault.count())) === 1, JSON.stringify((await settingsJson()).passwordsNever));
   const t5 = await open(`${base}/login`);
   await sleep(400);
   check('a Never site gets no watcher (but saved logins still fill)', (await pwWorld(t5, 'typeof window.__lumenPasswords')) === 'undefined' && (await stateOf(t5))?.saved === 1, JSON.stringify(await stateOf(t5)));
@@ -185,7 +186,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   // ---- turning it off ----
   await app.evaluate(() => { global.__passwordsConfirm = async ({ buttons }) => { global.__pwConfirmButtons = buttons; return 0; }; });
   const off = await app.evaluate(() => global.__passwords.setEnabled(false));
-  check('turning off asks, and Keep (the default) keeps the saved passwords', !off.enabled && off.count === 1 && fs.existsSync(vaultFile) && settingsJson().savePasswords === false, JSON.stringify(off));
+  check('turning off asks, and Keep (the default) keeps the saved passwords', !off.enabled && off.count === 1 && fs.existsSync(vaultFile) && (await settingsJson()).savePasswords === false, JSON.stringify(off));
   await app.evaluate((_e, i) => global.__agent.browser.switchTab(i), t2);
   check('off: the key button goes', await waitFor(() => ui.$eval('#passwords-btn', (b) => b.hidden)), '');
   const t6 = await open(`${base}/login`);

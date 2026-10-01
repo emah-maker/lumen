@@ -32,10 +32,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   };
   const settingsOf = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')); } catch { return {}; } };
 
+  // settings.json is written off the main thread: flush before reading it straight off disk.
+  let flushSettings = async () => {};
   async function launch(profile, { optIn = true } = {}) {
     const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile };
     if (optIn) env.LUMEN_WHATS_NEW_TEST = '1'; else delete env.LUMEN_WHATS_NEW_TEST;
     const app = await electron.launch({ args: [root], env });
+    flushSettings = () => app.evaluate(() => global.__settingsFlush()).catch(() => {});
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
     // The overlay's document, once a card is on screen (null if none comes up in `ms`).
@@ -76,6 +79,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       check(`update: the card is headed "What’s new in Lumen ${version}" and says where it updated from`, c?.message === `What’s new in Lumen ${version}` && c?.title === `Lumen was updated from 0.3.0 to ${version}`, `${c?.message} | ${c?.title}`);
       check(`update: it lists the releases since 0.3.0 (${expected.join(', ')}), newest first`, JSON.stringify(c?.versions) === JSON.stringify(expected) && c?.items > 0, JSON.stringify(c?.versions));
       check('update: a wide card with Got it, the switch (on) under the list, and a link to all notes', c?.wide && JSON.stringify(c?.buttons) === '["Got it"]' && c?.toggle === 'Show what’s new after updates' && c?.checked === true && c?.toggleVisible && /^https:\/\/github\.com\/emah-maker\/lumen\//.test(c?.link || ''), JSON.stringify(c));
+      await flushSettings();
       check('update: the new version is recorded as soon as the card shows', settingsOf(updated).lastSeenVersion === version, JSON.stringify(settingsOf(updated)));
       const hosted = await app.evaluate(({ BrowserWindow, webContents }) => {
         const view = webContents.getAllWebContents().find((w) => w.getURL().endsWith('dialog.html'));
@@ -84,6 +88,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       check('update: the card is drawn in the browser window', hosted.length === 1 && !/private/.test(hosted[0]), JSON.stringify(hosted));
       await gotIt(false);
       check('update: Got it closes the card', (await kind()) === null, await kind());
+      await flushSettings();
       check('update: switching it off on the card saves showWhatsNew: false', settingsOf(updated).showWhatsNew === false && settingsOf(updated).lastSeenVersion === version, JSON.stringify(settingsOf(updated)));
 
       // ---- Settings → Updates: the switch (now off) and the button that reopens the notes
@@ -93,14 +98,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const row = await inTab("(() => { const s = document.getElementById('pref-showWhatsNew'); return s ? { checked: s.checked, label: s.closest('.row').querySelector('.label').textContent, button: document.getElementById('whats-new-open')?.textContent } : null; })()");
       check('settings: Updates has the "Show what’s new after updates" switch, off as saved, and a Show what’s new button', row && row.checked === false && row.label === 'Show what’s new after updates' && row.button === 'Show what’s new', JSON.stringify(row));
       await inTab("document.getElementById('pref-showWhatsNew').click()");
-      await waitFor(() => settingsOf(updated).showWhatsNew === true, 4000);
+      await waitFor(async () => { await flushSettings(); return settingsOf(updated).showWhatsNew === true; }, 4000);
       check('settings: the switch saves showWhatsNew', settingsOf(updated).showWhatsNew === true, JSON.stringify(settingsOf(updated)));
       await inTab("document.getElementById('whats-new-open').click()");
       const again = await card();
       check('settings: Show what’s new opens the notes, the running version first, with no "updated from" line', again?.versions?.[0] === version && again.versions.length <= 3 && again.title === '' && again.checked === true, JSON.stringify(again));
       await gotIt();
+      await flushSettings();
       check('settings: closing it again changes nothing', settingsOf(updated).showWhatsNew === true && settingsOf(updated).lastSeenVersion === version, JSON.stringify(settingsOf(updated)));
       const setBlocked = await inTab("window.lumenSettings.set('lastSeenVersion', '0.0.1').then(() => 'set', (err) => 'refused')");
+      await flushSettings();
       check('settings: the page cannot rewrite lastSeenVersion', setBlocked === 'refused' && settingsOf(updated).lastSeenVersion === version, setBlocked);
 
       // ---- a private window: the card never goes in it

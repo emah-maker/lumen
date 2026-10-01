@@ -54,7 +54,7 @@ function toneWav() {
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 860));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(1280, 860));
 
   const open = (url, background = true) => app.evaluate(async (_e, { url, background }) => {
     const t = global.__agent.browser.openTab(url, { background });
@@ -69,7 +69,7 @@ function toneWav() {
 
   // Ctrl+Shift+A as a real key press, into the page (the usual case) or the browser UI.
   const pressSearchKey = (where = 'page') => app.evaluate(({ BrowserWindow }, where) => {
-    const wc = where === 'ui' ? BrowserWindow.getAllWindows()[0].webContents : global.__agent.browser.activeTab().webContents;
+    const wc = where === 'ui' ? [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents : global.__agent.browser.activeTab().webContents;
     wc.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: ['control', 'shift'] });
     wc.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: ['control', 'shift'] });
   }, where);

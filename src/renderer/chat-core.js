@@ -235,7 +235,7 @@ function setAssistantIdentity(group) {
   const empty = document.querySelector('#empty .empty-title');
   if (empty) empty.textContent = chatHost.emptyText ? chatHost.emptyText(who.name) : t('sidebar.empty', { name: who.name });
   const pill = $('agent-pill-text');
-  if (pill) pill.textContent = t('agent.usingTab', { name: who.name });
+  if (pill && !document.body.classList.contains('mcp-active')) pill.textContent = t('agent.usingTab', { name: who.name });
 }
 
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.

@@ -270,6 +270,8 @@ function writeSettings(settings) {
     .then(() => { if (gen === settingsGen) settingsPending = false; }); // (on disk: quitting has nothing left to write)
 }
 const writeSettingsAsync = writeSettings; // (the periodic session save)
+// Tests that read settings.json straight off disk call this first: a write is off the main thread, so the file can lag the cache.
+if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache) writeSettingsNow(settingsCache); };
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   settingsCache = { ...settings };
@@ -4807,6 +4809,8 @@ if (TEST) {
     tearOff: (srcWindowId, tabId, point, ids) => tearOffTab([...winRecs].find((r) => rcAlive(r) && r.win.id === srcWindowId), tabId, point, ids),
     group: (windowId, ids, name) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => { const g = tabGroups.create(name, ids); sendTabs(); return g.id; }),
     pin: (windowId, tabId, on) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => pinTab(tabId, on)),
+    // A new tab in that window, whichever window is current (a late focus event can move "current" under a test).
+    open: (windowId, url) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => { const t = global.__agent.browser.openTab(url); return { id: t.id, contentsId: t.webContents.id }; }),
     setSelection: (windowId, ids) => { const rec = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId); if (rec) rec.selection = ids; },
     tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => (tabMenuTemplate(tabId) || []).map((i) => ({ label: i.label, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
   };
