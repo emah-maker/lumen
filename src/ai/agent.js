@@ -2,6 +2,7 @@ const { WebContentsView } = require('electron');
 let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only error handling and aborts need the SDK's classes
 const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
+const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
@@ -1336,6 +1337,11 @@ class Agent {
     if (ccPlan) this.engines.claudecode.warm?.(ccPlan.spawn);
     // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
     if (viaGrokBuild && !this.engineRunScope) this.engines.grokbuild.prepare?.().catch?.(() => {});
+    // [mcp client] An API model's first request waits for the user's own MCP servers to start (externalToolDefs):
+    // they start now, alongside the page read, instead of after it. (Starting is shared: the turn's own call
+    // waits for the same start and reports a failure as before.)
+    const apiPick = providers.splitModel(String(messages.settings.model));
+    if (!viaClaudeCode && !viaGrokBuild && providers.canUseTools(apiPick.provider, apiPick.model)) this.browser.externalTools?.tools?.().catch?.(() => {});
     let attached;
     let page;
     try {
@@ -1424,7 +1430,9 @@ class Agent {
     if (!/^https?:/i.test(url)) return '';
     if (this.browser.aiOff?.(url)) return ''; // [ai controls]
     let page;
-    try { page = await runScript(wc, scripts.readPage(0, 0), 4000); } catch { return ''; }
+    // (Read at once even while the page still loads: Electron's own isolated-world call waited for the load,
+    // up to these 4 s, and then sent no page at all. See page-text.js.)
+    try { page = await readPageText(wc, { timeoutMs: 4000, fallback: (script, ms) => runScript(wc, script, ms) }); } catch { return ''; }
     const body = String(page?.text || '').slice(0, PAGE_CONTEXT_CHARS);
     if (!body.trim()) return '';
     const same = !fresh && this.lastPageContext?.url === url && this.lastPageContext.body === body;
@@ -2244,7 +2252,7 @@ class Agent {
       if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
       if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
       try {
-        const page = await runScript(tab.webContents, scripts.readPage(0, 0), 4000);
+        const page = await readPageText(tab.webContents, { timeoutMs: 4000, fallback: (script, ms) => runScript(tab.webContents, script, ms) }); // (not held until the tab stops loading: page-text.js)
         return { id, title: tab.webContents.getTitle() || tab.title, url: tab.webContents.getURL() || tab.url, text: String(page?.text || ''), totalChars: page?.totalTextChars };
       } catch {
         return { id, title: tab.title, url: tab.url, skipped: 'the page did not answer' };
