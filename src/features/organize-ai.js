@@ -391,7 +391,7 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
   stats.groups = count;
   stats.localMs = now() - t0;
   onPhase('local', { count });
-  const view = tabGroups.organizeView();
+  const view = tabGroups.organizeView({ explicit: true }); // an Organize click: hand-ungrouped and restored-session tabs count
   // Tabs on sites where the user turned AI off are never described to a model.
   view.groups = view.groups.map((g) => ({ ...g, entries: g.entries.filter((e) => !skipId(e.id)) })).filter((g) => g.entries.length);
   view.leftovers = view.leftovers.filter((e) => !skipId(e.id)).slice(0, maxTabs);
@@ -399,7 +399,7 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
   const finish = (reason) => {
     stats.reason = reason;
     stats.totalMs = now() - t0;
-    try { const after = tabGroups.organizeView(); stats.finalGroups = after.groups.length; stats.loose = after.leftovers.length; } catch { /* a stub without organizeView */ }
+    try { const after = tabGroups.organizeView({ explicit: true }); stats.finalGroups = after.groups.length; stats.loose = after.leftovers.length; } catch { /* a stub without organizeView */ }
     onPhase('done', stats);
     return stats;
   };

@@ -89,6 +89,8 @@ said see sign site so some than them then there these they top up us use using v
 gov gouv edu official free online app video videos watch search results result edit view log docs doc wiki org net io co uk en de fr es de
 help helps works time times visit deal deals thing things day days week weeks year years review reviews reviewed rated tips ideas
 library libraries open source powerful comprehensive community resources ecosystem platform
+// Words of everyday errands that say nothing about a topic ("near me", "buy", "8 year olds", "schedule"): a group named "Near" or "Olds" helps no one.
+near nearby me my buy buying buys bought schedule schedules old olds kid kids ideas idea vs cheap local today tonight list lists check find compare calculator calculators
 explain explained explains explaining explainer intuition intuitive basics basic beginner beginners introduction intro tutorial tutorials overview ultimate complete
 learn lesson lessons easy simple quick fast essential essentials fundamentals everything need know understanding primer walkthrough cheatsheet cheat examples example
 step steps full detailed definitive comparison compared versus faq reviewing
@@ -148,9 +150,20 @@ const PLACE_OF = new Map();
 for (const [country, cities] of Object.entries(knowledge.PLACES)) for (const city of cities.split(/\s+/)) PLACE_OF.set(stem(city), country);
 const CONCEPT_OF = new Map();
 for (const [concept, words] of Object.entries(knowledge.CONCEPTS)) for (const w of words.split(/\s+/)) CONCEPT_OF.set(stem(w), concept);
+// A site may be in several categories (arxiv.org: machine learning and research): host -> [category].
 const CATEGORY_OF_SITE = new Map();
-for (const [category, sites] of Object.entries(knowledge.SITE_CATEGORIES)) for (const site of sites.split(/\s+/)) CATEGORY_OF_SITE.set(site, category);
-const categoryOfSite = (url) => CATEGORY_OF_SITE.get(hostname(url)) || CATEGORY_OF_SITE.get(registrableDomain(url)) || '';
+for (const [category, sites] of Object.entries(knowledge.SITE_CATEGORIES)) for (const site of sites.split(/\s+/)) CATEGORY_OF_SITE.set(site, [...(CATEGORY_OF_SITE.get(site) || []), category]);
+const categoriesOfSite = (url) => {
+  const host = hostname(url);
+  const own = CATEGORY_OF_SITE.get(host) || CATEGORY_OF_SITE.get(registrableDomain(url)) || [];
+  const extra = Object.entries(knowledge.SUFFIX_CATEGORIES).filter(([, sites]) => ownedByHost(host, sites)).map(([c]) => c);
+  return extra.length ? [...new Set([...own, ...extra])] : own;
+};
+const CITY_KEYS = new Set(knowledge.CITIES.split(/\s+/).map(stem));
+// A city no country is known for (Boston): a word that says where, never what. Cities PLACES knows (Tokyo) name their country too, which is a topic.
+const isCityKey = (k) => CITY_KEYS.has(k) && !PLACE_OF.has(k);
+const isPlaceKey = (k) => CITY_KEYS.has(k) || PLACE_OF.has(k) || COUNTRY_KEYS.has(k);
+const ownedByHost = (host, list) => list.split(/\s+/).some((s) => host === s || host.endsWith(`.${s}`));
 // Site hints (knowledge.SITE_HINTS): "Canvas is school work". Each written site becomes a rule: a
 // domain (and its subdomains), a first label ("canvas.*"), or a domain plus a path prefix.
 const HINT_RULES = Object.entries(knowledge.SITE_HINTS).flatMap(([hint, sites]) => sites.split(/\s+/).filter(Boolean).map((site) => {
@@ -392,7 +405,8 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
   const repo = repoOf(url);
   // "acme/billing-api" in a title: the owner is not a topic (two repos of one owner are two topics).
   if (repo) shownTitle = String(shownTitle).split(/\s+/).map((w) => (w.toLowerCase().startsWith(`${repo.owner}/`) ? w.slice(repo.owner.length + 1) : w)).join(' ');
-  const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(shownTitle, url);
+  // An address in a title ("Inbox - mah.e@northeastern.edu - Outlook") names a mailbox, not a topic: its domain must not link the page to a university's.
+  const cleanTitle = isTransientTitle(title) ? '' : stripSiteSegment(shownTitle, url).replace(/\S+@\S+\.\S+/g, ' ');
   const titleTokens = tokens(cleanTitle);
   // Words written with a capital ("Москве", "iPhone in Boston"): names of places and things. `proper` ones are capitalised in
   // the middle of a sentence-case title, where only a name is. A Title Case title capitalises everything, so says nothing.
@@ -406,6 +420,8 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
     if (written[0] && /^\p{Lu}/u.test(written[0])) for (const t of tokens(written[0])) words.capital.add(t.key);
   }
   add(titleTokens, 1, { naming: true, vector: true });
+  // A university's or agency's own name in the title of its own page ("Northeastern Library") is that site's name, not a topic another page can share.
+  if (INSTITUTION.test(domain)) for (const { key } of tokens(label)) { const e = words.get(key); if (e && e.weight > 0.5) e.weight = 0.5; }
   // The words of the title's first segment ("Weather in Moscow 3 - Forecastly": the part before the separator): where a topic sits, as against a site's
   // nav label or tagline, which trail. See vectorize's `exempt`.
   words.lead = new Set(tokens(cleanTitle.split(/\s+[-|–—·:]\s+/)[0]).map((t) => t.key));
@@ -432,8 +448,14 @@ function tabWords({ title = '', url = '', text = '', hint = '' }) {
     const concept = CONCEPT_OF.get(key);
     if (concept && !words.has(`%${concept}`)) words.set(`%${concept}`, { weight: CONCEPT_WEIGHT, surface: concept });
   }
-  const category = categoryOfSite(url);
-  if (category && !words.has(`%${category}`)) words.set(`%${category}`, { weight: CONCEPT_WEIGHT, surface: category });
+  for (const category of categoriesOfSite(url)) if (!words.has(`%${category}`)) words.set(`%${category}`, { weight: CONCEPT_WEIGHT, surface: category });
+  // Airport codes, theme parks and landmarks name their city, and so do a few hosts.
+  const placed = new Set();
+  for (const [re, city] of knowledge.PLACE_ALIASES) if (re.test(`${cleanTitle} ${q}`)) placed.add(city);
+  const host = hostname(url);
+  for (const [site, city] of knowledge.SITE_PLACES) if (host === site || host.endsWith(`.${site}`)) placed.add(city);
+  for (const city of placed) if (!words.has(stem(city))) words.set(stem(city), { weight: 0.9, surface: city.charAt(0).toUpperCase() + city.slice(1) });
+  words.retail = ownedByHost(host.replace(/^www\./, ''), knowledge.RETAIL_HOSTS);
   words.brand = label && label.length >= 4 && !BRAND_WORDS.has(label) && !SEARCH_DOMAINS.has(domain) ? label : '';
   if (titleTokens.length <= 2) for (const g of charTrigrams(cleanTitle)) if (!words.has(g)) words.set(g, { weight: 0.4, surface: g });
   words.bigrams = bigrams;
@@ -449,7 +471,7 @@ function vectorize(entries, { allowCommon = false } = {}) {
   // repo called next.js): then the site's tabs get that word at full strength, so the docs join.
   for (const d of docs) {
     const b = d.words.brand;
-    if (!b || INSTITUTION.test(d.site)) continue; // a university or agency's name is not a topic another page can be about
+    if (!b || INSTITUTION.test(d.site) || ownedByHost(hostname(d.url), knowledge.SSO_HOSTS)) continue; // a university or agency's name, or a mail host's (outlook.office.com: "office"), is not a topic another page can be about
     for (const variant of new Set([b, b.replace(/(js|hq|io|py|css|ui|dev|lang|cli)$/, '')])) {
       if (variant.length < 3) continue;
       const key = stem(variant);
@@ -554,6 +576,8 @@ function anchorLink(A, B, df, n, ca = strongCounts(A), cb = strongCounts(B)) {
   for (const [k, a] of ca) {
     const b = cb.get(k);
     if (!b || (n >= 8 && df.get(k) / n > ANCHOR_MAX_DF && !A[0].exempt.has(k))) continue;
+    // A city is one topic's anchor only for tabs that are about travel or housing (a bus to Boston and a Boston flat are not the ramen in Boston).
+    if (isCityKey(k) && !['travel', 'housing'].some((c) => A.filter((d) => d.words.has(`%${c}`)).length * 2 > A.length && B.filter((d) => d.words.has(`%${c}`)).length * 2 > B.length)) continue;
     // A lone tab that names a product or brand and only shares a place with the group ("Купить iPhone в Москве" among
     // Moscow weather and news) is not of that topic: same rule as cosine()'s.
     const lone = A.length === 1 ? A[0] : B.length === 1 ? B[0] : null;
@@ -581,12 +605,22 @@ function cosine(a, b) {
   let sharedReal = 0; // shared dimensions NOT already discounted as same-site template noise
   let soleKey = null;
   let trigrams = 0;
+  let cities = 0; // shared city words, and whether anything beside places and the like is shared (see below)
+  let beyondPlaces = false;
   for (const [k, v] of a.vec) if (b.vec.has(k)) {
     const templated = sameSite && a.template?.has(k);
     dot += v * b.vec.get(k) * (templated ? SITE_TEMPLATE_PENALTY : 1);
     if (!templated && k[0] !== '^') { sharedReal++; soleKey = k; } // a shared site name never counts as a second word
     if (k[0] === '#') trigrams++;
+    else if (!templated && k[0] !== '^') {
+      if (k === '%travel' || k === '%housing' || (k[0] !== '%' && !isPlaceKey(k))) beyondPlaces = true;
+      else if (k[0] !== '%' && isCityKey(k)) cities++;
+      else if (k[0] !== '%' && !(a.title !== undefined && b.title !== undefined)) beyondPlaces = true; // a country shared by a group's pooled words (Japan) is a topic; a city with no country (Boston) is not
+    }
   }
+  // Two pages that share a city and nothing else ("Best ramen in Boston", "Boston rent prices", "Boston to NYC bus tickets") are not one topic:
+  // a city only counts beside a travel or housing word. A group's pooled words (a centroid) count a shared country too, so a Tokyo weather page can still join a Japan trip.
+  if (cities && !beyondPlaces) return 0;
   // Three letter fragments alone ("documentation" / "compilation") are a coincidence unless there are many.
   if (trigrams === sharedReal && trigrams < 5) return 0;
   // Two otherwise-unrelated tabs whose only REAL overlap is one word: trust it only if that word
@@ -597,6 +631,9 @@ function cosine(a, b) {
   // A place both titles mention and nothing else, where one title also names a product or brand ("Погода в Москве" /
   // "Купить iPhone в Москве"): a shared city doesn't make them one topic. Words only one tab has can't link, but they
   // still show what else the tab is about.
+  // A shop's page and another site's page that share one word ("Target: Back to school", "School district calendar"): the shop is for
+  // buying, not for what the word is about.
+  if (sharedReal <= 1 && Boolean(a.words?.retail) !== Boolean(b.words?.retail) && CONCEPT_OF.get(soleKey) !== 'shopping') return 0;
   if (sharedReal === 1 && (a.words?.mixed || b.words?.mixed) && a.words?.capital?.has(soleKey) && b.words?.capital?.has(soleKey) && (a.words.proper.has(soleKey) || b.words.proper.has(soleKey))) return (dot / (a.norm * b.norm)) / (1 + NAME_ONLY_PENALTY * (ownWords(a) + ownWords(b)));
   return dot / (a.norm * b.norm);
 }
@@ -623,6 +660,7 @@ function centroidOf(docs) {
   for (const d of docs) for (const [k, { weight }] of d.words || []) if (vec.has(k) && weight > (words.get(k)?.weight ?? 0)) words.set(k, { weight });
   // A name all over the group (every member that has the word writes it capitalised), and what else its members say, for cosine()'s name-only rule.
   words.mixed = docs.some((d) => d.words?.mixed);
+  words.retail = docs.filter((d) => d.words?.retail).length * 2 > docs.length;
   words.capital = new Set([...vec.keys()].filter((k) => docs.every((d) => !d.vec.has(k) || d.words?.capital?.has(k))));
   words.proper = new Set([...words.capital].filter((k) => docs.some((d) => d.words?.proper?.has(k))));
   return { vec, norm: Math.hypot(...vec.values()), words, own: docs.reduce((n, d) => n + ownWords(d), 0) / docs.length };
@@ -777,6 +815,8 @@ function siteJoin(clusters, docs) {
   // repos' shared description words, are the site's style, not a topic the two tabs share.
   for (const list of bySite.values()) {
     if (list.length < 2) continue;
+    // A workspace's pages on one SaaS domain (acme.atlassian.net: a Jira board, a Confluence page) are one group whatever their titles say.
+    if (knowledge.SAAS_DOMAINS[docs[list[0]].siteKey]) { fresh.push(list); list.forEach((i) => taken.add(i)); continue; }
     const parts = list.map((i) => [i]);
     for (;;) {
       let best = null;
@@ -834,7 +874,7 @@ function conceptGroups(clusters, docs) {
   const concepts = new Map(); // ... and the concept itself
   // How many of a tab's own words (and, if asked, its site's category) say the concept: a site's name alone is not strong evidence.
   const hitsOf = (i, concept, site = true) => {
-    let n = site && categoryOfSite(docs[i].url) === concept ? 1 : 0;
+    let n = site && categoriesOfSite(docs[i].url).includes(concept) ? 1 : 0;
     for (const [k, v] of docs[i].words) if (v.weight >= 0.7 && CONCEPT_OF.get(k) === concept) n++;
     return n;
   };
@@ -864,7 +904,7 @@ function conceptGroups(clusters, docs) {
   for (const [concept, label] of Object.entries(knowledge.CONCEPT_GROUPS)) {
     const key = `%${concept}`;
     const has = (i) => docs[i].words.has(key);
-    const mostly = (c) => c.filter(has).length * 2 > c.length && !ofRepo(c) && !(c.length === 1 && repoOf(docs[c[0]].url)); // a lone repo page stays with the repos
+    const mostly = (c) => c.filter(has).length * 2 > c.length && !ofRepo(c) && !(c.length === 1 && repoOf(docs[c[0]].url) && !(has(c[0]) && !(knowledge.CONCEPT_LOOSE_ONLY || {})[concept])); // a lone repo page stays with the repos, unless its name says a narrow topic (nanoGPT: machine learning)
     // A broad concept (programming, travel) only draws loose tabs together: a group that already formed on its words stays as it is.
     const looseMin = (knowledge.CONCEPT_LOOSE_ONLY || {})[concept]; // ...and needs this many of them
     const looseOnly = looseMin > 0;
@@ -873,7 +913,7 @@ function conceptGroups(clusters, docs) {
     // site's own group, categoryOf's).
     const joinMax = looseOnly ? 3 : small ? Infinity : big ? MAX_GROUP - big.length : CONCEPT_SMALL;
     let parts = out.filter((c) => c !== big && c.length <= joinMax && mostly(c));
-    if (looseOnly) {
+    if (looseOnly && !(knowledge.CONCEPT_SAME_SITE_OK || {})[concept]) {
       const perSite = new Map();
       for (const c of parts) for (const i of c) perSite.set(docs[i].siteKey, (perSite.get(docs[i].siteKey) || 0) + 1);
       parts = parts.filter((c) => c.every((i) => perSite.get(docs[i].siteKey) < 2));
@@ -907,7 +947,10 @@ function conceptGroups(clusters, docs) {
     // A member that carries the concept where the group mostly doesn't, and is not close to the rest of it.
     for (const c of [...out]) {
       if (c === home || c.length < 3 || mostly(c) || ofRepo(c)) continue;
+      // ...unless it also carries the concept its own group is about (an arXiv paper is research, but among machine learning tabs it is machine learning).
+      const own = groupConcepts.filter((k) => k !== concept && c.filter((j) => docs[j].words.has(`%${k}`)).length * 2 > c.length);
       for (const i of c.filter(has)) {
+        if (own.some((k) => docs[i].words.has(`%${k}`))) continue;
         const rest = c.filter((j) => j !== i).map((j) => docs[j]);
         if (cosine(docs[i], centroidOf(rest)) >= CONCEPT_PULL_MAX_COS) continue;
         c.splice(c.indexOf(i), 1);
@@ -939,10 +982,17 @@ function categoryOf({ url, title }) {
 // Two tabs make a group only when they share something: a word or concept both carry (not a letter-triple, nor a site's name), a site
 // hint, or a category. Whatever stage paired them ("Houseplant care tips" and "Resume template" on a stray word fragment), the pair
 // of two unrelated tabs stays loose.
+// Words that link tabs but never name a group ("Tickets" for a bus, a train and a flat: the group is Travel).
+const NAME_GENERIC = new Set(['ticket', 'price', 'cost', 'quote'].map(stem));
+const GENERIC_PAIR_STEMS = new Set(['price', 'cost', 'plan', 'tool', 'service', 'info', 'data', 'report', 'center', 'team', 'rate', 'tip', 'review', 'rental', 'rent'].map(stem).concat('%shopping'));
 function pairShares(c, docs, drawn) {
   if (drawn) return true;
   const [a, b] = c.map((i) => docs[i]);
-  for (const k of a.vec.keys()) if (k[0] !== '#' && k[0] !== '^' && b.vec.has(k)) return true;
+  if (a.siteKey && a.siteKey === b.siteKey && knowledge.SAAS_DOMAINS[a.siteKey]) return true; // two pages of one SaaS workspace
+  // ...a stem that says something: not a generic one ("price", "plan"), and a city only beside a travel or housing word.
+  const shared = [...a.vec.keys()].filter((k) => k[0] !== '#' && k[0] !== '^' && b.vec.has(k));
+  const trip = shared.some((k) => k === '%travel' || k === '%housing');
+  if (shared.some((k) => !GENERIC_PAIR_STEMS.has(k) && (trip || !isCityKey(k))) && !(shared.every((k) => GENERIC_PAIR_STEMS.has(k) || isCityKey(k)) && !trip)) return true;
   if (a.siteHint && a.siteHint === b.siteHint && !knowledge.BROAD_HINTS.has(a.siteHint)) return true;
   const ca = categoryOf(a);
   return Boolean(ca && ca === categoryOf(b));
@@ -1092,7 +1142,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     // Single-word candidates: the strongest word most members actually share.
     const score = new Map();
     for (const d of members) for (const [k, v] of d.vec) if (isReal(k)) score.set(k, (score.get(k) || 0) + v);
-    const ranked = [...score].filter(([k]) => members.filter((d) => d.vec.has(k)).length >= majority).sort((a, b) => b[1] - a[1]);
+    const ranked = [...score].filter(([k]) => !NAME_GENERIC.has(k) && members.filter((d) => d.vec.has(k)).length >= majority).sort((a, b) => b[1] - a[1]);
     const surface = (k) => members.find((d) => d.words.has(k)).words.get(k).surface;
     // A Russian word is written in whatever case the title needs ("в Москве", "Москвы"): the group is named for the
     // dictionary form among those its tabs use (no ending, then -а/-я), else the form most of them use.
@@ -1739,15 +1789,18 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
 
   // The topic groups "Organize" made (automatic ones the user hasn't named) with their tabs, and the tabs
   // still loose: what a model is asked to refine. Read only.
-  function organizeView() {
-    const isCandidate = (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
+  // explicit: for an Organize the user asked for (organize-ai.js): the marks that only stop AUTOMATIC grouping
+  // (userRemoved on every tab of a restored session, a hand-ungroup, a hand-drag) hide nothing, as in organizeByTopic.
+  // organizeByTopic rolls back when it grouped nothing, which puts those marks back: the model must still see the tabs.
+  function organizeView({ explicit = false } = {}) {
+    const isCandidate = explicit ? organizable : (t) => !pinned(t) && !t.userRemoved && !t.userMoved && !t.userPlaced && isWeb(urlOf(t));
     const list = [];
     for (const g of groups.values()) {
       if (!g.auto || g.userNamed || g.domain) continue;
       const entries = members(g.id).filter(isCandidate).map(entry);
       if (entries.length) list.push({ id: g.id, name: g.name, cohesion: g.cohesion, entries });
     }
-    return { groups: list, leftovers: loose().map(entry) };
+    return { groups: list, leftovers: (explicit ? getTabs().filter((t) => !t.groupId && organizable(t)) : loose()).map(entry) };
   }
 
   // Phase two of "Organize with AI" (see features/organize-ai.js planApply): rename groups in place, put
@@ -1756,13 +1809,13 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
   // nothing at all once that step was undone or another one was made.
   // fresh: there was no local organize step to belong to (nothing grouped locally): it starts one step of
   // undo of its own, and drops it again when nothing was grouped.
-  function applyRefinement({ renames = [], places = [], groups: created = [], merges = [] } = {}, { seq = null, fresh = false } = {}) {
+  function applyRefinement({ renames = [], places = [], groups: created = [], merges = [] } = {}, { seq = null, fresh = false, explicit = false } = {}) {
     const out = { renamed: 0, placed: 0, created: 0, merged: 0 };
     if (fresh) {
       const prev = { undoState, autoUndo, undoSeq };
       const before = new Set(groups.keys());
-      saveUndo();
-      const res = applyRefinement({ renames, places, groups: created, merges }, { seq: undoState.seq });
+      saveUndo(); // keeps the marks (userRemoved ...) as they are: Undo brings them back
+      const res = applyRefinement({ renames, places, groups: created, merges }, { seq: undoState.seq, explicit: true });
       if (!res.created && !res.renamed && !res.placed && !res.merged) { ({ undoState, autoUndo, undoSeq } = prev); return res; }
       spreadColors(new Set([...groups.keys()].filter((id) => !before.has(id))));
       return res;
@@ -1784,16 +1837,21 @@ function createTabGroups({ getTabs, setTabs, urlOf, titleOf, textOf, isWeb, mode
       g.name = uniqueName(clean, id).slice(0, 40);
       out.renamed++;
     }
+    // An explicit run takes any organizable loose tab and clears the marks of the ones it groups.
+    const takes = (t) => t && !t.groupId && (explicit ? organizable(t) : movable(t));
+    const claim = (t) => { if (explicit) { t.userRemoved = false; t.userMoved = false; t.userPlaced = false; } };
     for (const { tab: tabId, group } of places) {
       const tab = tabById(tabId);
-      if (!tab || tab.groupId || !movable(tab) || !groups.get(group)) continue;
+      if (!takes(tab) || !groups.get(group)) continue;
+      claim(tab);
       tab.groupId = group;
       tab.autoKey = keyOf(tab);
       out.placed++;
     }
     for (const { name, ids } of created) {
-      const free = ids.filter((id) => { const t = tabById(id); return t && !t.groupId && movable(t); });
+      const free = ids.filter((id) => takes(tabById(id)));
       if (free.length < 2) continue;
+      free.forEach((id) => claim(tabById(id)));
       create(uniqueName(cleanGroupName(name)), free, { auto: true });
       out.created++;
     }

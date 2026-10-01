@@ -344,4 +344,101 @@ function organized(specs) {
 
 }
 
+// ---- Round 7 rater's defects (Organize Tabs): local grouping ----
+
+// Defect 1 (local half): an explicit Organize groups tabs marked userRemoved (restored session, hand-ungrouped); Undo brings the marks back.
+{
+  const w = window_(RECIPES.map(([a, b]) => [a, b]));
+  w.g.organizeByTopic();
+  for (const t of w.tabs().slice()) w.g.remove(t.id, { byUser: true }); // the user ungroups every tab by hand
+  check('hand-ungrouped tabs are all marked userRemoved', w.tabs().every((t) => t.userRemoved === true && !gid(t)));
+  check('an explicit local Organize groups the hand-ungrouped tabs again', w.g.organizeByTopic() >= 1 && w.tabs().every((t) => gid(t) && gid(t) === gid(w.tabs()[0])));
+  check('...and clears their marks; Undo puts them back', w.tabs().every((t) => t.userRemoved === false) && w.g.undoOrganize() && w.tabs().every((t) => t.userRemoved === true && !gid(t)));
+  // ...while the automatic pass keeps respecting the marks.
+  check('automatic grouping of loose tabs still skips userRemoved tabs', w.g.organizeLoose() === 0 && w.tabs().every((t) => !gid(t)));
+}
+// ...and organizeView({ explicit }) shows them to a model, though the plain view (what automatic grouping may touch) does not.
+{
+  const w = window_([...RECIPES, ...TRIP].map(([a, b]) => [a, b, { userRemoved: true }]));
+  check('the plain organizeView hides userRemoved tabs', w.g.organizeView().leftovers.length === 0);
+  check('the explicit organizeView lists every organizable tab', w.g.organizeView({ explicit: true }).leftovers.length === 5);
+  const pinned = window_([['Pinned page', 'https://p.example/1', { pinned: true, userRemoved: true }], ['Other', 'https://q.example/2', { userRemoved: true }]]);
+  check('...never pinned ones', pinned.g.organizeView({ explicit: true }).leftovers.length === 1);
+  // applyRefinement({ fresh }) clears the marks of the tabs it groups and Undo restores them; tabs it leaves loose keep theirs.
+  const ids = w.tabs().map((t) => t.id);
+  const res = w.g.applyRefinement({ groups: [{ name: 'Baking', ids: ids.slice(0, 3) }] }, { fresh: true });
+  check('applyRefinement fresh groups userRemoved tabs', res.created === 1 && ids.slice(0, 3).every((id) => gid(at(w, id)) && at(w, id).userRemoved === false), JSON.stringify(res));
+  check('...tabs it did not take keep their marks', ids.slice(3).every((id) => at(w, id).userRemoved === true && !gid(at(w, id))));
+  check('...and one Undo removes the group and restores the marks', w.g.undoOrganize() && ids.every((id) => at(w, id).userRemoved === true && !gid(at(w, id))));
+  const plain = window_(RECIPES.map(([a, b]) => [a, b, { userRemoved: true }]));
+  const none = plain.g.applyRefinement({ groups: [{ name: 'Baking', ids: [1, 2] }] }, { seq: 1 });
+  check('a non-fresh refinement still respects the marks', none.created === 0 && plain.tabs().every((t) => !gid(t)));
+}
+
+// Defect 2: generic words never make or name a group.
+{
+  const near = organized([['Dentist near me', 'https://a.example/1'], ['Flu shot near me', 'https://b.example/2']]);
+  check('two "near me" tabs are no "Near" group', !near.same(0, 1) && near.name(0) === '', near.name(0));
+  const olds = organized([['Birthday party ideas for 8 year olds', 'https://a.example/1'], ['Fever in kids: when to call a doctor', 'https://b.example/2'], ['Old Navy kids jeans', 'https://c.example/3']]);
+  check('"kids", "old", "olds" do not group tabs or name a group', [0, 1, 2].every((i) => olds.name(i) === ''), [0, 1, 2].map(olds.name).join());
+  const buy = organized([['Rent vs buy calculator', 'https://a.example/1'], ['Used piano buying guide', 'https://b.example/2']]);
+  check('"buy" / "buying" link nothing', !buy.same(0, 1), buy.name(0));
+  const sched = organized([['Office hours schedule', 'https://a.example/1'], ['Little League schedule', 'https://b.example/2']]);
+  check('"schedule" links nothing', !sched.same(0, 1), sched.name(0));
+  const generic = organized([['Weekend plan with friends', 'https://a.example/1'], ['Marathon plan spreadsheet', 'https://b.example/2']]);
+  check('two tabs that share only a generic stem ("plan") are no group', !generic.same(0, 1), generic.name(0));
+  const real = organized([['Sourdough starter guide', 'https://a.example/1'], ['Feeding a sourdough starter', 'https://b.example/2']]);
+  check('a pair that shares a real stem is still a group', real.same(0, 1) && /sourdough|starter/i.test(real.name(0)), real.name(0));
+}
+
+// Defect 3: a shared host or a single word must not outweigh topic.
+{
+  const mail = organized([['Inbox - mah.e@northeastern.edu - Outlook', 'https://outlook.office.com/mail/'], ['Calendar - Outlook', 'https://outlook.office.com/calendar/'], ['Northeastern Library', 'https://library.northeastern.edu/'],
+    ['Office hours schedule', 'https://khoury.northeastern.edu/oh'], ['Husky Card balance', 'https://myhuskycard.northeastern.edu/']]);
+  check('Northeastern Library is not in the Outlook group', !mail.same(0, 2) && !mail.same(1, 2), mail.name(0));
+  check('...Outlook inbox and calendar are still a group, the university pages another', mail.same(0, 1) && mail.same(2, 4), `${mail.name(0)} / ${mail.name(2)}`);
+  check('...and the address in a title is not a word the university page shares', !mail.same(0, 3), mail.name(0));
+  const shop = organized([['School district calendar 2026-27', 'https://www.example-isd.org/calendar'], ['ParentSquare', 'https://www.parentsquare.com/'], ['Target: Back to school', 'https://www.target.com/c/back-to-school'],
+    ['Home Depot - Paint colors', 'https://www.homedepot.com/b/Paint'], ['Amazon.com: toddler shoes', 'https://www.amazon.com/s?k=toddler+shoes'], ['Old Navy kids jeans', 'https://oldnavy.gap.com/browse/category.do?cid=1']]);
+  check('"Target: Back to school" is not filed with the school district page', !shop.same(2, 0), shop.name(2));
+  check('...Target is a shop: it goes with the shopping tabs', shop.same(2, 3) && shop.same(2, 4) && /shop/i.test(shop.name(2)), shop.name(2));
+}
+
+// Defect 4: work, observability and research tools; SaaS workspaces; an Orlando trip by airport code and theme park.
+{
+  const work = organized([['Jira - Sprint 42 board', 'https://acme.atlassian.net/jira/software/projects/ENG/boards/1'], ['Linear - My issues', 'https://linear.app/acme/my-issues'], ['Asana - Home', 'https://app.asana.com/0/home'], ['Notion - Team wiki', 'https://www.notion.so/team'],
+    ['Mechanical keyboard switches guide', 'https://www.reddit.com/r/MechanicalKeyboards/1'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('Jira, Linear, Asana and Notion are one Work tools group', [1, 2, 3].every((i) => work.same(0, i)) && work.name(0) === 'Work tools' && !work.same(0, 4), work.name(0));
+  const obs = organized([['Datadog - Dashboards', 'https://app.datadoghq.com/dashboard/lists'], ['PagerDuty - Incidents', 'https://acme.pagerduty.com/incidents'], ['Sentry Issues', 'https://sentry.io/organizations/acme/issues/'], ['Grafana', 'https://grafana.com/'], ['New Relic', 'https://one.newrelic.com/'],
+    ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('Datadog, PagerDuty, Sentry, Grafana and New Relic are one Observability group', [1, 2, 3, 4].every((i) => obs.same(0, i)) && obs.name(0) === 'Observability' && !obs.same(0, 5), obs.name(0));
+  const res = organized([['Overleaf, Online LaTeX Editor', 'https://www.overleaf.com/project/1'], ['Zotero | Your personal research assistant', 'https://www.zotero.org/'], ['Google Scholar', 'https://scholar.google.com/'], ['Semantic Scholar', 'https://www.semanticscholar.org/'], ['Mendeley Reference Manager', 'https://www.mendeley.com/reference-manager'],
+    ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('Overleaf, Zotero, Scholar, Semantic Scholar and Mendeley are one Research group', [1, 2, 3, 4].every((i) => res.same(0, i)) && res.name(0) === 'Research' && !res.same(0, 5), res.name(0));
+  const ml = organized([['Attention Is All You Need - arXiv', 'https://arxiv.org/abs/1706.03762'], ['BERT: Pre-training of Deep Bidirectional Transformers', 'https://arxiv.org/abs/1810.04805'], ['PyTorch documentation', 'https://pytorch.org/docs/stable/index.html'], ['Hugging Face - Models', 'https://huggingface.co/models'],
+    ['Overleaf, Online LaTeX Editor', 'https://www.overleaf.com/project/1'], ['Zotero | Your personal research assistant', 'https://www.zotero.org/'], ['Google Scholar', 'https://scholar.google.com/']]);
+  check('arXiv papers among machine learning tabs stay Machine learning; the research tools are their own group', [1, 2, 3].every((i) => ml.same(0, i)) && ml.name(0) === 'Machine learning' && [5, 6].every((i) => ml.same(4, i)) && !ml.same(0, 4), `${ml.name(0)} / ${ml.name(4)}`);
+  const saas = organized([['Acme release notes', 'https://acme.atlassian.net/wiki/spaces/ENG/pages/1'], ['Standup board', 'https://acme.atlassian.net/jira/software/projects/ENG/boards/1'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara'], ['Sonnet review', 'https://alpha.example/s']]);
+  check('two pages of one SaaS workspace (acme.atlassian.net) are a group though their titles share nothing', saas.same(0, 1) && !saas.same(0, 2), saas.name(0));
+  const orl = organized([['Disney World ticket prices', 'https://disneyworld.disney.go.com/admission/tickets/'], ['Orlando hotels', 'https://www.booking.com/city/us/orlando.html'], ['Universal Orlando Resort', 'https://www.universalorlando.com/'], ['Flights to MCO', 'https://www.google.com/travel/flights'],
+    ['Chicken tikka masala recipe', 'https://www.seriouseats.com/tikka'], ['Sonnet review', 'https://alpha.example/s']]);
+  check('Disney World tickets and Flights to MCO join the Orlando trip', [1, 2, 3].every((i) => orl.same(0, i)) && !orl.same(0, 4), orl.name(0));
+}
+
+// Defect 7: naming and merging.
+{
+  const ml = organized([['CUDA out of memory - Stack Overflow', 'https://stackoverflow.com/questions/54374935'], ['GitHub - karpathy/nanoGPT', 'https://github.com/karpathy/nanoGPT'], ['PyTorch documentation', 'https://pytorch.org/docs/stable/index.html'], ['Hugging Face - Models', 'https://huggingface.co/models'],
+    ['torch.nn.Linear - PyTorch', 'https://pytorch.org/docs/stable/generated/torch.nn.Linear.html'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('CUDA out of memory and nanoGPT go to Machine learning, not Dev docs', [1, 2, 3, 4].every((i) => ml.same(0, i)) && ml.name(0) === 'Machine learning' && !ml.same(0, 5), ml.name(0));
+  const boston = organized([['Boston to NYC bus tickets', 'https://www.flixbus.com/bus/boston'], ['Best ramen in Boston - Yelp', 'https://www.yelp.com/search?find_desc=ramen&find_loc=Boston'], ['Boston rent prices by neighborhood', 'https://www.rentcafe.com/boston'], ['Boston weather this week', 'https://weather.com/boston']]);
+  check('a city word alone (Boston) makes no group', [0, 1, 2, 3].every((i) => boston.name(i) === ''), [0, 1, 2, 3].map(boston.name).join());
+  const trip = organized([['Boston to NYC bus tickets', 'https://www.flixbus.com/bus/boston'], ['Amtrak Northeast Regional schedule', 'https://www.amtrak.com/tickets'], ['Airbnb - Brooklyn stays', 'https://www.airbnb.com/s/Brooklyn']]);
+  check('...but travel tabs of the same city still group', trip.same(0, 1) && trip.same(0, 2) && trip.name(0) === 'Travel', trip.name(0));
+  const homes = organized([['Boston rent prices by neighborhood', 'https://www.rentcafe.com/boston'], ['Apartments in Boston - Zillow', 'https://www.zillow.com/boston-ma/rentals/']]);
+  check('...and housing tabs of the same city still group', homes.same(0, 1), homes.name(0));
+  const aws = organized([['AWS Management Console', 'https://us-east-1.console.aws.amazon.com/console/home'], ['EC2 Instances', 'https://us-east-1.console.aws.amazon.com/ec2/home'], ['CloudWatch Logs', 'https://us-east-1.console.aws.amazon.com/cloudwatch/home'],
+    ['Terraform Registry - aws_s3_bucket', 'https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket'], ['Kubernetes Documentation', 'https://kubernetes.io/docs/home/'], ['Pasta carbonara', 'https://www.seriouseats.com/carbonara']]);
+  check('AWS, EC2, CloudWatch and Terraform are one Cloud & DevOps group', [1, 2, 3, 4].every((i) => aws.same(0, i)) && aws.name(0) === 'Cloud & DevOps' && !aws.same(0, 5), [0, 1, 2, 3, 4].map(aws.name).join());
+}
+
 process.exit(failed ? 1 : 0);

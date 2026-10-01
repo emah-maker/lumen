@@ -2208,7 +2208,7 @@ async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_
     // The whole answer has `timeoutMs` (organize-ai's wait, minus a little): a fast model first (Claude Code: Haiku)
     // gets most of it, and the chat's own model is tried only with what is left, never after a timeout.
     const deadline = Date.now() + Math.max(5000, timeoutMs - 2000);
-    const ask = (m, ms) => cliJson.completeJSON({ engine, bin, model: m, system: organizeAi.REFINE_PROMPT, user, schema: organizeAi.REFINE_SCHEMA, userData: app.getPath('userData'), timeoutMs: ms });
+    const ask = (m, ms) => cliJson.completeJSON({ engine, bin, model: m, system: organizeAi.REFINE_PROMPT, user, schema: organizeAi.REFINE_SCHEMA, userData: app.getPath('userData'), timeoutMs: ms, signal }); // an abort stops the process, not just the wait
     const fast = engine === 'claudecode' ? 'haiku' : engineModelId;
     if (fast === engineModelId) return ask(fast, deadline - Date.now());
     try { return await ask(fast, Math.round((deadline - Date.now()) * 0.6)); } catch (err) {
@@ -2254,6 +2254,8 @@ async function organizeTabs() {
   const inWin = (groups) => Object.fromEntries(['organizeByTopic', 'organizeSeq', 'organizeView', 'applyRefinement'].map((k) => [k, (...a) => back(() => groups[k](...a))]));
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
+    await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
+    if (organizeAbort.signal.aborted) return 0;
     if (tabGroups.candidates().length < 2) throw tooFewMessage();
     // How long the model gets depends on the route: a CLI engine needs seconds just to start (organize-ai TIMEOUT_CLI_MS).
     const timeoutMs = organizeAi.timeoutFor(await groupingRoute(String(cheapTopicModel())).catch(() => null));
@@ -2280,8 +2282,11 @@ async function organizeTabs() {
     const failed = /^kept local/.test(stats.reason) ? stats.failed : '';
     if (!stats.groups && !stats.created) {
       // Nothing was changed (organizeByTopic rolls back), so no Undo. If the AI was asked and failed, say why, not "no groups".
-      back(() => organizeNote(failed ? aiFailureNote(failed) : `${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer
-    } else if (stats.reason !== 'cancelled') {
+      back(() => organizeNote(failed ? aiFailureNote(failed) : stats.reason === 'cancelled' ? `${t('organize.cancelledNone')}.` : `${t('organize.none')} ${t('organize.none.detail')}`)); // a note that closes itself, not a modal: nothing needs an answer
+    } else if (stats.reason === 'cancelled') {
+      // The groups made before the cancel are real and stay: say so, with the Undo that removes them.
+      back(() => organizeNote(`${t('organize.cancelled')}.`, { undo: true }));
+    } else {
       const how = stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : failed ? aiFailureNote(failed, false) : t('organize.localOnly');
       const what = Number.isInteger(stats.finalGroups) ? ` ${t(stats.loose ? 'organize.summaryLoose' : 'organize.summary', { groups: stats.finalGroups, loose: stats.loose })}` : '';
       back(() => organizeNote(`${how}.${what}`, { undo: true }));

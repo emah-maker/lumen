@@ -2138,8 +2138,8 @@ async function inprocRuns() {
 
 // ---- Organize with AI: local first, the model refines (features/organize-ai.js, organize-learn.js)
 async function organizeAiRuns() {
-  const tg = require('../src/browser/tab-groups');
-  const oai = require('../src/features/organize-ai');
+  const tg = require(process.env.TG_MODULE ? path.resolve(process.env.TG_MODULE) : '../src/browser/tab-groups');
+  const oai = require(process.env.OAI_MODULE ? path.resolve(process.env.OAI_MODULE) : '../src/features/organize-ai');
   const learn = require('../src/features/organize-learn');
   const { harness } = require('./topics-bench');
   const BASE = [
@@ -2262,7 +2262,40 @@ async function organizeAiRuns() {
     const { stats } = await run(h, () => new Promise(() => {}), { timeoutMs: 60 });
     check('organize-ai run: a model that never answers times out and keeps the local result', Date.now() - t0 < 2000 && stats.failed === 'timeout' && h.tg.state().length === 2, JSON.stringify(stats));
   }
-  // timeouts by route, and what a failure is called
+  // Round 7 defect 1: an explicit Organize asks the model even when every loose tab carries userRemoved
+  // (a restored session marks them all; a hand-ungroup marks one), and nothing grouped locally.
+  {
+    const JUNK = [['Zxqv wibble plomf', 'https://a1.example/p'], ['Krandle voop snazzle', 'https://b2.example/q'], ['Fleem druxo tarbin', 'https://c3.example/r'], ['Glorp yenta quibb', 'https://d4.example/s']];
+    const model = (w) => { const all = Object.values(w.u).flat().map((x) => x[0]); return { n: [], p: [], g: [{ s: 'Odd Words', t: all.slice(0, 3) }], m: [], h: [] }; };
+    const h = make(JUNK, { base: [] });
+    h.tabs().forEach((t) => { t.userRemoved = true; }); // restored session
+    const n0 = asks.length;
+    const { stats } = await run(h, model);
+    check('organize-ai restored: zero local groups still asks the model (not "these tabs look unrelated")', asks.length === n0 + 1 && stats.aiUsed && stats.reason === 'refined' && stats.created === 1, JSON.stringify(stats));
+    const grouped = h.tabs().filter((t) => t.groupId);
+    check('organize-ai restored: the group exists and its tabs lost their userRemoved mark', h.tg.state().length === 1 && grouped.length === 3 && grouped.every((t) => t.userRemoved === false) && h.tabs().filter((t) => !t.groupId).every((t) => t.userRemoved === true), JSON.stringify(h.tabs().map((t) => [t.groupId, t.userRemoved])));
+    check('organize-ai restored: Undo removes the group and puts every mark back', h.tg.undoOrganize() === true && h.tg.state().length === 0 && h.tabs().every((t) => !t.groupId && t.userRemoved === true));
+    // the same for tabs the user ungrouped by hand
+    const h2 = make(JUNK, { base: [] });
+    const made = h2.tg.create('Mine', h2.tabs().map((t) => t.id), { auto: true });
+    h2.tabs().forEach((t) => h2.tg.remove(t.id, { byUser: true }));
+    check('organize-ai hand-ungrouped: every tab is marked and loose', made && h2.tabs().every((t) => !t.groupId && t.userRemoved === true));
+    const r2 = await run(h2, model);
+    check('organize-ai hand-ungrouped: the model is asked and makes the group', r2.stats.aiUsed && r2.stats.created === 1 && h2.tabs().filter((t) => t.groupId).length === 3, JSON.stringify(r2.stats));
+    // locally grouped tabs and marked leftovers: the model also sees the marked leftover
+    const h3 = make([['Quokka sanctuary visit', 'https://q1.example/a']], {});
+    h3.tabs().forEach((t) => { t.userRemoved = true; });
+    const seen = [];
+    await run(h3, (w) => { seen.push(JSON.stringify(w)); return { n: [], p: [], g: [], m: [], h: [] }; });
+    check('organize-ai restored: a loose marked leftover beside local groups is described to the model', seen.length === 1 && /quokka/i.test(seen[0]), seen[0] && seen[0].slice(0, 200));
+  }
+  // Round 7 defect 5: a cancel after local groups were made leaves the Undo note (main.js).
+  {
+    const mainSrc = require('fs').readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const en = require('../src/locales/en.json');
+    check('organize cancel: the note offers Undo and says the quick grouping was kept', /stats\.reason === 'cancelled'\)\s*\{[\s\S]{0,300}organize\.cancelled[\s\S]{0,60}undo: true/.test(mainSrc) && /canceled; quick grouping kept/i.test(en['organize.cancelled']), String(en['organize.cancelled']));
+    check('organize cancel: the signal reaches the CLI one-shot (the process is killed, not just abandoned)', /completeJSON\(\{ engine, bin, model: m, system: organizeAi\.REFINE_PROMPT[^;]*signal \}\)/.test(mainSrc) && /cliJson\.whenIdle\(\)/.test(mainSrc));
+  }  // timeouts by route, and what a failure is called
   {
     check('organize-ai timeout: a CLI engine gets 45 s, an API provider 20 s', oai.timeoutFor({ engine: 'claudecode' }) === 45000 && oai.timeoutFor({ engine: 'grokbuild' }) === 45000 && oai.timeoutFor({ api: 'claude-haiku-4-5' }) === 20000 && oai.timeoutFor(null) === 20000);
     // A virtual clock: a model that answers after 12 s is awaited without a real 12 s wait.
