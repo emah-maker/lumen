@@ -3438,7 +3438,7 @@ function loadChat() {
 // A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
 // that chat again shows it live. Returns what the sidebar needs to show the chat.
 // `ensure` (a tab's own chat that has no file yet: it is still empty): shown as an empty chat under that id.
-function switchChat(id, { ensure = false } = {}) {
+function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
   const snapshot = id && !live ? chats().load(id) : null;
@@ -3454,7 +3454,8 @@ function switchChat(id, { ensure = false } = {}) {
   chatId = id || chats().newId();
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   unreadChats.delete(chatId);
-  chats().setCurrent(id && (snapshot || live) ? id : null);
+  if (id && (snapshot || live)) chats().setCurrent(id);
+  else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
   pushAttention();
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);
@@ -3466,7 +3467,7 @@ function switchChat(id, { ensure = false } = {}) {
 function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
-    : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo() } : null;
+    : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
   return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), ...(live ? { live } : {}) };
 }
 
@@ -3609,13 +3610,13 @@ function followTabChat(tab, { push = true } = {}) {
   if (plan.chat) {
     chatBind.bind(tab.id, plan.chat);
     const keep = unseen(plan.chat);
-    if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true });
+    if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true, quiet: true });
     if (keep) unreadChats.add(chatId);
     else if (sidebarOpen) unreadChats.delete(chatId);
   } else if (plan.adopt) {
     chatBind.bind(tab.id, plan.adopt);
   } else {
-    switchChat(null);
+    switchChat(null, { quiet: true });
     chatBind.bind(tab.id, chatId);
   }
   const wc = ui();

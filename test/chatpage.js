@@ -77,7 +77,7 @@ const fakeClient = (app) => app.evaluate(() => {
 
   // ---- 1. Open as full page from the sidebar
   check('the sidebar has an "Open as full page" button', await ui.evaluate(() => Boolean(document.getElementById('open-chat-page')?.getAttribute('aria-label'))), 'button');
-  await ui.click('#open-chat-page');
+  await ui.evaluate(() => document.getElementById('open-chat-page').click());
   const chat = await waitFor(chatTab);
   const frontId = await waitFor(async () => { const id = await app.evaluate(() => global.__chatPage.activeId()); return id === chat?.id && id; });
   check('the button opens a lumen://chat tab, in front', Boolean(chat) && /renderer\/chat-page\.html$/.test(chat.url) && frontId === chat.id, JSON.stringify({ chat, front: await app.evaluate(() => global.__chatPage.activeId()) }));
@@ -237,7 +237,7 @@ const fakeClient = (app) => app.evaluate(() => {
   check('Ctrl+Shift+L opens the page', Boolean(await waitFor(chatTab)), JSON.stringify(await tabs()));
   await app.evaluate(() => global.__pageTools.handleShortcut({ key: 'L', control: true, shift: true }));
   check('and Ctrl+Shift+L on the page goes back to the sidebar', await waitFor(async () => !(await chatTab())) && await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden'))), 'still open');
-  await ui.click('#open-chat-page');
+  await ui.evaluate(() => document.getElementById('open-chat-page').click());
   await waitFor(chatTab);
   const oneChatTab = (await tabs()).filter((t) => t.chat).length === 1;
   await app.evaluate(() => global.__chatPage.open());

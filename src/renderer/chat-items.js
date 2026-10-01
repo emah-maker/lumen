@@ -119,9 +119,10 @@
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
       const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) : '';
-      const meta = Object.assign(document.createElement('span'), { className: 'chat-meta', textContent: [when(chat.updated), chat.usage, inTab].filter(Boolean).join(' · ') });
+      const meta = Object.assign(document.createElement('span'), { className: 'chat-meta', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') });
       if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
+      if (inTab) openBtn.append(Object.assign(document.createElement('span'), { className: 'chat-meta chat-in-tab', textContent: inTab }));
       // Still running (it was left mid-reply), waiting for an OK, or finished and not seen yet.
       if (chat.badge) {
         const label = { running: tr('chats.badge.running', 'Working'), queued: tr('chats.badge.queued', 'Waiting for its turn'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
