@@ -3,7 +3,7 @@
 // toast) and renderer/newtab-widgets-grid.js (drag, resize, keys) draw and call these.
 //
 //   STRINGS / text()        the page's words (also in locales/en.json as newtab.edit.*)
-//   createHistory()         the undo stack: layout changes and removals, newest last
+//   createHistory()         the undo stack: layout changes, removals and stack changes, newest last
 //   undoPlan(prev, cur)     what to send to get from the current layout back to a previous one
 //   guides(rect, others)    snap guides: the grid lines the moving card lines up with
 //   pickerEntries(o)        what the Add widget picker offers
@@ -36,7 +36,7 @@ const STRINGS = {
   'newtab.edit.cancelled': 'Move canceled',
   'newtab.edit.removed': '{title} removed',
   'newtab.edit.hidden': '{title} hidden',
-  'newtab.edit.stacked': '{title} stacked with {onto}. Use the arrow on the card to switch.',
+  'newtab.edit.stacked': '{title} stacked with {onto}. Scroll it or use the dots to switch.',
   'newtab.edit.unstacked': '{title} removed from its stack',
   'newtab.stack.next': 'Next widget',
   'newtab.stack.shown': '{title}, {n} of {count}',
@@ -44,6 +44,40 @@ const STRINGS = {
   'newtab.stack.onto.title': 'Stack onto {onto}',
   'newtab.stack.unstack': 'Remove {title} from its stack',
   'newtab.stack.unstack.title': 'Remove from stack',
+  'newtab.stack.role': 'widget stack',
+  'newtab.stack.label': '{title}, {n} of {count}',
+  'newtab.stack.prev': 'Previous widget',
+  'newtab.stack.dot': 'Show {title}, {n} of {count}',
+  'newtab.stack.why': 'Suggested: {why}',
+  'newtab.stack.why.event': 'event starting soon',
+  'newtab.stack.why.countdown': 'countdown ends within a day',
+  'newtab.stack.why.morning': 'morning forecast',
+  'newtab.stack.edit': 'Edit the stack with {title}',
+  'newtab.stack.edit.title': 'Edit stack',
+  'newtab.stack.make': 'Stack {title} with another widget',
+  'newtab.stack.make.title': 'Stack with another widget',
+  'newtab.stack.panel': 'Edit stack',
+  'newtab.stack.panel.hint': 'Drag the handle or use the arrows to reorder. The pencil on a card edits the widget shown.',
+  'newtab.stack.done': 'Done',
+  'newtab.stack.new': 'New stack',
+  'newtab.stack.new.hint': 'Pick a widget of the same size to stack with.',
+  'newtab.stack.new.none': 'No other widget has the same size. Resize one to match.',
+  'newtab.stack.new.one': 'Stack {title} with {onto}',
+  'newtab.stack.grip': 'Move {title}, position {n} of {count}. Up and Down arrows reorder.',
+  'newtab.stack.up': 'Move {title} earlier',
+  'newtab.stack.down': 'Move {title} later',
+  'newtab.stack.rotate': 'Rotate automatically',
+  'newtab.stack.rotate.hint': 'Shows the next widget every 20 seconds while you are not using the stack',
+  'newtab.stack.smart': 'Smart rotate',
+  'newtab.stack.smart.hint': 'Shows the calendar before an event, a countdown on its last day and the weather in the morning',
+  'newtab.stack.add': 'Add to this stack',
+  'newtab.stack.add.one': 'Add {title} to this stack',
+  'newtab.stack.add.none': 'No other widget has the same size. Resize one to match.',
+  'newtab.stack.full': 'A stack holds up to {max} widgets.',
+  'newtab.stack.reordered': '{title} moved to position {n} of {count}',
+  'newtab.stack.option': '{option}: {state}',
+  'newtab.stack.on': 'on',
+  'newtab.stack.off': 'off',
   'newtab.edit.restored': '{title} is back',
   'newtab.edit.undone': 'Undone: {what}',
   'newtab.edit.nothing': 'Nothing to undo',

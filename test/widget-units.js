@@ -471,7 +471,7 @@ async function stackUnits(check, { it, noOverlap }) {
   check('stacks: exactly one member is shown (the first marked)', twoTops.filter((w) => w.top).map((w) => w.id).join() === 'wwx0001', rows(twoTops));
   const noTop = cleanList([wx('wwx0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001' }), todo('wtd0001', { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001' })]);
   check('stacks: a stack with none marked shows its first member', noTop.filter((w) => w.top).map((w) => w.id).join() === 'wwx0001', rows(noTop));
-  const huge = cleanList(Array.from({ length: 9 }, (_, i) => todo(`wtd000${i}`, { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001', top: i === 0 })));
+  const huge = cleanList(Array.from({ length: 12 }, (_, i) => todo(`wtd${String(i).padStart(4, "0")}`, { x: 0, y: 0, w: 4, h: 3, stack: 'sab0001', top: i === 0 })));
   check(`stacks: at most ${ST.MAX_STACK} in one stack, the rest become their own places`, huge.filter((w) => w.stack).length === ST.MAX_STACK && noOverlap(huge.filter((w) => !ST.isHidden(w))), rows(huge));
 
   // Cycling order: the list order, wrapping both ways.

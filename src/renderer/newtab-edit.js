@@ -313,6 +313,9 @@
     } else if (entry.kind === 'remove') {
       window.widgetAct(entry.id, 'restore');
       say(T('newtab.edit.restored', { title: entry.title }));
+    } else if (entry.kind === 'stack') { // stacking, unstacking, reordering, a stack option: the arrangement from before goes back (do=restack)
+      ok = Boolean(window.newtabStacks?.restore(entry));
+      say(T('newtab.edit.undone', { what: T('newtab.edit.what.layout', { title: entry.title }) }));
     } else if (entry.kind === 'config') { // a form save on a card: the browser still holds the settings it had (do=restore on a card that is there)
       window.widgetAct(entry.id, 'restore');
       say(T('newtab.edit.undone', { what: entry.title }));
@@ -729,6 +732,12 @@
       setTimeout(update, REMOVE_UNDO_MS + 50); // once the browser lets go of it, Undo stops offering it
     },
     // A card's form was saved: the same Undo toast as a removal; Undo puts its earlier settings back.
+    // A stack was changed (newtab-stacks.js): `before` is the arrangement Undo sends back.
+    stackChanged(info) {
+      history.push({ kind: 'stack', id: info.id, title: info.title, before: info.before, at: Date.now() });
+      showToast(info.message);
+      update();
+    },
     configChanged(info) {
       pruneHistory();
       history.push({ kind: 'config', id: info.id, title: info.title, at: Date.now() });

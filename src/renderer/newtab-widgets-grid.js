@@ -413,8 +413,7 @@
       place(d.base, d.id);
       d.card._pos = null;
       setBox(d.card, WL.cellToPx(target, m));
-      say(txt('newtab.edit.stacked', { title: titleOf(d.card), onto: titleOfId(d.onto) }));
-      window.widgetAct(d.id, 'stack', { onto: d.onto });
+      window.newtabStacks.join(d.id, d.onto); // records Undo, says so and asks the browser
       deferred = null;
       setTimeout(() => { d.card._pos = null; relayout(); }, 1200); // if the browser said no, the card goes back to its place
       return;
