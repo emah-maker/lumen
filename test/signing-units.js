@@ -36,6 +36,8 @@ const env = S.builderEnv({ ...dev, ...apiKey, ...appleId, CSC_IDENTITY_AUTO_DISC
 check('env: Developer ID re-enables certificate lookup and removes the Apple ID variables', env.CSC_IDENTITY_AUTO_DISCOVERY === 'true' && !('APPLE_ID' in env) && env.APPLE_API_KEY === apiKey.APPLE_API_KEY, JSON.stringify(Object.keys(env)));
 const plain = { CSC_IDENTITY_AUTO_DISCOVERY: 'false', FOO: '1' };
 check('env: any other mode passes the environment through untouched', S.builderEnv(plain) === plain, '');
+const kcEnv = S.builderEnv({ ...dev, ...appleId, LUMEN_KEYCHAIN: '/tmp/x.keychain-db' });
+check('env: a pre-imported keychain replaces the CSC_LINK import', kcEnv.CSC_KEYCHAIN === '/tmp/x.keychain-db' && !('CSC_LINK' in kcEnv) && !('CSC_KEY_PASSWORD' in kcEnv) && S.macSigning({ ...dev, LUMEN_KEYCHAIN: 'x' }).mode === 'developer-id', JSON.stringify(Object.keys(kcEnv)));
 
 check('after-sign: only the ad-hoc identity is re-signed with the self-signed certificate', AS.isAdHocBuild('-') && !AS.isAdHocBuild(undefined) && !AS.isAdHocBuild('Developer ID Application: X (ABCDE12345)'), '');
 

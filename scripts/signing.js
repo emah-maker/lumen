@@ -62,6 +62,14 @@ function builderEnv(env = process.env) {
   if (s.mode !== 'developer-id') return env;
   const out = { ...env, CSC_IDENTITY_AUTO_DISCOVERY: 'true' };
   if (s.dropAppleId) for (const k of APPLE_ID) delete out[k];
+  // The workflow imports the certificate into its own keychain (electron-builder's own import fails on
+  // current macOS runners at set-key-partition-list) and names it in LUMEN_KEYCHAIN: electron-builder
+  // then finds the Developer ID identity there instead of importing CSC_LINK again.
+  if (has(env, 'LUMEN_KEYCHAIN')) {
+    out.CSC_KEYCHAIN = String(env.LUMEN_KEYCHAIN).trim();
+    delete out.CSC_LINK;
+    delete out.CSC_KEY_PASSWORD;
+  }
   return out;
 }
 

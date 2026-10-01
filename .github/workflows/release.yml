@@ -125,6 +125,35 @@ jobs:
             echo "api_key_path=$key" >> "$GITHUB_OUTPUT"
           fi
 
+      # Developer ID certificate -> a keychain of our own. electron-builder's own CSC_LINK import runs
+      # `security set-key-partition-list` with the wrong password on current macOS runners and fails, so the
+      # .p12 is imported here (nothing is printed) and scripts/signing.js hands electron-builder the keychain
+      # instead (LUMEN_KEYCHAIN). The keychain is deleted in the last step.
+      - name: Import Developer ID certificate
+        id: keychain
+        if: matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -e
+          umask 077
+          kc_pw="$(openssl rand -hex 24)"
+          echo "::add-mask::$kc_pw"
+          kc="$RUNNER_TEMP/lumen-build.keychain-db"
+          p12="$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$CSC_LINK" | base64 --decode > "$p12"
+          security create-keychain -p "$kc_pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kc_pw" "$kc"
+          security import "$p12" -k "$kc" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security > /dev/null
+          rm -f "$p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pw" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          echo "path=$kc" >> "$GITHUB_OUTPUT"
+          security find-identity -v -p codesigning "$kc" | grep -E 'Developer ID Application|valid identit'
+
       - name: Build
         shell: bash
         env:
@@ -133,6 +162,7 @@ jobs:
           # macOS: a stable self-signed identity keeps the Keychain's "Always Allow" across updates (scripts/after-sign.js).
           LUMEN_SIGN_P12: ${{ secrets.LUMEN_SIGN_P12 }}
           LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
+          LUMEN_KEYCHAIN: ${{ matrix.platform == 'mac' && steps.keychain.outputs.path || '' }}
           # macOS Developer ID (mac job only; scripts/signing.js picks the mode from these). electron-builder
           # imports the CSC_LINK .p12 into its own temporary keychain, signs, notarizes and staples.
           CSC_LINK: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.CSC_LINK || '' }}
@@ -198,10 +228,12 @@ jobs:
             rm -rf "$tmp"
           done
 
-      - name: Remove the notarization key
+      - name: Remove the notarization key and build keychain
         if: always() && matrix.platform == 'mac'
         shell: bash
-        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
+        run: |
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP"/developer-id.p12
+          security delete-keychain "$RUNNER_TEMP/lumen-build.keychain-db" 2>/dev/null || true
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
