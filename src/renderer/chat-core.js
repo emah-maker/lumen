@@ -304,6 +304,13 @@ function openModelSearch(query = '') {
   catalog.open(query);
 }
 
+// The "Switch back" / "Retry" buttons of fallback notices. Only the newest notice's is live: an older one would
+// override the model answering now, or one the user picked since.
+const fallbackButtons = new Set();
+function retireFallbackButtons(except = null) {
+  for (const b of fallbackButtons) if (b !== except) { b.remove(); fallbackButtons.delete(b); }
+}
+
 $('model').addEventListener('change', async (e) => {
   const select = e.target;
   if (select.value === 'openrouter:__more') {
@@ -313,6 +320,7 @@ $('model').addEventListener('change', async (e) => {
     openModelSearch();
     return;
   }
+  retireFallbackButtons(); // a model picked by hand: an earlier notice's "Switch back" must not override it
   const switched = await window.assistant.setModel(select.value).catch(() => false);
   if (!switched) {
     // Not accepted (it disconnected a moment ago, say): show what main actually uses.
@@ -1011,13 +1019,16 @@ window.assistant.onEvent((event) => {
     case 'notice': {
       if (event.stopped) turn.stopped = true;
       const notice = appendToTurn(Object.assign(document.createElement('div'), { className: event.stopped ? 'notice stopped' : 'notice', textContent: event.stopped ? t('chat.stopped') : event.text }));
+      if (event.fallback) retireFallbackButtons(); // an older "Switch back" would undo whatever is answering now
       if (event.fallback) loadModels(); // [model fallback] the picker follows the model that is answering now (or the pick, once it is back)
       if (event.fallback && event.fallback.kind !== 'back' && event.fallback.from !== event.fallback.to) {
         // One quiet way back: picks the original model again (this also ends its cooldown, see settings:set-model); the next message tries it.
         const name = event.fallback.fromName || event.fallback.from;
         const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t(event.fallback.kind === 'unreachable' ? 'chat.fallbackRetry' : 'chat.fallbackBack', { name }) });
+        fallbackButtons.add(button);
         button.onclick = async () => {
           button.disabled = true;
+          retireFallbackButtons(button); // the others are for switches that are over
           const ok = await window.assistant.setModel(event.fallback.from).catch(() => false);
           await loadModels();
           if (ok) button.replaceWith(Object.assign(document.createElement('span'), { textContent: t('chat.fallbackBackDone', { name }) }));
