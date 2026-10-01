@@ -417,6 +417,18 @@ body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /
   body.zoomed .security span { display: none; }
 }
 
+/* 800-900 px: the security label's words give way to its icon (the aria-label names it), and the omnibox's
+   end actions pack tighter, so the address keeps the room. */
+@media (max-width: 900px) {
+  .security span { display: none; }
+  .omnibox-end { gap: 0; }
+  .omnibox-action { width: 24px; }
+}
+/* Very wide windows: the address field stops growing. */
+@media (min-width: 1920px) {
+  .toolbar { grid-template-columns: minmax(max-content, 1fr) minmax(0, 880px) minmax(max-content, 1fr); }
+}
+
 /* Find bar: the row opens by animating its grid track, so the page eases down with it. */
 .findbar {
   display: grid; grid-template-rows: 0fr; opacity: 0;
@@ -459,8 +471,9 @@ body.agent-active.agent-away .viewport { background: var(--surface); }
 
 .sidebar {
   position: relative; overflow: hidden; isolation: isolate; /* own stacking context: the --z-* scale stays inside it */
-  /* --reveal (0–1) is driven by a spring in app.js while the sidebar opens or closes. */
-  width: calc(var(--sidebar-width) * var(--reveal, 1)); max-width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; align-items: flex-end; min-height: 0;
+  /* The sidebar is always laid out at its final width. While it opens or closes, app.js slides it with a
+     transform + opacity on this one element (body.sidebar-moving, below): no layout or child restyle per frame. */
+  width: var(--sidebar-width); max-width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; align-items: flex-end; min-height: 0;
   /* The divider is a real border inside the sidebar: the page view is a native layer drawn on
      top of the UI, so anything painted outside the sidebar's box would be hidden under it. */
   background: var(--bg); border-left: 1px solid var(--border); box-shadow: 0 -1px 0 var(--hairline);
@@ -468,8 +481,11 @@ body.agent-active.agent-away .viewport { background: var(--surface); }
 /* Content keeps its full width and slides with the sidebar's leading edge, so text never reflows mid-animation. */
 .sidebar > :not(.sidebar-resize) {
   width: calc(var(--sidebar-width) - 1px); flex-shrink: 0;
-  opacity: calc(0.25 + var(--reveal, 1) * 0.75);
 }
+/* Moving: the sidebar floats over the page area (which is held at its full size under the snapshot) and its
+   inline transform/opacity are driven by the spring. The strip a closing sidebar uncovers is the snapshot-edge colour. */
+.body { position: relative; }
+body.sidebar-moving:not(.chat-full) .sidebar { position: absolute; top: 0; bottom: 0; right: 0; z-index: var(--z-float, 5); will-change: transform, opacity; }
 .sidebar > .messages { flex-shrink: 1; min-height: 0; }
 /* Warm-up: painted once at idle in the real spot, under the live page (the native page view
    covers it), so the first real open has nothing left to build. */
@@ -494,7 +510,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* ---------- full-page chat: homepage "Ask AI" fills the whole content area ---------- */
 /* The native page view is hidden by main (see 'chat:full' in main.js) rather than resized down to
    nothing, so there is no page to keep visible beside the chat here — the sidebar just takes over
-   the full width in place, ignoring --reveal and the resize handle entirely. */
+   the full width in place, ignoring the spring and the resize handle entirely. */
 body.chat-full .sidebar { width: 100%; max-width: none; align-items: stretch; border-left: none; animation: chat-full-in var(--t-smooth) var(--spring-smooth) backwards; }
 body.chat-full .sidebar > :not(.sidebar-resize) { width: 100%; opacity: 1; }
 body.chat-full .sidebar-resize { display: none; }
@@ -666,7 +682,8 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 }
 .working.waiting { display: none; } /* an approval card is waiting on the user, not the AI */
 @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(200%); } }
-@keyframes working-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.9; } }
+/* Opacity only, and slow (3.2 s): the reduced-motion status indicator, a gentle breath rather than a flash. */
+@keyframes working-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.8; } }
 @keyframes pulse { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
 
 /* ---------- composer (a floating glass layer; messages pass underneath) ---------- */
@@ -788,7 +805,7 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
   .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
   .tab.ai-reading .tab-title, .tab-favicon.spinner, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
   /* The working line stays visible: the light stops travelling and the whole bar breathes instead. */
-  .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 1.8s ease-in-out infinite !important; animation-duration: 1.8s !important; animation-iteration-count: infinite !important; }
+  .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 3.2s ease-in-out infinite !important; animation-duration: 3.2s !important; animation-iteration-count: infinite !important; }
   .loadbar::before { transform: none; left: 0; width: 100%; opacity: 0.6; }
   body.agent-active .viewport, body.agent-active .agent-pill { animation: none !important; }
   button:active:not(:disabled) { transform: none; }
@@ -797,6 +814,9 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 }
 @media (prefers-reduced-transparency: reduce) {
   .composer { background: var(--surface-raised); backdrop-filter: none; }
+  /* Every other blurred surface (the task sheet over the sidebar, attachment badges) goes opaque too. */
+  .attachment-remove { background: rgba(0, 0, 0, 0.78); backdrop-filter: none; }
+  .task-create { background: var(--bg); backdrop-filter: none; }
 }
 
 /* Copy a reply: appears on hover/focus at the reply's corner. */
@@ -823,7 +843,7 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 
 /* Settings -> Accessibility -> Reduce motion and Performance mode (pref-reduce-motion, prefs.css) squash every
    animation to one 0.01ms run, which left the working line's light parked off the bar: same pulse instead. */
-.pref-reduce-motion .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 1.8s ease-in-out infinite !important; animation-duration: 1.8s !important; animation-iteration-count: infinite !important; }
+.pref-reduce-motion .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 3.2s ease-in-out infinite !important; animation-duration: 3.2s !important; animation-iteration-count: infinite !important; }
 
 /* In the background, decorative loops stop (saves GPU; nothing to look at). */
 body.window-inactive .agent-pill,

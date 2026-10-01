@@ -446,7 +446,7 @@ window.addEventListener('DOMContentLoaded', () => document.documentElement.class
 
 contextBridge.exposeInMainWorld('browser', {
   setContentBounds: (bounds) => ipcRenderer.send('content-bounds', bounds),
-  freezeView: () => ipcRenderer.invoke('view:freeze'),
+  freezeView: (size) => ipcRenderer.invoke('view:freeze', size),
   thawView: () => ipcRenderer.send('view:thaw'),
   setChatFull: (on) => ipcRenderer.send('chat:full', on),
   warmView: () => ipcRenderer.invoke('view:warm'),

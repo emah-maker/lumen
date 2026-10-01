@@ -1995,8 +1995,9 @@ $('find-close').onclick = closeFind;
 
 // ---------- sidebar ----------
 
-// The sidebar springs open from the window's trailing edge. Its width follows --reveal (0–1) each
-// frame and the native page view is resized with it, so the page makes room instead of jumping.
+// The sidebar springs open from the window's trailing edge. `reveal` (0–1) drives a transform and an
+// opacity on the sidebar element alone (it stays laid out at its final width, floating over the page
+// area while body.sidebar-moving), and the native page view keeps its final size (heldRect).
 let reveal = document.body.classList.contains('sidebar-hidden') ? 0 : 1;
 let revealAnim = null;
 
@@ -2023,20 +2024,23 @@ if (document.body.classList.contains('sidebar-hidden')) {
   }, { timeout: 1500 });
 }
 
-// Viewport rect with the sidebar at reveal x, measured without painting.
-function viewportAt(x) {
-  const sidebar = $('sidebar');
-  const before = sidebar.style.getPropertyValue('--reveal');
-  sidebar.style.setProperty('--reveal', String(x));
-  const r = viewport.getBoundingClientRect();
-  if (before) sidebar.style.setProperty('--reveal', before);
-  else sidebar.style.removeProperty('--reveal');
-  return r;
+// The sidebar's spring state is two inline properties on that one element.
+function revealStyles(x) {
+  const c = Math.min(1, Math.max(0, x));
+  return { transform: c >= 1 ? '' : `translate3d(${((1 - c) * 100).toFixed(3)}%, 0, 0)`, opacity: c >= 1 ? '' : String((0.25 + c * 0.75).toFixed(3)) };
+}
+function clearReveal() {
+  const st = $('sidebar').style;
+  st.transform = '';
+  st.opacity = '';
 }
 
 function setReveal(x) {
   reveal = x;
-  $('sidebar').style.setProperty('--reveal', String(Math.min(1, Math.max(0, x))));
+  const st = $('sidebar').style;
+  const v = revealStyles(x);
+  st.transform = v.transform;
+  st.opacity = v.opacity;
   reportBounds();
 }
 
@@ -2065,17 +2069,20 @@ function edgeColor(img) {
 
 async function freezePage() {
   const token = ++freezeToken;
-  const src = await window.browser.freezeView?.();
-  if (!src || token !== freezeToken) return;
-  const r = viewport.getBoundingClientRect();
+  // The area the snapshot fills, in CSS pixels: main captures it at that size, not at device size.
+  const r = heldRect || viewport.getBoundingClientRect();
+  const bytes = await window.browser.freezeView?.({ width: Math.round(r.width), height: Math.round(r.height) });
+  if (!bytes || token !== freezeToken) return;
+  // The JPEG arrives as bytes (not a base64 data URI): a blob URL costs no giant string to build or parse.
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
   const img = new Image();
   img.className = 'page-snapshot';
   img.alt = '';
-  img.src = src;
+  img.src = url;
   img.style.width = `${r.width}px`;
   img.style.height = `${r.height}px`;
   await img.decode().catch(() => {});
-  if (token !== freezeToken) return;
+  if (token !== freezeToken) { URL.revokeObjectURL(url); return; }
   snapshot?.remove();
   snapshot = img;
   viewport.style.setProperty('--snapshot-edge', edgeColor(img));
@@ -2089,7 +2096,7 @@ function thawPage() {
   // Swap the live page back a frame after the motion has settled, not on its last frame.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     window.browser.thawView?.();
-    if (img) setTimeout(() => { img.remove(); viewport.style.removeProperty('--snapshot-edge'); }, 80);
+    if (img) setTimeout(() => { img.remove(); URL.revokeObjectURL(img.src); viewport.style.removeProperty('--snapshot-edge'); }, 80);
   }));
 }
 
@@ -2098,36 +2105,39 @@ async function showSidebar(visible) {
   $('sidebar').classList.remove('prewarm'); // never animate from the warm-up layout
   $('toggle-sidebar').setAttribute('aria-pressed', String(visible));
   window.assistant.sidebarState?.(visible); // main: when to notify about a reply, and the unread mark
+  const wasEarly = Boolean(earlyFreeze);
   if (earlyFreeze) {
     const pending = earlyFreeze;
     earlyFreeze = null;
     await pending;
-  } else if (!revealAnim && !motionReduced() && !snapshot) {
-    await freezePage();
-    if ($('toggle-sidebar').getAttribute('aria-pressed') !== String(visible)) return; // toggled again while capturing
   }
+  // No head start (a keyboard shortcut): the spring doesn't wait for the capture. The page area stays its
+  // background colour or the live page until the snapshot lands, and swaps in then (at the end of this function).
+  const lateFreeze = !wasEarly && !revealAnim && !motionReduced() && !snapshot;
   const velocity = revealAnim?.velocity || 0;
+  const interrupted = Boolean(revealAnim);
   revealAnim?.stop();
   revealAnim = null;
-  if (visible && body.classList.contains('sidebar-hidden')) {
-    setReveal(0);
-    body.classList.remove('sidebar-hidden');
-  }
+  const wasHidden = body.classList.contains('sidebar-hidden');
+  if (visible && wasHidden) body.classList.remove('sidebar-hidden');
   const target = visible ? 1 : 0;
-  // Opening: the page takes its narrower size now and the sidebar slides into the space.
+  // Opening: the page takes its narrower size now and the sidebar slides over the space.
   // Closing: the page keeps its size until the sidebar has gone, then widens once.
-  heldRect = visible ? viewportAt(1) : viewport.getBoundingClientRect();
+  // (Interrupted mid-spring, the page area is already floating at full size: keep the size held.)
+  if (!(interrupted && heldRect)) {
+    body.classList.remove('sidebar-moving'); // measure the settled layout
+    heldRect = viewport.getBoundingClientRect();
+  }
+  if (visible && wasHidden) setReveal(0);
+  if (!motionReduced()) body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
   reportBounds();
   const finish = () => {
     revealAnim = null;
     heldRect = null;
     body.classList.remove('sidebar-moving');
     thawPage();
-    if (visible) $('sidebar').style.removeProperty('--reveal');
-    else {
-      body.classList.add('sidebar-hidden');
-      $('sidebar').style.removeProperty('--reveal');
-    }
+    clearReveal();
+    if (!visible) body.classList.add('sidebar-hidden');
     reveal = target;
     reportBounds();
   };
@@ -2135,9 +2145,9 @@ async function showSidebar(visible) {
   else {
     // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
     // motion begins, so any slow frame is a still frame, not a jump.
-    body.classList.add('sidebar-moving'); // styles.css: no backdrop blur on the composer while the sidebar moves
     revealAnim = springTo(reveal, target, { response: visible ? 0.34 : 0.28, velocity, onUpdate: setReveal, onDone: finish });
   }
+  if (lateFreeze && revealAnim) freezePage(); // sized from heldRect, the page's final size, already set above
   if (visible) $('prompt').focus({ preventScroll: true });
 }
 $('toggle-sidebar').onclick = () => {
@@ -2250,10 +2260,10 @@ function enterFull() {
   heldRect = null;
   document.body.classList.remove('sidebar-moving');
   if (snapshot) thawPage();
-  // Full mode ignores --reveal (CSS forces width: 100%), but reset it so docking back later — which
+  // Full mode ignores the spring (CSS forces width: 100%), but reset it so docking back later — which
   // does nothing but remove the chat-full class — lands on a fully open sidebar, not a stale partial one.
   document.body.classList.remove('sidebar-hidden');
-  $('sidebar').style.removeProperty('--reveal');
+  clearReveal();
   reveal = 1;
   $('toggle-sidebar').setAttribute('aria-pressed', 'true');
   window.assistant.sidebarState?.(true);
