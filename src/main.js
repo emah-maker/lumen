@@ -1463,20 +1463,24 @@ function makeSpareNewTab() {
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
+  try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
   view.webContents.loadURL(newTabUrl()).catch(() => {});
   spareNewTab = s;
 }
+// { view, ready }: one still loading is taken too (its renderer is up and its page part-way: sooner than a new one).
 function takeSpareNewTab() {
   const s = spareNewTab;
   if (!s) return null;
   spareNewTab = null;
-  const fresh = s.ready && !s.view.webContents.isDestroyed() && !s.view.webContents.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)); // (no age limit: its data comes with the tab)
+  const fresh = !s.view.webContents.isDestroyed() && !s.view.webContents.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)); // (no age limit: its data comes with the tab)
   if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
-  return s.view;
+  return { view: s.view, ready: s.ready };
 }
-const spareSoon = () => setTimeout(makeSpareNewTab, 700).unref?.(); // (once this tab has drawn and the first keys are in)
+// The next one is made right away: Ctrl+T pressed again a moment later finds
+// it, or one part-way through loading. (It used to wait 700 ms, and a quick second new tab started from nothing.)
+const spareSoon = () => setTimeout(makeSpareNewTab, 0).unref?.();
 
 // ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
 // A web page in a new view (a link opened in a new tab, a restored or sleeping tab woken, an address typed into the
@@ -1591,7 +1595,8 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
   const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
-  const spare = plainNewTab ? takeSpareNewTab() : null;
+  const spared = plainNewTab ? takeSpareNewTab() : null;
+  const spare = spared?.view || null;
   if (plainNewTab) spareSoon();
   const webPage = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && isWebUrl(url);
   const warm = webPage ? takeWarmTab() : null; // (its process is already up: see makeWarmTab)
@@ -1616,12 +1621,15 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
   // The spare page gets this tab's data in place (no reload, no extra history entry).
   if (spare) {
-    // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
+    // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms. A spare still
+    // loading finishes first (its page reads the data then).
     tab.spareFilling = true;
-    // (At most 100 ms: an occluded or minimized window draws no frames, and the tab must not stay blank.)
-    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); true`, true)
-      .catch(() => wc.loadURL(url).catch(() => {}));
-    Promise.race([filled, new Promise((r) => setTimeout(r, 100))])
+    const fill = () => wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); true`, true)
+      .catch(() => { if (!wc.isDestroyed()) wc.loadURL(url).catch(() => {}); });
+    const loaded = spared.ready ? Promise.resolve() : new Promise((r) => { wc.once('did-finish-load', r); setTimeout(r, 1500); });
+    const filled = loaded.then(fill);
+    // (At most 100 ms past its load: an occluded or minimized window draws no frames, and the tab must not stay blank.)
+    Promise.race([filled, loaded.then(() => new Promise((r) => setTimeout(r, 100)))])
       .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
   }
 
@@ -2049,7 +2057,9 @@ let addressTouchedAt = 0;
 // kept its blinking caret while you typed somewhere else.
 ipcMain.on('address:touched', () => {
   addressTouchedAt = ++uiEventSeq;
-  if (!suggestView && win && !win.isDestroyed()) createSuggestView(); // (typing is coming: ready before the first key's list)
+  // (Typing is coming: ready before the first key's list. Not while the first tab is still loading at start-up: the
+  // new-tab page's address-bar focus lands here then, and the dropdown's renderer is made once that tab has loaded.)
+  if (!suggestView && firstTabDone && win && !win.isDestroyed()) createSuggestView();
   if (!ui()?.isFocused()) ui()?.focus();
   const wc = activeTab()?.webContents;
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
@@ -4961,6 +4971,8 @@ const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // suggestions renderer, the CLI checks and the extension update check start then, not while it loads.
 let markFirstTabLoaded = () => {};
 const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
+let firstTabDone = false;
+firstTabLoaded.then(() => { firstTabDone = true; });
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
 const GUESS_TOOLBAR_HEIGHT = 82; // the tab strip and toolbar: where a first tab's page goes before the UI has said (content-bounds)
