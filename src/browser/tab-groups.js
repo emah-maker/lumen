@@ -1283,6 +1283,59 @@ function distinctGroups(clusters, docs) {
   return { clusters: kept.concat([...formed.keys()]), formed };
 }
 
+// Eighth stage: the word most of a window's loose tabs share. A topical noun that no ordinary English list knows ("newborn", "dovetail", "sourdough",
+// "monitor") in the TITLES of three or more loose tabs (of two sites or more) is what those tabs are about. One word still never links a pair: it takes
+// three, and never a word of a kind of page ("guide", "best", "review", "plan", "list", "tips", "near", a year), a verb or an adjective (by its ending,
+// unless a concept's own vocabulary has it), a place, a brand or a nav label. The tabs may not split into two concepts of their own (a "monitor" that is
+// a baby's, a server's and a heart's). The group is named for the word; supportsOf takes the same word as evidence (docs.tokenKeys) so that cohesion keeps it.
+const TOKEN_MIN = 3;
+const TOKEN_MAX_SHARE = 0.4; // a word this share of the window carries is the window's, not a group's
+const NOT_A_NOUN = /(?:ly|ed|ing|ive|ous|ful|able|ible|less|ish|ward|wise)$/;
+function tokenGroups(clusters, docs) {
+  const out = clusters.map((c) => [...c]);
+  const formed = new Map();
+  const loose = new Set(out.filter((c) => c.length === 1).map((c) => c[0]));
+  if (loose.size < TOKEN_MIN) return { clusters: out, formed };
+  const byWord = new Map();
+  for (const i of loose) {
+    for (const [k, e] of docs[i].words) {
+      if (!isRealKey(k) || e.weight < 0.8 || CJK.test(k)) continue;
+      const surface = String(e.surface || k);
+      if (surface.length < 4 || !/^\p{L}+$/u.test(surface) || surface.length > 18) continue;
+      if (!byWord.has(k)) byWord.set(k, []);
+      byWord.get(k).push(i);
+    }
+  }
+  const conceptsOf = (i) => [...docs[i].words.keys()].filter((k) => k[0] === '%' && k !== '%shopping');
+  const cands = [];
+  for (const [k, list] of byWord) {
+    if (list.length < TOKEN_MIN || list.length > docs.length * TOKEN_MAX_SHARE) continue;
+    const surface = String(docs[list[0]].words.get(k).surface).toLowerCase();
+    const inConcept = CONCEPT_OF.has(k);
+    if (STOPWORDS.has(surface) || ORDINARY_KEYS.has(k) || isGenericKey(k) || NAV_WORDS.has(k) || BRAND_KEYS.has(k) || isPlaceKey(k) || GENERIC_PAIR_STEMS.has(k)) continue;
+    if (!inConcept && NOT_A_NOUN.test(surface)) continue;
+    if (new Set(list.map((i) => docs[i].siteKey || docs[i].url)).size < 2) continue; // one site's template word
+    // The word is what every tab is about: it is no word of a site's own name or address (a brand's tabs say it on every page).
+    const count = new Map();
+    for (const i of list) for (const x of new Set(conceptsOf(i))) count.set(x, (count.get(x) || 0) + 1);
+    const top = [...count.values()].sort((a, b) => b - a);
+    if (top.length >= 2 && top[1] >= 2) continue; // two concepts of two tabs each: the word means different things here
+    cands.push([k, list]);
+  }
+  cands.sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1));
+  const taken = new Set();
+  docs.tokenKeys = new Set();
+  for (const [k, list] of cands) {
+    const free = list.filter((i) => !taken.has(i));
+    if (free.length < TOKEN_MIN) continue;
+    free.forEach((i) => taken.add(i));
+    docs.tokenKeys.add(k);
+    formed.set(free, docs[free[0]].words.get(k).surface);
+  }
+  const kept = out.filter((c) => !(c.length === 1 && taken.has(c[0])));
+  return { clusters: kept.concat([...formed.keys()]), formed };
+}
+
 // ---------- cohesion: what a group has to show before it is a group ----------
 //
 // Precision over recall: a wrong group costs the user more than a loose tab. Whatever stage put tabs together (a shared word, an anchor,
@@ -1356,6 +1409,11 @@ function supportsOf(c, docs) {
       if (label && docs.distinct.has(label)) { if (!named.has(label)) named.set(label, { titled: 0, all: new Set() }); named.get(label).all.add(i); }
     }
     for (const { titled, all } of named.values()) if (titled >= 1 && all.size >= 2) out.push({ holders: [...all] });
+  }
+  // A word three loose tabs say in their titles (tokenGroups): the group formed on it keeps the tabs that say it.
+  for (const k of docs.tokenKeys || []) {
+    const h = c.filter((i) => evidenceOf(docs[i]).words.has(k));
+    if (h.length >= TOKEN_MIN) out.push({ holders: h });
   }
   // Words held by 2+ tabs: one word is never evidence (sharedEvidence). Two tabs that hold two of them, one of which is no ordinary English word, are bound.
   const byWord = new Map();
@@ -1666,6 +1724,11 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     merged = named.clusters;
     for (const c of named.formed.keys()) conceptOf.set(idsKey(c), ''); // drawn together by a name, and named the usual way (the name's own spelling is not always the best: Москве, Москва)
   }
+  if (!process.env.NOTOKEN) {
+    const worded = tokenGroups(merged, docs);
+    merged = worded.clusters;
+    for (const c of worded.formed.keys()) conceptOf.set(idsKey(c), ''); // a word three tabs share: named the usual way too
+  }
   // Cohesion: whatever formed a group, most of its tabs must share something that says something (see cohere); then the trips.
   const rekey = (c, change) => { // change a cluster's tabs, keeping the name its old tabs earned it
     const was = idsKey(c);
@@ -1874,6 +1937,14 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     else name = sharedHint || fallbackName();
     // CJK words are bigrams, so two of them pasted together name a group badly ("파이 이썬"): use the longest run the
     // titles share, or the site's (category's) name when that run is only filler.
+    // A bare place ("Texas", "Austin") names a trip and nothing else: a group of tabs that only share where they are is named for what they are about
+    // (the next word they say, else their concept or category), and only a trip (tripGroups) or a place's own housing keeps the place.
+    if (wordNamed && !/\s/.test(name) && isPlaceKey(stem(name.toLowerCase())) && members.filter(tripEvidence).length * 2 < members.length && !['Travel', 'Housing'].includes(conceptLabel(c, docs))) {
+      const other = ranked.find(([k]) => !isGenericKey(k) && !isPlaceKey(k));
+      const label = conceptLabel(c, docs) || categoryLabel(members);
+      if (other) name = titleCase(bestSurface(other[0]));
+      else if (label) { name = label; wordNamed = false; }
+    }
     if (wordNamed) name = normalizeName(name, [conceptLabel(c, docs), categoryLabel(members), sharedHint], new Set(members.flatMap((d) => [...d.words].map(([, e]) => String(e.surface || '').toLowerCase()))));
     if (CJK.test(name)) name = sharedRun(members.map((d) => d.title), members.length) || sharedRun(members.map((d) => d.title), majority) || sharedHint || fallbackName();
     // One site's tabs named by a piece of the site's own name ("Hacker" from "Hacker News"): the whole name.
