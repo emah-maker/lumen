@@ -53,7 +53,7 @@ process.stdin.on('data', (d) => {
   process.env.LUMEN_CLAUDE_BIN = fake; // findClaude: this file stands in for the CLI
   const runOnce = async ({ fullAccess, silenceMs = 50, watchdogMs = 400 }) => {
     const log = path.join(dir, `log-${fullAccess ? 'full' : 'base'}-${silenceMs}.json`);
-    const fakeSpawn = (bin, argv, opts) => spawn(process.execPath, [bin, ...argv], { ...opts, env: { ...opts.env, FAKE_LOG: log, FAKE_SILENCE_MS: String(silenceMs) } });
+    const fakeSpawn = (bin, argv, opts) => spawn(process.execPath, [bin, ...argv], { ...opts, env: { ...opts.env, ELECTRON_RUN_AS_NODE: '1', FAKE_LOG: log, FAKE_SILENCE_MS: String(silenceMs) } }); // (run as Node under Electron's node, as CI's may be)
     const engine = new cc.ClaudeCodeEngine({ userData: dir, mcpCommand: () => ({ command: process.execPath, args: ['-e', ''], env: {} }), ensureServer: () => {}, keepAlive: false, watchdogMs, spawn: fakeSpawn });
     const events = [];
     const out = await engine.run({ prompt: 'state\n\nhello', sessionId: '00000000-0000-4000-8000-000000000001', resume: false, systemPrompt: 'LUMEN', fullAccess, signal: new AbortController().signal, emit: (e) => events.push(e) });
