@@ -1169,6 +1169,7 @@ function showSuggestions(rect, payload) {
   const height = Math.max(0, Math.min(rect.height, win.getContentSize()[1] - rect.y));
   suggestView.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(height) });
   suggestView.setVisible(true);
+  raiseOverlays(); // (once visible, so it counts: the tool overlay and a dialog stay above it)
   const send = () => suggestView.webContents.send('suggest:items', payload);
   if (suggestView.webContents.isLoading()) suggestView.webContents.once('did-finish-load', send);
   else send();
@@ -1213,6 +1214,7 @@ function showDownloadsPanel(anchor) {
     downloadsView.webContents.send('downloads:list', downloads.panelList());
     downloadsView.webContents.send('downloads:open');
     downloadsView.setVisible(true);
+    raiseOverlays(); // (once visible, so it counts: the tool overlay and a dialog stay above it)
     downloadsView.webContents.focus();
   };
   if (downloadsView.webContents.isLoading()) downloadsView.webContents.once('did-finish-load', open);
@@ -1392,6 +1394,18 @@ function layout() {
     }
   }
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
+  raiseOverlays();
+}
+const { overlaysToRaise } = require('./features/overlay-order');
+// Layering (bottom to top): the UI view, tab views, Spotify card, suggestions, downloads panel, tool overlay, dialogs. A tab view added later
+// (a new tab, a woken one) lands above an overlay that is showing and would hide it; put those back on top, in order.
+function raiseOverlays() {
+  if (!win || win.isDestroyed()) return;
+  // Fixed order, bottom to top: spotify, suggestions, downloads, tool overlay (dialogs: dialogs.raise below).
+  const order = [spotifyWeb.view(), suggestView, downloadsView, toolOverlay.viewFor(win)].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
+  // Only when one is under a tab (or they are out of order): then all are re-added in order, so two never swap.
+  for (const v of overlaysToRaise(win.contentView.children, tabs.filter((t) => t.view).map((t) => t.view), order)) win.contentView.addChildView(v);
+  dialogs.raise();
 }
 // Turn the tab's full-width layout override on, change it or off (only when it changed).
 function setOverlay(tab, params) {
@@ -1806,6 +1820,7 @@ function wakeTab(tab) {
   try { view.setBounds(tabSleep.wakeBounds(contentBounds, { fullscreen: tab.fullscreen, full: tab.fullscreen ? (() => { const [width, height] = win.getContentSize(); return { width, height }; })() : null })); } catch { /* laid out by layout() */ }
   win.contentView.addChildView(view);
   view.setVisible(false);
+  raiseOverlays(); // the woken view lands above any floating panel that was showing
   const history = tab.sleepHistory;
   tab.sleepHistory = null;
   wireView(tab, tab.sleepUrl || newTabUrl(), history);
