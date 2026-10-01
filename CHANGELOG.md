@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Every tab has its own sidebar chat, and chats in different tabs work at the same time. Switching tabs switches the sidebar to that tab's chat, a chat keeps working while its tab is in the background, and a mark on the tab shows working, waiting for its turn, needs your OK, or finished and not viewed yet. A chat's browser tools act on its own tab, and a chat working in another tab never pulls you away from the tab you are in.
+- The chat list shows which tab each chat lives in, with "Open chat in its tab" and "Move chat to this tab". Closing a tab under a working chat keeps the chat going in a background tab. Settings, AI: how many chats work at once (default 3); the next one waits its turn, and Claude Code and Grok Build always take turns, one chat at a time.
+
 ## 0.4.4 (2026-10-01)
 
 - The Mac app is now signed with an Apple Developer ID and notarized by Apple, so it opens without the "Open Anyway" step. On the first launch after updating, macOS asks once to allow Lumen access to its Keychain item.
