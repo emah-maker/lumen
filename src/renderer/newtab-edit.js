@@ -248,7 +248,7 @@
         if (entry.kind === 'section') {
           window.widgetAct(entry.id, 'restore');
           say(T('newtab.edit.restored', { title: entry.label }));
-        } else if (window.widgetSetup?.can(entry.type)) {
+        } else if (window.widgetSetup?.canAdd(entry.type)) {
           window.widgetSetup.open({ type: entry.type }); // set up right here on the page (renderer/newtab-setup.js)
         } else {
           window.widgetAct('wcreate', 'create', { type: entry.type });
@@ -284,15 +284,22 @@
   function showToast(message) {
     hideToast();
     toast = el('div', 'w-toast w-ui');
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
     toast.append(el('span', null, message));
     const b = tb('w-toast-undo', T('newtab.edit.undo'), null);
+    const hint = WE.undoHint(navigator.userAgentData?.platform || navigator.platform);
+    b.title = T('newtab.edit.undo.title').replace('Ctrl+Z', hint); // Ctrl+Z works while the toast shows, in or out of Edit layout
     b.addEventListener('click', () => undo());
     toast.append(b);
+    const keys = el('span', 'w-toast-hint', hint);
+    keys.setAttribute('aria-hidden', 'true'); // the button's title already says it
+    toast.append(keys);
     document.body.append(toast);
     toastTimer = setTimeout(hideToast, 8000);
   }
   // Passed over by Undo: a removal the browser let go of, and a size changed again since (in Settings, another tab).
-  const staleEntry = (e) => (e.kind === 'remove' && Date.now() - e.at > REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
+  const staleEntry = (e) => WE.timedOut(e, Date.now(), REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
   function undo() {
     let entry = history.pop();
     // Passed over: a removal the browser let go of, and a size changed again since (in Settings, another tab).
@@ -306,6 +313,9 @@
     } else if (entry.kind === 'remove') {
       window.widgetAct(entry.id, 'restore');
       say(T('newtab.edit.restored', { title: entry.title }));
+    } else if (entry.kind === 'config') { // a form save on a card: the browser still holds the settings it had (do=restore on a card that is there)
+      window.widgetAct(entry.id, 'restore');
+      say(T('newtab.edit.undone', { what: entry.title }));
     } else {
       ok = Boolean(grid()?.undoLayout(entry));
       if (entry.look) ok = restoreLook(entry.look) || ok; // Reset layout also put the clock and the search bar back
@@ -314,7 +324,16 @@
     update();
     return ok;
   }
+  function pruneHistory() { history.retain((e) => !WE.timedOut(e, Date.now(), REMOVE_UNDO_MS)); }
   undoBtn.addEventListener('click', undo);
+  // Outside Edit layout (which has its own Ctrl+Z in newtab-widgets-grid.js): Ctrl/Cmd+Z undoes a config save or removal while its toast is up.
+  document.addEventListener('keydown', (e) => {
+    if (editing || !toast || window.widgetSetup?.isOpen?.()) return;
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
+    if (WE.isTypingTarget(document.activeElement)) return;
+    e.preventDefault();
+    undo();
+  }, true);
   resetBtn.addEventListener('click', () => {
     const entry = grid()?.snapshot(null);
     if (!entry) return;
@@ -703,10 +722,19 @@
   window.widgetEditUI = {
     recordLayout(entry) { history.push(entry); update(); },
     removed(info) {
+      pruneHistory();
       history.push({ kind: 'remove', ...info });
       showToast(T(info.system ? 'newtab.edit.hidden' : 'newtab.edit.removed', { title: info.title }));
       update();
       setTimeout(update, REMOVE_UNDO_MS + 50); // once the browser lets go of it, Undo stops offering it
+    },
+    // A card's form was saved: the same Undo toast as a removal; Undo puts its earlier settings back.
+    configChanged(info) {
+      pruneHistory();
+      history.push({ kind: 'config', id: info.id, title: info.title, at: Date.now() });
+      showToast(info.message);
+      update();
+      setTimeout(update, REMOVE_UNDO_MS + 50);
     },
     guides(item, list, obstacle, m) {
       if (!item || !m) return;
@@ -717,7 +745,8 @@
     clearGuides() { drawGuides([], grid()?.geometry().m || {}); },
     editingChanged(on) {
       editing = on;
-      if (!on) { history.clear(); closePicker(false); hideToast(); }
+      // Layout steps end with the mode; a config or removal Undo (and its toast) stays until it times out.
+      if (!on) { history.retain(WE.survivesEditExit); closePicker(false); if (!history.some((e) => !staleEntry(e))) hideToast(); }
       update();
       placeTile();
       placeSoon();

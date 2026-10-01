@@ -379,7 +379,12 @@
     .w-link:hover { background: var(--hover); color: var(--text); }
     .w-link svg, .w-icon-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     .w-icon-btn { flex: none; appearance: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: default; opacity: 0; outline: none; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
-    .w-card:hover .w-icon-btn, .w-icon-btn:focus-visible { opacity: 1; }
+    /* Hidden until the card is hovered or focused (and always on a failed card's pencil); touch has no hover, so it stays faintly there. */
+    .w-card:hover .w-icon-btn, .w-card:focus-within .w-icon-btn, .w-icon-btn:hover, .w-icon-btn:focus-visible, .w-icon-btn.always { opacity: 1; }
+    @media (hover: none) { .w-icon-btn { opacity: 0.6; } }
+    body.on-media .w-icon-btn { background: rgba(0, 0, 0, 0.28); color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); }
+    body.on-media .w-icon-btn:hover { background: rgba(0, 0, 0, 0.45); }
+    @media (prefers-reduced-motion: reduce) { .w-icon-btn { transition: none; } }
     .w-icon-btn:hover { background: var(--hover); color: var(--text); }
     .w-link:focus-visible, .w-icon-btn:focus-visible, .w-btn:focus-visible, .w-row a:focus-visible, .w-check:focus-visible, .wx-day:focus-visible, .wx-dot:focus-visible, .td-add input:focus-visible, .mu-ask input:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     .w-note { margin: auto 0; padding: 6px 0 2px; color: var(--muted); font-size: 12.5px; }
@@ -387,6 +392,7 @@
     .w-note strong { display: block; color: var(--text); font-weight: 550; font-size: 13px; margin-bottom: 2px; }
     .w-btn { appearance: none; display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 5px 12px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: 500 12px/18px system-ui, sans-serif; text-decoration: none; cursor: default; outline: none; transition: background-color 150ms ease-out; }
     .w-btn:hover { background: var(--hover); }
+    .w-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .w-btn.primary { background: var(--accent); color: var(--on-accent); }
     .w-empty { margin: auto 0; color: var(--muted); font-size: 12.5px; padding: 4px 0; }
 
@@ -664,6 +670,30 @@
     .ws-buttons .w-btn { margin: 0; }
     .ws-status { flex: 1 1 auto; margin: 0; font-size: 12px; color: var(--muted); }
     .ws-status.err { color: var(--warn, #d70015); }
+    .ws-places { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .ws-chip { appearance: none; margin: 0; padding: 3px 10px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; cursor: default; outline: none; }
+    .ws-chip:hover { background: var(--hover); }
+    .ws-chip.off { text-decoration: line-through; color: var(--muted); }
+    .ws-chip.ws-sw[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+    .ws-panel:focus { outline: none; }
+    .ws-panel.ws-look { gap: 12px; }
+    .ws-seg { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; border-radius: 10px; background: var(--field); }
+    .ws-seg button { appearance: none; flex: 1 1 auto; margin: 0; padding: 4px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: 500 12px/18px system-ui, sans-serif; cursor: default; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
+    .ws-seg button:hover { color: var(--text); }
+    .ws-seg button[aria-pressed="true"] { background: var(--bg); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 1px 3px rgba(0, 0, 0, 0.12); }
+    .ws-seg button:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    @media (prefers-reduced-motion: reduce) { .ws-seg button { transition: none; } }
+    body .ws-toast.err { background: #d70015; color: #fff; }
+    .ws-buttons .w-btn:disabled { opacity: 0.45; }
+    .ws-chip:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    /* The clock and greeting's pencil (newtab-setup.js openLook): faint until the header is hovered or focused, and not while Edit layout is on (its gear does this).
+       It sits right after the greeting's own text (never at the column's edge), so a wide clock or a long greeting can't run under it. */
+    .greet { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .greet h1 { min-width: 0; overflow-wrap: anywhere; }
+    header:hover .hdr-edit, header:focus-within .hdr-edit, .greet:hover .hdr-edit, .hdr-edit:focus-visible { opacity: 1; }
+    .hdr-edit { opacity: 0.35; } /* resting, so the clock and greeting edit can be found */
+    body.w-editing .hdr-edit { display: none; }
+    .w-toast-hint { font-size: 11px; opacity: 0.6; margin-left: 2px; }
     /* Custom recipes, Notes, Countdown and Timer. */
     .cw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; align-content: start; }
     .cw-stat { display: flex; flex-direction: column; min-width: 0; }
@@ -788,7 +818,10 @@
         <p class="clock" id="clock" hidden></p>
         <p class="date" id="date"></p>
       </div>
-      <h1 id="greeting">Hello</h1>
+      <div class="greet">
+        <h1 id="greeting">Hello</h1>
+        <button class="w-icon-btn hdr-edit" id="hdr-edit" type="button" aria-label="Edit clock and greeting" title="Edit"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.6 2.2l2.2 2.2L4.2 10H2v-2.2z"/></svg></button>
+      </div>
     </header>
     <form action="https://www.google.com/search" method="get" role="search">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.75"/><path d="m10.6 10.6 3.4 3.4"/></svg>

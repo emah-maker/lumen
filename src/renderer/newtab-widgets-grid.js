@@ -465,17 +465,18 @@
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (window.widgetSetup?.isOpen?.()) return; // a card's form is open: Escape is for it (newtab-setup.js), not for leaving Edit layout
       if (drag) { e.preventDefault(); e.stopPropagation(); cancelDrag(); } else if (editing && !document.querySelector('.w-picker')) { setEditing(false); }
       return;
     }
     // Ctrl+Z (Cmd+Z): undo the last move, resize, removal or reset.
-    if (editing && !drag && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) {
+    if (editing && !drag && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && !WE.isTypingTarget(document.activeElement)) {
       e.preventDefault();
       window.widgetEditUI?.undo();
     }
   }, true);
   document.addEventListener('pointerdown', (e) => {
-    if (editing && !drag && !e.target.closest?.('.w-card, .w-edit-btn, .w-ui')) setEditing(false);
+    if (editing && !drag && !e.target.closest?.('.w-card, .w-edit-btn, .w-ui, .ws-back')) setEditing(false);
   });
 
   // ---- one card's controls and gestures ----
@@ -515,6 +516,7 @@
     gear.setAttribute('aria-label', `Settings for ${title}`);
     gear.title = 'Settings';
     gear.addEventListener('click', () => {
+      if (card.dataset.id === 'wsyshead') { window.widgetSetup?.openLook(); return; } // the clock and greeting: its own small panel
       const w = window.widgetSetupTarget?.(card.dataset.id); // kinds the page edits itself (renderer/newtab-setup.js)
       if (w) window.widgetSetup.open(w); else window.widgetAct(card.dataset.id, 'configure');
     });
@@ -528,7 +530,7 @@
       presets.append(b);
     }
     if (card.dataset.keep !== '1') card.append(remove); // the search box can't be removed
-    if (!sysCard) card.append(gear); // a section's settings are its toggle in Settings, reached from Edit layout's picker
+    if (!sysCard || card.dataset.id === 'wsyshead') card.append(gear); // the other sections' settings are their toggle in Settings, reached from Edit layout's picker
     card.append(presets);
     card.tabIndex = editing ? 0 : -1;
 

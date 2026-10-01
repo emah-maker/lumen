@@ -68,6 +68,7 @@ function effectStyleOf(s) {
 }
 const dark = matchMedia('(prefers-color-scheme: dark)');
 let currentLook = lookOf(null);
+window.newtabLook = () => currentLook; // the editor on the clock card (newtab-setup.js) starts from what is shown
 function applyLook(look) {
   currentLook = look;
   document.body.dataset.bg = look.background;

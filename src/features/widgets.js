@@ -65,6 +65,7 @@ const MK = require('./markets-view');
 const TVW = require('./tradingview-view');
 const CW = require('./custom-widget');
 const LW = require('./local-widgets');
+const WCFG = require('./widget-config'); // the home page's own editor: what it may see, and its form laid over what is saved
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -86,8 +87,10 @@ const ENDPOINTS = {
   coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
 };
 // Kinds the new-tab page can add and edit itself (renderer/newtab-setup.js), through do=setup: none of
-// them has a key, a sign-in or a private address, so their settings may be shown to the page. The
-// value picks what the page's form starts from. Everything else opens Settings (do=configure).
+// them has a key or a sign-in, so their settings may be shown to the page. The value picks what the
+// page's form starts from. Weather, World clock, Calendar and Feed are edited the same way, but their
+// settings are cut down (features/widget-config.js: a calendar's address never leaves the browser) and
+// laid over what is saved when the form comes back. Everything else opens Settings (do=configure).
 const INLINE = {
   notes: () => ({}),
   countdown: (w) => ({ cd: w.cd }),
@@ -95,6 +98,11 @@ const INLINE = {
   tradingview: (w) => ({ tv: w.tv }),
   custom: (w) => ({ recipe: w.recipe }),
   embed: (w) => ({ url: w.url, height: w.height }),
+  weather: (w) => WCFG.view(w),
+  worldclock: (w) => WCFG.view(w),
+  calendar: (w) => WCFG.view(w),
+  feed: (w) => WCFG.view(w),
+  crypto: (w) => WCFG.view(w), // edited here (its coins) but added in Settings, where the optional key is
 };
 const MAX_WIDGETS = 24; // every kind of card can be added more than once (several feeds, places, pages), so the cap is well above the number of kinds
 const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, the full width
@@ -151,12 +159,13 @@ const CONNECTORS = {
     async resolve(input, x) {
       let places = WX.cleanPlaces(input.wx?.places);
       let message = places.length === 1 ? `${places[0].here ? 'My location' : places[0].name} is ready.` : `${places.length} places are ready.`;
-      if (!places.length) { // the older form: a typed city
-        const query = str(input.city, 80);
+      // A typed city: the older form (no places yet), or the home page's editor, which adds it to the places (wx.append).
+      const query = str(input.city, 80);
+      if (!places.length || (query && input.wx?.append === true)) {
         if (!query) throw new Error('Type a city, or search for a place.');
         const found = (await searchPlaces(x, query))[0];
         if (!found) throw new Error(`No place called “${query}” was found.`);
-        places = [{ name: found.name, lat: found.lat, lon: found.lon }];
+        places = WX.cleanPlaces([...places, { name: found.name, lat: found.lat, lon: found.lon }]);
         message = `Found ${found.name}.`;
       }
       const wx = WX.cleanConfig({ ...input.wx, places, units: pick(input.units, ['f', 'c'], input.wx?.units) }, {});
@@ -208,12 +217,12 @@ const CONNECTORS = {
     },
     async resolve(input, x) {
       let places = WCK.cleanPlaces(input.wc?.places);
-      if (!places.length) { // a typed city
-        const query = str(input.city, 80);
+      const query = str(input.city, 80);
+      if (!places.length || (query && input.wc?.append === true)) { // a typed city (the home page's editor adds it to the places: wc.append)
         if (!query) throw new Error('Type a city, or search for a place.');
         const found = (await searchPlaces(x, query))[0];
         if (!found) throw new Error(`No place called “${query}” was found.`);
-        places = WCK.cleanPlaces([found]);
+        places = WCK.cleanPlaces([...places, found]);
       }
       const sun = await Promise.all(places.map((p) => sunFor(x, p)));
       places = places.map((p, i) => ({ ...p, tz: sun[i].tz }));
@@ -253,7 +262,7 @@ const CONNECTORS = {
       const upcoming = cal.events.filter((e) => e.allDay || e.end > Date.now());
       const events = cal.total === 1 ? '1 event' : `${cal.total} events`;
       return {
-        config: { url, name: cal.name, count: 5, colors: WC.cleanMode(input.colors) },
+        config: { url, name: cal.name, count: input.count ?? 5, colors: WC.cleanMode(input.colors) },
         message: `${cal.name ? `${cal.name}: ` : ''}${events}, ${upcoming.length} in the next two weeks.`,
       };
     },
@@ -615,6 +624,10 @@ const CONNECTORS = {
       const coins = MK.cleanCoins(input.mk?.coins, MK.MAX_COINS);
       if (!coins.length) throw new Error('Add at least one coin, like bitcoin (CoinGecko’s id for it).');
       const { rows, missing } = await geckoQuotes(x, coins, token || x.secret());
+      // The home page's coin editor names the coins it added: one CoinGecko has no price for is a typo, not a coin to keep.
+      const added = Array.isArray(input.mk?.added) ? input.mk.added : [];
+      const typo = coins.filter((c) => added.includes(c.id) && missing.includes(c.sym));
+      if (typo.length) throw new Error(`CoinGecko has no price for “${typo.map((c) => c.id).join('”, “')}”. Use its id: the end of the coin page’s address on coingecko.com.`);
       return {
         config: { mk: { coins }, pf: { cash0: MK.cleanCash(input.mk?.startCash) }, colors: WC.cleanMode(input.colors) }, secret: token || undefined,
         message: `Connected${token || x.secret() ? '' : ' without a key'}. ${rows.length} of ${coins.length} coins found${missing.length ? ` (no price for ${missing.join(', ')})` : ''}.`,
@@ -1163,6 +1176,7 @@ function createWidgets(deps) {
   const sysList = () => stored().filter(SYS.isSystem);
   const save = (widgets, extra = {}, sys = sysList()) => deps.writeSettings({ ...deps.readSettings(), homeWidgets: cleanList([...widgets, ...sys]), ...extra });
   const trash = createTrash({ now, ttl: deps.trashMs ?? 30000 });
+  const cfgTrash = createTrash({ now, ttl: deps.trashMs ?? 30000 }); // a card's settings from before its last form save (Undo)
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.defaultSize(type); // a size the person used stays; a first card fits beside the centre column
   // A changed config invalidates its cached data; its size, place and paper trades don't.
@@ -1432,11 +1446,11 @@ function createWidgets(deps) {
   }
 
   // ---- Settings ----
-  async function resolveInput(input, id = null) {
+  async function resolveInput(input, id = null, known = null) {
     const i = cleanInput(input);
     if (!i.type) throw new Error('Pick a kind of widget.');
     const c = CONNECTORS[i.type];
-    const out = await c.resolve(i, helpers(c.secret));
+    const out = known || await c.resolve(i, helpers(c.secret)); // known: the caller already has what resolve would find (a calendar's unchanged address)
     const config = c.clean(out.config);
     if (!config) throw new Error('That didn’t check out. Try again.');
     return { widget: { id: id || newId(), type: i.type, title: i.title, span: i.span || defaultSpan(i.type), ...config }, secret: out.secret, message: out.message, ok: out.frameable !== false };
@@ -1452,12 +1466,12 @@ function createWidgets(deps) {
     }
   }
   // Add (no id) or replace a widget. The token, if any, is saved encrypted, never in the widget.
-  async function saveWidget(input, id = null) {
+  async function saveWidget(input, id = null, known = null) {
     const widgets = list();
     const prev = id ? widgets.find((w) => w.id === id) : null;
     if (id && !prev) throw new Error('That widget is gone.');
     if (!id && widgets.length >= MAX_WIDGETS) throw new Error(`Up to ${MAX_WIDGETS} widgets.`);
-    const { widget, secret, message } = await resolveInput(input, id);
+    const { widget, secret, message } = await resolveInput(input, id, known);
     // Paper trades survive an edit; the starting cash can only change while there are none (Reset first).
     if (prev?.pf && CONNECTORS[widget.type].portfolio) widget.pf = { cash0: prev.pf.trades.length ? prev.pf.cash0 : widget.pf?.cash0, trades: prev.pf.trades };
     const ci = cleanInput(input);
@@ -1925,10 +1939,12 @@ function createWidgets(deps) {
       if (!action.items) return { invalid: true };
       action.dock = (params.get('d') || '').split(',').filter(SYS.isSystemId).slice(0, SYS.IDS.length); // system cards back to the centre column
     }
-    if (action.do === 'look') { // Edit layout's clock size (k=clock&v=s|m|l|xl) and search bar width (k=search&v=480-960)
-      action.key = params.get('k') === 'clock' ? 'newTabClockSize' : params.get('k') === 'search' ? 'newTabSearchWidth' : null;
-      action.value = action.key === 'newTabClockSize' ? SYS.cleanClockSize(params.get('v')) : action.key ? SYS.cleanSearchWidth(/^\d{3,4}$/.test(params.get('v') || '') ? params.get('v') : null) : null;
-      if (!action.value) return { invalid: true };
+    if (action.do === 'look') { // the clock's size (k=clock&v=s|m|l|xl), the search bar's width (k=search&v=480-960) and the clock card's own choices (features/widget-config.js LOOK)
+      if (params.get('k') === 'defaults') { action.defaults = true; return action; } // the clock panel's Reset to defaults
+      const look = WCFG.cleanLook(params.get('k'), params.get('v'));
+      if (!look) return { invalid: true };
+      action.key = look.key;
+      action.value = look.value;
     }
     if (action.do === 'stack') { // Edit layout: this widget (and its stack) dropped onto another of the same size
       action.onto = params.get('onto');
@@ -1963,6 +1979,8 @@ function createWidgets(deps) {
   // do=restore: Undo of a removal, or "show again" for a section that was hidden.
   function restore(id) {
     if (SYS.isSystemId(id)) return setSectionShown(id, true);
+    const here = list().find((w) => w.id === id);
+    if (here) return restoreConfig(here, cfgTrash.take(id)?.widget); // Undo of a form save: the card is still there, its settings go back
     const held = trash.take(id);
     if (!held) return false;
     const widgets = list();
@@ -1970,6 +1988,20 @@ function createWidgets(deps) {
     if (held.secret && held.secretName) deps.setSecret(held.secretName, held.secret);
     save([...widgets, held.widget]);
     deps.onUpdate?.();
+    return true;
+  }
+  // Undo after a form save (do=setup): the settings the card had before, over where the card is now.
+  function restoreConfig(now, before) {
+    if (!before || before.type !== now.type) return false;
+    const back = { ...before, ...WL.rectOf(now) };
+    for (const k of ['snap', 'stack', 'top']) delete back[k];
+    if (now.snap) back.snap = now.snap;
+    Object.assign(back, ST.cleanFields(now));
+    save(list().map((w) => (w.id === now.id ? back : w)));
+    cache.delete(now.id);
+    deps.onUpdate?.();
+    const again = list().find((w) => w.id === now.id);
+    if (again) refresh(again).catch(() => {});
     return true;
   }
   // A stack's arrow (cycle: show this member), Edit layout's drop onto a same-size card (stack) and its
@@ -1985,6 +2017,7 @@ function createWidgets(deps) {
   async function act(action) {
     if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
     if (action.do === 'restore') return restore(action.id);
+    if (action.do === 'look' && action.defaults) { deps.writeSettings({ ...deps.readSettings(), ...WCFG.LOOK_DEFAULTS }); deps.onUpdate?.(); return true; }
     if (action.do === 'look') { deps.writeSettings({ ...deps.readSettings(), [action.key]: action.value }); deps.onUpdate?.(); return true; }
     if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
     if (action.do === 'setup') return setupFromPage(action);
@@ -2041,9 +2074,15 @@ function createWidgets(deps) {
     const prev = action.create ? null : list().find((x) => x.id === action.id);
     if (!action.create && (!prev || prev.type !== input.type)) return { ok: false, message: 'That widget is gone.' };
     if (prev?.type === 'notes') input.note = prev.note; // editing a note's card keeps what is written on it
+    const problem = WCFG.checkEdit(prev, input); // before anything is looked up
+    if (problem) return { ok: false, message: problem };
+    // A calendar edit that leaves the address alone is only a count (and a title): nothing to fetch, so it also works offline.
+    const known = WCFG.keepsAddress(prev, input) ? { config: { url: prev.url, name: prev.name, count: input.count, colors: prev.colors }, message: 'Saved.' } : null;
+    if (WCFG.KINDS.includes(input.type)) Object.assign(input, WCFG.mergeEdit(prev, input)); // the form's few fields over the saved settings
     try {
-      const { widget, message } = await saveWidget(input, prev ? prev.id : null);
-      return { ok: true, message: message || 'Saved.', id: widget.id };
+      const { widget, message } = await saveWidget(input, prev ? prev.id : null, known);
+      if (prev) cfgTrash.hold({ id: prev.id, widget: prev }); // so the page can offer Undo
+      return { ok: true, message: message || 'Saved.', id: widget.id, undo: Boolean(prev) };
     } catch (err) {
       return { ok: false, message: String(err?.message || err).slice(0, 300) };
     }

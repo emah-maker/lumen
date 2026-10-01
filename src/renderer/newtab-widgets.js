@@ -110,6 +110,16 @@ function openLink(url, label, name) {
   if (name) a.title = name;
   return a;
 }
+// Kinds the page can edit itself get a pencil (renderer/newtab-setup.js); the rest are edited in Settings.
+// It comes from w.setup, so a card that failed to load has it too.
+function openEditor(w) { const t = window.widgetSetupTarget?.(w.id); if (t) window.widgetSetup.open(t); }
+function editPencil(w, title, card, always) {
+  if (w.setup && window.widgetSetup?.can(w.type)) {
+    const b = iconButton(ICON_EDIT, `Edit ${title}`, () => openEditor(w));
+    if (always) b.classList.add('always'); // a card that failed keeps its pencil visible: that is where editing matters
+    card.head.append(b);
+  }
+}
 function iconButton(svg, label, onclick) {
   const b = el('button', 'w-icon-btn');
   b.type = 'button';
@@ -1190,11 +1200,25 @@ function buildCard(w) {
   if (w.data && typeof w.data === 'object') {
     try {
       WIDGET_RENDERERS[w.type]({ ...w, title }, card);
-      // Kinds the page can edit itself get a pencil (renderer/newtab-setup.js); the rest are edited in Settings.
-      if (w.setup && window.widgetSetup?.can(w.type)) card.head.append(iconButton(ICON_EDIT, `Edit ${title}`, () => { const t = window.widgetSetupTarget(w.id); if (t) window.widgetSetup.open(t); }));
+      editPencil(w, title, card);
     } catch (err) {
       console.error('widget', w.type, err);
       body.replaceChildren(el('p', 'w-note', 'This widget couldn’t be shown.'));
+      const wrap = el('div', 'w-actions');
+      const retry = el('button', 'w-btn', 'Try again');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', `Try ${title} again`);
+      retry.addEventListener('click', () => widgetAct(w.id, 'refresh'));
+      wrap.append(retry);
+      if (w.setup && window.widgetSetup?.can(w.type)) {
+        const fix = el('button', 'w-btn', 'Edit settings');
+        fix.type = 'button';
+        fix.setAttribute('aria-label', `Edit ${title}`);
+        fix.addEventListener('click', () => openEditor(w));
+        wrap.append(fix);
+      }
+      body.append(wrap);
+      editPencil(w, title, card, true);
     }
   } else if (typeof w.error === 'string' && w.error) {
     const note = el('p', 'w-note');
@@ -1204,9 +1228,18 @@ function buildCard(w) {
     retry.setAttribute('aria-label', `Try ${title} again`);
     retry.addEventListener('click', () => widgetAct(w.id, 'refresh'));
     body.append(note);
-    const wrap = el('div');
+    const wrap = el('div', 'w-actions');
     wrap.append(retry);
+    // A card that can't load is often one whose address or place is wrong: fix it here, next to Try again.
+    if (w.setup && window.widgetSetup?.can(w.type)) {
+      const fix = el('button', 'w-btn', 'Edit settings');
+      fix.type = 'button';
+      fix.setAttribute('aria-label', `Edit ${title}`);
+      fix.addEventListener('click', () => openEditor(w));
+      wrap.append(fix);
+    }
     body.append(wrap);
+    editPencil(w, title, card, true);
   } else {
     const skel = el('div', 'w-skel');
     skel.setAttribute('aria-label', `Loading ${title}`);
