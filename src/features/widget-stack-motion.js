@@ -82,11 +82,71 @@ const DECEL = 0.998; // UIScrollView's normal deceleration rate
 const project = (v, d = DECEL) => (v / 1000) * d / (1 - d);
 // A swipe is released at progress `p` (-1..1, in cards: positive is toward the next one) with velocity
 // `v` (px/s); `px` is how many px of swipe make one card. -> -1 (the previous), 0 (back) or 1 (the next).
-function settleTarget(p, v, px = 120) {
+// `edge`: the swipe is at the end of the stack and wrapping needs a firmer push (EDGE_AT instead of half a card).
+function settleTarget(p, v, px = 120, edge = false) {
   const landing = p + project(v) / px;
-  if (landing >= 0.5) return 1;
-  if (landing <= -0.5) return -1;
+  const need = edge ? EDGE_AT : 0.5;
+  if (landing >= need) return 1;
+  if (landing <= -need) return -1;
   return 0;
+}
+// ---- the end of the stack: wrap-around with resistance ----
+// The last card is followed by the first (and the first preceded by the last), like iOS's stack. But a swipe
+// that starts at an end meets resistance first, so the end is felt: the card follows the hand at a fraction
+// (a rubber band, Apple's curve) and wrapping needs a firmer push (EDGE_AT of a card of raw swipe, or a flick).
+// Keys, dots, arrows and the auto-rotate wrap without any resistance.
+const EDGE_AT = 0.8; // raw swipe (in cards) that wraps at an end
+const EDGE_C = 0.55; // Apple's rubber-band constant
+// How far the card is drawn for `x` cards of raw swipe past an end (0..1 in, 0..EDGE_C/(1+EDGE_C) out).
+const elastic = (x) => { const a = Math.min(1, Math.abs(x)); return Math.sign(x) * ((a * EDGE_C) / (1 + EDGE_C * a)); };
+// The raw swipe that is drawn as `y` (the inverse of elastic), for taking over a card that is mid-flight.
+const unelastic = (y) => { const b = Math.min(Math.abs(y), EDGE_C / (1 + EDGE_C) - 1e-6); return Math.sign(y) * (b / (EDGE_C - EDGE_C * b)); };
+// The progress to draw for a raw swipe: itself, or elastic at an end.
+const resist = (raw, edge) => (edge ? elastic(raw) : raw);
+// Whether a swipe in direction `sign` (+1 next, -1 previous) starts at an end: the shown card is the last
+// one going forward, or the first going back, of a stack of 2 or more.
+const atEnd = (index, count, sign) => count >= 2 && ((sign > 0 && index === count - 1) || (sign < 0 && index === 0));
+
+// ---- the slide: a full card, inside the stack's own frame ----
+// Progress k (0..1, in cards) toward the card in direction `sign` (+1: the next, which comes up from below;
+// -1: the previous, which comes down from above). `h` is the card's height in px. The shown card moves out
+// (up for next) while the other comes in behind it, edge to edge, and both are clipped to the stack's frame:
+// a vertical page of two cards sliding through a window. Opacity overlaps (neither drops below HOLD) and the
+// outgoing card recedes a little (scale), so the stack is never empty. With Reduce motion nothing moves, the two
+// crossfade. -> { out, in } each { ty (px), scale, opacity, clip: [top, bottom] (px inset, in the card's own space) }
+const HOLD = 0.5; // the lowest opacity a card has while it is sliding
+const RECEDE = 0.04; // how much smaller the outgoing card gets by the time it is gone (and the incoming starts)
+const ease = (k) => k * k * (3 - 2 * k); // smoothstep: the opacity and the scale settle at both ends
+function clipFor(ty, scale, h) {
+  // The stack's frame is screen rows 0..h; the card is drawn scaled about its centre and moved by ty.
+  const c = h / 2;
+  const top = c - (c + ty) / scale; // the card's own row at the frame's top
+  const bottom = c + (c - ty) / scale; // and at the frame's bottom
+  return [Math.max(0, top), Math.max(0, h - bottom)];
+}
+function slide(k, sign, h, reduced = false) {
+  const t = Math.min(1, Math.max(0, Math.abs(k)));
+  const s = sign < 0 ? -1 : 1;
+  if (reduced) return { out: { ty: 0, scale: 1, opacity: 1 - t, clip: [0, 0] }, in: { ty: 0, scale: 1, opacity: Math.min(1, t * 1.5), clip: [0, 0] } };
+  const e = ease(t);
+  const out = { ty: -s * t * h, scale: 1 - RECEDE * e, opacity: 1 - (1 - HOLD) * e };
+  const inn = { ty: s * (1 - t) * h, scale: 1 - RECEDE * (1 - e), opacity: HOLD + (1 - HOLD) * e };
+  out.clip = clipFor(out.ty, out.scale, h);
+  inn.clip = clipFor(inn.ty, inn.scale, h);
+  return { out, in: inn };
+}
+// How much of the stack's frame shows something, 0..1: each card's on-screen share of the frame (scaled about
+// its centre, moved by ty, cut at the frame) times its opacity, the two added (they sit edge to edge). With
+// Reduce motion the two layers sit on top of each other. The tests keep it high all the way through.
+function coverage(k, h = 200, reduced = false) {
+  const f = slide(k, 1, h, reduced);
+  if (reduced) return 1 - (1 - f.out.opacity) * (1 - f.in.opacity);
+  const part = (c) => {
+    const lo = Math.max(0, h / 2 + c.ty - (c.scale * h) / 2);
+    const hi = Math.min(h, h / 2 + c.ty + (c.scale * h) / 2);
+    return (Math.max(0, hi - lo) / h) * c.opacity;
+  };
+  return part(f.out) + part(f.in);
 }
 // One step of a spring toward `target`: s = { x, v } (x in the same units as target, v per second), dt in
 // seconds, response = how fast it arrives (s, not a duration), damping = ratio (1 settles without overshoot).
@@ -118,7 +178,7 @@ function velocityOf(samples, now, window = 90) {
   return (sum / span) * 1000;
 }
 
-const api = { AUTO_MS, SOON_MS, DAY_MS, MORNING, autoPlan, smartPick, smartAction, project, settleTarget, springStep, settled, wheelPx, velocityOf };
+const api = { AUTO_MS, SOON_MS, DAY_MS, MORNING, EDGE_AT, HOLD, autoPlan, smartPick, smartAction, project, settleTarget, springStep, settled, wheelPx, velocityOf, elastic, unelastic, resist, atEnd, slide, clipFor, coverage };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetStackMotion = api;
 })();

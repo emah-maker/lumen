@@ -14,6 +14,8 @@
   const T = (key, vars) => WE.text(key, vars, strings);
   const say = (message) => window.widgetAnnounce?.(message);
   const MAX_WIDGETS = 24; // features/widgets.js
+  const STACK_HINT_KEY = 'lumen.home.stackHint';
+  const STARTER_COUNT = 3; // the Smart Stack entry adds this many widgets (features/widget-stacks.js starterKinds)
   const REMOVE_UNDO_MS = 25000; // how long the browser keeps a removed widget (features/widget-trash.js is 30 s)
 
   const CSS = `
@@ -47,6 +49,7 @@
     .w-dock.editing .w-dock-row { padding: 6px; border-radius: 16px; background: var(--bg); box-shadow: 0 0 0 1px var(--border), 0 8px 28px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
     .w-dock-hint, .w-firstrun { margin: 0; padding: 6px 12px; border-radius: 12px; background: var(--bg); color: var(--muted); font-size: 12px; line-height: 1.4; box-shadow: 0 0 0 1px var(--border), 0 6px 20px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
     .w-dock-hint[hidden], .w-firstrun[hidden] { display: none; }
+    .w-stackhint { color: var(--text); }
     .w-firstrun { display: flex; align-items: center; gap: 8px; }
     .w-tb { appearance: none; position: static; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 13px; border: 0; border-radius: 999px; background: var(--card); color: var(--text);
       font: 500 12.5px/18px system-ui, sans-serif; cursor: default; outline: none; box-shadow: 0 0 0 1px var(--border); transition: background-color 150ms ease-out; }
@@ -144,6 +147,7 @@
 
   let editing = false;
   let stacked = false;
+  let stackHintShown = false; // the stack hint was on screen during this Edit layout
   const history = WE.createHistory(20);
 
   // ---- the dock: toggle, and the toolbar while editing ----
@@ -162,6 +166,15 @@
   firstX.setAttribute('aria-label', T('newtab.edit.dismiss'));
   firstX.addEventListener('click', () => { store.set('lumen.home.editHint', '1'); update(); });
   first.append(firstText, firstX);
+  // First time in Edit layout: how to make a Smart Stack. Shown once; × (or leaving Edit layout) remembers it.
+  const stackHint = el('div', 'w-firstrun w-stackhint');
+  stackHint.hidden = true;
+  stackHint.id = 'w-stack-hint';
+  const stackX = el('button', 'w-x', '×');
+  stackX.type = 'button';
+  stackX.setAttribute('aria-label', T('newtab.edit.dismiss'));
+  stackX.addEventListener('click', () => { store.set(STACK_HINT_KEY, '1'); update(); });
+  stackHint.append(el('span', null, T('newtab.edit.stackHint')), stackX);
   const row = el('div', 'w-dock-row');
   const addBtn = tb('w-tb-add', T('newtab.edit.add'), icon('M6 2v8M2 6h8'), T('newtab.edit.add.title'));
   addBtn.setAttribute('aria-haspopup', 'dialog');
@@ -172,7 +185,7 @@
   toggle.setAttribute('aria-pressed', 'false');
   toggle.setAttribute('aria-describedby', 'w-dock-hint');
   row.append(addBtn, undoBtn, resetBtn, toggle);
-  dock.append(hint, first, row);
+  dock.append(hint, stackHint, first, row);
   document.body.append(dock);
 
   const extras = el('div');
@@ -198,7 +211,10 @@
     resetBtn.hidden = !editing;
     hint.hidden = !editing;
     first.hidden = editing || real > 0 || stacked || store.get('lumen.home.editHint') === '1';
+    stackHint.hidden = !editing || stacked || store.get(STACK_HINT_KEY) === '1';
+    if (!stackHint.hidden) stackHintShown = true;
     dock.hidden = stacked; // one column: no editing, and nothing to add to
+    placeToast(); // the toolbar's height changed (its hint came or went)
     tile.querySelector('small').textContent = real === 0 ? T('newtab.edit.tile.empty') : '';
   }
 
@@ -233,7 +249,7 @@
     const sys = window.newtabSystem;
     const hidden = (sys ? sys.hidden() : []).map((id) => ({ id, label: WS.labelOf(id) }));
     const types = window.widgetTypes?.() || []; // one entry for every kind newtab-widgets.js can draw
-    const entries = WE.pickerEntries({ types: realCount() >= MAX_WIDGETS ? [] : types, hidden, table: strings });
+    const entries = WE.pickerEntries({ types: realCount() >= MAX_WIDGETS ? [] : types, hidden, table: strings, stack: realCount() + STARTER_COUNT <= MAX_WIDGETS });
     picker = el('div', 'w-picker w-ui');
     picker.setAttribute('role', 'dialog');
     picker.setAttribute('aria-label', T('newtab.edit.picker'));
@@ -248,6 +264,10 @@
         if (entry.kind === 'section') {
           window.widgetAct(entry.id, 'restore');
           say(T('newtab.edit.restored', { title: entry.label }));
+        } else if (entry.kind === 'stack') { // a stack with starter widgets; its Edit stack panel opens when it lands (newtab-stacks.js)
+          window.newtabStacks?.expectNew();
+          window.widgetAct('wcreate', 'smartstack');
+          say(T('newtab.edit.smartstack.adding'));
         } else if (window.widgetSetup?.canAdd(entry.type)) {
           window.widgetSetup.open({ type: entry.type }); // set up right here on the page (renderer/newtab-setup.js)
         } else {
@@ -296,8 +316,25 @@
     keys.setAttribute('aria-hidden', 'true'); // the button's title already says it
     toast.append(keys);
     document.body.append(toast);
+    placeToast();
     toastTimer = setTimeout(hideToast, 8000);
   }
+  // The toast sits centered just above the toolbar and gets out of the way of the toolbar, the Edit stack panel and
+  // the picker (features/widget-edit.js placeToast): it never covers them. Called when any of them moves.
+  function placeToast() {
+    if (!toast) return;
+    const rect = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+    const shown = (sel) => [...document.querySelectorAll(sel)].filter((n) => n.getClientRects().length);
+    const bar = shown('.w-dock:not([hidden])').map(rect)[0];
+    const obstacles = [...(bar ? [bar] : []), ...shown('.w-stack-panel, .w-picker, .w-stack-menu').map(rect)];
+    const r = toast.getBoundingClientRect();
+    const at = WE.placeToast({ size: { w: r.width, h: r.height }, view: { w: innerWidth, h: innerHeight }, obstacles, base: bar ? bar.top - 10 : undefined });
+    toast.style.left = `${Math.round(at.left)}px`;
+    toast.style.top = `${Math.round(at.top)}px`;
+    toast.style.bottom = 'auto';
+    toast.style.transform = 'none';
+  }
+  addEventListener('resize', placeToast);
   // Passed over by Undo: a removal the browser let go of, and a size changed again since (in Settings, another tab).
   const staleEntry = (e) => WE.timedOut(e, Date.now(), REMOVE_UNDO_MS) || (e.kind === 'look' && SZ()?.get()[e.key] !== e.after);
   function undo() {
@@ -755,11 +792,13 @@
     editingChanged(on) {
       editing = on;
       // Layout steps end with the mode; a config or removal Undo (and its toast) stays until it times out.
+      if (!on && stackHintShown) { store.set(STACK_HINT_KEY, '1'); stackHintShown = false; } // shown once
       if (!on) { history.retain(WE.survivesEditExit); closePicker(false); if (!history.some((e) => !staleEntry(e))) hideToast(); }
       update();
       placeTile();
       placeSoon();
     },
+    placeToast,
     undo,
   };
 

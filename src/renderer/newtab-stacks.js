@@ -6,17 +6,24 @@
 // are content-visibility: hidden); each widget still refreshes on its own schedule.
 //
 // Cycling, like iOS: the mouse wheel or a two-finger swipe (deltaY) and a one-finger swipe on touch move the
-// shown card 1:1 with the hand, then a spring takes it to the next card (or back), carrying the release
-// velocity; grabbing it mid-flight takes over from where it is. Wrapping: the last card is followed by the
-// first. Only transform and opacity animate (a plain crossfade with Reduce motion, nothing in Performance mode).
-// The stack's rail on the right edge has page dots (buttons) and, on hover or focus, an up and a down arrow.
-// The rail is the focusable stack: Up/Down and PageUp/PageDown switch, Home and End go to the ends.
+// shown card with the hand, then a spring takes it to the next card (or back), carrying the release velocity;
+// grabbing it mid-flight takes over from where it is. The motion is Smart Stack's: a full card slides up and
+// out while the next one comes up from below, edge to edge, inside the stack's own frame (each card is clipped
+// to it, so nothing leaks over a neighbor), with overlapping opacity and a slight recede (transform, opacity and
+// clip-path only; a plain crossfade with Reduce motion, nothing in Performance mode). A switch changes the
+// stack's classes in place: the grid is not drawn again (features/widget-stack-motion.js slide).
+// Wrapping: the last card is followed by the first. At an end a swipe meets resistance first (a rubber band, and a
+// firmer push to wrap); keys, dots, arrows and the auto-rotate wrap freely.
+// The stack's rail on the right edge (in its own gutter of the card's padding) has page dots (buttons) and, on
+// hover or focus, an up and a down arrow. It is faint at rest and shows fully on hover, focus and while the stack
+// moves. The rail is the focusable stack: Up/Down and PageUp/PageDown switch, Home and End go to the ends, and
+// Enter, the Menu key, a right-click or a long-press opens "Edit stack…" (so does the stack button in the card's header).
 //
 // A stack rotates by itself (every ~20 s, while the page is visible and nobody is hovering, focusing or
 // touching it; never with Reduce motion) unless its "Rotate automatically" is off. "Smart rotate" shows the
 // calendar when an event starts within 30 minutes, a countdown within a day, the weather in the morning, and
 // says why for a few seconds. The "Edit stack" panel (Edit layout, the badge on a card) lists the members:
-// reorder (drag or the arrows), remove, add, the two toggles. Every change there and stacking by dropping a
+// reorder (drag or the arrows), remove, add, the two toggles; it sits beside the stack (never over it) and opens outside Edit layout too. Every change there and stacking by dropping a
 // card on another can be undone (the Undo toast: newtab-edit.js). The shown member and the order are stored
 // (do=cycle, do=restack) so every new tab shows the same.
 (() => {
@@ -26,14 +33,16 @@
   const say = (t) => window.widgetAnnounce?.(t);
   const txt = (key, vars) => window.WidgetEdit.text(key, vars, window.lumenI18n?.strings);
   const PENDING_MS = 2500; // how long a switch the browser hasn't confirmed yet is kept on screen
-  const PX = 120; // px of wheel or swipe that move one card
-  const TRAVEL = 22; // px a card slides while it fades
+  const PX_MAX = 160; // px of wheel that move one card (less for a short card: its own height)
+  const LONG_PRESS_MS = 520; // a press on the rail this long opens Edit stack…
+  const RAIL_MS = 1400; // the rail stays fully visible this long after a switch
   const TOUCH_HOLD_MS = 30000; // after a person touched a stack, smart rotate leaves it be this long
   const pending = new Map(); // member id -> when it was picked (until the browser's list agrees)
   const runs = new Map(); // stack id -> { last (ms of the last move or touch), seen (the last smart key acted on) }
   let groups = new Map(); // widget id -> { sid, members: [ids], top, rotate, smart }
   let lastRaw = [];
-  let eng = null; // the swipe or switch in progress: { sid, topId, p, v, target, jump, samples, raf }
+  let eng = null; // the swipe or switch in progress: { sid, topId, p (drawn), raw (swipe, before resistance), edge, v, target, jump, samples, raf, h, px }
+  let expecting = null; // Add widget > Smart Stack was chosen: { sids: the stacks there were, until }, so the new one's panel opens
 
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   // Small line icons, built with DOM calls (no markup strings).
@@ -107,6 +116,7 @@
     card.classList.toggle('in-stack', Boolean(g));
     if (!g) {
       control?.remove();
+      card.querySelector(':scope > .w-head > .w-stack-open')?.remove();
       card.querySelector(':scope > .w-stack-edit')?.remove();
       card.classList.remove('w-near', 'w-peek');
       setHidden(card, false);
@@ -119,6 +129,7 @@
     const ti = g.members.indexOf(g.top);
     card.classList.toggle('w-near', n <= 3 || [1, n - 1].includes(((i - ti) % n + n) % n)); // the shown card's neighbors stay drawn
     const c = control || build(card);
+    headButton(card);
     c.setAttribute('aria-label', txt('newtab.stack.label', { title: titleOf(card), n: i + 1, count: n }));
     const dots = c.querySelector('.w-stack-dots');
     const key = g.members.map((id) => `${id}:${titleOfId(id)}`).join('|');
@@ -136,6 +147,22 @@
     c.querySelector('.w-stack-prev').title = prev ? `${txt('newtab.stack.prev')}: ${titleOf(prev)}` : txt('newtab.stack.prev');
     c.querySelector('.w-stack-next').title = next ? `${txt('newtab.stack.next')}: ${titleOf(next)}` : txt('newtab.stack.next');
     return shown;
+  }
+  // The card's header gets a stack button (shown on hover, like the pencil): Edit stack, outside Edit layout too.
+  function headButton(card) {
+    const head = card.querySelector(':scope > .w-head');
+    if (!head) return;
+    let b = head.querySelector(':scope > .w-stack-open');
+    if (!b) {
+      b = el('button', 'w-icon-btn w-stack-open');
+      b.type = 'button';
+      b.setAttribute('aria-haspopup', 'dialog');
+      b.append(icon(ICON_STACK));
+      b.addEventListener('click', (e) => { e.stopPropagation(); openPanel(card, b); });
+      head.append(b);
+    }
+    b.setAttribute('aria-label', txt('newtab.stack.edit', { title: titleOf(card) }));
+    b.title = txt('newtab.stack.edit.title');
   }
   function setHidden(card, hidden) {
     card.classList.toggle('w-under', hidden);
@@ -167,7 +194,7 @@
     const c = el('div', 'w-stack');
     c.setAttribute('role', 'group');
     c.setAttribute('aria-roledescription', txt('newtab.stack.role'));
-    c.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown PageUp PageDown Home End');
+    c.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown PageUp PageDown Home End Enter');
     c.tabIndex = 0;
     const up = navButton(card, 'w-stack-prev', txt('newtab.stack.prev'), ICON_UP, () => stepFrom(card, -1));
     const down = navButton(card, 'w-stack-next', txt('newtab.stack.next'), ICON_DOWN, () => stepFrom(card, 1));
@@ -181,6 +208,8 @@
     why.setAttribute('aria-hidden', 'true'); // the live region says it
     c.append(up, dots, down, live);
     c.addEventListener('keydown', (e) => onKey(e, card));
+    c.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openRailMenu(card, c, e.clientX, e.clientY); });
+    c.addEventListener('pointerdown', (e) => onRailPress(e, card, c));
     card.append(c, why);
     card.addEventListener('pointerdown', (e) => onTouchStart(e, card));
     return c;
@@ -188,6 +217,13 @@
 
   // ---- keys, dots and arrows ----
   function onKey(e, card) {
+    const rail = e.currentTarget;
+    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10') || (e.key === 'Enter' && e.target === rail && !e.altKey && !e.ctrlKey && !e.metaKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      openPanel(card, rail);
+      return;
+    }
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     const g = groups.get(card.dataset.id);
     if (!g) return;
@@ -216,14 +252,89 @@
   // The old API (and the tests'): the arrow's step.
   function cycle(card, step) { stepFrom(card, step); }
 
+  // ---- "Edit stack…" from the rail: a right-click, the Menu key or a long-press ----
+  let menu = null; // { root, opener }
+  function closeMenu(refocus = false) {
+    if (!menu) return;
+    const { root, opener } = menu;
+    menu = null;
+    root.remove();
+    document.removeEventListener('pointerdown', menuOutside, true);
+    document.removeEventListener('keydown', menuKeys, true);
+    if (refocus && opener?.isConnected) opener.focus({ preventScroll: true });
+  }
+  function menuOutside(e) { if (menu && !menu.root.contains(e.target)) closeMenu(); }
+  function menuKeys(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); } }
+  function openRailMenu(card, rail, x, y) {
+    closeMenu();
+    closePanel(false);
+    const root = el('div', 'w-stack-menu w-ui');
+    root.setAttribute('role', 'menu');
+    const item = el('button', 'w-stack-menu-item', txt('newtab.stack.menu'));
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.addEventListener('click', () => { closeMenu(); openPanel(card, rail); });
+    root.append(item);
+    document.body.append(root);
+    const r = root.getBoundingClientRect();
+    root.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+    root.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+    menu = { root, opener: rail };
+    document.addEventListener('pointerdown', menuOutside, true);
+    document.addEventListener('keydown', menuKeys, true);
+    item.focus({ preventScroll: true });
+  }
+  // A press that stays on the rail for LONG_PRESS_MS opens the panel (a touch screen has no right-click). The click that
+  // would end it (a dot) is dropped.
+  function onRailPress(e, card, rail) {
+    if (e.button !== 0 || editing()) return;
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const timer = setTimeout(() => {
+      off();
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 400);
+      openPanel(card, rail);
+    }, LONG_PRESS_MS);
+    const move = (ev) => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 8) off(); };
+    function off() {
+      clearTimeout(timer);
+      removeEventListener('pointermove', move, true);
+      removeEventListener('pointerup', off, true);
+      removeEventListener('pointercancel', off, true);
+    }
+    addEventListener('pointermove', move, true);
+    addEventListener('pointerup', off, true);
+    addEventListener('pointercancel', off, true);
+  }
+
   // ---- the motion ----
   // eng.p is the progress toward the next card (positive) or the previous one (negative), in cards. The shown
-  // card slides away and fades while its neighbor (the card under it) slides in and fades up: transform and
-  // opacity only. With Reduce motion nothing slides, the two crossfade.
+  // card slides up and out (down and out going back) while its neighbor, the card under it, comes in behind it from
+  // the other side, edge to edge, each clipped to the stack's frame (SM.slide has the numbers). With Reduce motion
+  // nothing slides, the two crossfade. eng.raw is the swipe itself; at an end eng.p is its rubber-banded
+  // version (SM.resist), elsewhere the same.
   function begin(g, extra = {}) {
     if (eng) settleNow();
-    eng = { sid: g.sid, topId: g.top, p: 0, v: 0, target: null, jump: null, peekId: null, samples: [], raf: 0, t: 0, wheelTimer: 0, ...extra };
+    const h = cardOf(g.top)?.offsetHeight || 160;
+    eng = { sid: g.sid, topId: g.top, p: 0, raw: 0, edge: false, exempt: 0, v: 0, target: null, jump: null, peekId: null, samples: [], raf: 0, t: 0, wheelTimer: 0, h, px: Math.max(80, Math.min(PX_MAX, h)), ...extra };
+    flashRail(cardOf(g.top));
     return eng;
+  }
+  // Take over a card that is in flight: the swipe carries on from where the card is drawn.
+  function grab() {
+    stop();
+    eng.exempt = eng.target ? Math.sign(eng.target) : eng.exempt; // a landing in progress is not held back at the end
+    eng.target = null;
+    eng.raw = eng.edge && !eng.exempt ? SM.unelastic(eng.p) : eng.p;
+  }
+  // Add a swipe of `step` cards to the raw swipe: the drawn progress follows it (resisted at an end).
+  function swipe(g, step) {
+    eng.raw = Math.max(-1, Math.min(1, eng.raw + step));
+    const sign = Math.sign(eng.raw);
+    if (eng.exempt && eng.exempt !== sign) eng.exempt = 0;
+    eng.edge = !eng.exempt && SM.atEnd(g.members.indexOf(g.top), g.members.length, sign);
+    eng.p = SM.resist(eng.raw, eng.edge);
   }
   const groupOfEng = () => (eng ? groups.get(eng.topId) : null);
   function peekFor(g, sign) {
@@ -241,20 +352,30 @@
     const peek = want ? cardOf(want) : null;
     if (!top) { abort(); return; }
     if (!peek) { clearCard(top); return; }
-    const k = Math.min(Math.abs(eng.p), 1);
-    const slide = reduced() ? 0 : TRAVEL;
+    const flat = reduced();
+    const f = SM.slide(Math.min(Math.abs(eng.p), 1), sign, eng.h, flat);
     top.classList.add('w-moving');
     peek.classList.add('w-peek', 'w-moving');
-    top.style.opacity = String(Math.max(0, 1 - k * 1.7));
-    top.style.translate = slide ? `0 ${(-sign * k * slide).toFixed(2)}px` : '';
-    peek.style.opacity = String(Math.min(1, Math.max(0, (k - 0.3) * 1.45)));
-    peek.style.translate = slide ? `0 ${(sign * (1 - k) * slide).toFixed(2)}px` : '';
+    frame(top, f.out, flat);
+    frame(peek, f.in, flat);
+  }
+  // One card's frame of the slide. The scale is about the card's own centre (the grid positions a card with a
+  // transform, which moves the default origin), and the clip keeps it inside the stack's frame.
+  function frame(card, f, flat) {
+    card.style.opacity = f.opacity.toFixed(3);
+    if (flat) return;
+    if (!card.style.transformOrigin) {
+      const [left, top, width, height] = String(card._pos || '').split(',').map(Number);
+      if ([left, top, width, height].every(Number.isFinite)) card.style.transformOrigin = `${left + width / 2}px ${top + height / 2}px`;
+    }
+    card.style.translate = `0 ${f.ty.toFixed(2)}px`;
+    card.style.scale = f.scale.toFixed(4);
+    card.style.clipPath = f.clip[0] > 0.01 || f.clip[1] > 0.01 ? `inset(${f.clip[0].toFixed(2)}px -1px ${f.clip[1].toFixed(2)}px -1px round 17px)` : '';
   }
   function clearCard(card) {
     if (!card) return;
     card.classList.remove('w-peek', 'w-moving');
-    card.style.removeProperty('opacity');
-    card.style.removeProperty('translate');
+    for (const p of ['opacity', 'translate', 'scale', 'clip-path', 'transform-origin']) card.style.removeProperty(p);
   }
   function stop() {
     cancelAnimationFrame(eng.raf);
@@ -319,23 +440,38 @@
     abort();
     if (peekId && g) commit(g, peekId);
   }
-  // The shown card is now `toId`: the page's list, the browser's record, the announcement.
+  // The shown card is now `toId`: changed in place (the classes, the dots, the grid's record of what is shown), the
+  // announcement, and the browser's record (do=cycle). The grid is not drawn again: the card that was under is the card
+  // that is shown, at the same cells, so nothing flashes or moves.
   function commit(g, toId) {
-    const from = cardOf(g.top);
+    const fromId = g.top;
+    const from = cardOf(fromId);
+    const to = cardOf(toId);
+    if (!to || !g.members.includes(toId) || fromId === toId) return;
     const focused = Boolean(from?.contains(document.activeElement));
     for (const id of g.members) pending.delete(id);
     pending.set(toId, Date.now());
     moved(g.sid);
-    window.renderWidgets(lastRaw); // the grid now has `to` in the place; `from` waits under it
-    const to = cardOf(toId);
-    if (focused) to?.querySelector('.w-stack')?.focus({ preventScroll: true });
+    g.top = toId;
+    lastRaw = lastRaw.map((w) => (g.members.includes(w.id) ? { ...w, top: w.id === toId } : w)); // a later redraw from this list agrees
+    for (const id of g.members) { const c = cardOf(id); if (c) decorate(c, { id }); }
+    window.widgetGrid?.swapShown?.(fromId, { id: toId, type: rawOf(toId)?.type, title: rawOf(toId)?.title }, to);
+    if (focused) to.querySelector('.w-stack')?.focus({ preventScroll: true });
+    flashRail(to);
     const n = g.members.length;
-    const live = to?.querySelector('.w-stack-live');
+    const live = to.querySelector('.w-stack-live');
     if (live) {
       live.textContent = '';
       setTimeout(() => { live.textContent = txt('newtab.stack.shown', { title: titleOfId(toId), n: g.members.indexOf(toId) + 1, count: n }); }, 40);
     }
     window.widgetAct(toId, 'cycle');
+  }
+  // The rail shows fully for a moment (iOS shows its page indicator when the page changes, then lets it fade).
+  function flashRail(card) {
+    if (!card) return;
+    card.classList.add('rail-on');
+    clearTimeout(card._railT);
+    card._railT = setTimeout(() => card.classList.remove('rail-on'), RAIL_MS);
   }
   // Show `toId` in the stack (an arrow, a dot, a key, the auto-rotate): from the side `dir`.
   function go(g, toId, dir) {
@@ -378,19 +514,19 @@
       if (now - lockT > 140) locked = false; else { lockT = now; return; }
     }
     if (eng && eng.sid !== g.sid) settleNow();
-    if (eng) { stop(); eng.target = null; } else begin(g); // a new swipe, or the card in flight is grabbed where it is
+    if (eng) grab(); else begin(g); // a new swipe, or the card in flight is grabbed where it is
     eng.drag = true;
     eng.jump = eng.jump && Math.sign(eng.p) === eng.jump.dir ? eng.jump : null;
     touched(g.sid);
     eng.samples.push({ t: now, d: dy });
-    eng.p = Math.max(-1, Math.min(1, eng.p + dy / PX));
+    swipe(g, dy / eng.px);
     draw();
     if (!eng) return;
-    if (Math.abs(eng.p) >= 1) { // a whole card of swipe: it lands, and the rest of this swipe is ignored
+    if (Math.abs(eng.raw) >= 1) { // a whole card of swipe: it lands (wraps, at an end), and the rest of this swipe is ignored
       locked = true;
       lockT = now;
       eng.drag = false;
-      release(Math.sign(eng.p), SM.velocityOf(eng.samples, now) / PX);
+      release(Math.sign(eng.raw), SM.velocityOf(eng.samples, now) / eng.px);
       return;
     }
     clearTimeout(eng.wheelTimer);
@@ -399,7 +535,7 @@
       if (eng !== owner) return;
       const v = SM.velocityOf(owner.samples, owner.samples[owner.samples.length - 1].t, 120);
       owner.drag = false;
-      release(SM.settleTarget(owner.p, v, PX), v / PX);
+      release(SM.settleTarget(owner.raw, v, owner.px, owner.edge), v / owner.px);
     }, 90);
   }
 
@@ -411,7 +547,7 @@
     const g = groups.get(card.dataset.id);
     if (!g || g.top !== card.dataset.id) return;
     touch = { id: e.pointerId, x: e.clientX, y: e.clientY, lastY: e.clientY, g, card, on: false, moved: false };
-    if (eng && eng.sid === g.sid) { stop(); eng.target = null; eng.drag = true; touch.grab = true; } // grabbing a card in flight
+    if (eng && eng.sid === g.sid) { grab(); eng.drag = true; touch.grab = true; } // grabbing a card in flight
     addEventListener('pointermove', onTouchMove, true);
     addEventListener('pointerup', onTouchEnd, true);
     addEventListener('pointercancel', onTouchEnd, true);
@@ -424,7 +560,7 @@
       if (!touch.grab && Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
       if (!touch.grab && Math.abs(dx) > Math.abs(dy)) { endTouchListeners(); touch = null; return; }
       touch.on = true;
-      touch.px = Math.min(160, touch.card.clientHeight || PX);
+      touch.px = touch.card.clientHeight || PX_MAX; // the card follows the finger one to one
       if (!eng) { begin(touch.g); eng.drag = true; }
       try { touch.card.setPointerCapture(e.pointerId); } catch { /* the pointer is gone */ }
     }
@@ -434,7 +570,7 @@
     const step = touch.lastY - e.clientY; // an upward swipe is toward the next card
     touch.lastY = e.clientY;
     eng.samples.push({ t: performance.now(), d: step });
-    eng.p = Math.max(-1, Math.min(1, eng.p + step / touch.px));
+    swipe(touch.g, step / touch.px);
     draw();
   }
   function onTouchEnd(e) {
@@ -446,7 +582,7 @@
     eng.drag = false;
     if (t.moved) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 60); }
     const v = e.type === 'pointercancel' ? 0 : SM.velocityOf(eng.samples, performance.now());
-    release(e.type === 'pointercancel' ? 0 : SM.settleTarget(eng.p, v, t.px), v / t.px);
+    release(e.type === 'pointercancel' ? 0 : SM.settleTarget(eng.raw, v, t.px, eng.edge), v / t.px);
   }
   function endTouchListeners() {
     removeEventListener('pointermove', onTouchMove, true);
@@ -516,6 +652,7 @@
       if (frame && h) frame.dataset.h = h;
     }
     if (document.body.classList.contains('w-editing')) editBadges();
+    openNew();
     if (panel) refreshPanel();
   }
   // What the page knows as a list the model can check: the places on the grid and the hidden members.
@@ -642,11 +779,13 @@
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePanel(); }
   }
   function panelOutside(e) {
-    if (panel && !panel.root.contains(e.target) && !e.target.closest?.('.w-stack-edit, .w-toast')) closePanel(false);
+    if (panel && !panel.root.contains(e.target) && !e.target.closest?.('.w-stack-edit, .w-stack-open, .w-stack-menu, .w-toast')) closePanel(false);
   }
   function openPanel(card, opener) {
     if (panel && panel.card === card) { closePanel(); return; }
+    closeMenu();
     closePanel(false);
+    card.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     const root = el('div', 'w-stack-panel w-ui');
     root.setAttribute('role', 'dialog');
     root.setAttribute('aria-label', txt('newtab.stack.panel'));
@@ -660,12 +799,26 @@
   const panelSignature = (g, id) => (g
     ? `s|${g.sid}|${g.members.map((m) => `${m}:${titleOfId(m)}`).join()}|${g.rotate}|${g.smart}|${candidatesFor(g.top).filter((c) => !groups.has(c)).join()}`
     : `p|${id}|${candidatesFor(id).join()}`);
+  // Beside the stack it edits, never over it: the side with the least of the other cards under it (and clear of the
+  // toolbar and the picker). features/widget-edit.js placePanel has the rule; an Undo toast moves out of its way.
   function placePanel() {
-    const r = panel.card.getBoundingClientRect();
-    const w = panel.root.offsetWidth || 300;
-    const left = r.right + 12 + w <= innerWidth ? r.right + 12 : Math.max(8, r.left - 12 - w);
-    panel.root.style.left = `${Math.max(8, Math.min(left, innerWidth - w - 8))}px`;
-    panel.root.style.top = `${Math.max(8, Math.min(r.top, innerHeight - panel.root.offsetHeight - 8))}px`;
+    const rect = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+    const own = rect(panel.card);
+    const others = [...(box()?.querySelectorAll(':scope > .w-card:not(.w-under)') || []), ...document.querySelectorAll('main #clock:not([hidden]), main form')].filter((c) => c !== panel.card).map(rect); // the other cards and the clock and search bar
+    const avoid = [...document.querySelectorAll('.w-dock:not([hidden]), .w-picker')].filter((n) => n.getClientRects().length).map(rect);
+    panel.root.style.maxHeight = `${Math.max(160, Math.min(560, innerHeight * 0.8, innerHeight - 16))}px`;
+    const size = { w: panel.root.offsetWidth || 300, h: panel.root.offsetHeight || 320 };
+    const at = window.WidgetEdit.placePanel({ size, view: { w: innerWidth, h: innerHeight }, own, others, avoid });
+    panel.root.style.left = `${Math.round(at.left)}px`;
+    panel.root.style.top = `${Math.round(at.top)}px`;
+    panel.root.dataset.side = at.side;
+    window.widgetEditUI?.placeToast?.();
+    // A card that was just made or moved is still sliding into its place (260 ms): measure again once it has landed.
+    if (!panel.rechecked) {
+      const mine = panel;
+      mine.rechecked = true;
+      setTimeout(() => { if (panel === mine) placePanel(); }, 330);
+    }
   }
   function refreshPanel(first = false) {
     if (!panel) return;
@@ -813,14 +966,25 @@
     addEventListener('pointerup', up, true);
     addEventListener('pointercancel', up, true);
   }
-  // Leaving Edit layout closes the panel and removes the badges. Entering: badges.
+  // Leaving Edit layout removes the badges (an open Edit stack panel stays: it works outside Edit layout too). Entering: badges.
   document.addEventListener('w-mode', (e) => {
-    if (e.detail?.editing) editBadges(); else closePanel(false);
+    if (e.detail?.editing) editBadges(); else if (panel && !panel.sid) closePanel(false); // the "New stack" picker is part of Edit layout
   });
+  // Add widget > Smart Stack: the page asked the browser for a new stack; when it arrives its Edit stack panel opens.
+  function expectNew() { expecting = { sids: new Set(uniqueGroups().map((g) => g.sid)), until: Date.now() + 8000 }; }
+  function openNew() {
+    if (!expecting) return;
+    if (Date.now() > expecting.until) { expecting = null; return; }
+    const g = uniqueGroups().find((x) => !expecting.sids.has(x.sid));
+    const card = g && cardOf(g.top);
+    if (!card) return;
+    expecting = null;
+    openPanel(card, null);
+  }
 
   window.widgetGrid?.onLayout(afterLayout);
   window.newtabStacks = {
-    prepare, decorate, afterLayout, canStack, cycle, join, leave, restore, go: (id, to, dir) => { const g = groups.get(id); return g ? go(g, to, dir || 1) : false; },
+    prepare, decorate, afterLayout, canStack, cycle, join, leave, restore, expectNew, edit: (id) => { const c = cardOf(groups.get(id)?.top || id); if (c && groups.has(id)) openPanel(c, null); return Boolean(panel); }, go: (id, to, dir) => { const g = groups.get(id); return g ? go(g, to, dir || 1) : false; },
     state: () => ({ groups: [...new Set(groups.values())].map((g) => ({ ...g })), pending: [...pending.keys()], moving: eng ? { sid: eng.sid, p: eng.p, peek: eng.peekId } : null, panel: Boolean(panel) }),
   };
 })();

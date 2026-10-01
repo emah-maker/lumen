@@ -599,7 +599,19 @@
     }
   }
 
-  window.widgetGrid = { attach, sync, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, gridBottom(centreBottom())),
+  // A stack's switch, in place (newtab-stacks.js): `to` ({ id, type, title }) is shown, at the cells `fromId` had, and
+  // `card` is its card. The grid's records follow; nothing is drawn again but the layout hooks (the hidden members'
+  // places), which write nothing that has not changed.
+  function swapShown(fromId, to, card) {
+    const i = items.findIndex((it) => it.id === fromId);
+    if (i < 0 || !card || !to?.id) return false;
+    items[i] = { ...items[i], id: to.id, type: to.type || items[i].type, title: to.title ?? items[i].title };
+    if (cardsById) { cardsById.delete(fromId); cardsById.set(to.id, card); }
+    layoutNow();
+    return true;
+  }
+
+  window.widgetGrid = { attach, sync, swapShown, setEditing, isEditing: () => editing, snapshot, undoLayout, onLayout: (fn) => layoutHooks.push(fn), geometry: () => ({ m, o, view, stacked: stacked() }), metrics: () => WL.metrics(document.documentElement.clientWidth, gridBottom(centreBottom())),
     // Does the centre column, at the size it has right now (a clock or search-bar resize being previewed), leave every
     // card where it is? False when it would run into one: the resize stops short instead of pushing cards around.
     // (Measured into copies: the grid's own state is left as it was, so a size that was tried and put back can't leave a

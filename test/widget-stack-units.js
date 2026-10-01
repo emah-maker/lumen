@@ -158,6 +158,53 @@ module.exports = async function widgetStackUnits(check) {
   const oddSettings = cleanList([...N(4).map((x) => ({ ...x, rotate: false })), todo('wplain01', { x: 4, y: 0, w: 4, h: 3, rotate: false, smart: false })]);
   check('settings: stack options on a widget that is in no stack are dropped; on a stack they are kept', !('rotate' in byId(oddSettings, 'wplain01')) && oddSettings.filter((x) => x.stack).every((x) => x.rotate === false), '');
 
+  // ---- round 2: the slide, the end of the stack, the starter stack ----
+  let minCover = 9;
+  for (let k = 0; k <= 1.0001; k += 0.02) minCover = Math.min(minCover, SM.coverage(k, 190));
+  check('smart stack slide: the frame is never empty (coverage stays at or above 0.6 all the way)', minCover >= 0.6, String(minCover));
+  const r2mid = SM.slide(0.5, 1, 200);
+  check('smart stack slide: next goes up and out while the other comes up from below, edge to edge', r2mid.out.ty === -100 && r2mid.in.ty === 100 && SM.slide(0, 1, 200).out.ty === 0 && SM.slide(1, 1, 200).in.ty === 0 && SM.slide(1, 1, 200).out.ty === -200, JSON.stringify(r2mid));
+  check('smart stack slide: previous mirrors it (down and out, in from above)', SM.slide(0.5, -1, 200).out.ty === 100 && SM.slide(0.5, -1, 200).in.ty === -100, '');
+  check('smart stack slide: each card is clipped to the frame (the cut is where the other begins), and a card at rest is not clipped', r2mid.out.clip[0] > 90 && r2mid.out.clip[1] === 0 && r2mid.in.clip[1] > 90 && r2mid.in.clip[0] === 0 && SM.slide(0, 1, 200).out.clip.every((c) => c === 0), JSON.stringify(r2mid));
+  check('smart stack slide: opacity overlaps and never drops below the floor; the outgoing card recedes a little', SM.slide(0.5, 1, 200).out.opacity >= SM.HOLD && SM.slide(1, 1, 200).out.opacity >= SM.HOLD && SM.slide(0, 1, 200).in.opacity >= SM.HOLD && SM.slide(1, 1, 200).out.scale < 1 && SM.slide(1, 1, 200).in.scale === 1, '');
+  check('smart stack slide: Reduce motion crossfades with no movement', (() => { const f = SM.slide(0.5, 1, 200, true); return f.out.ty === 0 && f.in.ty === 0 && f.out.scale === 1 && f.out.opacity === 0.5 && f.in.opacity === 0.75 && SM.coverage(0.5, 200, true) >= 0.6; })(), '');
+  check('smart stack end: the first card going back, or the last going forward, is an end', SM.atEnd(2, 3, 1) && SM.atEnd(0, 3, -1) && !SM.atEnd(1, 3, 1) && !SM.atEnd(1, 3, -1) && !SM.atEnd(0, 3, 1) && !SM.atEnd(0, 1, 1), '');
+  check('smart stack end: the rubber band follows the hand at a fraction, grows with the pull and never reaches a card', SM.elastic(0.4) > 0 && SM.elastic(0.4) < 0.4 * 0.6 && SM.elastic(0.9) > SM.elastic(0.4) && SM.elastic(1) < 0.4 && SM.elastic(-0.5) === -SM.elastic(0.5) && SM.resist(0.5, false) === 0.5 && SM.resist(0.5, true) === SM.elastic(0.5), '');
+  check('smart stack end: the elastic curve inverts (to take over a card in flight)', Math.abs(SM.unelastic(SM.elastic(0.6)) - 0.6) < 1e-9 && Math.abs(SM.unelastic(SM.elastic(-0.2)) + 0.2) < 1e-9 && Number.isFinite(SM.unelastic(0.9)), '');
+  check('smart stack end: wrapping at an end needs a firmer pull (0.8 of a card) or a flick, elsewhere half a card', SM.settleTarget(0.6, 0, 120, true) === 0 && SM.settleTarget(0.85, 0, 120, true) === 1 && SM.settleTarget(0.6, 0, 120, false) === 1 && SM.settleTarget(0.1, 3000, 120, true) === 1 && SM.settleTarget(-0.6, 0, 120, true) === 0 && SM.settleTarget(-0.85, 0, 120, true) === -1, '');
+  const r2kinds = ST.starterKinds(Date.UTC(2026, 9, 1, 12));
+  check('smart stack starter: a timer, a countdown to the next New Year and a note, no account or network', r2kinds.map((k) => k.type).join() === 'timer,countdown,notes' && r2kinds[1].cd.date === '2027-01-01' && ST.starterKinds(Date.UTC(2026, 11, 31, 12))[1].cd.date === '2027-01-01', JSON.stringify(r2kinds));
+  const r2made = r2kinds.map((k, i) => ({ id: `wst${i}0001`, ...k }));
+  const r2exist = [{ id: 'wnote0001', type: 'notes', note: { text: '' }, x: 0, y: 0, w: 3, h: 3 }];
+  const r2started = ST.starter(r2exist, r2made, WL, null);
+  const sMembers = r2started.list.filter((w) => w.stack);
+  check('smart stack starter: three widgets in one stack, the first shown, all at one free place of 3 by 3', sMembers.length === 3 && new Set(sMembers.map((w) => w.stack)).size === 1 && sMembers.filter((w) => w.top).map((w) => w.id).join() === 'wst00001' && new Set(sMembers.map((w) => `${w.x},${w.y},${w.w},${w.h}`)).size === 1 && sMembers[0].w === 3 && sMembers[0].h === 3 && !(sMembers[0].x === 0 && sMembers[0].y === 0) && r2started.id === 'wst00001', JSON.stringify(sMembers.map((w) => [w.id, w.x, w.y, w.w, w.h])));
+  check('smart stack starter: refuses duplicates, a single widget and a full page', ST.starter(r2exist, [r2made[0]], WL, null) === null && ST.starter([{ id: 'wst00001', type: 'notes' }], r2made, WL, null) === null && ST.canStarter(r2exist, 24) && !ST.canStarter(Array.from({ length: 22 }, (_, i) => ({ id: `w${i}`, type: 'notes' })), 24), '');
+  check('smart stack starter: the page action is allowed and the page files wire it (picker entry, panel opens when it lands)', /smartstack/.test(read('src/features/widgets.js')) && /smartstack/.test(read('src/renderer/newtab-edit.js')) && /expectNew/.test(read('src/renderer/newtab-edit.js')) && /openNew/.test(read('src/renderer/newtab-stacks.js')), '');
+  const r2hubs = { size: { w: 300, h: 400 }, view: { w: 1000, h: 800 } };
+  const r2own = { left: 100, top: 100, right: 420, bottom: 290 };
+  const boxOf = (p) => ({ left: p.left, top: p.top, right: p.left + 300, bottom: p.top + 400 });
+  const r2p1 = WE.placePanel({ ...r2hubs, own: r2own });
+  check('edit panel placement: beside the stack (right first), top aligned, never over it', r2p1.side === 'right' && r2p1.left === 432 && r2p1.top === 100, JSON.stringify(r2p1));
+  const r2p2 = WE.placePanel({ ...r2hubs, own: { left: 640, top: 100, right: 960, bottom: 290 } });
+  check('edit panel placement: no room on the right, it goes left', r2p2.side === 'left' && r2p2.left === 328, JSON.stringify(r2p2));
+  const r2wide = { left: 20, top: 100, right: 980, bottom: 290 };
+  const r2p3 = WE.placePanel({ ...r2hubs, own: r2wide });
+  check('edit panel placement: a stack as r2wide as the window, it goes below, not over it', WE.overlapArea(boxOf(r2p3), r2wide) === 0, JSON.stringify(r2p3));
+  const r2neighbor = { left: 430, top: 90, right: 760, bottom: 420 };
+  const r2p4 = WE.placePanel({ ...r2hubs, own: r2own, others: [r2neighbor] });
+  check('edit panel placement: it takes the side that covers the fewest other cards', r2p4.side !== 'right' && WE.overlapArea(boxOf(r2p4), r2neighbor) === 0, JSON.stringify(r2p4));
+  const r2lift = WE.placePanel({ size: { w: 300, h: 400 }, view: { w: 1000, h: 800 }, own: { left: 100, top: 380, right: 420, bottom: 570 }, avoid: [{ left: 300, top: 640, right: 984, bottom: 790 }], others: [{ left: 20, top: 200, right: 90, bottom: 700 }] });
+  check('edit panel placement: the toolbar in the way, the panel lifts clear above it instead of covering a neighbor', r2lift.side === 'right' && r2lift.top + 400 <= 640, JSON.stringify(r2lift));
+  const r2dock = { left: 560, top: 700, right: 984, bottom: 784 };
+  const panelR = { left: 300, top: 400, right: 600, bottom: 780 };
+  const toastBox = (t) => ({ left: t.left, top: t.top, right: t.left + 420, bottom: t.top + 40 });
+  const r2t1 = WE.placeToast({ size: { w: 420, h: 40 }, view: { w: 1000, h: 800 }, obstacles: [r2dock], base: r2dock.top - 10 });
+  check('toast placement: centered above the toolbar, clear of it', r2t1.left === 290 && r2t1.top === r2dock.top - 10 - 40 && WE.overlapArea(toastBox(r2t1), r2dock) === 0, JSON.stringify(r2t1));
+  const r2t2 = WE.placeToast({ size: { w: 420, h: 40 }, view: { w: 1000, h: 800 }, obstacles: [r2dock, panelR], base: r2dock.top - 10 });
+  check('toast placement: it never lands on the toolbar or the Edit stack panel', WE.overlapArea(toastBox(r2t2), r2dock) === 0 && WE.overlapArea(toastBox(r2t2), panelR) === 0 && r2t2.top >= 16, JSON.stringify(r2t2));
+  check('picker: Smart Stack is offered first and only when asked', WE.pickerEntries({ types: ['weather'], hidden: [{ id: 'sys-x', label: 'X' }], stack: true })[0].kind === 'stack' && !WE.pickerEntries({ types: ['weather'], stack: false }).some((e) => e.kind === 'stack') && WE.pickerEntries({ types: [], stack: true }).length === 1, '');
+
   // ---- the page files ----
   const src = read('src/renderer/newtab-stacks.js');
   const html = read('src/renderer/newtab.html');

@@ -350,23 +350,40 @@
     .w-card.w-under:not(.w-near):not(.w-peek) { content-visibility: hidden; }
     .w-card.w-under.w-peek { visibility: visible; z-index: 1; }
     .w-card.w-moving { will-change: transform, opacity; transition: none; }
-    .w-card.in-stack { padding-right: 24px; }
+    /* The rail's gutter: the card's right padding holds the rail (a 24px column and the edge), so content never sits under the dots. */
+    .w-card.in-stack { padding-right: 34px; }
     .w-card.in-stack:not(.w-under) { touch-action: pan-x pinch-zoom; }
-    .w-stack { position: absolute; right: 4px; top: 50%; z-index: 2; translate: 0 -50%; display: flex; flex-direction: column; align-items: center; max-height: calc(100% - 12px); border-radius: 999px; outline: none; }
-    .w-stack:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
-    .w-stack-dots { display: flex; flex-direction: column; align-items: center; }
-    .w-stack-dot { appearance: none; display: grid; place-items: center; width: 16px; height: 13px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; outline: none; cursor: default; }
-    .w-stack-dot::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--faint); opacity: 0.8; transition: opacity 200ms var(--ease), scale 200ms var(--ease), background-color 200ms var(--ease); }
-    .w-stack-dot[aria-current="true"]::before { background: var(--text); opacity: 0.85; scale: 1.5; }
-    .w-stack-dot:hover::before { background: var(--muted); opacity: 1; }
-    .w-stack-dot:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-    @container card (max-height: 150px) { .w-stack-dot { height: 9px; } .w-stack-nav { display: none; } }
-    .w-stack-nav { appearance: none; display: grid; place-items: center; flex: none; width: 16px; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; outline: none; cursor: default; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+    /* The rail is faint at rest and shows fully on hover, focus, while the stack moves and for a moment after a switch (iOS's page indicator). */
+    .w-stack { position: absolute; right: 4px; top: 50%; z-index: 2; translate: 0 -50%; display: flex; flex-direction: column; align-items: center; width: 24px; max-height: calc(100% - 12px); box-sizing: border-box; padding: 2px 0; border-radius: 13px; outline: none; opacity: 0.78; transition: opacity 240ms var(--ease), background-color 240ms var(--ease), box-shadow 240ms var(--ease); }
+    .w-card:hover .w-stack, .w-card:focus-within .w-stack, .w-card.rail-on .w-stack, .w-card.w-moving .w-stack { opacity: 1; background: color-mix(in srgb, var(--bg) 58%, transparent); box-shadow: 0 0 0 0.5px var(--border); }
+    .w-stack:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+    .w-stack-dots { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 0; }
+    .w-stack-dot { appearance: none; display: grid; place-items: center; flex: 0 1 24px; width: 24px; height: 24px; min-height: 13px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; outline: none; cursor: default; }
+    .w-stack-dot::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--text) 40%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 60%, transparent); transition: scale 220ms var(--ease), background-color 220ms var(--ease); }
+    .w-stack-dot[aria-current="true"]::before { background: var(--text); scale: 1.25; }
+    .w-stack-dot:hover::before { background: color-mix(in srgb, var(--text) 75%, transparent); }
+    .w-stack-dot[aria-current="true"]:hover::before { background: var(--text); }
+    .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accent); }
+    body.on-media .w-stack-dot::before { background: rgba(255, 255, 255, 0.62); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.34), 0 1px 3px rgba(0, 0, 0, 0.4); }
+    body.on-media .w-stack-dot[aria-current="true"]::before, body.on-media .w-stack-dot[aria-current="true"]:hover::before { background: #fff; }
+    body.on-media .w-stack-dot:hover::before { background: rgba(255, 255, 255, 0.9); }
+    body.on-media .w-card:hover .w-stack, body.on-media .w-card:focus-within .w-stack, body.on-media .w-card.rail-on .w-stack, body.on-media .w-card.w-moving .w-stack { background: rgba(0, 0, 0, 0.3); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2); }
+    body.on-media .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 3.5px #fff; }
+    @media (hover: none) { .w-stack { opacity: 0.85; } }
+    @container card (max-height: 150px) { .w-stack-dot { min-height: 11px; } .w-stack-nav { display: none; } }
+    .w-stack-nav { appearance: none; display: grid; place-items: center; flex: none; width: 24px; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; outline: none; cursor: default; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
     .w-stack-nav svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .w-card:hover .w-stack-nav, .w-stack:focus-within .w-stack-nav { opacity: 1; }
     .w-stack-nav:hover { background: var(--hover); color: var(--text); }
     .w-stack-nav:active { scale: 0.9; }
     .w-stack-nav:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+    body.on-media .w-stack-nav { color: rgba(255, 255, 255, 0.85); }
+    .w-stack-open svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    body.w-editing .w-stack-open { display: none; }
+    .w-stack-menu { position: fixed; z-index: 31; min-width: 150px; box-sizing: border-box; padding: 4px; border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 10px 30px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; }
+    .w-stack-menu-item { appearance: none; display: block; width: 100%; margin: 0; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: 500 12.5px/1.3 system-ui, sans-serif; text-align: left; cursor: default; outline: none; }
+    .w-stack-menu-item:hover, .w-stack-menu-item:focus-visible { background: var(--hover); }
+    .w-stack-menu-item:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
     .w-stack-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .w-stack-why { position: absolute; z-index: 3; left: 50%; top: -9px; translate: -50% 0; max-width: calc(100% - 32px); padding: 2px 9px; border-radius: 999px; background: var(--bg); color: var(--muted); box-shadow: 0 0 0 0.5px var(--border), 0 2px 8px var(--shadow); font: 500 10.5px/16px system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
     @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-stack-why { animation: w-pop 180ms ease-out; } }
@@ -377,8 +394,8 @@
     .w-stack-edit:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     body.w-editing .w-stack-edit { display: grid; pointer-events: auto; }
     .w-ghost.stack { border-style: solid; background: color-mix(in srgb, var(--accent) 16%, transparent); scale: 0.96; }
-    @media (prefers-reduced-motion: reduce) { .w-stack-dot::before, .w-stack-nav { transition: none; } }
-    body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
+    @media (prefers-reduced-motion: reduce) { .w-stack, .w-stack-dot::before, .w-stack-nav { transition: none; } }
+    body.calm .w-stack, body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
     /* Edit stack: a small panel beside the card (Edit layout) */
     .w-stack-panel { position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
     .w-sp-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 2px 8px; }

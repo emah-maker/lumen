@@ -78,6 +78,14 @@ const STRINGS = {
   'newtab.stack.option': '{option}: {state}',
   'newtab.stack.on': 'on',
   'newtab.stack.off': 'off',
+  'newtab.stack.menu': 'Edit stack…',
+  'newtab.stack.menu.hint': 'Edit stack, right-click or long-press the dots',
+  'newtab.stack.rail': 'Edit stack…',
+  'newtab.edit.stackHint': 'Drag a widget onto another to stack them.',
+  'newtab.edit.type.smartstack': 'Smart Stack',
+  'newtab.edit.type.smartstack.hint': 'Widgets that take turns in one place. Starts with a timer, a countdown and a note',
+  'newtab.edit.smartstack.adding': 'Adding a Smart Stack with Timer, Countdown and Notes',
+  'newtab.edit.smartstack.added': 'Smart Stack added. Scroll it to switch widgets, or edit it here.',
   'newtab.edit.restored': '{title} is back',
   'newtab.edit.undone': 'Undone: {what}',
   'newtab.edit.nothing': 'Nothing to undo',
@@ -230,14 +238,73 @@ function guides(rect, others, limit = 8) {
 // ---- the Add widget picker ----
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 // types: the kinds of widget the page can draw; hidden: [{ id, label }] sections that are switched off;
-// table: the page's string table, if any. -> [{ kind: 'section' | 'widget', id?, type?, label, hint }]
-function pickerEntries({ types = [], hidden = [], table } = {}) {
-  const out = hidden.map((h) => ({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) }));
+// table: the page's string table, if any; stack: offer a Smart Stack (a stack of starter widgets, first among the kinds).
+// -> [{ kind: 'section' | 'stack' | 'widget', id?, type?, label, hint }]
+function pickerEntries({ types = [], hidden = [], table, stack = false } = {}) {
+  const out = [];
+  if (stack) out.push({ kind: 'stack', label: text('newtab.edit.type.smartstack', null, table), hint: text('newtab.edit.type.smartstack.hint', null, table) }); // first: it is the way in
+  for (const h of hidden) out.push({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) });
   for (const type of types) {
     const info = TYPE_INFO[type];
     out.push({ kind: 'widget', type, label: info ? text(info[0], null, table) : cap(type), hint: text(info ? info[1] : 'newtab.edit.type.other.hint', null, table) });
   }
   return out;
+}
+
+// ---- where floating things go ----
+// Rects are { left, top, right, bottom } in px (the viewport's).
+const overlapArea = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+const boxAt = (left, top, size) => ({ left, top, right: left + size.w, bottom: top + size.h });
+const clampTo = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
+// The Edit stack panel: beside the card it edits (right, left, below, above, in that order of preference), never
+// over the card itself, over the fewest other cards, and clear of what must stay reachable (the toolbar, the picker, a
+// toast). o = { size: { w, h }, view: { w, h }, own: rect (the stack's card), others: [rects], avoid: [rects], gap, margin }.
+// -> { left, top, side } where side is 'right' | 'left' | 'below' | 'above'.
+function placePanel({ size, view, own, others = [], avoid = [], gap = 12, margin = 8 }) {
+  const h = Math.min(size.h, view.h - 2 * margin);
+  const sz = { w: size.w, h };
+  const midY = clampTo(own.top, margin, view.h - h - margin);
+  const midX = clampTo(own.left, margin, view.w - sz.w - margin);
+  // Beside the card, level with its top; or, when the toolbar is in the way down there, lifted clear above it.
+  const lift = avoid.length ? clampTo(Math.min(...avoid.map((r) => r.top)) - gap - h, margin, midY) : midY;
+  const spots = [
+    ['right', own.right + gap, midY],
+    ['left', own.left - gap - sz.w, midY],
+    ['right', own.right + gap, lift],
+    ['left', own.left - gap - sz.w, lift],
+    ['below', midX, own.bottom + gap],
+    ['above', midX, own.top - gap - sz.h],
+  ];
+  let best = null;
+  for (const [side, x, y] of spots) {
+    const left = clampTo(x, margin, view.w - sz.w - margin);
+    const top = clampTo(y, margin, view.h - sz.h - margin);
+    const box = boxAt(left, top, sz);
+    const score = overlapArea(box, own) * 1000 + avoid.reduce((a, r) => a + overlapArea(box, r) * 2, 0) + others.reduce((a, r) => a + overlapArea(box, r), 0);
+    if (!best || score < best.score) best = { left, top, side, score };
+  }
+  return { left: best.left, top: best.top, side: best.side };
+}
+// The Undo toast: centered above the toolbar by default; it never lands on the toolbar, the Edit stack panel or the
+// picker (obstacles): it moves aside (left or right) or above them. o = { size, view, obstacles: [rects], base (the
+// toast's lowest edge: just above the toolbar), margin, gap }. -> { left, top }.
+function placeToast({ size, view, obstacles = [], base, margin = 16, gap = 10 }) {
+  const floor = Number.isFinite(base) ? base : view.h - margin;
+  const rows = [floor, ...obstacles.map((r) => r.top - gap)];
+  const cols = [(view.w - size.w) / 2, margin, view.w - size.w - margin];
+  let best = null;
+  for (const bottom of rows) {
+    for (const x of cols) {
+      const left = clampTo(x, margin, view.w - size.w - margin);
+      const top = bottom - size.h;
+      const box = boxAt(left, top, size);
+      const off = top < margin ? (margin - top) * size.w * 4 : 0; // off the top of the window
+      const score = obstacles.reduce((a, r) => a + overlapArea(box, r) * 1000, 0) + off;
+      if (!best || score < best.score) best = { left, top, score };
+      if (score === 0) return { left, top };
+    }
+  }
+  return { left: best.left, top: best.top };
 }
 
 // Typing somewhere (a field, a select or a contenteditable): Ctrl/Cmd+Z there belongs to the text, not to the page's Undo.
@@ -249,7 +316,7 @@ function undoHint(platform) {
   return (/mac|iphone|ipad/i.test(String(platform || '')) ? 'Cmd' : 'Ctrl') + '+Z';
 }
 
-const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey };
+const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey, placePanel, placeToast, overlapArea };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();

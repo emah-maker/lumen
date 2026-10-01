@@ -263,7 +263,40 @@ function setOption(list, sid, key, on) {
   });
 }
 
-const api = { MAX_STACK, MIN_STACK, STACK_RE, wrap, optionsOf, snapshot, restack, moveMember, reorder, setOption, cleanFields, isHidden, membersOf, neighbour, normalize, settle, sameShape, canStack, join, select, leave, drop };
+// ---- Add widget > Smart Stack: a stack with starter widgets ----
+// Three widgets that need no account, key or network, all the same size (3 by 3 cells) so they can share one place:
+// a Pomodoro timer, a countdown to the next New Year and a note. `now` (ms) picks the countdown's year.
+// -> the inputs features/widgets.js resolves like any other add (cleanInput: type, tm, cd, note).
+const STARTER_SIZE = { w: 3, h: 3 };
+function starterKinds(now = Date.now()) {
+  const d = new Date(now);
+  const year = d.getFullYear() + 1;
+  return [
+    { type: 'timer', tm: { pomodoro: true, work: 25, rest: 5 } },
+    { type: 'countdown', cd: { label: 'New Year', date: `${year}-01-01`, time: '' } },
+    { type: 'notes', note: { text: '' } },
+  ];
+}
+// Whether a starter stack still fits: its members are new widgets (`max` is the most the page holds).
+const canStarter = (list, max, count = 3) => Array.isArray(list) && list.filter((w) => !isSys(w)).length + count <= max;
+// The list with `made` (the starter widgets, each { id, type, ...config } without a place) added as one stack:
+// they all take the first free spot of STARTER_SIZE (WL: features/widget-layout.js), the first is shown, and the
+// order is the order given. `sid` is the stack's id. -> { list, id (the shown widget), ids } or null.
+function starter(list, made, WL, sid) {
+  if (!Array.isArray(list) || !Array.isArray(made) || made.length < MIN_STACK || made.length > MAX_STACK) return null;
+  if (made.some((w) => !w || typeof w.id !== 'string' || list.some((x) => x.id === w.id))) return null;
+  const id = cleanId(sid) || freshId(list, made[0].id);
+  const spot = WL.firstFit(list.filter((w) => !isHidden(w) && Number.isInteger(w.x)).map(WL.rectOf), STARTER_SIZE);
+  const rect = { ...spot, ...STARTER_SIZE };
+  const add = made.map((w, i) => {
+    const next = { ...without(w), ...rect, ...WL.mirror(w.type, rect), stack: id };
+    if (i === 0) next.top = true;
+    return next;
+  });
+  return { list: [...list, ...add], id: made[0].id, ids: made.map((w) => w.id) };
+}
+
+const api = { STARTER_SIZE, starterKinds, canStarter, starter, MAX_STACK, MIN_STACK, STACK_RE, wrap, optionsOf, snapshot, restack, moveMember, reorder, setOption, cleanFields, isHidden, membersOf, neighbour, normalize, settle, sameShape, canStack, join, select, leave, drop };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetStacks = api;
 })();

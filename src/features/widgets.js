@@ -1893,7 +1893,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|note|timer|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -2037,7 +2037,21 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // do=smartstack (Add widget > Smart Stack, id wcreate): a stack with three starter widgets that need no account or
+  // network (a timer, a countdown to New Year, a note), at the first free spot, the timer shown. -> whether it was added.
+  async function starterStack() {
+    if (!ST.canStarter(list(), MAX_WIDGETS)) return false;
+    const made = [];
+    for (const input of ST.starterKinds(now())) made.push((await resolveInput(input)).widget);
+    const out = ST.starter(list(), made, WL, null);
+    if (!out) return false;
+    save(out.list);
+    deps.onUpdate?.();
+    for (const id of out.ids) { const w = list().find((x) => x.id === id); if (w) refresh(w).catch(() => {}); }
+    return true;
+  }
   async function act(action) {
+    if (action.do === 'smartstack') return starterStack();
     if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
     if (action.do === 'restore') return restore(action.id);
     if (action.do === 'look' && action.defaults) { deps.writeSettings({ ...deps.readSettings(), ...WCFG.LOOK_DEFAULTS }); deps.onUpdate?.(); return true; }
