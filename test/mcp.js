@@ -79,7 +79,7 @@ const os = require('os');
   const inSettings = await openSettingsTab(app);
   check('Settings offer an Add to Claude Code button', await inSettings("[...document.querySelectorAll('#ai-snippets button')].some((b) => b.textContent === 'Add to Claude Code')"), 'no button');
   await app.evaluate((_e, sid) => global.__agent.browser.closeTab(sid), inSettings.id);
-  check('settings give Codex, Gemini and generic configs', ['codex', 'gemini', 'json'].every((id) => info.snippets.some((s) => s.id === id)), JSON.stringify(info.snippets.map((s) => s.id)));
+  check('settings give Codex, Antigravity and generic configs', ['codex', 'antigravity', 'json'].every((id) => info.snippets.some((s) => s.id === id)), JSON.stringify(info.snippets.map((s) => s.id)));
 
   const init = await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude-code', title: 'Claude Code', version: '1.0' } });
   check('initialize: server info + tools capability + echoed version', init.result?.serverInfo?.name === 'lumen' && init.result.capabilities?.tools && init.result.protocolVersion === '2025-06-18', JSON.stringify(init));

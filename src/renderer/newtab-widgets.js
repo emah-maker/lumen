@@ -1271,7 +1271,7 @@ function renderWidgets(list) {
   const valid = stacks ? stacks.prepare(known, 12) : known.slice(0, 12);
   lastList.current = valid;
   const cards = valid.map((w) => {
-    const { span, height, layout, updated, warning, colors, setup, stack, top, ...rest } = w; // a new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked)
+    const { span, height, layout, updated, warning, colors, setup, stack, sid, top, rotate, smart, ...rest } = w; // a new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked)
     const key = JSON.stringify(rest);
     const kept = shownWidgets.get(w.id);
     const card = kept && kept.key === key ? kept.el : buildCard(w);

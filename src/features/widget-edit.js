@@ -3,7 +3,7 @@
 // toast) and renderer/newtab-widgets-grid.js (drag, resize, keys) draw and call these.
 //
 //   STRINGS / text()        the page's words (also in locales/en.json as newtab.edit.*)
-//   createHistory()         the undo stack: layout changes and removals, newest last
+//   createHistory()         the undo stack: layout changes, removals and stack changes, newest last
 //   undoPlan(prev, cur)     what to send to get from the current layout back to a previous one
 //   guides(rect, others)    snap guides: the grid lines the moving card lines up with
 //   pickerEntries(o)        what the Add widget picker offers
@@ -36,7 +36,7 @@ const STRINGS = {
   'newtab.edit.cancelled': 'Move canceled',
   'newtab.edit.removed': '{title} removed',
   'newtab.edit.hidden': '{title} hidden',
-  'newtab.edit.stacked': '{title} stacked with {onto}. Use the arrow on the card to switch.',
+  'newtab.edit.stacked': '{title} stacked with {onto}. Scroll it or use the dots to switch.',
   'newtab.edit.unstacked': '{title} removed from its stack',
   'newtab.stack.next': 'Next widget',
   'newtab.stack.shown': '{title}, {n} of {count}',
@@ -44,6 +44,51 @@ const STRINGS = {
   'newtab.stack.onto.title': 'Stack onto {onto}',
   'newtab.stack.unstack': 'Remove {title} from its stack',
   'newtab.stack.unstack.title': 'Remove from stack',
+  'newtab.stack.role': 'widget stack',
+  'newtab.stack.label': '{title}, {n} of {count}',
+  'newtab.stack.prev': 'Previous widget',
+  'newtab.stack.dot': 'Show {title}, {n} of {count}',
+  'newtab.stack.why': 'Suggested: {why}',
+  'newtab.stack.why.event': 'event starting soon',
+  'newtab.stack.why.countdown': 'countdown ends within a day',
+  'newtab.stack.why.morning': 'morning weather',
+  'newtab.stack.edit': 'Edit the stack with {title}',
+  'newtab.stack.edit.title': 'Edit stack',
+  'newtab.stack.make': 'Stack {title} with another widget',
+  'newtab.stack.make.title': 'Stack with another widget',
+  'newtab.stack.panel': 'Edit stack',
+  'newtab.stack.panel.hint': 'Drag the handle or use the arrows to reorder. The pencil on a card edits that widget; the stacked-squares button edits the stack.',
+  'newtab.stack.done': 'Done',
+  'newtab.stack.new': 'New stack',
+  'newtab.stack.new.hint': 'Pick a widget to stack with. It resizes to match if needed.',
+  'newtab.stack.new.none': 'No other widget to stack with yet.',
+  'newtab.stack.new.one': 'Stack {title} with {onto}',
+  'newtab.stack.grip': 'Move {title}, position {n} of {count}. Up and Down arrows reorder.',
+  'newtab.stack.up': 'Move {title} earlier',
+  'newtab.stack.down': 'Move {title} later',
+  'newtab.stack.rotate': 'Rotate automatically',
+  'newtab.stack.rotate.hint': 'Shows the next widget every 20 seconds while you are not using the stack',
+  'newtab.stack.smart': 'Smart rotate',
+  'newtab.stack.smart.hint': 'Shows the calendar before an event, a countdown on its last day and the weather in the morning',
+  'newtab.stack.add': 'Add to this stack',
+  'newtab.stack.add.one': 'Add {title} to this stack',
+  'newtab.stack.add.none': 'No other widget to stack with yet.',
+  'newtab.stack.smart.none': 'Add weather, calendar or a countdown to use Smart rotate',
+  'newtab.stack.fits': 'Resizes to {size}',
+  'newtab.stack.grows': 'Stack grows to {size}',
+  'newtab.stack.full': 'A stack holds up to {max} widgets.',
+  'newtab.stack.reordered': '{title} moved to position {n} of {count}',
+  'newtab.stack.option': '{option}: {state}',
+  'newtab.stack.on': 'on',
+  'newtab.stack.off': 'off',
+  'newtab.stack.menu': 'Edit stack…',
+  'newtab.stack.menu.hint': 'Edit stack, right-click or long-press the dots',
+  'newtab.stack.rail': 'Edit stack…',
+  'newtab.edit.stackHint': 'Drag a widget onto another to stack them.',
+  'newtab.edit.type.smartstack': 'Smart Stack',
+  'newtab.edit.type.smartstack.hint': 'Widgets that take turns in one place. Starts with weather, a countdown and a note',
+  'newtab.edit.smartstack.adding': 'Adding a Smart Stack with Weather, Countdown and Notes',
+  'newtab.edit.smartstack.added': 'Smart Stack added. Scroll it to switch widgets, or edit it here.',
   'newtab.edit.restored': '{title} is back',
   'newtab.edit.undone': 'Undone: {what}',
   'newtab.edit.nothing': 'Nothing to undo',
@@ -196,14 +241,100 @@ function guides(rect, others, limit = 8) {
 // ---- the Add widget picker ----
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 // types: the kinds of widget the page can draw; hidden: [{ id, label }] sections that are switched off;
-// table: the page's string table, if any. -> [{ kind: 'section' | 'widget', id?, type?, label, hint }]
-function pickerEntries({ types = [], hidden = [], table } = {}) {
-  const out = hidden.map((h) => ({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) }));
+// table: the page's string table, if any; stack: offer a Smart Stack (a stack of starter widgets, first among the kinds).
+// -> [{ kind: 'section' | 'stack' | 'widget', id?, type?, label, hint }]
+function pickerEntries({ types = [], hidden = [], table, stack = false } = {}) {
+  const out = [];
+  if (stack) out.push({ kind: 'stack', label: text('newtab.edit.type.smartstack', null, table), hint: text('newtab.edit.type.smartstack.hint', null, table) }); // first: it is the way in
   for (const type of types) {
     const info = TYPE_INFO[type];
     out.push({ kind: 'widget', type, label: info ? text(info[0], null, table) : cap(type), hint: text(info ? info[1] : 'newtab.edit.type.other.hint', null, table) });
   }
+  // After the widgets: a few "Show again" rows must not push real widgets below the fold.
+  for (const h of hidden) out.push({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) });
   return out;
+}
+
+// ---- where floating things go ----
+// Rects are { left, top, right, bottom } in px (the viewport's).
+const overlapArea = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+const boxAt = (left, top, size) => ({ left, top, right: left + size.w, bottom: top + size.h });
+const clampTo = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
+// The Edit stack panel: beside the card it edits (right, left, below, above, in that order of preference), never
+// over the card itself, over the fewest other cards, and clear of what must stay reachable (the toolbar, the picker, a
+// toast). o = { size: { w, h }, view: { w, h }, own: rect (the stack's card), others: [rects], avoid: [rects], gap, margin }.
+// -> { left, top, side } where side is 'right' | 'left' | 'below' | 'above'.
+function placePanel({ size, view, own, others = [], avoid = [], gap = 12, margin = 8 }) {
+  const h = Math.min(size.h, view.h - 2 * margin);
+  const sz = { w: size.w, h };
+  const midY = clampTo(own.top, margin, view.h - h - margin);
+  const midX = clampTo(own.left, margin, view.w - sz.w - margin);
+  // Beside the card, level with its top; or, when the toolbar is in the way down there, lifted clear above it.
+  const lift = avoid.length ? clampTo(Math.min(...avoid.map((r) => r.top)) - gap - h, margin, midY) : midY;
+  const spots = [
+    ['right', own.right + gap, midY],
+    ['left', own.left - gap - sz.w, midY],
+    ['right', own.right + gap, lift],
+    ['left', own.left - gap - sz.w, lift],
+    ['below', midX, own.bottom + gap],
+    ['above', midX, own.top - gap - sz.h],
+  ];
+  let best = null;
+  for (const [side, x, y] of spots) {
+    const left = clampTo(x, margin, view.w - sz.w - margin);
+    const top = clampTo(y, margin, view.h - sz.h - margin);
+    const box = boxAt(left, top, sz);
+    const score = overlapArea(box, own) * 1000 + avoid.reduce((a, r) => a + overlapArea(box, r) * 2, 0) + others.reduce((a, r) => a + overlapArea(box, r), 0);
+    if (!best || score < best.score) best = { left, top, side, score };
+  }
+  // The usual spots overlap something: hit-test the free space. Candidate corners come from the edges of the other cards
+  // (just beyond each one), the window's edges and the stack's own; the one that covers the least wins, nearest to the stack on a tie.
+  if (best.score > 0) {
+    const maxL = view.w - sz.w - margin;
+    const maxT = view.h - sz.h - margin;
+    const xs = [margin, maxL, midX, own.right + gap, own.left - gap - sz.w, ...others.flatMap((r) => [r.right + gap, r.left - gap - sz.w])];
+    const ys = [margin, maxT, midY, lift, own.bottom + gap, own.top - gap - sz.h, ...others.flatMap((r) => [r.bottom + gap, r.top - gap - sz.h])];
+    const cx = (own.left + own.right) / 2;
+    const cy = (own.top + own.bottom) / 2;
+    let found = null;
+    for (const x of xs) {
+      for (const y of ys) {
+        const left = clampTo(x, margin, maxL);
+        const top = clampTo(y, margin, maxT);
+        const box = boxAt(left, top, sz);
+        const score = overlapArea(box, own) * 1000 + avoid.reduce((a, r) => a + overlapArea(box, r) * 2, 0) + others.reduce((a, r) => a + overlapArea(box, r), 0);
+        const dist = Math.hypot(left + sz.w / 2 - cx, top + sz.h / 2 - cy);
+        if (!found || score < found.score || (score === found.score && dist < found.dist)) found = { left, top, score, dist, side: left >= own.right ? 'right' : left + sz.w <= own.left ? 'left' : top >= own.bottom ? 'below' : top + sz.h <= own.top ? 'above' : 'right' };
+      }
+    }
+    if (found && found.score < best.score) best = found;
+  }
+  // Nothing is free: centered over the page (the caller dims what is behind it).
+  if (best.score > 0) {
+    return { left: Math.round((view.w - sz.w) / 2), top: Math.round(clampTo((view.h - sz.h) / 2, margin, view.h - sz.h - margin)), side: 'center' };
+  }
+  return { left: best.left, top: best.top, side: best.side };
+}
+// The Undo toast: centered above the toolbar by default; it never lands on the toolbar, the Edit stack panel or the
+// picker (obstacles): it moves aside (left or right) or above them. o = { size, view, obstacles: [rects], base (the
+// toast's lowest edge: just above the toolbar), margin, gap }. -> { left, top }.
+function placeToast({ size, view, obstacles = [], base, margin = 16, gap = 10 }) {
+  const floor = Number.isFinite(base) ? base : view.h - margin;
+  const rows = [floor, ...obstacles.map((r) => r.top - gap)];
+  const cols = [(view.w - size.w) / 2, margin, view.w - size.w - margin];
+  let best = null;
+  for (const bottom of rows) {
+    for (const x of cols) {
+      const left = clampTo(x, margin, view.w - size.w - margin);
+      const top = bottom - size.h;
+      const box = boxAt(left, top, size);
+      const off = top < margin ? (margin - top) * size.w * 4 : 0; // off the top of the window
+      const score = obstacles.reduce((a, r) => a + overlapArea(box, r) * 1000, 0) + off;
+      if (!best || score < best.score) best = { left, top, score };
+      if (score === 0) return { left, top };
+    }
+  }
+  return { left: best.left, top: best.top };
 }
 
 // Typing somewhere (a field, a select or a contenteditable): Ctrl/Cmd+Z there belongs to the text, not to the page's Undo.
@@ -215,7 +346,7 @@ function undoHint(platform) {
   return (/mac|iphone|ipad/i.test(String(platform || '')) ? 'Cmd' : 'Ctrl') + '+Z';
 }
 
-const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey };
+const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey, placePanel, placeToast, overlapArea };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();

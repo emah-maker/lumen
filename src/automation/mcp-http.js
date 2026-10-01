@@ -51,7 +51,7 @@ function terminalCommand(msg) {
 // onTerminalApproval(tag, command) -> Promise<'once' | 'always' | 'deny'>, asked the first time a run
 // (by its Grok chat session, not this one message) calls run_terminal_command; 'always' is remembered
 // only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
-// Resolves once listening, with open(tag, chatSessionId) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
+// Resolves once listening, with open(tag, chatSessionId, { agy }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
 // armed(tag), listed(tag), allowed(tag), denied(tag), port and stop().
 function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, holdMs = 8000, terminalHoldMs = 20000 }) {
   const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
@@ -81,6 +81,19 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
     if (answer === 'always') { if (run.chatSessionId) chatSessionsAllowed.add(run.chatSessionId); return null; }
     if (answer === 'once' || answer === true) return null;
     return DENY('The user did not approve this terminal command.');
+  }
+
+  // Antigravity's hooks (antigravity.js hooksFor, agy's hooks.md): PreToolUse posts { toolCall: { name, args } } and reads
+  // { decision: allow | deny, reason }, before agy's own permission layer; PreInvocation posts no toolCall and only marks the run as
+  // seen. Lumen's own MCP tools (any name with "lumen" in it) go through; a shell, file or browser tool of agy's own is denied: an
+  // Antigravity run has Lumen's tools only. Tool names are agy's, lowercased step types (run_command, write_to_file, view_file...).
+  const AGY_ACTING = /(command|terminal|shell|bash|exec|run_|write|edit|replace|delete|remove|create|move|rename|file|url|browser)/i;
+  const AGY_READS = /^(view_file|view_file_outline|view_code_item|view_content_chunk|list_dir|grep_search|find_by_name|command_status|read_terminal|list_resources|read_resource)$/i;
+  function agyDecision(run, msg) {
+    if (!msg?.toolCall) { run.armed = true; return {}; }
+    const name = String(msg.toolCall.name || '');
+    if (/lumen/i.test(name) || AGY_READS.test(name) || !AGY_ACTING.test(name)) return { decision: 'allow' };
+    return { decision: 'deny', reason: `Only Lumen's browser tools are allowed here (${name.slice(0, 60) || 'unnamed tool'} is not one of them).` };
   }
 
   // One MCP session per run (Grok opens one per grok process), answered request by request.
@@ -119,6 +132,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
         const run = byHook(hookToken);
         const event = String(msg?.hook_event_name || msg?.hookEventName || '');
         if (!run) return json(200, DENY('This Grok run has ended.'));
+        if (run.agy) return json(200, agyDecision(run, msg));
         if (/^user_?prompt_?submit$/i.test(event)) return json(200, await armed(run));
         if (/^pre_?tool_?use$/i.test(event)) {
           const name = msg?.toolName ?? msg?.tool_name;
@@ -147,8 +161,8 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       port = server.address().port;
       resolve({
         port,
-        open(tag, chatSessionId = null) {
-          const run = { tag, chatSessionId, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
+        open(tag, chatSessionId = null, { agy = false } = {}) {
+          const run = { tag, chatSessionId, agy, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
           runs.set(tag, run);
           return { mcpUrl: `http://127.0.0.1:${port}/mcp`, mcpToken: run.mcpToken, hookUrl: `http://127.0.0.1:${port}/hook/${run.hookToken}` };
         },
