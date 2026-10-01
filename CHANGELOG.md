@@ -4,6 +4,20 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- New Window: `Ctrl+N` (`Cmd+N`) opens a normal window with a new tab, from the keyboard, the ⋯ menu or the File menu (on a Mac even with no window open). `Ctrl+Shift+W` (`Shift+Cmd+W`) closes the window in front.
+- Page info: click the lock (or "Not secure") next to the address, or ⋯ → This Page → Site Information…, to see the site's connection and choose Ask, Allow or Block for its location, camera and microphone, notifications and clipboard. It also shows how many cookies the site has, with **Clear Cookies and Site Data…** for that site only, and links to Site Settings.
+- The right-click menu has Open Link in New Window, Open Link in Private Window and Save Link As… on links, Save Image As… and Copy Image Address on images, and Print… on the page. Save … As always asks where to save.
+- Zoom is remembered per site: a level you pick by hand comes back the next time you open that site, even after a restart. `Ctrl+0` (or the zoom pill) forgets it, and page info shows it with a reset.
+- If Lumen didn't shut down correctly and it is set to open a new tab or specific pages on startup, it offers to restore the tabs you had open. With "Continue where you left off" (the default) they come back as before.
+- Settings → Privacy and security → Site data lists every site that keeps cookies, with a filter and Remove for each.
+- Keyboard Shortcuts: `Ctrl+Shift+/`, ⋯ → Keyboard Shortcuts or Help → Keyboard Shortcuts lists every shortcut for your platform.
+- Picture in Picture from ⋯ → This Page (and the View menu on a Mac) plays the page's video in a floating window.
+- `Esc` stops a page that is still loading, and `Ctrl+Shift+Delete` opens Clear browsing data.
+- On a Mac, About Lumen shows Lumen's version and the Electron and Chromium it is built on.
+- Windows high contrast: the active tab, pressed toolbar buttons, focus rings and Settings' switches stay visible.
+- Settings → About Lumen has Copy version details and Report a problem, for bug reports. On a Mac, the toolbar's shortcut hints read ⌘T, ⇧⌘A and so on instead of Ctrl+.
+- Polish: the page and video right-click menus, spelling suggestions, the risky-download prompt, and the Open File and Export Chat dialogs use Lumen's translated strings instead of fixed English. The lock is a keyboard-focusable button with a focus ring and a name for screen readers.
+
 ## 0.4.4 (2026-10-01)
 
 - The Mac app is now signed with an Apple Developer ID and notarized by Apple, so it opens without the "Open Anyway" step. On the first launch after updating, macOS asks once to allow Lumen access to its Keychain item.

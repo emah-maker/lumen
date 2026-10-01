@@ -46,6 +46,7 @@ Lumen.exe (main process: main.js)
 
 - **Extensions** (`electron-chrome-extensions`, `electron-chrome-web-store`): Chrome Web Store installs, the toolbar's extension buttons and the `chrome.*` APIs extensions need. Lumen shows its own install dialog with the permissions an extension asks for (`src/browser/extension-permissions.js`).
 - **Ad blocking** (`src/features/adblock.js`): runs in the main process with uBlock Origin-compatible lists, so pages see no extension or injected globals.
+- **Page info** (`src/features/page-info.js`): the lock's menu, a native menu drawn outside the page, reading and changing the same per-site permission decisions as Settings. **Site data** (`src/features/site-data.js`: Settings' list of sites with cookies), **per-site zoom** (`src/features/site-zoom.js`), **crash recovery** (`src/features/crash-recovery.js`: a `running` marker in the profile folder), the **Keyboard Shortcuts** sheet (`src/features/shortcuts-help.js`) and the link and image menu items (`src/features/link-menu.js`).
 - **Downloads** (`src/features/downloads.js`), **dialogs** (`src/features/dialogs.js`), **tab groups** (`src/browser/tab-groups.js`), **search engines** (`src/browser/search.js`), **history and favicons** (`src/browser/favicon-store.js`), **import from other browsers** (`src/browser/importer.js`).
 
 ## Updates
