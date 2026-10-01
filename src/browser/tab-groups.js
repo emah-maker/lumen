@@ -81,12 +81,17 @@ const isAppOrSearch = (url) => Boolean(PRODUCT_SITES[hostname(url)]) || SEARCH_D
 // words most tabs share say nothing, so both are dropped before comparing; unrelated tabs stay
 // loose.
 
+// The list also holds the generic title words ("explained", "basics", "tutorial", "overview", "beginners" ...): they say what kind of page it
+// is, never what it is about, so two tabs sharing only one of them are not one topic ("Bond yields explained", "Transformer attention explained").
 const STOPWORDS = new Set(`a an and are as at be by for from has have how i in is it its of on or our that the this to was what when where which who why will with you your
 about after all also any best can com could do does get go guide home into just like login more most new news no not now official one only other out over page
 said see sign site so some than them then there these they top up us use using via vs was way we web welcome were what www html htm php aspx index amp http https
 gov gouv edu official free online app video videos watch search results result edit view log docs doc wiki org net io co uk en de fr es de
 help helps works time times visit deal deals thing things day days week weeks year years review reviews reviewed rated tips ideas
 library libraries open source powerful comprehensive community resources ecosystem platform
+explain explained explains explaining explainer intuition intuitive basics basic beginner beginners introduction intro tutorial tutorials overview ultimate complete
+learn lesson lessons easy simple quick fast essential essentials fundamentals everything need know understanding primer walkthrough cheatsheet cheat examples example
+step steps full detailed definitive comparison compared versus faq reviewing
 // Function words of the languages most tab titles come in besides English (French, Spanish, German, Portuguese):
 // without them "7 jours" and "3 jours" link a weather page to a Paris itinerary.
 le la les des du un une et en pour que qui dans sur avec voir jour jours par au aux pas plus est sont ce cette
@@ -798,22 +803,63 @@ function siteJoin(clusters, docs) {
 // Returns the new clusters and the ones that were drawn together (by cluster, for naming).
 const CONCEPT_SMALL = 3;
 const CONCEPT_PULL_MAX_COS = 0.6; // a tab this close to the rest of its group stays there
+// Also: in a small window (CONCEPT_SMALL_WINDOW tabs or fewer) every group that mostly carries the concept is one group ("Sourdough" and
+// "Bread" in a window of five bakers' tabs); two loose tabs that both carry it strongly (CONCEPT_PAIR_HITS words each) make a pair; and a
+// pair of two tabs that carry different concepts ("Bond yields explained", "Transformer attention explained") is no pair at all.
+const CONCEPT_SMALL_WINDOW = 12;
+const CONCEPT_PAIR_HITS = 2;
+const SUBNAMES = Object.fromEntries(Object.entries(knowledge.CONCEPT_SUBNAMES || {}).map(([concept, list]) => [concept, list.map(([name, words]) => [name, new Set(words.split(/\s+/).map(stem))])]));
 function conceptGroups(clusters, docs) {
-  const out = clusters.map((c) => [...c]);
+  let out = clusters.map((c) => [...c]);
+  const small = docs.length <= CONCEPT_SMALL_WINDOW;
   const formed = new Map(); // cluster (array) -> the concept name
+  const concepts = new Map(); // ... and the concept itself
+  // How many of a tab's own words (and, if asked, its site's category) say the concept: a site's name alone is not strong evidence.
+  const hitsOf = (i, concept, site = true) => {
+    let n = site && categoryOfSite(docs[i].url) === concept ? 1 : 0;
+    for (const [k, v] of docs[i].words) if (v.weight >= 0.7 && CONCEPT_OF.get(k) === concept) n++;
+    return n;
+  };
+  const groupConcepts = Object.keys(knowledge.CONCEPT_GROUPS);
+  const conceptsOfTab = (i) => new Set(groupConcepts.filter((k) => hitsOf(i, k) > 0));
+  // Two tabs of different concepts, clustered on a loose word: not concept-coherent, so each goes back to being loose.
+  out = out.flatMap((c) => {
+    if (c.length !== 2) return [c];
+    const [a, b] = c.map(conceptsOfTab);
+    return a.size && b.size && ![...a].some((k) => b.has(k)) ? [[c[0]], [c[1]]] : [c];
+  });
+  // A project's own pages (a repo's code, issues and PRs) are that project's, whatever they are about.
+  const ofRepo = (c) => { const n = new Map(); for (const i of c) { const r = repoOf(docs[i].url); if (r) n.set(r.name, (n.get(r.name) || 0) + 1); } return c.length >= 2 && Math.max(0, ...n.values()) * 2 >= c.length; };
   for (const [concept, label] of Object.entries(knowledge.CONCEPT_GROUPS)) {
     const key = `%${concept}`;
     const has = (i) => docs[i].words.has(key);
-    const mostly = (c) => c.filter(has).length * 2 > c.length;
-    const big = out.filter((c) => c.length > CONCEPT_SMALL && mostly(c)).sort((a, b) => b.length - a.length)[0];
-    const parts = out.filter((c) => c.length <= CONCEPT_SMALL && mostly(c));
+    const mostly = (c) => c.filter(has).length * 2 > c.length && !ofRepo(c);
+    // A broad concept (programming, travel) only draws loose tabs together: a group that already formed on its words stays as it is.
+    const looseMin = (knowledge.CONCEPT_LOOSE_ONLY || {})[concept]; // ...and needs this many of them
+    const looseOnly = looseMin > 0;
+    const big = looseOnly ? undefined : out.filter((c) => c.length > CONCEPT_SMALL && mostly(c)).sort((a, b) => b.length - a.length)[0];
+    // Parts: the small groups and loose tabs that carry it (any size in a small window, or while the home stays under MAX_GROUP). A broad concept takes only loose tabs and pairs, of different sites (two pages of one docs site are that
+    // site's own group, categoryOf's).
+    const joinMax = looseOnly ? 2 : small ? Infinity : big ? MAX_GROUP - big.length : CONCEPT_SMALL;
+    let parts = out.filter((c) => c !== big && c.length <= joinMax && mostly(c));
+    if (looseOnly) {
+      const perSite = new Map();
+      for (const c of parts) for (const i of c) perSite.set(docs[i].siteKey, (perSite.get(docs[i].siteKey) || 0) + 1);
+      parts = parts.filter((c) => c.every((i) => perSite.get(docs[i].siteKey) < 2));
+    }
     let home = big;
-    if (!home && parts.reduce((n, c) => n + c.length, 0) >= 3 && parts.length >= 2) {
+    if (!home && parts.reduce((n, c) => n + c.length, 0) >= (looseMin || 3) && parts.length >= 2) {
+      home = parts[0];
+      formed.set(home, label);
+    }
+    // Two loose tabs that both say the concept strongly, with nowhere better to go.
+    if (!home && parts.length === 2 && parts.every((c) => c.length === 1 && hitsOf(c[0], concept, false) >= CONCEPT_PAIR_HITS)) {
       home = parts[0];
       formed.set(home, label);
     }
     if (!home) continue;
-    if (big || parts.reduce((n, c) => n + c.length, 0) >= 3) {
+    if (formed.get(home) === label) concepts.set(home, concept);
+    if (big || formed.get(home) === label) {
       for (const c of parts) if (c !== home) { home.push(...c); out.splice(out.indexOf(c), 1); }
     }
     // Tabs of a concept that may only join (the tax office beside retirement accounts).
@@ -824,7 +870,7 @@ function conceptGroups(clusters, docs) {
     }
     // A member that carries the concept where the group mostly doesn't, and is not close to the rest of it.
     for (const c of [...out]) {
-      if (c === home || c.length < 3 || mostly(c)) continue;
+      if (c === home || c.length < 3 || mostly(c) || ofRepo(c)) continue;
       for (const i of c.filter(has)) {
         const rest = c.filter((j) => j !== i).map((j) => docs[j]);
         if (cosine(docs[i], centroidOf(rest)) >= CONCEPT_PULL_MAX_COS) continue;
@@ -832,6 +878,11 @@ function conceptGroups(clusters, docs) {
         home.push(i);
       }
     }
+  }
+  // A group named for the narrower thing most of its tabs are about ("Python" for pandas, NumPy and Django).
+  for (const [c, label] of formed) {
+    const sub = (SUBNAMES[concepts.get(c)] || []).find(([, words]) => c.filter((i) => [...words].some((k) => docs[i].words.has(k))).length * 2 > c.length);
+    formed.set(c, sub ? sub[0] : label);
   }
   return { clusters: out, formed };
 }
@@ -917,6 +968,7 @@ function clusterPass(entries, { threshold = TOPIC_THRESHOLD, categories = false 
     for (const [c, hint] of joined.hinted) hintOf.set(idsKey(c), hint);
   }
   if (!process.env.NOCONCEPT) {
+    if (process.env.DBGC) console.error('PRE', JSON.stringify(merged.map((c) => c.map((i) => docs[i].title.slice(0, 25)))));
     const drawn = conceptGroups(merged, docs);
     merged = drawn.clusters;
     for (const [c, label] of drawn.formed) conceptOf.set(idsKey(c), label);

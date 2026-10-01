@@ -53,24 +53,35 @@ const CONCEPTS = {
   travel: 'flight airline airfare airport hotel hostel resort itinerary airbnb vacation trip travel tourist tour visa passport luggage cruise ryokan sightseeing destination layover boarding',
   education: 'lecture homework syllabus assignment textbook exam midterm semester professor course quiz lab tutor gradebook',
   shopping: 'price buy deal discount coupon cart checkout shipping warranty unboxing',
-  baking: 'sourdough bread loaf dough starter flour yeast crumb bake baking knead proofing levain baguette pastry dutch',
-  cooking: 'recipe ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast sheet chicken protein burrito',
+  entertainment: 'movie movies film films cinema trailer trailers imdb letterboxd goodreads rotten tomatoes tomato book books novel novels author series season episode episodes tv sitcom documentary actor director',
+  baking: 'sourdough bread loaf dough starter flour yeast crumb bake baking knead proofing levain baguette pastry dutch oven hydration scoring banneton cake cookie cookies',
+  cooking: 'recipe ingredient cook cooking dinner lunch breakfast meal mealprep grocery marinade roast chicken burrito pasta soup stew casserole skillet',
   jobs: 'job career resume interview salary hiring recruiter internship applicant offer negotiate negotiation leetcode cscareerquestions grad',
-  housing: 'apartment rent rental lease landlord mortgage realtor tenant',
+  housing: 'apartment rent rental lease landlord realtor tenant',
   sports: 'nba nfl mlb nhl playoff finals championship coach quarterback',
   health: 'symptom diagnosis medication doctor clinic therapy nutrition workout',
-  finance: 'stock invest investing investor bond dividend portfolio inflation savings loan roth ira 401k 403b rollover retirement retire brokerage etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase',
+  finance: 'stock invest investing investor bond dividend portfolio inflation savings loan mortgage mortgages yield yields roth ira 401k 403b rollover retirement retire brokerage dividends index etf etfs fund funds equity equities crypto bitcoin fidelity vanguard schwab robinhood etrade coinbase',
   tax: 'tax taxes irs',
-  ml: 'machine neural gradient backpropagation pytorch tensorflow keras llm llms gpt transformer transformers embedding embeddings huggingface arxiv kaggle tensor deeplearning',
-  fitness: 'fitness gym cardio run running runner runners marathon jog jogging c25k couch strava garmin pegasus parkrun triathlon yoga pilates crossfit deadlift squat hiit',
-  plants: 'plant plants fern ferns moss succulent succulents orchid orchids bonsai garden gardening seedling houseplant houseplants cactus cacti repot repotting prune pruning compost fertilizer perennial',
+  ml: 'machine neural gradient backpropagation pytorch tensorflow keras llm llms gpt transformer transformers attention embedding embeddings huggingface arxiv kaggle tensor deeplearning finetune finetuning tuning tokenizer diffusion classifier backprop',
+  fitness: 'fitness gym cardio run running runner runners marathon jog jogging c25k couch strava garmin pegasus parkrun triathlon yoga pilates crossfit deadlift squat hiit hypertrophy macros macro protein lifting weightlifting powerlifting barbell dumbbell creatine bench',
+  plants: 'plant plants monstera fiddle pothos philodendron fern ferns moss succulent succulents orchid orchids bonsai garden gardening seedling houseplant houseplants cactus cacti repot repotting prune pruning compost fertilizer perennial',
+  programming: 'python pandas numpy scipy matplotlib seaborn jupyter django flask fastapi pytest pip asyncio dataclasses typescript javascript react redux vue svelte angular nextjs node nodejs npm webpack vite rust cargo golang java kotlin sql postgres postgresql mysql sqlite mongodb redis git docker kubernetes kubectl api apis css regex linux bash compiler programming coding developer devops',
   music: 'chord lyric guitar piano song album playlist',
 };
 
 // Concepts whose tabs form a group of their own (tab-groups.js conceptGroups) when three or more loose tabs carry them and nothing
 // else took those tabs: "Roth IRA", "Vanguard funds" and "401k rollover" share no word, but are one errand. concept -> group name.
-// Only concepts that name one topic; "shopping" or "travel" words turn up in tabs about anything.
-const CONCEPT_GROUPS = { finance: 'Finance', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants' };
+// Only concepts that name one topic; "shopping" words turn up in tabs about anything, and the broad ones (programming, travel) are held to
+// stricter terms (CONCEPT_LOOSE_ONLY). Cooking is left out: a window of a baker's and a meal-prepper's tabs is two topics.
+const CONCEPT_GROUPS = { finance: 'Finance', ml: 'Machine learning', fitness: 'Fitness', plants: 'Plants', baking: 'Baking', programming: 'Programming', entertainment: 'Movies & books', travel: 'Travel' };
+// Concepts too broad to merge groups: they only draw LOOSE tabs together, from different sites, and want this many (the docs of every
+// project are "programming": three of them beside a project's own tabs are that project's; two groups that formed on their own words are two projects).
+const CONCEPT_LOOSE_ONLY = { programming: 4, travel: 4 };
+// A concept group named for what most of its tabs are about when that is narrower ("Python" for a pandas, NumPy and Django window):
+// concept -> [name, words]; the first name more than half the tabs carry a word of takes the group.
+const CONCEPT_SUBNAMES = {
+  programming: [['Python', 'python pandas numpy scipy matplotlib seaborn jupyter django flask fastapi pytest pip pypi asyncio dataclasses']],
+};
 // Concepts whose tabs may JOIN such a group but never start one: the tax office beside a Roth IRA and a 401k is money, three pages of
 // an agency are government ("Government" takes them, tab-groups.js FALLBACK_CATEGORIES).
 const CONCEPT_JOINS = { finance: ['tax'] };
@@ -84,7 +95,10 @@ const SITE_CATEGORIES = {
   cooking: 'seriouseats.com allrecipes.com budgetbytes.com epicurious.com bonappetit.com instacart.com eatingwell.com foodnetwork.com cooking.nytimes.com',
   jobs: 'indeed.com glassdoor.com levels.fyi lever.co greenhouse.io ziprecruiter.com handshake.com zety.com leetcode.com hackerrank.com',
   housing: 'zillow.com apartments.com redfin.com streeteasy.com trulia.com realtor.com',
-  dev: 'github.com gitlab.com stackoverflow.com stackexchange.com developer.mozilla.org npmjs.com pypi.org docs.docker.com hub.docker.com dev.to',
+  dev: 'github.com gitlab.com dev.to',
+  // Language and library docs, Q&A and package registries: programming itself, as opposed to a code host (a repo's pages are that project's).
+  programming: 'stackoverflow.com stackexchange.com developer.mozilla.org npmjs.com pypi.org docs.python.org readthedocs.io docs.docker.com hub.docker.com nextjs.org typescriptlang.org react.dev nodejs.org rust-lang.org go.dev pkg.go.dev docs.rs numpy.org pandas.pydata.org matplotlib.org scipy.org djangoproject.com docs.djangoproject.com flask.palletsprojects.com realpython.com kubernetes.io',
+  entertainment: 'imdb.com rottentomatoes.com letterboxd.com goodreads.com metacritic.com themoviedb.org',
   sports: 'espn.com basketball-reference.com nba.com nfl.com mlb.com',
   finance: 'reuters.com bloomberg.com cnbc.com wsj.com marketwatch.com federalreserve.gov fidelity.com vanguard.com schwab.com robinhood.com etrade.com nerdwallet.com investopedia.com coinbase.com',
   tax: 'irs.gov',
@@ -138,9 +152,9 @@ const FALLBACK_CATEGORIES = [
   { name: 'Government', hosts: 'europa.eu canada.ca gc.ca usa.gov', hostRe: GOV_HOST, title: /\b(tax returns?|dmv|passport renewal|social security|voter registration|driver'?s licen[sc]e)\b|確定申告|налог|госуслуги/i },
   { name: 'Dev docs', hosts: 'developer.mozilla.org stackoverflow.com stackexchange.com github.com gitlab.com npmjs.com pypi.org dev.to react.dev reactjs.org electronjs.org nodejs.org typescriptlang.org python.org rust-lang.org go.dev docs.rs vuejs.org angular.dev nextjs.org tailwindcss.com devdocs.io w3schools.com docs.*', title: /\b(api reference|documentation|docs|handbook|sdk|stack overflow|javascript|typescript|node\.?js|pull request|commit)\b/i },
   { name: 'Travel', join: true, hosts: 'booking.com kayak.com tripadvisor.com airbnb.com expedia.com skyscanner.com hotels.com vrbo.com agoda.com lonelyplanet.com flights.google.com', title: /\b(flights?|hotels?|itinerary|airbnb|vacation|trip|things to do|visa|airport)\b|ホテル|観光|旅行|航空券|旅館|отел|авиабилет|путешеств|достопримечательн|호텔|여행|관광|酒店|旅游|景点/i },
-  { name: 'Shopping', join: true, hosts: 'amazon.com ebay.com etsy.com bestbuy.com walmart.com target.com newegg.com rtings.com wirecutter.com costco.com homedepot.com lowes.com ikea.com', title: /\b(reviews?|deals?|discount|coupon|price|buy|cart|best [\w ]{2,30}20\d\d)\b|口コミ|通販|купить|отзыв|скидк|후기|할인|优惠|评测/i },
+  { name: 'Shopping', join: true, hosts: 'amazon.com ebay.com etsy.com bestbuy.com walmart.com target.com newegg.com rtings.com wirecutter.com costco.com homedepot.com lowes.com ikea.com', title: /\b(deals?|discount|coupon|price|buy|cart|best [\w ]{2,30}20\d\d)\b|口コミ|通販|купить|отзыв|скидк|후기|할인|优惠|评测/i },
   { name: 'Video & music', hosts: 'youtube.com youtu.be vimeo.com twitch.tv netflix.com hulu.com disneyplus.com spotify.com soundcloud.com music.apple.com', title: /\b(official video|trailer|playlist|lofi|podcast)\b|動画|予告編|клип|трейлер|плейлист|동영상|视频/i },
   { name: 'News & social', weak: true, hosts: 'news.ycombinator.com reddit.com twitter.com x.com facebook.com instagram.com linkedin.com bsky.app threads.net nytimes.com washingtonpost.com bbc.com bbc.co.uk cnn.com theguardian.com reuters.com apnews.com theverge.com techcrunch.com arstechnica.com wired.com npr.org bloomberg.com weather.com news.google.com', title: /\b(breaking|headlines|news|weather forecast)\b|ニュース|天気予報|новости|прогноз погоды|뉴스|新闻|天气/i },
 ];
 
-module.exports = { FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };
+module.exports = { FALLBACK_CATEGORIES, EDU_HOST, GOV_HOST, PLACES, CONCEPTS, CONCEPT_GROUPS, CONCEPT_JOINS, CONCEPT_LOOSE_ONLY, CONCEPT_SUBNAMES, SITE_CATEGORIES, SITE_HINTS, AI_HINTS, BROAD_HINTS };

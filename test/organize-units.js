@@ -135,7 +135,7 @@ const at = (w, id) => w.tabs().find((t) => t.id === id); // grouping reorders th
     ['TypeScript handbook', 'https://www.typescriptlang.org/docs/handbook'], ['Stack Overflow - how to debounce', 'https://stackoverflow.com/questions/1'],
     ['CS 3500 - Canvas', 'https://canvas.northeastern.edu/courses/1'], ['Gradescope HW3', 'https://www.gradescope.com/courses/2'], ['Piazza CS3500', 'https://piazza.com/class/x'],
     ['Gmail - Inbox', 'https://mail.google.com/mail/u/0'], ['YouTube - lofi beats', 'https://www.youtube.com/watch?v=1'], ['Reddit - r/programming', 'https://www.reddit.com/r/programming'], ['Hacker News', 'https://news.ycombinator.com'],
-    ['Amazon.com: mechanical keyboard', 'https://www.amazon.com/s?k=keyboard'], ['Best mechanical keyboards 2026 - RTINGS', 'https://www.rtings.com/keyboard'], ['Keychron Q1 review', 'https://www.theverge.com/keychron'],
+    ['Amazon.com: mechanical keyboard', 'https://www.amazon.com/s?k=keyboard'], ['Best mechanical keyboards 2026 - RTINGS', 'https://www.rtings.com/keyboard'], ['Keychron Q1 mechanical keyboard review', 'https://www.theverge.com/keychron'],
     ['Weather Boston', 'https://weather.com/boston'], ['Linear algebra notes', 'https://example.edu/la'], ['Wikipedia - Eigenvalue', 'https://en.wikipedia.org/wiki/Eigenvalue'], ['Khan Academy - matrices', 'https://www.khanacademy.org/matrices'],
     ['Repo - lumen', 'https://github.com/me/lumen'], ['Pull request #12', 'https://github.com/me/lumen/pull/12'], ['Issues', 'https://github.com/me/lumen/issues'],
     ['Notion', 'https://www.notion.so/x'], ['Spotify', 'https://open.spotify.com/'],
@@ -148,7 +148,7 @@ const at = (w, id) => w.tabs().find((t) => t.id === id); // grouping reorders th
   check('31-tab bar: at least 90% grouped', grouped / 31 >= 0.9, `${grouped}/31`);
   check('31-tab bar: no giant group, no "Other"', Math.max(...sizes) <= 8 && !named.some((g) => /^other$/i.test(g.name)), named.map((g, i) => `${g.name}:${sizes[i]}`).join());
   const nameOf = (i) => named.find((g) => g.id === at(w, i + 1).groupId)?.name || '';
-  check('31-tab bar: good names', /recipes/i.test(nameOf(4)) && /dev/i.test(nameOf(7)) && nameOf(7) === nameOf(11) && /school/i.test(nameOf(12)) && nameOf(12) === nameOf(23) && /mail/i.test(nameOf(15)) && nameOf(15) === nameOf(29) && /video/i.test(nameOf(16)), named.map((g) => g.name).join());
+  check('31-tab bar: good names', /recipes|baking/i.test(nameOf(4)) && /dev|programming/i.test(nameOf(7)) && nameOf(7) === nameOf(11) && /school/i.test(nameOf(12)) && nameOf(12) === nameOf(23) && /mail/i.test(nameOf(15)) && nameOf(15) === nameOf(29) && /video/i.test(nameOf(16)), named.map((g) => g.name).join());
   check('31-tab bar: the keyboard review joins the keyboard group', nameOf(19) === nameOf(21) && nameOf(19) !== '', nameOf(21));
   check('31-tab bar: topics stay apart (Tokyo trip is not dev docs)', nameOf(0) !== nameOf(7) && nameOf(26) !== nameOf(7), `${nameOf(0)} / ${nameOf(26)} / ${nameOf(7)}`);
   check('31-tab bar: deterministic', run().g.state().map((g) => g.name).join() === named.map((g) => g.name).join());
@@ -266,7 +266,7 @@ function organized(specs) {
   check('PyTorch joins Machine learning, not Python', ml.same(0, 7) && !ml.same(5, 7) && ml.same(5, 6), `${ml.name(7)} / ${ml.name(5)}`);
   const fit = organized([['Best running shoes 2026', 'https://runnersworld.example/shoes'], ['Marathon training plan 16 weeks', 'https://runners.example/plan'], ['Couch to 5K', 'https://nhs.uk/c25k'], ['Sourdough starter guide', 'https://www.kingarthurbaking.com/sourdough']]);
   check('running shoes, marathon plan and Couch to 5K: Fitness', [1, 2].every((i) => fit.same(0, i)) && fit.name(0) === 'Fitness' && !fit.same(0, 3), fit.name(0));
-  const few = organized([['Roth IRA limits', 'https://www.fidelity.com/roth'], ['Vanguard index funds', 'https://investor.vanguard.com/funds'], ['Quarterly zebra', 'https://a.example/1'], ['Plumbing 101', 'https://b.example/2']]);
+  const few = organized([['Roth limits', 'https://a.example/roth'], ['Vanguard login', 'https://b.example/login'],['Quarterly zebra', 'https://a.example/1'], ['Plumbing 101', 'https://b.example/2']]);
   check('two money tabs are not enough to make a concept group', !few.same(0, 1), few.name(0));
 }
 
@@ -282,6 +282,39 @@ function organized(specs) {
   check('stemWord: one key for every case (борщ, Москва, Россия, вкусный, отель)', family('борщ борща борщу борщом борще борщи') === 1 && family('москва москвы москве москву москвой') === 1 && family('россия россии россию россией') === 1 && family('красный красного красной красную красные') === 1 && family('отель отеля отелю отеле отели отелей') === 1);
   const pies = organized([['Рецепт пирога с яблоками', 'https://a.ru/1'], ['Рецепты пирогов', 'https://b.ru/2'], ['Погода в Москве', 'https://c.ru/3'], ['Купить ноутбук', 'https://d.ru/4']]);
   check('a group of pies is named for the dictionary form, Пирог', pies.same(0, 1) && pies.name(0) === 'Пирог', pies.name(0));
+}
+
+// 21. round 5: ordinary English windows. Filler title words do not make groups, one topic is one group, programming and film/book tabs meet
+{
+  const keys = (t) => tg.tokens(t).map((x) => x.key);
+  check('tokens: explained, intuition, basics, tutorial, overview, beginners are filler', ['Explained', 'Intuition', 'Basics', 'Tutorial', 'Overview', 'Beginners', 'Ultimate', 'Complete', 'Introduction'].every((w) => keys(w).length === 0), keys('Explained Intuition Basics Tutorial Overview Beginners').join());
+  const fifteen = organized([['Dividend investing basics', 'https://s0.example/a'], ['Index fund returns', 'https://s1.example/b'], ['Bond yields explained', 'https://s2.example/c'],
+    ['Neural network backpropagation', 'https://s3.example/d'], ['Transformer attention explained', 'https://s4.example/e'], ['Gradient descent intuition', 'https://s5.example/f'],
+    ['Deadlift form', 'https://s6.example/g'], ['Squat progression', 'https://s7.example/h'], ['Hypertrophy training volume', 'https://s8.example/i'],
+    ['Monstera care', 'https://s9.example/j'], ['Fiddle leaf fig watering', 'https://s10.example/k'], ['Succulent soil mix', 'https://s11.example/l'],
+    ['Pasta carbonara', 'https://s12.example/m'], ['Paris hotels', 'https://s13.example/n'], ['NBA scores', 'https://s14.example/o']]);
+  check('15 tabs: "explained" does not group a finance tab with an ML tab', !fifteen.same(2, 4) && fifteen.name(2) !== 'Explained' && fifteen.name(4) !== 'Explained', `${fifteen.name(2)} / ${fifteen.name(4)}`);
+  check('15 tabs: Finance, Machine learning, Fitness and Plants each get their three', [[0, 1, 2, 'Finance'], [3, 4, 5, 'Machine learning'], [6, 7, 8, 'Fitness'], [9, 10, 11, 'Plants']].every(([a, b, c, n]) => fifteen.same(a, b) && fifteen.same(a, c) && fifteen.name(a) === n), [0, 3, 6, 9].map(fifteen.name).join());
+  check('15 tabs: the three unrelated tabs stay loose', [12, 13, 14].every((i) => !fifteen.name(i)), [12, 13, 14].map(fifteen.name).join());
+  const fillerOnly = organized([['Photosynthesis explained', 'https://a.example/1'], ['Mortgage rates explained', 'https://b.example/2'], ['Guide to guitar chords', 'https://c.example/3'], ['Tips for tomato seedlings', 'https://d.example/4']]);
+  check('a filler word is never the only thing two tabs share', [0, 1, 2, 3].every((i) => !fillerOnly.name(i)), [0, 1, 2, 3].map(fillerOnly.name).join());
+  const bake = organized([['Sourdough starter', 'https://a.example/1'], ['Sourdough bread recipe', 'https://a.example/2'], ['Sourdough scoring', 'https://a.example/3'], ['Sourdough hydration', 'https://a.example/4'], ['Dutch oven bread', 'https://a.example/5']]);
+  check('5 sourdough tabs of one site are one group, not "Sourdough" (3) + "Bread" (2)', [1, 2, 3, 4].every((i) => bake.same(0, i)), [0, 1, 2, 3, 4].map(bake.name).join());
+  const py = organized([['Python list comprehension tutorial', 'https://realpython.com/1'], ['pandas groupby', 'https://pandas.pydata.org/1'], ['numpy broadcasting', 'https://numpy.org/1'], ['Matplotlib subplots', 'https://matplotlib.org/1'], ['Django models', 'https://docs.djangoproject.com/1'], ['Pasta carbonara', 'https://x.example/1']]);
+  check('Python, pandas, NumPy, Matplotlib and Django tabs across sites: one group named Python', [1, 2, 3, 4].every((i) => py.same(0, i)) && !py.same(0, 5) && py.name(0) === 'Python', py.name(0));
+  const dev = organized([['Next.js app router docs', 'https://nextjs.org/docs'], ['TypeScript generics handbook', 'https://www.typescriptlang.org/docs'], ['useState vs useReducer', 'https://react.dev/a'], ['Python list comprehension tutorial', 'https://realpython.com/1'], ['Easy Banana Bread Recipe', 'https://a.example/banana-bread']]);
+  check('Next.js, TypeScript, React and Python tabs: "Programming", not a vague "Dev docs"', [1, 2, 3].every((i) => dev.same(0, i)) && !dev.same(0, 4) && dev.name(0) === 'Programming', dev.name(0));
+  const lumen = organized([['GitHub - lumen/lumen', 'https://github.com/lumen/lumen'], ['Pull requests - lumen/lumen', 'https://github.com/lumen/lumen/pulls'], ['Issues - lumen/lumen', 'https://github.com/lumen/lumen/issues'], ['pandas groupby', 'https://pandas.pydata.org/1'], ['numpy broadcasting', 'https://numpy.org/1'], ['Matplotlib subplots', 'https://matplotlib.org/1'], ['Django models', 'https://docs.djangoproject.com/1']]);
+  check("a repo's GitHub tabs stay \"Lumen\" beside a Python stack", lumen.same(0, 1) && lumen.same(0, 2) && !lumen.same(0, 3) && /lumen/i.test(lumen.name(0)) && [4, 5, 6].every((i) => lumen.same(3, i)), `${lumen.name(0)} / ${lumen.name(3)}`);
+  const film = organized([['Dune Part Two review', 'https://www.rottentomatoes.com/m/dune_part_two'], ['Best sci-fi books', 'https://www.goodreads.com/list/sci-fi'], ['Oppenheimer trailer', 'https://www.imdb.com/title/tt15398776'], ['Severance season 2 episodes', 'https://letterboxd.com/film/severance'], ['Amazon.com: standing desk', 'https://www.amazon.com/1'], ['Monitor arm', 'https://www.amazon.com/2'], ['Ergonomic chair deals', 'https://www.amazon.com/3']]);
+  check('film and book tabs group together; "review" is not a shopping word', [1, 2, 3].every((i) => film.same(0, i)) && film.name(0) !== 'Shopping' && !film.same(0, 4), film.name(0));
+  check('the shop tabs still group', film.same(4, 5) && film.same(4, 6) && !film.same(0, 4), film.name(4));
+  const pair = organized([['Roth IRA limits 2026', 'https://a.example/1'], ['Vanguard index funds vs ETFs', 'https://b.example/2'], ['Quarterly zebra', 'https://c.example/3'], ['Plumbing 101', 'https://d.example/4']]);
+  check('two tabs that both carry two finance words form a Finance pair', pair.same(0, 1) && pair.name(0) === 'Finance' && !pair.same(0, 2), pair.name(0));
+  const weak = organized([['Dividend dates', 'https://a.example/1'], ['Mutual fund fees', 'https://b.example/2'], ['Quarterly zebra', 'https://c.example/3'], ['Plumbing 101', 'https://d.example/4']]);
+  check('two tabs with one finance word each are not enough', !weak.same(0, 1), weak.name(0));
+  const misfit = organized([['Roth IRA limits', 'https://a.example/1'], ['Neural network backpropagation', 'https://a.example/2'], ['Quarterly zebra', 'https://c.example/3']]);
+  check('a finance tab and an ML tab are never a pair', !misfit.same(0, 1));
 }
 
 process.exit(failed ? 1 : 0);
