@@ -44,14 +44,25 @@ const PRODUCT_SITES = {
 
 // What "the same site" means when grouping by site: the registrable domain, except that each app
 // above counts as a site of its own.
+// Loopback and IP hosts (127.0.0.1, localhost, [::1], 0.0.0.0, a LAN address) are not a "site" in the topic sense: each port is a
+// different dev server. Topic stages never join tabs on them (see isLocalHost users); "By site" keys them by host:port.
+function isLocalHost(url) {
+  const host = hostname(url);
+  return Boolean(host) && (host === 'localhost' || host.endsWith('.localhost') || /^\d+(\.\d+){3}$/.test(host) || host.includes(':'));
+}
+function hostPort(url) {
+  try { return new URL(url).host.toLowerCase(); } catch { return ''; }
+}
 function siteKey(url) {
   const host = hostname(url);
+  if (isLocalHost(url)) return hostPort(url);
   return PRODUCT_SITES[host] ? host : registrableDomain(url);
 }
 
 // A short human name for a site: known names first, then a page-title suffix that matches the
 // domain ("Title - Wikipedia"), then the capitalised domain label.
 function siteName(url, title = '') {
+  if (isLocalHost(url)) return hostPort(url);
   const product = PRODUCT_SITES[hostname(url)];
   if (product) return product;
   const domain = registrableDomain(url);
@@ -567,7 +578,7 @@ function dropFragmentLinks(docs) {
 
 // TF-IDF vectors for a set of entries, idf computed over just this set ("current tabs").
 function vectorize(entries, { allowCommon = false } = {}) {
-  const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: registrableDomain(e.url), siteKey: siteKey(e.url), siteHint: siteHint(e.url) || e.aiHint || '' }));
+  const docs = entries.map((e) => ({ ...e, words: tabWords(e), site: isLocalHost(e.url) ? hostPort(e.url) : registrableDomain(e.url), siteKey: isLocalHost(e.url) ? '' : siteKey(e.url), siteHint: siteHint(e.url) || e.aiHint || '' }));
   const n = docs.length;
   dropFragmentLinks(docs);
   // A site's own name ("nextjs.org", "zod.dev") is brand noise between two of its own pages, but
@@ -1373,6 +1384,8 @@ function tripGroups(clusters, docs, rekey, nameOf) {
 // Strong host first, then the title words, then a weak host (a news site that also carries a review).
 const hostMatches = (host, sites) => sites.split(/\s+/).some((s) => (s.endsWith('.*') ? host.startsWith(`${s.slice(0, -2)}.`) && host.split('.').length >= 3 : host === s || host.endsWith(`.${s}`)));
 function categoryOf({ url, title }) {
+  // A dev server's tabs share one app name after the page title ("alpha - Docs"): that is the app's template, not what the page is about.
+  if (isLocalHost(url)) title = String(title || '').split(/\s+[-|–—·:]\s+/).slice(0, -1).join(' - ') || title;
   const host = hostname(url).replace(/^www\./, '');
   const cats = knowledge.FALLBACK_CATEGORIES;
   const fullUrl = `${host}${(() => { try { return new URL(url).pathname; } catch { return ''; } })()}`;
