@@ -206,7 +206,16 @@ function pickerEntries({ types = [], hidden = [], table } = {}) {
   return out;
 }
 
-const api = { STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey };
+// Typing somewhere (a field, a select or a contenteditable): Ctrl/Cmd+Z there belongs to the text, not to the page's Undo.
+function isTypingTarget(node) {
+  return Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable === true);
+}
+// The platform's modifier for the Undo hint: "Cmd" on a Mac, else "Ctrl".
+function undoHint(platform) {
+  return (/mac|iphone|ipad/i.test(String(platform || '')) ? 'Cmd' : 'Ctrl') + '+Z';
+}
+
+const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();

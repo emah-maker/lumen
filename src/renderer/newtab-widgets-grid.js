@@ -470,7 +470,7 @@
       return;
     }
     // Ctrl+Z (Cmd+Z): undo the last move, resize, removal or reset.
-    if (editing && !drag && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) {
+    if (editing && !drag && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && !WE.isTypingTarget(document.activeElement)) {
       e.preventDefault();
       window.widgetEditUI?.undo();
     }

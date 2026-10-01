@@ -691,7 +691,9 @@
     .greet { display: flex; align-items: center; gap: 6px; min-width: 0; }
     .greet h1 { min-width: 0; overflow-wrap: anywhere; }
     header:hover .hdr-edit, header:focus-within .hdr-edit, .greet:hover .hdr-edit, .hdr-edit:focus-visible { opacity: 1; }
+    .hdr-edit { opacity: 0.35; } /* resting, so the clock and greeting edit can be found */
     body.w-editing .hdr-edit { display: none; }
+    .w-toast-hint { font-size: 11px; opacity: 0.6; margin-left: 2px; }
     /* Custom recipes, Notes, Countdown and Timer. */
     .cw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; align-content: start; }
     .cw-stat { display: flex; flex-direction: column; min-width: 0; }

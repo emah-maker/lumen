@@ -1204,6 +1204,21 @@ function buildCard(w) {
     } catch (err) {
       console.error('widget', w.type, err);
       body.replaceChildren(el('p', 'w-note', 'This widget couldn’t be shown.'));
+      const wrap = el('div', 'w-actions');
+      const retry = el('button', 'w-btn', 'Try again');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', `Try ${title} again`);
+      retry.addEventListener('click', () => widgetAct(w.id, 'refresh'));
+      wrap.append(retry);
+      if (w.setup && window.widgetSetup?.can(w.type)) {
+        const fix = el('button', 'w-btn', 'Edit settings');
+        fix.type = 'button';
+        fix.setAttribute('aria-label', `Edit ${title}`);
+        fix.addEventListener('click', () => openEditor(w));
+        wrap.append(fix);
+      }
+      body.append(wrap);
+      editPencil(w, title, card, true);
     }
   } else if (typeof w.error === 'string' && w.error) {
     const note = el('p', 'w-note');

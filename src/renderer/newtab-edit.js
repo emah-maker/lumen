@@ -288,9 +288,13 @@
     toast.setAttribute('aria-live', 'polite');
     toast.append(el('span', null, message));
     const b = tb('w-toast-undo', T('newtab.edit.undo'), null);
-    b.title = T('newtab.edit.undo.title'); // Ctrl+Z works while the toast shows, in or out of Edit layout
+    const hint = WE.undoHint(navigator.userAgentData?.platform || navigator.platform);
+    b.title = T('newtab.edit.undo.title').replace('Ctrl+Z', hint); // Ctrl+Z works while the toast shows, in or out of Edit layout
     b.addEventListener('click', () => undo());
     toast.append(b);
+    const keys = el('span', 'w-toast-hint', hint);
+    keys.setAttribute('aria-hidden', 'true'); // the button's title already says it
+    toast.append(keys);
     document.body.append(toast);
     toastTimer = setTimeout(hideToast, 8000);
   }
@@ -326,7 +330,7 @@
   document.addEventListener('keydown', (e) => {
     if (editing || !toast || window.widgetSetup?.isOpen?.()) return;
     if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
-    if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+    if (WE.isTypingTarget(document.activeElement)) return;
     e.preventDefault();
     undo();
   }, true);
