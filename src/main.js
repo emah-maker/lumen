@@ -3889,7 +3889,7 @@ async function refreshDragStrips(d) {
     // All at once, not one after another: a quick drop onto another window's strip finds it measured.
     const found = await Promise.all(recs.filter((rec) => !((d.single && rec === d.rec) || !rcAlive(rec) || isSpare(rec) || rec.win.isMinimized())).map((rec) => stripGeometry(rec)));
     for (const g of found) if (g) next.set(g.rec, g);
-    if (tabDrag === d) d.strips = next;
+    if (tabDrag === d) { d.strips = next; d.targets?.invalidate(); } // the targets carry the strips' geometry
   } finally { d.refreshing = false; }
 }
 // A window is only shown once it has painted what it now holds: its strip with the tab, and the tab's
@@ -3927,8 +3927,13 @@ function revealNewWindow(rec, tabId, then = () => {}) {
     const focus = () => { if (!tabDrag) w.focus(); }; // a new drag already under way keeps its window focused
     if (motionReducedMain()) { w.setOpacity(1); focus(); then(); return; }
     // Timed against the clock, aimed at frame boundaries (features/frame-clock.js): a setInterval(16) fires on
-    // Windows' coarse timer and stutters, and a busy turn slowed every later step.
-    const fade = frameClock.tween({ duration: 150, onFrame: (eased) => { if (w.isDestroyed()) fade?.stop(); else w.setOpacity(eased); } });
+    // Windows' coarse timer and stutters, and a busy turn slowed every later step. setOpacity is a native call
+    // per window, so the fade is a few steps (4 over ~120 ms) rather than one per frame.
+    let shown = -1;
+    const fade = frameClock.tween({ duration: 120, ease: (t) => frameClock.quantize(t, 4), onFrame: (eased) => {
+      if (w.isDestroyed()) { fade?.stop(); return; }
+      if (eased !== shown) { shown = eased; w.setOpacity(eased); }
+    } });
     focus();
     then();
   });
@@ -4144,6 +4149,7 @@ function setDragHover(d, hit, { cancel = false, chipAs = 'cancel', dropping = fa
 function tickTabDrag() {
   const d = tabDrag;
   if (!d) return;
+  dragTicks.mark();
   if (!rcAlive(d.rec)) { endDragQuietly(d); return; } // the window was closed under the drag
   // A release that never came (the mouse-up went somewhere Lumen can't see): nothing is moved on a guess.
   // A card drag is dropped; a dragged window stays where it is, without joining a strip.
@@ -4192,12 +4198,20 @@ function tickTabDrag() {
 }
 // Every window that could be under the cursor, front first: the strips a tab can join, and the windows that
 // only get in the way (private windows, a normal window whose strip hasn't been measured yet).
+// Built at most every 120 ms (the strip measurement's own rhythm) and after each measurement, not on every
+// 4-8 ms tick of the drag: it looks every window up and measures its bounds.
 function dropTargets(d) {
+  if (!d.targets) d.targets = frameClock.ttlCache(() => buildDropTargets(d), 120);
+  return d.targets.get();
+}
+function buildDropTargets(d) {
   const out = [];
+  const recByWin = new Map();
+  for (const r of winRecs) recByWin.set(r.win, r);
   for (const w of BrowserWindow.getAllWindows()) {
     if (w.isDestroyed() || !w.isVisible() || w.isMinimized() || (dragCard && w === dragCard.win)) continue;
     if (d.single && w === d.rec.win) continue; // the window being dragged is under the cursor by definition
-    const rec = [...winRecs].find((r) => r.win === w);
+    const rec = recByWin.get(w);
     if (rec && isSpare(rec)) continue;
     const g = rec && d.strips.get(rec);
     out.push(g ? { key: rec, win: w, bounds: w.getContentBounds(), bottom: g.bottom, tabs: g.tabs } : { win: w, bounds: w.getBounds(), occluder: true });
@@ -4404,7 +4418,7 @@ function beginTabDrag(src, tabId, grab) {
   d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
   w.webContents.on('before-input-event', d.escape);
   refreshDragStrips(d);
-  d.timer = setInterval(tickTabDrag, 8);
+  d.timer = setInterval(() => { if (dragTicks.due(DRAG_TICK_GAP)) tickTabDrag(); }, 8); // a pointer move may have just ticked
   return true;
 }
 const num = (v) => (Number.isFinite(v) ? v : 0);
@@ -4418,9 +4432,11 @@ ipcMain.on('tab:dragstart', (event, id, grab) => {
 // mouse's own rhythm, instead of waiting for the next poll.
 // At most one tick per 4 ms: a 1 kHz mouse reports a move per millisecond, and each tick looks every window up
 // and moves a transparent window (the 8 ms poll below keeps going meanwhile), which backed up the main thread.
-const dragMoveGate = frameClock.rateGate(4);
+// The poll and the pointer reports share one gate (tickTabDrag marks it), so they never tick back to back.
+const DRAG_TICK_GAP = 4;
+const dragTicks = frameClock.tickGuard();
 ipcMain.on('tab:dragmove', (event) => {
-  if (tabDrag && dragMoveGate() && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
+  if (tabDrag && dragTicks.due(DRAG_TICK_GAP) && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
 });
 // A tab is being pulled towards the edge of the strip: it may come out next, so have a window ready.
 ipcMain.on('tab:dragprep', (event, tabId) => {
@@ -5315,7 +5331,8 @@ ipcMain.on('content-bounds', (_e, bounds) => {
 const freezeSeq = new WeakMap(); // window rec -> number
 let freezeCounter = 0;
 const FREEZE_MAX_MS = 2500;
-ipcMain.handle('view:freeze', async () => {
+const snapshotSizer = require('./features/snapshot-size');
+ipcMain.handle('view:freeze', async (_e, cssSize) => {
   const rec = curRec;
   const wc = activeTab()?.webContents;
   if (!rec || !wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
@@ -5330,7 +5347,11 @@ ipcMain.handle('view:freeze', async () => {
       freezeSeq.set(rec, ++freezeCounter);
       withWindow(rec, () => { viewFrozen = false; layout(); });
     }, FREEZE_MAX_MS);
-    return `data:image/jpeg;base64,${image.toJPEG(88).toString('base64')}`;
+    // Encoded at the size it is shown (CSS pixels, not device pixels) and sent as bytes: the renderer makes a blob
+    // URL from them, so neither side builds or decodes a multi-megabyte base64 string (features/snapshot-size.js).
+    const target = snapshotSizer.snapshotSize(image.getSize(), cssSize);
+    const shot = target ? image.resize({ width: target.width, height: target.height, quality: 'good' }) : image;
+    return shot.toJPEG(snapshotSizer.JPEG_QUALITY);
   } catch {
     return null;
   }

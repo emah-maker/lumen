@@ -52,4 +52,32 @@ function rateGate(gap) {
   };
 }
 
-module.exports = { FRAME_MS, easeOutCubic, progress, untilNextFrame, tween, rateGate };
+// t (0..1) snapped up to one of `steps` levels: 0 stays 0, anything above rises in `steps` equal jumps to 1.
+// For work that is costly per change (a window's opacity), so a 150 ms fade is 5 calls, not one per frame.
+const quantize = (t, steps) => (t <= 0 ? 0 : t >= 1 ? 1 : Math.ceil(t * steps) / steps);
+
+// Two sources (an input event and a poll) drive the same tick: `due(gap)` is false when a tick ran less than
+// `gap` ms ago, whichever source ran it. The tick itself calls `mark()`.
+function tickGuard() {
+  let last = -Infinity;
+  return {
+    due: (gap, now = Date.now()) => now - last >= gap,
+    mark: (now = Date.now()) => { last = now; },
+  };
+}
+
+// A value rebuilt at most once per `ttl` ms (or after invalidate()): for a list that is costly to build and
+// is read on every tick of a fast loop. `build` and the clock are injectable for tests.
+function ttlCache(build, ttl) {
+  let value;
+  let at = -Infinity;
+  return {
+    get(now = Date.now()) {
+      if (now - at >= ttl) { value = build(); at = now; }
+      return value;
+    },
+    invalidate() { at = -Infinity; },
+  };
+}
+
+module.exports = { FRAME_MS, easeOutCubic, progress, untilNextFrame, tween, rateGate, quantize, tickGuard, ttlCache };
