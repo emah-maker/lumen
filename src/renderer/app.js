@@ -2035,8 +2035,18 @@ function clearReveal() {
   st.opacity = '';
 }
 
+// While the page is a still image, main's last-resort thaw timer is told every second that motion goes on.
+let lastFreezeAlive = 0;
+function freezeAlive() {
+  const now = performance.now();
+  if (now - lastFreezeAlive < 1000) return;
+  lastFreezeAlive = now;
+  window.browser.freezeAlive?.();
+}
+
 function setReveal(x) {
   reveal = x;
+  if (snapshot) freezeAlive();
   const st = $('sidebar').style;
   const v = revealStyles(x);
   st.transform = v.transform;
@@ -2067,7 +2077,8 @@ function edgeColor(img) {
   }
 }
 
-async function freezePage() {
+// fade: the snapshot eases in over --t-press (a shortcut-started spring, where the capture lands mid-animation).
+async function freezePage({ fade = false } = {}) {
   const token = ++freezeToken;
   // The area the snapshot fills, in CSS pixels: main captures it at that size, not at device size.
   const r = heldRect || viewport.getBoundingClientRect();
@@ -2081,10 +2092,16 @@ async function freezePage() {
   img.src = url;
   img.style.width = `${r.width}px`;
   img.style.height = `${r.height}px`;
-  await img.decode().catch(() => {});
+  const decoded = await img.decode().then(() => true, () => false);
   if (token !== freezeToken) { URL.revokeObjectURL(url); return; }
-  snapshot?.remove();
+  if (!decoded) { // a broken image must not replace the live page: revoke it and show the live view again
+    URL.revokeObjectURL(url);
+    thawPage();
+    return;
+  }
+  if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
+  if (fade) img.classList.add('fade-in');
   viewport.style.setProperty('--snapshot-edge', edgeColor(img));
   viewport.append(img);
 }
@@ -2099,6 +2116,8 @@ function thawPage() {
     if (img) setTimeout(() => { img.remove(); URL.revokeObjectURL(img.src); viewport.style.removeProperty('--snapshot-edge'); }, 80);
   }));
 }
+
+const SPRING_OPEN_RESPONSE = 0.34, SPRING_CLOSE_RESPONSE = 0.28; // seconds: closing is a little quicker
 
 async function showSidebar(visible) {
   const body = document.body;
@@ -2141,13 +2160,15 @@ async function showSidebar(visible) {
     reveal = target;
     reportBounds();
   };
+  // Reduced motion: no spring, so heldRect is set above only to be cleared by finish() in the same tick;
+  // the single reportBounds() inside finish() then sends the final size and nothing animates.
   if (motionReduced()) finish();
   else {
     // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
     // motion begins, so any slow frame is a still frame, not a jump.
-    revealAnim = springTo(reveal, target, { response: visible ? 0.34 : 0.28, velocity, onUpdate: setReveal, onDone: finish });
+    revealAnim = springTo(reveal, target, { response: visible ? SPRING_OPEN_RESPONSE : SPRING_CLOSE_RESPONSE, velocity, onUpdate: setReveal, onDone: finish });
   }
-  if (lateFreeze && revealAnim) freezePage(); // sized from heldRect, the page's final size, already set above
+  if (lateFreeze && revealAnim) freezePage({ fade: true }); // sized from heldRect, the page's final size, already set above
   if (visible) $('prompt').focus({ preventScroll: true });
 }
 $('toggle-sidebar').onclick = () => {
@@ -2202,6 +2223,7 @@ resizer.addEventListener('pointerdown', (e) => {
   let frame = 0;
   const move = (ev) => {
     cancelAnimationFrame(frame);
+    freezeAlive();
     frame = requestAnimationFrame(() => setSidebarWidth(startWidth + (startX - ev.clientX)));
   };
   const up = async () => {

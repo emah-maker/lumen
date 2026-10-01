@@ -11,6 +11,14 @@ const { loadJson, writeJsonAtomic } = require('../src/settings/settings-file');
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
 
+// ---- the window's CSP lets the page snapshot (a blob: URL image, see freezePage in app.js) load
+{
+  const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
+  const csp = (html.match(/Content-Security-Policy"\s+content="([^"]*)"/) || [])[1] || '';
+  const imgSrc = (csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('img-src ')) || '').split(/\s+/);
+  check('csp: index.html img-src allows blob: (the sidebar snapshot)', imgSrc.includes('blob:'), csp);
+}
+
 // ---- address bar
 const searched = (text) => resolveInput(text, 'google').startsWith('https://www.google.com/search?q=');
 for (const [input, want] of [
