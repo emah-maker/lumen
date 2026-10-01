@@ -611,6 +611,8 @@
   "settings.ai.maxSteps": "Max steps per task",
   "settings.ai.autoFallback": "Switch models automatically when one is unavailable",
   "settings.ai.autoFallbackDesc": "When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.",
+  "settings.ai.claudeCodeFullAccess": "Give Claude Code full access to this computer",
+  "settings.ai.claudeCodeFullAccessDesc": "Claude Code in the sidebar works as it does in your terminal: it can run commands, read and change any of your files, and use your own MCP servers, skills and slash commands, all without asking first. Only turn this on if you trust it with your computer: a web page it reads could try to trick it. Off by default; applies from the next message.",
   "settings.ai.grokWarmup": "Warm up Grok Build when Lumen starts",
   "settings.ai.grokWarmupDesc": "Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.",
   "settings.ai.researchTabs": "Show AI research in tabs",

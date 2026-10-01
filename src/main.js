@@ -5298,6 +5298,7 @@ const agent = new Agent({
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
+  claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when

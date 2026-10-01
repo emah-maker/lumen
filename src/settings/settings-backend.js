@@ -103,6 +103,7 @@ const DEFAULTS = {
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
+  claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
