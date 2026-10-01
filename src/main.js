@@ -1055,18 +1055,33 @@ const SEED_SITES = [
 let history = new Map(); // url -> { url, title, visits, last }
 let historySaveTimer = null;
 
+// Read off the startup path (a long history is a sizeable file): visits recorded meanwhile are kept, with the
+// file's earlier ones merged under them. Whatever needs the whole list awaits `historyReady`; suggestions just
+// work from what is there.
+let historyLoaded = false;
+let historyReady = Promise.resolve();
 function loadHistory() {
-  try {
-    // Older builds recorded sign-in and token URLs; drop them on load.
-    history = new Map(JSON.parse(fs.readFileSync(HISTORY_FILE(), 'utf8')).filter((h) => importer.isWorthImporting(h.url)).map((h) => [h.url, h]));
-  } catch {
-    history = new Map();
-  }
+  historyReady = (async () => {
+    try {
+      await new Promise((r) => setImmediate(r));
+      // Older builds recorded sign-in and token URLs; drop them on load.
+      const saved = JSON.parse(await fs.promises.readFile(HISTORY_FILE(), 'utf8')).filter((h) => importer.isWorthImporting(h.url));
+      for (const h of saved) {
+        const now = history.get(h.url);
+        if (!now) history.set(h.url, h);
+        else { now.visits += h.visits || 0; now.last = Math.max(now.last, h.last || 0); now.title = now.title || h.title; }
+      }
+      historyVersion++;
+      if (process.platform === 'darwin' && Menu.getApplicationMenu()) Menu.setApplicationMenu(macMenu()); // its History menu lists the recent pages
+    } catch { /* no file yet, or unreadable: start empty */ }
+    historyLoaded = true;
+  })();
 }
 
 function saveHistorySoon() {
   clearTimeout(historySaveTimer);
   historySaveTimer = setTimeout(() => {
+    if (!historyLoaded) { saveHistorySoon(); return; } // (never overwrite the file with a list that is still missing its past)
     const entries = [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000);
     fs.writeFile(HISTORY_FILE(), JSON.stringify(entries), () => {});
   }, 2000);
@@ -1920,6 +1935,16 @@ function switchTab(id, { wake = true } = {}) {
 
 // `user`: the user closed it (a sleeping tab's ✕, Close group); a tab closed by code (a sign-in tab closing
 // itself, an extension) never takes its window with it.
+// Calls `fn` once the tab is closed (its page destroyed and the tab gone from the strip: a tab put to sleep
+// destroys its page too, and is still there). Returns a function that stops listening.
+function onTabGone(id, fn) {
+  const wc = tabs.find((t) => t.id === id)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return () => {};
+  const gone = () => { if (!tabs.some((t) => t.id === id)) fn(); };
+  wc.once('destroyed', gone);
+  return () => { if (!wc.isDestroyed()) wc.removeListener('destroyed', gone); };
+}
+
 function closeTab(id, { destroyed = false, user = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
@@ -2663,11 +2688,13 @@ function openHistoryPage() {
   openTab(HISTORY_URL, { historyPage: true });
 }
 const fromHistoryPage = (event) => event.senderFrame === event.sender.mainFrame && event.sender.getURL().startsWith(HISTORY_URL);
-ipcMain.handle('history:list', (event) => {
+ipcMain.handle('history:list', async (event) => {
   if (!fromHistoryPage(event)) return [];
+  await historyReady;
   return [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000).map(({ url, title, last }) => ({ url, title, last }));
 });
-ipcMain.handle('history:remove', (event, url) => {
+ipcMain.handle('history:remove', async (event, url) => {
+  await historyReady;
   if (!fromHistoryPage(event) || typeof url !== 'string' || !history.delete(url)) return false;
   saveHistorySoon();
   return true;
@@ -2686,6 +2713,7 @@ function historyMenu() {
       click: async () => {
         const { response } = await dialog.showMessageBox(win, { type: 'question', buttons: [t('dialog.cancel'), t('history.clear.button')], defaultId: 1, cancelId: 0, message: t('history.clear'), detail: t('history.clear.detail') });
         if (response !== 1) return;
+        await historyReady;
         history.clear();
         fs.rm(HISTORY_FILE(), { force: true }, () => {});
       },
@@ -4120,7 +4148,8 @@ function tickTabDrag() {
   // A release that never came (the mouse-up went somewhere Lumen can't see): nothing is moved on a guess.
   // A card drag is dropped; a dragged window stays where it is, without joining a strip.
   const cursor = cursorPoint();
-  if (!d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y) { d.lastCursor = cursor; d.movedAt = Date.now(); }
+  const moved = !d.lastCursor || d.lastCursor.x !== cursor.x || d.lastCursor.y !== cursor.y;
+  if (moved) { d.lastCursor = cursor; d.movedAt = Date.now(); }
   // Measured from the last time the mouse moved: someone holding still over a strip isn't cut off.
   if (Date.now() - (d.movedAt || d.started) > (!d.hover ? Math.min(tabDragTimeoutMs, 30000) : tabDragTimeoutMs)) {
     d.rec.win.webContents.send('tab:dragabort'); // the strip lets go of its drag, and shows the tab again
@@ -4134,7 +4163,7 @@ function tickTabDrag() {
       d.cardAt = at;
       if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(at.x, at.y);
     }
-  } else {
+  } else if (moved || !d.last) { // a still cursor needs no display lookup: the window is already where it goes
     const area = screen.getDisplayNearestPoint(cursor).workArea;
     const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
     if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setPosition(b.x, b.y); d.last = b; } // position only: no size drift across displays
@@ -4375,7 +4404,7 @@ function beginTabDrag(src, tabId, grab) {
   d.escape = (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape') finishTabDrag('cancel'); };
   w.webContents.on('before-input-event', d.escape);
   refreshDragStrips(d);
-  d.timer = setInterval(tickTabDrag, 12);
+  d.timer = setInterval(tickTabDrag, 16);
   return true;
 }
 const num = (v) => (Number.isFinite(v) ? v : 0);
@@ -5675,7 +5704,7 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     if (done) return;
     done = true;
     clearTimeout(timer);
-    clearInterval(watch);
+    unwatch();
     cancelOpenRouterSignIn = null;
     server.close();
     if (authTab && tabs.some((t) => t.id === authTab)) setTimeout(() => { if (tabs.some((t) => t.id === authTab)) closeTab(authTab); }, 1200);
@@ -5683,8 +5712,8 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
   };
   cancelOpenRouterSignIn = () => finish({ ok: false, cancelled: true, message: t('openrouter.cancelled') });
   // Closing the sign-in tab (or it failing to load, offline, and the user closing it) cancels at
-  // once, instead of leaving the button disabled until the 5-minute timeout.
-  const watch = setInterval(() => { if (authTab && !tabs.some((t) => t.id === authTab)) cancelOpenRouterSignIn?.(); }, 700);
+  // once (onTabGone), instead of leaving the button disabled until the 5-minute timeout.
+  let unwatch = () => {}; // set once the tab exists
   const server = require('http').createServer(async (req, res) => {
     const code = new URL(req.url, 'http://127.0.0.1').searchParams.get('code');
     if (!code) { res.writeHead(404).end(); return; }
@@ -5711,6 +5740,7 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
     const callback = `http://127.0.0.1:${server.address().port}/callback`;
     const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
     authTab = openTab(url).id;
+    if (!done) unwatch = onTabGone(authTab, () => cancelOpenRouterSignIn?.());
   });
 }));
 
@@ -5730,7 +5760,7 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
     if (done) return;
     done = true;
     clearTimeout(timer);
-    clearInterval(watch);
+    unwatch();
     cancelSpotifySignIn = null;
     server.close();
     if (authTab && tabs.some((x) => x.id === authTab)) setTimeout(() => { if (tabs.some((x) => x.id === authTab)) closeTab(authTab); }, 1200);
@@ -5738,7 +5768,7 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
   };
   cancelSpotifySignIn = () => finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
   // Closing the sign-in tab cancels at once, instead of waiting for the 5-minute timeout.
-  const watch = setInterval(() => { if (authTab && !tabs.some((x) => x.id === authTab)) cancelSpotifySignIn?.(); }, 700);
+  let unwatch = () => {}; // set once the tab exists
   const page = (title, text) => `<title>${title}</title><body style="font:15px system-ui;padding:40px">${text}</body>`;
   const server = require('http').createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -5760,7 +5790,7 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
   });
   const timer = setTimeout(() => finish({ ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
   server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: SPOTIFY_REDIRECT_PORT }) }));
-  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; });
+  server.listen(SPOTIFY_REDIRECT_PORT, '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
 }));
 
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)
