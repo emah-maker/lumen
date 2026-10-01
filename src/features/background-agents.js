@@ -49,7 +49,7 @@ const backgroundStepLimit = (setting) => (Number.isInteger(setting) && setting >
 
 // ---- models and engines. A task runs on an API model, or on the user's own Claude Code / Grok Build CLI.
 
-const CLI_ENGINES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' };
+const CLI_ENGINES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' }; // (Antigravity is for sidebar chats only: a background task has nobody to answer its approvals)
 const engineOfModel = (model) => /^claudecode:/.test(String(model)) ? 'claudecode' : /^grokbuild:/.test(String(model)) ? 'grokbuild' : 'api';
 const isCliModel = (model) => engineOfModel(model) !== 'api';
 

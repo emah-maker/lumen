@@ -1,8 +1,9 @@
 // Outside AI agents driving Lumen, split out of main.js:
-//  - MCP (Claude Code, Codex CLI, Gemini CLI, Cursor…) through mcp.js,
+//  - MCP (Claude Code, Codex CLI, Grok Build, Antigravity, Cursor…) through mcp.js,
 //  - automation tools over the Chrome DevTools Protocol (automation.js, opt-in),
 //  - the sidebar's "Claude · your account" engine: the user's own Claude Code CLI (claude-code.js),
 //  - the sidebar's "Grok · your account" engine: the user's own Grok Build CLI (grok-build.js),
+//  - the sidebar's "Antigravity · your account" engine: the user's own Antigravity CLI, `agy` (antigravity.js),
 //  - the "Using: <page>" setting.
 // automation.js, claude-code.js and grok-build.js load only when first needed.
 const crypto = require('crypto');
@@ -11,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { exists, lookup: which, validModel } = require('../ai/cli-utils');
+const { accessOf } = require('../ai/cli-access');
 const launcher = require('../automation/launcher');
 // `electron` is only there in the main process; units.js loads this file in plain Node.
 const webContents = { getAllWebContents: () => require('electron').webContents.getAllWebContents() };
@@ -92,6 +94,8 @@ function setupAiAgents(deps) {
   // ---------- MCP ----------
 
   let mcpServer = null;
+  // [cli access] "Let CLI agents use this computer", read for every message so the toggle needs no restart.
+  const cliAccess = () => accessOf(readSettings());
   // Sessions opened by the sidebar's own Claude Code engine (event.engine) are not "external agents".
   const mcpEvent = (event) => { if (!event.engine) ui()?.send('mcp:event', event); };
   // Off until the user turns it on (Settings, or an "Add to <agent>" button): nothing outside Lumen
@@ -156,7 +160,7 @@ function setupAiAgents(deps) {
       const { GrokBuildEngine } = grokBuildModule();
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
-      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
+      grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, access: cliAccess, spawn: cliSpawn(), onFresh: freshReads });
     }
     return grokBuild;
   };
@@ -173,11 +177,31 @@ function setupAiAgents(deps) {
     powerMonitor: { on: (ev, cb) => { try { require('electron').powerMonitor.on(ev, cb); } catch { /* not ready / tests */ } } },
   });
 
+  // ---------- Antigravity engine (created on first use) ----------
+  // Runs agy with Lumen's own home folder, whose .gemini/ names only the `lumen` MCP server and the permission rules for this
+  // run (see antigravity.js's file header). Replaces the Gemini CLI as the sidebar's Google engine.
+
+  let antigravity = null;
+  let antigravityFound = false;
+  let antigravitySignedIn = 'unknown'; // true | false | 'unknown' — mirrors antigravity.status().signedIn
+  let antigravityModels = []; // the slugs `agy models` lists, when known
+  const antigravityModule = () => require('../ai/antigravity');
+  // Offered in the sidebar once the user has chosen it (the setup card, Settings → AI), or with LUMEN_AGY_SIDEBAR=1.
+  const antigravitySidebar = () => process.env.LUMEN_AGY_SIDEBAR === '1' || (process.env.LUMEN_AGY_SIDEBAR !== '0' && readSettings().antigravitySidebar === true);
+  const antigravityEngine = () => {
+    if (!antigravity) {
+      const { AntigravityEngine } = antigravityModule();
+      antigravity = new AntigravityEngine({ userData: app.getPath('userData'), gate: startGrokGate, access: cliAccess, spawn: cliSpawn(), onFresh: freshReads });
+    }
+    return antigravity;
+  };
+
   // Grok's PreToolUse hook (mcp-http.js terminalDecision) asks this before letting a
   // run_terminal_command call through: the same approval card as an MCP tool's (renderer/app.js
   // showToolApproval, action 'terminal'), on the chat the command came from. 'deny' if that chat's
   // run already ended (a stray call after Lumen's timeout, or a mismatched tag) or was stopped.
-  async function onTerminalApproval(tag, command) {
+  // With full computer access (cli-access.js) it also asks for Grok's file-writing tools: `tool` names the one.
+  async function onTerminalApproval(tag, command, tool = 'run_terminal_command') {
     const owner = grokBuild?.owns(tag) ? grokBuild : [...bgEngines].find((e) => e.kind === 'grokbuild' && e.owns(tag));
     const engineRun = owner ? owner.active : null;
     if (!engineRun || owner.background) return 'deny'; // a background task's Grok never gets a terminal (nobody could answer)
@@ -188,7 +212,7 @@ function setupAiAgents(deps) {
     try {
       answer = await agent.askApproval('run_terminal_command', engineRun.emit, engineRun.signal, {
         action: 'terminal',
-        title: 'Grok wants to run a terminal command',
+        title: tool === 'run_terminal_command' ? 'Grok wants to run a terminal command' : `Grok wants to use ${String(tool).slice(0, 40)}`,
         args,
       });
       return answer === 'always' ? 'always' : answer ? 'once' : 'deny';
@@ -212,9 +236,9 @@ function setupAiAgents(deps) {
 
   // Which engine (if any) a bridge's LUMEN_ENGINE tag belongs to.
   const testEngine = () => (require('../test-mode').isTest() ? global.__fakeEngine : null); // tests stand in for an engine's run
-  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : [...bgEngines].find((e) => e.owns(session?.engine)) || null);
+  const engineForSession = (session) => (testEngine()?.owns(session?.engine) ? testEngine() : claudeCode?.owns(session?.engine) ? claudeCode : grokBuild?.owns(session?.engine) ? grokBuild : antigravity?.owns(session?.engine) ? antigravity : [...bgEngines].find((e) => e.owns(session?.engine)) || null);
   const ownsSession = (session) => Boolean(engineForSession(session));
-  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); } };
+  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); } };
   if (require('../test-mode').isTest()) {
     Object.defineProperty(global, '__claudeCode', { get: claudeCodeEngine, configurable: true });
     global.__mcpCallTool = (name, args, session) => mcpCallTool(name, args, session);
@@ -226,7 +250,37 @@ function setupAiAgents(deps) {
   const LABEL_FIRST = new Set(['click', 'type_text', 'fill_form', 'press_key']); // their labels are read from the page before the action runs
   const LABEL_WAIT_MS = 150;
   const OUTSIDE_LABEL_WAIT_MS = 1500; // outside agents (no early row): the label goes in the first event, for up to this long
+  // [cli access] Claude Code's permission prompt (mcp.js APPROVAL_TOOL, claude-code.js accessArgs): asks the user with the same approval card as a
+  // terminal command, and answers in the JSON Claude Code reads: { behavior: 'allow', updatedInput } or { behavior: 'deny', message }.
+  async function approvalPrompt(args, session) {
+    const answerWith = (body) => ({ content: [{ type: 'text', text: JSON.stringify(body) }], isError: false });
+    const owner = engineForSession(session);
+    const run = owner?.active;
+    const access = cliAccess();
+    if (!run || owner.background || owner.kind !== 'claudecode' || !access.enabled || !access.askBefore) return answerWith({ behavior: 'deny', message: 'No approval is being asked for here.' });
+    const tool = String(args?.tool_name || 'a tool').slice(0, 80);
+    const input = args?.input && typeof args.input === 'object' ? args.input : {};
+    run.alwaysTools ||= new Set();
+    if (run.alwaysTools.has(tool)) return answerWith({ behavior: 'allow', updatedInput: input });
+    const body = (v) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+    let summary = typeof input.command === 'string' ? input.command
+      : typeof input.file_path === 'string' ? `${input.file_path}${input.content ? `\n\n${body(input.content).slice(0, 1500)}` : input.new_string ? `\n\n${body(input.new_string).slice(0, 1500)}` : ''}`
+        : body(input);
+    if (summary.length > 4000) summary = `${summary.slice(0, 4000)}\n…`;
+    owner.callBegin?.(run); // the card can wait on the user: the inactivity watchdog waits too
+    let answer = false;
+    try {
+      answer = await agent.askApproval('run_terminal_command', run.emit, run.signal, { action: 'terminal', title: `Claude wants to use ${tool}`, args: summary });
+    } catch {
+      answer = false; // the user hit Stop while the card was up
+    } finally {
+      if (!answer) owner.callEnd?.(run);
+    }
+    if (answer === 'always') run.alwaysTools.add(tool);
+    return answerWith(answer ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'The user did not approve this.' });
+  }
   async function mcpCallTool(name, args, session) {
+    if (name === 'approval_prompt') return approvalPrompt(args, session);
     session.approvedHosts ||= new Set();
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
@@ -256,7 +310,7 @@ function setupAiAgents(deps) {
     // scope for the sidebar's own engine (its chat holds the taint until New chat, and the attached
     // page text counts), the MCP session for an outside agent (every call in the session shares it).
     const allow = engineRun
-      ? { hosts: scope?.hosts || runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : 'Claude', input: args, run: scope || engineRun }
+      ? { hosts: scope?.hosts || runAgent.approvedHosts, who: owner.kind === 'grokbuild' ? 'Grok' : owner.kind === 'antigravity' ? 'Antigravity' : 'Claude', input: args, run: scope || engineRun }
       : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
@@ -344,7 +398,8 @@ function setupAiAgents(deps) {
         { id: 'claude', label: 'Claude Code', hint: 'One click, or run this in a terminal', text: `${win ? 'claude.cmd' : 'claude'} mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'claude' },
         { id: 'codex', label: 'Codex CLI', hint: 'One click, or run this in a terminal', text: `${win ? 'codex.cmd' : 'codex'} mcp add lumen --env ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'codex', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.codex/config.toml.' },
         { id: 'grok', label: 'Grok Build', hint: 'One click, or run this in a terminal (needs SuperGrok or X Premium+)', text: `grok mcp add lumen -e ELECTRON_RUN_AS_NODE=1 -- ${quoted}`, addButton: 'grok', secondary: 'Or add a [mcp_servers.lumen] entry to ~/.grok/config.toml.' },
-        { id: 'gemini', label: 'Gemini CLI', hint: 'One click, or run this in a terminal', text: `${win ? 'gemini.cmd' : 'gemini'} mcp add -s user -e ELECTRON_RUN_AS_NODE=1 lumen ${quoted}`, addButton: 'gemini', secondary: 'Or add to ~/.gemini/settings.json directly.' },
+        // Antigravity (agy) reads its MCP servers from ~/.gemini/config/mcp_config.json (antigravity.google/docs/mcp); the one click merges this entry into that file.
+        { id: 'antigravity', label: 'Antigravity', hint: 'One click, or add this under mcpServers in ~/.gemini/config/mcp_config.json', text: json, addButton: 'antigravity', secondary: 'Replaces Gemini CLI. Or run /mcp inside agy to manage servers.' },
         { id: 'json', label: 'Other MCP clients', hint: 'Cursor, Claude Desktop, etc.', text: json },
       ],
     };
@@ -356,7 +411,7 @@ function setupAiAgents(deps) {
     return true;
   });
 
-  // ---------- One-click "Add to <agent>" for Claude Code, Codex CLI, Grok Build and Gemini CLI ----------
+  // ---------- One-click "Add to <agent>" for Claude Code, Codex CLI, Grok Build and Antigravity ----------
   // Every add runs the target CLI with an argv array and shell:false (never a shell string), so
   // user-controlled paths never reach a shell and PowerShell can't eat `--`.
 
@@ -401,6 +456,15 @@ function setupAiAgents(deps) {
     });
   });
 
+  // Antigravity's global MCP config (antigravity.google/docs/mcp). Unreadable or not JSON: treated as having no servers, and left alone unless added to.
+  const agyMcpFile = () => path.join(os.homedir(), '.gemini', 'config', 'mcp_config.json');
+  function readAgyMcp() {
+    try {
+      const { mcpServers = {}, ...rest } = JSON.parse(fs.readFileSync(agyMcpFile(), 'utf8'));
+      return { servers: mcpServers && typeof mcpServers === 'object' ? mcpServers : {}, rest };
+    } catch { return { servers: {}, rest: {} }; }
+  }
+
   const AGENTS = {
     claude: {
       label: 'Claude Code',
@@ -422,12 +486,23 @@ function setupAiAgents(deps) {
       },
       add: (run, argv) => run(['mcp', 'add', 'lumen', '--env', 'ELECTRON_RUN_AS_NODE=1', '--', ...argv]),
     },
-    gemini: {
-      label: 'Gemini CLI',
-      find: () => findCli('gemini', '@google/gemini-cli'),
-      installHint: () => "Gemini CLI isn't installed. Install it with: npm install -g @google/gemini-cli",
-      check: async (run) => { const list = await run(['mcp', 'list']); return { ok: list.ok && list.out.includes('lumen') }; },
-      add: (run, argv) => run(['mcp', 'add', '-s', 'user', '-e', 'ELECTRON_RUN_AS_NODE=1', 'lumen', ...argv]),
+    // Google Antigravity's CLI (`agy`), which replaces Gemini CLI. Its `agy mcp add` arguments aren't documented, so Lumen does what the docs
+    // describe instead: it merges a `lumen` entry (command, args, env) into the global mcp_config.json, keeping every other server.
+    antigravity: {
+      label: 'Antigravity',
+      find: async () => { const bin = await antigravityEngine().detect(true); return bin ? { command: bin, args: [] } : null; },
+      installHint: () => `Antigravity isn't installed. ${antigravityModule().INSTALL_HINT}`,
+      check: async () => ({ ok: Boolean(readAgyMcp().servers?.lumen) }),
+      add: async (_run, argv) => {
+        try {
+          const file = agyMcpFile();
+          const { servers, rest } = readAgyMcp();
+          const { env } = mcpCommand();
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, JSON.stringify({ ...rest, mcpServers: { ...servers, lumen: { command: argv[0], args: argv.slice(1), env } } }, null, 2));
+          return { ok: true, out: '' };
+        } catch (err) { return { ok: false, out: String(err?.message || err) }; }
+      },
     },
     // xAI's Grok Build (native installer, signs in with the user's own SuperGrok / X Premium+ account).
     // Node-mode bridge like the others (`grok mcp add -e`): it connects at once, where the env-free
@@ -546,6 +621,32 @@ function setupAiAgents(deps) {
     });
   }
 
+  // Same shape again, for the Antigravity engine (antigravity.js).
+  function refreshAntigravityStatus(refresh) {
+    return antigravityEngine().status(refresh).then((s) => {
+      antigravityFound = s.installed;
+      antigravitySignedIn = s.signedIn;
+      antigravityModels = s.models || [];
+      if (s.installed) ui()?.send('models-updated');
+      return s;
+    });
+  }
+  // Settings → AI: where Antigravity stands, and the install command for this OS (shown to the user; run only by the click below).
+  ipcMain.handle('antigravity:status', async (_e, refresh) => {
+    const s = await refreshAntigravityStatus(Boolean(refresh)).catch(() => ({ installed: false, signedIn: false }));
+    return { installed: Boolean(s.installed), signedIn: s.signedIn, enabled: antigravitySidebar(), installCommand: antigravityModule().installCommand(), signInHint: antigravityModule().SIGN_IN_HINT };
+  });
+  // The user clicked "Install" (Settings → AI) after seeing the command: runs Google's official installer for this OS.
+  // Only from the settings page; never from a page, an agent or the sidebar.
+  let installing = null;
+  ipcMain.handle('antigravity:install', async (e) => {
+    if (!deps.isSettingsSender?.(e)) throw new Error('Not allowed');
+    installing ||= antigravityEngine().install().finally(() => { installing = null; });
+    const out = await installing;
+    const s = await refreshAntigravityStatus(true).catch(() => ({ installed: false }));
+    return { ok: out.ok && Boolean(s.installed), installed: Boolean(s.installed), output: out.output };
+  });
+
   // Until the first look for the CLIs has finished, a saved "Claude Code" / "Grok Build" pick is kept
   // as it is (see effectiveModel in main.js) instead of looking like it isn't set up.
   let detecting = true;
@@ -562,14 +663,14 @@ function setupAiAgents(deps) {
       // has loaded, not while it does.
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
-        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false)])
+        Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false)])
           .then(() => { detecting = false; ui()?.send('models-updated'); grokWarmup.afterLook(); });
         grokWarmup.watchResume();
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
     },
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
-    engineDetecting: (id) => detecting && /^(claudecode|grokbuild):/.test(String(id)),
+    engineDetecting: (id) => detecting && /^(claudecode|grokbuild|antigravity):/.test(String(id)),
     mcpServer: () => mcpServer,
     // The setup card's "Use your own Grok Build": on in the sidebar, looked for again (just installed or signed in).
     async useGrokBuild() {
@@ -578,10 +679,18 @@ function setupAiAgents(deps) {
       ui()?.send('models-updated');
       return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
     },
+    // The setup card's "Use your own Antigravity": on in the sidebar, looked for again (just installed or signed in).
+    async useAntigravity() {
+      if (readSettings().antigravitySidebar !== true) writeSettings({ ...readSettings(), antigravitySidebar: true });
+      const s = await refreshAntigravityStatus(true).catch(() => ({ installed: false, signedIn: false }));
+      ui()?.send('models-updated');
+      return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
+    },
     // Are the local CLIs there, and signed in (background tasks list them, or say why not).
     cliStatus: () => ({
       claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn },
       grokbuild: { installed: grokBuildFound, signedIn: grokBuildSignedIn, enabled: grokSidebar() },
+      antigravity: { installed: antigravityFound, signedIn: antigravitySignedIn, enabled: antigravitySidebar() }, // (sidebar chats only: not offered to background tasks)
     }),
     // A fresh engine for one background run: { engine, release }. It shares nothing live with the
     // sidebar's engine (its own child, MCP tag and `active` run; Grok also its own GROK_HOME and folder,
@@ -610,6 +719,7 @@ function setupAiAgents(deps) {
     modelOptions: () => [
       ...(claudeCodeFound ? claudeCodeOptions({ signedIn: claudeCodeSignedIn, accountDetail: claudeCodeDetail }) : []),
       ...(grokSidebar() && grokBuildFound ? grokBuildOptions({ signedIn: grokBuildSignedIn, accountDetail: grokBuildDetail, models: grokBuildModels, saved: readSettings().model }) : []),
+      ...(antigravitySidebar() && antigravityFound ? antigravityOptions({ signedIn: antigravitySignedIn, models: antigravityModels, saved: readSettings().model }) : []),
     ],
   };
 }
@@ -657,4 +767,26 @@ function grokBuildOptions({ signedIn = 'unknown', accountDetail = null, models =
   }));
 }
 
-module.exports = { setupAiAgents, prepareAutomation, inProcessAutomation, validPort, DEFAULT_AUTOMATION_PORT, claudeCodeOptions, grokBuildOptions };
+// The picker entries for the user's own Antigravity CLI (agy, which replaces Gemini CLI): its default, then each model `agy models`
+// lists. A saved pick the CLI didn't list this time stays offered, as for Grok Build.
+function antigravityOptions({ signedIn = 'unknown', models = [], saved = null } = {}) {
+  const list = models.filter((m) => m !== 'default' && validModel(m));
+  const pick = /^antigravity:(.+)$/.exec(String(saved || ''))?.[1];
+  if (pick && pick !== 'default' && validModel(pick) && !list.includes(pick)) list.push(pick);
+  const note = 'experimental: only Lumen’s browser tools are allowed unless you turn on computer access for CLI agents in Settings';
+  return ['default', ...list].map((model) => ({
+    id: `antigravity:${model}`,
+    label: model === 'default' ? 'Antigravity (experimental)' : `Antigravity · ${model} (experimental)`,
+    name: model === 'default' ? 'Antigravity' : require('./model-names').prettyModel(model) || model,
+    provider: 'Antigravity',
+    badges: [...(signedIn === false ? ['sign in'] : []), ...(model === 'default' ? ['experimental'] : [])],
+    detail: signedIn === false
+      ? 'Not signed in: open a terminal, run agy, and sign in with your Google account'
+      : model === 'default' ? `Antigravity’s default model. ${note.charAt(0).toUpperCase()}${note.slice(1)}` : '',
+    group: 'Your Google account',
+    signedIn,
+    accountDetail: null,
+  }));
+}
+
+module.exports = { setupAiAgents, prepareAutomation, inProcessAutomation, validPort, DEFAULT_AUTOMATION_PORT, claudeCodeOptions, grokBuildOptions, antigravityOptions };

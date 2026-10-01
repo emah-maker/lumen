@@ -12,6 +12,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     clearDownloads: call('prefs:clear-downloads'),
     showDownload: call('prefs:open-download'),
     pickDownloadDir: call('prefs:pick-download-dir'),
+    setCliAccess: call('prefs:set-cli-access'), // [cli access] on shows a confirmation first
+    pickCliFolder: call('prefs:pick-cli-folder'),
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
     // [widgets] Appearance → Widgets
@@ -123,6 +125,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       cliLogout: call('cli:logout'),
       cliCancel: call('cli:cancel'),
       claudeCodeStatus: call('claudecode:status'),
+      antigravityStatus: call('antigravity:status'), // Settings → AI → CLI agents: found? the install command
+      antigravityInstall: call('antigravity:install'), // runs Google's installer, only from the click that follows seeing it
+      useAntigravity: call('settings:use-antigravity'),
       mcpInfo: call('mcp:info'),
       setMcpEnabled: call('mcp:set-enabled'),
       addToAgent: call('mcp:add-to-agent'),

@@ -97,7 +97,7 @@ function describeFailure(text, code) {
   if (/not (logged|signed) in|please (log|sign) ?in|sign[- ]?in required|unauthenticated|not authenticated|authentication (failed|required)|no (active )?session|login required|keyring/i.test(t)) {
     return { text: `Antigravity is not signed in. ${SIGN_IN_HINT} Lumen never sees your Google login.` };
   }
-  if (isLimitText(t) || /resource_exhausted|exhausted|credits?\b/i.test(t)) {
+  if (isLimitText(t) || /resource[_ ]exhausted|out of credits|credits? (have )?(run|ran) out|insufficient credits/i.test(t)) {
     return { text: `Your Antigravity usage limit is reached. ${t.split('\n')[0].slice(0, 200)}` };
   }
   return { text: `Antigravity stopped${code !== null && code !== undefined ? ` (exit ${code})` : ''}: ${t.split('\n').slice(0, 3).join(' ').slice(0, 300) || 'no output'}` };
