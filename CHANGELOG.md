@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Home page Smart Stack: a stack holds 2 to 10 widgets of any kind and cycles with the mouse wheel, a swipe, Up and Down, the page dots or the arrows. It can rotate by itself and surface the calendar, a countdown or the weather when they matter. Edit it from Edit layout, with Undo.
+
 ## 0.4.3 (2026-10-01)
 
 - Organize Tabs works on a full tab bar and with AI: no false "no tabs", and no "AI took too long" after 5 seconds. Grouping is more accurate and much faster, and the toast says plainly what happened.

@@ -380,7 +380,7 @@
     @media (prefers-reduced-motion: reduce) { .w-stack-dot::before, .w-stack-nav { transition: none; } }
     body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
     /* Edit stack: a small panel beside the card (Edit layout) */
-    .w-stack-panel { position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
+    .w-stack-panel { position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
     .w-sp-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 2px 8px; }
     .w-stack-panel h2 { margin: 0; font-size: 13px; font-weight: 600; }
     .w-stack-panel h3 { margin: 10px 0 2px; padding: 0 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
@@ -404,7 +404,7 @@
     .w-sp-opts { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
     .w-sp-toggle { display: flex; gap: 8px; align-items: flex-start; padding: 5px 8px; border-radius: 10px; }
     .w-sp-toggle:hover { background: var(--hover); }
-    .w-sp-toggle input { flex: none; margin: 2px 0 0; accent-color: var(--accent); }
+    .w-sp-toggle input { appearance: auto; flex: none; width: 14px; height: 14px; min-width: 14px; margin: 2px 0 0; padding: 0; border: 0; background: none; box-shadow: none; accent-color: var(--accent); }
     .w-sp-toggle b { display: block; font-weight: 600; }
     .w-sp-toggle span span { display: block; color: var(--muted); font-size: 11px; }
     .w-sp-pick { appearance: none; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; margin: 0; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; cursor: default; outline: none; }
