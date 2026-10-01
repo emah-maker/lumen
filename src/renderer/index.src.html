@@ -4,7 +4,15 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data: blob: crx: file:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>Lumen</title>
-  <link rel="stylesheet" href="ui.bundle.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="picker.css" />
+  <link rel="stylesheet" href="extras.css" /><!-- Claude Code engine, page context chip -->
+  <link rel="stylesheet" href="prefs.css" /><!-- [settings] -->
+  <link rel="stylesheet" href="tab-search.css" />
+  <link rel="stylesheet" href="chats.css" /><!-- chat history list -->
+  <link rel="stylesheet" href="translate.css" /><!-- translate infobar and button -->
+  <link rel="stylesheet" href="slash.css" /><!-- the "/" menu and skill tags -->
+  <link rel="stylesheet" href="tasks.css" /><!-- background tasks panel -->
 </head>
 <body class="sidebar-hidden">
   <header class="chrome">
@@ -232,6 +240,34 @@
     </aside>
   </main>
 
-  <script src="ui.bundle.js" defer></script>
+  <script src="i18n.js"></script>
+  <script src="markdown.js"></script>
+  <script src="picker-match.js"></script>
+  <script src="picker.js"></script>
+  <script src="model-catalog.js"></script>
+  <script src="chat-topic.js"></script>
+  <script src="highlight.js"></script>
+  <script src="chat-core.js"></script>
+  <script src="tabs-ask-core.js"></script>
+  <script src="tabs-ask.js"></script>
+  <script src="chat-items.js"></script>
+  <script src="snapshot-arrival.js"></script>
+  <script src="freeze-keepalive.js"></script>
+  <script src="tab-selection.js"></script>
+  <script src="app.js"></script>
+  <script src="chats.js"></script>
+  <script src="tasks.js"></script>
+  <script src="extras.js"></script>
+  <script src="chat-extras.js"></script>
+  <script src="slash-match.js"></script>
+  <script src="slash.js"></script>
+  <script src="skills.js"></script>
+  <script src="chat-commands.js"></script>
+  <script src="ui-prefs.js"></script>
+  <script src="tab-search-match.js"></script>
+  <script src="tab-search.js"></script>
+  <script src="updates.js"></script>
+  <script src="translate.js"></script>
+  <script src="passwords.js"></script>
 </body>
 </html>
