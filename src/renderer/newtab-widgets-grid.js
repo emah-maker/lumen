@@ -465,6 +465,7 @@
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (window.widgetSetup?.isOpen?.()) return; // a card's form is open: Escape is for it (newtab-setup.js), not for leaving Edit layout
       if (drag) { e.preventDefault(); e.stopPropagation(); cancelDrag(); } else if (editing && !document.querySelector('.w-picker')) { setEditing(false); }
       return;
     }
@@ -475,7 +476,7 @@
     }
   }, true);
   document.addEventListener('pointerdown', (e) => {
-    if (editing && !drag && !e.target.closest?.('.w-card, .w-edit-btn, .w-ui')) setEditing(false);
+    if (editing && !drag && !e.target.closest?.('.w-card, .w-edit-btn, .w-ui, .ws-back')) setEditing(false);
   });
 
   // ---- one card's controls and gestures ----

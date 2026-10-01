@@ -48,9 +48,17 @@ module.exports = async function widgetConfigUnits(check) {
   const store = { settings: {} };
   const asked = [];
   const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  let offline = false; // calendar and coin lookups fail while this is on
+  const COINS = { bitcoin: 60000, ethereum: 3000, solana: 150 };
   const fakeFetch = async (url) => {
     asked.push(url);
     const u = new URL(url);
+    if (offline && (u.hostname === 'calendar.example.com' || u.hostname === 'other.example.com')) throw new Error('offline');
+    if (u.hostname === 'api.coingecko.com') {
+      const body = {};
+      for (const id of (u.searchParams.get('ids') || '').split(',')) if (Object.prototype.hasOwnProperty.call(COINS, id)) body[id] = { usd: COINS[id], usd_24h_change: 1.5, last_updated_at: Math.floor(Date.now() / 1000) };
+      return json(body);
+    }
     if (u.hostname === 'geocoding-api.open-meteo.com') {
       const name = u.searchParams.get('name');
       if (name === 'Nowhere') return json({});
@@ -64,7 +72,8 @@ module.exports = async function widgetConfigUnits(check) {
   const make = () => createWidgets({ readSettings: () => store.settings, writeSettings: (s) => { store.settings = JSON.parse(JSON.stringify(s)); }, fetch: fakeFetch, getSecret: () => null, setSecret: () => {}, onUpdate: () => {}, endpoints: () => ({}), rateMax: () => 1000 });
   const W = make();
   const act = (id, cfg) => W.act({ id, do: 'setup', cfg, create: id === 'wcreate' });
-  const parse = (q) => W.actionFrom(`lumen://newtab/?${q}`);
+  const parse = (qs) => W.actionFrom(`lumen://newtab/?${qs}`);
+  const q = (o) => new URLSearchParams(o).toString();
 
   let r = await act('wcreate', { type: 'weather', title: '', city: 'Boston', units: 'c', clock: '24', drop: [] });
   check('setup: a Weather card is added from a city (units and clock kept)', r.ok === true && W.list().length === 1 && W.list()[0].wx.units === 'c' && W.list()[0].wx.clock === '24' && W.list()[0].wx.places[0].name.startsWith('Boston'), JSON.stringify(r));
@@ -108,8 +117,66 @@ module.exports = async function widgetConfigUnits(check) {
   r = await act(wid, { type: 'feed', feed: 'hn', count: 3 });
   check('setup: a form for the wrong kind of card is refused', r.ok === false, JSON.stringify(r));
 
+  // ---- a calendar edit that leaves the address alone needs no network ----
+  const calNow = W.list().find((x) => x.id === calId);
+  check('skip-fetch rule: an empty address, or the saved one typed again, keeps the address (webcal:// counts as https)', C.keepsAddress(calNow, { type: 'calendar', url: '', count: 4 }) && C.keepsAddress(calNow, { type: 'calendar', url: calNow.url }) && C.keepsAddress(calNow, { type: 'calendar', url: calNow.url.replace('https://', 'webcal://') }), '');
+  check('skip-fetch rule: a new address, a new card, another kind or a card with no address fetches', !C.keepsAddress(calNow, { type: 'calendar', url: 'https://other.example.com/x.ics' }) && !C.keepsAddress(null, { type: 'calendar', url: '' }) && !C.keepsAddress(calNow, { type: 'feed', url: '' }) && !C.keepsAddress({ type: 'calendar', url: '' }, { type: 'calendar', url: '' }), '');
+  offline = true;
+  r = await act(calId, { type: 'calendar', url: '', count: 3 });
+  check('setup: changing only a Calendar’s count saves while offline, and keeps the address', r.ok === true && W.list().find((x) => x.id === calId).count === 3 && W.list().find((x) => x.id === calId).url === before, JSON.stringify(r));
+  r = await act(calId, { type: 'calendar', url: 'https://other.example.com/x.ics', count: 3 });
+  check('setup: a different Calendar address still has to be fetched (and fails offline, changing nothing)', r.ok === false && W.list().find((x) => x.id === calId).url === before, JSON.stringify(r));
+  offline = false;
+
+  // ---- keep at least one place ----
+  const two = { type: 'weather', wx: { units: 'f', clock: 'auto', places: [{ name: 'Boston', lat: 1, lon: 2 }, { name: 'Cairo', lat: 3, lon: 4 }] } };
+  check('keep one place: dropping every place with no city typed is refused, with the reason', /at least one place/i.test(C.checkEdit(two, { type: 'weather', city: '', drop: [0, 1] })) && /at least one place/i.test(C.checkEdit({ type: 'worldclock', wc: { places: [{ name: 'Tokyo' }] } }, { type: 'worldclock', drop: [0] })), '');
+  check('keep one place: dropping some, or all with a city typed, or none, is fine', C.checkEdit(two, { type: 'weather', drop: [0] }) === '' && C.checkEdit(two, { type: 'weather', city: 'Lima', drop: [0, 1] }) === '' && C.checkEdit(two, { type: 'weather', city: '  ', drop: [] }) === '' && C.checkEdit(null, { type: 'weather', city: 'Lima' }) === '', '');
+  r = await act(wid, { type: 'weather', city: '', units: 'f', clock: 'auto', drop: [0] });
+  check('keep one place: main says "keep at least one place", not "type a city"', r.ok === false && /Keep at least one place/.test(r.message), JSON.stringify(r));
+
+  // ---- Undo after a form save ----
+  const undoBefore = { count: W.list().find((x) => x.id === calId).count, title: W.list().find((x) => x.id === calId).title };
+  r = await act(calId, { type: 'calendar', title: 'Team', url: '', count: 8 });
+  check('undo: a form save on an existing card says it can be undone; a new card does not', r.ok && r.undo === true && W.list().find((x) => x.id === calId).count === 8 && (await act('wcreate', { type: 'feed', feed: 'hn', url: '', count: 4 })).undo === false, JSON.stringify([r, W.list().find((x) => x.id === calId).count]));
+  const placeNow = JSON.stringify([W.list().find((x) => x.id === calId).x, W.list().find((x) => x.id === calId).y]);
+  check('undo: do=restore puts the card’s earlier settings back (count and title), where the card now is', (await W.act({ id: calId, do: 'restore' })) === true && W.list().find((x) => x.id === calId).count === undoBefore.count && (W.list().find((x) => x.id === calId).title || '') === (undoBefore.title || '') && W.list().find((x) => x.id === calId).url === before && JSON.stringify([W.list().find((x) => x.id === calId).x, W.list().find((x) => x.id === calId).y]) === placeNow, JSON.stringify(W.list().find((x) => x.id === calId)));
+  check('undo: it works once; a second restore of a card that is there does nothing', (await W.act({ id: calId, do: 'restore' })) === false, '');
+  const feedNow = W.list().find((x) => x.id === fid);
+  await act(fid, { type: 'feed', feed: 'hn', url: '', count: 5 });
+  await W.act({ id: fid, do: 'restore' });
+  check('undo: a feed goes back to the address it had', W.list().find((x) => x.id === fid).url === feedNow.url && W.list().find((x) => x.id === fid).preset === feedNow.preset, JSON.stringify(W.list().find((x) => x.id === fid)));
+
+  // ---- the clock panel's Reset to defaults ----
+  await W.act(parse(q({ widget: 'wlook', do: 'look', k: 'style', v: 'serif' })));
+  await W.act(parse(q({ widget: 'wlook', do: 'look', k: 'seconds', v: 'on' })));
+  await W.act(parse(q({ widget: 'wlook', do: 'look', k: 'name', v: 'Ada' })));
+  const reset = parse(q({ widget: 'wlook', do: 'look', k: 'defaults', v: 'all' }));
+  check('actionFrom: look k=defaults is a reset (and is not a Settings key)', reset.defaults === true && !reset.invalid, JSON.stringify(reset));
+  await W.act(reset);
+  check('look: Reset to defaults puts the look back, and keeps the name', store.settings.newTabClockStyle === 'classic' && store.settings.newTabClockSeconds === false && store.settings.newTabClockDate === true && store.settings.newTabClockCard === 'none' && store.settings.newTabClockHours === 'auto' && store.settings.newTabGreetingFont === 'classic' && store.settings.newTabName === 'Ada', JSON.stringify(store.settings));
+  check('look: every default is a Settings key the panel can already set', Object.keys(C.LOOK_DEFAULTS).every((key) => Object.values(C.LOOK).some((l) => l.key === key)), '');
+
+  // ---- Crypto: the coin list ----
+  r = await act('wcreate', { type: 'crypto', add: 'bitcoin, ethereum' });
+  const cry = r.id;
+  check('crypto: a card is made from coin ids', r.ok && W.list().find((x) => x.id === cry).mk.coins.map((c) => c.id).join() === 'bitcoin,ethereum', JSON.stringify(r));
+  check('crypto: the page sees ids and tickers, nothing else', JSON.stringify(W.forPage().find((x) => x.id === cry).setup.coins) === JSON.stringify([{ id: 'bitcoin', sym: 'BTC' }, { id: 'ethereum', sym: 'ETH' }]), '');
+  const cNow = W.list().find((x) => x.id === cry);
+  check('crypto validation: not an id, nothing left, or too many', /isn.t a CoinGecko id/.test(C.checkEdit(cNow, { type: 'crypto', add: 'bit coin!' })) && /isn.t a CoinGecko id/.test(C.checkEdit(cNow, { type: 'crypto', add: '../x' })) && /at least one coin/.test(C.checkEdit(cNow, { type: 'crypto', drop: [0, 1] })) && /Up to 12/.test(C.checkEdit(cNow, { type: 'crypto', add: 'a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11' })), '');
+  const merged = C.mergeEdit(cNow, { type: 'crypto', drop: [0], add: 'Solana, solana, dogecoin=DOGE' });
+  check('crypto validation: remove one, add one, add "id=SYM"; ids are lower-cased and repeats ignored', C.checkEdit(cNow, { type: 'crypto', drop: [0], add: 'Solana, solana, dogecoin=DOGE' }) === '' && merged.mk.coins.map((c) => `${c.id}:${c.sym}`).join() === 'ethereum:ETH,solana:SOL,dogecoin:DOGE' && merged.mk.added.join() === 'solana,dogecoin', JSON.stringify(merged));
+  r = await act(cry, { type: 'crypto', drop: [], add: 'notacoin' });
+  check('crypto: an id CoinGecko has no price for is refused and changes nothing', r.ok === false && /no price for/.test(r.message) && W.list().find((x) => x.id === cry).mk.coins.length === 2, JSON.stringify(r));
+  r = await act(cry, { type: 'crypto', drop: [0], add: 'solana' });
+  check('crypto: a coin is added and one removed in one save', r.ok && r.undo && W.list().find((x) => x.id === cry).mk.coins.map((c) => c.id).join() === 'ethereum,solana', JSON.stringify(r));
+  await W.act({ id: cry, do: 'restore' });
+  check('crypto: Undo brings the earlier coins back', W.list().find((x) => x.id === cry).mk.coins.map((c) => c.id).join() === 'bitcoin,ethereum', '');
+  r = await act(cry, { type: 'crypto', drop: [0, 1], add: '' });
+  check('crypto: removing every coin is refused', r.ok === false && /at least one coin/.test(r.message) && W.list().find((x) => x.id === cry).mk.coins.length === 2, JSON.stringify(r));
+  check('crypto: the paper portfolio is kept through a coin edit', Boolean(W.list().find((x) => x.id === cry).pf), '');
+
   // ---- the browser-side checks of the URL the page navigates to ----
-  const q = (o) => new URLSearchParams(o).toString();
   check('actionFrom: setup is accepted for the new kinds and refused for kinds that need a key', parse(q({ widget: 'wcreate', do: 'setup', cfg: JSON.stringify({ type: 'feed' }) })).cfg.type === 'feed' && parse(q({ widget: 'wcreate', do: 'setup', cfg: JSON.stringify({ type: 'github' }) })).invalid === true && parse(q({ widget: 'wcreate', do: 'setup', cfg: JSON.stringify({ type: 'todoist' }) })).invalid === true, '');
   check('actionFrom: setup refuses a form that is too long', parse(q({ widget: 'wcreate', do: 'setup', cfg: JSON.stringify({ type: 'feed', url: 'x'.repeat(13000) }) })).invalid === true, '');
   const look = parse(q({ widget: 'wlook', do: 'look', k: 'hours', v: '24' }));
@@ -128,9 +195,18 @@ module.exports = async function widgetConfigUnits(check) {
   check('page: the editor’s feed list is the browser’s preset list (same ids, same names)', FEED.PRESETS.every((p) => setupSrc.includes(`['${p.id}', '${p.name}']`)) && (setupSrc.match(/\['[a-z-]+', '[^']+'\]/g) || []).filter((s) => presetIds.some((id) => s.startsWith(`['${id}'`))).length === presetIds.length, '');
   check('page: newtab-setup.js builds everything with DOM calls and textContent (no markup strings, no eval, no network)', !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|fetch\(|XMLHttpRequest|WebSocket/.test(setupSrc), '');
   const html = read('src/renderer/newtab.html');
+  const widgetsSrc = read('src/renderer/newtab-widgets.js');
   check('page: the CSP is untouched', html.includes(`content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data: file:; frame-src https:; form-action https:"`), '');
   check('page: the clock’s pencil is a labelled button in the header, shown on hover or focus and hidden while Edit layout is on', /<button class="w-icon-btn hdr-edit" id="hdr-edit" type="button" aria-label="Edit clock and greeting"/.test(html) && /header:focus-within \.hdr-edit/.test(html) && /body\.w-editing \.hdr-edit \{ display: none/.test(html), '');
   check('page: Escape closes the editor and focus goes back (to the pencil, gear or card)', /e\.key === 'Escape'/.test(setupSrc) && /back\?\.focus\?\.\(\)/.test(setupSrc) && /aria-modal/.test(setupSrc), '');
+  check('page: a card that failed to load gets the pencil too (from w.setup), and an Edit settings button beside Try again', /function editPencil/.test(widgetsSrc) && /w\.setup && window\.widgetSetup\?\.can\(w\.type\)/.test(widgetsSrc) && /Edit settings/.test(widgetsSrc) && (widgetsSrc.match(/editPencil\(w, title, card\)/g) || []).length === 3, '');
+  check('page: the name is saved as it is typed (400 ms), on change, and when the panel closes', /setTimeout\(sendName, 400\)/.test(setupSrc) && /if \(flushName\)/.test(setupSrc), '');
+  check('page: an answer that arrives after the panel closed is toasted (and an error says why)', /const here = panel === back/.test(setupSrc) && /didn’t save: \$\{why\}/.test(setupSrc) && /error \? 'alert'/.test(setupSrc), '');
+  check('page: while a panel is open the page behind it is inert, the panel takes focus, and Escape does not reach Edit layout', /setAttribute\('inert', ''\)/.test(setupSrc) && /removeAttribute\('inert'\)/.test(setupSrc) && /box\.tabIndex = -1/.test(setupSrc) && /stopImmediatePropagation/.test(setupSrc) && /widgetSetup\?\.isOpen\?\.\(\)\) return/.test(read('src/renderer/newtab-widgets-grid.js')), '');
+  check('page: the clock panel uses segmented controls (aria-pressed buttons, arrow keys) and has Reset to defaults', /function segmented/.test(setupSrc) && /aria-pressed/.test(setupSrc) && /ArrowRight/.test(setupSrc) && /Reset to defaults/.test(setupSrc) && /k: 'defaults'/.test(setupSrc) && !/bind\('hours', select/.test(setupSrc), '');
+  check('page: Save waits (and says "Keep at least one place") while every place is marked for removal', /Keep at least one place/.test(setupSrc) && /ok\.disabled = Boolean\(g\)/.test(setupSrc), '');
+  check('page: pencils are faint (about .35) until hover or focus, and the clock’s pencil sits after the greeting, not at the edge', /\.w-icon-btn \{[^}]*opacity: 0\.35/.test(html) && /\.w-card:hover \.w-icon-btn[^{]*\{ opacity: 1/.test(html) && /<div class="greet">\s*<h1 id="greeting">[^<]*<\/h1>\s*<button class="w-icon-btn hdr-edit"/.test(html) && !/\.hdr-edit \{ position: absolute/.test(html), '');
+  check('page: a form save offers the Undo toast through Edit layout’s own undo stack', /configChanged/.test(setupSrc) && /kind: 'config'/.test(read('src/renderer/newtab-edit.js')), '');
   check('page: the clock card’s gear opens the clock panel in Edit layout', /wsyshead'\) \{ window\.widgetSetup\?\.openLook/.test(read('src/renderer/newtab-widgets-grid.js')), '');
 };
 

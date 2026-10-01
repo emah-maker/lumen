@@ -5,16 +5,20 @@
 // through window.widgetSetupResult({ ok, message, id }). Weather, World clock, Calendar and Feed are edited
 // here too: main sends only what is safe to show (features/widget-config.js view: a calendar's address
 // never comes to the page) and lays the form over what is saved. The clock and greeting have their own
-// small panel (openLook) that saves each choice as it is made. Every other kind opens Settings.
+// small panel (openLook) that saves each choice as it is made. Crypto's coins are edited here too (its key and
+// first set-up stay in Settings). Every other kind opens Settings.
 (function () {
 'use strict';
 
-const KINDS = ['notes', 'countdown', 'timer', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed'];
-const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines' };
+const KINDS = ['notes', 'countdown', 'timer', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed', 'crypto'];
+const EDIT_ONLY = ['crypto']; // edited here, added in Settings (the optional key lives there)
+const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
 const CLOCKS = [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']];
 // features/feed.js PRESETS (test/widget-config-units.js keeps the two lists the same).
 const FEEDS = [['bloomberg-markets', 'Bloomberg Markets'], ['bloomberg-technology', 'Bloomberg Technology'], ['bloomberg-politics', 'Bloomberg Politics'], ['hn', 'Hacker News'], ['hn-frontpage', 'Hacker News (hnrss.org)'], ['npr', 'NPR News']];
 const secure = (v) => /^(https|webcals?):\/\/[^\s"'<>\\]+$/i.test(String(v || '').trim());
+const COIN_RE = /^[a-z0-9][a-z0-9-]{0,49}$/; // features/markets-view.js; main checks it again
+const MAX_COINS = 12;
 const INTERVALS = [['1', '1 minute'], ['5', '5 minutes'], ['15', '15 minutes'], ['30', '30 minutes'], ['60', '1 hour'], ['240', '4 hours'], ['D', '1 day'], ['W', '1 week'], ['M', '1 month']];
 
 const el = (tag, cls, text) => {
@@ -44,8 +48,8 @@ function select(options, value) {
   return s;
 }
 
-// The places a Weather or World clock card has now, each with a Remove switch (positions go back as drop).
-function placeList(places) {
+// The places (or coins) a card has now, each with a Remove switch (positions go back as drop). kept() is how many stay.
+function placeList(places, { noun = 'place', tips = [] } = {}) {
   const drop = new Set();
   const list = el('ul', 'ws-places');
   places.forEach((name, i) => {
@@ -53,19 +57,24 @@ function placeList(places) {
     const b = el('button', 'ws-chip', name);
     b.type = 'button';
     b.setAttribute('aria-pressed', 'false');
-    b.setAttribute('aria-label', `Remove ${name}`);
+    b.setAttribute('aria-label', `Remove ${tips[i] || name}`);
+    if (tips[i]) b.title = tips[i];
     b.addEventListener('click', () => {
       const off = drop.has(i);
       if (off) drop.delete(i); else drop.add(i);
       b.setAttribute('aria-pressed', String(!off));
-      b.setAttribute('aria-label', `${off ? 'Remove' : 'Keep'} ${name}`);
+      b.setAttribute('aria-label', `${off ? 'Remove' : 'Keep'} ${tips[i] || name}`);
       b.classList.toggle('off', !off);
     });
     li.append(b);
     list.append(li);
   });
-  return { node: list, drop: () => [...drop] };
+  return { node: list, drop: () => [...drop], kept: () => places.length - drop.size, noun };
 }
+// Why Save has to wait: every place is marked for removal and none is being added (main refuses that too).
+const keepOne = (places, city) => (places && places.kept() === 0 && !city.value.trim() ? 'Keep at least one place' : '');
+// "bitcoin, solana=SOL" -> pieces; the ids main will accept.
+const coinPieces = (v) => String(v || '').split(/[\s,;]+/).filter(Boolean);
 const bool = (v) => v === 'on';
 
 // Each kind: its fields (from what is saved, if anything) and read() -> the input main.js checks.
@@ -136,7 +145,7 @@ const FORMS = {
     const nodes = [];
     if (places) nodes.push(field('Places', places.node, 'Press a place to remove it. “My location” is changed in Settings → Widgets.'));
     nodes.push(field(places ? 'Add a place' : 'City', city, places ? 'Optional.' : undefined), field('Units', units), field('Clock', clock, 'How the hourly forecast writes the time.'));
-    return { nodes, read: () => ({ city: city.value, units: units.value, clock: clock.value, drop: places ? places.drop() : [] }), first: city };
+    return { nodes, read: () => ({ city: city.value, units: units.value, clock: clock.value, drop: places ? places.drop() : [] }), first: city, guard: () => keepOne(places, city) };
   },
   worldclock(s, editing) {
     const city = input('text', '', { maxlength: '80', placeholder: 'Tokyo', autocomplete: 'off' });
@@ -146,7 +155,7 @@ const FORMS = {
     const nodes = [];
     if (places) nodes.push(field('Places', places.node, 'Press a place to remove it.'));
     nodes.push(field(places ? 'Add a place' : 'City', city, places ? 'Optional.' : undefined), field('Clock', clock), field('Seconds', seconds));
-    return { nodes, read: () => ({ city: city.value, clock: clock.value, seconds: bool(seconds.value), drop: places ? places.drop() : [] }), first: city };
+    return { nodes, read: () => ({ city: city.value, clock: clock.value, seconds: bool(seconds.value), drop: places ? places.drop() : [] }), first: city, guard: () => keepOne(places, city) };
   },
   calendar(s, editing) {
     const url = input('url', '', { placeholder: editing ? `Saved: ${str(s.host, 80) || 'a calendar'}. Paste a new address to change it` : 'https:// or webcal://', spellcheck: 'false', autocomplete: 'off' });
@@ -173,6 +182,24 @@ const FORMS = {
       check: () => (!kind.value && !/^https:\/\//i.test(url.value.trim()) ? 'Paste an https:// feed address.' : ''),
     };
   },
+  crypto(s) {
+    const coins = Array.isArray(s.coins) ? s.coins : [];
+    const places = coins.length ? placeList(coins.map((c) => c.sym), { noun: 'coin', tips: coins.map((c) => `${c.sym} (${c.id})`) }) : null;
+    const add = input('text', '', { maxlength: '200', placeholder: 'solana, dogecoin', spellcheck: 'false', autocomplete: 'off' });
+    const nodes = [];
+    if (places) nodes.push(field('Coins', places.node, 'Press a coin to remove it. The key for more requests is in Settings → Widgets.'));
+    nodes.push(field('Add coins', add, `CoinGecko ids, separated by commas: the end of a coin page’s address on coingecko.com. Up to ${MAX_COINS}.`));
+    const guard = () => {
+      const pieces = coinPieces(add.value);
+      const bad = pieces.find((p) => !COIN_RE.test(p.split('=')[0].toLowerCase()));
+      if (bad) return `“${bad.split('=')[0].slice(0, 30)}” isn’t a CoinGecko id`;
+      const gone = new Set(places ? places.drop() : []);
+      const ids = new Set(coins.filter((_, i) => !gone.has(i)).map((c) => c.id));
+      for (const p of pieces) ids.add(p.split('=')[0].toLowerCase());
+      return ids.size === 0 ? 'Keep at least one coin' : ids.size > MAX_COINS ? `Up to ${MAX_COINS} coins` : '';
+    };
+    return { nodes, read: () => ({ add: add.value, drop: places ? places.drop() : [] }), first: add, guard };
+  },
   embed(s) {
     const url = input('url', s.url, { placeholder: 'https://…' });
     const height = select([['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['tall', 'Tall']], s.height || 'medium');
@@ -181,14 +208,27 @@ const FORMS = {
 };
 
 let panel = null;
-let pending = null; // { resolve } while a save is on its way
+let pending = null; // { resolve, owner } while a save is on its way; it outlives the panel (Escape must not lose the answer)
 let opener = null; // { el, id }: where focus goes back to (the card may have been drawn again meanwhile)
+let flushName = null; // the clock panel's name, typed but not yet sent
+let released = []; // what was made inert behind the panel
+
+// While a panel is open nothing behind it can be reached: Tab, clicks and screen readers stay in the panel.
+function lockPage(back) {
+  released = [...document.body.children].filter((n) => n !== back && n.id !== 'w-live' && !/^(SCRIPT|STYLE)$/.test(n.tagName) && !n.hasAttribute('inert'));
+  for (const n of released) n.setAttribute('inert', '');
+}
+function unlockPage() {
+  for (const n of released) n.removeAttribute('inert');
+  released = [];
+}
 
 function close() {
   if (!panel) return;
+  if (flushName) { const f = flushName; flushName = null; f(); } // a name typed a moment ago is kept, not dropped
   panel.remove();
   panel = null;
-  pending = null;
+  unlockPage();
   // Back to what had focus; the page redraws a card when it is saved, so fall back to that card's pencil, gear or the card itself.
   const id = opener?.id;
   const back = opener?.el?.isConnected ? opener.el : id ? document.querySelector(`[data-id="${id}"] .w-icon-btn[aria-label^="Edit"], [data-id="${id}"] .w-gear`) || document.querySelector(`[data-id="${id}"]`) : null;
@@ -197,14 +237,41 @@ function close() {
 }
 const openerFor = (id) => ({ el: document.activeElement, id: id || null });
 
-// Typing here is for the form, never the page's shortcuts; Escape closes; Tab stays inside.
+// Typing here is for the form, never the page's shortcuts; Tab stays inside.
 function trap(e, box) {
   e.stopPropagation();
   if (e.key === 'Escape') { e.preventDefault(); close(); return; }
   if (e.key !== 'Tab') return;
-  const f = [...box.querySelectorAll('input, select, textarea, button')].filter((x) => !x.disabled && x.offsetParent);
+  const f = [...box.querySelectorAll('input, select, textarea, button')].filter((x) => !x.disabled && x.offsetParent && x.tabIndex >= 0);
   if (!f.length) return;
-  if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+  if (e.shiftKey && (document.activeElement === f[0] || document.activeElement === box)) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+}
+// Escape closes the panel wherever focus is, and never reaches Edit layout's own Escape (which would leave edit mode).
+// Registered before newtab-widgets-grid.js, so it hears the key first.
+document.addEventListener('keydown', (e) => {
+  if (!panel || e.key !== 'Escape') return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  close();
+}, true);
+
+function dialog(label) {
+  const back = el('div', 'ws-back');
+  const box = el('form', 'ws-panel w-ui');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-label', label);
+  box.tabIndex = -1;
+  return { back, box };
+}
+function show(back, box, focusFirst) {
+  box.addEventListener('keydown', (e) => trap(e, box));
+  back.addEventListener('pointerdown', (e) => { if (e.target === back) close(); });
+  back.append(box);
+  document.body.append(back);
+  panel = back;
+  lockPage(back);
+  (focusFirst || box).focus();
 }
 
 // open({ type }) for a new one, or open(card) with card = { id, type, title, setup } from the page's list.
@@ -215,11 +282,8 @@ function open(target) {
   const saved = target.setup || {};
   const editing = Boolean(target.id);
   const form = FORMS[type](saved, editing);
-  const back = el('div', 'ws-back');
-  const box = el('form', 'ws-panel w-ui');
-  box.setAttribute('role', 'dialog');
-  box.setAttribute('aria-modal', 'true');
-  box.setAttribute('aria-label', editing ? `Edit ${target.title || NAMES[type]}` : `New ${NAMES[type]} widget`);
+  const label = editing ? `Edit ${target.title || NAMES[type]}` : `New ${NAMES[type]} widget`;
+  const { back, box } = dialog(label);
   const title = input('text', saved.title, { maxlength: '60', placeholder: NAMES[type] });
   const note = el('p', 'ws-status');
   note.setAttribute('role', 'status');
@@ -231,95 +295,163 @@ function open(target) {
   const buttons = el('div', 'ws-buttons');
   buttons.append(note, cancel, ok);
   box.append(el('h2', null, editing ? `Edit ${target.title || NAMES[type]}` : `New ${NAMES[type]}`), ...form.nodes, field('Card title', title, 'Leave empty to use the widget’s name.'), buttons);
+  // Save waits while the form can't be saved as it stands (every place marked for removal, a coin id that isn't one).
+  let guarding = false;
+  const sync = () => {
+    const g = form.guard?.() || '';
+    if (g) { note.className = 'ws-status err'; note.textContent = g; guarding = true; } else if (guarding) { note.className = 'ws-status'; note.textContent = ''; guarding = false; }
+    ok.disabled = Boolean(g) || pending?.owner === back;
+  };
+  for (const ev of ['input', 'click', 'change']) box.addEventListener(ev, sync);
   box.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (pending) return;
-    const problem = form.check?.();
+    if (pending) { if (pending.owner !== back) { note.className = 'ws-status'; note.textContent = 'Still saving the last change…'; } return; }
+    const problem = form.guard?.() || form.check?.();
     if (problem) { note.className = 'ws-status err'; note.textContent = problem; return; }
     const cfg = { type, title: title.value, ...form.read() };
+    const name = cfg.title.trim() || target.title || NAMES[type];
     ok.disabled = true;
     note.className = 'ws-status';
     note.textContent = 'Saving…';
+    const timer = setTimeout(() => { if (pending?.owner === back) pending.resolve({ ok: false, message: 'No answer from Lumen. Try again.' }); }, 20000); // the page reloaded, or main never got it
     pending = {
+      owner: back,
       resolve(r) {
+        clearTimeout(timer);
         pending = null;
-        ok.disabled = false;
-        if (r && r.ok) { close(); window.widgetToast?.(str(r.message, 200) || 'Saved.'); return; }
-        note.className = 'ws-status err';
-        note.textContent = str(r?.message, 300) || 'That didn’t save. Check the fields and try again.';
+        const here = panel === back; // false when Escape or a click outside closed it while the save was on its way
+        if (r && r.ok) {
+          if (here) close();
+          const message = str(r.message, 200) || 'Saved.';
+          if (r.undo && window.widgetEditUI?.configChanged) window.widgetEditUI.configChanged({ id: r.id || target.id, title: name, message });
+          else toast(message);
+          return;
+        }
+        const why = str(r?.message, 300) || 'That didn’t save. Check the fields and try again.';
+        if (here) { ok.disabled = false; note.className = 'ws-status err'; note.textContent = why; sync(); } else toast(`${name} didn’t save: ${why}`, { error: true });
       },
     };
-    // No answer (the page reloaded, or main never got it): let the person try again.
-    setTimeout(() => { if (pending) pending.resolve({ ok: false, message: 'No answer from Lumen. Try again.' }); }, 20000);
     window.widgetAct(editing ? target.id : 'wcreate', 'setup', { cfg: JSON.stringify(cfg) });
   });
-  // Typing here is for the form, never the page's shortcuts; Escape closes; Tab stays inside.
-  box.addEventListener('keydown', (e) => trap(e, box));
-  back.addEventListener('pointerdown', (e) => { if (e.target === back) close(); });
-  back.append(box);
-  document.body.append(back);
-  panel = back;
-  (form.first || title).focus();
+  show(back, box, form.first || title);
+  sync();
 }
 
 // The clock and greeting card: each choice is saved the moment it is made (do=look, one key at a time) and the page
 // follows; Done (or Escape) only closes. Same words and values as Settings → Home.
 const STYLES = [['classic', 'Classic'], ['rounded', 'Rounded'], ['thin', 'Thin'], ['serif', 'Serif'], ['mono', 'Mono'], ['bold', 'Stacked']];
+const HOURS = [['auto', 'Auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']];
 const CARDS = [['none', 'None'], ['soft', 'Soft'], ['glass', 'Glass']];
-const GREET = [['classic', 'Classic'], ['match', 'Match clock'], ['rounded', 'Rounded'], ['serif', 'Serif'], ['thin', 'Thin'], ['mono', 'Mono'], ['hand', 'Handwritten']];
-const onOff = (v) => (v ? 'on' : 'off');
+const GREET = [['classic', 'Classic'], ['match', 'Match', 'Match the clock'], ['rounded', 'Rounded'], ['serif', 'Serif'], ['thin', 'Thin'], ['mono', 'Mono'], ['hand', 'Hand', 'Handwritten']];
+// What "Reset to defaults" puts back (features/widget-config.js LOOK_DEFAULTS; the name and sizes are left alone).
+const LOOK_DEFAULT = { show: true, style: 'classic', hours: 'auto', seconds: false, date: true, card: 'none', greeting: 'classic' };
+
+// A segmented control: one button per choice, aria-pressed on the chosen one, arrow keys move and choose (one tab stop).
+function segmented(label, options, value, onPick) {
+  const wrap = el('div', 'ws-field');
+  const row = el('div', 'ws-seg');
+  row.setAttribute('role', 'group');
+  row.setAttribute('aria-label', label);
+  const buttons = options.map(([v, text, long]) => {
+    const b = el('button', null, text);
+    b.type = 'button';
+    b.dataset.value = v;
+    if (long) { b.setAttribute('aria-label', long); b.title = long; }
+    return b;
+  });
+  const set = (v) => { for (const b of buttons) { const on = b.dataset.value === v; b.setAttribute('aria-pressed', String(on)); b.tabIndex = on ? 0 : -1; } };
+  const pick = (b) => { set(b.dataset.value); b.focus(); onPick(b.dataset.value); };
+  buttons.forEach((b, i) => {
+    b.addEventListener('click', () => pick(b));
+    b.addEventListener('keydown', (e) => {
+      const go = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: buttons.length - 1 }[e.key];
+      if (go === undefined) return;
+      e.preventDefault();
+      pick(buttons[(go + buttons.length) % buttons.length]);
+    });
+  });
+  set(value);
+  row.append(...buttons);
+  wrap.append(el('span', 'ws-label', label), row);
+  return { node: wrap, set };
+}
+// A switch that looks like the place chips: pressed means on.
+function switchChip(label, on, onChange) {
+  const b = el('button', 'ws-chip ws-sw', label);
+  b.type = 'button';
+  const set = (v) => { b.setAttribute('aria-pressed', String(v)); };
+  b.addEventListener('click', () => { const v = b.getAttribute('aria-pressed') !== 'true'; set(v); onChange(v); });
+  set(on);
+  return { node: b, set };
+}
+
 function openLook() {
   close();
   opener = openerFor('wsyshead');
   if (!opener.el || opener.el === document.body) opener.el = document.getElementById('hdr-edit');
   const look = window.newtabLook?.() || {};
   const cs = look.clockStyle || {};
-  const back = el('div', 'ws-back');
-  const box = el('form', 'ws-panel w-ui');
-  box.setAttribute('role', 'dialog');
-  box.setAttribute('aria-modal', 'true');
-  box.setAttribute('aria-label', 'Edit clock and greeting');
+  const { back, box } = dialog('Edit clock and greeting');
   const save = (k, v) => window.widgetAct('wlook', 'look', { k, v });
-  const bind = (k, control) => { control.addEventListener('change', () => save(k, control.value)); return control; };
-  const toggle = (k, label, value) => field(label, bind(k, select([['on', 'On'], ['off', 'Off']], onOff(value))));
-  const name = bind('name', input('text', look.name, { maxlength: '40', placeholder: 'Your name', autocomplete: 'off' }));
+  const onOff = (v) => (v ? 'on' : 'off');
+  // The name is saved as it is typed (after a short pause), and whatever is left when the panel closes.
+  const name = input('text', look.name, { maxlength: '40', placeholder: 'Your name', autocomplete: 'off' });
+  let sent = look.name || '';
+  let timer = 0;
+  const sendName = () => { clearTimeout(timer); timer = 0; flushName = null; if (name.value !== sent) { sent = name.value; save('name', sent); } };
+  name.addEventListener('input', () => { clearTimeout(timer); flushName = sendName; timer = setTimeout(sendName, 400); });
+  name.addEventListener('change', sendName);
+  const controls = {
+    show: switchChip('Clock', look.clock !== false, (v) => save('show', onOff(v))),
+    seconds: switchChip('Seconds', cs.seconds === true, (v) => save('seconds', onOff(v))),
+    date: switchChip('Date', cs.date !== false, (v) => save('date', onOff(v))),
+    style: segmented('Clock style', STYLES, cs.style || 'classic', (v) => save('style', v)),
+    hours: segmented('Hours', HOURS, cs.hours || 'auto', (v) => save('hours', v)),
+    card: segmented('Behind the clock', CARDS, cs.card || 'none', (v) => save('card', v)),
+    greeting: segmented('Greeting font', GREET, cs.greeting || 'classic', (v) => save('greeting', v)),
+  };
+  const switches = el('ul', 'ws-places');
+  for (const k of ['show', 'seconds', 'date']) { const li = el('li'); li.append(controls[k].node); switches.append(li); }
+  const showField = el('div', 'ws-field');
+  showField.append(el('span', 'ws-label', 'Show'), switches);
+  const reset = el('button', 'w-btn', 'Reset to defaults');
+  reset.type = 'button';
+  reset.title = 'Clock style, hours, seconds, date, card and greeting font. Your name stays.';
+  const status = el('p', 'ws-status');
+  status.setAttribute('role', 'status');
+  reset.addEventListener('click', () => {
+    window.widgetAct('wlook', 'look', { k: 'defaults', v: 'all' });
+    for (const [k, v] of Object.entries(LOOK_DEFAULT)) controls[k].set(v);
+    status.textContent = 'Back to the defaults.';
+  });
   const done = el('button', 'w-btn primary', 'Done');
   done.type = 'submit';
   const buttons = el('div', 'ws-buttons');
-  buttons.append(done);
+  buttons.append(reset, status, done);
+  box.classList.add('ws-look');
   box.append(
     el('h2', null, 'Clock and greeting'),
     field('Name in the greeting', name, 'Leave empty for “Good morning” alone.'),
-    toggle('show', 'Show the clock', look.clock !== false),
-    field('Style', bind('style', select(STYLES, cs.style || 'classic'))),
-    field('Hours', bind('hours', select(CLOCKS, cs.hours || 'auto'))),
-    toggle('seconds', 'Seconds', cs.seconds === true),
-    toggle('date', 'Date', cs.date !== false),
-    field('Behind the clock', bind('card', select(CARDS, cs.card || 'none'))),
-    field('Greeting font', bind('greeting', select(GREET, cs.greeting || 'classic'))),
+    showField,
+    controls.style.node, controls.hours.node, controls.card.node, controls.greeting.node,
     buttons,
   );
-  box.addEventListener('submit', (e) => { e.preventDefault(); if (document.activeElement === name && name.value !== (look.name || '')) save('name', name.value); close(); });
-  box.addEventListener('keydown', (e) => trap(e, box));
-  back.addEventListener('pointerdown', (e) => { if (e.target === back) close(); });
-  back.append(box);
-  document.body.append(back);
-  panel = back;
-  name.focus();
+  box.addEventListener('submit', (e) => { e.preventDefault(); close(); });
+  show(back, box, name);
 }
 
-// "Saved." for a few seconds (the same look as edit mode's Undo toast).
+// A few seconds at the bottom (the same look as edit mode's Undo toast). An error stays longer and is announced at once.
 let toastTimer = null;
-function toast(message) {
+function toast(message, { error = false } = {}) {
   document.querySelector('.ws-toast')?.remove();
   clearTimeout(toastTimer);
-  const t = el('div', 'w-toast w-ui ws-toast', message);
-  t.setAttribute('role', 'status');
+  const t = el('div', `w-toast w-ui ws-toast${error ? ' err' : ''}`, message);
+  t.setAttribute('role', error ? 'alert' : 'status');
   document.body.append(t);
-  toastTimer = setTimeout(() => t.remove(), 3500);
+  toastTimer = setTimeout(() => t.remove(), error ? 7000 : 3500);
 }
 window.widgetToast = toast;
 window.widgetSetupResult = (r) => { if (pending) pending.resolve(r); };
 document.getElementById('hdr-edit')?.addEventListener('click', openLook);
-window.widgetSetup = { KINDS, can: (type) => KINDS.includes(type), open, openLook, close, isOpen: () => Boolean(panel) };
+window.widgetSetup = { KINDS, can: (type) => KINDS.includes(type), canAdd: (type) => KINDS.includes(type) && !EDIT_ONLY.includes(type), open, openLook, close, isOpen: () => Boolean(panel) };
 })();
