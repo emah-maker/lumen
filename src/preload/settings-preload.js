@@ -57,6 +57,15 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
+    // Translation → language packs on this device (features/translate-local.js)
+    translatePacks: {
+      list: call('prefs:translate-packs'),
+      download: call('prefs:translate-pack-download'),
+      cancel: call('prefs:translate-pack-cancel'),
+      remove: call('prefs:translate-pack-delete'),
+      removeAll: call('prefs:translate-pack-delete-all'),
+      onProgress: (cb) => ipcRenderer.on('translate-packs:progress', (_e, info) => cb(info)),
+    },
     extensions: call('prefs:extensions'),
     removeExtension: call('prefs:remove-extension'),
     extensionOptions: call('prefs:extension-options'),

@@ -192,7 +192,7 @@ function createModelStore({ dir, fetch: doFetch = (...a) => fetch(...a), now = (
   }
   const isInstalled = (from, to) => Boolean(manifestOf(from, to));
   function installed() {
-    let names = [];
+    let names;
     try { names = fs.readdirSync(dir); } catch { return []; }
     const out = [];
     for (const name of names) {
@@ -306,7 +306,16 @@ function createModelStore({ dir, fetch: doFetch = (...a) => fetch(...a), now = (
   function cancel(from, to) { jobs.get(pairKey(from, to))?.controller.abort(); }
   const downloading = () => [...jobs.keys()];
 
-  return { loadIndex, indexNow: () => index, installed, installedSet, isInstalled, filesOf, verify, remove, removeAll, usedBytes, download, cancel, downloading, dir };
+  // The index if it is known without the network: in memory, else the copy cached on disk (however old).
+  function indexNow() {
+    if (!index) {
+      const cached = readJson(cachePath);
+      if (cached?.index) { index = cached.index; indexAt = cached.fetchedAt || 0; }
+    }
+    return index;
+  }
+
+  return { loadIndex, indexNow, installed, installedSet, isInstalled, filesOf, verify, remove, removeAll, usedBytes, download, cancel, downloading, dir };
 }
 
 module.exports = {

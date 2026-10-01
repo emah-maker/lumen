@@ -154,12 +154,60 @@ function createLocal({ store, fork, idleMs = IDLE_MS, maxPairs = MAX_PAIRS }) {
     stats.last = { loadMs: res.loadMs, inferMs: res.inferMs, texts: texts.length, chars: texts.reduce((n, t) => n + t.length, 0) };
     return res.texts;
   }
+  // The route if every pair of it is on disk, judged without the network; else null.
+  function readyRoute(from, to) {
+    const index = store.indexNow();
+    const route = index ? M.planRoute(from, to, index) : null;
+    return route?.length && route.every(([a, b]) => store.isInstalled(a, b)) ? route : null;
+  }
+  // Start the engine (and load the models of `route`) before the first request, so it answers at once.
   async function warm(route) {
-    if (route && route.length) { try { stepsFor(route); } catch { return; } }
-    try { await request({ type: 'warm' }); } catch { /* it starts on first use anyway */ }
+    let steps = [];
+    if (route?.length) { try { steps = stepsFor(route); } catch { return; } reserve(route); }
+    try { await request({ type: 'warm', steps }); } catch { /* it starts on first use anyway */ }
   }
 
-  return { plan, ensure, translate, warm, supports, stop, stats: () => ({ ...stats, running: Boolean(child) }), store, Cancelled };
+  // ---- the settings page: what is installed, what could be (codes here are Lumen's, 'zh-CN' not 'zh-Hans') ----
+  // `codes`: the languages the page offers. A language's packs are its two halves with English, so any pair
+  // of installed languages works through English.
+  const halves = (code, index) => {
+    const m = M.modelCode(code);
+    return [[m, M.PIVOT], [M.PIVOT, m]].filter(([a, b]) => index?.[M.pairKey(a, b)]);
+  };
+  async function overview(codes) {
+    let index = null;
+    let error = '';
+    try { index = await store.loadIndex(); } catch (err) { index = store.indexNow(); error = String(err?.message || err).slice(0, 160); }
+    const have = store.installedSet();
+    const languages = [];
+    for (const code of codes) {
+      if (code === M.PIVOT) continue;
+      const pairs = halves(code, index);
+      if (!pairs.length) continue;
+      languages.push({
+        code,
+        bytes: pairs.reduce((n, [a, b]) => n + index[M.pairKey(a, b)].bytes, 0),
+        missing: pairs.reduce((n, [a, b]) => n + (have.has(M.pairKey(a, b)) ? 0 : index[M.pairKey(a, b)].bytes), 0),
+      });
+    }
+    return {
+      installed: store.installed().map((p) => ({ from: M.lumenCode(p.from), to: M.lumenCode(p.to), bytes: p.bytes, version: p.version })),
+      used: store.usedBytes(),
+      languages,
+      error,
+      downloading: store.downloading(),
+    };
+  }
+  async function downloadLanguage(code, options) {
+    const index = await store.loadIndex();
+    const pairs = halves(code, index);
+    if (!pairs.length) throw new Error(`No language pack for ${code}.`);
+    await ensure(pairs, options);
+  }
+  const removePair = (from, to) => store.remove(M.modelCode(from), M.modelCode(to));
+  const cancelDownloads = () => { for (const key of store.downloading()) { const [a, b] = key.split('>'); store.cancel(a, b); } };
+
+  return { plan, ensure, translate, warm, readyRoute, supports, overview, downloadLanguage, removePair, removeAll: () => store.removeAll(), cancelDownloads, stop, stats: () => ({ ...stats, running: Boolean(child) }), store, Cancelled };
 }
 
 module.exports = { createLocal, electronFork, nodeFork, Cancelled, WORKER };

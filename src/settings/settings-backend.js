@@ -109,6 +109,8 @@ const DEFAULTS = {
   translateTarget: '', // '' = Lumen's language
   translateNever: [], // sites where the offer stays away
   translateConsent: [], // providers the user allowed to receive page text
+  translateEngine: 'local', // 'local' (on this device, Mozilla's Bergamot) | 'ai' (the connected AI first)
+  translateLocalAuto: false, // download an on-device language pack without asking first
   autoDownloadUpdates: true, // Windows setup installs: fetch new versions in the background (features/updates.js)
   showWhatsNew: true, // the release notes come up once after Lumen updates (features/whats-new.js)
   lastSeenVersion: '', // the newest Lumen version run in this profile ('' until the first run records it); internal
@@ -170,6 +172,8 @@ function validate(key, value) {
     case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
+    case 'translateEngine': return translate.cleanEngine(value);
+    case 'translateLocalAuto': return typeof value === 'boolean' ? value : null;
     case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
     case 'adblockAllow':
       return Array.isArray(value) ? [...new Set(value.map((h) => String(h).trim().toLowerCase().replace(/^www\./, '')).filter((h) => /^[a-z0-9.-]+$/.test(h)))] : null;
@@ -827,6 +831,30 @@ function create(deps) {
       const removed = deps.permissionDecisions.delete(`${origin}|${permission}`);
       savePermissions(deps.permissionDecisions);
       return removed;
+    });
+    // [translate] on-device language packs (features/translate-local.js): sizes and deletes; downloads report progress to the page
+    const packCodes = (code) => (translate.LANG_CODES.includes(code) ? code : null);
+    const packs = () => deps.translateLocal().overview(translate.LANG_CODES);
+    handle('prefs:translate-packs', packs);
+    handle('prefs:translate-pack-delete', (from, to) => {
+      const [a, b] = [from, to].map((c) => (c === 'en' ? 'en' : packCodes(c)));
+      if (a && b) deps.translateLocal().removePair(a, b);
+      return packs();
+    });
+    handle('prefs:translate-pack-delete-all', () => { deps.translateLocal().removeAll(); return packs(); });
+    handle('prefs:translate-pack-cancel', () => { deps.translateLocal().cancelDownloads(); return true; });
+    ipcMain.handle('prefs:translate-pack-download', async (event, code) => {
+      if (!deps.isSettingsSender(event)) throw new Error('Not allowed');
+      const lang = packCodes(code);
+      if (!lang) throw new Error('Unknown language');
+      let cancelled = false;
+      try {
+        await deps.translateLocal().downloadLanguage(lang, { onProgress: (fraction, received, total) => { try { event.sender.send('translate-packs:progress', { code: lang, fraction, received, total }); } catch { /* the page closed */ } } });
+      } catch (err) {
+        if (err?.code !== 'cancelled') return { ...(await packs()), failed: String(err?.message || err).slice(0, 160) };
+        cancelled = true;
+      }
+      return { ...(await packs()), cancelled };
     });
     handle('prefs:extensions', listExtensions);
     handle('prefs:remove-extension', async (id) => {

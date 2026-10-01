@@ -6,7 +6,7 @@
 //   { type: 'translate', id, steps: [{ from, to, version, files: { model, lex, vocab | srcvocab + trgvocab } }], texts: [string] }
 //       -> { type: 'result', id, texts: [string], loadMs, inferMs }   or   { type: 'error', id, message }
 //   { type: 'cancel', id }   a queued request that has not started is answered with { type: 'cancelled', id }
-//   { type: 'warm', id }     start the wasm now (answered with { type: 'ready', id, ms })
+//   { type: 'warm', id, steps? }  start the wasm now and load those models (answered with { type: 'ready', id, ms })
 // One or two steps: two means a pivot through English (Bergamot's translateViaPivoting).
 // Text only: every message is plain text in, plain text out; no HTML mode.
 'use strict';
@@ -158,6 +158,7 @@ async function pump() {
       try {
         if (job.type === 'warm') {
           const ms = bergamot ? 0 : await startEngine();
+          for (const step of job.steps || []) loadModel(step);
           link.send({ type: 'ready', id: job.id, ms });
         } else {
           const res = await translate(job);
