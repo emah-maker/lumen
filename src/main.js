@@ -1,4 +1,7 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components, systemPreferences } = require('electron');
+// The main process's ~4 MB of modules are compiled once and kept on disk (V8's code cache, keyed by each file's
+// contents): later launches skip most of the ~70 ms of parsing and compiling before the window can be made.
+try { require('module').enableCompileCache?.(require('path').join(require('os').tmpdir(), 'lumen-compile-cache')); } catch { /* compiled as before */ }
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
@@ -28,6 +31,9 @@ if (!TEST && !process.argv.includes('--install-shortcuts')) {
   }
 }
 const path = require('path');
+// Every window's icon. Windows gets the .ico (its small sizes are ready to use): decoding the 1024 px PNG held up
+// each new window by ~45 ms, the first one included. (macOS ignores it; Linux takes the PNG.)
+const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
@@ -825,7 +831,7 @@ const adblock = createAdblock({
 // Native dialogs there: Lumen's in-window dialogs (features/dialogs.js) draw over the main window.
 const privateWindows = createPrivateWindows({
   BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
-  resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
+  resolveInput: (text) => resolveInput(text), iconPath: WINDOW_ICON,
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
   // Private sessions get the profile's proxy, Do Not Track / Global Privacy Control, languages and Chrome hints.
   mirrorSession: (ses) => settingsBackend.mirrorSession(ses),
@@ -3085,7 +3091,7 @@ const uaHighEntropyHeaders = (hints) => CHROME_IDENTITY.highEntropyHeaders(UA_ME
 const popupWindowOptions = () => ({
   autoHideMenuBar: true,
   backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
-  icon: path.join(__dirname, 'assets', 'icon.png'),
+  icon: WINDOW_ICON,
   webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) },
 });
 // Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
@@ -4846,7 +4852,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     minWidth: 800,
     minHeight: 500,
     title: 'Lumen',
-    icon: path.join(__dirname, 'assets', 'icon.png'),
+    icon: WINDOW_ICON,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
