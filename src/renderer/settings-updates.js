@@ -62,11 +62,13 @@ async function buildUpdates(card) {
   const note = status('updates-status');
   // `busy` covers the click itself: the 1-second render below must not re-enable a button whose call is still running.
   let busy = false;
+  let clickError = ''; // why the last click's call threw (shown in the note until the next click)
   const click = async (fn) => {
     if (busy) return;
     busy = true;
     render();
-    try { u = await fn(); } finally { busy = false; u = await U.state(); render(); }
+    clickError = '';
+    try { u = await fn(); } catch (err) { clickError = String(err?.message || '').split(/\r?\n/)[0] || ut('unknownError'); } finally { busy = false; u = await U.state(); render(); }
   };
   const action = h('button', { class: 'primary', id: 'updates-apply', hidden: true, onclick: () => click(() => U.apply()) });
   const checkBtn = h('button', { id: 'updates-check', text: ut('action.check'), onclick: () => click(() => U.check()) });
@@ -80,8 +82,8 @@ async function buildUpdates(card) {
   function render() {
     const v = updateView(u);
     desc.textContent = ut('version', { version: u.current, checked: updateAgo(u.lastChecked) });
-    note.textContent = v.note;
-    note.className = `note ${v.cls}`.trim();
+    note.textContent = clickError || v.note;
+    note.className = `note ${clickError ? 'err' : v.cls}`.trim();
     action.hidden = !v.action;
     action.textContent = v.action || '';
     // A check with an update already known keeps the old status underneath; the buttons just say so.
