@@ -313,6 +313,17 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   await t.u.apply();
   check('try again: a failed re-check records the new cause and keeps the install failure and its version', t.u.state().error === 'net::ERR_INTERNET_DISCONNECTED' && t.u.state().installFailed === true && t.u.state().version === '2.0.0' && t.u.state().status === 'error' && t.u.state().checking === false, JSON.stringify(t.u.state()));
 
+  // Try again over a version-less install failure whose re-check fails: the pill must not vanish
+  t = make(); t.h.setKind('nsis');
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => null, stage: () => new Promise(() => {}), launchSwap() {} });
+  t.h.setState({ status: 'error', error: 'Lumen couldn’t replace its files' }); t.h.restore(true);
+  const stSeen = [];
+  t.fake.checkForUpdates = async () => { stSeen.push(t.u.state().status); throw new Error('net::ERR_NAME_NOT_RESOLVED'); };
+  await t.u.apply();
+  const vlAfter = t.u.state();
+  check('try again (no version): a failed re-check keeps installFailed, status error and the pill fields, and records the new cause',
+    stSeen[0] === 'error' && vlAfter.installFailed === true && vlAfter.version === null && vlAfter.status === 'error' && vlAfter.checking === false && vlAfter.dismissed === false && vlAfter.error === 'net::ERR_NAME_NOT_RESOLVED', JSON.stringify({ stSeen, vlAfter }));
+
   // the pill's x for an install failure that names no version
   t = make(); t.h.setKind('nsis');
   t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), readMarker: () => null, stage: () => new Promise(() => {}), launchSwap() {} });
@@ -368,6 +379,15 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
 
   // ---- every string key the update screens ask for exists in en.json (ut() is updates.settings.*)
   const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+  // the main process's own dialog strings (features/updates.js asks deps.t for updates.* keys)
+  const mainSrc = fs.readFileSync(path.join(__dirname, '../src/features/updates.js'), 'utf8');
+  const mainKeys = new Set([...mainSrc.matchAll(/(?<![\w.])tr\(\s*'([^']+)'/g)].map((m) => m[1]));
+  const mainMissing = [...mainKeys].filter((k) => !(k in en));
+  check(`locale keys: features/updates.js uses ${mainKeys.size} keys and all exist in en.json`, mainKeys.size > 0 && mainMissing.length === 0, mainMissing.join(', '));
+  const tt = make({ settings: {} }); tt.h.setKind('mac', false); tt.h.setPlacement({ misplaced: 'temporary', why: 'temporary' });
+  tt.emit('2.0.0'); await flush();
+  const dlg = tt.log.dialogs[0] || {};
+  check('move dialog: the English fallback (no deps.t) says the same as en.json', tt.log.dialogs.length === 1 && dlg.message === en['updates.moveDialog.message'].replace('{version}', '2.0.0') && dlg.buttons[0] === en['updates.moveDialog.confirm'] && dlg.buttons[1] === en['updates.moveDialog.later'] && dlg.detail === en['updates.moveDialog.detail'], JSON.stringify(tt.log.dialogs));
   for (const file of ['settings-updates.js', 'updates.js']) {
     const src = fs.readFileSync(path.join(__dirname, '../src/renderer', file), 'utf8');
     const keys = new Set();

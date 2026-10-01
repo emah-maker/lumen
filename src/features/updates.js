@@ -237,7 +237,7 @@ function shouldOfferMove({ relocate, version, promptedAt = 0, promptedVersion = 
   return promptedVersion !== version && now - promptedAt >= REOFFER_GAP_MS;
 }
 
-// deps: { app, ipcMain, session, ui, readSettings, writeSettings, prefs, beforeInstall, test }
+// deps: { app, ipcMain, session, ui, readSettings, writeSettings, prefs, beforeInstall, test, t? }
 function createUpdates(deps) {
   const { app } = deps;
   const reason = disabledReason({
@@ -303,6 +303,14 @@ function createUpdates(deps) {
   let moveError = ''; // why a move / relocated install couldn't go ahead (shown until dismissed or retried)
   const errFile = () => path.join(app.getPath('userData'), 'update-error.txt');
 
+  // Main-process strings come from locales/ through deps.t; without it (a test) the English text stands in.
+  const EN = {
+    'updates.moveDialog.confirm': 'Move and update',
+    'updates.moveDialog.later': 'Not now',
+    'updates.moveDialog.message': 'Lumen {version} is available',
+    'updates.moveDialog.detail': 'Move Lumen to Applications and update it now? Lumen restarts from there.',
+  };
+  const tr = (key, vars) => (deps.t ? deps.t(key, vars) : EN[key].replace(/\{(\w+)\}/g, (w, n) => (vars && n in vars ? String(vars[n]) : w)));
   const autoDownload = () => deps.prefs().autoDownloadUpdates !== false;
   const canSelfUpdate = () => mode === 'stage';
   // 'misplaced' | 'user' (standard user in /Applications) | null: the copies whose update installs into Applications
@@ -415,7 +423,7 @@ function createUpdates(deps) {
   async function offerMoveUpdate() {
     const version = state.version;
     deps.writeSettings({ ...deps.readSettings(), movePromptedAt: Date.now(), movePromptedVersion: version });
-    const { response } = await io.dialog({ type: 'question', buttons: ['Move and update', 'Not now'], defaultId: 0, cancelId: 1, message: `Lumen ${version} is available`, detail: 'Move Lumen to Applications and update it now? Lumen restarts from there.' });
+    const { response } = await io.dialog({ type: 'question', buttons: [tr('updates.moveDialog.confirm'), tr('updates.moveDialog.later')], defaultId: 0, cancelId: 1, message: tr('updates.moveDialog.message', { version }), detail: tr('updates.moveDialog.detail') });
     if (response === 0 && state.version === version) await apply();
   }
 
@@ -430,7 +438,8 @@ function createUpdates(deps) {
     publish(); // the renderers show "Checking…" even while the status stays as it was
     // With an update already known the status stays as it is, so "Restart to update" / "Move and
     // update" don't flicker away during a background check; the result only matters if it is newer.
-    if (!state.version) setState({ status: 'checking', error: '' });
+    // Nor after a failed install or check: the pill (and Try again) must survive a re-check that fails too.
+    if (!state.version && !installFailed && state.status !== 'error') setState({ status: 'checking', error: '' });
     try {
       const result = await u.checkForUpdates();
       if (!result) { if (state.status === 'checking') setState({ status: 'idle' }); } // the updater is inactive (unpackaged)
