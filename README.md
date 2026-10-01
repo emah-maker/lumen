@@ -142,7 +142,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | Ask the AI about selected text | right-click → Ask Claude About Selection |
 | Tab devtools | `F12` |
 
-## Use Lumen from Claude Code, Codex, Gemini CLI
+## Use Lumen from Claude Code, Codex, Antigravity
 
 Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 28 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → AI and agents → Allow AI agents to connect**. The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
 
@@ -166,7 +166,7 @@ env = { ELECTRON_RUN_AS_NODE = "1" }
 ```
 
 ```json
-// Gemini CLI (~/.gemini/settings.json), Cursor, Claude Desktop and other MCP clients
+// Antigravity (~/.gemini/config/mcp_config.json), Cursor, Claude Desktop and other MCP clients
 { "mcpServers": { "lumen": {
   "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\Lumen.exe",
   "args": ["C:\\Users\\<you>\\AppData\\Local\\Programs\\Lumen\\resources\\app\\mcp.js"],
