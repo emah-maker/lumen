@@ -171,7 +171,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
-  'app-menu', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
@@ -595,7 +595,7 @@ function openPageInfo(point = null) {
   if (!wc || wc.isDestroyed()) return Promise.resolve(null);
   return pageInfo.open({ url: realUrl(wc), ses: wc.session, security: siteSecurity.stateOf(wc), point });
 }
-ipcMain.on('page-info:open', (event, point) => { if (uiContents.has(event.sender)) openPageInfo(point && typeof point === 'object' ? point : null); });
+ipcMain.on('page-info:open', (_e, point) => openPageInfo(point && typeof point === 'object' ? point : null)); // (UI-only: UI_ONLY_IPC)
 
 // Keyboard Shortcuts (⋯ menu, Help menu, Ctrl+Shift+/): the list in Lumen's own dialog (features/shortcuts-help.js).
 const shortcutsHelp = require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) });
@@ -1804,8 +1804,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     wc.on(event, sendTabsSoon);
   }
   wc.on('before-input-event', (event, input) => {
-    // Esc in a page that is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
-    if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoading() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
+    // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
+    // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
+    if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
     handleShortcut(event, input);
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
