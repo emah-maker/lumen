@@ -4,6 +4,18 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.4.3 (2026-10-01)
+
+- Organize Tabs works on a full tab bar and with AI: no false "no tabs", and no "AI took too long" after 5 seconds. Grouping is more accurate and much faster, and the toast says plainly what happened.
+- Signing in with Google works on websites again.
+- One-click updates on Mac and Windows: Lumen downloads the update and restarts into it, with no new DMG to open.
+- Merge windows, and move several tabs between windows at once.
+- Edit every home-page widget in place, on the new-tab page itself.
+- Models switch automatically when one runs out of credit or cannot connect, with a way back to your own pick.
+- Smoother animations and a more responsive app, including the sidebar layers.
+- Sleeping tabs wake correctly, and the tab strip's styles are restored.
+- A Grok Build warm-up setting, so it is ready before your first message.
+
 ## 0.4.2 (2026-09-30)
 
 - Faster AI agents: Claude Code now stays warm between messages, so a chat's first reply no longer waits on a cold start, and it gets ready for the model your message will use while you type. Actions wait for the page to settle instead of a fixed pause, and a page that never stops animating costs a fraction of a second, not more. Stop interrupts the agent right away and keeps it ready for the next message. A stuck Claude Code or Grok Build turn now gives up on its own after 90 seconds (time spent on tool calls and approvals does not count), and steps show up as soon as they start with their specific label.
