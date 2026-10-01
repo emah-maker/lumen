@@ -2287,6 +2287,7 @@ async function organizeTabs() {
   const rec = curRec;
   const back = (fn) => withWindow(rec, fn);
   const inWin = (groups) => Object.fromEntries(['organizeByTopic', 'organizeSeq', 'organizeView', 'applyRefinement', 'layoutSignature'].map((k) => [k, (...a) => back(() => groups[k](...a))]));
+  const groupsBefore = back(() => tabGroups.layoutSignature().groups); // groups that exist before this click (automatic grouping may have made some)
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
     await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
@@ -2330,7 +2331,9 @@ async function organizeTabs() {
       back(() => organizeNote(`${t('organize.cancelled')}.`, { undo: true }));
     } else {
       const how = stats.reason === 'local' ? t('organize.local') : stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : failed ? aiFailureNote(failed, false) : t('organize.localOnly');
-      const what = Number.isInteger(stats.finalGroups) ? ` ${organizeSummary(stats.finalGroups, stats.loose)}` : '';
+      // Groups the automatic grouping had already made are not this click's work: with some before, the note says what THIS click added.
+      const added = stats.groups > 0 && groupsBefore > 0 && stats.finalGroups > stats.groups ? stats.groups : 0;
+      const what = !Number.isInteger(stats.finalGroups) ? '' : added ? ` ${t(added === 1 ? 'organize.summaryAdded.one' : 'organize.summaryAdded', { added, groups: stats.finalGroups, loose: stats.loose })}` : ` ${organizeSummary(stats.finalGroups, stats.loose)}`;
       back(() => organizeNote(`${how}.${what}`, { undo: true }));
     }
   } catch (err) {

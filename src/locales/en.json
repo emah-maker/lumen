@@ -532,6 +532,8 @@
   "organize.summaryLoose.oneLoose": "{groups} groups, {loose} tab left loose.",
   "organize.summaryLoose.oneGroup": "{groups} group, {loose} tabs left loose.",
   "organize.summaryLoose.oneGroup.oneLoose": "{groups} group, {loose} tab left loose.",
+  "organize.summaryAdded": "{added} new, {groups} in all, {loose} loose.",
+  "organize.summaryAdded.one": "1 new, {groups} in all, {loose} loose.",
   "organize.local": "Organized",
   "organize.already": "Already organized",
   "organize.noteLoose": "{count} loose",
