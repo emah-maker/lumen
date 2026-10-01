@@ -75,7 +75,7 @@ const AUDIT = `(() => {
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 860));
+  await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].setSize(1280, 860));
   const open = (url) => app.evaluate(async (_e, u) => {
     const t = global.__agent.browser.openTab(u);
     await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 5000); });
@@ -103,7 +103,8 @@ const AUDIT = `(() => {
   check('aria: the strip is one Tab stop (roving tabindex), ✕ buttons aren\'t stops', s.stops === 1 && s.closeStops === 0, JSON.stringify(s));
 
   // Keyboard only from here: put focus in the window's UI, on the strip's one stop.
-  await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.focus(); w.webContents.focus(); });
+  await app.evaluate(({ BrowserWindow }) => { const w = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0]; w.focus(); w.webContents.focus(); });
+  await waitFor(() => ui.evaluate(() => document.querySelector('#tabs .tab.active .tab-title')?.textContent === 'Page three')); // (the title arrives a moment after the load)
   await ui.evaluate(() => document.querySelector('#tabs [tabindex="0"]').focus());
   s = await strip();
   check('keyboard: the strip\'s stop is the active tab', s.focused === s.active && s.active === 'Page three', JSON.stringify(s));
@@ -141,7 +142,7 @@ const AUDIT = `(() => {
   // Ctrl+Shift+PageDown / PageUp move the active tab (main.js handleShortcut, which sees native
   // input: sendInputEvent, as test/home.js does, not Playwright's synthetic key events).
   const shortcut = (key) => app.evaluate(({ BrowserWindow }, k) => {
-    const wc = BrowserWindow.getAllWindows()[0].webContents;
+    const wc = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents;
     for (const type of ['keyDown', 'keyUp']) wc.sendInputEvent({ type, keyCode: k, modifiers: ['control', 'shift'] });
   }, key);
   await ui.evaluate(() => document.querySelector('#tabs .tab.active').focus());
