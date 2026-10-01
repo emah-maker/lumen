@@ -113,8 +113,12 @@ function openLink(url, label, name) {
 // Kinds the page can edit itself get a pencil (renderer/newtab-setup.js); the rest are edited in Settings.
 // It comes from w.setup, so a card that failed to load has it too.
 function openEditor(w) { const t = window.widgetSetupTarget?.(w.id); if (t) window.widgetSetup.open(t); }
-function editPencil(w, title, card) {
-  if (w.setup && window.widgetSetup?.can(w.type)) card.head.append(iconButton(ICON_EDIT, `Edit ${title}`, () => openEditor(w)));
+function editPencil(w, title, card, always) {
+  if (w.setup && window.widgetSetup?.can(w.type)) {
+    const b = iconButton(ICON_EDIT, `Edit ${title}`, () => openEditor(w));
+    if (always) b.classList.add('always'); // a card that failed keeps its pencil visible: that is where editing matters
+    card.head.append(b);
+  }
 }
 function iconButton(svg, label, onclick) {
   const b = el('button', 'w-icon-btn');
@@ -1220,7 +1224,7 @@ function buildCard(w) {
       wrap.append(fix);
     }
     body.append(wrap);
-    editPencil(w, title, card);
+    editPencil(w, title, card, true);
   } else {
     const skel = el('div', 'w-skel');
     skel.setAttribute('aria-label', `Loading ${title}`);
