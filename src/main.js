@@ -3984,6 +3984,7 @@ function whenPainted(rec, tab, then) {
 const tabById = (rec, id) => tabsOf(rec).find((t) => t.id === id);
 // Shows a window that has just been given a tab, faded in once it has painted, and focuses it.
 // Lumen's own Reduce motion setting, Performance mode, or the system's (Windows: animations off).
+const frameClock = require('./features/frame-clock'); // timers for the main process's own short animations
 const motionReducedMain = () => Boolean(settingsBackend.prefs().reduceMotion) || Boolean(perfMode.active?.())
   || systemPreferences?.getAnimationSettings?.().shouldRenderRichAnimation === false;
 function revealNewWindow(rec, tabId, then = () => {}) {
@@ -3997,14 +3998,9 @@ function revealNewWindow(rec, tabId, then = () => {}) {
     announce();
     const focus = () => { if (!tabDrag) w.focus(); }; // a new drag already under way keeps its window focused
     if (motionReducedMain()) { w.setOpacity(1); focus(); then(); return; }
-    const start = Date.now();
-    const FADE_MS = 150;
-    const step = setInterval(() => {
-      if (w.isDestroyed()) { clearInterval(step); return; }
-      const k = Math.min(1, (Date.now() - start) / FADE_MS);
-      w.setOpacity(1 - (1 - k) ** 3);
-      if (k === 1) clearInterval(step);
-    }, 16);
+    // Timed against the clock, aimed at frame boundaries (features/frame-clock.js): a setInterval(16) fires on
+    // Windows' coarse timer and stutters, and a busy turn slowed every later step.
+    const fade = frameClock.tween({ duration: 150, onFrame: (eased) => { if (w.isDestroyed()) fade?.stop(); else w.setOpacity(eased); } });
     focus();
     then();
   });
@@ -4142,20 +4138,21 @@ function glideCard(d, rec, slot) {
   if (need > cw) card.win.setSize(need, ch);
   cardCall('compact', true);
   cardCall('land', Math.round(slot.w || 0), Math.round(slot.h || 0)); // and takes the tab's width, height and corners on the way
-  const t0 = Date.now();
-  const ease = (t) => 1 - (1 - t) ** 3;
-  clearInterval(card.glide);
-  card.glide = setInterval(() => {
-    if (card.win.isDestroyed() || card.owner !== d) { clearInterval(card.glide); return; }
-    const t = Math.min(1, (Date.now() - t0) / 120);
-    card.win.setPosition(Math.round(x0 + (to.x - x0) * ease(t)), Math.round(y0 + (to.y - y0) * ease(t)));
-    if (t < 1) return;
-    clearInterval(card.glide);
-    cardCall('hide', 'land');
-    if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); // the real tab shows as the chip fades over it
-    clearTimeout(card.hideTimer);
-    card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && card.owner === d) card.win.hide(); }, 160);
-  }, 16);
+  card.glide?.stop();
+  // Frame-clock timing (features/frame-clock.js): each step's position comes from the elapsed time, and the
+  // timers aim at frame boundaries, so a late step skips ahead instead of stuttering.
+  card.glide = frameClock.tween({
+    duration: 120,
+    onFrame: (eased, t) => {
+      if (card.win.isDestroyed() || card.owner !== d) { card.glide?.stop(); return; }
+      card.win.setPosition(Math.round(x0 + (to.x - x0) * eased), Math.round(y0 + (to.y - y0) * eased));
+      if (t < 1) return;
+      cardCall('hide', 'land');
+      if (rcAlive(rec)) rec.win.webContents.send('tab:landed'); // the real tab shows as the chip fades over it
+      clearTimeout(card.hideTimer);
+      card.hideTimer = setTimeout(() => { if (!card.win.isDestroyed() && card.owner === d) card.win.hide(); }, 160);
+    },
+  });
 }
 
 // ---- a window made ready for a tear-off before it happens
@@ -4491,8 +4488,11 @@ ipcMain.on('tab:dragstart', (event, id, grab) => {
 });
 // The pointer moved (the page holding it reports every move): the card or window follows at once, on the
 // mouse's own rhythm, instead of waiting for the next poll.
+// At most one tick per 4 ms: a 1 kHz mouse reports a move per millisecond, and each tick looks every window up
+// and moves a transparent window (the 8 ms poll below keeps going meanwhile), which backed up the main thread.
+const dragMoveGate = frameClock.rateGate(4);
 ipcMain.on('tab:dragmove', (event) => {
-  if (tabDrag && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
+  if (tabDrag && dragMoveGate() && recOfSender(event.sender) === tabDrag.rec) tickTabDrag();
 });
 // A tab is being pulled towards the edge of the strip: it may come out next, so have a window ready.
 ipcMain.on('tab:dragprep', (event, tabId) => {

@@ -2121,6 +2121,7 @@ async function showSidebar(visible) {
   const finish = () => {
     revealAnim = null;
     heldRect = null;
+    body.classList.remove('sidebar-moving');
     thawPage();
     if (visible) $('sidebar').style.removeProperty('--reveal');
     else {
@@ -2134,6 +2135,7 @@ async function showSidebar(visible) {
   else {
     // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
     // motion begins, so any slow frame is a still frame, not a jump.
+    body.classList.add('sidebar-moving'); // styles.css: no backdrop blur on the composer while the sidebar moves
     revealAnim = springTo(reveal, target, { response: visible ? 0.34 : 0.28, velocity, onUpdate: setReveal, onDone: finish });
   }
   if (visible) $('prompt').focus({ preventScroll: true });
@@ -2178,16 +2180,30 @@ resizer.addEventListener('pointerdown', (e) => {
   // The page is a native view: once the pointer is over it, it takes the mouse moves (the drag
   // stalls and the cursor changes). For the drag it is shown as a snapshot, like during the spring.
   const frozen = !snapshot && !motionReduced() ? freezePage() : null;
+  // Until the snapshot is up (a full-page capture takes 50-200 ms) the page is still live, and resizing it
+  // every frame made the site reflow on each one: the first moments of a drag stuttered. Its size is held for
+  // the whole drag and sent once at the end, as the sidebar's spring does (heldRect).
+  let ended = false;
+  const held = frozen && !heldRect;
+  if (held) {
+    heldRect = viewport.getBoundingClientRect();
+    frozen.then(() => { if (!ended && !snapshot && heldRect) { heldRect = null; reportBounds(); } }); // no snapshot came: don't leave the page at a stale size
+  }
   let frame = 0;
   const move = (ev) => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => setSidebarWidth(startWidth + (startX - ev.clientX)));
   };
   const up = async () => {
+    ended = true;
     resizer.removeEventListener('pointermove', move);
     document.body.classList.remove('resizing');
     localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)));
-    if (frozen) { await frozen; thawPage(); }
+    if (frozen) {
+      await frozen;
+      if (held) { heldRect = null; reportBounds(); } // the page's final size, once, while it is still hidden
+      thawPage();
+    }
   };
   resizer.addEventListener('pointermove', move);
   // Fires after pointerup or pointercancel, and if capture is lost any other way: the drag always ends.
@@ -2232,6 +2248,7 @@ function enterFull() {
   revealAnim?.stop();
   revealAnim = null;
   heldRect = null;
+  document.body.classList.remove('sidebar-moving');
   if (snapshot) thawPage();
   // Full mode ignores --reveal (CSS forces width: 100%), but reset it so docking back later — which
   // does nothing but remove the chat-full class — lands on a fully open sidebar, not a stale partial one.

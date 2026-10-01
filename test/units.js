@@ -2628,6 +2628,9 @@ async function swapHelperRuns() {
   check('drag: a menu tear-off that already fits is not moved', JSON.stringify(placeOnWorkArea({ x: 40, y: 50, width: 800, height: 600 }, area)) === JSON.stringify({ x: 40, y: 50, width: 800, height: 600 }));
 }
 
+// ---- frame timing helpers (features/frame-clock.js)
+require('./frame-clock-units')(check);
+
 // ---- ask across open tabs (features/tabs-ask.js, renderer/tabs-ask-core.js, read_tabs in agent.js)
 async function tabsAskRuns() {
   const ta = require('../src/features/tabs-ask');
