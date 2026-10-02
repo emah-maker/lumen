@@ -166,6 +166,51 @@
   // `undo` ({ id, undoable, lasting }) comes with the run's 'done' event (agent.js undoSummary):
   // the tabs it opened, closed, moved to other pages or regrouped can be put back; what it did on
   // sites (lasting: clicks, typing, forms) can't, and the button says so.
+  // ---------- [ai manners] "Close N tabs the AI opened" under a reply (main.js aiTabsAfterRun / aiTabsClose) ----------
+  // `info` ({ n, mode: offer | ask }) comes with the run's 'done' event; with Settings > "Close tabs the AI opened" on Always, main
+  // closes them itself and sends 'ai_tabs_closed' ({ n, token }): the row then says so and offers Undo. Never closes a tab you
+  // used, a pinned tab or the one a chat lives in (main skips those: the count is what can really close).
+  function aiTabsRow(append) {
+    return append(Object.assign(document.createElement('div'), { className: 'run-undo ai-tabs' }));
+  }
+  const plural = (base, n, en) => { const k = `${base}.${n === 1 ? 'one' : 'other'}`; const s = window.t ? window.t(k, { count: n }) : k; return s && s !== k ? s : en.replace('{count}', n); };
+  function undoRow(box, closed, token) {
+    box.replaceChildren();
+    box.append(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.closed', closed, closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.') }), ' ');
+    const undo = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.undo') || 'Undo' });
+    undo.addEventListener('click', async () => {
+      undo.disabled = true;
+      const result = await window.assistant.undoCloseAiTabs(token).catch(() => null);
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.reopened', result?.reopened || 0, 'Reopened {count} tabs.') }));
+    });
+    box.append(undo);
+    box.setAttribute('role', 'status');
+  }
+  window.showAiTabs = function showAiTabs(append, info, runId) {
+    if (!info?.n || !window.assistant?.closeAiTabs) return;
+    const box = aiTabsRow(append);
+    const n = info.n;
+    const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text' });
+    if (info.mode === 'ask') text.textContent = plural('chat.aiTabs.ask', n, n === 1 ? 'The AI opened {count} tab. Close it?' : 'The AI opened {count} tabs. Close them?');
+    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab the AI opened' : 'Close {count} tabs the AI opened') });
+    close.addEventListener('click', async () => {
+      close.disabled = true;
+      const result = await window.assistant.closeAiTabs({ runId }).catch(() => null);
+      if (!result?.closed) { box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: window.t?.('chat.aiTabs.none') || 'Nothing to close.' })); return; }
+      undoRow(box, result.closed, result.token);
+    });
+    box.append(...(info.mode === 'ask' ? [text, ' ', close] : [close]));
+    if (info.mode === 'ask') {
+      const keep = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.keep') || 'Keep' });
+      keep.addEventListener('click', () => box.remove());
+      box.append(' ', keep);
+    }
+  };
+  window.showAiTabsClosed = function showAiTabsClosed(append, event) {
+    if (!event?.n || !event.token) return;
+    undoRow(aiTabsRow(append), event.n, event.token);
+  };
+
   window.showRunUndo = function showRunUndo(append, undo) {
     if (!undo?.undoable) return;
     const box = append(Object.assign(document.createElement('div'), { className: 'run-undo' }));

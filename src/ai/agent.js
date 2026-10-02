@@ -14,6 +14,7 @@ const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTIC
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
+const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
 
 // The tab a task works in. A sidebar run (and each outside agent's tool call) pins the tab that was
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
@@ -294,19 +295,19 @@ const TOOLS = [
   },
   {
     name: 'open_tab',
-    description: 'Open a URL in a new tab and make it active.',
+    description: 'Open a URL in a background tab and work there. show:true to bring it to front.',
     input_schema: {
       type: 'object',
-      properties: { url: { type: 'string' } },
+      properties: { url: { type: 'string' }, show: { type: 'boolean' } },
       required: ['url'],
     },
   },
   {
     name: 'switch_tab',
-    description: 'Make another tab active.',
+    description: 'Work in another tab. show:true to bring it to front.',
     input_schema: {
       type: 'object',
-      properties: { tab_id: { type: 'integer' } },
+      properties: { tab_id: { type: 'integer' }, show: { type: 'boolean' } },
       required: ['tab_id'],
     },
   },
@@ -381,7 +382,10 @@ function systemFor(settings) {
     ? SYSTEM
     : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : onAntigravity ? 'You are the AI assistant built into Lumen, a web browser, running in Google Antigravity.' : 'You are the AI assistant built into Lumen, a web browser.')
       + '\n\nweb_search returns top results from DuckDuckGo; open results with read_urls or navigate.';
-  return settings.adhdMode ? base + ADHD_STYLE : base;
+  const style = settings.adhdMode ? base + ADHD_STYLE : base;
+  return settings.handsOff ? `${style}
+
+${manners.HANDS_OFF_PROMPT}` : style; // [ai manners] fixed per conversation, like the answer style
 }
 
 // ---- [claude code engine] extra guidance when the user's own Claude Code CLI answers (claude-code.js).
@@ -2011,6 +2015,7 @@ class Agent {
   // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
   async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, input = {}, run = taskScope.getStore() } = {}) {
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
+    this.handsOffCheck(name, input); // [ai manners] hands-off mode: no card for an act the user does not allow
     const gate = { emit, signal, hosts, who, external, run };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
     const scope = taskScope.getStore();
@@ -2083,6 +2088,48 @@ class Agent {
       let url = '';
       try { url = this.taskTab()?.webContents.getURL() || ''; } catch {}
       if (off(url)) refuse(url);
+    }
+  }
+
+  // ---- [ai manners] "Don't let the AI act on my pages" (Settings, off by default). Enforced here, in the tool layer, for
+  // every caller (the sidebar's AI, its Claude Code / Grok Build / Antigravity engines, outside agents over MCP, batch steps):
+  // a tool that clicks, types, scrolls, navigates or runs a script is refused on a tab the AI did not open itself. Reading
+  // tools are not touched. features/ai-manners.js has the tool list and the refusal text.
+  handsOffCheck(name, input = {}) {
+    if (!manners.isActionTool(name) || !this.browser.handsOff?.()) return;
+    let id = null;
+    try { id = name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null); } catch { return; } // (no tab / a closed one: the tool says so itself)
+    if (id === null || id === undefined) return;
+    const refusal = manners.handsOffCheck({ tool: name, handsOff: true, ownTab: Boolean(this.browser.isAiTab?.(id)) });
+    if (refusal) throw new Error(refusal);
+  }
+
+  // The user is typing in this tab right now: the AI's typing waits (their keys and ours would mix in one field).
+  // Gives up after TYPING_WAIT_CAP_MS so a user who never stops can't stall the run for ever.
+  async waitForUserTyping(wc) {
+    const began = Date.now();
+    let told = false;
+    for (;;) {
+      const wait = manners.typingWait({ typedAt: manners.userInput.typedAt(wc) });
+      if (!wait || Date.now() - began >= manners.TYPING_WAIT_CAP_MS || this.signalAborted()) return;
+      if (!told) { told = true; try { taskScope.getStore()?.gate?.emit?.({ type: 'notice', text: this.browser.typingText?.() || 'Waiting while you type…' }); } catch {} }
+      await sleep(Math.min(wait, 250));
+      if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
+    }
+  }
+
+  // Runs `fn` (a tool that clicks or types in the page) and puts the user's caret back after it: the field they were in,
+  // and where in it. Nothing is saved when the user is in no field of this page, or has not been active in it lately.
+  // `exceptId`: the element the tool types into on purpose (its caret stays where the typing put it).
+  async keepUserFocus(wc, fn, exceptId = null) {
+    let kept = false;
+    try {
+      let pageFocused = false;
+      try { pageFocused = wc.isFocused(); } catch {}
+      if (manners.guardsFocus({ pageFocused, userInputAt: manners.userInput.inputAt(wc) })) kept = await runScript(wc, scripts.focusSave(), 3000).catch(() => false);
+    } catch {}
+    try { return await fn(); } finally {
+      if (kept && !wc.isDestroyed()) await runScript(wc, scripts.focusRestore(exceptId), 3000).catch(() => {});
     }
   }
 
@@ -2485,6 +2532,7 @@ ${out.text}${note}
   async execute(name, input) {
     if (this.isExternalTool(name)) return this.runExternal(name, input); // [mcp client] no tab involved
     this.aiOffCheck(name, input);
+    this.handsOffCheck(name, input); // [ai manners] (also here: a batch step or a direct call never skips it)
     const log = taskScope.getStore()?.log;
     if (!log || nestedCall.getStore()) {
       const result = await this.executeGuarded(name, input);
@@ -2687,8 +2735,10 @@ ${same}
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
         // The task's tab is behind another one (the user switched away): mouse events need a tab on
         // screen, so it gets a DOM click instead.
-        if (target.covered || !this.taskTabInFront()) await runScript(wc, scripts.domClick(id));
-        else await this.mouseClick(wc, x, y);
+        await this.keepUserFocus(wc, async () => {
+          if (target.covered || !this.taskTabInFront()) await runScript(wc, scripts.domClick(id));
+          else await this.mouseClick(wc, x, y);
+        });
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
         return `Clicked element ${id} (${target.tag} ${quote(target.label || '')}).${moved}`;
@@ -2794,18 +2844,24 @@ ${same}
       }
       case 'type_text': {
         const wc = this.requireTab();
-        const status = await runScript(wc, scripts.focusForTyping(input.element_id));
-        if (status === 'missing') throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
-        if (status === 'toggle') throw new Error(`Element ${input.element_id} is a checkbox or radio button. Use click instead.`);
-        if (status === 'unfocusable') throw new Error(`Element ${input.element_id} cannot take text input.`);
-        if (status === 'setvalue') {
-          const set = await runScript(wc, scripts.setValue(input.element_id, input.text));
-          if (set === null) throw new Error(`Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
-          return `Set element ${input.element_id} to "${set}".`;
-        }
-        await wc.insertText(input.text);
+        await this.waitForUserTyping(wc); // [ai manners] the user is typing in this tab: wait for a pause
+        const status = await this.keepUserFocus(wc, async () => {
+          const st = await runScript(wc, scripts.focusForTyping(input.element_id));
+          if (st === 'missing') throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
+          if (st === 'toggle') throw new Error(`Element ${input.element_id} is a checkbox or radio button. Use click instead.`);
+          if (st === 'unfocusable') throw new Error(`Element ${input.element_id} cannot take text input.`);
+          if (st === 'setvalue') {
+            const set = await runScript(wc, scripts.setValue(input.element_id, input.text));
+            if (set === null) throw new Error(`Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
+            return { set };
+          }
+          // Typed through the page's own focus (CDP insertText on the focused frame): no window or view takes the OS focus.
+          await wc.insertText(input.text);
+          if (input.press_enter) this.pressKey(wc, 'Enter'); // (while the typed-in field still has the page's focus)
+          return st;
+        }, input.element_id);
+        if (status && status.set !== undefined) return `Set element ${input.element_id} to "${status.set}".`;
         if (input.press_enter) {
-          this.pressKey(wc, 'Enter');
           await settleAfterAction(wc);
           return `Typed into element ${input.element_id} and pressed Enter. Page is ${wc.getURL()}.${captchaNote(wc.getURL())}`;
         }
@@ -2815,17 +2871,23 @@ ${same}
         const wc = this.requireTab();
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
+        await this.waitForUserTyping(wc); // [ai manners]
         this.pressKey(wc, input.key, modifiers);
         await settleAfterAction(wc);
         return `Pressed ${[...modifiers, input.key].join('+')}.`;
       }
       case 'click_at': {
         const wc = this.requireTab();
-        if (!this.taskTabInFront()) throw new Error('This tab is not on screen right now (the user switched to another tab), so it can\'t be clicked by position. Use click with an element id instead.');
         if (!this.screenshotScale || this.screenshotScale.wc !== wc) throw new Error('Take a screenshot of this tab first.');
         const { ratio } = this.screenshotScale;
         const urlBefore = wc.getURL();
-        await this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio));
+        // [ai manners] A tab behind another one (the AI's own, opened in the background) gets the click as page events at that point.
+        const inFront = this.taskTabInFront();
+        await this.keepUserFocus(wc, async () => {
+          if (inFront) { await this.mouseClick(wc, Math.round(input.x * ratio), Math.round(input.y * ratio)); return; }
+          const zoom = wc.getZoomFactor();
+          if (!(await runScript(wc, scripts.domClickAt(Math.round(input.x * ratio / zoom), Math.round(input.y * ratio / zoom))))) throw new Error('Nothing is at that position.');
+        });
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : '';
         return `Clicked at (${input.x}, ${input.y}).${moved}`;
@@ -2902,8 +2964,8 @@ ${same}
           }));
       }
       case 'open_tab': {
-        const tab = this.browser.openTab(webUrl(input.url));
-        this.pinTab(tab.id); // it opens in front; the task carries on there
+        const tab = this.browser.openTab(webUrl(input.url), { ai: true, show: input.show === true }); // [ai manners] opens behind the user's tab, marked as the AI's
+        this.pinTab(tab.id); // the task carries on there, in front or not
         const redirects = this.guardRedirects(tab.webContents, { clientSide: true });
         try {
           await waitForLoad(tab.webContents);
@@ -2917,7 +2979,7 @@ ${same}
         // Only the tabs list_tabs shows: Lumen's own pages and file:// tabs are off limits.
         const listed = agentTabList(this.browser.listTabs()).find((t) => t.id === input.tab_id);
         if (listed && this.tabBusyElsewhere(input.tab_id)) throw new Error(TAB_BUSY);
-        if (!listed || !this.browser.switchTab(input.tab_id)) throw new Error(`No tab with id ${input.tab_id}.`);
+        if (!listed || !this.browser.switchTab(input.tab_id, { show: input.show === true })) throw new Error(`No tab with id ${input.tab_id}.`);
         this.pinTab(input.tab_id);
         const wc = this.requireTab();
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
@@ -2945,19 +3007,23 @@ ${same}
       if (command) { wc[command](); return; }
       modifiers = [...mods, 'meta'];
     }
-    wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
-    // Only unmodified printable keys produce text.
-    if (!modifiers.some((m) => m !== 'shift')) {
-      const char = key === 'Enter' ? '\r' : key === 'Space' ? ' ' : key.length === 1 ? key : null;
-      if (char) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers });
-    }
-    wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+    manners.agentInput(wc, () => { // [ai manners] these keys are the AI's, not the user typing
+      wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+      // Only unmodified printable keys produce text.
+      if (!modifiers.some((m) => m !== 'shift')) {
+        const char = key === 'Enter' ? '\r' : key === 'Space' ? ' ' : key.length === 1 ? key : null;
+        if (char) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers });
+      }
+      wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+    });
   }
 
   async mouseClick(wc, x, y) {
-    wc.sendInputEvent({ type: 'mouseMove', x, y });
-    wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
-    wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    manners.agentInput(wc, () => {
+      wc.sendInputEvent({ type: 'mouseMove', x, y });
+      wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+      wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    });
   }
 }
 

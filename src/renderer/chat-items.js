@@ -27,6 +27,7 @@
     delete: '<svg viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 9h5l.5-9"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
+    closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
     movehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 11V8.5M6.5 10L8 11.5 9.5 10"/></svg>',
   };
   const iconButton = (name, label) => {
@@ -173,6 +174,18 @@
         const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
         move.onclick = () => onOpen(chat.id);
         tabActions.push(show, move);
+      }
+      // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
+      if (chat.aiTabs > 0 && api.closeTabs) {
+        const closeLabel = tr('chats.closeTabs', 'Close this chat’s tabs');
+        const closeTabs = iconButton('closetabs', closeLabel);
+        closeTabs.onclick = async () => {
+          closeTabs.disabled = true;
+          const out = await api.closeTabs(chat.id).catch(() => null);
+          meta.textContent = out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : tr('chats.closeTabs.none', 'This chat has no tabs it opened');
+          closeTabs.remove();
+        };
+        tabActions.push(closeTabs);
       }
       actions.append(...tabActions, rename, exportBtn, del);
       li.append(openBtn);

@@ -181,12 +181,12 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
-  'chats:list', 'chats:open', 'chats:show-tab', 'chats:rename', 'chats:delete', 'chats:export',
+  'chats:list', 'chats:open', 'chats:show-tab', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tabs:hide-ai', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
@@ -2868,6 +2868,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
     { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
     { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
+    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { aiTabsClose({ rec: curRec }).catch(() => {}); } }, // [ai manners]
     { type: 'separator' },
     { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
   );
@@ -4111,8 +4112,15 @@ function aiTabsAfterRun(runId) {
 const cleanSelector = (o) => ({ runId: o?.runId ?? null, chatId: typeof o?.chatId === 'string' ? o.chatId : null });
 ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsClose(cleanSelector(o)));
 ipcMain.handle('agent:ai-tabs-undo', (_e, token) => aiTabsReopen(Number(token)));
-ipcMain.handle('chats:close-tabs', (_e, id) => aiTabsClose({ chatId: String(id) }));
-if (TEST) global.__aiTabs = { select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
+// The sidebar's "hide the tabs the AI opened" toggle: a saved setting (prefs:ui carries it to the strip). It only leaves them out of
+// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close Tabs Opened by AI all still reach them).
+ipcMain.handle('tabs:hide-ai', async (_e, on) => {
+  if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
+  return readSettings().hideAiTabs === true;
+});
+ipcMain.handle('chats:close-tabs',(_e, id) => aiTabsClose({ chatId: String(id) }));
+if (TEST) global.__manners = manners;
+if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
 
 // Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
 // on in a tab behind another one (a screenshot, wait_for); back on once no run works there.
@@ -6536,6 +6544,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   };
   run.cancelQueued = finishQueued;
   const emit = (msg) => {
+    let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
+    if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     if (msg.type === 'text') run.reply += msg.text;
@@ -6555,6 +6565,9 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
+      if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
+        aiTabsClose({ runId }, { auto: true }).then(({ closed, token }) => chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: closed, token })).catch(() => {});
+      }
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
@@ -6646,7 +6659,7 @@ ipcMain.handle('chats:list', (event) => {
     maxRuns: runSlots.limit,
     chats: (() => {
       const badges = chatBadges();
-      return chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id) }));
+      return chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id), aiTabs: aiTabSelect({ chatId: c.id }).length }));
     })(),
   };
 });

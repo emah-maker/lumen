@@ -1124,7 +1124,11 @@ function createTabEl(id) {
   });
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
-  inner.append(globeIcon(), chatMark, title, close);
+  // [ai manners] a tab the AI opened: a small sparkle after its title (updateTabEl; styles.css .tab-ai-mark)
+  const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
+  aiMark.setAttribute('aria-hidden', 'true');
+  aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
+  inner.append(globeIcon(), chatMark, title, aiMark, close);
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
@@ -1180,7 +1184,8 @@ function updateTabEl(el, tab, group, activeId) {
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote, tab.aiOpened ? t('tabs.aiOpened') : ''].filter(Boolean).join(', '));
+  el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -1435,7 +1440,8 @@ function fillHoverCard(el) {
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
-  hostEl.hidden = !host;
+  if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
+  hostEl.hidden = !host && !tab.aiOpened;
   return true;
 }
 
@@ -1631,9 +1637,36 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
+
+// [ai manners] The sidebar's toggle (ui-prefs.js sets window.lumenHideAiTabs): the tabs the AI opened are left out of the strip, except the one
+// in front (and one being dragged), so what you are looking at never vanishes. They stay open; the toggle shows how many are out of sight.
+function aiHiddenTab(tab, state) {
+  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+}
+const hideAiButton = $('hide-ai-tabs');
+function syncHideAiToggle(state) {
+  if (!hideAiButton) return;
+  const on = window.lumenHideAiTabs === true;
+  const total = (state?.tabs || []).filter((x) => x.aiOpened).length;
+  const out = (state?.tabs || []).filter((x) => aiHiddenTab(x, state)).length;
+  const count = on ? out : total;
+  hideAiButton.hidden = !on && total === 0; // nothing to hide: no button (it stays while the toggle is on, so it can be turned off)
+  hideAiButton.setAttribute('aria-pressed', String(on));
+  const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
+  hideAiButton.title = label;
+  hideAiButton.setAttribute('aria-label', label);
+  const badge = $('hide-ai-tabs-count');
+  badge.hidden = count === 0;
+  badge.textContent = count > 99 ? '99+' : String(count);
+}
+hideAiButton?.addEventListener('click', async () => {
+  const on = await Promise.resolve(window.browser.hideAiTabs?.(window.lumenHideAiTabs !== true)).catch(() => window.lumenHideAiTabs === true);
+  if (typeof on === 'boolean' && window.lumenHideAiTabs !== on) { window.lumenHideAiTabs = on; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
+});
+document.addEventListener('lumen:hide-ai-tabs', () => { if (lastTabState) { syncHideAiToggle(lastTabState); lastLayoutSig = null; renderTabsNow(lastTabState); } });
 
 function renderTabsNow(state) {
   // Updates wait while tabs are being moved here, but not while they are out on the card: the strip then
@@ -1644,6 +1677,7 @@ function renderTabsNow(state) {
     return;
   }
   lastTabState = state;
+  syncHideAiToggle(state);
   if (!drag?.handed) pruneSelection(state);
   const container = $('tabs');
   const sig = layoutSig(state);
@@ -1684,9 +1718,10 @@ function renderTabsNow(state) {
   // just been thrown away, and did nothing.
   const wanted = [];
   for (const tab of state.tabs) {
+    if (aiHiddenTab(tab, state)) continue; // [ai manners] left out of the strip by the sidebar's toggle (still open)
     const group = tab.groupId ? groupsById.get(tab.groupId) : null;
     if (group && currentGroup !== group.id) {
-      wanted.push(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id).length, crowded, before.get(`g${group.id}`)?.el));
+      wanted.push(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id && !aiHiddenTab(t, state)).length, crowded, before.get(`g${group.id}`)?.el));
     }
     currentGroup = group ? group.id : null;
     if (group?.collapsed && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id)) continue; // the active tab (and one being dragged) stays
