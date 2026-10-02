@@ -1551,6 +1551,7 @@
   "chat.aiTabs.undo": "Undo",
   "chat.aiTabs.reopened.one": "Reopened {count} tab.",
   "chat.aiTabs.reopened.other": "Reopened {count} tabs.",
+  "chat.aiTabs.nothingReopened": "Nothing to reopen.",
   "composer.handsOff": "Hands-off",
   "sidebar.hideAiTabs": "Hide tabs the AI opened",
   "sidebar.hideAiTabs.off.one": "Hide the {count} tab the AI opened",

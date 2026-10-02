@@ -7380,7 +7380,7 @@ $('agent-stop')?.addEventListener('click', () => {
     undo.addEventListener('click', async () => {
       undo.disabled = true;
       const result = await window.assistant.undoCloseAiTabs(token).catch(() => null);
-      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.reopened', result?.reopened || 0, 'Reopened {count} tabs.') }));
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: result?.reopened ? plural('chat.aiTabs.reopened', result.reopened, 'Reopened {count} tabs.') : (window.t?.('chat.aiTabs.nothingReopened') || 'Nothing to reopen.') })); // (a second Undo of the same close finds nothing)
     });
     box.append(undo);
     if (kept > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') }));
