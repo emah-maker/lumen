@@ -272,21 +272,51 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: it is separate from the close setting (its own channel and key)', /ipcMain\.handle\('tabs:hide-ai'/.test(mainSrc) && !/hideAiTabs/.test(/function aiTabsAfterRun[\s\S]*?\n\}/.exec(mainSrc)?.[0] || ''));
   }
 
-  // ---- hands-off for the Automation (CDP) server
+  // ---- hands-off for the Automation (CDP) server: an allowlist of reads, judged by the tab a command is for
   {
-    const acts = ['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Page.navigate', 'Page.reload', 'Page.close', 'Page.bringToFront', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'DOM.setOuterHTML', 'DOM.setFileInputFiles', 'DOM.removeNode', 'Network.setCookie', 'Storage.clearDataForOrigin', 'Fetch.fulfillRequest', 'Debugger.setBreakpointByUrl', 'Target.closeTarget', 'Target.activateTarget', 'Page.addScriptToEvaluateOnNewDocument'];
-    const reads = ['Page.captureScreenshot', 'Page.getFrameTree', 'DOM.getDocument', 'DOM.querySelector', 'DOM.getBoxModel', 'Runtime.enable', 'Network.enable', 'Accessibility.getFullAXTree', 'Page.enable', 'Target.createTarget', 'Target.attachToTarget', 'Runtime.getProperties'];
-    const R = (method, extra) => M.automationRefusal({ method, handsOff: true, ownTab: false, ...extra });
-    check('automation: every acting protocol command is refused on a tab the AI did not open', acts.every((m) => /Hands-off mode is on/.test(R(m) || '')), acts.filter((m) => !R(m)).join(','));
-    check('automation: reading commands still go through', reads.every((m) => R(m) === null), reads.filter((m) => R(m)).join(','));
-    check('automation: a tab the AI opened (Target.createTarget) can be acted in', acts.every((m) => R(m, { ownTab: true }) === null));
-    check('automation: off by default', acts.every((m) => R(m, { handsOff: false }) === null));
+    const AU = require('../src/automation/automation');
+    const V = (method, extra) => M.automationVerdict({ method, handsOff: true, ownTab: false, ...extra });
+    const acts = ['Input.dispatchMouseEvent', 'Input.insertText', 'Page.navigate', 'Page.reload', 'Page.close', 'Page.crash', 'Page.bringToFront', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'DOM.setOuterHTML', 'DOM.setFileInputFiles', 'DOM.removeNode', 'Network.setCookie', 'Network.setExtraHTTPHeaders', 'Network.replayXHR', 'Storage.clearDataForOrigin', 'Storage.clearCookies', 'Storage.setCookies', 'Browser.setDownloadBehavior', 'Browser.grantPermissions', 'Target.disposeBrowserContext', 'Target.closeTarget', 'Target.activateTarget', 'Emulation.setDeviceMetricsOverride', 'Autofill.trigger', 'ServiceWorker.unregister', 'CacheStorage.deleteCache', 'Fetch.enable', 'Fetch.fulfillRequest', 'Debugger.enable', 'Some.futureMethod'];
+    const reads = ['Page.captureScreenshot', 'Page.getFrameTree', 'Page.getResourceTree', 'Page.enable', 'DOM.getDocument', 'DOM.querySelector', 'DOM.describeNode', 'DOM.getBoxModel', 'Runtime.enable', 'Network.enable', 'Network.getCookies', 'Accessibility.getFullAXTree', 'Accessibility.enable', 'Target.getTargets', 'Target.getTargetInfo', 'Target.setAutoAttach', 'Target.attachToTarget', 'Target.createTarget', 'Browser.getVersion', 'Runtime.getProperties', 'Runtime.runIfWaitingForDebugger', 'Page.createIsolatedWorld', 'Log.enable', 'Performance.getMetrics'];
+    check('automation: anything not a known read is refused on a tab the AI did not open (denylist gaps included)', acts.every((m) => V(m).error), acts.filter((m) => !V(m).error).join(','));
+    check('automation: known reads go through', reads.every((m) => V(m).ok === true), reads.filter((m) => !V(m).ok).join(','));
+    check('automation: init-time calls of Playwright/Puppeteer are answered without running, so attaching still works', ['Page.addScriptToEvaluateOnNewDocument', 'Emulation.setFocusEmulationEnabled', 'Runtime.addBinding'].every((m) => V(m).noop === true) && AU.noopResult('Page.addScriptToEvaluateOnNewDocument').identifier === '0');
+    check('automation: the refusal says what still works and that Runtime.evaluate is refused', /Reads .*work/.test(V('Runtime.evaluate').error) && /Runtime\.evaluate/.test(V('Runtime.evaluate').error));
+    check('automation: a tab the AI opened can be acted in; off by default', acts.every((m) => V(m, { ownTab: true }).ok) && acts.every((m) => V(m, { handsOff: false }).ok));
+
+    // the proxy's decisions, with fakes: tabs 1 (the user's) and 2 (opened by the AI); targets t1, t2
+    const ai = new Set([2]);
+    let handsOff = true;
+    const hooks = { handsOffVerdict: (method, tabId) => M.automationVerdict({ method, handsOff, ownTab: ai.has(tabId) }) };
+    const targets = new Map([['t1', 1], ['t2', 2]]);
+    const userTargets = async () => targets;
+    const sessionTab = new Map();
+    sessionTab.set('s1', await AU.sessionTabFor({ parentSession: null, sessionTab, targetInfo: { targetId: 't1' }, userTargets }));
+    sessionTab.set('s2', await AU.sessionTabFor({ parentSession: null, sessionTab, targetInfo: { targetId: 't2' }, userTargets }));
+    sessionTab.set('s1f', await AU.sessionTabFor({ parentSession: 's1', sessionTab, targetInfo: { targetId: 'frame' }, userTargets }));
+    sessionTab.set('s2w', await AU.sessionTabFor({ parentSession: 's2', sessionTab, targetInfo: { targetId: 'worker' }, userTargets }));
+    check('proxy: a session gets its tab; a frame or worker session inherits its parent\'s', sessionTab.get('s1') === 1 && sessionTab.get('s2') === 2 && sessionTab.get('s1f') === 1 && sessionTab.get('s2w') === 2);
+    const gate = (method, sessionId, params = {}) => AU.gateCommand({ method, params, sessionId, sessionTab, userTargets, hooks });
+    check('proxy: a click on the user\'s tab\'s session is refused, also from its iframe\'s session', (await gate('Input.dispatchMouseEvent', 's1')).error && (await gate('Input.dispatchMouseEvent', 's1f')).error);
+    check('proxy: the AI\'s own tab\'s session (and its worker) may act', (await gate('Input.dispatchMouseEvent', 's2')).ok && (await gate('Runtime.evaluate', 's2w')).ok);
+    check('proxy: reading the user\'s tab works', (await gate('Page.captureScreenshot', 's1')).ok && (await gate('DOM.getDocument', 's1f')).ok);
+    check('proxy: Playwright\'s init addScript is a no-op on the user\'s tab, and runs on the AI\'s', (await gate('Page.addScriptToEvaluateOnNewDocument', 's1')).noop && (await gate('Page.addScriptToEvaluateOnNewDocument', 's2')).ok);
+    check('proxy: browser-level commands naming no tab are refused (storage, downloads, contexts)', (await gate('Storage.clearCookies', null)).error && (await gate('Browser.setDownloadBehavior', null)).error && (await gate('Target.disposeBrowserContext', null, { browserContextId: 'x' })).error && (await gate('Browser.grantPermissions', null)).error);
+    check('proxy: ...but listing and creating tabs works', (await gate('Target.getTargets', null)).ok && (await gate('Target.createTarget', null, { url: 'about:blank' })).ok && (await gate('Browser.getVersion', null)).ok);
+    check('proxy: a session in the AI\'s own tab cannot close or front a user\'s tab by target id', (await gate('Target.closeTarget', 's2', { targetId: 't1' })).error && (await gate('Target.activateTarget', 's2', { targetId: 't1' })).error);
+    check('proxy: ...but may close its own tab, and attach to either (reading)', (await gate('Target.closeTarget', 's2', { targetId: 't2' })).ok && (await gate('Target.attachToTarget', 's2', { targetId: 't1' })).ok);
+    check('proxy: closeTarget / activateTarget with no session are judged by the target\'s tab', (await gate('Target.closeTarget', null, { targetId: 't1' })).error && (await gate('Target.closeTarget', null, { targetId: 't2' })).ok);
+    handsOff = false;
+    check('proxy: with hands-off off nothing is held back', (await gate('Input.dispatchMouseEvent', 's1')).ok && (await gate('Storage.clearCookies', null)).ok && (await gate('Target.closeTarget', 's2', { targetId: 't1' })).ok);
+    check('proxy: no hook (an older embedder): nothing is held back', (await AU.gateCommand({ method: 'Input.insertText', sessionId: 's1', sessionTab, userTargets, hooks: {} })).ok);
+
     const au = fs.readFileSync(path.join(__dirname, '../src/automation/automation.js'), 'utf8').replace(/\r\n/g, '\n');
-    check('automation: the proxy checks session commands, closeTarget / activateTarget, /json/close|activate and direct page sockets', (au.match(/handsOffRefusal\?\./g) || []).length >= 5 && /sessionTab\.set\(sessionId/.test(au) && /function pageClient\(req, socket, targetId, tabId\)/.test(au));
+    check('proxy: createTarget and /json/new open behind the user\'s tab unless the client asks otherwise', /params\.background === undefined \? true/.test(au) && /hooks\.openTab\(target, \{ background: true \}\)/.test(au));
+    check('proxy: sessioned commands, closeTarget / activateTarget, sessionless commands, /json routes and page sockets all go through the gate', (au.match(/gateCommand\(\{/g) || []).length >= 4 && /hooks\.handsOffVerdict\?\.\(m\[1\]/.test(au) && /function pageClient\(req, socket, targetId, tabId\)/.test(au) && /sessionTabFor\(\{ parentSession/.test(au));
     const agents = fs.readFileSync(path.join(__dirname, '../src/features/ai-agents.js'), 'utf8').replace(/\r\n/g, '\n');
-    check('automation: the hook reads the setting and the tab\'s mark; tabs a client opens are the AI\'s', /handsOffRefusal: \(method, tabId\) =>/.test(agents) && /aiHandsOff === true/.test(agents) && /openedBy: \{\}/.test(agents));
+    check('automation: the hook reads the setting and the tab\'s mark; tabs a client opens are the AI\'s', /handsOffVerdict: \(method, tabId\) =>/.test(agents) && /aiHandsOff === true/.test(agents) && /openedBy: \{\}/.test(agents));
     const doc = fs.readFileSync(path.join(__dirname, '../docs/settings.md'), 'utf8') + fs.readFileSync(path.join(__dirname, '../SECURITY.md'), 'utf8');
-    check('automation: documented in docs/settings.md and SECURITY.md', /aiHandsOff/.test(doc) && /Don't let the AI act on my pages/.test(doc));
+    check('automation: documented in docs/settings.md, SECURITY.md and the changelog', /aiHandsOff/.test(doc) && /Don't let the AI act on my pages/.test(doc) && /Automation server/.test(fs.readFileSync(path.join(__dirname, '../CHANGELOG.md'), 'utf8')));
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
     check('automation: the setting text says it covers the Automation server', /Automation server/.test(en['settings.ai.handsOffDesc']));
   }

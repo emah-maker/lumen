@@ -251,6 +251,25 @@ function multiplexer(up) {
   return { ready, call, open, sync: () => up.refresh?.() };
 }
 
+// ---- [ai manners] hands-off mode for the proxy (features/ai-manners.js automationVerdict, via hooks.handsOffVerdict(method, tabId)
+// -> { ok } | { noop } | { error }). Pure over its inputs, so test/ai-manners-units.js drives it with fakes.
+// The Lumen tab a new session belongs to: a tab's own session, or (a frame / worker) its parent's.
+async function sessionTabFor({ parentSession, sessionTab, targetInfo, userTargets }) {
+  if (parentSession) return sessionTab.get(parentSession);
+  return (await userTargets()).get(targetInfo.targetId);
+}
+// What an init-time command answered without being run gets as its result.
+const noopResult = (method) => (method === 'Page.addScriptToEvaluateOnNewDocument' ? { identifier: '0' } : {});
+// Should this client command run? `sessionId` null: it names no session (a browser-level command). A Target.* command carrying a
+// targetId is judged by THAT target's tab on any session (an AI-own-tab session may not close or front a user's tab); every other
+// command by its session's tab. A command for no known tab counts as "not the AI's".
+async function gateCommand({ method, params = {}, sessionId, sessionTab, userTargets, hooks }) {
+  if (!hooks.handsOffVerdict) return { ok: true };
+  let tabId = sessionId ? sessionTab.get(sessionId) : undefined;
+  if (/^Target\./.test(method) && params.targetId) tabId = (await userTargets()).get(params.targetId);
+  return hooks.handsOffVerdict(method, tabId);
+}
+
 // The in-process backend (cdp-inproc.js) over the user's tabs. hooks.onContents(cb) calls cb(webContents)
 // for every web contents now and later, so a tab's iframes are known from the start.
 function inprocBackend(hooks) {
@@ -363,7 +382,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       if (route === '/json/new') {
         if (req.method !== 'PUT') return send(405, { error: 'Use PUT' });
         const target = decodeURIComponent(url.search.slice(1)) || 'about:blank';
-        const tab = hooks.openTab(target);
+        const tab = hooks.openTab(target, { background: true }); // behind the user's tab, unless a client asks otherwise (Target.createTarget)
         const id = await targetIdOf(tab.webContents);
         const page = (await listPages()).find((t) => t.id === id);
         return send(200, page || { id });
@@ -372,7 +391,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       if (m) {
         const tabId = (await userTargets()).get(m[2]);
         if (!tabId) return send(404, { error: 'No such tab' });
-        if (hooks.handsOffRefusal?.(m[1] === 'close' ? 'Target.closeTarget' : 'Target.activateTarget', tabId)) return send(403, { error: 'Hands-off mode is on: the AI may not close or front a tab it did not open.' });
+        if (hooks.handsOffVerdict?.(m[1] === 'close' ? 'Target.closeTarget' : 'Target.activateTarget', tabId)?.error) return send(403, { error: 'Hands-off mode is on: the AI may not close or front a tab it did not open.' });
         if (m[1] === 'close') hooks.closeTab(tabId);
         else hooks.switchTab?.(tabId);
         return send(200, m[1] === 'close' ? 'Target is closing' : 'Target activated');
@@ -415,8 +434,9 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
         // [ai manners] hands-off mode: an act on a tab the AI did not open is answered with an error instead of reaching the page
         let msg = null;
         try { msg = JSON.parse(text); } catch {}
-        const refusal = msg && typeof msg.method === 'string' ? hooks.handsOffRefusal?.(msg.method, tabId) : null;
-        if (refusal) { client.send(JSON.stringify({ id: msg.id, error: { code: -32000, message: refusal } })); return; }
+        const verdict = msg && typeof msg.method === 'string' ? hooks.handsOffVerdict?.(msg.method, tabId) : null;
+        if (verdict?.error) { client.send(JSON.stringify({ id: msg.id, error: { code: -32000, message: verdict.error } })); return; }
+        if (verdict?.noop) { client.send(JSON.stringify({ id: msg.id, result: noopResult(msg.method) })); return; }
         upstream.send(text);
       },
       onClose: () => { upstream.close(); if (clients.delete(entry)) announce(); },
@@ -452,7 +472,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       heldSessions.delete(sessionId);
       if (ok) {
         allowedSessions.add(sessionId);
-        sessionTab.set(sessionId, parentOk ? sessionTab.get(msg.sessionId) : (await userTargets()).get(targetInfo.targetId));
+        sessionTab.set(sessionId, await sessionTabFor({ parentSession: parentOk ? msg.sessionId : null, sessionTab, targetInfo, userTargets }));
         knownTargets.add(targetInfo.targetId);
         client.send(JSON.stringify(msg));
         for (const m of held) client.send(m);
@@ -509,14 +529,15 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       const { id, method, params = {}, sessionId } = msg;
       if (typeof id !== 'number' || id >= OWN_ID_BASE) return reply(id, sessionId, null, 'Invalid message id.');
       if (sessionId && !allowedSessions.has(sessionId)) return reply(id, sessionId, null, 'No such session.');
-      if (sessionId) { // commands to a user tab go straight through (unless hands-off mode refuses an act on a tab the AI did not open)
-        const refusal = hooks.handsOffRefusal?.(method, sessionTab.get(sessionId));
-        if (refusal) return reply(id, sessionId, null, refusal);
+      if (sessionId) { // commands to a user tab go straight through (unless hands-off mode holds back an act on a tab the AI did not open)
+        const gate = await gateCommand({ method, params, sessionId, sessionTab, userTargets, hooks });
+        if (gate.error) return reply(id, sessionId, null, gate.error);
+        if (gate.noop) return reply(id, sessionId, noopResult(method));
         return toUpstream(msg);
       }
       switch (method) {
         case 'Target.createTarget': {
-          const tab = hooks.openTab(params.url || 'about:blank', { background: Boolean(params.background) });
+          const tab = hooks.openTab(params.url || 'about:blank', { background: params.background === undefined ? true : Boolean(params.background) }); // behind the user's tab unless the client says otherwise
           const targetId = await targetIdOf(tab.webContents);
           if (!targetId) return reply(id, null, null, 'Could not open a tab.');
           chromium.sync(); // the in-process backend learns of the tab now, not at its next look
@@ -532,14 +553,14 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
         case 'Target.closeTarget': {
           const tabId = (await userTargets()).get(params.targetId);
           if (!tabId) return reply(id, null, null, 'No target with given id found');
-          { const refusal = hooks.handsOffRefusal?.(method, tabId); if (refusal) return reply(id, null, null, refusal); }
+          { const gate = await gateCommand({ method, params, sessionId: null, sessionTab, userTargets, hooks }); if (gate.error) return reply(id, null, null, gate.error); }
           hooks.closeTab(tabId);
           return reply(id, null, { success: true });
         }
         case 'Target.activateTarget': {
           const tabId = (await userTargets()).get(params.targetId);
           if (!tabId) return reply(id, null, null, 'No target with given id found');
-          { const refusal = hooks.handsOffRefusal?.(method, tabId); if (refusal) return reply(id, null, null, refusal); }
+          { const gate = await gateCommand({ method, params, sessionId: null, sessionTab, userTargets, hooks }); if (gate.error) return reply(id, null, null, gate.error); }
           hooks.switchTab?.(tabId);
           return reply(id, null, {});
         }
@@ -567,6 +588,11 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
           return reply(id, null, null, `${method} is not available in Lumen.`);
         default:
       }
+      { // a command that names no tab (storage, browser settings, contexts...): in hands-off mode only reads go through
+        const gate = await gateCommand({ method, params, sessionId: null, sessionTab, userTargets, hooks });
+        if (gate.error) return reply(id, null, null, gate.error);
+        if (gate.noop) return reply(id, null, noopResult(method));
+      }
       toUpstream(msg);
     }
 
@@ -593,4 +619,4 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
   };
 }
 
-module.exports = { start };
+module.exports = { start, gateCommand, sessionTabFor, noopResult };

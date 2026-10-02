@@ -79,25 +79,33 @@ function handsOffCheck({ tool, handsOff = false, ownTab = false } = {}) {
   return handsOffRefusal(tool);
 }
 
-// The same rule for the opt-in Automation (CDP) server (automation/automation.js), which outside programs drive: the protocol commands
-// that click, type, navigate, run script, change the page or its storage, or close / front a tab. Reading ones (Page.captureScreenshot,
-// DOM.getDocument, Runtime.enable, Network.enable, ...) are not here.
-const AUTOMATION_ACTING = new RegExp('^(' + [
-  'Input\\.',
-  'Page\\.(navigate|navigateToHistoryEntry|reload|stopLoading|close|bringToFront|handleJavaScriptDialog|setDocumentContent|addScriptToEvaluateOnNewDocument|setInterceptFileChooserDialog|resetNavigationHistory)$',
-  'Runtime\\.(evaluate|callFunctionOn|compileScript|runScript)$',
-  'DOM\\.(setAttributeValue|setAttributesAsText|removeAttribute|setNodeValue|setNodeName|setOuterHTML|removeNode|moveTo|copyTo|setFileInputFiles|focus|scrollIntoViewIfNeeded|undo|redo|markUndoableState)$',
-  'Emulation\\.(setScriptExecutionDisabled|setGeolocationOverride|setTimezoneOverride|setLocaleOverride)$',
-  'Network\\.(setCookie|setCookies|deleteCookies|clearBrowserCookies)$',
-  'Storage\\.(clear|set|override|delete)', 'DOMStorage\\.(clear|set|remove)', 'IndexedDB\\.(clear|delete)',
-  'Fetch\\.(fulfillRequest|failRequest|continueRequest|continueWithAuth)$',
-  'CSS\\.set', 'Debugger\\.', 'Target\\.(closeTarget|activateTarget)$',
+// The same rule for the opt-in Automation (CDP) server (automation/automation.js), which outside programs drive. There it is an
+// ALLOWLIST: on a tab the AI did not open (and for commands that name no tab at all) only commands that read are let through, so
+// a method nobody listed (a future Chromium one, Page.crash, ServiceWorker.*, CacheStorage.*, Autofill.trigger, Browser.setDownloadBehavior,
+// Storage.clearCookies, ...) is refused by default.
+const AUTOMATION_READS = new RegExp('^(' + [
+  '(?!Fetch\\.|Debugger\\.)[A-Za-z]+\\.(enable|disable)$', // switching a domain's events on / off (not Fetch: paused requests would hang; not the debugger)
+  '[A-Za-z]+\\.get[A-Z]\\w*$', // getFrameTree, getDocument, getBoxModel, getProperties, getCookies, getTargets, getVersion, getFullAXTree, ...
+  'DOM\\.(querySelector|querySelectorAll|describeNode|resolveNode|requestChildNodes|requestNode|performSearch|getSearchResults|discardSearchResults|collectClassNamesFromSubtree)$',
+  'Page\\.(captureScreenshot|captureSnapshot|printToPDF|createIsolatedWorld|setLifecycleEventsEnabled)$',
+  'Runtime\\.(releaseObject|releaseObjectGroup|runIfWaitingForDebugger)$',
+  'Accessibility\\.(queryAXTree)$',
+  'CSS\\.(collectClassNames)$',
+  'Target\\.(setDiscoverTargets|setAutoAttach|autoAttachRelated|attachToTarget|detachFromTarget|createTarget)$',
+  'Browser\\.(getVersion)$',
 ].join('|') + ')');
-const isAutomationAction =(method) => AUTOMATION_ACTING.test(String(method || ''));
-// null when the command may go ahead, else the error text for the client.
-function automationRefusal({ method, handsOff = false, ownTab = false } = {}) {
-  if (!handsOff || ownTab || !isAutomationAction(method)) return null;
-  return `Hands-off mode is on in Lumen: ${method} acts on a tab the user did not let the AI open, so it was not run. Reading the page (screenshots, DOM, accessibility tree) still works; open your own tab (Target.createTarget) to act.`;
+// Init-time calls clients (Playwright connectOverCDP, Puppeteer) make when they attach: answered with an empty success and NOT run on a
+// tab the AI did not open, so attaching still works and the session simply stays read-only.
+const AUTOMATION_INIT_NOOPS = new Set(['Page.addScriptToEvaluateOnNewDocument', 'Emulation.setFocusEmulationEnabled', 'Runtime.addBinding', 'Network.setCacheDisabled', 'Emulation.setEmulatedMedia', 'Page.setBypassCSP', 'Emulation.setAutoDarkModeOverride']);
+const isAutomationRead = (method) => AUTOMATION_READS.test(String(method || ''));
+// { ok: true } (run it), { noop: true } (answer {} without running it) or { error } (refuse, with the text for the client).
+//   handsOff   the setting
+//   ownTab     the command is for a tab the AI opened
+// Not for hands-off mode: everything is { ok: true }.
+function automationVerdict({ method, handsOff = false, ownTab = false } = {}) {
+  if (!handsOff || ownTab || isAutomationRead(method)) return { ok: true };
+  if (AUTOMATION_INIT_NOOPS.has(method)) return { noop: true };
+  return { error: `Hands-off mode is on in Lumen: ${method} is not a read-only command, and this is not a tab the AI opened, so it was not run. Reads (screenshots, DOM, accessibility tree, Runtime.enable) work; evaluating script here (Runtime.evaluate) is refused. Open your own tab (Target.createTarget) to act.` };
 }
 
 // One line for the system prompt, so the model plans around it instead of finding out by being refused.
@@ -168,6 +176,6 @@ const userInput = {
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, handOver, isAiTab, takenOver, closeSelection, cleanCloseSetting, closeAfterRun,
-  isAutomationAction, automationRefusal, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
+  isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
   agentInput, agentInputAsync, isAgentInput, userInput,
 };

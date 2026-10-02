@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- AI tab manners: tabs the AI opens are marked, open in the background and can be closed again in one step (with Undo); a setting keeps the AI from acting on your own pages (it also covers the Automation server, which then only reads); the AI no longer takes your focus or caret and waits while you type; a button in the tab strip hides the tabs the AI opened.
+
 ## 0.5.0 (2026-10-01)
 
 - Private windows have the protections of a normal window: Safe Browsing, the ad blocker, HTTPS-only, error and certificate pages, and the permission defaults from Settings. Zoom, permissions and "Continue" choices made in a private window stay in that window and are never saved. Private windows also get downloads (kept in memory only), find in page, more shortcuts, a fuller right-click menu, a redesigned tab strip and a new-tab page that says what is and isn't kept.
