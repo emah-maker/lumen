@@ -25,6 +25,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       remove: (id) => ipcRenderer.invoke('chats:delete', id),
       exportChat: (id) => ipcRenderer.invoke('chats:export', id),
       onUsage: on('chats:usage'),
+      onContext: on('chats:context'),
       onChanged: on('chats:changed'),
     },
     onEvent: on('agent:event'),

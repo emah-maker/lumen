@@ -8,7 +8,7 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 
 const SUITES = [
-  'units', 'claudecode-full-units', 'tab-chats-units', 'model-route-units', 'fallback-units', 'antigravity-units', 'perf-budget', 'cli-json', 'smoke', 'tools', 'ui', 'images', 'models', 'adhd', 'extensions', 'adblock', 'pagecontext', 'page-text-units',
+  'units', 'claudecode-full-units', 'tab-chats-units', 'chat-context-units', 'model-route-units', 'fallback-units', 'antigravity-units', 'perf-budget', 'cli-json', 'smoke', 'tools', 'ui', 'images', 'models', 'adhd', 'extensions', 'adblock', 'pagecontext', 'page-text-units', 'frames', 'frames-units',
   'dialogs', 'recovery', 'tasklock', 'tabstrip', 'tabmenu', 'tabui', 'tabsearch', 'downloads', 'hardening', 'exfil', 'aicontrols', 'security-ui', 'safe-browsing', 'a11y', 'updates',
   'mcp', 'mcpclient', 'netfetch', 'settings', 'groups', 'cdp', 'browser', 'home', 'windows', 'private', 'tabdetach', 'pagetools', 'screenshot', 'translate', 'managers', 'chats', 'chatpage', 'tabchats', 'files', 'usage', 'look', 'tabsask', 'skills', 'bgtasks', 'routines-units', 'routines', 'widgets', 'tradingview-ui', 'cdp-inproc', 'whats-new', 'passwords', 'updates-units', 'signing-units', 'chrome-identity-units', 'google-auth-identity-units', 'basics', 'basics-units', 'warm-tabs',
 ];

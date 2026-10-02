@@ -3,13 +3,15 @@ let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only 
 const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
+const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
 const providers = require('./providers');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
 const modelRoute = require('../features/model-route'); // [model route]
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
-const { addUsage } = require('../features/chat-usage');
+const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
+const compactLib = require('../features/chat-compact'); // [context] /compact and /context
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
@@ -346,6 +348,21 @@ function recordUsage(messages, entry, emit) {
   emit({ type: 'usage', usage: messages.settings.usage });
 }
 
+// [context] How full the chat's context window is (features/chat-usage.js setContext), saved with the chat like its
+// usage; the sidebar's meter gets it at once. `ctx`: { tokens, window, model, estimated }.
+function recordContext(messages, ctx, emit) {
+  if (!messages.settings || !setContext(messages.settings, ctx)) return;
+  emit({ type: 'context', context: contextView(messages.settings.context) });
+}
+
+// The conversation so far as text, for an engine that starts mid-chat (Claude Code, Grok Build, Antigravity): the
+// chat's /compact summary first, when it has one, then the newest of the turns before this message.
+function earlierText(messages, priorItems) {
+  const summary = compactLib.summaryOf(messages);
+  const turns = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+  return [summary ? `Summary of the earlier conversation:\n${summary}` : '', turns].filter(Boolean).join('\n\n');
+}
+
 // A turn written by another model is passed on in a form any model accepts: text (without
 // citations), client tool calls, and web search results as plain text. Thinking blocks are
 // dropped: they are only readable by the model that wrote them, and some models reject them.
@@ -490,6 +507,7 @@ function capHistoryImages(historyImages, currentImages, emit) {
 
 // ---- [page context] Comet-style: each sidebar message carries the current tab's readable text.
 const PAGE_CONTEXT_CHARS = 7000;
+const FRAME_ELEMENTS = 150; // elements of embedded frames a full read_page lists (at most 60 from one frame)
 const PAGE_BLOCK = /<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g;
 // ---- [/page context]
 
@@ -928,14 +946,15 @@ async function searchWebInView(query) {
 // What the sidebar shows for a restored chat: user/assistant text and pasted images, no tool steps.
 // Also used for chats in the history list and for exporting one (main.js).
 const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
-function transcriptFor(chatMessages) {
-  const items = [];
+// settings.compactedItems: turns an API chat's /compact replaced with a summary (features/chat-compact.js), still shown.
+function transcriptFor(chatMessages, settings = chatMessages.settings) {
+  const items = Array.isArray(settings?.compactedItems) ? settings.compactedItems.map((it) => ({ ...it, images: [] })) : [];
   let steps = 0;
   let acted = false;
   for (const m of chatMessages) {
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'user') {
-      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '')).join('\n').trim();
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '').replace(compactLib.SUMMARY_BLOCK, '')).join('\n').trim();
       const images = blocks.filter((b) => b.type === 'image' && b.source?.type === 'base64').map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
       // A message from the user starts a new exchange: one that ended without a final reply (stopped
       // mid-tool) must not lend its step count or "acted" to the next.
@@ -1144,7 +1163,9 @@ class Agent {
       if (m[i].role !== 'user' || !blocks.some((b) => b.type === 'text' || b.type === 'image')) continue;
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n');
       if (want && !text.includes(want)) return 'absent'; // the last exchange is an earlier one: it stays
+      const summary = compactLib.summaryBlockOf(m[i]); // [context] a /compact summary rides on the first message: it stays
       m.splice(i);
+      if (summary) m.push({ role: 'user', content: [summary] }); // (the next message extends it, as after a stop)
       m.simpleTurn = null;
       this.pageContexts.delete(m); // the page text it carried is gone: the next message sends it again
       repairHistory(m);
@@ -1358,6 +1379,9 @@ class Agent {
   // ---- [/model fallback]
 
   async runTask(messages, tab, userText, images, controller, emit, extra = {}) {
+    // [context] "/compact …" and "/context" are commands for this chat, not a message to it.
+    const command = images.length || extra.tabs?.length ? null : compactLib.chatCommand(userText);
+    if (command) return this.commandTurn(messages, command, controller, emit);
     const aiOff = tab && this.browser.aiOff?.(tab.webContents.getURL()); // [ai controls] no title or address either
     const state = aiOff
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
@@ -1430,12 +1454,14 @@ class Agent {
     const fb = { tried: new Set(), calls0: taskScope.getStore()?.toolCalls || 0 };
     const callsNow = () => taskScope.getStore()?.toolCalls || 0;
     let plan = ccPlan;
+    let autoChecked = false;
     for (;;) {
       const model = String(messages.settings.model);
       const toClaudeCode = model.startsWith('claudecode:') && Boolean(this.engines?.claudecode);
       const toGrokBuild = model.startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
       const toAntigravity = model.startsWith('antigravity:') && Boolean(this.engines?.antigravity);
       if (!toClaudeCode && !toGrokBuild && !toAntigravity) {
+        if (!autoChecked) { autoChecked = true; await this.autoCompact(messages, controller.signal, emit); } // [context]
         try { await this.loop(messages, controller.signal, emit, fb); return; } catch (err) { if (err === REDISPATCH) continue; throw err; }
       }
       // (A switch to another Grok model starts a new session: see above.)
@@ -1491,7 +1517,7 @@ class Agent {
     let page;
     // (Read at once even while the page still loads: Electron's own isolated-world call waited for the load,
     // up to these 4 s, and then sent no page at all. See page-text.js.)
-    try { page = await readPageText(wc, { timeoutMs: 4000, fallback: (script, ms) => runScript(wc, script, ms) }); } catch { return ''; }
+    try { page = await readPageText(wc, { chars: PAGE_CONTEXT_CHARS, timeoutMs: 4000, fallback: (script, ms) => runScript(wc, script, ms), allow: this.frameAllow() }); } catch { return ''; }
     const body = String(page?.text || '').slice(0, PAGE_CONTEXT_CHARS);
     if (!body.trim()) return '';
     const last = this.pageContexts.get(messages);
@@ -1513,6 +1539,148 @@ class Agent {
     if (!this.onUsage || !(data?.usage || data?.limit)) return null;
     try { return this.onUsage(engine, data) || null; } catch (err) { console.error('[lumen] usage log failed:', err.message); return null; }
   }
+
+  // ---- [context] /compact and /context (features/chat-compact.js). They are answered here for every AI and never
+  // become messages of the chat: Claude Code runs them in the chat's own session (with or without full access, since
+  // neither grants a tool); an API chat is summarized by its own model; Grok Build and Antigravity compact their
+  // sessions themselves.
+  async commandTurn(messages, command, controller, emit) {
+    const model = String(messages.settings.model);
+    const signal = controller.signal;
+    if (model.startsWith('claudecode:') && this.engines?.claudecode) return this.claudeCodeCommand(messages, command, signal, emit);
+    const engine = model.startsWith('grokbuild:') ? 'Grok Build' : model.startsWith('antigravity:') ? 'Antigravity' : null;
+    if (command.name === 'context') return this.contextReport(messages, emit, engine);
+    if (engine) { emit({ type: 'notice', text: `${engine} keeps this conversation in its own session and compacts it by itself when it fills up, so Lumen can't compact it from here. New chat starts fresh.` }); return; }
+    await this.compactApi(messages, command.args, signal, emit);
+  }
+
+  async claudeCodeCommand(messages, command, signal, emit) {
+    const settings = messages.settings;
+    if (command.name === 'compact' && !settings.ccSession) { emit({ type: 'notice', text: 'Nothing to compact yet: this chat has no Claude Code conversation.' }); return; }
+    if (this.engineRunScope) throw new Error('Claude Code is still working on a task in another chat. Wait for it to finish, then try again.');
+    const had = Boolean(settings.ccSession);
+    const { routed, spawn } = this.claudeCodePlan(messages, '', 0, 0);
+    let shown = false;
+    const gate = (event) => { if (event.type === 'text' && event.text) shown = true; emit(event); };
+    emit({ type: 'turn_start' });
+    if (command.name === 'compact') emit({ type: 'status', text: 'Compacting the conversation…' });
+    this.engineRunScope = taskScope.getStore();
+    this.prewarmed = null;
+    let out;
+    try {
+      out = await this.engines.claudecode.run({
+        ...spawn, prompt: `/${command.name}${command.args ? ` ${command.args}` : ''}`, images: [], quietExpired: true, signal, emit: gate, prestart: false,
+        lateUsage: ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); },
+      });
+    } finally {
+      this.engineRunScope = null;
+    }
+    if (command.name === 'compact') emit({ type: 'status', text: '' });
+    if (out.expired) {
+      delete settings.ccSession;
+      emit({ type: 'notice', text: 'This chat’s Claude Code session is gone (cleared, or from another machine). Your next message starts a new one, handed the conversation so far.' });
+      return;
+    }
+    recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
+    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    // (A /context on a chat with no session yet ran in a throwaway one: the chat's first message still hands the
+    // conversation over, as a switch to Claude Code mid-chat does.)
+    if (out.sessionId === null) delete settings.ccSession;
+    else if (!out.failed && !out.stopped && had) settings.ccSession = out.sessionId;
+    if (out.stopped) { emit({ type: 'notice', text: 'Stopped.', stopped: true }); return; }
+    if (out.failed) return; // (the engine said why)
+    if (command.name === 'compact') {
+      this.noteCliContext(messages, out, routed.model, emit, { command: true });
+      const c = out.compacted;
+      emit({ type: 'notice', text: c ? `Compacted: ${shortCount(c.pre)} → ${shortCount(c.post)} tokens.` : String(out.text || '').trim().slice(0, 300) || 'Claude Code did not compact this conversation.' });
+      if (c) snapshot.reads.clear(); // the pages it read are no longer in view as they were
+      return;
+    }
+    const report = parseContextReport(out.text);
+    if (report) recordContext(messages, { ...report, model: routed.model }, emit);
+    if (!shown && out.text) { emit({ type: 'text_block' }); emit({ type: 'text', text: out.text }); }
+  }
+
+  // What a Claude Code turn says about the chat's context: its last model call's input; after a compaction with no
+  // call since (a /compact on its own), the CLI's after-figure, marked as an estimate until the next message. A
+  // compaction the CLI ran by itself during a reply (near the limit) is said in the chat.
+  noteCliContext(messages, out, model, emit, { command = false } = {}) {
+    const c = out.compacted;
+    if (out.context) recordContext(messages, { ...out.context, model }, emit);
+    else if (c && c.pre > 0) recordContext(messages, { tokens: c.post, window: out.window || messages.settings?.context?.window, model, estimated: true }, emit);
+    if (c && !command) emit({ type: 'notice', text: `Claude Code compacted this conversation to make room (${shortCount(c.pre)} → ${shortCount(c.post)} tokens).` });
+  }
+
+  // An API chat's /compact: the same model summarizes everything before the last exchange, and the summary takes
+  // those turns' place (they stay on screen). `auto`: the history is near what one request may carry (runTask).
+  // Nothing changes when the request fails or the summary is empty. True when the chat was compacted.
+  async compactApi(messages, instructions, signal, emit, { auto = false } = {}) {
+    const plan = compactLib.compactPlan(messages, 1);
+    if (!plan) { if (!auto) emit({ type: 'notice', text: 'Nothing to compact yet: this chat has only one exchange.' }); return false; }
+    const model = String(messages.settings.model);
+    const older = messages.slice(0, plan.cut);
+    const items = transcriptFor(older, null);
+    const temp = [{ role: 'user', content: [{ type: 'text', text: compactLib.summaryRequest({ items, prior: compactLib.summaryOf(messages), instructions }) }] }];
+    temp.settings = { ...messages.settings };
+    const beforeChars = historyChars(messages);
+    const before = messages.settings.context?.tokens || compactLib.estimateTokens(beforeChars);
+    emit({ type: 'status', text: auto ? 'This chat is long: summarizing its earlier part…' : 'Compacting the conversation…' });
+    const quiet = () => {};
+    let message;
+    try {
+      message = providers.splitModel(model).provider === 'anthropic'
+        ? await this.claudeTurn(temp, signal, quiet, this.contextBudget(model), true)
+        : await this.otherTurn(temp, signal, quiet, this.contextBudget(model), true).catch((err) => { err.__provider = providers.splitModel(model).provider; throw err; });
+    } catch (err) {
+      if (signal.aborted) throw err;
+      emit({ type: 'notice', text: `Couldn’t compact this chat (${describeError(err, this.browser.anthropicAuth?.()).text}). Nothing was changed.` });
+      return false;
+    } finally {
+      emit({ type: 'status', text: '' });
+    }
+    recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
+    const summary = (message.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+    if (!summary || summary === '(no reply)' || !compactLib.applySummary(messages, plan.cut, summary, items)) {
+      emit({ type: 'notice', text: 'Couldn’t compact this chat: the model sent no summary. Nothing was changed.' });
+      return false;
+    }
+    const after = Math.max(0, before - compactLib.estimateTokens(beforeChars - historyChars(messages)));
+    recordContext(messages, { tokens: after, window: messages.settings.context?.window || fallback.capsOf(model, this.fallbackOptionsList()).context, model, estimated: true }, emit);
+    messages.simpleTurn = null;
+    this.pageContexts.delete(messages); // the page text the replaced turns carried is gone: the next message sends it again
+    snapshot.reads.clear();
+    emit({ type: 'notice', text: auto
+      ? `This chat was getting long, so its earlier part was summarized for the AI (about ${shortCount(before)} → ${shortCount(after)} tokens). It stays on screen.`
+      : `Compacted: about ${shortCount(before)} → ${shortCount(after)} tokens. The earlier messages stay on screen; the AI now sees a summary of them.` });
+    return true;
+  }
+
+  // Auto-compact (Settings > AI, on by default): an API chat whose history nears what one request may carry is
+  // summarized before the request, instead of having its oldest turns left out (fitContext).
+  async autoCompact(messages, signal, emit) {
+    if (this.browser.autoCompact?.() === false) return false;
+    const model = String(messages.settings.model);
+    if (!compactLib.shouldAutoCompact(historyChars(messages), this.contextBudget(model))) return false;
+    return this.compactApi(messages, '', signal, emit, { auto: true });
+  }
+
+  // /context for a chat Lumen measures itself (API models, Grok Build, Antigravity): the last request's figure.
+  contextReport(messages, emit, engine = null) {
+    const settings = messages.settings;
+    const view = contextView(settings.context);
+    const exchanges = compactLib.turnStarts(messages).length;
+    const lines = ['## Context'];
+    if (view) lines.push(`**Tokens:** ${view.estimated ? 'about ' : ''}${shortCount(view.tokens)} / ${shortCount(view.window)} (${Math.round(view.percent)}%)`);
+    else lines.push(exchanges ? 'Not measured yet: the next reply reports it.' : 'Nothing in this chat’s context yet.');
+    lines.push('', `- Model: ${settings.model}`, `- Exchanges the AI sees: ${exchanges}`);
+    if (settings.compactions) lines.push(`- Compacted ${settings.compactions === 1 ? 'once' : `${settings.compactions} times`}: earlier turns are a summary`);
+    if (!engine) lines.push(`- Messages: about ${shortCount(compactLib.estimateTokens(historyChars(messages)))} tokens (the rest is Lumen's instructions and the browser tools)`, '', 'Type /compact to summarize the earlier part of this chat and free up room.');
+    else lines.push('', `${engine} compacts its own session when it fills up.`);
+    emit({ type: 'turn_start' });
+    emit({ type: 'text_block' });
+    emit({ type: 'text', text: lines.join('\n') });
+  }
+  // ---- [/context]
 
   // ---- [claude code engine] One message through the user's Claude Code CLI. The session id lives
   // in the chat's settings, so follow-ups resume it and New chat (reset) starts a fresh one.
@@ -1581,12 +1749,13 @@ class Agent {
     const handoff = () => {
       if (messages.length <= 1) return { text: prompt, images };
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      const earlier = earlierText(messages, priorItems);
       const priorImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
       return { text: earlier ? `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}` : prompt, images: [...capHistoryImages(priorImages, images, emit), ...images] };
     };
-    // [full access] "/goal …", "/context", a skill: the CLI runs a slash command only when it starts the
-    // message, so it goes in as typed, without the browser state and page text put before it.
+    // [full access] "/goal …", a skill: the CLI runs a slash command only when it starts the message, so it goes
+    // in as typed, without the browser state and page text put before it. (/compact and /context work without full
+    // access: commandTurn sends them.)
     const slash = spawn.fullAccess ? require('./claude-code').slashCommand(hint.userText) : null;
     const first = slash ? { text: slash, images } : spawn.resume ? { text: prompt, images } : handoff();
     this.prewarmed = null; // (its session id is this message's now)
@@ -1614,6 +1783,7 @@ class Agent {
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    this.noteCliContext(messages, out, routed.model, emit); // [context]
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
@@ -1641,7 +1811,7 @@ class Agent {
     if (!resume && messages.length > 1) {
       // Switched to Grok Build mid-chat: hand it the conversation so far, same as claudeCodeTurn.
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      const earlier = earlierText(messages, priorItems);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
     }
@@ -1661,6 +1831,7 @@ class Agent {
     // The model Grok says it used, for this pick: the next reply's notice and system prompt use it.
     if (out.model) { settings.gbShown = out.model; settings.gbShownFor = settings.model; }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
+    if (Number.isFinite(out.usage?.contextTokens) && out.usage.contextTokens > 0) recordContext(messages, { tokens: out.usage.contextTokens, window: out.usage.contextWindow, model: settings.model }, emit); // [context]
     // A plan-limit failure carries the reset time when Grok's message named one (out.planLimit); a
     // finished turn clears it. The log may answer with a budget notice (features/usage.js).
     const logged = this.reportUsage('grokbuild', { usage: out.usage, model: engineModel(settings.model), session: out.sessionId || settings.gbSession || null, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
@@ -1688,7 +1859,7 @@ class Agent {
     if (!resume && messages.length > 1) {
       // Switched to Antigravity mid-chat: hand it the conversation so far, same as grokBuildTurn.
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      const earlier = earlierText(messages, priorItems);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
     }
@@ -1826,6 +1997,7 @@ class Agent {
       }
 
       recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
+      if (message.usage) recordContext(messages, { tokens: contextTokensOf(message.usage), window: fallback.capsOf(model, this.fallbackOptionsList()).context, model }, emit); // [context]
 
       for (const block of message.content) {
         if (block.type === 'server_tool_use' && block.name === 'web_search') {
@@ -1961,7 +2133,7 @@ class Agent {
       if (name === 'click_at') return 'Clicking a spot on the page';
       if (name !== 'click' && name !== 'type_text') return null;
       const wc = this.taskTab()?.webContents;
-      const info = wc ? await runScript(wc, scripts.labelOf(input.element_id), 1000) : null;
+      const info = wc ? await this.elementRun(wc, input.element_id, scripts.labelOf, { timeoutMs: 1000 }) : null;
       const target = info?.label ? quote(info.label) : `element ${input.element_id}`;
       const kind = { a: ' link', button: ' button', select: ' menu' }[info?.tag] || '';
       if (name === 'click') return `Clicking ${target}${kind}`;
@@ -1973,10 +2145,10 @@ class Agent {
 
   // Maps visible text or a label to an element id, reading the page first if needed.
   async resolveTarget(wc, text, mode, refresh = true) {
-    let found = await runScript(wc, scripts.findTarget(text, mode));
+    let found = await this.findTargetAll(wc, text, mode);
     if (found.error && refresh) {
-      await runScript(wc, scripts.readPage(0, 0));
-      found = await runScript(wc, scripts.findTarget(text, mode));
+      await this.refreshRegistry(wc);
+      found = await this.findTargetAll(wc, text, mode);
     }
     if (found.error && mode === 'field') {
       // Narrow layouts often hide a field behind a toggle button with the same name ("Search").
@@ -1984,8 +2156,8 @@ class Agent {
       if (toggle) {
         await runScript(wc, scripts.domClick(toggle));
         await settleAfterAction(wc, 5000); // a toggle may expand in place or open a search page
-        await runScript(wc, scripts.readPage(0, 0));
-        found = await runScript(wc, scripts.findTarget(text, mode));
+        await this.refreshRegistry(wc);
+        found = await this.findTargetAll(wc, text, mode);
       }
     }
     if (found.error) throw new Error(`Nothing on the page matches ${quote(text)}. Call read_page to see what is there.`);
@@ -2344,8 +2516,9 @@ class Agent {
   // ---- read_tabs / tabs a message attaches (features/tabs-ask.js): the text of open tabs of this window,
   // read where they are (no switching), a sleeping tab only by its address. browser.askTabs() lists
   // this window's tabs with their state; anything the rules refuse is named, not read.
-  async readTabEntries(ids) {
+  async readTabEntries(ids, { perTab } = {}) {
     const open = this.browser.askTabs?.() || [];
+    const chars = tabsAsk.perTabBudget(tabsAsk.cleanIds(ids).length, perTab ? { perTab } : {}); // (the frames' text fits in it too)
     const ctx = { windowId: undefined, isPrivate: false };
     const entries = await Promise.all(tabsAsk.cleanIds(ids).map(async (id) => {
       const tab = open.find((t) => t.id === id);
@@ -2354,7 +2527,7 @@ class Agent {
       if (why) return { id, title: why === 'AI is off on this site' ? '' : tab.title, url: why === 'AI is off on this site' ? '' : tab.url, skipped: why === 'not a web page' ? 'not a web or file page' : why };
       if (tab.sleeping || !tab.webContents || tab.webContents.isDestroyed()) return { id, title: tab.title, url: tab.url, asleep: true };
       try {
-        const page = await readPageText(tab.webContents, { timeoutMs: 4000, fallback: (script, ms) => runScript(tab.webContents, script, ms) }); // (not held until the tab stops loading: page-text.js)
+        const page = await readPageText(tab.webContents, { chars, timeoutMs: 4000, fallback: (script, ms) => runScript(tab.webContents, script, ms), allow: this.frameAllow() }); // (not held until the tab stops loading: page-text.js)
         return { id, title: tab.webContents.getTitle() || tab.title, url: tab.webContents.getURL() || tab.url, text: String(page?.text || ''), totalChars: page?.totalTextChars };
       } catch {
         return { id, title: tab.title, url: tab.url, skipped: 'the page did not answer' };
@@ -2367,7 +2540,7 @@ class Agent {
     const ids = tabsAsk.cleanIds(input.ids);
     if (!ids.length) throw new Error('Give at least one tab id from list_tabs.');
     const perTab = Math.min(Math.max(Number(input.max_chars_each) || tabsAsk.PER_TAB_CHARS, 500), 12000);
-    const rendered = tabsAsk.renderTabs(await this.readTabEntries(ids), { perTab });
+    const rendered = tabsAsk.renderTabs(await this.readTabEntries(ids, { perTab }), { perTab });
     return `<untrusted_page_content>
 ${rendered.text}
 </untrusted_page_content>`;
@@ -2476,6 +2649,87 @@ ${out.text}${note}
     const tab = this.taskTab();
     if (!tab) throw new Error(this.browser.noTabReason?.() || 'No tab is open.');
     return tab.webContents;
+  }
+
+  // ---- embedded frames (frames.js): an element id above frames.ID_BASE names one of the tab's frames,
+  // and its scripts run in Claude's isolated world of that frame. A frame on a site where the user
+  // turned AI off is never listed, so it is never read and none of its ids resolve.
+  frameAllow() { return (url) => !this.browser.aiOff?.(url); }
+
+  // An element's script, make(id in its own frame), run where the element is. `missing`: the answer
+  // when its frame has gone.
+  async elementRun(wc, id, make, { timeoutMs = 10000, missing = null } = {}) {
+    const at = frames.decodeId(id);
+    if (!at) return runScript(wc, make(id), timeoutMs);
+    const frame = await frames.find(wc, at.n, { allow: this.frameAllow() });
+    return frame ? frames.run(wc, frame, make(at.k), timeoutMs) : missing;
+  }
+
+  // locate (page-scripts.js) for any element id, in the tab's coordinates (CSS px), with the frame it
+  // is in (null: the main frame). A point outside its frame's box counts as covered.
+  async locateElement(wc, id) {
+    const at = frames.decodeId(id);
+    if (!at) {
+      const target = await runScript(wc, scripts.locate(id));
+      return target && { ...target, frame: null };
+    }
+    const opts = { allow: this.frameAllow() };
+    let frame = await frames.find(wc, at.n, opts);
+    const target = frame && await frames.run(wc, frame, scripts.locate(at.k));
+    if (!target) return null;
+    frame = (await frames.find(wc, at.n, opts)) || frame; // placed again: scrolling the element into view can move its frame
+    const inside = target.x >= 0 && target.y >= 0 && target.x <= frame.w && target.y <= frame.h;
+    return { ...target, x: Math.round(frame.x + target.x), y: Math.round(frame.y + target.y), covered: target.covered || !inside, frame };
+  }
+
+  // The element registries again: the main frame's (read_page's walk) and each embedded frame's.
+  async refreshRegistry(wc) {
+    const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
+    await runScript(wc, scripts.readPage(0, 0, { frames: own }));
+    if (own) return;
+    const { frames: list } = await frames.list(wc, { allow: this.frameAllow() });
+    await frames.each(wc, list, snapshot.registryScript(scripts, { frames: false }));
+  }
+
+  // read_page's first page gets the embedded frames: their elements join `elements` (ids naming the
+  // frame, inFrame), their text follows the page's under each frame's label, and `frames` lists them.
+  async readFrames(wc, page) {
+    const { frames: list, aiOff } = await frames.list(wc, { allow: this.frameAllow() });
+    const read = await frames.each(wc, list, scripts.readPage(0, 0, { frames: false }), 5000);
+    delete page.crossOriginFrames; // (every frame is read in its own frame now)
+    if (aiOff) page.framesNotRead = `${aiOff} embedded frame${aiOff === 1 ? '' : 's'} on a site where the user turned AI off`;
+    if (!read.length) return;
+    let room = frames.FRAMES_CHARS;
+    let slots = FRAME_ELEMENTS;
+    page.frames = [];
+    for (const { frame, value } of read) {
+      if (!value || !Array.isArray(value.elements)) continue;
+      const label = frames.labelOf(frame, value.title);
+      const elements = value.elements.slice(0, Math.min(60, slots)).map((e) => ({ ...e, id: frames.encodeId(frame.n, e.id), inFrame: true, frame: frame.n }));
+      slots -= elements.length;
+      page.elements.push(...elements);
+      const text = String(value.text || '').trim().slice(0, Math.min(frames.FRAME_CHARS, room));
+      room -= text.length;
+      page.frames.push({ frame: frame.n, label, url: frame.url.slice(0, 150), box: [frame.x, frame.y, frame.w, frame.h], totalElements: value.totalElements, elementsShown: elements.length, totalTextChars: value.totalTextChars });
+      if (text) page.text += `\n\n${label}\n${frames.defang(text)}`;
+    }
+  }
+
+  async framesInclude(wc, probe) {
+    const { frames: list } = await frames.list(wc, { allow: this.frameAllow(), timeoutMs: 1500 });
+    return (await frames.each(wc, list, probe, 1500)).some((h) => h.value === true);
+  }
+
+  // findTarget in the main frame, then in the embedded frames: { id } (a frame's element: its id
+  // encoded) or { error }.
+  async findTargetAll(wc, text, mode) {
+    const found = await runScript(wc, scripts.findTarget(text, mode));
+    if (!found.error || !frames.available(wc)) return found;
+    const { frames: list } = await frames.list(wc, { allow: this.frameAllow() });
+    const hits = (await frames.each(wc, list, scripts.findTarget(text, mode))).filter((h) => h.value && !h.value.error);
+    if (!hits.length) return found;
+    const best = hits.reduce((a, b) => (b.value.score > a.value.score ? b : a));
+    return { id: frames.encodeId(best.frame.n, best.value.id), ambiguous: best.value.ambiguous };
   }
 
   // Runs a tool; in a tainted run, redirects in the task's tab are checked while it runs (and for
@@ -2641,7 +2895,9 @@ ${out.text}${note}
         const wc = this.requireTab();
         const textOffset = Math.max(0, input.text_offset || 0);
         const elementOffset = Math.max(0, input.element_offset || 0);
-        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset));
+        const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
+        const page = await runScript(wc, scripts.readPage(textOffset, elementOffset, { frames: own }));
+        if (!own && !textOffset && !elementOffset) await this.readFrames(wc, page); // with the first page of a read
         const { text, ...rest } = page;
         const same = !this.readDedupe() ? null : snapshot.reads.check(wc.id, wc.getURL(), `f|${textOffset}|${elementOffset}`, `${JSON.stringify(rest)}
 ${text}`);
@@ -2680,14 +2936,16 @@ ${same}
       case 'click': {
         const wc = this.requireTab();
         const id = input.element_id ?? await this.resolveTarget(wc, input.text, 'click');
-        const target = await runScript(wc, scripts.locate(id));
+        const target = await this.locateElement(wc, id);
         if (!target) throw new Error(`No element with id ${id}: the page changed since ids were read. Call read_page mode:"compact" (or find) for fresh ids, or click by visible text.`);
         const urlBefore = wc.getURL();
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
         // The task's tab is behind another one (the user switched away): mouse events need a tab on
-        // screen, so it gets a DOM click instead.
-        if (target.covered || !this.taskTabInFront()) await runScript(wc, scripts.domClick(id));
+        // screen, so it gets a DOM click instead. In an embedded frame the mouse goes through the
+        // DevTools session (frames.js), and a DOM click is the fallback.
+        if (target.covered || !this.taskTabInFront()) await this.elementRun(wc, id, scripts.domClick);
+        else if (target.frame) await frames.mouseClick(wc, target.x, target.y).catch(() => this.elementRun(wc, id, scripts.domClick));
         else await this.mouseClick(wc, x, y);
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
@@ -2695,14 +2953,14 @@ ${same}
       }
       case 'fill_form': {
         const wc = this.requireTab();
-        await runScript(wc, scripts.readPage(0, 0)); // fresh element registry for label matching
+        await this.refreshRegistry(wc); // fresh element registries for label matching (embedded frames' too)
         const report = [];
         let lastId = null;
         for (const { label, value } of input.fields) {
           try {
             const id = await this.resolveTarget(wc, label, 'field', false);
             lastId = id;
-            const state = await runScript(wc, scripts.toggleState(id));
+            const state = await this.elementRun(wc, id, scripts.toggleState);
             if (state && ['checkbox', 'switch'].includes(state.type)) {
               const want = /^(true|yes|on|checked|1)$/i.test(value.trim());
               if (want !== state.checked) await this.execute('click', { element_id: id });
@@ -2729,7 +2987,7 @@ ${same}
         }
         if (input.submit && lastId !== null) {
           const urlBefore = wc.getURL();
-          const submitted = await runScript(wc, scripts.submitForm(lastId));
+          const submitted = await this.elementRun(wc, lastId, scripts.submitForm, { missing: false });
           if (!submitted) this.pressKey(wc, 'Enter');
           await settleAfterAction(wc);
           report.push(`Submitted.${wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : ''}`);
@@ -2787,6 +3045,7 @@ ${same}
         while (Date.now() < deadline && !this.signalAborted()) {
           if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
           if (await runScript(wc, probe, 3000).catch(() => false)) return `Found ${quote(input.text)} on the page.`;
+          if (frames.available(wc) && await this.framesInclude(wc, probe)) return `Found ${quote(input.text)} in an embedded frame of the page.`;
           await sleep(300);
         }
         if (this.signalAborted()) throw new Error('Stopped by the user.');
@@ -2794,18 +3053,22 @@ ${same}
       }
       case 'type_text': {
         const wc = this.requireTab();
-        const status = await runScript(wc, scripts.focusForTyping(input.element_id));
+        const status = await this.elementRun(wc, input.element_id, scripts.focusForTyping, { missing: 'missing' });
         if (status === 'missing') throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
         if (status === 'toggle') throw new Error(`Element ${input.element_id} is a checkbox or radio button. Use click instead.`);
         if (status === 'unfocusable') throw new Error(`Element ${input.element_id} cannot take text input.`);
         if (status === 'setvalue') {
-          const set = await runScript(wc, scripts.setValue(input.element_id, input.text));
+          const set = await this.elementRun(wc, input.element_id, (id) => scripts.setValue(id, input.text));
           if (set === null) throw new Error(`Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
           return `Set element ${input.element_id} to "${set}".`;
         }
-        await wc.insertText(input.text);
+        // (Into an embedded frame through the DevTools session: Electron's insertText into a frame of
+        // another process crashed the page.)
+        if (frames.decodeId(input.element_id)) await frames.insertText(wc, input.text);
+        else await wc.insertText(input.text);
         if (input.press_enter) {
-          this.pressKey(wc, 'Enter');
+          if (frames.decodeId(input.element_id)) await frames.pressKey(wc, 'Enter');
+          else this.pressKey(wc, 'Enter');
           await settleAfterAction(wc);
           return `Typed into element ${input.element_id} and pressed Enter. Page is ${wc.getURL()}.${captchaNote(wc.getURL())}`;
         }
@@ -2815,7 +3078,12 @@ ${same}
         const wc = this.requireTab();
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
-        this.pressKey(wc, input.key, modifiers);
+        // The focus is inside an embedded frame: the key goes there through the DevTools session (frames.js).
+        // (Not the macOS edit commands pressKey runs itself: those act on the focused frame already.)
+        const macCommand = process.platform === 'darwin' && [...input.key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'));
+        const inFrame = !macCommand && frames.available(wc) && await runScript(wc, frames.FOCUS_IN_FRAME, 1000).catch(() => false);
+        if (inFrame) await frames.pressKey(wc, input.key, modifiers);
+        else this.pressKey(wc, input.key, modifiers);
         await settleAfterAction(wc);
         return `Pressed ${[...modifiers, input.key].join('+')}.`;
       }
@@ -2832,11 +3100,12 @@ ${same}
       }
       case 'hover': {
         const wc = this.requireTab();
-        const target = await runScript(wc, scripts.locate(input.element_id));
+        const target = await this.locateElement(wc, input.element_id);
         if (!target) throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
         const zoom = wc.getZoomFactor();
         // A tab behind another one gets no real mouse: its hover events are sent to the element instead.
-        if (!this.taskTabInFront()) await runScript(wc, scripts.domHover(input.element_id));
+        if (!this.taskTabInFront()) await this.elementRun(wc, input.element_id, scripts.domHover);
+        else if (target.frame) await frames.mouseMove(wc, target.x, target.y).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
         else wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
         await sleep(500);
         return `Hovering over element ${input.element_id}. Call read_page to see any menu that opened.`;

@@ -22,7 +22,8 @@ const CONTEXT_CHARS = 12000; // page, selection or clipboard text put into one p
 const TAB_CHARS = 6000;
 const MAX_TABS = 8;
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
-const RESERVED = new Set(['background', 'watch', 'skills', 'create-skill', 'help']); // commands other features register
+// Commands other features register (renderer/chat-commands.js has the chat's own: /clear, /compact, /context, …).
+const RESERVED = new Set(['background', 'watch', 'skills', 'create-skill', 'help', 'clear', 'compact', 'context', 'cost', 'usage', 'model']);
 const INPUTS = ['page', 'selection', 'tabs', 'clipboard'];
 const MODES = ['chat', 'no-tools', 'agent'];
 const VARIABLES = ['page', 'selection', 'clipboard', 'tabs', 'input', 'date', 'language', 'content'];
@@ -303,7 +304,9 @@ function createStore({ file, now = Date.now }) {
     const skills = [];
     for (const raw of Array.isArray(data.skills) ? data.skills : []) {
       if (skills.length >= MAX_SKILLS) break;
-      const r = normalizeSkill(raw, { now });
+      // A skill saved before its name became a chat command (/compact, /context, …) is kept, renamed "<name>-skill".
+      const renamed = raw && RESERVED.has(raw.name) ? { ...raw, name: uniqueName(skills, `${raw.name}-skill`) } : raw;
+      const r = normalizeSkill(renamed, { now });
       if (r.ok && !nameTaken(skills, r.skill.name) && !skills.some((s) => s.id === r.skill.id)) skills.push(r.skill);
     }
     const known = Array.isArray(data.known) ? data.known.filter((n) => typeof n === 'string') : [];
