@@ -357,6 +357,33 @@ function domClickAt(x, y) {
   })()`;
 }
 
+// Did a click reach the page? clickProbeArm() listens (capture phase, one record per page) for any mouse event a click sends;
+// clickProbeRead() reports whether one came (done: and removes the listener). A click that is dropped (a view that is not
+// painting) leaves the record empty. The listener only records; it never touches the page's own handling.
+function clickProbeArm() {
+  return `(() => {
+    const key = Symbol.for('lumen.clickProbe');
+    if (window[key]) window[key].off();
+    const rec = { hit: false };
+    const on = () => { rec.hit = true; };
+    const types = ['mousedown', 'mouseup', 'click', 'pointerdown'];
+    for (const t of types) window.addEventListener(t, on, true);
+    rec.off = () => { for (const t of types) window.removeEventListener(t, on, true); };
+    window[key] = rec;
+    return true;
+  })()`;
+}
+function clickProbeRead(done = false) {
+  return `(() => {
+    const key = Symbol.for('lumen.clickProbe');
+    const rec = window[key];
+    if (!rec) return true; // (a navigation cleared it: the click happened)
+    const hit = rec.hit;
+    if (${done ? 'true' : 'hit'}) { rec.off(); delete window[key]; }
+    return hit;
+  })()`;
+}
+
 // Scrolls the window, or the largest scrollable container if the window does not move.
 function scroll(pages) {
   return `(() => {
@@ -464,4 +491,4 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };

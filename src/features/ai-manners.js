@@ -163,6 +163,23 @@ async function agentInputAsync(wc, fn, graceMs = 0) {
   }
 }
 
+// Is a tab on screen for the user? It is the front tab of ITS OWN window (not just the main window's), and that window is not
+// minimized. Only such a tab takes the ordinary mouse path; any other gets the background click / DOM click.
+const tabInFront = ({ activeId, tabId, minimized = false } = {}) => tabId != null && activeId === tabId && !minimized;
+
+// Did an input the AI sent reach the page? `landed()` reads the page's own record of it (one-shot listener, see page-scripts
+// clickProbeArm): polled until it says yes or `timeoutMs` pass. A read that throws (the page navigated away, which a click
+// does) counts as landed: the click happened. Input events reach a renderer asynchronously, and a view that is not painting
+// yet (a window just torn off, minimized or hidden) can drop them without any error, so the sender cannot trust "no throw".
+async function confirmLanded(landed, { timeoutMs = 400, stepMs = 25, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    try { if (await landed()) return true; } catch { return true; }
+    if (Date.now() >= end) return false;
+    await sleep(stepMs);
+  }
+}
+
 // When the user last pressed a key / clicked in each page ('typed': keys only).
 const typed = new WeakMap();
 const touched = new WeakMap();
@@ -177,5 +194,5 @@ module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, handOver, isAiTab, takenOver, closeSelection, cleanCloseSetting, closeAfterRun,
   isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
-  agentInput, agentInputAsync, isAgentInput, userInput,
+  agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
 };
