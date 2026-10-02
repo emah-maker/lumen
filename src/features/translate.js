@@ -231,6 +231,23 @@ function numberValue(token, style = '') {
   }
   return Number(t);
 }
+// A token with 2 or more marks that is not valid thousands grouping (192.168.0.1, 1.2.3.4) is a code, not a quantity: it is
+// compared group by group instead of by value.
+const GROUPED = /^\d{1,3}(?:([.,])\d{3})+(?:(?!\1)[.,]\d+)?$/;
+const markCount = (tok) => (tok.match(/[.,]/g) || []).length;
+const isOpaque = (tok) => markCount(tok) >= 2 && !GROUPED.test(tok.replace(/[\s'’]/g, ''));
+const groupsOf = (tok) => tok.replace(/[\s'’]/g, '').split(/[.,]/);
+// Are two number tokens the same number? (by value; by groups for codes)
+function sameToken(a, styleA, b, styleB) {
+  if (isOpaque(a) || isOpaque(b)) return groupsOf(a).join('|') === groupsOf(b).join('|');
+  return numberValue(a, styleA) === numberValue(b, styleB);
+}
+// Is the token at `index` of `str` negative? A minus (any dash) right before it, brackets around it.
+function negativeAt(str, index, length) {
+  const before = str.slice(0, index).trimEnd();
+  const after = str.slice(index + length).trimStart();
+  return MINUS.test(before.slice(-1)) || MINUS.test(after.charAt(0)) || (before.endsWith('(') && after.startsWith(')'));
+}
 // The signed value of the single number token in `str`: a minus before or after it, or brackets around it, is negative.
 function signedValue(str, style) {
   const re = new RegExp(NUMBER_TOKEN.source);
@@ -250,6 +267,7 @@ function checkNumber(was, now, locales = {}) {
   const a = clean(was);
   const b = clean(now);
   if (a === null || b === null) return 'keep';
+  if (a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()) return 'ok'; // copied unchanged: nothing to judge ("1,234" for a German target stays "1,234")
   const digitsA = a.replace(/\D/g, '');
   const digitsB = b.replace(/\D/g, '');
   if (!digitsA) return /[\p{L}\p{N}]/u.test(b) ? 'keep' : 'ok'; // a symbol stays a symbol; "€" -> "euro" is left alone
@@ -260,15 +278,22 @@ function checkNumber(was, now, locales = {}) {
   if (DATE_LIKE.test(a) || DATE_LIKE.test(b)) return DATE_LIKE.test(a) && DATE_LIKE.test(b) && (a.match(/\d+/g) || []).join() === (b.match(/\d+/g) || []).join() ? 'ok' : 'keep';
   if (FRACTION.test(a) || FRACTION.test(b)) return 'keep'; // 1½ -> 1,5, 1 1/2: a different way to write the same amount
   if (isRtl(locales.target) && /\)[^()]*\d[^()]*\(/.test(b)) return 'keep'; // (5) written mirrored, )5(, for a right-to-left target
+  // "(1)" -> "1": a list marker losing its brackets is not a lost sign
+  if (/^\s*\(\s*\d{1,2}\s*\)\s*$/.test(a) && digitsA === digitsB && !MINUS.test(b) && !/[()]/.test(b)) return 'keep';
   const tokensA = a.match(NUMBER_TOKEN) || [];
   const tokensB = b.match(NUMBER_TOKEN) || [];
   const from = decimalStyle(locales.source);
   const to = decimalStyle(locales.target);
   if (tokensA.length !== 1) { // dates, times, ranges: a benign reformat is never corruption, but the same digits must keep their values in order
     if (digitsA !== digitsB || tokensB.length !== tokensA.length) return 'keep';
-    return tokensA.every((tok, i) => numberValue(tok, from) === numberValue(tokensB[i], to)) ? 'ok' : 'corrupt';
+    // every token keeps its value and its sign ("40.7128, -74.0060" must not lose the minus)
+    const where = (str, toks) => { let at = 0; return toks.map((tok) => { const index = str.indexOf(tok, at); at = index + tok.length; return index; }); };
+    const posA = where(a, tokensA);
+    const posB = where(b, tokensB);
+    return tokensA.every((tok, i) => sameToken(tok, from, tokensB[i], to) && negativeAt(a, posA[i], tok.length) === negativeAt(b, posB[i], tokensB[i].length)) ? 'ok' : 'corrupt';
   }
   if (tokensB.length !== 1) return 'corrupt';
+  if (isOpaque(tokensA[0]) || isOpaque(tokensB[0])) return sameToken(tokensA[0], from, tokensB[0], to) && negativeAt(a, a.indexOf(tokensA[0]), tokensA[0].length) === negativeAt(b, b.indexOf(tokensB[0]), tokensB[0].length) ? 'ok' : 'corrupt';
   return signedValue(a, from) === signedValue(b, to) ? 'ok' : 'corrupt';
 }
 // Is this node's text one plain number (not a date, time, range or fraction)?
@@ -358,7 +383,14 @@ function splitSegment(segment, text, locales = {}) {
     const own = numberDigits(segment.nodes[i].text);
     return own.length > 0 && parts.some((part, j) => { if (j === i) return false; const there = numberDigits(part); return own.every((d) => there.includes(d)); });
   });
-  pairs.redo = wordsInNumber || moved;
+  // And for every number, intact or not: if it comes back more times than the source has it, one of them is in the wrong
+  // part ("Zeige 10 von | 10 | von | 200 | Ergebnisse" shows 10 twice).
+  const sourceCount = new Map();
+  for (const node of segment.nodes) for (const d of numberDigits(node.text)) sourceCount.set(d, (sourceCount.get(d) || 0) + 1);
+  const replyCount = new Map();
+  for (const part of parts) for (const d of numberDigits(part)) replyCount.set(d, (replyCount.get(d) || 0) + 1);
+  const duplicated = [...replyCount].some(([d, n]) => sourceCount.has(d) && n > sourceCount.get(d));
+  pairs.redo = wordsInNumber || moved || duplicated;
   pairs.numberMismatches = mismatches; // bare numbers the engine corrupted (kept as written)
   pairs.numbersChecked = checked; // bare numbers that came back intact
   return pairs;
@@ -737,7 +769,7 @@ function createTranslate(deps) {
           if (!ok.has(item.id)) { if (item.nodes) again(sendable(item.nodes), 2); else if (p.left > 1) again([item], p.left - 1); continue; }
           if (item.nodes) {
             const cut = splitSegment(item, ok.get(item.id), ctx.locales);
-            if (cut?.redo) { ctx.seamStreak = 0; again(sendable(item.nodes), 2); continue; } // the markers worked but words landed in a number: node by node
+            if (cut?.redo) { ctx.seamStreak = 0; noteNumberMismatch(ctx); again(sendable(item.nodes), 2); continue; } // the markers worked but words landed in a number: node by node
             if (!cut) {
               again(sendable(item.nodes), 2);
               noteSeamFailure(ctx);
