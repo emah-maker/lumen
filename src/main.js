@@ -58,6 +58,7 @@ const cliAuth = lazy(() => require('./ai/cli-auth'));
 let anthropicSdk_ = null;
 const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords, siteHint } = require('./browser/tab-groups');
+const taskbarTasks = require('./features/taskbar-tasks'); // the taskbar's "Close tabs the AI opened" (Jump List task / Dock menu)
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
@@ -1207,6 +1208,7 @@ function showAppMenu({ x, y, right }) {
     [
       more([
         { label: t('menu.tabGroups'), submenu: tabGroupsMenu() },
+        { label: t('menu.closeAiTabs'), enabled: aiTabSelect({}).length > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } }, // [ai manners]
         { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
         { label: t('menu.import'), submenu: importMenu() },
         { label: t('menu.adBlocker'), submenu: adblock.menu() },
@@ -4194,7 +4196,37 @@ ipcMain.handle('tabs:hide-ai', async (_e, on) => {
 });
 ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
+// The taskbar's command (Jump List task, Dock menu) and the menus' "Close Tabs Opened by AI": every normal window's AI tabs, each
+// window's toast (counts, Undo) in the window that held them. It never raises or focuses a window (the click was on the taskbar).
+// A private window has no AI tabs of this kind (it is in no window record). With none to close, a brief line shows in the
+// window in front, and only if one is visible.
+let closingAiEverywhere = false;
+async function closeAiTabsEverywhere() {
+  if (closingAiEverywhere || !uiReady) return { windows: 0, closed: 0, kept: 0 }; // (a second click while one runs, or Lumen still starting: nothing)
+  closingAiEverywhere = true;
+  try {
+    const recs = [...new Set(aiTabSelect({}).map((x) => x.rec))];
+    if (!recs.length) {
+      const rec = focusedRec();
+      if (rec && rcAlive(rec) && rec.win.isVisible() && !rec.win.isMinimized()) withWindow(rec, () => ui()?.send('tabs:organize-note', { text: t('taskbar.noAiTabs'), undo: false, ttl: 4000 }));
+      return { windows: 0, closed: 0, kept: 0 };
+    }
+    let closed = 0;
+    let kept = 0;
+    for (const rec of recs) {
+      const r = await aiTabsClose({ rec }).catch(() => null);
+      if (!r) continue;
+      closed += r.closed;
+      kept += r.kept;
+      aiCloseNote(rec, r);
+    }
+    return { windows: recs.length, closed, kept };
+  } finally {
+    closingAiEverywhere = false;
+  }
+}
 if (TEST) global.__manners = manners;
+if (TEST) global.__taskbar = { closeAiTabs: closeAiTabsEverywhere, wants: taskbarTasks.wantsCloseAiTabs, secondInstance: (argv) => app.emit('second-instance', {}, argv) };
 if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
 
 // Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
@@ -4382,6 +4414,8 @@ function macMenu() {
         { type: 'separator' },
         normal({ label: t('menu.newTabRight'), click: () => { if (activeId) newTabRightOf(activeId); } }),
         normal({ label: t('menu.duplicateTab'), click: () => { if (activeId) duplicateTab(activeId); } }),
+        { type: 'separator' },
+        normal({ label: t('menu.closeAiTabs'), click: () => { closeAiTabsEverywhere().catch(() => {}); } }),
       ],
     },
     { label: t('menu.downloads'), submenu: [normal({ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') })] },
@@ -7180,7 +7214,24 @@ const singleInstance = process.argv.includes('--install-shortcuts') || instance.
 if (!singleInstance) app.quit();
 // Opening the shortcut again focuses the running browser (two copies would overwrite each other's
 // files); a link opened from another app while Lumen runs comes the same way, and opens in a tab.
-app.on('second-instance', (_e, argv) => { focusWindow(); openLinksFromOtherApps(linksIn(argv)); });
+// The taskbar's "Close tabs the AI opened" arrives the same way, with no link: it does its work in the background and does not
+// bring a window forward.
+app.on('second-instance', (_e, argv) => {
+  const closeAi = taskbarTasks.wantsCloseAiTabs(argv);
+  if (closeAi) closeAiTabsEverywhere().catch(() => {});
+  const links = linksIn(argv);
+  if (!closeAi || links.length) { focusWindow(); openLinksFromOtherApps(links); }
+});
+// The taskbar entry: a Jump List task on Windows (an installed Lumen only: from source or in a test the program would be the
+// wrong one, and the Jump List belongs to the installed app's identity), the Dock menu on macOS.
+function setupTaskbar() {
+  if (TEST) return;
+  if (process.platform === 'win32' && app.isPackaged) {
+    try { app.setUserTasks(taskbarTasks.jumpListTasks({ execPath: process.execPath, label: t('taskbar.closeAiTabs'), description: t('taskbar.closeAiTabsDesc') })); } catch {}
+  } else if (process.platform === 'darwin') {
+    try { app.dock?.setMenu(Menu.buildFromTemplate(taskbarTasks.dockMenuItems({ label: t('taskbar.closeAiTabs'), click: () => { closeAiTabsEverywhere().catch(() => {}); } }))); } catch {}
+  }
+}
 
 app.whenReady().then(async () => {
   perf.mark('ready');
@@ -7199,6 +7250,7 @@ app.whenReady().then(async () => {
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
+  setupTaskbar();
   setTimeout(() => instance.fixShortcutIcons(app, shell), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app); // Explorer says Lumen, not Electron
   aiAgents.start({ after: firstTabLoaded }); // MCP server, CDP automation (if on), Claude Code detection (once the first tab has loaded)
