@@ -167,6 +167,8 @@ function prioritize(items) {
 const SEGMENT_CHARS = 1200;
 const MAX_NODES = 12; // nodes in one segment: a failed segment costs a request per node, so it stays small
 const SEAM_FAILS = 3;
+const NUMBER_MISMATCHES = 3; // segments with a changed number before a pair's numbers are left out of its sentences
+const LOCAL_PROBE_FIRST = 300; // the first request is this small until a pair's markers have worked once
 const SEAM_PAUSE_MS = 10 * 60 * 1000; // a pair whose markers failed is not grouped for this long, then probed again
 const seamOf = (n) => ` ⟦${n}⟧ `;
 const SEAM_RE = /\s*⟦\s*(\p{Nd}+)\s*⟧\s*/u;
@@ -184,10 +186,21 @@ function asciiDigits(str) {
   }
   return out;
 }
+// The digits of `str` as ASCII, everything else (separators, currency, words) dropped; null when a digit is one we can't read.
+function digitSequence(str) {
+  let out = '';
+  for (const ch of String(str)) {
+    if (!/\p{Nd}/u.test(ch)) continue;
+    const d = asciiDigits(ch);
+    if (d === null) return null;
+    out += d;
+  }
+  return out;
+}
 // Items from the page: { id, text, v, g (block), l, t (space before / after), n (no letters: a number, price, symbol) }.
 // A letterless node is only worth sending as part of a sentence ("Showing <b>10</b> of <b>200</b> results");
 // alone it is left as written.
-function groupItems(items) {
+function groupItems(items, { numbers = true } = {}) {
   const out = [];
   let cur = null;
   const flush = () => {
@@ -203,6 +216,7 @@ function groupItems(items) {
   };
   for (const item of items) {
     if (item.id === 0 || item.g === undefined) { flush(); out.push(item); continue; }
+    if (item.n && !numbers) { flush(); continue; } // this pair garbles numbers: they split the sentence and stay as written
     if (cur && (cur.g !== item.g || cur.chars + item.text.length > SEGMENT_CHARS || cur.list.length >= MAX_NODES)) flush();
     if (!cur) cur = { g: item.g, list: [], chars: 0 };
     cur.list.push(item);
@@ -226,11 +240,18 @@ function splitSegment(segment, text) {
     parts.push(pieces[i]);
   }
   const pairs = [];
+  let mismatches = 0;
   for (let i = 0; i < k; i++) {
     const node = segment.nodes[i];
     // a part may come back empty: the engine moved that node's words into a neighbour ("worries farmers ⟦1⟧ ⟦2⟧").
     // A bare number or symbol that comes back empty is left as written.
     if (node.n && !parts[i].trim()) continue;
+    // A bare number may be re-formatted for the target (200 -> ٢٠٠, 1,000.5 -> 1.000,5, $5.99 -> 5,99 €) but must keep
+    // its digits. If they differ the engine changed the number: the page keeps what it had.
+    if (node.n) {
+      const was = digitSequence(node.text);
+      if (was === null || was !== digitSequence(parts[i])) { mismatches++; continue; }
+    }
     let out = parts[i];
     // Written without spaces (Chinese, Japanese, Thai) into a language with them: nothing in the page separated
     // these two nodes, so the words would be glued ("Ilike"). Put the space back.
@@ -239,6 +260,7 @@ function splitSegment(segment, text) {
       && /[\p{L}\p{N}]$/u.test(out) && /^[\p{L}\p{N}]/u.test(parts[i + 1]) && !UNSPACED.test(out.slice(-1)) && !UNSPACED.test(parts[i + 1].charAt(0))) out += ' ';
     pairs.push([node.id, out, segment.id]);
   }
+  pairs.numberMismatches = mismatches; // bare numbers whose digits the engine changed (kept as written)
   return pairs;
 }
 
@@ -453,6 +475,9 @@ function createTranslate(deps) {
   const cache = new Map(); // `${url}|${target}|${engine}` -> Map(source text -> translation)
   const timings = new WeakMap(); // tab -> how long the last run took (measured, never sent anywhere)
   const seamsBroken = new Map(); // language pair -> { until, ms }: the engine mangled the segment markers; not grouped until then
+  const seamPause = new Map(); // pair -> the last pause length, so the next one doubles (survives the pause ending)
+  const seamWorks = new Set(); // pairs whose markers came back at least once this session
+  const numbersOff = new Map(); // pair -> until: bare numbers are not put into its sentences
   const seamProbation = new Set(); // pairs that were paused: their next grouped run is a probe
   const nowMs = () => (deps.now ? deps.now() : Date.now());
   let testEngine = null;
@@ -586,11 +611,11 @@ function createTranslate(deps) {
       const cut = item.nodes ? splitSegment(item, map.get(item.text)) : null;
       if (!item.nodes) pairs.push([item.id, map.get(item.text)]);
       else if (cut) pairs.push(...cut);
-      else fresh.push(...item.nodes);
+      else fresh.push(...sendable(item.nodes));
     }
     if (pairs.length) { await script(tab, 'apply', pairs); ctx.firstAt ||= performance.now(); }
     if (!ctx.runner) throw new Error('no-engine');
-    const chunks = ctx.via === 'local' ? chunkItems(fresh, LOCAL_CHUNK, LOCAL_FIRST) : chunkItems(fresh);
+    const chunks = ctx.via === 'local' ? chunkItems(fresh, LOCAL_CHUNK, seamWorks.has(ctx.pair) ? LOCAL_FIRST : LOCAL_PROBE_FIRST) : chunkItems(fresh);
     const weight = (item) => (item.nodes ? item.nodes.reduce((n, x) => n + x.text.length, 0) : item.text.length) + 1; // text, not request counts: a fallback to node by node does not move the bar
     const total = fresh.reduce((n, item) => n + weight(item), 0);
     let done = 0;
@@ -617,7 +642,9 @@ function createTranslate(deps) {
               continue;
             }
             ctx.seamStreak = 0;
-            if (ctx.probing) { ctx.probing = false; seamProbation.delete(ctx.pair); } // the markers work again
+            if (ctx.pair) seamWorks.add(ctx.pair);
+            if (ctx.probing) { ctx.probing = false; seamProbation.delete(ctx.pair); seamPause.delete(ctx.pair); } // the markers work again
+            if (cut.numberMismatches) noteNumberMismatch(ctx);
             good.push(...cut);
             map.set(item.text, ok.get(item.id));
           } else {
@@ -640,14 +667,22 @@ function createTranslate(deps) {
   function noteSeamFailure(ctx) {
     if (ctx.noSeams) return; // this run already paused the pair
     ctx.seamStreak = (ctx.seamStreak || 0) + 1;
-    if (!ctx.probing && ctx.seamStreak < SEAM_FAILS) return;
+    // a pair whose markers have never worked trips one segment sooner: its first request is small, so this costs little
+    if (!ctx.probing && ctx.seamStreak < (seamWorks.has(ctx.pair) ? SEAM_FAILS : SEAM_FAILS - 1)) return;
     ctx.noSeams = true;
     if (!ctx.pair) return;
-    const was = seamsBroken.get(ctx.pair);
-    const ms = ctx.probing ? Math.min((was?.ms || SEAM_PAUSE_MS) * 2, 60 * 60 * 1000) : SEAM_PAUSE_MS;
-    seamsBroken.set(ctx.pair, { until: nowMs() + ms, ms });
+    const ms = ctx.probing ? Math.min((seamPause.get(ctx.pair) || SEAM_PAUSE_MS) * 2, 60 * 60 * 1000) : SEAM_PAUSE_MS; // 10, 20, 40, 60 minutes
+    seamPause.set(ctx.pair, ms); // kept apart from seamsBroken, which is cleared when a pause ends
+    seamsBroken.set(ctx.pair, { until: nowMs() + ms });
     seamProbation.add(ctx.pair);
     ctx.probing = false;
+  }
+
+  // A bare number whose digits the engine changed is never written to the page. After NUMBER_MISMATCHES such
+  // segments the pair's numbers are left out of its sentences for a while (they split the sentence, as before).
+  function noteNumberMismatch(ctx) {
+    ctx.numberMismatches = (ctx.numberMismatches || 0) + 1;
+    if (ctx.numberMismatches >= NUMBER_MISMATCHES && ctx.pair) numbersOff.set(ctx.pair, nowMs() + SEAM_PAUSE_MS);
   }
 
   // Group for the on-device engine unless its markers are known not to survive for this pair (for now).
@@ -657,7 +692,9 @@ function createTranslate(deps) {
     if (broken && nowMs() < broken.until) return items.filter((i) => !i.n);
     if (broken) { seamsBroken.delete(ctx.pair); } // the pause is over: this run probes
     if (ctx.pair && seamProbation.has(ctx.pair)) ctx.probing = true;
-    return groupItems(items);
+    const off = numbersOff.get(ctx.pair);
+    if (off && nowMs() >= off) numbersOff.delete(ctx.pair);
+    return groupItems(items, { numbers: !(off && nowMs() < off) });
   }
 
   const failure = (code) => Object.assign(new Error(code), { code });
@@ -909,6 +946,6 @@ function createTranslate(deps) {
 module.exports = {
   createTranslate, LANGUAGES, LANG_CODES, WORLD, CHUNK_CHARS, LOCAL_CHUNK, LOCAL_FIRST,
   targetFor, guessLanguage, pageLanguage, languagesDiffer, shouldOffer, excludedElement, translatableText,
-  chunkItems, prioritize, groupItems, splitSegment, seamOf, SEAM_FAILS, SEAM_PAUSE_MS, MAX_NODES, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
+  chunkItems, prioritize, groupItems, splitSegment, seamOf, SEAM_FAILS, SEAM_PAUSE_MS, MAX_NODES, NUMBER_MISMATCHES, LOCAL_PROBE_FIRST, PAGE_SRC, systemPrompt, userPrompt, validateReply, consentDecision, cleanHosts, cleanConsent, baseOf, siteOf, isWebUrl,
   chooseEngine, fallsBackToAi, cleanEngine, ENGINES, localSourceCode, localTargetCode,
 };

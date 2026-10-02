@@ -220,7 +220,7 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
     // one good segment between failures resets the streak
     const blocks = [0, 1, 2, 3, 4, 5].map((i) => el('p', [text(`Sentence ${i} ${'y'.repeat(700)} `), el('b', [text(`bold ${i}`)])]));
     let n = 0;
-    const flaky = (t) => { if (!/⟦/.test(t)) return t.toUpperCase(); n++; return n % 3 === 0 ? t.toUpperCase() : t.replace(MARK, ' ').toUpperCase(); };
+    const flaky = (t) => { if (!/⟦/.test(t)) return t.toUpperCase(); n++; return n % 3 === 1 ? t.toUpperCase() : t.replace(MARK, ' ').toUpperCase(); };
     const r = await run(blocks, flaky);
     check('kill switch: a segment that works resets the count (a mostly fine engine keeps grouping)', withSeams(r.log).length >= 6, `${withSeams(r.log).length}`);
   }
@@ -279,7 +279,7 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
     const count = () => withSeams(log).length;
     await run(blocks(), 'x', { tr: api });
     const first = count();
-    check('decay: three bad segments in a row pause grouping for the pair', first >= T.SEAM_FAILS, first);
+    check('decay: bad segments in a row pause grouping for the pair (a pair that never worked trips one sooner)', first >= T.SEAM_FAILS - 1, first);
     log.length = 0;
     clock += 60 * 1000;
     await run(blocks(), 'x', { tr: api });
@@ -301,6 +301,118 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
     api.clearCache(); // otherwise the second run is answered from the first run's translations
     await run(blocks(), 'x', { tr: api });
     check('decay: when the probe works the pair is grouped again, and stays so', good > 0 && count() > 0, `${good} ${count()}`);
+  }
+
+  // ---- the pause doubles each time (10, 20, 40, then 60 minutes at most) and clears when a probe works ----
+  {
+    let clock = 5000;
+    const mode = { current: 'drop' };
+    const log = [];
+    const engine = fakeLocal((t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase();
+      const parts = t.split(MARK).map((p) => p.toUpperCase());
+      return mode.current === 'drop' ? parts.join(' ') : parts.reduce((o, p, i) => o + (i ? marks[i - 1] : '') + p, '');
+    }, log);
+    const api = newTr(engine, {}, { now: () => clock });
+    const blocks = () => [0, 1, 2].map((i) => el('p', [text(`Backoff ${i} ${'q'.repeat(50)} `), el('b', [text(`bold ${i}`)])]));
+    const grouping = async () => { log.length = 0; api.clearCache(); await run(blocks(), 'x', { tr: api }); return withSeams(log).length > 0; };
+    const MIN = 60 * 1000;
+    check('backoff: the first failures pause the pair (10 minutes)', (await grouping()) === true && (clock += 9 * MIN, (await grouping()) === false), '');
+    clock += 1 * MIN + 1; // 10 minutes passed
+    check('backoff: after 10 minutes one grouped run probes, and its failure pauses for 20', (await grouping()) === true, '');
+    clock += 19 * MIN;
+    check('backoff: still paused 19 minutes into the 20', (await grouping()) === false, '');
+    clock += 1 * MIN + 1;
+    check('backoff: probes again after 20, fails, and now pauses for 40', (await grouping()) === true, '');
+    clock += 39 * MIN;
+    check('backoff: still paused 39 minutes into the 40', (await grouping()) === false, '');
+    clock += 1 * MIN + 1;
+    check('backoff: probes again after 40, fails, and pauses for 60', (await grouping()) === true, '');
+    clock += 59 * MIN;
+    check('backoff: still paused 59 minutes into the 60', (await grouping()) === false, '');
+    clock += 1 * MIN + 1;
+    check('backoff: probes after 60, fails, and the pause stays at 60 (the cap), not 80', (await grouping()) === true, '');
+    clock += 61 * MIN;
+    mode.current = 'keep';
+    check('backoff: after the cap it probes again; a probe that works clears the pause', (await grouping()) === true && (await grouping()) === true, '');
+    mode.current = 'drop';
+    clock += 1 * MIN;
+    await grouping(); // a fresh failure after a success starts from 10 minutes again
+    clock += 11 * MIN;
+    check('backoff: a pair that worked and then failed starts again at 10 minutes', (await grouping()) === true, '');
+  }
+
+  // ---- bare numbers keep their digits ----
+  {
+    const segOf = (nums) => T.groupItems([{ id: 1, text: 'Showing', g: 1, l: false, t: true }, { id: 2, text: nums, g: 1, n: true, l: false, t: true }, { id: 3, text: 'results', g: 1, l: false, t: false }])[0];
+    const ids = (cut) => (cut || []).map((p) => p[0]).join();
+    const cases = [
+      ['200', '٢٠٠', true, 'Arabic-Indic digits for the same number'],
+      ['200', '۲۰۰', true, 'Persian digits for the same number'],
+      ['200', '२००', true, 'Devanagari digits for the same number'],
+      ['1,000.5', '1.000,5', true, 'a German separator style'],
+      ['1,000.5', '١٬٠٠٠٫٥', true, 'Arabic separators and digits'],
+      ['$5.99', '5,99 €', true, 'a price in the other style, other currency sign'],
+      ['$5.99', '5.99 dollars', true, 'a currency word'],
+      ['2024-05-01', '01/05/2024', false, 'a date reordered (digit order changed: kept as written)'],
+      ['200', '٢٠٠٠', false, 'an extra digit'],
+      ['200', '20', false, 'a dropped digit'],
+      ['200', '300', false, 'a different number'],
+      ['45%', '٪٤٥', true, 'a percentage with a percent sign moved'],
+      ['1st', '1.', true, 'an ordinal mark (letters in the page: not a bare number)'],
+    ];
+    for (const [orig, reply, accepted, why] of cases) {
+      if (orig === '1st') continue; // has letters, so it is an ordinary node, covered elsewhere
+      const cut = T.splitSegment(segOf(orig), `Showing${M(1)}${reply}${M(2)}results`);
+      const kept = cut && !cut.some((p) => p[0] === 2);
+      check(`numbers: ${why} (${orig} -> ${reply}) is ${accepted ? 'applied' : 'kept as written'}`, cut && (accepted ? ids(cut) === '1,2,3' : kept && cut.numberMismatches === 1), `${ids(cut)} ${cut?.numberMismatches}`);
+    }
+    check('numbers: the other words of the segment are still applied when a number is rejected', ids(T.splitSegment(segOf('200'), `Showing${M(1)}300${M(2)}results`)) === '1,3', '');
+    // through a run: a locale-converting engine, then one that mangles digits
+    const convert = (t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase();
+      const parts = t.split(MARK).map((p) => (/^\d/.test(p) ? p.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]) : p.toUpperCase()));
+      return parts.reduce((o, p, i) => o + (i ? marks[i - 1] : '') + p, '');
+    };
+    const conv = await run([el('p', [text('Showing '), el('b', [text('200')]), text(' results')])], convert);
+    check('numbers: through a run, a number rewritten in the target\'s digits lands on the page', conv.state.phase === 'done' && conv.snap.join('') === 'SHOWING ٢٠٠ RESULTS', conv.snap.join('|'));
+    const mangle = (t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase();
+      const parts = t.split(MARK).map((p) => (/^\d/.test(p) ? `${p}0` : p.toUpperCase()));
+      return parts.reduce((o, p, i) => o + (i ? marks[i - 1] : '') + p, '');
+    };
+    const bad = await run([el('p', [text('Showing '), el('b', [text('200')]), text(' results')])], mangle);
+    check('numbers: through a run, a changed number never reaches the page (the rest is translated)', bad.state.phase === 'done' && bad.snap.join('') === 'SHOWING 200 RESULTS', bad.snap.join('|'));
+
+    // after NUMBER_MISMATCHES such segments the pair's numbers are left out of its sentences
+    let clock = 9000;
+    const log = [];
+    const api = newTr(fakeLocal(mangle, log), {}, { now: () => clock });
+    const nums = () => [0, 1, 2, 3].map((i) => el('p', [text(`Count ${'abcd'[i]} is `), el('b', [text(`${100 + i}`)]), text(' items')]));
+    await run(nums(), 'x', { tr: api });
+    log.length = 0;
+    api.clearCache();
+    await run(nums(), 'x', { tr: api });
+    const sent = log.flat();
+    check('numbers: after repeated changed numbers the pair\'s numbers are left out of its sentences (nothing numeric is sent)', sent.length > 0 && !sent.some((t) => /\d/.test(t)) && !sent.some((t) => /⟦/.test(t)), JSON.stringify(sent));
+    log.length = 0;
+    api.clearCache();
+    clock += T.SEAM_PAUSE_MS + 1;
+    await run(nums(), 'x', { tr: api });
+    check('numbers: and numbers come back into sentences once the pause is over', log.flat().some((t) => /\d/.test(t)), JSON.stringify(log.flat()));
+  }
+
+  // ---- a pair that has never worked starts with a small first request ----
+  {
+    const log = [];
+    const engine = fakeLocal('drop', log);
+    const blocks = Array.from({ length: 8 }, (_v, i) => el('p', [text(`Probe ${i} ${'w'.repeat(80)} `), el('b', [text(`bold ${i}`)])]));
+    await run(blocks, 'x', { tr: newTr(engine) });
+    const firstRequest = log[0] || [];
+    check(`first request: with no history a pair's first request stays under ${T.LOCAL_PROBE_FIRST + 200} characters, so a bad engine costs one small request`, firstRequest.join('').length <= T.LOCAL_PROBE_FIRST + 200 && firstRequest.some((t) => /⟦/.test(t)), JSON.stringify(firstRequest.map((t) => t.length)));
   }
 
   // ---- a download that is stopped from elsewhere ----
