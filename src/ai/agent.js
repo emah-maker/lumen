@@ -2269,7 +2269,7 @@ class Agent {
   // tools are not touched. features/ai-manners.js has the tool list and the refusal text.
   handsOffCheck(name, input = {}) {
     if (!manners.isActionTool(name) || !this.browser.handsOff?.()) return;
-    let ids = [];
+    let ids;
     try {
       if (name === 'group_tabs' || name === 'ungroup_tabs') ids = Array.isArray(input.tab_ids) ? input.tab_ids : []; // moving the user's tabs about is acting on them
       else ids = [name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null)];
@@ -3183,7 +3183,7 @@ ${same}
         const zoom = wc.getZoomFactor();
         // A tab behind another one gets no real mouse: its hover events are sent to the element instead.
         if (!this.taskTabInFront()) await this.elementRun(wc, input.element_id, scripts.domHover);
-        else if (target.frame) await frames.mouseMove(wc, target.x, target.y).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
+        else if (target.frame) await manners.agentInputAsync(wc, () => frames.mouseMove(wc, target.x, target.y)).catch(() => this.elementRun(wc, input.element_id, scripts.domHover));
         else wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * zoom), y: Math.round(target.y * zoom) });
         await sleep(500);
         return `Hovering over element ${input.element_id}. Call read_page to see any menu that opened.`;

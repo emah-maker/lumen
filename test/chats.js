@@ -28,6 +28,8 @@ const fakeClient = (app) => app.evaluate(() => {
 });
 
 (async () => {
+  // A chat row's buttons show, and take clicks, while the row is hovered (#130), as a mouse does.
+  const rowAction = async (id, cls) => { await ui.hover(`.chat-item[data-id="${id}"]`); await new Promise((r) => setTimeout(r, 200)); await ui.click(`.chat-item[data-id="${id}"] ${cls}`); };
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-chats-'));
@@ -121,7 +123,7 @@ const fakeClient = (app) => app.evaluate(() => {
   await ui.evaluate(() => document.querySelector('.sidebar-head .picker-button').click()); // closes the menu again
   await ui.waitForSelector('.sidebar-head .picker-menu[hidden]', { state: 'attached' });
   await ui.waitForSelector('#chat-list:not([hidden]) .chat-item');
-  await ui.click(`.chat-item[data-id="${legacyId}"] .chat-open`);
+  await rowAction(legacyId, '.chat-open');
   const reopened = await waitFor(() => ui.evaluate(() => document.getElementById('chat-list').hidden && document.getElementById('messages').textContent));
   check('opening a chat shows its messages', /legacy question about tides/.test(reopened || '') && /Reply 2\./.test(reopened || '') && !/brand new topic/.test(reopened || ''), (reopened || '').slice(0, 200));
   check('opening a chat shows its usage', await ui.evaluate(() => document.getElementById('chat-usage').textContent) === '2.4k tokens · ~$0.02', 'usage line');
@@ -141,7 +143,7 @@ const fakeClient = (app) => app.evaluate(() => {
   // ---- 5. Rename.
   await ui.click('#chat-history');
   await ui.waitForSelector(`#chat-list:not([hidden]) .chat-item[data-id="${newId}"]`);
-  await ui.click(`.chat-item[data-id="${newId}"] .chat-rename`);
+  await rowAction(newId, '.chat-rename');
   await ui.fill('.chat-item input.chat-rename-input', 'Trip planning');
   await ui.press('.chat-item input.chat-rename-input', 'Enter');
   const renamed = await waitFor(() => ui.evaluate((id) => document.querySelector(`.chat-item[data-id="${id}"] .chat-title`)?.textContent === 'Trip planning', newId));
@@ -151,7 +153,7 @@ const fakeClient = (app) => app.evaluate(() => {
   // ---- 6. Export (the save dialog is answered by the test).
   const exportPath = path.join(profile, 'exported.md');
   await app.evaluate(({ dialog }, file) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: file }); }, exportPath);
-  await ui.click(`.chat-item[data-id="${legacyId}"] .chat-export`);
+  await rowAction(legacyId, '.chat-export');
   const md = await waitFor(() => fs.existsSync(exportPath) && fs.readFileSync(exportPath, 'utf8'));
   check('export writes Markdown with title, turns and usage', md && md.startsWith('# legacy question about tides\n') && /## You\n\nlegacy question about tides/.test(md) && /## Assistant\n\nReply 2\./.test(md) && /Usage: 3\.6k tokens · ~\$0\.03/.test(md), (md || '').slice(0, 300));
   check('export leaves out Lumen\'s browser state', md && !/browser_state|Active tab id/.test(md), 'leaked');
@@ -161,16 +163,16 @@ const fakeClient = (app) => app.evaluate(() => {
 
   // ---- 7. Delete: two clicks; deleting another chat leaves the open one alone.
   const del = `.chat-item[data-id="${newId}"] .chat-delete`;
-  await ui.click(del);
+  await rowAction(newId, '.chat-delete');
   check('the first delete click only asks', (await app.evaluate(() => global.__chats.store().list().length)) === 2, 'deleted on first click');
-  await ui.click(del);
+  await rowAction(newId, '.chat-delete');
   list = await waitFor(async () => { const l = await app.evaluate(() => global.__chats.store().list()); return l.length === 1 && l; });
   check('the second click deletes the chat and its file', list && list[0].id === legacyId && !fs.existsSync(path.join(chatsDir, `${newId}.json`)), JSON.stringify(list));
   check('deleting another chat keeps the open one on screen', /back again/.test(await ui.evaluate(() => document.getElementById('messages').textContent)), 'view cleared');
   // Deleting the open chat empties the sidebar.
   const delOpen = `.chat-item[data-id="${legacyId}"] .chat-delete`;
-  await ui.click(delOpen);
-  await ui.click(delOpen);
+  await rowAction(legacyId, '.chat-delete');
+  await rowAction(legacyId, '.chat-delete');
   const cleared = await waitFor(() => ui.evaluate(() => !document.querySelector('.msg') && document.getElementById('chat-usage').hidden));
   check('deleting the open chat empties the sidebar', cleared, 'still shows messages');
   check('…and leaves no chats', (await app.evaluate(() => global.__chats.store().list().length)) === 0 && (await app.evaluate(() => global.__agent.messages.length)) === 0, 'left over');
