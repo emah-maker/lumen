@@ -70,7 +70,7 @@ function parseResetTime(text, now = Date.now()) {
 
   const iso = /(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?[ \t]*(Z|[+-]\d{2}:?\d{2})?/.exec(s);
   if (iso) {
-    let zone = null;
+    let zone;
     if (iso[7]) zone = iso[7] === 'Z' ? { offsetMin: 0 } : { offsetMin: (iso[7][0] === '-' ? -1 : 1) * (Number(iso[7].slice(1, 3)) * 60 + Number(iso[7].slice(-2))) };
     else zone = zoneIn(s.slice(iso.index + iso[0].length, iso.index + iso[0].length + 40));
     return done(wallToInstant(+iso[1], +iso[2] - 1, +iso[3], +iso[4], +iso[5], +(iso[6] || 0), zone));

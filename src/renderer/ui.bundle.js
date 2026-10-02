@@ -4545,7 +4545,6 @@ function moveTabDrag(e) {
       const at = drag.gathered.map((x) => order.indexOf(x));
       if (at.some((k, i) => i && k !== at[i - 1] + 1)) drag.homeKey = null;
     }
-    const own = (lastTabState?.tabs || []).find((t) => t.id === drag.id);
     // The group(s) the dragged tabs are in now: a drop at home that the slot shows outside it is a move out.
     const inGroups = new Set((drag.gathered || [drag.id]).map((x) => (lastTabState?.tabs || []).find((t) => t.id === x)?.groupId || null));
     drag.homeGroup = inGroups.size === 1 ? [...inGroups][0] : undefined;
@@ -4606,7 +4605,7 @@ function tintSlot() {
 
 function endTabDrag(e) {
   if (!drag) return;
-  const { moved, from, to, id, ids, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
+  const { moved, from, id, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
   // Escape, a cancelled pointer or a lost one: nothing moves.
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);

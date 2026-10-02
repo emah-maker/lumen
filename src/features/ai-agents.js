@@ -19,14 +19,6 @@ const webContents = { getAllWebContents: () => require('electron').webContents.g
 const APP_DIR = path.join(__dirname, '..', '..'); // the app's root: package.json and the mcp.js agents are given
 const DEFAULT_AUTOMATION_PORT = 9222;
 const validPort = (port) => (Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : DEFAULT_AUTOMATION_PORT);
-// Anthropic's terms let a user sign in to the unmodified Claude Code binary with their own
-// subscription; they just don't let a third-party app offer claude.ai sign-in to other people (see
-// https://code.claude.com/docs/en/legal-and-compliance). So sharing Lumen means each person brings
-// their own login: their own API key, or connecting Lumen as an MCP server to their own CLI.
-const CLAUDE_CODE_NOTE = 'Claude Code';
-// Same idea, for a user's own Grok Build CLI (xAI's terms: a SuperGrok/X Premium+ account signs in
-// to the unmodified `grok` binary; sharing Lumen still means each person brings their own login).
-const GROK_BUILD_NOTE = 'Grok Build';
 
 // The secret at the start of every automation proxy URL (automation.js). Kept in the profile so a
 // saved Playwright MCP config keeps working across restarts; turning the setting off deletes it,

@@ -26,11 +26,14 @@ const tokenPath = (userData) => path.join(userData, 'mcp-token');
 const proofFor = (token, nonce) => crypto.createHmac('sha256', token).update(nonce).digest('hex');
 
 // Newline-delimited JSON lines from a stream.
-function onLines(stream, handler) {
+const MAX_LINE = 8 * 1024 * 1024; // a JSON-RPC line (a screenshot result is the biggest) past this is a broken or hostile peer
+const AUTH_TIMEOUT_MS = 5000; // a connection that has not proved the token by then is dropped
+function onLines(stream, handler, maxLine = MAX_LINE) {
   let buffer = '';
   stream.setEncoding('utf8');
   stream.on('data', (chunk) => {
     buffer += chunk;
+    if (buffer.length > maxLine) { buffer = ''; stream.destroy(); return; }
     let i;
     while ((i = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, i).trim();
@@ -99,7 +102,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null 
 }
 
 // Accepts bridge connections. Returns { close }. Writes a fresh token for this run.
-function startServer({ userData, tools, callTool, enabled, onEvent }) {
+function startServer({ userData, tools, callTool, enabled, onEvent, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
   const token = crypto.randomBytes(24).toString('hex');
   fs.writeFileSync(tokenPath(userData), token, { mode: 0o600 });
   const where = channelPath(userData);
@@ -113,6 +116,8 @@ function startServer({ userData, tools, callTool, enabled, onEvent }) {
     let current = null;
     const send = (obj) => { if (!socket.destroyed) socket.write(`${JSON.stringify(obj)}\n`); };
     const nonce = crypto.randomBytes(24).toString('hex');
+    const authTimer = setTimeout(() => { if (!authed) socket.destroy(); }, authTimeoutMs);
+    authTimer.unref?.();
     send({ lumenChallenge: nonce });
     onLines(socket, (line) => {
       let message;
@@ -122,6 +127,7 @@ function startServer({ userData, tools, callTool, enabled, onEvent }) {
         return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
       }
       if (!authed) {
+        if (!message || typeof message !== 'object') { send({ lumenAuth: 'denied' }); socket.end(); return; }
         // First line from the bridge: { lumenProof: HMAC-SHA256(token, nonce) }. Constant-time compare.
         const given = Buffer.from(String(message.lumenProof || ''));
         const expected = Buffer.from(proofFor(token, nonce));
@@ -131,14 +137,17 @@ function startServer({ userData, tools, callTool, enabled, onEvent }) {
           return;
         }
         authed = true;
+        clearTimeout(authTimer);
         current = createSession({ tools, callTool, enabled, onEvent, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
         sessions.add(current);
         send({ lumenAuth: 'ok' });
         return;
       }
-      current.handle(message);
-    });
+      if (!message || typeof message !== 'object' || Array.isArray(message)) return send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } });
+      current.handle(message).catch(() => {});
+    }, maxLine);
     socket.on('close', () => {
+      clearTimeout(authTimer);
       sockets.delete(socket);
       if (!current) return;
       current.close();
@@ -295,4 +304,4 @@ function runBridge({ app }) {
 
 if (require.main === module) relay();
 
-module.exports = { runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it
+module.exports = { MAX_LINE, onLines, runBridge, relay, startServer, createSession, channelPath, tokenPath, proofFor, SUPPORTED_VERSIONS }; // relay: the root mcp.js starts it

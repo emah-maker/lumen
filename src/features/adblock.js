@@ -108,10 +108,9 @@ function createAdblock(deps) {
     // Annoyance lists hide Google's One Tap prompt and block its sign-in script; signing in with Google on a site
     // must keep working, so those are always let through. Patching the engine takes ~0.4 s, so the patched engine
     // is kept (tagged with the lists it was built from) and a launch just loads it.
-    let baseStat = null;
     try {
       const meta = JSON.parse(await fs.promises.readFile(`${patched}.json`, 'utf8'));
-      baseStat = await fs.promises.stat(base);
+      const baseStat = await fs.promises.stat(base);
       if (meta.patch === PATCH && meta.baseMtime === baseStat.mtimeMs && meta.baseSize === baseStat.size) blocker = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(patched)));
     } catch { blocker = null; }
     const isTest = require('../test-mode').isTest();
@@ -121,7 +120,7 @@ function createAdblock(deps) {
     const whenIdle = () => new Promise((resolve) => {
       const started = Date.now();
       const check = () => {
-        let idle = 0;
+        let idle;
         try { idle = electron.powerMonitor.getSystemIdleTime(); } catch { idle = 99; }
         if (idle >= 2 || Date.now() - started > 120000) resolve(); else setTimeout(check, 3000).unref?.();
       };

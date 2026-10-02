@@ -68,13 +68,7 @@ jobs:
       # Pure-logic suites (no window, no network): a broken updater or installer setting can't ship.
       - name: Unit tests
         shell: bash
-        run: |
-          set -e
-          for t in units claudecode-full-units updates-units agentic-units catalog-units clock-style-units github-units gmail-units highlight-units local-custom-units markets-units math-units model-route-units password-units routines-units settings-async-units setup-units signing-units signed-in-units slack-units small-screen-units spotify-units tradingview-units whats-new-units widget-edit-units widget-summary-units widget-units chat-context-units frames-units; do
-            echo "::group::$t"
-            node "test/$t.js"
-            echo "::endgroup::"
-          done
+        run: node scripts/test-units.js
 
       # Widevine VMP signing (scripts/after-pack.js) needs a free castlabs EVS account. Add the
       # repository secrets EVS_ACCOUNT_NAME and EVS_PASSWD to enable it; without them the build is

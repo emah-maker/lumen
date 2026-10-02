@@ -19,11 +19,11 @@ See **Build from source** in the README for packaging and installing locally.
 
 ## Tests
 
-The suites are Playwright scripts that launch Lumen. Run them one at a time with `node test/<name>.js`; `npm test` runs the core set and stops at the first failure.
+The suites are Playwright scripts that launch Lumen. Run them one at a time with `node test/<name>.js`; `npm test` runs the core set one after another, keeps going past a failure and prints a pass/fail summary. `npm run test:units` runs just the pure-node suites (`test/units.js`, `test/*-units.js`, `test/cli-json.js`; no Electron needed), which is what CI runs on every pull request.
 
 - Tests use a throwaway profile: set `CLAUDE_BROWSER_TEST=1` and `CLAUDE_BROWSER_PROFILE=<empty temp folder>` (see `test/home.js`). Test mode only works when running from source, never in a packaged build.
 - Close other Lumen or Electron windows first. Some suites (`ui`, `tabstrip`, `downloads`) depend on window focus.
-- Add or update a test with every change. `test/units.js` is the place for logic that doesn't need a window.
+- Add or update a test with every change. `test/units.js` or a new `test/<area>-units.js` is the place for logic that doesn't need a window: `scripts/test-units.js` picks the file up by name, so nothing needs registering.
 
 ## Translations
 

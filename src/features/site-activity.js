@@ -2,8 +2,8 @@
 // and site data. Electron's session can only clear those for all time or per origin, and cookies
 // carry no creation time, so Lumen keeps its own record: cookie domain -> last time a cookie was set.
 // Kept in userData/site-activity.json (domains and times only, never cookie names or values).
-const fs = require('fs');
 const path = require('path');
+const settingsFile = require('../settings/settings-file'); // tmp + rename + .bak writes, corrupt-file recovery
 
 const KEEP_MS = 400 * 86400e3; // older entries can't matter to any time range but "all time"
 
@@ -11,7 +11,7 @@ function createSiteActivity({ userData, now = () => Date.now() }) {
   const file = path.join(userData, 'site-activity.json');
   let seen = new Map();
   try {
-    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const saved = settingsFile.loadJson(file); // (an unparseable file is restored from .bak or set aside, never overwritten)
     if (saved && typeof saved === 'object') seen = new Map(Object.entries(saved).filter(([, t]) => Number.isFinite(t)));
   } catch {
     // none yet
@@ -22,7 +22,7 @@ function createSiteActivity({ userData, now = () => Date.now() }) {
     timer = setTimeout(() => {
       const cutoff = now() - KEEP_MS;
       for (const [d, t] of seen) if (t < cutoff) seen.delete(d);
-      fs.promises.writeFile(file, JSON.stringify(Object.fromEntries(seen))).catch(() => {});
+      settingsFile.writeJsonAtomicAsync(file, Object.fromEntries(seen), undefined, 0).catch(() => {});
     }, 2000);
     timer.unref?.();
   };
