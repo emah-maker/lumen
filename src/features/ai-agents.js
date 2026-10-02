@@ -88,7 +88,8 @@ function setupAiAgents(deps) {
 
   let mcpServer = null;
   // Sessions opened by the sidebar's own Claude Code engine (event.engine) are not "external agents".
-  const mcpEvent = (event) => { if (!event.engine) ui()?.send('mcp:event', event); };
+  // The steps, the "driven by" pill and the approval cards go to the window the user is in, not to the agent's own window.
+  const mcpEvent = (event) => { if (!event.engine) (deps.userUi?.() || ui())?.send('mcp:event', event); };
   // Off until the user turns it on (Settings, or an "Add to <agent>" button): nothing outside Lumen
   // can drive the browser by default. Lumen's own engines (ownsSession) work either way.
   const mcpEnabled = () => readSettings().mcpEnabled === true;
@@ -259,6 +260,19 @@ function setupAiAgents(deps) {
     };
     const problem = deps.validateToolInput(name, args);
     if (problem) return refuse(`Invalid input: ${problem}`);
+    // An outside agent works in a window of its own, made on its first call that needs a tab (features/agent-windows.js):
+    // its tools see that window's tabs and nothing else, so it cannot touch the user's tabs or the sidebar AI's.
+    const windows = !engineRun && !(global.__mcpSharedWindow && require('../test-mode').isTest()) ? deps.agentWindows : null; // (tests can turn it off, to show what sharing the user's window did)
+    let agentRec = null;
+    if (windows) {
+      agentRec = windows.windows.get(session);
+      if (!agentRec && !require('./agent-windows').needsWindow(name)) {
+        if (name === 'list_tabs') return { content: [{ type: 'text', text: '[]' }], isError: false }; // no window yet: no tabs of its own
+      } else if (!agentRec) {
+        if (session.controller.signal.aborted) return refuse('The agent session ended.'); // (a call finishing after its bridge went: no window for a session nobody will end)
+        try { agentRec = await windows.windows.ensure(session, session.clientName); } catch (err) { return refuse(`Lumen could not open a window for ${session.clientName}: ${err.message}`); }
+      }
+    }
     const stepId = early || `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // A background task's CLI run brings its own Agent (work tab, approved sites, taint, approval cards
     // for the Tasks panel): each of its calls runs there, never in the sidebar's Agent or the user's tab.
@@ -275,8 +289,9 @@ function setupAiAgents(deps) {
       : { hosts: session.approvedHosts, who: session.clientName, external: true, input: args, run: session }; // outside agents always ask
     // The step's label is worked out in the same tab the call will act on (a click's label names the
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
-    const front = scope ? null : agent.browser.activeTab()?.id;
-    const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn));
+    // An outside agent's own window: the tab in front THERE (not the user's, not the sidebar run's).
+    const front = scope ? null : windows ? (agentRec ? windows.activeTabId(agentRec) : null) : agent.browser.activeTab()?.id;
+    const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn, null, null, windows ? { rec: agentRec, mcp: true } : null));
     // The row shows at once with its generic label; describeStep's specific one follows as a tool_update
     // (renderer) and never holds the call up. Only a label that reads the page as it is before the call
     // acts (a click or type names its element) is waited for, for at most LABEL_WAIT_MS, then the call goes on.
@@ -299,7 +314,7 @@ function setupAiAgents(deps) {
     if (!early) toUi({ type: 'tool', id: stepId, name, input: args, label: first, clientName: session.clientName });
     else named(first);
     labelled.then((label) => { if (label !== first) named(label); });
-    const emit = (event) => toUi({ ...event, clientName: session.clientName });
+    const emit = (event) => toUi({ ...event, clientName: session.clientName, ...(engineRun ? {} : { quiet: true }) }); // (quiet: an outside agent's approval card never opens the user's sidebar)
     // The sidebar's own engine run keeps working in the tab its message started in (agent.engineScope);
     // an outside agent's call is pinned to the tab in front when it arrives, so the approval card and
     // the action it allows are about the same tab. Stop ends a long wait at once, either way.
@@ -338,6 +353,7 @@ function setupAiAgents(deps) {
       // tag is refused, never treated as an outside agent.
       enabled: (session) => (session.engine ? ownsSession(session) : mcpEnabled()),
       onEvent: mcpEvent,
+      onClose: (session) => { if (!session.engine) deps.agentWindows?.windows.release(session); }, // its window closes after a grace period
     });
   }
 
@@ -367,7 +383,7 @@ function setupAiAgents(deps) {
   });
   ipcMain.handle('mcp:set-enabled', (_e, on) => {
     writeSettings({ ...readSettings(), mcpEnabled: Boolean(on) });
-    if (!on) mcpServer?.disconnectAll();
+    if (!on) { mcpServer?.disconnectAll(); deps.agentWindows?.windows.releaseAll(); }
     else startMcp();
     return true;
   });
