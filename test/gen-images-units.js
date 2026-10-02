@@ -160,7 +160,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
       events.length = 0;
       const consumed = await inChat(() => agent.imageTurn(messages, 'draw a cat', new AbortController().signal, emit));
       const notice = events.find((e) => e.type === 'notice');
-      check(`${who}: "draw a cat" says it can't make pictures and still goes on to answer in text`, consumed === false && new RegExp(`${who} can't make pictures`).test(notice?.text || '') && /GPT, Grok or Gemini/.test(notice.text), J(events));
+      check(`${who}: "draw a cat" says it can't make pictures and still goes on to answer in text`, consumed === false && new RegExp(`${who} can't make pictures`).test(notice?.text || '') && (model.startsWith('claudecode') ? /full access to this computer/.test(notice.text) && /OpenAI/.test(notice.text) && /already set/.test(notice.text) && !/Grok|Gemini/.test(notice.text) : /GPT, Grok or Gemini/.test(notice.text)), J(events));
       events.length = 0;
       await inChat(() => agent.imageTurn(messages, 'draw another cat', new AbortController().signal, emit));
       check(`${who}: the notice is shown once per chat`, !events.some((e) => e.type === 'notice'));
@@ -223,6 +223,73 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
     const blocks = await inChat(() => agent.enginePictures(reply, engine, emit));
     check('CLI engines: the picture the reply names is saved and shown', blocks.length === 1 && events.some((e) => e.type === 'image') && store.read(blocks[0].id)?.buffer.equals(PNG), J(blocks));
     check('an engine that names no folders shows nothing', (await inChat(() => agent.enginePictures(reply, {}, emit))).length === 0);
+  }
+
+  // ---- [full access] Claude Code with its own tools: no "can't make pictures" notice, "/image" goes to it as words, and the
+  // pictures it wrote during the run (and only those) are shown
+  {
+    const full = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', claudeCodeFullAccess: () => true }, () => null, () => ({}), () => null);
+    full.imageStore = store;
+    const fullChat = () => chat('claudecode:default');
+    const inFull = (fn) => full.inTask(null, new AbortController().signal, fn, [], null, { chatId: CHAT });
+    events.length = 0;
+    const consumed = await inFull(() => full.imageTurn(fullChat(), 'draw a small blue paper plane icon', new AbortController().signal, emit));
+    check('full access: "draw …" goes to Claude Code with no "can\'t make pictures" notice', consumed === false && !events.some((e) => e.type === 'notice'), J(events));
+    events.length = 0;
+    const slash = await inFull(() => full.imageTurn(fullChat(), '/image a paper plane', new AbortController().signal, emit));
+    check('full access: "/image …" is not answered with the notice either', slash === false && !events.some((e) => e.type === 'notice'), J(events));
+    const seenByCli = [];
+    full.getClient = () => null;
+    const m = fullChat();
+    full.messages = m;
+    // runTask turns the slash command into words before the message is built (the CLI has no /image command)
+    const taskText = await (async () => { let got = null; const orig = full.pageContextFor; full.pageContextFor = async () => ''; full.claudeCodeTurn = async (_ms, prompt) => { got = prompt; seenByCli.push(prompt); }; full.engines = { claudecode: {} }; try { await inFull(() => full.runTask(m, null, '/image a paper plane', [], new AbortController(), emit, {})); } finally { full.pageContextFor = orig; } return got; })();
+    check('full access: "/image a paper plane" reaches Claude Code as plain words', /Generate an image: a paper plane/.test(taskText || '') && !/\/image/.test(taskText || ''), taskText);
+    events.length = 0;
+    const off = await inChat(() => agent.imageTurn(chat('claudecode:default'), 'draw a cat', new AbortController().signal, emit));
+    check('full access off: the notice still shows, and says how to turn on drawing', off === false && /Settings > AI/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
+    const grokFull = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', claudeCodeFullAccess: () => true, grokBuildFullAccess: () => true }, () => null, () => ({}), () => null);
+    events.length = 0;
+    await grokFull.inTask(null, new AbortController().signal, () => grokFull.imageTurn(chat('grokbuild:default'), 'draw a cat', new AbortController().signal, emit), [], null, { chatId: CHAT });
+    check('Grok Build keeps its own behaviour (the notice), whatever Claude Code\'s setting', /Grok Build can't make pictures/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
+
+    // pictures: written during the run under the home folder / a folder the run was pointed at -> shown; the rest -> not
+    const home = path.join(tmp, 'home'); fs.mkdirSync(path.join(home, 'Pictures'), { recursive: true });
+    const pointed = path.join(tmp, 'pointed-out'); fs.mkdirSync(pointed, { recursive: true });
+    const elsewhere = path.join(tmp, 'elsewhere2'); fs.mkdirSync(elsewhere, { recursive: true });
+    const runStart = Date.now() - 2000;
+    const old = path.join(home, 'Pictures', 'old.png'); fs.writeFileSync(old, PNG); fs.utimesSync(old, new Date(Date.now() - 3600e3), new Date(Date.now() - 3600e3));
+    const fresh = path.join(home, 'Pictures', 'plane.jpg'); fs.writeFileSync(fresh, JPG);
+    const inPointed = path.join(pointed, 'out.png'); fs.writeFileSync(inPointed, PNG);
+    const outside = path.join(elsewhere, 'new.png'); fs.writeFileSync(outside, PNG);
+    const svgish = path.join(home, 'Pictures', 'plane.png'); fs.writeFileSync(svgish, SVG);
+    const svgFile = path.join(home, 'Pictures', 'plane.svg'); fs.writeFileSync(svgFile, SVG);
+    const engine = { imageRoots: () => [], freshRoots: () => [home, pointed] };
+    const reply = `Done: ${fresh}, ${old}, ${inPointed}, ${outside}, ${svgish}, ${svgFile}`;
+    const opts = { roots: engine.freshRoots(), since: runStart, until: Date.now(), home };
+    const found = gen.findLocalImages(reply, engine.imageRoots(), { fresh: opts });
+    const names = found.map((f) => path.basename(f.file)).sort();
+    check('full access pictures: only files written during the run, inside home or a folder the run was pointed at, and real pictures', J(names) === J(['out.png', 'plane.jpg']), J(names));
+    check('without the run window nothing outside the engine\'s own folders is taken', gen.findLocalImages(reply, [], {}).length === 0);
+    const big = path.join(home, 'Pictures', 'big.png'); fs.writeFileSync(big, Buffer.concat([PNG, Buffer.alloc(300)]));
+    check('full access pictures: a size cap applies', gen.findLocalImages(big, [], { max: 100, fresh: opts }).length === 0 && gen.findLocalImages(big, [], { fresh: opts }).length === 1);
+    check('full access pictures: ~/ and Git Bash style paths are read as the folder they stand for', gen.pathsIn('saved ~/Pictures/plane.jpg', { home }).includes(path.join(home, 'Pictures', 'plane.jpg')) && gen.pathsIn('at /c/Users/me/x.png', { home, platform: 'win32' }).includes('C:/Users/me/x.png') && gen.pathsIn('at /c/Users/me/x.png', { home, platform: 'linux' }).includes('/c/Users/me/x.png'));
+    let linked = false;
+    const link = path.join(home, 'Pictures', 'link.png');
+    try { fs.symlinkSync(outside, link); linked = true; } catch { /* no symlink rights */ }
+    check('full access pictures: a link out of the allowed folders is not followed', !linked || gen.findLocalImages(link, [], { fresh: opts }).length === 0);
+    // through the agent: kept in the chat's store, shown as an image event, and the fresh window starts at the run
+    events.length = 0;
+    const kept = await inFull(() => full.enginePictures(`Saved ${fresh} and ${old} and ${outside}`, engine, emit, { since: runStart }));
+    check('agent: the fresh picture is saved with the chat and shown; the old one and the one elsewhere are not', kept.length === 1 && events.filter((e) => e.type === 'image').length === 1 && store.read(kept[0].id)?.buffer.equals(JPG), J(events));
+    events.length = 0;
+    const plain = await inFull(() => full.enginePictures(`Saved ${fresh}`, engine, emit));
+    check('agent: without full access (no run window) the same path is not shown', plain.length === 0 && !events.some((e) => e.type === 'image'), J(events));
+    const claudecode = require('../src/ai/claude-code');
+    check('Bash --cwd / --add-dir folders are noticed', J(claudecode.dirsInCommand('grok --cwd "C:\\a b\\out" --add-dir /tmp/x --cwd=/y/z -p "hi"')) === J(['C:\\a b\\out', '/tmp/x', '/y/z']), J(claudecode.dirsInCommand('grok --cwd "C:\\a b\\out" --add-dir /tmp/x --cwd=/y/z -p "hi"')));
+    const eng = new claudecode.ClaudeCodeEngine({ userData: tmp, mcpCommand: () => ({}), ensureServer: () => {} });
+    eng.runDirs = new Set([pointed, path.parse(pointed).root, 'relative/dir', path.join(tmp, 'missing')]);
+    check('freshRoots: home plus the existing folders the run named; never a drive root, a relative or missing folder', J(eng.freshRoots()) === J([os.homedir(), pointed]), J(eng.freshRoots()));
   }
 
   // ---- web pictures: https only, no cookies, no private addresses, real images only

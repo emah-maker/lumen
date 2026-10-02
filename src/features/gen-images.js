@@ -188,31 +188,41 @@ function createImageStore({ dir, encrypt = (s) => s, decrypt = (s) => s, availab
 // Absolute paths in the engine's reply that end in an image extension.
 const WIN_PATH = /(?:[A-Za-z]:[\\/][^\s"'<>|*?`]+?\.(?:png|jpe?g|gif|webp))\b/gi;
 const POSIX_PATH = /(?:^|[\s("'`])(\/[^\s"'<>|*?`]+?\.(?:png|jpe?g|gif|webp))\b/gi;
-function pathsIn(text) {
+const TILDE_PATH = /(?:^|[\s("'`])(~[\\/][^\s"'<>|*?`]+?\.(?:png|jpe?g|gif|webp))\b/gi;
+// With `home`: "~/x.png" and (on Windows) a Git Bash path "/c/Users/me/x.png" are read as the native path they stand for.
+function pathsIn(text, { home = null, platform = process.platform } = {}) {
   const found = new Set();
   const s = String(text || '');
   for (const m of s.matchAll(WIN_PATH)) found.add(m[0]);
-  for (const m of s.matchAll(POSIX_PATH)) found.add(m[1]);
+  for (const m of s.matchAll(POSIX_PATH)) found.add(platform === 'win32' && home ? m[1].replace(/^\/([A-Za-z])\//, (_a, d) => `${d.toUpperCase()}:/`) : m[1]);
+  if (home) for (const m of s.matchAll(TILDE_PATH)) found.add(path.join(home, m[1].slice(2)));
   return [...found].slice(0, 20);
 }
 
 // The files among `text`'s paths that really are pictures lying inside one of `roots` (the engine's own working and temp
 // folders): [{ file, buffer, mime }]. A path elsewhere, a link out of the roots, a big file or non-image bytes are skipped.
-function findLocalImages(text, roots, { fsImpl = fs, max = MAX_BYTES } = {}) {
-  const realRoots = [];
-  for (const r of roots || []) { try { realRoots.push(normalise(fsImpl.realpathSync(r))); } catch {} }
+// fresh: { roots, since, until, home } (a CLI that runs as in a terminal, "full access"): a picture also counts when it lies
+// in one of fresh.roots (the home folder and the folders the run was pointed at) AND was written during the run (its modified
+// time is between `since` and `until`). A file that was already there is never shown, whatever names it.
+function findLocalImages(text, roots, { fsImpl = fs, max = MAX_BYTES, fresh = null } = {}) {
+  const real = (list) => { const out = []; for (const r of list || []) { try { out.push(normalise(fsImpl.realpathSync(r))); } catch { /* not there */ } } return out; };
+  const realRoots = real(roots);
+  const freshRoots = fresh ? real(fresh.roots) : [];
+  const within = (key, list) => list.some((root) => key === root || key.startsWith(root + path.sep.toLowerCase()) || key.startsWith(`${root}/`) || key.startsWith(`${root}${path.sep}`));
   const out = [];
-  for (const p of pathsIn(text)) {
+  for (const p of pathsIn(text, { home: fresh?.home || null })) {
     if (out.length >= MAX_PER_REPLY) break;
     try {
-      const real = fsImpl.realpathSync(p);
-      const key = normalise(real);
-      if (!realRoots.some((root) => key === root || key.startsWith(root + path.sep.toLowerCase()) || key.startsWith(`${root}/`))) continue;
-      const stat = fsImpl.statSync(real);
+      const realPath = fsImpl.realpathSync(p);
+      const key = normalise(realPath);
+      const stat = fsImpl.statSync(realPath);
+      const own = within(key, realRoots);
+      const recent = !own && freshRoots.length > 0 && within(key, freshRoots) && stat.mtimeMs >= fresh.since && stat.mtimeMs <= (fresh.until ?? Date.now()) + 60000;
+      if (!own && !recent) continue;
       if (!stat.isFile() || stat.size > max || stat.size < 12) continue;
-      const buffer = fsImpl.readFileSync(real);
+      const buffer = fsImpl.readFileSync(realPath);
       const type = sniff(buffer);
-      if (type) out.push({ file: real, buffer, mime: type.mime });
+      if (type && !out.some((o) => o.file === realPath)) out.push({ file: realPath, buffer, mime: type.mime });
     } catch { /* not there, or not readable: skipped */ }
   }
   return out;
