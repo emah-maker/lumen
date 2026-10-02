@@ -18,6 +18,7 @@ class El {
   insertBefore(n) { this.children.unshift(n); }
   get textContent() { return this.children.length ? this.children.map((c) => c.textContent).join('') : this._text; }
   set textContent(v) { this._text = String(v); this.children = []; }
+  querySelector(sel) { return this.find(sel.replace(/^\./, ''))[0] || null; }
   find(cls) { const out = []; const walk = (e) => { if (e.classList?.contains?.(cls)) out.push(e); (e.children || []).forEach(walk); }; walk(this); return out; }
 }
 const text = (s) => Object.assign(new El('#text'), { _text: s });
@@ -109,6 +110,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('row click: an idle chat that cannot be opened shows its note on the row (still attached) and has not redrawn yet', /Could not open this chat/.test(meta(li).textContent) && redraws === 0, `${meta(li).textContent} ${redraws}`);
   await sleep(2700);
   check('...and the list is redrawn after the note has been read', redraws === 1, redraws);
+  // the redraw never lands on an open rename field, and a second failed open does not stack a second timer
+  redraws = 0;
+  li = make(api, base);
+  await li.find('chat-open')[0].onclick();
+  await li.find('chat-open')[0].onclick();
+  li.append(Object.assign(new El('input'), { className: 'chat-rename-input' }));
+  await sleep(2700);
+  check('row click: no redraw over an open rename field (and two failed opens leave one timer)', redraws === 0, redraws);
+  li = make(api, base);
+  await li.find('chat-open')[0].onclick();
+  await li.find('chat-open')[0].onclick();
+  await sleep(2700);
+  check('row click: two failed opens in a row redraw once', redraws === 1, redraws);
+  li = make(api, base);
+  await li.find('chat-open')[0].onclick();
+  li.find('chat-actions')[0].children.find((b) => /delete/i.test(b.title)).classList.add('armed');
+  await sleep(2700);
+  check('row click: no redraw over an armed delete', redraws === 1, redraws);
   rerenderSpy = async () => {};
   opener = async () => true;
   // a slow stop that then succeeds takes its failure note back
@@ -130,6 +149,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const second = stop.onclick({ stopPropagation() {} });
   await Promise.all([first, second]);
   check('stop: a false answer to a second click is ignored while the first stop worked', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
+  // a stop that works, then a slower earlier timeout: the timeout does not fail it
+  calls = 0;
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => true, remove: async () => ({}), list: async () => ({ chats: [] }), stopChat: async () => { calls++; if (calls === 1) { await sleep(90); return true; } return true; } };
+  li = make(api, queued);
+  stop = li.find('chat-stop-wait')[0];
+  const slowFirst = stop.onclick({ stopPropagation() {} });
+  await sleep(10);
+  stop.disabled = false;
+  await stop.onclick({ stopPropagation() {} }); // the second answers true at once: stopped
+  await sleep(60); // the first one's patience (40 ms) runs out after that
+  check('stop: a stop that already worked is not failed by an older one running out of patience', !/Could not stop/.test(meta(li).textContent), meta(li).textContent);
+  await slowFirst;
   // a row that has been redrawn away is never written to
   api = { exportChat: async () => ({ ok: true }), showTab: async () => true, stopChat: async () => true, remove: async () => ({}), list: async () => ({ chats: [{ id: 'c1', badge: 'queued' }] }) };
   li = make(api, queued);

@@ -231,6 +231,8 @@ const J = (v) => JSON.stringify(v);
     const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
     const del = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:delete'"), mainSrc.indexOf('// The chat as Markdown'));
     check('delete: both branches (the open chat and another) push attention after the chat is gone', (del.match(/pushAttention\(\)/g) || []).length === 2 && del.indexOf('unbindChat') < del.indexOf('pushAttention()'), String((del.match(/pushAttention\(\)/g) || []).length));
+    const tell = mainSrc.slice(mainSrc.indexOf('function tellUser(run, kind)'), mainSrc.indexOf('function tellUser(run, kind)') + 400);
+    check('deleted chat: a run that ends after its chat was deleted adds no unread mark and sends no notification', /if \(run\.deleted\) \{ unreadChats\.delete\(run\.chatId\);[^}]*return; \}/.test(tell) && tell.indexOf('run.deleted') < tell.indexOf('unreadChats.add'));
     check('queue: why a chat waits is asked again when its text is made', /const waitingText = \(run\) => t\(\(run\.queued \? runSlots\.reason\(run\.chatId\)/.test(mainSrc));
   }
   check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));

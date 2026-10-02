@@ -171,10 +171,16 @@
         try { if ((await api.showTab(chat.id)) === false) { say(tr('chats.tabFailed', 'Could not open the tab')); return; } window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); }
       };
       // Moving a chat into this tab (or opening it): the page's open answers false when the chat is gone.
+      let redrawTimer = null;
       const moveHere = async () => {
         let ok;
         try { ok = (await onOpen(chat.id)) !== false; } catch { ok = false; }
-        if (!ok) { say(tr('chats.openFailed', 'Could not open this chat')); setTimeout(() => { if (attached()) rerender(); }, 2600); } // the note is read, then the list is drawn again without it
+        if (!ok) {
+          say(tr('chats.openFailed', 'Could not open this chat'));
+          // The note is read, then the list is drawn again without it: one timer per row, and never over a rename field or an armed delete.
+          clearTimeout(redrawTimer);
+          redrawTimer = setTimeout(() => { if (attached() && !li.querySelector('.chat-rename-input') && !del.classList.contains('armed')) rerender(); }, 2600);
+        }
       };
       exportBtn.onclick = async () => {
         try {
@@ -241,7 +247,7 @@
           const wait = window.chatItemsStopMs || 4000; // (a test shortens it)
           let timedOut = false;
           const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
-          const lost = setTimeout(() => { timedOut = true; fail(); }, wait); // slow main: the button comes back, but a late success takes that back
+          const lost = setTimeout(() => { if (stoppedOnce) return; timedOut = true; fail(); }, wait); // slow main: the button comes back, but a late success takes that back
           try {
             const answer = await api.stopChat(chat.id);
             stopsOut--;

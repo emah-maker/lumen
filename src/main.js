@@ -3853,6 +3853,7 @@ const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRun
 // Tells the user about a run: a system notification (clicking it brings the window and that chat
 // back), and the unread mark when the reply isn't in view.
 function tellUser(run, kind) {
+  if (run.deleted) { unreadChats.delete(run.chatId); pushAttention(); return; } // a chat deleted while it worked leaves no unread mark or notification behind
   const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...runView(run) });
   if (decided.unread && kind !== 'approval') unreadChats.add(run.chatId);
   pushAttention();
