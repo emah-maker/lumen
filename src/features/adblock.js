@@ -15,6 +15,8 @@ const path = require('path');
 const crypto = require('crypto');
 const electron = require('electron');
 const { t } = require('./i18n');
+const lists = require('./adblock-lists');
+const youtube = require('./adblock-youtube');
 
 // Must be registered before the app is ready, and Electron keeps only the last call's list:
 // electron-chrome-extensions registers crx (it loads earlier in main.js), so it is repeated here.
@@ -99,12 +101,14 @@ function createAdblock(deps) {
     '#@##credential_picker_iframe',
     '#@#iframe[src^="https://accounts.google.com/gsi/"]',
   ];
+  // Added to every engine (patched in once, then kept): the sign-in exceptions and YouTube's extra hiding rules.
+  const ENGINE_PATCH = [...SIGN_IN_EXCEPTIONS, ...youtube.YOUTUBE_FILTERS];
   const LISTS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   async function setup() {
     const { ElectronBlocker, fromElectronDetails } = require('@ghostery/adblocker-electron');
     const base = path.join(deps.app.getPath('userData'), 'adblock-engine.bin');
     const patched = path.join(deps.app.getPath('userData'), 'adblock-engine-signin.bin');
-    const PATCH = `1|${SIGN_IN_EXCEPTIONS.join('|')}`;
+    const PATCH = `2|${ENGINE_PATCH.join('|')}`;
     // Annoyance lists hide Google's One Tap prompt and block its sign-in script; signing in with Google on a site
     // must keep working, so those are always let through. Patching the engine takes ~0.4 s, so the patched engine
     // is kept (tagged with the lists it was built from) and a launch just loads it.
@@ -118,6 +122,7 @@ function createAdblock(deps) {
     // freshly built one (patched, or from new lists) without re-wiring anything.
     // The swap's deserialize takes ~30-80 ms on the main thread: done when the user has been idle a couple of seconds.
     const whenIdle = () => new Promise((resolve) => {
+      if (isTest) { resolve(); return; } // (tests don't wait for the machine to be idle)
       const started = Date.now();
       const check = () => {
         let idle;
@@ -141,20 +146,30 @@ function createAdblock(deps) {
     const inWorker = (refresh) => new Promise((resolve) => {
       let worker;
       try {
-        worker = new (require('worker_threads').Worker)(path.join(__dirname, 'adblock-worker.js'), { workerData: { base, patched, exceptions: SIGN_IN_EXCEPTIONS, patch: PATCH, refresh } });
+        worker = new (require('worker_threads').Worker)(path.join(__dirname, 'adblock-worker.js'), { workerData: { base, patched, exceptions: ENGINE_PATCH, patch: PATCH, refresh, sourceFile } });
       } catch { resolve(false); return; }
       worker.once('message', (m) => { if (!m?.ok) console.error('[lumen] ad-block worker:', m?.error); resolve(Boolean(m?.ok)); });
       worker.once('error', (err) => { console.error('[lumen] ad-block worker failed:', err?.message || err); resolve(false); });
       worker.once('exit', () => resolve(false));
       worker.unref();
     });
+    // Which lists the saved engine came from (adblock-lists.js): one from the library's old snapshot is replaced soon.
+    const sourceFile = `${base}.src`;
+    const sourceOf = () => fs.promises.readFile(sourceFile, 'utf8').then((s) => s.trim(), () => '');
     if (!blocker) {
-      blocker = await ElectronBlocker.fromPrebuiltFull(fetch, { path: base, read: fs.promises.readFile, write: fs.promises.writeFile });
+      let saved = null;
+      try { saved = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(base))); } catch { /* none yet, or unreadable */ }
+      if (saved) blocker = saved;
+      else {
+        const built = await lists.buildEngineOrFallback(ElectronBlocker, fetch);
+        blocker = built.engine;
+        fs.promises.writeFile(base, blocker.serialize()).then(() => fs.promises.writeFile(sourceFile, built.source)).catch(() => {});
+      }
       // Patched after the window is up (the network check below lets sign-in through meanwhile), then kept. Off the
       // main thread; only if a worker can't run is it patched here, in the idle time a few seconds in.
       setTimeout(async () => {
         if (await inWorker(false)) { await loadPatched().catch(() => {}); return; }
-        try { engine.updateFromDiff({ added: SIGN_IN_EXCEPTIONS }); } catch { return; }
+        try { engine.updateFromDiff({ added: ENGINE_PATCH }); } catch { return; }
         fs.promises.stat(base).then((st) => fs.promises.writeFile(patched, engine.serialize())
           .then(() => fs.promises.writeFile(`${patched}.json`, JSON.stringify({ patch: PATCH, baseMtime: st.mtimeMs, baseSize: st.size }))))
           .catch(() => {});
@@ -164,7 +179,8 @@ function createAdblock(deps) {
     // hours while Lumen stays open), and used from then on.
     const refreshIfOld = async () => {
       const st = await fs.promises.stat(base).catch(() => null);
-      if (st && Date.now() - st.mtimeMs > LISTS_MAX_AGE_MS && (await inWorker(true))) await loadPatched().catch(() => {});
+      const old = st && Date.now() - st.mtimeMs > LISTS_MAX_AGE_MS;
+      if (st && (old || (await sourceOf()) !== lists.SOURCE) && (await inWorker(true))) await loadPatched().catch(() => {});
     };
     if (!isTest) {
       setTimeout(refreshIfOld, 60000).unref?.();
@@ -203,9 +219,10 @@ function createAdblock(deps) {
           getBaseRules: false, getInjectionRules: true, getExtendedRules: false, getRulesFromHostname: true, getRulesFromDOM: false,
           callerContext: { frameId: event.frameId, processId: event.processId },
         }).scripts;
+        const scripts = youtube.withFallback(out, hostname);
         if (scriptletCache.map.size > 300) scriptletCache.map.clear();
-        scriptletCache.map.set(hostname || '', out);
-        return out;
+        scriptletCache.map.set(hostname || '', scripts);
+        return scripts;
       } catch {
         return [];
       }
