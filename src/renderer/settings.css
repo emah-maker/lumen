@@ -200,7 +200,7 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
   main { padding: 24px 24px 96px; }
 }
 @media (max-width: 720px) {
-  body { grid-template-columns: 1fr; }
+  body { grid-template-columns: minmax(0, 1fr); }
   .nav { position: static; height: auto; padding: 12px 12px 8px; overflow: visible; box-shadow: inset 0 -1px 0 var(--hairline); }
   .nav .search { padding: 0 0 8px; }
   #nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
@@ -414,3 +414,7 @@ details.disclosure > summary:focus-visible { outline: none; box-shadow: var(--fo
 details.disclosure > .list { margin-top: 8px; columns: 2; column-gap: 24px; }
 /* Switches that give a program control of the computer carry a thin warning edge. */
 .row.warn { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--danger) 70%, transparent); }
+/* A checked switch keeps its focus ring (the checked rule above clears box-shadow). */
+input.switch:focus-visible, input.switch:checked:focus-visible, input.switch:indeterminate:focus-visible { box-shadow: var(--focus-ring); }
+main, .pane, .slot, .group, .card { min-width: 0; }
+.key-get { margin-left: 8px; font-size: 12px; font-weight: 400; }

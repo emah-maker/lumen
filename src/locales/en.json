@@ -751,6 +751,7 @@
   "settings.loadFailed": "Couldn’t load this section",
   "settings.noResults": "No settings match your search.",
   "settings.skip": "Skip to settings",
+  "settings.ai.fullAccessGroup": "Full access (advanced)",
   "settings.noResultsHint": "Try a different word, like “privacy”, “theme” or “download”.",
   "settings.noResultsFor": "Nothing matches “{q}”",
   "settings.clearSearch": "Clear search",
