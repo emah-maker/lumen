@@ -219,7 +219,7 @@ function createAdblock(deps) {
           getBaseRules: false, getInjectionRules: true, getExtendedRules: false, getRulesFromHostname: true, getRulesFromDOM: false,
           callerContext: { frameId: event.frameId, processId: event.processId },
         }).scripts;
-        const scripts = youtube.withFallback(out, hostname);
+        const scripts = youtube.withFallback(youtube.dedupe(out.map(youtube.prepareScriptlet)), hostname);
         if (scriptletCache.map.size > 300) scriptletCache.map.clear();
         scriptletCache.map.set(hostname || '', scripts);
         return scripts;
