@@ -9,7 +9,8 @@ const { AsyncLocalStorage } = require('async_hooks');
 const { engineModel } = require('./cli-utils');
 const modelRoute = require('../features/model-route'); // [model route]
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
-const { addUsage } = require('../features/chat-usage');
+const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
+const compactLib = require('../features/chat-compact'); // [context] /compact and /context
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
@@ -344,6 +345,21 @@ function recordUsage(messages, entry, emit) {
   if (!messages.settings) return;
   messages.settings.usage = addUsage(messages.settings.usage, entry);
   emit({ type: 'usage', usage: messages.settings.usage });
+}
+
+// [context] How full the chat's context window is (features/chat-usage.js setContext), saved with the chat like its
+// usage; the sidebar's meter gets it at once. `ctx`: { tokens, window, model, estimated }.
+function recordContext(messages, ctx, emit) {
+  if (!messages.settings || !setContext(messages.settings, ctx)) return;
+  emit({ type: 'context', context: contextView(messages.settings.context) });
+}
+
+// The conversation so far as text, for an engine that starts mid-chat (Claude Code, Grok Build, Antigravity): the
+// chat's /compact summary first, when it has one, then the newest of the turns before this message.
+function earlierText(messages, priorItems) {
+  const summary = compactLib.summaryOf(messages);
+  const turns = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+  return [summary ? `Summary of the earlier conversation:\n${summary}` : '', turns].filter(Boolean).join('\n\n');
 }
 
 // A turn written by another model is passed on in a form any model accepts: text (without
@@ -928,14 +944,15 @@ async function searchWebInView(query) {
 // What the sidebar shows for a restored chat: user/assistant text and pasted images, no tool steps.
 // Also used for chats in the history list and for exporting one (main.js).
 const ACTING_TOOL_NAMES = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
-function transcriptFor(chatMessages) {
-  const items = [];
+// settings.compactedItems: turns an API chat's /compact replaced with a summary (features/chat-compact.js), still shown.
+function transcriptFor(chatMessages, settings = chatMessages.settings) {
+  const items = Array.isArray(settings?.compactedItems) ? settings.compactedItems.map((it) => ({ ...it, images: [] })) : [];
   let steps = 0;
   let acted = false;
   for (const m of chatMessages) {
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'user') {
-      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '')).join('\n').trim();
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '').replace(compactLib.SUMMARY_BLOCK, '')).join('\n').trim();
       const images = blocks.filter((b) => b.type === 'image' && b.source?.type === 'base64').map((b) => `data:${b.source.media_type};base64,${b.source.data}`);
       // A message from the user starts a new exchange: one that ended without a final reply (stopped
       // mid-tool) must not lend its step count or "acted" to the next.
@@ -1144,7 +1161,9 @@ class Agent {
       if (m[i].role !== 'user' || !blocks.some((b) => b.type === 'text' || b.type === 'image')) continue;
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n');
       if (want && !text.includes(want)) return 'absent'; // the last exchange is an earlier one: it stays
+      const summary = compactLib.summaryBlockOf(m[i]); // [context] a /compact summary rides on the first message: it stays
       m.splice(i);
+      if (summary) m.push({ role: 'user', content: [summary] }); // (the next message extends it, as after a stop)
       m.simpleTurn = null;
       this.pageContexts.delete(m); // the page text it carried is gone: the next message sends it again
       repairHistory(m);
@@ -1358,6 +1377,9 @@ class Agent {
   // ---- [/model fallback]
 
   async runTask(messages, tab, userText, images, controller, emit, extra = {}) {
+    // [context] "/compact …" and "/context" are commands for this chat, not a message to it.
+    const command = images.length || extra.tabs?.length ? null : compactLib.chatCommand(userText);
+    if (command) return this.commandTurn(messages, command, controller, emit);
     const aiOff = tab && this.browser.aiOff?.(tab.webContents.getURL()); // [ai controls] no title or address either
     const state = aiOff
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
@@ -1430,12 +1452,14 @@ class Agent {
     const fb = { tried: new Set(), calls0: taskScope.getStore()?.toolCalls || 0 };
     const callsNow = () => taskScope.getStore()?.toolCalls || 0;
     let plan = ccPlan;
+    let autoChecked = false;
     for (;;) {
       const model = String(messages.settings.model);
       const toClaudeCode = model.startsWith('claudecode:') && Boolean(this.engines?.claudecode);
       const toGrokBuild = model.startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
       const toAntigravity = model.startsWith('antigravity:') && Boolean(this.engines?.antigravity);
       if (!toClaudeCode && !toGrokBuild && !toAntigravity) {
+        if (!autoChecked) { autoChecked = true; await this.autoCompact(messages, controller.signal, emit); } // [context]
         try { await this.loop(messages, controller.signal, emit, fb); return; } catch (err) { if (err === REDISPATCH) continue; throw err; }
       }
       // (A switch to another Grok model starts a new session: see above.)
@@ -1514,6 +1538,148 @@ class Agent {
     try { return this.onUsage(engine, data) || null; } catch (err) { console.error('[lumen] usage log failed:', err.message); return null; }
   }
 
+  // ---- [context] /compact and /context (features/chat-compact.js). They are answered here for every AI and never
+  // become messages of the chat: Claude Code runs them in the chat's own session (with or without full access, since
+  // neither grants a tool); an API chat is summarized by its own model; Grok Build and Antigravity compact their
+  // sessions themselves.
+  async commandTurn(messages, command, controller, emit) {
+    const model = String(messages.settings.model);
+    const signal = controller.signal;
+    if (model.startsWith('claudecode:') && this.engines?.claudecode) return this.claudeCodeCommand(messages, command, signal, emit);
+    const engine = model.startsWith('grokbuild:') ? 'Grok Build' : model.startsWith('antigravity:') ? 'Antigravity' : null;
+    if (command.name === 'context') return this.contextReport(messages, emit, engine);
+    if (engine) { emit({ type: 'notice', text: `${engine} keeps this conversation in its own session and compacts it by itself when it fills up, so Lumen can't compact it from here. New chat starts fresh.` }); return; }
+    await this.compactApi(messages, command.args, signal, emit);
+  }
+
+  async claudeCodeCommand(messages, command, signal, emit) {
+    const settings = messages.settings;
+    if (command.name === 'compact' && !settings.ccSession) { emit({ type: 'notice', text: 'Nothing to compact yet: this chat has no Claude Code conversation.' }); return; }
+    if (this.engineRunScope) throw new Error('Claude Code is still working on a task in another chat. Wait for it to finish, then try again.');
+    const had = Boolean(settings.ccSession);
+    const { routed, spawn } = this.claudeCodePlan(messages, '', 0, 0);
+    let shown = false;
+    const gate = (event) => { if (event.type === 'text' && event.text) shown = true; emit(event); };
+    emit({ type: 'turn_start' });
+    if (command.name === 'compact') emit({ type: 'status', text: 'Compacting the conversation…' });
+    this.engineRunScope = taskScope.getStore();
+    this.prewarmed = null;
+    let out;
+    try {
+      out = await this.engines.claudecode.run({
+        ...spawn, prompt: `/${command.name}${command.args ? ` ${command.args}` : ''}`, images: [], quietExpired: true, signal, emit: gate, prestart: false,
+        lateUsage: ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); },
+      });
+    } finally {
+      this.engineRunScope = null;
+    }
+    if (command.name === 'compact') emit({ type: 'status', text: '' });
+    if (out.expired) {
+      delete settings.ccSession;
+      emit({ type: 'notice', text: 'This chat’s Claude Code session is gone (cleared, or from another machine). Your next message starts a new one, handed the conversation so far.' });
+      return;
+    }
+    recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
+    this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    // (A /context on a chat with no session yet ran in a throwaway one: the chat's first message still hands the
+    // conversation over, as a switch to Claude Code mid-chat does.)
+    if (out.sessionId === null) delete settings.ccSession;
+    else if (!out.failed && !out.stopped && had) settings.ccSession = out.sessionId;
+    if (out.stopped) { emit({ type: 'notice', text: 'Stopped.', stopped: true }); return; }
+    if (out.failed) return; // (the engine said why)
+    if (command.name === 'compact') {
+      this.noteCliContext(messages, out, routed.model, emit, { command: true });
+      const c = out.compacted;
+      emit({ type: 'notice', text: c ? `Compacted: ${shortCount(c.pre)} → ${shortCount(c.post)} tokens.` : String(out.text || '').trim().slice(0, 300) || 'Claude Code did not compact this conversation.' });
+      if (c) snapshot.reads.clear(); // the pages it read are no longer in view as they were
+      return;
+    }
+    const report = parseContextReport(out.text);
+    if (report) recordContext(messages, { ...report, model: routed.model }, emit);
+    if (!shown && out.text) { emit({ type: 'text_block' }); emit({ type: 'text', text: out.text }); }
+  }
+
+  // What a Claude Code turn says about the chat's context: its last model call's input; after a compaction with no
+  // call since (a /compact on its own), the CLI's after-figure, marked as an estimate until the next message. A
+  // compaction the CLI ran by itself during a reply (near the limit) is said in the chat.
+  noteCliContext(messages, out, model, emit, { command = false } = {}) {
+    const c = out.compacted;
+    if (out.context) recordContext(messages, { ...out.context, model }, emit);
+    else if (c && c.pre > 0) recordContext(messages, { tokens: c.post, window: out.window || messages.settings?.context?.window, model, estimated: true }, emit);
+    if (c && !command) emit({ type: 'notice', text: `Claude Code compacted this conversation to make room (${shortCount(c.pre)} → ${shortCount(c.post)} tokens).` });
+  }
+
+  // An API chat's /compact: the same model summarizes everything before the last exchange, and the summary takes
+  // those turns' place (they stay on screen). `auto`: the history is near what one request may carry (runTask).
+  // Nothing changes when the request fails or the summary is empty. True when the chat was compacted.
+  async compactApi(messages, instructions, signal, emit, { auto = false } = {}) {
+    const plan = compactLib.compactPlan(messages, 1);
+    if (!plan) { if (!auto) emit({ type: 'notice', text: 'Nothing to compact yet: this chat has only one exchange.' }); return false; }
+    const model = String(messages.settings.model);
+    const older = messages.slice(0, plan.cut);
+    const items = transcriptFor(older, null);
+    const temp = [{ role: 'user', content: [{ type: 'text', text: compactLib.summaryRequest({ items, prior: compactLib.summaryOf(messages), instructions }) }] }];
+    temp.settings = { ...messages.settings };
+    const beforeChars = historyChars(messages);
+    const before = messages.settings.context?.tokens || compactLib.estimateTokens(beforeChars);
+    emit({ type: 'status', text: auto ? 'This chat is long: summarizing its earlier part…' : 'Compacting the conversation…' });
+    const quiet = () => {};
+    let message;
+    try {
+      message = providers.splitModel(model).provider === 'anthropic'
+        ? await this.claudeTurn(temp, signal, quiet, this.contextBudget(model), true)
+        : await this.otherTurn(temp, signal, quiet, this.contextBudget(model), true).catch((err) => { err.__provider = providers.splitModel(model).provider; throw err; });
+    } catch (err) {
+      if (signal.aborted) throw err;
+      emit({ type: 'notice', text: `Couldn’t compact this chat (${describeError(err, this.browser.anthropicAuth?.()).text}). Nothing was changed.` });
+      return false;
+    } finally {
+      emit({ type: 'status', text: '' });
+    }
+    recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
+    const summary = (message.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+    if (!summary || summary === '(no reply)' || !compactLib.applySummary(messages, plan.cut, summary, items)) {
+      emit({ type: 'notice', text: 'Couldn’t compact this chat: the model sent no summary. Nothing was changed.' });
+      return false;
+    }
+    const after = Math.max(0, before - compactLib.estimateTokens(beforeChars - historyChars(messages)));
+    recordContext(messages, { tokens: after, window: messages.settings.context?.window || fallback.capsOf(model, this.fallbackOptionsList()).context, model, estimated: true }, emit);
+    messages.simpleTurn = null;
+    this.pageContexts.delete(messages); // the page text the replaced turns carried is gone: the next message sends it again
+    snapshot.reads.clear();
+    emit({ type: 'notice', text: auto
+      ? `This chat was getting long, so its earlier part was summarized for the AI (about ${shortCount(before)} → ${shortCount(after)} tokens). It stays on screen.`
+      : `Compacted: about ${shortCount(before)} → ${shortCount(after)} tokens. The earlier messages stay on screen; the AI now sees a summary of them.` });
+    return true;
+  }
+
+  // Auto-compact (Settings > AI, on by default): an API chat whose history nears what one request may carry is
+  // summarized before the request, instead of having its oldest turns left out (fitContext).
+  async autoCompact(messages, signal, emit) {
+    if (this.browser.autoCompact?.() === false) return false;
+    const model = String(messages.settings.model);
+    if (!compactLib.shouldAutoCompact(historyChars(messages), this.contextBudget(model))) return false;
+    return this.compactApi(messages, '', signal, emit, { auto: true });
+  }
+
+  // /context for a chat Lumen measures itself (API models, Grok Build, Antigravity): the last request's figure.
+  contextReport(messages, emit, engine = null) {
+    const settings = messages.settings;
+    const view = contextView(settings.context);
+    const exchanges = compactLib.turnStarts(messages).length;
+    const lines = ['## Context'];
+    if (view) lines.push(`**Tokens:** ${view.estimated ? 'about ' : ''}${shortCount(view.tokens)} / ${shortCount(view.window)} (${Math.round(view.percent)}%)`);
+    else lines.push(exchanges ? 'Not measured yet: the next reply reports it.' : 'Nothing in this chat’s context yet.');
+    lines.push('', `- Model: ${settings.model}`, `- Exchanges the AI sees: ${exchanges}`);
+    if (settings.compactions) lines.push(`- Compacted ${settings.compactions === 1 ? 'once' : `${settings.compactions} times`}: earlier turns are a summary`);
+    if (!engine) lines.push(`- Messages: about ${shortCount(compactLib.estimateTokens(historyChars(messages)))} tokens (the rest is Lumen's instructions and the browser tools)`, '', 'Type /compact to summarize the earlier part of this chat and free up room.');
+    else lines.push('', `${engine} compacts its own session when it fills up.`);
+    emit({ type: 'turn_start' });
+    emit({ type: 'text_block' });
+    emit({ type: 'text', text: lines.join('\n') });
+  }
+  // ---- [/context]
+
   // ---- [claude code engine] One message through the user's Claude Code CLI. The session id lives
   // in the chat's settings, so follow-ups resume it and New chat (reset) starts a fresh one.
   // What a Claude Code message needs before it is sent, worked out before the page is read so the
@@ -1581,12 +1747,13 @@ class Agent {
     const handoff = () => {
       if (messages.length <= 1) return { text: prompt, images };
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      const earlier = earlierText(messages, priorItems);
       const priorImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
       return { text: earlier ? `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}` : prompt, images: [...capHistoryImages(priorImages, images, emit), ...images] };
     };
-    // [full access] "/goal …", "/context", a skill: the CLI runs a slash command only when it starts the
-    // message, so it goes in as typed, without the browser state and page text put before it.
+    // [full access] "/goal …", a skill: the CLI runs a slash command only when it starts the message, so it goes
+    // in as typed, without the browser state and page text put before it. (/compact and /context work without full
+    // access: commandTurn sends them.)
     const slash = spawn.fullAccess ? require('./claude-code').slashCommand(hint.userText) : null;
     const first = slash ? { text: slash, images } : spawn.resume ? { text: prompt, images } : handoff();
     this.prewarmed = null; // (its session id is this message's now)
@@ -1614,6 +1781,7 @@ class Agent {
     }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model });
+    this.noteCliContext(messages, out, routed.model, emit); // [context]
     if (out.sessionId === null) delete settings.ccSession;
     else if (!out.failed && (!out.stopped || out.text)) settings.ccSession = out.sessionId;
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
@@ -1641,7 +1809,7 @@ class Agent {
     if (!resume && messages.length > 1) {
       // Switched to Grok Build mid-chat: hand it the conversation so far, same as claudeCodeTurn.
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      const earlier = earlierText(messages, priorItems);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
     }
@@ -1661,6 +1829,7 @@ class Agent {
     // The model Grok says it used, for this pick: the next reply's notice and system prompt use it.
     if (out.model) { settings.gbShown = out.model; settings.gbShownFor = settings.model; }
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
+    if (Number.isFinite(out.usage?.contextTokens) && out.usage.contextTokens > 0) recordContext(messages, { tokens: out.usage.contextTokens, window: out.usage.contextWindow, model: settings.model }, emit); // [context]
     // A plan-limit failure carries the reset time when Grok's message named one (out.planLimit); a
     // finished turn clears it. The log may answer with a budget notice (features/usage.js).
     const logged = this.reportUsage('grokbuild', { usage: out.usage, model: engineModel(settings.model), session: out.sessionId || settings.gbSession || null, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
@@ -1688,7 +1857,7 @@ class Agent {
     if (!resume && messages.length > 1) {
       // Switched to Antigravity mid-chat: hand it the conversation so far, same as grokBuildTurn.
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = priorItems.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n\n').slice(-6000);
+      const earlier = earlierText(messages, priorItems);
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
     }
@@ -1826,6 +1995,7 @@ class Agent {
       }
 
       recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
+      if (message.usage) recordContext(messages, { tokens: contextTokensOf(message.usage), window: fallback.capsOf(model, this.fallbackOptionsList()).context, model }, emit); // [context]
 
       for (const block of message.content) {
         if (block.type === 'server_tool_use' && block.name === 'web_search') {
