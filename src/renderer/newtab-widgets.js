@@ -604,40 +604,109 @@ const WIDGET_RENDERERS = {
     }
   },
 
+  // Calendar: one or several calendars as one agenda (features/widgets.js sends d.events soonest first, each with
+  // the id of its calendar when there are several, and d.cals: { id, name, color, ok, error?, stale? }). With several,
+  // every event has a colour dot (named for screen readers; the name shows too where there is room) and a legend of
+  // switches under the title hides a calendar on this card. Which are hidden is remembered per card on this computer.
   calendar(w, card) {
     const d = w.data;
     card.head.append(refreshButton(w));
-    const now = Date.now();
-    const events = (Array.isArray(d.events) ? d.events : [])
-      .filter((e) => e && Number.isFinite(e.start) && Number.isFinite(e.end) && (e.allDay || e.end > now));
-    if (!events.length) { card.body.append(el('p', 'w-empty', 'Nothing coming up in the next two weeks.')); return; }
-    const list = el('div', 'w-list');
-    let lastDay = '';
-    let dayIdx = -1;
-    events.forEach((e, i) => {
-      const start = e.allDay && /^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? new Date(+e.date.slice(0, 4), +e.date.slice(5, 7) - 1, +e.date.slice(8, 10)) : new Date(e.start);
-      const shown = e.allDay && start < new Date(new Date().setHours(0, 0, 0, 0)) ? new Date() : start; // a multi-day event that began earlier
-      const day = dayLabel(shown);
-      if (day !== lastDay) { const dl = el('div', 'w-day', day); if (i > 0) dl.classList.add('later'); if (day === 'Today') dl.classList.add('today-label'); list.append(dl); lastDay = day; dayIdx++; }
-      const row = el('div', 'w-row');
-      row.dataset.c = String(dayIdx % 3);
-      if (day === 'Today') row.classList.add('today');
-      const evColor = hex6(e.color) || hex6(d.color); // the feed's own colour (used when the card's Colors setting is "Calendar colors")
-      if (evColor) row.style.setProperty('--ev', evColor);
-      if (i > 0) row.classList.add('later');
-      if (i > 2) row.classList.add('far');
-      const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      const main = el('div', 'w-main');
-      const title = text(e.title) || 'Busy';
-      const url = safeUrl(e.url);
-      main.append(url ? link(url, title, '') : el('span', 'w-title', title));
-      const where = text(e.location, 200);
-      const until = !e.allDay && e.start <= now ? `Now · until ${new Date(e.end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
-      if (until || where) main.append(el('span', 'w-sub', [until, where].filter(Boolean).join(' · ')));
-      row.append(el('span', 'w-bar'), el('span', 'w-time', time), main);
-      list.append(row);
-    });
-    card.body.append(list);
+    const cals = (Array.isArray(d.cals) ? d.cals : []).filter((c) => c && typeof c.id === 'string' && /^c[0-9a-z]{1,12}$/.test(c.id)).slice(0, 8)
+      .map((c) => ({ id: c.id, name: text(c.name, 60) || 'Calendar', color: hex6(c.color) || '', error: text(c.error, 160), stale: c.stale === true }));
+    const multi = d.multi === true && cals.length > 1;
+    const byId = new Map(cals.map((c) => [c.id, c]));
+    const hideKey = 'lumen.calendar.hidden.' + w.id;
+    const hidden = new Set();
+    if (multi) {
+      try { for (const id of JSON.parse(localStorage.getItem(hideKey) || '[]')) if (byId.has(id)) hidden.add(id); } catch { /* private window: all shown */ }
+      if (hidden.size >= cals.length) hidden.clear(); // never a card with nothing it can show
+    }
+    const remember = () => { try { if (hidden.size) localStorage.setItem(hideKey, JSON.stringify([...hidden])); else localStorage.removeItem(hideKey); } catch { /* it is just not remembered */ } };
+    const dot = (c, cls) => {
+      const span = el('span', 'cal-dot' + (cls ? ' ' + cls : ''));
+      if (c.color) span.style.setProperty('--cal', c.color);
+      return span;
+    };
+    const drawEvents = (events) => {
+      const now = Date.now();
+      const shown = events.filter((e) => !(multi && hidden.has(e.cal)));
+      if (!shown.length) {
+        const all = multi && hidden.size >= cals.length;
+        return el('p', 'w-empty', all ? 'All calendars are hidden. Turn one back on above.' : multi && hidden.size ? 'Nothing coming up in the calendars that are showing.' : 'Nothing coming up in the next two weeks.');
+      }
+      const list = el('div', 'w-list');
+      let lastDay = '';
+      let dayIdx = -1;
+      shown.forEach((e, i) => {
+        const start = e.allDay && /^\d{4}-\d{2}-\d{2}$/.test(e.date || '') ? new Date(+e.date.slice(0, 4), +e.date.slice(5, 7) - 1, +e.date.slice(8, 10)) : new Date(e.start);
+        const day = dayLabel(e.allDay && start < new Date(new Date().setHours(0, 0, 0, 0)) ? new Date() : start); // a multi-day event that began earlier
+        if (day !== lastDay) { const dl = el('div', 'w-day', day); if (i > 0) dl.classList.add('later'); if (day === 'Today') dl.classList.add('today-label'); list.append(dl); lastDay = day; dayIdx++; }
+        const row = el('div', 'w-row');
+        row.dataset.c = String(dayIdx % 3);
+        if (day === 'Today') row.classList.add('today');
+        const cal = multi ? byId.get(e.cal) : null;
+        const evColor = (cal && cal.color) || hex6(e.color) || hex6(d.color); // the calendar's colour; else the feed's own (used when the card's Colors setting is "Calendar colors")
+        if (evColor) row.style.setProperty('--ev', evColor);
+        if (i > 0) row.classList.add('later');
+        if (i > 2) row.classList.add('far');
+        const time = e.allDay ? 'All day' : new Date(e.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const main = el('div', 'w-main');
+        const title = text(e.title) || 'Busy';
+        const url = safeUrl(e.url);
+        main.append(url ? link(url, title, '') : el('span', 'w-title', title));
+        const where = text(e.location, 200);
+        const until = !e.allDay && e.start <= now ? 'Now · until ' + new Date(e.end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+        if (until || where) main.append(el('span', 'w-sub', [until, where].filter(Boolean).join(' · ')));
+        row.append(el('span', 'w-bar'), el('span', 'w-time', time), main);
+        if (cal) {
+          const mark = dot(cal, 'cal-row-dot');
+          mark.setAttribute('role', 'img');
+          mark.setAttribute('aria-label', 'Calendar: ' + cal.name);
+          mark.title = cal.name;
+          main.append(el('span', 'cal-name', cal.name));
+          row.append(mark);
+        }
+        list.append(row);
+      });
+      return list;
+    };
+    const events = (Array.isArray(d.events) ? d.events : []).filter((e) => e && Number.isFinite(e.start) && Number.isFinite(e.end) && (e.allDay || e.end > Date.now()));
+    const draw = (focusId) => {
+      const nodes = [];
+      if (multi) {
+        const legend = el('div', 'cal-legend');
+        legend.setAttribute('role', 'group');
+        legend.setAttribute('aria-label', 'Calendars on this card');
+        for (const c of cals) {
+          const on = !hidden.has(c.id);
+          const chip = el('button', 'cal-chip');
+          chip.type = 'button';
+          chip.dataset.cal = c.id;
+          chip.setAttribute('aria-pressed', String(on));
+          chip.setAttribute('aria-label', c.name + (c.error ? (c.stale ? ', could not update, showing earlier events' : ', could not be read') : '') + (on ? ', shown' : ', hidden'));
+          chip.title = on ? 'Hide ' + c.name : 'Show ' + c.name;
+          chip.append(dot(c), el('span', 'cal-chip-name', c.name));
+          chip.addEventListener('click', () => {
+            if (on && hidden.size >= cals.length - 1) { announce('At least one calendar stays on.'); return; }
+            if (on) hidden.add(c.id); else hidden.delete(c.id);
+            remember();
+            announce(c.name + (on ? ' hidden' : ' shown'));
+            draw(c.id);
+          });
+          legend.append(chip);
+        }
+        nodes.push(legend);
+      }
+      nodes.push(drawEvents(events));
+      for (const c of cals) {
+        if (!c.error) continue;
+        const warn = el('p', 'w-note small cal-warn', c.name + ': ' + c.error + (c.stale ? ' Showing what it had before.' : ''));
+        nodes.push(warn);
+      }
+      card.body.replaceChildren(...nodes);
+      if (focusId) card.body.querySelector('.cal-chip[data-cal="' + focusId + '"]')?.focus();
+    };
+    draw();
   },
 
   // Gmail (read-only): only text from the API arrives here, and it is set with textContent. The

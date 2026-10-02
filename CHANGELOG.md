@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Calendar widget: show several calendars on one card (for example School and Other), merged into one time-ordered agenda, each with a name, color and on/off switch (Settings and the home page editor). Events show a colored dot and the calendar name where there is room; switches on the card hide a calendar (remembered per card). A calendar that cannot be reached shows a small note while the others keep working; the same event in two calendars shows once. Existing single-calendar cards are unchanged.
 - Ad blocker, YouTube: the filter lists are now fetched from Ghostery's live list service instead of a snapshot that had not been updated since mid-August, and now include uBlock's 2025 and 2026 rule files, which the old set left out (it ended at 2024), so YouTube's current ad-field scriptlets are in place. Lists saved by an older Lumen are replaced on the next launch rather than after a day. YouTube also gets extra hiding rules for ad and sponsored cards (feed, search, Shorts, the banner over the video) and the "ad blockers violate YouTube's Terms of Service" dialog, and a safety net that, only while the player is actually showing an ad, presses Skip or runs the ad to its end.
 
 ## 0.5.3 (2026-10-02)

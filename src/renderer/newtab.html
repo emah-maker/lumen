@@ -625,6 +625,24 @@
     @container card (max-height: 299px) { .feed .far { display: none; } }
     @container card (max-height: 149px) { .calendar .later { display: none; } }
     @container card (max-height: 299px) { .calendar .far, .calendar .w-day.later { display: none; } }
+    /* Several calendars on one card: a legend of switches under the title, a colour dot on each event, the calendar's name where there is room.
+       The dot keeps the calendar's own colour in every Colors setting; the name and the switch labels say the same in words. */
+    .cal-legend { flex: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; }
+    .cal-chip { appearance: none; margin: 0; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px 2px 7px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: inherit; font-size: 11px; cursor: default; outline: none; transition: background-color 150ms ease-out, color 150ms ease-out; }
+    .cal-chip:hover { background: var(--hover); }
+    .cal-chip:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .cal-chip[aria-pressed="false"] { color: var(--muted); text-decoration: line-through; }
+    .cal-chip[aria-pressed="false"] .cal-dot { opacity: 0.35; }
+    .cal-chip-name { min-width: 0; max-width: 130px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .cal-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cal, var(--accent)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 18%, transparent); }
+    .cal-row-dot { margin-top: 5px; }
+    .cal-name { display: none; color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .cal-warn { color: var(--warn); }
+    @container card (min-width: 300px) { .cal-name { display: block; } }
+    @container card (max-height: 149px) { .cal-legend, .cal-warn { display: none; } }
+    @container card (max-width: 190px) { .cal-chip-name { max-width: 70px; } }
+    @media (prefers-reduced-motion: reduce) { .cal-chip { transition: none; } }
+    body.calm .cal-chip { transition: none; }
     @container card (max-width: 240px) { .w-time { width: 48px; } .w-fallback { flex-wrap: wrap; } }
     /* Spotify: title and artist on a small card; the album art, the controls and the progress bar as the card grows. */
     .sp-wrap { display: flex; gap: 12px; align-items: center; flex: 1 1 auto; min-height: 0; }
@@ -735,6 +753,14 @@
     .ws-buttons .w-btn { margin: 0; }
     .ws-status { flex: 1 1 auto; margin: 0; font-size: 12px; color: var(--muted); }
     .ws-status.err { color: var(--warn, #d70015); }
+    .ws-cals { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .ws-cal { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: color-mix(in srgb, var(--field) 55%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent); }
+    .ws-cal-top { display: flex; align-items: center; gap: 8px; }
+    .ws-cal-top input[type="text"] { flex: 1 1 auto; min-width: 0; }
+    .ws-panel .ws-cal-top input[type="color"] { flex: none; width: 34px; padding: 2px; cursor: default; }
+    .ws-panel .ws-cal-top input[type="checkbox"] { flex: none; width: 18px; height: 18px; accent-color: var(--accent); }
+    .ws-cal-btns { display: flex; gap: 6px; }
+    .ws-cal-btns .ws-chip:disabled { opacity: 0.4; }
     .ws-places { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
     .ws-chip { appearance: none; margin: 0; padding: 3px 10px; border: 0; border-radius: 999px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; cursor: default; outline: none; }
     .ws-chip:hover { background: var(--hover); }
