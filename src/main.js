@@ -183,7 +183,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
-  'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
+  'chats:list', 'chats:open', 'chats:show-tab', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',

@@ -5,6 +5,16 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - The AI reads what's inside embedded content: a claude.ai artifact, a Google Docs, Notion or CodePen embed, a payment or chat widget, any iframe (cross-site ones too) and web components' shadow DOM. Their text goes with your message and into read_page, find and read_tabs, labelled by the frame's site ("[embedded frame: claude.site — Artifact]"), and the AI can click, type and press keys inside them. Each frame is read in its own isolated world, where the page can't see or change the read; tracking pixels, hidden frames and frames on sites where you turned AI off are skipped.
+
+## 0.5.0 (2026-10-01)
+
+- Private windows have the protections of a normal window: Safe Browsing, the ad blocker, HTTPS-only, error and certificate pages, and the permission defaults from Settings. Zoom, permissions and "Continue" choices made in a private window stay in that window and are never saved. Private windows also get downloads (kept in memory only), find in page, more shortcuts, a fuller right-click menu, a redesigned tab strip and a new-tab page that says what is and isn't kept.
+- Optional: Settings → AI → "Give Claude Code full access to this computer" lets Claude Code in the sidebar work as it does in a terminal (shell, files, your MCP servers and slash commands such as /goal), without asking. Off by default.
+- Asking the AI about a page that is still loading no longer waits 4 seconds and drops the page: its text goes with your message at once.
+- Faster start and page loads: the first tabs open while the window loads, the next page gets a warm renderer, and the window's page loads one script and one stylesheet.
+- Antigravity replaces Gemini CLI as a sidebar engine, using your own Google sign-in.
+- Organize Tabs groups the obvious clusters, picks better names and no longer overlaps group chips.
+- Google sign-in pages are recognized exactly (a look-alike address no longer counts as one).
 - New Window: `Ctrl+N` (`Cmd+N`) opens a normal window with a new tab, from the keyboard, the ⋯ menu or the File menu (on a Mac even with no window open). `Ctrl+Shift+W` (`Shift+Cmd+W`) closes the window in front.
 - Page info: click the lock (or "Not secure") next to the address, or ⋯ → This Page → Site Information…, to see the site's connection and choose Ask, Allow or Block for its location, camera and microphone, notifications and clipboard. It also shows how many cookies the site has, with **Clear Cookies and Site Data…** for that site only, and links to Site Settings.
 - The right-click menu has Open Link in New Window, Open Link in Private Window and Save Link As… on links, Save Image As… and Copy Image Address on images, and Print… on the page. Save … As always asks where to save.
