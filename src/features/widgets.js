@@ -65,6 +65,7 @@ const MK = require('./markets-view');
 const TVW = require('./tradingview-view');
 const CW = require('./custom-widget');
 const LW = require('./local-widgets');
+const AS = require('./aistatus-view'); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
 const WCFG = require('./widget-config'); // the home page's own editor: what it may see, and its form laid over what is saved
 
 const ENDPOINTS = {
@@ -93,6 +94,7 @@ const ENDPOINTS = {
 // laid over what is saved when the form comes back. Everything else opens Settings (do=configure).
 const INLINE = {
   notes: () => ({}),
+  aistatus: () => ({}),
   countdown: (w) => ({ cd: w.cd }),
   timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
   tradingview: (w) => ({ tv: w.tv }),
@@ -770,6 +772,19 @@ const CONNECTORS = {
     },
   },
 
+  // AI status (features/aistatus-view.js): which AIs Lumen can use, from what it already knows here. No account,
+  // never online; present() asks main.js (deps.aiStatus) on every read, and aiStatusChanged() tells the page when it moved.
+  aistatus: {
+    label: 'AI status',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'Shows which AIs are ready, working or at a limit. It updates by itself and never goes online.' }; },
+    title: () => 'AI status',
+    summary: () => 'Which AIs are ready, working or at a limit',
+    async fetch() { return {}; },
+    present: (c, d, ctx) => ctx.aiStatus(),
+  },
+
   embed: {
     label: 'Web page',
     ttl: 12 * 3600e3, // re-checks whether the site still allows being framed
@@ -1437,7 +1452,7 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
@@ -2135,9 +2150,24 @@ function createWidgets(deps) {
     }
   }
 
+  // The AI status card shows live facts (chats working, tabs the AI opened, a limit that ended), so main.js says when
+  // any of them may have moved (aiStatusSoon: several events in a row become one look). The page is only refreshed when the card's
+  // data really differs from what it was last given, so an idle browser costs nothing.
+  let aiLast = '';
+  let aiTimer = null;
+  function aiStatusChanged() {
+    if (!deps.aiStatus || !list().some((w) => w.type === 'aistatus')) return false;
+    const now = JSON.stringify(AS.shape(deps.aiStatus(), Date.now()));
+    if (now === aiLast) return false;
+    aiLast = now;
+    deps.onUpdate?.();
+    return true;
+  }
+  const aiStatusSoon = () => { if (aiTimer) return; aiTimer = setTimeout(() => { aiTimer = null; try { aiStatusChanged(); } catch (err) { console.error('[lumen] AI status:', err.message); } }, 300); aiTimer.unref?.(); };
+
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
-  return { flush, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  return { flush, aiStatusChanged, aiStatusSoon, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

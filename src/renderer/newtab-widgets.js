@@ -989,6 +989,49 @@ const WIDGET_RENDERERS = {
     card.body.append(phase, clock, bar, btns);
   },
 
+  // AI status (features/aistatus-view.js): main shapes it from what Lumen already knows; nothing here is a secret. A small
+  // card shows a summary line and a dot per AI, a bigger one a row per AI, a bigger one still the model and usage hint
+  // and the live counts (newtab.html picks which, by the room the card has; fitAiStatus trims what still doesn't fit).
+  aistatus(w, card) {
+    const d = w.data;
+    card.el.classList.add('aistatus');
+    const STATES = ['ready', 'limited', 'down', 'out', 'off', 'missing'];
+    const ais = (Array.isArray(d.ais) ? d.ais : []).filter((a) => a && typeof a === 'object').slice(0, 8);
+    const name = (a) => text(a.name, 40);
+    const stateOf = (a) => (STATES.includes(a.state) ? a.state : 'missing');
+    const full = (a) => `${name(a)}: ${text(a.stateText, 40)}`;
+    const mark = (a) => { const m = el('i', 'ai-mark'); m.setAttribute('aria-hidden', 'true'); return m; };
+    // The compact view: one line of words, a dot per AI (each with its name and state as text for a screen reader), a note.
+    const compact = el('div', 'ai-compact');
+    const dots = el('ul', 'ai-dots');
+    for (const a of ais) {
+      const li = el('li', `ai-dot s-${stateOf(a)}`);
+      li.title = full(a);
+      li.append(mark(a), el('span', 'ai-sr', full(a)));
+      dots.append(li);
+    }
+    const sum = el('p', 'ai-sum');
+    (Array.isArray(d.summaryParts) && d.summaryParts.length ? d.summaryParts : [d.summary]).slice(0, 3).forEach((part, i) => { if (i) sum.append(' '); sum.append(el('span', null, `${i ? '· ' : ''}${text(part, 40)}`)); }); // (the space between is outside the spans, where a line may break)
+    compact.append(sum, dots, el('p', 'ai-sub', text(d.sub, 120)));
+    // The list: a row per AI, then the live counts.
+    const list = el('div', 'ai-list');
+    const rows = el('ul', 'ai-rows');
+    for (const a of ais) {
+      const li = el('li', `ai-row s-${stateOf(a)}`);
+      li.dataset.keep = a.current || stateOf(a) !== 'ready' ? '1' : '0'; // what a short card keeps last (fitAiStatus)
+      const detail = [a.model ? `Using ${text(a.model, 60)}` : '', text(a.note, 140), a.fullAccess ? 'Full access on' : ''].filter(Boolean).join(' · ');
+      li.append(mark(a), el('span', 'ai-name', name(a)), el('span', 'ai-state', text(a.stateText, 40)));
+      if (detail) li.append(el('span', 'ai-detail', detail));
+      rows.append(li);
+    }
+    const live = el('p', 'ai-live');
+    live.setAttribute('aria-label', 'Right now');
+    for (const t of (Array.isArray(d.liveText) ? d.liveText : []).slice(0, 4)) live.append(el('span', null, text(t, 60)));
+    list.append(rows, live);
+    card.body.append(compact, list);
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || 'AI status'}: ${text(d.summary, 90)}`);
+  },
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -1406,7 +1449,7 @@ const SLACK = 2; // px of rounding that is not overflow
 const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
 const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
 const fitOff = (n) => n.classList.add('fit-off');
-const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'custom'];
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom'];
 function fitPlace(sec, cycle) {
   // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
   for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {
@@ -1485,6 +1528,43 @@ function fitLists(cardEl, body) {
     tidy();
   }
 }
+// AI status: the whole list, then what a small card can't hold goes in order of least importance: the second lines, the note,
+// rows from the end down to three ("+N more"; the live counts stay) and last the rest of the rows.
+// A list that cannot show three rows and the live counts gives way to the summary and dots (ai-compact-only), which show every AI in a line.
+// That one drops the note, the "waiting" count, the dots and then the "working" count.
+function fitAiStatus(cardEl, body, compactOnly = false) {
+  body.classList.toggle('ai-compact-only', compactOnly);
+  body.querySelectorAll('.ai-more').forEach((n) => n.remove());
+  body.querySelectorAll('.fit-off').forEach((n) => n.classList.remove('fit-off'));
+  const bad = () => body.scrollHeight > body.clientHeight || body.scrollWidth > body.clientWidth; // (no slack: a line cut by a pixel is still cut)
+  const hide = (sel) => { for (const n of body.querySelectorAll(sel)) if (isShown(n)) fitOff(n); };
+  const parts = [...body.querySelectorAll('.ai-sum > span')];
+  const rows = [...body.querySelectorAll('.ai-row')].filter(isShown);
+  const more = el('p', 'ai-more');
+  let gone = 0;
+  const trim = (keep) => {
+    if (rows.length < 2) return;
+    if (!more.isConnected) rows[rows.length - 1].after(more);
+    // The ones that matter least go first: an AI that is ready and not the one in use, from the end; then the rest from the end.
+    const order = [...rows].reverse().filter((r) => r.dataset.keep !== '1').concat([...rows].reverse().filter((r) => r.dataset.keep === '1'));
+    for (const r of order) { if (rows.length - gone <= keep || !bad()) break; if (r.classList.contains('fit-off')) continue; fitOff(r); gone++; more.textContent = `+${gone} more`; }
+  };
+  if (!bad()) return;
+  hide('.ai-detail');
+  if (!bad()) return;
+  hide('.ai-sub');
+  if (rows.length) {
+    trim(3);
+    if (bad() && rows.length > 3 && !compactOnly) { fitAiStatus(cardEl, body, true); return; }
+    if (bad()) hide('.ai-live');
+    trim(1);
+    if (bad() && more.isConnected) fitOff(more);
+    return;
+  }
+  if (bad() && parts[2]) fitOff(parts[2]);
+  if (bad()) hide('.ai-dots');
+  if (bad() && parts[1]) fitOff(parts[1]);
+}
 function settleCard(cardEl) {
   if (!cardEl?.isConnected || cardEl.classList.contains('sys')) return; // the page's own sections fit themselves (newtab-system.js)
   const body = cardEl.querySelector('.w-body');
@@ -1494,6 +1574,7 @@ function settleCard(cardEl) {
   cardEl.querySelectorAll('.fit-off').forEach((n) => n.classList.remove('fit-off'));
   cardEl.querySelectorAll('.w-fit-more').forEach((n) => n.remove());
   if (cardEl.classList.contains('weather')) fitWeather(cardEl);
+  else if (cardEl.classList.contains('aistatus')) fitAiStatus(cardEl, body);
   else if (!NO_LIST_FIT.some((c) => cardEl.classList.contains(c))) fitLists(cardEl, body);
   // Only what still overflows may scroll (thin, and only while hovered); a card that fits doesn't move or catch the wheel.
   for (const n of scrollers) {

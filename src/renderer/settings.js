@@ -715,7 +715,7 @@ async function buildHome(card) {
   );
   renderTiles();
   const widgets = card.at('widgets');
-  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro custom recipe embed');
+  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed');
   try { await buildWidgets(sub); } catch (err) { sub.append(row('Widgets', String(err?.message || err))); }
 }
 
@@ -739,6 +739,7 @@ const WIDGET_ICONS = {
   notes: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h7.5L13 5v8.5H3z"/><path d="M5.5 7h5M5.5 9.5h5M5.5 12h3"/></svg>',
   countdown: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1.8h6M5 14.2h6M5.5 1.8c0 3.4 5 3.8 5 6.2s-5 2.8-5 6.2M10.5 1.8c0 3.4-5 3.8-5 6.2s5 2.8 5 6.2"/></svg>',
   timer: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5.2"/><path d="M8 9V6.2M6.5 1.8h3M12.2 4.4l1-1"/></svg>',
+  aistatus: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4.5" r="1.3"/><circle cx="4" cy="11.5" r="1.3"/><path d="M7.5 4.5h6M7.5 11.5h6"/></svg>',
   custom: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 2 8l3.5 4.5M10.5 3.5 14 8l-3.5 4.5"/></svg>',
   tradingview: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M4 5.5h-1.2M4 10h1.2M8 2v12M8 4.5H6.8M8 11h1.2M12 4v8M12 6h-1.2M12 9.5h1.2"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
@@ -1335,6 +1336,8 @@ async function buildWidgets(card) {
         marketFields(same);
       } else if (type === 'notes') {
         fields.replaceChildren(section('Note', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Type straight on the card. It saves as you go, stays on this computer and never goes online.' }))]));
+      } else if (type === 'aistatus') {
+        fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
         const cd = same?.cd || {};
         inputs.label = h('input', { type: 'text', id: 'widget-cd-label', maxlength: '60', placeholder: 'Vacation', 'aria-label': 'What it counts to', value: cd.label || '' });

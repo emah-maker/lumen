@@ -3883,6 +3883,8 @@ function runView(run) {
     onRunTab: runTab == null || runTab === activeIdOf(rec || curRec),
   };
 }
+// [widgets] The AI status card (features/aistatus-view.js) looks again when chats start, wait or end; set once the widgets exist.
+let aiStatusSoon = () => {};
 // The mark on each window's sidebar button, and the chat list's badges.
 function pushAttention() {
   const approvals = [...chatRuns.values()].reduce((n, r) => n + r.pending.size, 0);
@@ -3895,6 +3897,7 @@ function pushAttention() {
   }
   chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
   refreshTabMarks(); // [chat per tab]
+  aiStatusSoon();
 }
 const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRuns.keys()].map((id) => {
   const run = chatRuns.get(id);
@@ -3940,7 +3943,7 @@ const runSlots = tabChatsLib.createRunSlots({
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
-onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); };
+onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
@@ -6208,6 +6211,7 @@ const skillWithin = (promise, ms = 4000) => Promise.race([promise, new Promise((
 const skillTabOk = (tab) => alive(tab) && !agentOffLimits(tab) && isWebUrl(realUrl(tab.view.webContents)) && !aiSites.isOff(realUrl(tab.view.webContents));
 // The model list or the chosen model changed: every window's sidebar, every chat page and Settings reload theirs.
 function modelsChanged() {
+  aiStatusSoon();
   for (const rec of winRecs) if (rcAlive(rec) && !isSpare(rec)) rec.win.webContents.send('models-updated');
   for (const wc of [...chatPageRt.chatTabs().map((t) => t.view.webContents), ...tabs.filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)]) if (wc && !wc.isDestroyed()) wc.send('models-updated');
 }
@@ -6277,6 +6281,37 @@ function refreshNewTabs() {
   const url = newTabUrl();
   for (const t of open) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {});
 }
+// [widgets] What the AI status card is built from (features/aistatus-view.js shapes it): which providers have a key and which CLIs are
+// installed and signed in, the model in use, the models being left alone after a limit, the usage Lumen counted, the chats running, the
+// tabs the AI opened. Names, states and counts only: no key, token or address leaves this function.
+const AI_FULL_ACCESS = { claudecode: 'claudeCodeFullAccess', grokbuild: 'grokBuildFullAccess', antigravity: 'antigravityFullAccess' }; // read generically: a setting that doesn't exist is simply not shown
+function aiStatusFacts() {
+  const s = readSettings();
+  const now = Date.now();
+  const apis = [];
+  if (anthropicUsable()) apis.push('anthropic');
+  for (const p of Object.keys(providers.PROVIDERS)) if (providerKey(p)) apis.push(p);
+  const cli = aiAgents.cliStatus();
+  const model = effectiveModel();
+  const provider = model ? aiFallback.providerOf(model) : null;
+  const bare = model ? String(model).replace(/^[a-z][a-z0-9]*:/, '') : '';
+  const cooling = {};
+  for (const [id, entry] of Object.entries(aiFallback.shared.snapshot(now))) cooling[id] = { ...entry, ...(entry.model ? { model: (MODELS[entry.model] && MODELS[entry.model].label) || modelNames.prettyModel(entry.model) || entry.model } : {}) };
+  const glance = usage.glance(now);
+  return {
+    apis,
+    engines: cli,
+    current: model ? { provider, label: (MODELS[bare] && MODELS[bare].label) || modelNames.prettyModel(bare) || bare } : null,
+    cooling,
+    meter: glance.meter,
+    grokLimit: glance.grokLimit,
+    today: glance.today,
+    fullAccess: Object.fromEntries(Object.entries(AI_FULL_ACCESS).map(([id, key]) => [id, s[key] === true ? true : s[key] === false ? false : undefined])),
+    runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
+    aiTabs: [...winRecs].filter(rcAlive).reduce((n, rec) => n + tabsOf(rec).filter((tab) => manners.isAiTab(tab)).length, 0),
+    handsOff: s.aiHandsOff === true,
+  };
+}
 // [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as
 // several widgets often finish together).
 let widgetRefreshTimer = null;
@@ -6289,6 +6324,7 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
     clearTimeout(widgetRefreshTimer);
@@ -6308,6 +6344,8 @@ const widgets = createWidgets({
   endpoints: () => (TEST && global.__widgetEndpoints) || {},
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
+aiStatusSoon = widgets.aiStatusSoon;
+setInterval(() => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, 15e3).unref?.(); // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
 
 // [widgets] The user's TradingView watchlists, for the TradingView widget's import and sync: one fixed
