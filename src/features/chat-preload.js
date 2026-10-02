@@ -40,6 +40,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
+    onModelsUpdated: on('models-updated'), // the model was picked elsewhere (sidebar, Settings, another window): the page's picker follows at once
     openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
     // Page only
     state: () => ipcRenderer.invoke('chatpage:state'),

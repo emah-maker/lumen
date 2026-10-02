@@ -20,7 +20,7 @@ function data() {
     if (Array.isArray(parsed)) return { favorites: parsed.filter(isWeb), frequent: [], blocked: null, look: lookOf(null) };
     return {
       search: parsed.search && typeof parsed.search.url === 'string' && /^https:\/\//.test(parsed.search.url) ? parsed.search : null,
-      assistant: parsed.assistant && typeof parsed.assistant.name === 'string' ? parsed.assistant : null,
+      assistant: parsed.assistant && typeof parsed.assistant.name === 'string' ? { ...parsed.assistant, model: typeof parsed.assistant.model === 'string' ? parsed.assistant.model : '', label: typeof parsed.assistant.label === 'string' ? parsed.assistant.label : '' } : null,
       favorites: Array.isArray(parsed.favorites) ? parsed.favorites.filter(isWeb) : DEFAULTS,
       frequent: Array.isArray(parsed.frequent) ? parsed.frequent.filter(isWeb) : [],
       blocked: Number.isFinite(parsed.blocked) ? parsed.blocked : null,
@@ -292,17 +292,22 @@ window.addEventListener('hashchange', render);
 // with %s }) or asks the assistant. Asking reloads this page with ?ask=…; the browser cancels that
 // navigation and hands the prompt to the sidebar, so the tab stays here.
 (() => {
-  const { search: engine, assistant } = data();
   const form = document.querySelector('form[role=search]');
   const input = document.getElementById('q');
   const radios = [...document.querySelectorAll('#mode [role=radio]')];
   const KEY = 'lumen.home.mode';
-  const who = assistant?.name || 'Claude';
   let mode = 'search';
   try { if (localStorage.getItem(KEY) === 'ask') mode = 'ask'; } catch {}
+  // Who the box asks and which engine it searches are read from the hash each time (the browser rewrites it when
+  // the user picks another model or search engine), so the label never shows what was true when the page loaded.
+  const current = () => { const d = data(); return { engine: d.search, who: d.assistant?.name || 'Claude', model: d.assistant?.model || '', modelLabel: d.assistant?.label || '' }; };
 
   function apply(next, { save = true, focus = false } = {}) {
     mode = next === 'ask' ? 'ask' : 'search';
+    const { engine, who, model, modelLabel } = current();
+    const askRadio = document.getElementById('mode-ask');
+    askRadio.dataset.model = model; // exactly which model an ask goes to
+    askRadio.title = modelLabel ? `${modelLabel}` : '';
     for (const r of radios) {
       const on = r.dataset.mode === mode;
       r.setAttribute('aria-checked', String(on));
@@ -315,6 +320,7 @@ window.addEventListener('hashchange', render);
     if (save) try { localStorage.setItem(KEY, mode); } catch {}
   }
   apply(mode, { save: false });
+  window.addEventListener('hashchange', () => apply(mode, { save: false })); // a model or search engine was picked: the box follows at once
 
   for (const r of radios) r.addEventListener('click', () => { apply(r.dataset.mode); input.focus(); });
   document.getElementById('mode').addEventListener('keydown', (e) => {
@@ -335,6 +341,7 @@ window.addEventListener('hashchange', render);
       if (q) location.href = `${location.pathname}?ask=${encodeURIComponent(q)}${location.hash}`;
       return;
     }
+    const { engine } = current();
     if (!engine) return; // the form's own action (Google) handles it
     e.preventDefault();
     if (q) location.href = engine.url.replace('%s', encodeURIComponent(q));
