@@ -37,7 +37,7 @@
   padding: 7px 4px 7px 12px; border: 0; background: none; color: inherit; font: inherit; border-radius: var(--radius); cursor: default;
 }
 .chat-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chat-meta { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
+.chat-meta { font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
 
 .chat-rename-input {
   flex: 1; min-width: 0; margin: 4px 4px 4px 8px; padding: 5px 6px; font: inherit; font-size: 13px; color: var(--text);
@@ -46,12 +46,13 @@
 .chat-rename-input:focus-visible { box-shadow: var(--focus-ring); }
 
 /* Actions show on hover or keyboard focus, so the list reads as titles first. */
-.chat-actions { display: flex; opacity: 0; transition: opacity var(--t-fast) var(--ease-out); }
-.chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; }
+/* They float over the row's right edge, so the title keeps the whole row while they are hidden (still reachable by keyboard: focus shows them). */
+.chat-actions { position: absolute; right: 4px; top: 4px; display: flex; opacity: 0; pointer-events: none; border-radius: var(--radius); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)); transition: opacity var(--t-fast) var(--ease-out); }
+.chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
 .chat-actions .icon-btn { width: 26px; height: 26px; }
 .chat-actions .chat-delete.armed { display: inline-flex; align-items: center; width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
 .chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
-.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; }
+.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; pointer-events: auto; }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 /* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
@@ -69,10 +70,9 @@
 .chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
 .chat-open:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); } /* softer than the global ring: the row is already tinted */
 /* A waiting chat: "Stop waiting" is a small link on a line of its own, so the title keeps the whole row. */
-.chat-item.has-queued { display: grid; grid-template-columns: 1fr auto; }
+.chat-item.has-queued { display: grid; grid-template-columns: 1fr; }
 .chat-item.has-queued .chat-open { grid-column: 1; grid-row: 1; }
-.chat-item.has-queued .chat-actions { grid-column: 2; grid-row: 1; }
-.chat-stop-wait { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin: -2px 0 6px 12px; padding: 1px 2px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 11.5px; text-decoration: underline; cursor: default; }
+.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: -2px 0 6px 12px; padding: 1px 2px; border: 0; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; text-decoration: underline; cursor: default; }
 .chat-stop-wait:hover { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .chat-badge .cm-spin { animation: none; } .chat-badge .cm-still { display: block; } }
 :root.pref-reduce-motion .chat-badge .cm-spin { animation: none; }
@@ -90,4 +90,15 @@
 .chat-search { display: block; width: calc(100% - 16px); margin: 0 8px 6px; height: 30px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; }
 .chat-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 
-.chat-item.has-unread:not(.current) { background: color-mix(in srgb, var(--success) 7%, transparent); } /* a finished chat not seen yet */
+/* A finished chat not seen yet: a tint and a bar on the left (the hover and focus tint still show over it). */
+.chat-item.has-unread:not(.current):not(:hover):not(:focus-within) { background: color-mix(in srgb, var(--success) 11%, transparent); }
+.chat-item.has-unread { box-shadow: inset 2px 0 0 var(--success); }
+/* High-contrast mode drops colours and shadows: the glyphs take the system colours and the unread bar becomes a border. */
+@media (forced-colors: active) {
+  .chat-badge { color: CanvasText; forced-color-adjust: none; }
+  .chat-badge.needs-ok, .chat-badge.running { color: Highlight; }
+  .chat-badge .cm-on { fill: currentColor; }
+  .chat-badge .cm-glyph { stroke: Canvas; }
+  .chat-item.has-unread { box-shadow: none; border-left: 3px solid Highlight; }
+  .chat-actions { background: Canvas; border: 1px solid CanvasText; }
+}

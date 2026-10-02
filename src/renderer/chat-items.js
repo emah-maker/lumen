@@ -90,6 +90,8 @@
       const input = Object.assign(document.createElement('input'), { className: 'chat-rename-input', value: chat.title || '', maxLength: 120 });
       input.setAttribute('aria-label', tr('chats.name', 'Chat name'));
       openBtn.hidden = true;
+      const stopLink = li.querySelector('.chat-stop-wait');
+      if (stopLink) stopLink.hidden = true; // (the rename field has the row)
       li.insertBefore(input, openBtn);
       input.focus();
       input.select();

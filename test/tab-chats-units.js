@@ -145,6 +145,27 @@ const J = (v) => JSON.stringify(v);
   const loose = stateClasses.filter((c) => new RegExp('(^|[,}\\n])\\s*\\.' + c + '\\s*[{,:]').test(css.replace(/\/\*[\s\S]*?\*\//g, '')));
   check('marks: no stylesheet has a bare rule for a mark state class (it would style the mark too)', loose.length === 0, J(loose));
   check('marks: the needs-OK state uses its own class in the tab strip and the chat list, never "approval"', /'needs-ok'/.test(app) && /'needs-ok'/.test(items) && /\.tab-chat-mark\.needs-ok/.test(css) && /\.chat-badge\.needs-ok/.test(css) && !/\.(tab-chat-mark|chat-badge)\.approval/.test(css));
+  const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'locales', 'en.json'), 'utf8'));
+  check('marks: the four state words are in the locale table', ['running', 'queued', 'approval', 'unread'].every((k) => en['chats.state.' + k]), J(Object.keys(en).filter((k) => k.startsWith('chats.state'))));
+  check('marks: the finished-row tint does not beat the hover and focus tint', /has-unread:not\(\.current\):not\(:hover\):not\(:focus-within\)/.test(css));
+  check('marks: both the strip marks and the list badges have a forced-colors fallback', (css.match(/forced-colors: active[^]*?\.tab-chat-mark/) || [])[0] !== undefined && /forced-colors: active\) \{\s*\.chat-badge/.test(css));
+  check('marks: the row actions float (they take no width from the title)', /\.chat-actions \{ position: absolute/.test(css));
+  { // AA (4.5:1) for the small text on the row and the selected row, both themes: the colours as the sheets mix them
+    const hex = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    const mix = (a, b, p) => a.map((v, i) => v * p + b[i] * (1 - p));
+    const lum = (a) => a.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((t, v, i) => t + v * [0.2126, 0.7152, 0.0722][i], 0);
+    const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    const themes = { light: { bg: '#ffffff', text: '#1d1d1f', muted: '#6e6e73', accent: '#007aff', soft: [0, 122, 255, 0.14] }, dark: { bg: '#2c2c2e', text: '#f5f5f7', muted: '#98989d', accent: '#0a84ff', soft: [10, 132, 255, 0.2] } };
+    const worst = { meta: 99, stop: 99 };
+    for (const t of Object.values(themes)) {
+      const bg = hex(t.bg), sel = mix(t.soft.slice(0, 3), bg, t.soft[3]);
+      for (const under of [bg, sel]) {
+        worst.meta = Math.min(worst.meta, ratio(mix(hex(t.muted), hex(t.text), 0.55), under));
+        worst.stop = Math.min(worst.stop, ratio(mix(hex(t.accent), hex(t.text), 0.6), under));
+      }
+    }
+    check('marks: the meta line and "Stop waiting" are AA (4.5:1) in both themes', /\.chat-meta \{[^}]*color-mix\(in srgb, var\(--muted\) 55%, var\(--text\)\)/.test(css) && /\.chat-stop-wait \{[^}]*color-mix\(in srgb, var\(--accent\) 60%, var\(--text\)\)/.test(css) && worst.meta >= 4.5 && worst.stop >= 4.5, J(worst));
+  }
   check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
 }
 
