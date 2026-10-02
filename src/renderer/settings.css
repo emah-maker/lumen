@@ -452,3 +452,13 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
 .reduce-motion .flash-target { animation: none; }
 .page-foot { margin: 8px 4px 0; text-align: center; color: var(--muted); font-size: 12px; }
 .searching .page-foot { display: none; }
+
+/* Calendar widget: one row per calendar (color, name, switch, address, actions). */
+.cal-edit-list { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.cal-edit { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 10px; align-items: center; padding: 10px; border-radius: 10px; background: color-mix(in srgb, var(--field, transparent) 50%, transparent); box-shadow: 0 0 0 1px var(--hairline); }
+.cal-edit .cal-color { width: 34px; height: 30px; padding: 2px; border: 0; border-radius: 8px; background: var(--field); cursor: default; }
+.cal-edit .cal-name { min-width: 0; }
+.cal-edit .cal-on { white-space: nowrap; }
+.cal-edit .cal-url { grid-column: 1 / -1; min-width: 0; }
+.cal-edit .cal-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cal-edit .cal-test { flex: 1 1 160px; min-width: 0; }

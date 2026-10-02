@@ -86,7 +86,16 @@ function widgetSummary(w, ctx = {}) {
         if (CLOCKS[wc.clock]) parts.push(CLOCKS[wc.clock]);
         break;
       }
-      case 'calendar': parts.push(host(w.url) || 'No calendar link yet'); break;
+      case 'calendar': {
+        // One calendar is its address's host; several are their names: "School + Other · 2 calendars" (features/calendar-sources.js summaryOf says the same).
+        const cals = Array.isArray(w.cals) ? w.cals.filter((c) => c && c.url) : [];
+        if (cals.length < 2) { parts.push(host(cals.length ? cals[0].url : w.url) || 'No calendar link yet'); break; }
+        const on = cals.filter((c) => c.enabled !== false);
+        const names = (on.length ? on : cals).map((c, i) => String(c.name || host(c.url) || `Calendar ${i + 1}`));
+        parts.push(names.length > 3 ? `${names.slice(0, 2).join(' + ')} + ${names.length - 2} more` : names.join(' + '));
+        parts.push(plural(cals.length, 'calendar', 'calendars') + (on.length < cals.length ? `, ${cals.length - on.length} off` : ''));
+        break;
+      }
       case 'feed': {
         const preset = (ctx.feedPresets || []).find((p) => p.id === w.preset);
         parts.push(preset ? preset.name : host(w.url) || 'No feed yet');

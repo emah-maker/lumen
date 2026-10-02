@@ -15,6 +15,7 @@ const WX = require('./weather-view');
 const WCK = require('./worldclock-view');
 const FEED = require('./feed');
 const MK = require('./markets-view');
+const CAL = require('./calendar-sources');
 
 const KINDS = ['weather', 'worldclock', 'calendar', 'feed', 'crypto']; // the kinds that merge into what is saved (the others are the whole form)
 const CLOCKS = ['auto', '12', '24'];
@@ -47,7 +48,7 @@ function view(w) {
   if (!w || typeof w !== 'object') return {};
   if (w.type === 'weather') return { units: w.wx.units, clock: w.wx.clock, places: placeNames(w.wx.places, WX.placeLabel) };
   if (w.type === 'worldclock') return { clock: w.wc.clock, seconds: w.wc.seconds, places: placeNames(w.wc.places, WCK.placeLabel) };
-  if (w.type === 'calendar') return { host: hostOf(w.url), count: w.count };
+  if (w.type === 'calendar') return { host: hostOf(w.url), count: w.count, cals: CAL.sourcesOf(w).map((s) => ({ id: s.id, name: s.name, host: hostOf(s.url), color: s.color, enabled: s.enabled })) };
   if (w.type === 'feed') return { feed: w.preset || '', url: w.preset ? '' : w.url, count: w.count };
   if (w.type === 'crypto') return { coins: (w.mk?.coins || []).map((c) => ({ id: c.id, sym: c.sym })) };
   return {};
@@ -71,10 +72,24 @@ function mergeEdit(prev, cfg) {
     return { ...base, city, wc: { ...(prev?.wc || {}), places: keep, clock: pick(c.clock, CLOCKS, prev?.wc?.clock || 'auto'), seconds: c.seconds === true, append: true } };
   }
   if (c.type === 'calendar') {
-    // An empty address keeps the saved one (the page never saw it). A typed one must be https or webcal.
+    // The form lists the calendars it wants, in order: { keep (its place in the saved list, or -1 for a new one), name, color, enabled, url }.
+    // A saved calendar's address is never sent (the page never saw it): an empty one keeps it. A typed one must be https or webcal.
+    if (Array.isArray(c.cals)) {
+      const had = prev ? CAL.sourcesOf(prev) : [];
+      const cals = c.cals.slice(0, CAL.MAX_SOURCES + 1).filter((r) => r && typeof r === 'object').map((r) => {
+        const old = Number.isInteger(r.keep) && r.keep >= 0 ? had[r.keep] : null;
+        const typed = typeof r.url === 'string' ? r.url.trim() : '';
+        const url = typed ? secureUrl(typed, { allowWebcal: true }) || typed.slice(0, MAX_URL) : old ? old.url : '';
+        return { name: flat(r.name, CAL.MAX_NAME), url, color: CAL.cleanColor(r.color), enabled: r.enabled !== false };
+      });
+      return { ...base, cals, url: cals[0]?.url || '', count: clampCount(c.count, 3, 8, prev?.count || 5) };
+    }
+    // The older form (one address): over the first calendar, the rest stay.
     const typed = typeof c.url === 'string' ? c.url.trim() : '';
     const url = typed ? secureUrl(typed, { allowWebcal: true }) : prev?.url || '';
-    return { ...base, url: url || typed.slice(0, MAX_URL), count: clampCount(c.count, 3, 8, prev?.count || 5) };
+    const rest = prev ? CAL.sourcesOf(prev) : [];
+    const first = url || typed.slice(0, MAX_URL);
+    return { ...base, url: first, ...(rest.length > 1 ? { cals: [{ ...rest[0], url: first }, ...rest.slice(1)] } : {}), count: clampCount(c.count, 3, 8, prev?.count || 5) };
   }
   if (c.type === 'feed') {
     const preset = FEED.presetFor(c.feed);
@@ -104,6 +119,19 @@ function checkEdit(prev, cfg) {
     const left = have.length - cleanDrop(c.drop, have.length).length;
     if (prev && have.length && left === 0 && !flat(c.city, MAX_CITY)) return 'Keep at least one place, or type a city to put in its place.';
   }
+  if (c.type === 'calendar' && Array.isArray(c.cals)) {
+    const had = prev ? CAL.sourcesOf(prev) : [];
+    const rows = c.cals.filter((r) => r && typeof r === 'object');
+    if (!rows.length) return 'Add at least one calendar.';
+    if (rows.length > CAL.MAX_SOURCES) return `Up to ${CAL.MAX_SOURCES} calendars.`;
+    for (const [i, r] of rows.entries()) {
+      const label = flat(r.name, CAL.MAX_NAME) || `Calendar ${i + 1}`;
+      const typed = typeof r.url === 'string' ? r.url.trim() : '';
+      const known = !typed && Number.isInteger(r.keep) && r.keep >= 0 && had[r.keep];
+      if (typed ? !secureUrl(typed, { allowWebcal: true }) : !known) return typed ? `${label} needs an https:// or webcal:// address.` : `Paste an address for ${label}.`;
+    }
+    if (rows.every((r) => r.enabled === false)) return 'Turn on at least one calendar.';
+  }
   if (c.type === 'crypto') {
     const have = prev?.mk ? prev.mk.coins : [];
     const gone = cleanDrop(c.drop, have.length);
@@ -118,7 +146,17 @@ function checkEdit(prev, cfg) {
 // A calendar edit that leaves the address alone (empty, or the saved one typed again) changes only what is
 // stored here: no reason to fetch the calendar, so it works offline too.
 function keepsAddress(prev, cfg) {
-  if (!prev || prev.type !== 'calendar' || !prev.url || !cfg || cfg.type !== 'calendar') return false;
+  if (!prev || prev.type !== 'calendar' || !cfg || cfg.type !== 'calendar') return false;
+  const had = CAL.sourcesOf(prev);
+  if (!had.length) return false;
+  if (Array.isArray(cfg.cals)) { // every calendar of the form is one the card already has
+    const urls = new Set(had.map((s) => s.url));
+    return cfg.cals.length > 0 && cfg.cals.every((r) => {
+      const t = r && typeof r.url === 'string' ? r.url.trim() : '';
+      return t ? urls.has(secureUrl(t, { allowWebcal: true })) : Boolean(r) && Number.isInteger(r.keep) && r.keep >= 0 && r.keep < had.length;
+    });
+  }
+  if (!prev.url) return false;
   const typed = typeof cfg.url === 'string' ? cfg.url.trim() : '';
   return !typed || secureUrl(typed, { allowWebcal: true }) === prev.url;
 }

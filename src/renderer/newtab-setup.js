@@ -158,14 +158,84 @@ const FORMS = {
     nodes.push(field(places ? 'Add a place' : 'City', city, places ? 'Optional.' : undefined), field('Clock', clock), field('Seconds', seconds));
     return { nodes, read: () => ({ city: city.value, clock: clock.value, seconds: bool(seconds.value), drop: places ? places.drop() : [] }), first: city, guard: () => keepOne(places, city) };
   },
+  // One or several calendars, shown together on the card. A saved calendar's address never comes here: its row
+  // says which site it is from, and a new address typed over it replaces it. keep is its place in the saved list (-1: new).
   calendar(s, editing) {
-    const url = input('url', '', { placeholder: editing ? `Saved: ${str(s.host, 80) || 'a calendar'}. Paste a new address to change it` : 'https:// or webcal://', spellcheck: 'false', autocomplete: 'off' });
+    const MAX_CALS = 8;
+    const COLORS = ['#4f8ef7', '#e5604d', '#35a974', '#e0a030', '#9b6bd6', '#25a9b8', '#d6609a', '#7d8896']; // features/calendar-sources.js PALETTE
+    const saved = Array.isArray(s.cals) ? s.cals : [];
+    const rows = saved.map((c, i) => ({ keep: i, name: str(c.name, 60), color: /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : '', host: str(c.host, 80), enabled: c.enabled !== false, url: '' }));
+    if (!rows.length) rows.push({ keep: -1, name: '', color: '', host: '', enabled: true, url: '' });
     const count = select([3, 4, 5, 6, 7, 8].map((n) => [String(n), `${n} events`]), String(s.count || 5));
+    const list = el('ul', 'ws-cals');
+    const addBtn = el('button', 'w-btn', 'Add another calendar');
+    addBtn.type = 'button';
+    const colorOf = (r, i) => r.color || COLORS[i % COLORS.length];
+    let focus = null; // after a redraw: which control gets focus back
+    function draw() {
+      list.replaceChildren();
+      rows.forEach((r, i) => {
+        const label = r.name.trim() || r.host || `Calendar ${i + 1}`;
+        const li = el('li', 'ws-cal');
+        li.setAttribute('role', 'group');
+        li.setAttribute('aria-label', `Calendar ${i + 1}: ${label}`);
+        const color = input('color', colorOf(r, i));
+        color.setAttribute('aria-label', `Color for ${label}`);
+        color.addEventListener('input', () => { r.color = color.value; });
+        const name = input('text', r.name, { maxlength: '60', placeholder: i === 0 ? 'School' : 'Other', autocomplete: 'off', 'aria-label': `Name of calendar ${i + 1}` });
+        name.addEventListener('input', () => { r.name = name.value; });
+        const on = input('checkbox', '');
+        on.checked = r.enabled;
+        on.setAttribute('aria-label', `Show ${label} on the card`);
+        on.title = 'Show on the card';
+        on.addEventListener('change', () => { r.enabled = on.checked; });
+        const url = input('url', r.url, { placeholder: r.keep >= 0 ? `Saved: ${r.host || 'a calendar'}. Paste a new address to change it` : 'https:// or webcal://', spellcheck: 'false', autocomplete: 'off', 'aria-label': `Address of calendar ${i + 1}` });
+        url.addEventListener('input', () => { r.url = url.value; });
+        const btn = (text, name2, fn, off) => {
+          const b2 = el('button', 'ws-chip', text);
+          b2.type = 'button';
+          b2.setAttribute('aria-label', `${name2} ${label}`);
+          b2.disabled = Boolean(off);
+          b2.addEventListener('click', fn);
+          return b2;
+        };
+        const up = btn('↑', 'Move up', () => { [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; focus = `up${i - 1}`; draw(); }, i === 0);
+        const down = btn('↓', 'Move down', () => { [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; focus = `down${i + 1}`; draw(); }, i === rows.length - 1);
+        const gone = btn('Remove', 'Remove', () => { rows.splice(i, 1); focus = 'add'; draw(); }, rows.length === 1 && editing);
+        up.dataset.k = `up${i}`;
+        down.dataset.k = `down${i}`;
+        const top = el('div', 'ws-cal-top');
+        top.append(color, name, on);
+        const bottom = el('div', 'ws-cal-btns');
+        bottom.append(up, down, gone);
+        li.append(top, url, bottom);
+        list.append(li);
+      });
+      addBtn.disabled = rows.length >= MAX_CALS;
+      if (focus) { (focus === 'add' ? addBtn : list.querySelector(`[data-k="${focus}"]`) || addBtn).focus(); focus = null; }
+    }
+    addBtn.addEventListener('click', () => { rows.push({ keep: -1, name: '', color: '', host: '', enabled: true, url: '' }); draw(); list.lastElementChild?.querySelector('input[type="text"]')?.focus(); });
+    draw();
+    const guard = () => {
+      for (const [i, r] of rows.entries()) {
+        const t = r.url.trim();
+        const label = r.name.trim() || r.host || `Calendar ${i + 1}`;
+        if (t && !secure(t)) return `${label} needs an https:// or webcal:// address`;
+        if (!t && r.keep < 0) return rows.length === 1 ? 'Paste a calendar address' : `Paste an address for ${label}`;
+      }
+      return rows.some((r) => r.enabled) ? '' : 'Turn on at least one calendar';
+    };
+    const group = el('div', 'ws-field');
+    group.append(el('span', 'ws-label', 'Calendars'), list, el('span', 'ws-hint', 'Events from every calendar you turn on appear together, soonest first. Give each a name and a color to tell them apart.'));
     return {
-      nodes: [field('Calendar address (ICS)', url, editing ? 'Leave empty to keep the saved address; it is never shown here.' : 'From your calendar’s settings, “secret address in iCal format”.'), field('Show', count)],
-      read: () => ({ url: url.value, count: Number(count.value) }),
-      first: url,
-      check: () => (url.value.trim() && !secure(url.value) ? 'Paste an https:// or webcal:// address.' : !editing && !url.value.trim() ? 'Paste a calendar address.' : ''),
+      nodes: [
+        group,
+        addBtn,
+        field('Show', count),
+      ],
+      read: () => ({ cals: rows.map((r) => ({ keep: r.keep, name: r.name, color: r.color, enabled: r.enabled, url: r.url })), count: Number(count.value) }),
+      first: list.querySelector('input[type="text"]') || list.querySelector('input'),
+      guard,
     };
   },
   feed(s) {
