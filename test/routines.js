@@ -237,7 +237,8 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   const ir = await save({ title: 'Off', prompt: 'ROUTINE-I do not run', schedule: { repeat: 'daily', time: '06:00' } });
   await ui.evaluate(() => { document.getElementById('task-panel').querySelector('.task-back')?.click(); });
   await ui.evaluate(() => document.getElementById('task-tab-routines')?.click());
-  await ui.waitForSelector('.routine-toggle');
+  // (The list redraws once the save lands: wait for this routine's own row, not just any switch.)
+  await ui.waitForFunction(() => [...document.querySelectorAll('.routine-item')].some((li) => /Off/.test(li.textContent) && li.querySelector('.routine-toggle')), null, { timeout: 8000 });
   await ui.evaluate(() => [...document.querySelectorAll('.routine-item')].find((li) => /Off/.test(li.textContent)).querySelector('.routine-toggle').click());
   check('the list\'s switch turns a routine off', await waitFor(async () => (await routine('ROUTINE-I')).enabled === false), '');
   await overdue(ir.id);
