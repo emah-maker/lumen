@@ -3985,6 +3985,16 @@ function refreshTabMarks() {
   tabMarksKey = key;
   for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, sendTabsSoon);
 }
+// A chat shown in tabs of two windows: the other window's sidebar hears the run too (its turn, then its events).
+// `except`: the views that already got it.
+function mirrorToViews(id, except, channel, payload) {
+  const skip = new Set(except);
+  for (const rec of winRecs) {
+    if (!rcAlive(rec)) continue;
+    const wc = rec.win.webContents;
+    if (wc && !wc.isDestroyed() && !skip.has(wc) && shownChat.get(wc) === id) wc.send(channel, payload);
+  }
+}
 function pushChatView(wc) {
   if (!wc || wc.isDestroyed()) return;
   shownChat.set(wc, chatId);
@@ -4003,7 +4013,7 @@ function followTabChat(tab, { push = true } = {}) {
   const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
   const unseen = (id) => unreadChats.has(id) && !sidebarOpen; // a finished reply stays "done" on its tab until the sidebar is looked at
   if (plan.chat) {
-    chatBind.bind(tab.id, plan.chat);
+    if (chatBind.chatOf(tab.id) !== plan.chat) chatBind.bind(tab.id, plan.chat); // (a tab already showing it stays as it is: coming to the front must not make it the home)
     const keep = unseen(plan.chat);
     if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true, quiet: true });
     if (keep) unreadChats.add(chatId);
@@ -4289,7 +4299,8 @@ function sessionEntry() {
     active: Math.max(0, saved.findIndex((t) => t.id === activeId)),
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
-    chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart)
+    chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart); a chat shown in several tabs is in each
+    chatHomes: chatBind.snapshotHomes(saved.map((t) => t.id)), // which of those tabs is the chat's home
     groups: tabGroups.snapshot(),
   };
 }
@@ -4339,7 +4350,7 @@ function restoreTabsFrom(saved) {
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
     if (saved.pinned?.[i] && !tab.groupId) tab.pinned = true;
-    chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid)); // [chat per tab]
+    chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid), [saved.chatHomes?.[i] === true]); // [chat per tab] (a chat saved in several tabs comes back in each)
   });
   tabGroups.cleanup();
   tabGroups.arrange();
@@ -6722,14 +6733,20 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   const askText = String(text || '');
   const fromChatPage = chatPageRt.isChatSender(event);
   // [chat per tab] Starting a chat in a tab binds it there: its tools act on this tab, not on whichever is in front later.
-  const homeTab = fromChatPage ? null : activeId;
+  // A chat shown in several tabs has one live run on one home tab: a message typed in another tab while the run is going
+  // does not pull its tools there. With no run going, it starts in the tab it was typed in, and that tab is the home.
+  const going = chatRuns.get(runChat);
+  const goingTab = going && !going.deleted ? (going.queued ? going.homeTab : agent.runTabIdFor(going.messages)) : null;
+  const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
+  const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, rec: curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null };
+  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   const isOpen = () => runChat === chatId && run.messages === agent.messages;
   const to = () => (run.sender && !run.sender.isDestroyed() ? run.sender : event.sender);
   chatPageRt.beginRun(event, { text: askText, runId, images: valid }); // pins a chat-page run to the tab last looked at; the other view mirrors it
+  mirrorToViews(runChat, [event.sender, ...chatPageRt.surfaces()], 'chat:run-start', { text: askText, runId, images: valid.map((i) => ({ media_type: i.media_type, data: i.data })) }); // another window's sidebar showing this chat shows the turn too
   const finishQueued = () => { // a run that never got a slot (stopped, or its chat deleted while it waited)
     runSlots.cancel(runChat);
     if (chatRuns.get(runChat) === run) chatRuns.delete(runChat);
@@ -6768,6 +6785,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
     }
     chatPageRt.emit(to(), 'agent:event', { ...msg, runId }); // whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
+    mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId }); // and another window's sidebar that shows this chat too
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
@@ -6852,16 +6870,25 @@ ipcMain.on('agent:reset', (event) => {
 // ---- the sidebar's chat history list (features/chat-store.js)
 // [chat per tab] Where a chat lives: the tab it is bound to (or, while it works, the tab it works in).
 // { id, title, here } ('here': it is the tab in front), or null.
-function chatPlaceOf(id) {
+// `tabs`: every tab it shows in, its home first ([{ id, title, home, here }]; a chat in several tabs is shared).
+// The tabs a chat shows in, its home first: the tab its run works in while it runs, else the tab it was last started or
+// moved in; then the others, newest first. (A run's tab counts even if that tab now shows another chat: the work is there.)
+function chatTabOrder(id) {
   const working = chatRuns.get(id);
-  const bound = chatBind.tabsOf(id);
-  const pinned = working && !working.queued ? agent.runTabIdFor(working.messages) : null;
-  const candidates = [...(pinned != null ? [pinned] : []), ...bound.slice().reverse()];
-  const tabId = candidates.includes(activeId) ? activeId : candidates.find((tid) => tabAnywhere(tid));
+  const pinned = working && !working.deleted && !working.queued ? agent.runTabIdFor(working.messages) : null;
+  const home = pinned ?? chatBind.homeOf(id);
+  const order = [...(home != null ? [home] : []), ...chatBind.tabsHomeFirst(id).filter((t) => t !== home)];
+  return order.filter((tid) => tabAnywhere(tid));
+}
+function chatPlaceOf(id) {
+  const candidates = chatTabOrder(id);
+  const tabId = candidates.includes(activeId) ? activeId : candidates[0];
   if (tabId == null) return null;
   const found = tabAnywhere(tabId);
   if (!found) return null;
-  return { id: tabId, title: withWindow(found.rec, () => tabTitle(found.t)) || '', here: tabId === activeId && found.rec === curRec, place: tabChatsLib.chatPlace({ tabId, here: tabId === activeId && found.rec === curRec }) };
+  const isHere = (tid, rec) => tid === activeId && rec === curRec;
+  const tabsShown = candidates.map((tid, i) => { const f = tabAnywhere(tid); return { id: tid, title: withWindow(f.rec, () => tabTitle(f.t)) || '', home: i === 0, here: isHere(tid, f.rec) }; });
+  return { id: tabId, title: withWindow(found.rec, () => tabTitle(found.t)) || '', here: isHere(tabId, found.rec), place: tabChatsLib.chatPlace({ tabId, here: isHere(tabId, found.rec) }), tabs: tabsShown };
 }
 ipcMain.handle('chats:list', (event) => {
   syncToSender(event);
@@ -6876,7 +6903,7 @@ ipcMain.handle('chats:list', (event) => {
       // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
       const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
         .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
-      return [...unsaved, ...saved].map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id), aiTabs: aiTabSelect({ chatId: c.id }).length }));
+      return [...unsaved, ...saved].map((c) => { const place = chatPlaceOf(c.id); return { id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: place, tabs: place?.tabs || [], aiTabs: aiTabSelect({ chatId: c.id }).length }; });
     })(),
   };
 });
@@ -6890,14 +6917,29 @@ ipcMain.handle('chats:open', (event, id) => {
   }
   return view;
 });
+// "Also show in this tab": the chat shows in the tab in front as well, and stays in the tabs it was in. Nothing else
+// changes: its home tab stays, a run keeps working there, and this tab's earlier chat only loses this tab.
+ipcMain.handle('chats:share', (event, id) => {
+  syncToSender(event);
+  const view = switchChat(String(id));
+  if (view) {
+    chatBind.bind(activeId, chatId, { share: true });
+    if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
+    pushAttention();
+    refreshSidebars();
+    chatPageRt.broadcast('chat:sync', { view }, event.sender);
+  }
+  return view;
+});
 // "Open chat in its tab": show the tab the chat lives in (its window comes to the front).
 ipcMain.handle('chats:show-tab', (event, id) => {
   id = String(id);
+  // The home tab; for a chat shown in several tabs, the tab you are not on (the home, or another when you are on the home).
   const place = (() => {
-    const working = chatRuns.get(id);
-    const pinned = working && !working.queued ? agent.runTabIdFor(working.messages) : null;
-    for (const tid of [...(pinned != null ? [pinned] : []), ...chatBind.tabsOf(id).slice().reverse()]) { const f = tabAnywhere(tid); if (f) return { tid, ...f }; }
-    return null;
+    const order = chatTabOrder(id);
+    const tid = order.length > 1 && order[0] === activeId ? order[1] : order[0];
+    const f = tid != null ? tabAnywhere(tid) : null;
+    return f ? { tid, ...f } : null;
   })();
   if (!place) return false;
   withWindow(place.rec, () => { switchTab(place.tid); });

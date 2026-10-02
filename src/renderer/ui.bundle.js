@@ -3690,9 +3690,10 @@ function startChat() {
 // ---- chat-items.js
 // One row of the chat list: open, rename, export (Markdown) and delete (two clicks) an earlier chat.
 // Shared by the sidebar's history panel (chats.js) and the full-page chat's list (chat-page.js).
-//   window.createChatItems({ api, open(id), rerender(), cleared() }) -> item(chat, isCurrent)
+//   window.createChatItems({ api, open(id), share?(id), rerender(), cleared() }) -> item(chat, isCurrent)
 //     api       window.assistant.chats
 //     open      the row was chosen
+//     share     "Also show in this tab": the chat shows here too and stays in the tabs it was in (none: no such button)
 //     rerender  the list changed (renamed, deleted): draw it again
 //     cleared   the open chat was deleted: empty the conversation view
 //   window.chatIconButton(name, label), window.chatTr(key, english)
@@ -3718,6 +3719,7 @@ function startChat() {
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
     closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
+    sharehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 8.2v3.6M6.2 10h3.6"/></svg>',
     movehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 11V8.5M6.5 10L8 11.5 9.5 10"/></svg>',
   };
   const iconButton = (name, label) => {
@@ -3775,7 +3777,7 @@ function startChat() {
     },
   };
   window.chatTr = tr;
-  window.createChatItems = ({ api, open: onOpen, rerender, cleared }) => {
+  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared }) => {
     function startRename(li, chat) {
       const openBtn = li.querySelector('.chat-open');
       const input = Object.assign(document.createElement('input'), { className: 'chat-rename-input', value: chat.title || '', maxLength: 120 });
@@ -3818,6 +3820,11 @@ function startChat() {
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
+      // Shown in several tabs at once ("Also show in this tab"): every tab it is in, its home marked.
+      const tabs = Array.isArray(chat.tabs) ? chat.tabs : [];
+      const shared = tabs.length > 1;
+      const tabName = (x) => (x.here ? tr('chats.thisTab', 'This tab') : x.title || tr('chats.tabUntitled', 'another tab'));
+      const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + ' · ' + tr('chats.clickGoes', 'click to go there') : '';
       const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? ' · ' + tr('chats.clickGoes', 'click to go there') : ' · ' + tr('chats.clickMoves', 'click moves it here')) : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
@@ -3825,7 +3832,7 @@ function startChat() {
       if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
-      const place = inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
+      const place = inTabs || inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
       if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
       // Still running (it was left mid-reply), waiting for an OK, or finished and not seen yet.
       if (chat.badge) {
@@ -3846,7 +3853,8 @@ function startChat() {
       const stateWord = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
       openBtn.setAttribute('aria-label', [name.textContent, stateWord, place].filter(Boolean).join(', '));
       openBtn.onclick = async () => {
-        if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
+        if (shared && api.showTab) await goToTab(); // a shared chat: the tab you are not on, or its home
+        else if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
       };
 
       const actions = document.createElement('div');
@@ -3865,9 +3873,9 @@ function startChat() {
       };
       // Moving a chat into this tab (or opening it): the page's open answers false when the chat is gone.
       let redrawTimer = null;
-      const moveHere = async () => {
+      const openWith = (choose) => async () => {
         let ok;
-        try { ok = (await onOpen(chat.id)) !== false; } catch { ok = false; }
+        try { ok = (await choose(chat.id)) !== false; } catch { ok = false; }
         if (!ok) {
           say(tr('chats.openFailed', 'Could not open this chat'));
           // The note is read, then the list is drawn again without it: one timer per row, and never over a rename field or an armed delete.
@@ -3875,6 +3883,8 @@ function startChat() {
           redrawTimer = setTimeout(() => { if (attached() && !li.querySelector('.chat-rename-input') && !del.classList.contains('armed')) rerender(); }, 2600);
         }
       };
+      const moveHere = openWith(onOpen);
+      const alsoShow = openWith((id) => onShare(id));
       exportBtn.onclick = async () => {
         try {
           const out = await api.exportChat(chat.id);
@@ -3911,17 +3921,28 @@ function startChat() {
       // list drops that button: "open in its tab" for a working chat, "move here" for an idle one.
       const dropsOne = Boolean(elsewhere && api.showTab);
       if (dropsOne) li.classList.add('drops-one');
+      const clickGoes = working || shared; // (the row's click goes to the tab; otherwise it moves the chat here)
       const tabActions = [];
-      if (elsewhere && api.showTab) {
+      if ((elsewhere || shared) && api.showTab) {
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
         show.classList.add('chat-act-tab');
-        if (working) show.classList.add('chat-act-drop');
+        if (clickGoes) show.classList.add('chat-act-drop');
         show.onclick = goToTab;
-        const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
-        move.classList.add('chat-act-move');
-        if (!working) move.classList.add('chat-act-drop');
-        move.onclick = moveHere;
-        tabActions.push(show, move);
+        tabActions.push(show);
+        if (elsewhere) {
+          const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
+          move.classList.add('chat-act-move');
+          if (!clickGoes) move.classList.add('chat-act-drop');
+          move.onclick = moveHere;
+          tabActions.push(move);
+        }
+      }
+      // Also show it in this tab, without taking it out of the tabs it is in (not offered where it already shows).
+      if (elsewhere && onShare) {
+        const share = iconButton('sharehere', tr('chats.alsoShow', 'Also show in this tab'));
+        share.classList.add('chat-act-share');
+        share.onclick = alsoShow;
+        tabActions.push(share);
       }
       // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
       if (chat.aiTabs > 0 && api.closeTabs) {
@@ -6781,6 +6802,7 @@ $('agent-stop')?.addEventListener('click', () => {
   const item = window.createChatItems({
     api,
     open: (id) => openChat(id),
+    share: (id) => openChat(id, { share: true }), // "Also show in this tab"
     rerender: () => render(),
     cleared: () => { clearChatView(); refreshUsage(''); },
   });
@@ -6826,8 +6848,8 @@ $('agent-stop')?.addEventListener('click', () => {
   }
   tools.arrows(panel);
 
-  async function openChat(id) {
-    const view = await api.open(id);
+  async function openChat(id, { share = false } = {}) {
+    const view = await (share ? api.share(id) : api.open(id));
     if (!view) return false; // gone (deleted, or unreadable on this machine): the row says so, then the list redraws (chat-items.js moveHere)
     clearChatView();
     showHistory(view.items);
