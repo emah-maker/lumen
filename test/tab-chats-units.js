@@ -104,6 +104,14 @@ const J = (v) => JSON.stringify(v);
   check('slots: a start that throws at once reports "failed" and holds no slot', s.request('x', { start: () => { throw new Error('boom'); } }) === 'failed' && s.size() === 0 && J(errs) === '[["x","boom"]]', J(errs));
   check('slots: a chat that already holds a slot and fails to restart gives it up', (() => { s.request('y', { start() {} }); const r = s.request('y', { start: () => { throw new Error('again'); } }); return r === 'failed' && s.state('y') === null; })());
 
+  // a start that finishes inside start() (its done already released the slot) is 'started', never 'queued'
+  s = mk(2);
+  const quick = s.request('q', { start: () => { s.release('q'); } });
+  check('slots: a start that ends at once is reported as started (not queued on a finished chat)', quick === 'started' && s.state('q') === null, quick);
+  s = mk(1);
+  s.request('hold', { start() {} });
+  check('slots: a chat that really has to wait is still queued', s.request('late', { start() {} }) === 'queued');
+
   // the cap raised starts every chat that now fits, at once
   started.length = 0;
   s = mk(1);
@@ -192,7 +200,7 @@ const J = (v) => JSON.stringify(v);
     const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-page.js'), 'utf8');
     check('stop: chats:stop is a handle that returns stopChat()\'s answer, listed as a UI-only channel for the window and the chat page', /ipcMain\.handle\('chats:stop'[^\n]*stopChat\(id\)/.test(mainSrc) && /'chats:stop'/.test(mainSrc.slice(0, mainSrc.indexOf('ipcMain.handle('))) && /'chats:stop'/.test(page));
     check('stop: both preloads invoke it', /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(pre) && /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(chatPre));
-    check('stop: a false answer or 4 seconds without one restores the button with a note', /\(await api\.stopChat\(chat\.id\)\) === false/.test(items) && /timedOut = true; fail\(\)/.test(items) && /clearTimeout\(lost\);/.test(items)); // (behaviour: test/chat-items-units.js)
+    check('stop: a false answer or 4 seconds without one restores the button with a note', /answer === false/.test(items) && /timedOut = true; fail\(\)/.test(items) && /clearTimeout\(lost\);/.test(items)); // (behaviour: test/chat-items-units.js)
   }
   { // the title-padding rules, in the order and with the specificity the cascade needs
     const spec = (sel) => { // [ids, classes+attrs+pseudo-classes, elements] (a :has()/:is() counts its most specific argument)
@@ -218,6 +226,12 @@ const J = (v) => JSON.stringify(v);
     check('padding rules: the narrow hover rule outranks the plain hover rule, the armed rules come after their hover rules and are not weaker', cmp(nHover.spec, hover.spec) > 0 && armed.at > hover.at && cmp(armed.spec, hover.spec) >= 0 && nArmed.at > nHover.at && cmp(nArmed.spec, nHover.spec) >= 0, J({ hover: hover.spec, nHover: nHover.spec, armed: armed.spec, nArmed: nArmed.spec }));
     check('padding rules: the narrow touch rule outranks the plain touch rule', cmp(nTouch.spec, find('.chat-title', ':').filter((r) => r.sel === '.chat-title')[0].spec) > 0);
     check('padding rules: the narrow ones read --actions-w-narrow and the plain ones --actions-w', [nHover, nArmed, nTouch].every((r) => /--actions-w-narrow/.test(r.val)) && [hover, armed].every((r) => /--actions-w\b(?!-)/.test(r.val)));
+  }
+  { // deleting a chat refreshes the Chats button, the list and the tab marks (a stale green "done" mark otherwise)
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const del = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:delete'"), mainSrc.indexOf('// The chat as Markdown'));
+    check('delete: both branches (the open chat and another) push attention after the chat is gone', (del.match(/pushAttention\(\)/g) || []).length === 2 && del.indexOf('unbindChat') < del.indexOf('pushAttention()'), String((del.match(/pushAttention\(\)/g) || []).length));
+    check('queue: why a chat waits is asked again when its text is made', /const waitingText = \(run\) => t\(\(run\.queued \? runSlots\.reason\(run\.chatId\)/.test(mainSrc));
   }
   check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
 }

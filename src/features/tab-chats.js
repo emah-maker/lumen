@@ -108,12 +108,12 @@ function createRunSlots({ max = DEFAULT_MAX_RUNS, cliMax = 1, onError = null, on
       if (running.has(chatId)) return begin(chatId, kind, alive, start) ? 'started' : 'failed';
       const queuedAt = waiting.findIndex((w) => w.chatId === chatId);
       if (queuedAt >= 0) waiting.splice(queuedAt, 1); // (the newer message wins its place in line)
-      let failed = false;
-      const guarded = () => { try { start(); } catch (err) { failed = true; throw err; } };
+      let failed = false, started = false;
+      const guarded = () => { try { start(); started = true; } catch (err) { failed = true; throw err; } };
       waiting.push({ chatId, kind, start: guarded, alive });
       pump(); // (starts at once when there is room: a chat behind others that don't fit still goes ahead of them)
       if (failed) return 'failed';
-      return running.has(chatId) ? 'started' : 'queued';
+      return started || running.has(chatId) ? 'started' : 'queued'; // (a start that ran and ended at once has already left `running`)
     },
     // The chat's run ended (or it was stopped): the next one in line may go.
     release(chatId) { running.delete(chatId); pump(); },

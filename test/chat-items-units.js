@@ -30,7 +30,8 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'c
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   let opener = async () => true;
-  const make = (api, chat) => { const item = sandbox.window.createChatItems({ api, open: opener, rerender: async () => {}, cleared() {} }); return item(chat, false); };
+  let rerenderSpy = async () => {};
+  const make = (api, chat) => { const item = sandbox.window.createChatItems({ api, open: opener, rerender: () => rerenderSpy(), cleared() {} }); return item(chat, false); };
   const base = { id: 'c1', title: 'Chat one', updated: Date.now(), usage: '' };
   const meta = (li) => li.find('chat-open')[0].find('chat-meta-text')[0];
 
@@ -99,11 +100,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   api.showTab = async () => true;
   await li.find('chat-open')[0].onclick();
   check('showTab true closes the list', closed === 1, closed);
-  // an idle chat's row click moves it here: a false answer (gone) gets a note too
-  opener = async () => false;
+  // an idle chat's row click moves it here: a false answer (gone) gets a note that is seen, and the list is drawn again after it
+  let redraws = 0;
+  opener = async () => false; // as in production: the page answers false and does not redraw first
+  rerenderSpy = () => { redraws++; };
   li = make(api, base);
   await li.find('chat-open')[0].onclick();
-  check('row click: an idle chat that cannot be opened says so', /Could not open this chat/.test(meta(li).textContent), meta(li).textContent);
+  check('row click: an idle chat that cannot be opened shows its note on the row (still attached) and has not redrawn yet', /Could not open this chat/.test(meta(li).textContent) && redraws === 0, `${meta(li).textContent} ${redraws}`);
+  await sleep(2700);
+  check('...and the list is redrawn after the note has been read', redraws === 1, redraws);
+  rerenderSpy = async () => {};
   opener = async () => true;
   // a slow stop that then succeeds takes its failure note back
   api = { exportChat: async () => ({ ok: true }), showTab: async () => true, stopChat: async () => { await sleep(90); return true; }, remove: async () => ({}), list: async () => ({ chats: [] }) };
@@ -114,6 +120,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('stop: a slow answer first restores the button with a note', stop.disabled === false && /Could not stop/.test(meta(li).textContent));
   await slow;
   check('stop: ...and a late success takes the note back and shows "Stopping…"', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
+  // a second click after the first one timed out: a false answer about it must not fail the first stop that worked
+  let calls = 0;
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => true, remove: async () => ({}), list: async () => ({ chats: [] }), stopChat: async () => { calls++; if (calls === 1) { await sleep(90); return true; } return false; } };
+  li = make(api, queued);
+  stop = li.find('chat-stop-wait')[0];
+  const first = stop.onclick({ stopPropagation() {} });
+  await sleep(60); // the first one timed out: the button is back
+  const second = stop.onclick({ stopPropagation() {} });
+  await Promise.all([first, second]);
+  check('stop: a false answer to a second click is ignored while the first stop worked', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
   // a row that has been redrawn away is never written to
   api = { exportChat: async () => ({ ok: true }), showTab: async () => true, stopChat: async () => true, remove: async () => ({}), list: async () => ({ chats: [{ id: 'c1', badge: 'queued' }] }) };
   li = make(api, queued);

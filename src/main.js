@@ -3891,7 +3891,7 @@ onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clam
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
-const waitingText = (run) => t(run.waitReason === 'cli' ? 'agent.waitingCli' : 'agent.waiting');
+const waitingText = (run) => t((run.queued ? runSlots.reason(run.chatId) || run.waitReason : run.waitReason) === 'cli' ? 'agent.waitingCli' : 'agent.waiting'); // (why it waits is asked again each time: it can change while in line)
 // The chat of a running task that works in this tab, whichever chat that is.
 function pinnedChat(tabId) {
   for (const r of chatRuns.values()) if (!r.deleted && !r.queued && agent.runTabIdFor(r.messages) === tabId) return r.chatId;
@@ -6622,10 +6622,13 @@ ipcMain.handle('chats:delete', (event, id) => {
     chatId = chats().newId();
     chatBind.bind(activeId, chatId);
     chats().remove(id);
+    pushAttention(); // the Chats button, the list and the tab marks drop what this chat had (an unread mark, a binding)
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
     return { cleared: true, view: chatView() };
   }
-  return { cleared: false, removed: chats().remove(id) };
+  const removed = chats().remove(id);
+  pushAttention();
+  return { cleared: false, removed };
 });
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
 function chatMarkdown(id) {

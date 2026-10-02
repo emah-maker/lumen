@@ -3512,7 +3512,9 @@ function startChat() {
       };
       // Moving a chat into this tab (or opening it): the page's open answers false when the chat is gone.
       const moveHere = async () => {
-        try { if ((await onOpen(chat.id)) === false) say(tr('chats.openFailed', 'Could not open this chat')); } catch { say(tr('chats.openFailed', 'Could not open this chat')); }
+        let ok = true;
+        try { ok = (await onOpen(chat.id)) !== false; } catch { ok = false; }
+        if (!ok) { say(tr('chats.openFailed', 'Could not open this chat')); setTimeout(() => { if (attached()) rerender(); }, 2600); } // the note is read, then the list is drawn again without it
       };
       exportBtn.onclick = async () => {
         try {
@@ -3570,8 +3572,10 @@ function startChat() {
       if (chat.badge === 'queued' && api.stopChat) {
         const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
         const stopBack = () => { stop.disabled = false; stop.textContent = tr('chats.stopWaiting', 'Stop waiting'); };
+        let stopsOut = 0, stoppedOnce = false; // (a second click after a timeout must not be failed by an answer about the first)
         stop.onclick = async (e) => {
           e.stopPropagation();
+          stopsOut++;
           stop.disabled = true;
           stop.textContent = tr('chats.stopping', 'Stopping…');
           const wait = window.chatItemsStopMs || 4000; // (a test shortens it)
@@ -3579,7 +3583,10 @@ function startChat() {
           const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
           const lost = setTimeout(() => { timedOut = true; fail(); }, wait); // slow main: the button comes back, but a late success takes that back
           try {
-            if ((await api.stopChat(chat.id)) === false) { clearTimeout(lost); fail(); return; } // (the chat had already moved on)
+            const answer = await api.stopChat(chat.id);
+            stopsOut--;
+            if (answer === false) { clearTimeout(lost); if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
+            stoppedOnce = true;
             clearTimeout(lost);
             if (timedOut && attached()) { unsay(); stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } // it did stop, only slowly
             // Stopped. The list redraws when the run leaves; if it cannot (a rename field is open, the panel is hidden) the
@@ -3588,7 +3595,7 @@ function startChat() {
               if (!attached() || !stop.disabled) return;
               try { const now = await api.list?.(); if (attached() && now?.chats?.find((c) => c.id === chat.id)?.badge === 'queued') fail(); } catch { /* keep the note */ }
             }, wait);
-          } catch { clearTimeout(lost); fail(); }
+          } catch { stopsOut--; clearTimeout(lost); fail(); }
         };
         li.append(stop);
       }
@@ -6376,7 +6383,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
   async function openChat(id) {
     const view = await api.open(id);
-    if (!view) { await render(); return false; } // gone (deleted, or unreadable on this machine)
+    if (!view) return false; // gone (deleted, or unreadable on this machine): the row says so, then the list redraws (chat-items.js moveHere)
     clearChatView();
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here
