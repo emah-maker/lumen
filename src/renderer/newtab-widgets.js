@@ -818,8 +818,9 @@ const WIDGET_RENDERERS = {
   tradingview(w, card) {
     const d = w.data;
     const symbol = text(d.symbol, 60) || 'Chart';
-    const dark = d.theme === 'dark' || (d.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-    const url = tvUrl(dark ? d.dark : d.light);
+    const scheme = matchMedia('(prefers-color-scheme: dark)');
+    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && scheme.matches);
+    const url = tvUrl(isDark() ? d.dark : d.light);
     const list = d.view === 'watchlist';
     if (!url) { card.body.append(el('p', 'w-note', list ? 'This watchlist can’t be shown.' : 'This chart can’t be shown.')); return; }
     if (list) card.head.append(openLink('https://www.tradingview.com/chart/', 'Open', 'Your watchlist on TradingView'));
@@ -842,7 +843,8 @@ const WIDGET_RENDERERS = {
     wrap.append(frame);
     card.body.append(wrap);
     const fit = globalThis.TradingViewFit;
-    const small = tvUrl(dark ? d.compactDark : d.compactLight); // none in data from before compact views existed
+    let small = tvUrl(isDark() ? d.compactDark : d.compactLight); // none in data from before compact views existed
+    let src0 = url;
     let shown = '';
     let was = null;
     const place = () => {
@@ -850,7 +852,7 @@ const WIDGET_RENDERERS = {
       const h = wrap.clientHeight;
       const next = fit ? fit.plan({ view: d.view, sections: d.sections, chart: d.chart === true }, w, h, was, Boolean(small)) : (w > 0 && h > 0 ? { compact: false, scale: 1 } : null);
       if (!next) return; // not laid out yet (a card in a stack that isn't showing): the observer calls again
-      const src = next.compact && small ? small : url;
+      const src = next.compact && small ? small : src0;
       if (src !== shown) { shown = src; frame.src = src; }
       if (next.scale < 1) { frame.style.width = `${Math.round(w / next.scale)}px`; frame.style.height = `${Math.round(h / next.scale)}px`; frame.style.transform = `scale(${next.scale})`; }
       else { frame.style.width = ''; frame.style.height = ''; frame.style.transform = ''; }
@@ -858,6 +860,13 @@ const WIDGET_RENDERERS = {
     };
     if (typeof ResizeObserver === 'function') new ResizeObserver(place).observe(wrap);
     else frame.src = url;
+    // The system scheme (which the in-app dark setting drives) changed: load the other theme's address.
+    scheme.addEventListener('change', () => {
+      if (!frame.isConnected) return;
+      src0 = tvUrl(isDark() ? d.dark : d.light) || src0;
+      small = tvUrl(isDark() ? d.compactDark : d.compactLight);
+      if (shown) place(); else frame.src = src0;
+    });
   },
 
   // Custom recipes (features/custom-widget.js): plain strings only, as numbers or a list.
