@@ -168,17 +168,32 @@ const J = (v) => JSON.stringify(v);
   }
   const cp = fs.readFileSync(path.join(dir, 'chat-page.css'), 'utf8');
   check('list: the open chat on the chat page does not force its action bar visible over its title', !/chat-item\.current \.chat-actions/.test(cp));
-  check('list: touch devices (no hover) get the buttons always, with room left in the title', /@media \(hover: none\) \{ \.chat-actions \{ opacity: 1; pointer-events: auto; \}/.test(css) && /@media \(hover: none\)[^\n]*\.chat-title \{ padding-right: var\(--actions-w/.test(css));
-  check('list: the title leaves room for the floating buttons, and for the armed Delete? pill', /chat-item:hover \.chat-title[^{]*\{ padding-right: var\(--actions-w/.test(css) && /chat-delete\.armed\) \.chat-title \{ padding-right: calc/.test(css) && /--actions-w/.test(items));
+  check('list: touch devices (no hover) get the buttons always, with room left in the title', /@media \(hover: none\) \{ \.chat-actions \{ opacity: 1; pointer-events: auto; \}/.test(css) && /@media \(hover: none\)[^\n]*\.chat-title \{ padding-right: min\(var\(--actions-w/.test(css));
+  check('list: the title leaves room for the floating buttons, and for the armed Delete? pill', /chat-item:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w/.test(css) && /chat-delete\.armed\) \.chat-title \{ padding-right: min\(calc/.test(css) && /--actions-w/.test(items));
   check('list: the "go there" arrow shows only on rows a click takes you to the tab of (working ones)', /is\(\.has-running, \.has-queued, \.has-approval\) \.chat-place:not\(\.here\)::after/.test(css) && !/\n\.chat-place:not\(\.here\)::after/.test(css));
   check('list: forced-colors selectors are as specific as the state rules they override', /forced-colors: active\) \{\s*\.chat-badge, \.chat-badge\.queued, \.chat-badge\.unread/.test(css) && /\.tab-chat-mark, \.tab-chat-mark\.waiting, \.tab-chat-mark\.done \{ color: CanvasText/.test(css));
   check('list: "Exported" goes in its own span (the state word stays) and the badge is hidden from screen readers', /say\(tr\('chats\.exported'/.test(items) && /metaText\.textContent = text/.test(items) && !/[^a-zA-Z]meta\.textContent =/.test(items) && /badge\.setAttribute\('aria-hidden', 'true'\)/.test(items) && !/badge\.setAttribute\('aria-label'/.test(items));
   check('list: the usage line is AA like the meta line', /\.chat-usage \{[^}]*color-mix\(in srgb, var\(--muted\) 55%/.test(css));
-  check('list: a narrow list drops "move here" from an idle chat in another tab and the title padding follows', /@container chatlist \(max-width: 240px\)[^]*drops-move \.chat-act-move \{ display: none/.test(css) && /--actions-w-narrow/.test(items) && /chat-act-move/.test(items));
+  check('list: a narrow list drops "move here" from an idle chat in another tab and the title padding follows', /@container chatlist \(max-width: 240px\)[^]*drops-one \.chat-act-drop \{ display: none/.test(css) && /drops-one:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w-narrow\)/.test(css) && /setProperty\('--actions-w-narrow'/.test(items) && /setProperty\('--actions-w',/.test(items) && /chat-act-drop/.test(items));
   check('list: the title padding eases in with the bar (same --t-fast)', /\.chat-title \{ transition: padding-right var\(--t-fast\)/.test(css) && /\.chat-actions \{[^}]*top: 3px/.test(css));
   check('list: the armed Delete? pill keeps a border under forced-colors', /forced-colors: active[^]*chat-delete\.armed \{ border: 1px solid CanvasText/.test(css));
   check('list: export, delete, stop and open-tab report a failure instead of staying silent, and a passing note reverts', /exportFailed/.test(items) && /deleteFailed/.test(items) && /stopFailed/.test(items) && /tabFailed/.test(items) && /setTimeout\(\(\) => \{ metaText\.textContent = original/.test(items) && /stop\.disabled = true/.test(items) && /del\.disabled = true/.test(items));
   check('list: an idle chat in another tab says that a click moves it here', /clickMoves/.test(items) && ['clickMoves', 'exportFailed', 'deleteFailed', 'stopFailed', 'stopping', 'tabFailed'].every((k) => en['chats.' + k]));
+  { // the real export handler's answers, and what the list does with each
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const handler = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:export'"), mainSrc.indexOf("if (TEST) global.__chats"));
+    check('export: main answers { ok:false, reason } for an empty chat and a dismissed Save dialog', /reason: 'empty'/.test(handler) && /reason: 'canceled'/.test(handler) && !/\bcancelled?\s*:/.test(handler.replace(/const \{ canceled/, '')));
+    check('export: the list stays quiet for reason "canceled", has its own words for "empty", and fails otherwise', /out\?\.reason === 'empty'/.test(items) && /out\?\.reason !== 'canceled'/.test(items) && !/out\.canceled/.test(items) && en['chats.exportEmpty']);
+  }
+  { // "Stop waiting" gets an answer from main (an invoke), and the button can never stay on "Stopping…"
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const pre = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8');
+    const chatPre = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-preload.js'), 'utf8');
+    const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-page.js'), 'utf8');
+    check('stop: chats:stop is a handle that returns stopChat()\'s answer, listed as a UI-only channel for the window and the chat page', /ipcMain\.handle\('chats:stop'[^\n]*stopChat\(id\)/.test(mainSrc) && /'chats:stop'/.test(mainSrc.slice(0, mainSrc.indexOf('ipcMain.handle('))) && /'chats:stop'/.test(page));
+    check('stop: both preloads invoke it', /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(pre) && /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(chatPre));
+    check('stop: a false answer or 4 seconds without one restores the button with a note', /\(await api\.stopChat\(chat\.id\)\) === false/.test(items) && /setTimeout\(\(\) => \{ stopBack\(\)/.test(items));
+  }
   check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
 }
 

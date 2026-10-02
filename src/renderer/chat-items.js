@@ -166,7 +166,8 @@
         try {
           const out = await api.exportChat(chat.id);
           if (out?.ok) say(tr('chats.exported', 'Exported'));
-          else if (out && out.canceled !== true && out.cancelled !== true) say(tr('chats.exportFailed', 'Could not export'));
+          else if (out?.reason === 'empty') say(tr('chats.exportEmpty', 'Nothing to export yet')); // (main.js chats:export: reason 'canceled' = the Save dialog was dismissed: no note)
+          else if (out?.reason !== 'canceled') say(tr('chats.exportFailed', 'Could not export'));
         } catch { say(tr('chats.exportFailed', 'Could not export')); }
       };
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
@@ -193,30 +194,38 @@
           say(tr('chats.deleteFailed', 'Could not delete'));
         }
       };
-      const move0 = () => elsewhere && api.showTab && !['running', 'queued', 'approval'].includes(chat.badge);
-      if (move0()) li.classList.add('drops-move');
+      // In another tab: a click on the row already goes there (a working chat) or moves it here (an idle one), so the narrow
+      // list drops that button: "open in its tab" for a working chat, "move here" for an idle one.
+      const dropsOne = Boolean(elsewhere && api.showTab);
+      if (dropsOne) li.classList.add('drops-one');
       const tabActions = [];
       if (elsewhere && api.showTab) {
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
         show.classList.add('chat-act-tab');
+        if (working) show.classList.add('chat-act-drop');
         show.onclick = async () => { try { await api.showTab(chat.id); window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); } };
         const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
         move.classList.add('chat-act-move');
+        if (!working) move.classList.add('chat-act-drop');
         move.onclick = () => onOpen(chat.id);
         tabActions.push(show, move);
       }
       actions.append(...tabActions, rename, exportBtn, del);
-      li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`);
-      li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (move0() ? 1 : 0)) * 24 + 8}px`); // a narrow list drops "move here" from an idle chat (clicking the row moves it) // the title leaves room for the floating buttons
+      li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
+      li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
       // Waiting for its turn: it can be taken out of the line from here.
       if (chat.badge === 'queued' && api.stopChat) {
         const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
+        const stopBack = () => { stop.disabled = false; stop.textContent = tr('chats.stopWaiting', 'Stop waiting'); };
         stop.onclick = async (e) => {
           e.stopPropagation();
           stop.disabled = true;
           stop.textContent = tr('chats.stopping', 'Stopping…');
-          try { await api.stopChat(chat.id); } catch { stop.disabled = false; stop.textContent = tr('chats.stopWaiting', 'Stop waiting'); say(tr('chats.stopFailed', 'Could not stop it')); }
+          const lost = setTimeout(() => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); }, 4000); // never stuck on "Stopping…"
+          try {
+            if ((await api.stopChat(chat.id)) === false) { clearTimeout(lost); stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); } // (the chat had already moved on)
+          } catch { clearTimeout(lost); stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); }
         };
         li.append(stop);
       }

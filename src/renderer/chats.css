@@ -52,17 +52,18 @@
 .chat-actions .icon-btn { width: 24px; height: 22px; }
 /* The title gives way to the buttons (it never sits under them); the armed "Delete?" pill is wider. */
 .chat-title { transition: padding-right var(--t-fast) var(--ease-out); }
-.chat-item:hover .chat-title, .chat-item:focus-within .chat-title { padding-right: var(--actions-w, 100px); }
-.chat-item:has(.chat-delete.armed) .chat-title { padding-right: calc(var(--actions-w, 100px) + 56px); }
-/* A narrow list: an idle chat in another tab drops its "move here" button (clicking the row does the same). */
+.chat-item:hover .chat-title, .chat-item:focus-within .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } /* (the title always keeps some width) */
+.chat-item:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w, 100px) + 56px), 70%); }
+/* A narrow list: a chat in another tab drops one button (the row's own click does the same). */
 .chat-items { container: chatlist / inline-size; }
 @container chatlist (max-width: 240px) {
-  .chat-item.drops-move .chat-act-move { display: none; }
-  .chat-item.drops-move { --actions-w: var(--actions-w-narrow); }
-  .chat-item.drops-move:has(.chat-delete.armed) .chat-title { padding-right: calc(var(--actions-w-narrow) + 56px); }
+  .chat-item.drops-one .chat-act-drop { display: none; }
+  .chat-item.drops-one:hover .chat-title, .chat-item.drops-one:focus-within .chat-title { padding-right: min(var(--actions-w-narrow), 55%); }
+  .chat-item.drops-one:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w-narrow) + 56px), 70%); }
+  @media (hover: none) { .chat-item.drops-one .chat-title { padding-right: min(var(--actions-w-narrow), 55%); } }
 }
 /* No hover (touch): the buttons are always there, and the title always leaves room. */
-@media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: var(--actions-w, 100px); } }
+@media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } }
 .chat-actions .chat-delete.armed { display: inline-flex; align-items: center; width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
 .chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
 .chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; pointer-events: auto; }
