@@ -18,7 +18,8 @@
 // deps: { readSettings, apiKey() -> string|null, dir() -> folder for the lists, fetch(url) -> Response,
 //         isTab(wc), dialogs, win(), warnUrl, baseUrl?, onChange?() }
 const crypto = require('crypto');
-const fs = require('fs');
+const fsp = require('fs').promises;
+const os = require('os');
 const net = require('net');
 const path = require('path');
 const { getDomain } = require('tldts-experimental');
@@ -218,10 +219,25 @@ function riceDecode(enc) {
 
 // ---------- one list: a sorted Uint32Array of big-endian 4-byte prefixes ----------
 
+const LITTLE = os.endianness() === 'LE';
+
+// The on-disk (and checksummed) form: each prefix as 4 big-endian bytes. Copy the typed array's bytes,
+// then swap them all at once, natively, when this machine is little-endian.
+function prefixesToBytes(prefixes) {
+  const buf = Buffer.from(prefixes.buffer.slice(prefixes.byteOffset, prefixes.byteOffset + prefixes.byteLength));
+  return LITTLE ? buf.swap32() : buf;
+}
+
+// The reverse: an aligned Uint32Array, or null when the length isn't a whole number of prefixes.
+function prefixesFromBytes(bytes) {
+  if (bytes.length % 4 !== 0) return null;
+  const buf = Buffer.from(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)); // own, aligned copy
+  if (LITTLE) buf.swap32();
+  return new Uint32Array(buf.buffer, buf.byteOffset, buf.length / 4);
+}
+
 function checksum(prefixes) {
-  const buf = Buffer.alloc(prefixes.length * 4);
-  for (let i = 0; i < prefixes.length; i++) buf.writeUInt32BE(prefixes[i], i * 4);
-  return crypto.createHash('sha256').update(buf).digest('base64');
+  return crypto.createHash('sha256').update(prefixesToBytes(prefixes)).digest('base64');
 }
 
 // Applies one HashList update to `current` (sorted). Throws on a malformed update.
@@ -277,7 +293,6 @@ function createSafeBrowsing(deps) {
   let searchBlockedUntil = 0; // hashes.search backoff
   let searchErrors = 0;
   let timer = null;
-  let loaded = false;
   let syncing = null;
   let lastUpdate = 0;
   let lastError = '';
@@ -287,38 +302,47 @@ function createSafeBrowsing(deps) {
   const file = (name) => path.join(deps.dir(), `${name}.bin`);
   const stateFile = () => path.join(deps.dir(), 'state.json');
 
+  // Loads the stored lists once, off the main thread's critical path (fs.promises). Never rejects:
+  // a missing, partial or damaged file is ignored and that list is fetched again in full.
+  let loading = null;
   function load() {
-    if (loaded) return;
-    loaded = true;
+    if (!loading) {
+      loading = loadFromDisk().catch(() => {}).then(() => { deps.onChange?.(); });
+    }
+    return loading;
+  }
+  async function loadFromDisk() {
     let state = {};
-    try { state = JSON.parse(fs.readFileSync(stateFile(), 'utf8')); } catch {}
-    lastUpdate = state.lastUpdate || 0;
+    try { state = JSON.parse(await fsp.readFile(stateFile(), 'utf8')); } catch {}
+    if (!state || typeof state !== 'object') state = {};
+    lastUpdate = Number(state.lastUpdate) || 0;
     for (const name of LISTS) {
       const meta = state.lists?.[name];
       if (!meta) continue;
       try {
-        const buf = fs.readFileSync(file(name));
-        const prefixes = new Uint32Array(buf.length / 4);
-        for (let i = 0; i < prefixes.length; i++) prefixes[i] = buf.readUInt32BE(i * 4);
-        if (checksum(prefixes) !== meta.checksum) continue; // damaged on disk: fetched again in full
+        const prefixes = prefixesFromBytes(await fsp.readFile(file(name)));
+        if (!prefixes || checksum(prefixes) !== meta.checksum) continue; // damaged on disk: fetched again in full
+        if (lists.has(name)) continue; // an update already landed while this was reading
         lists.set(name, { prefixes, version: meta.version, checksum: meta.checksum });
-        if (meta.due) due.set(name, meta.due);
+        if (meta.due && !due.has(name)) due.set(name, meta.due);
       } catch {}
     }
   }
 
-  function save() {
-    fs.mkdirSync(deps.dir(), { recursive: true });
-    const state = { lastUpdate, lists: {} };
-    for (const [name, l] of lists) {
-      const buf = Buffer.alloc(l.prefixes.length * 4);
-      for (let i = 0; i < l.prefixes.length; i++) buf.writeUInt32BE(l.prefixes[i], i * 4);
-      fs.writeFileSync(`${file(name)}.tmp`, buf);
-      fs.renameSync(`${file(name)}.tmp`, file(name));
-      state.lists[name] = { version: l.version, checksum: l.checksum, due: due.get(name) || 0 };
-    }
-    fs.writeFileSync(`${stateFile()}.tmp`, JSON.stringify(state));
-    fs.renameSync(`${stateFile()}.tmp`, stateFile());
+  // Atomic per file: write a .tmp beside it, then rename over. A failure leaves the old files and the
+  // in-memory lists as they were (the next update writes again).
+  async function save() {
+    try {
+      await fsp.mkdir(deps.dir(), { recursive: true });
+      const state = { lastUpdate, lists: {} };
+      for (const [name, l] of [...lists]) {
+        await fsp.writeFile(`${file(name)}.tmp`, prefixesToBytes(l.prefixes));
+        await fsp.rename(`${file(name)}.tmp`, file(name));
+        state.lists[name] = { version: l.version, checksum: l.checksum, due: due.get(name) || 0 };
+      }
+      await fsp.writeFile(`${stateFile()}.tmp`, JSON.stringify(state));
+      await fsp.rename(`${stateFile()}.tmp`, stateFile());
+    } catch {}
   }
 
   async function getJson(pathAndQuery) {
@@ -334,7 +358,7 @@ function createSafeBrowsing(deps) {
 
   // One round of list updates: every list whose wait is over, in one hashLists:batchGet.
   async function updateLists() {
-    load();
+    await load();
     const now = Date.now();
     const names = LISTS.filter((n) => (due.get(n) || 0) <= now);
     if (!names.length) return;
@@ -365,7 +389,7 @@ function createSafeBrowsing(deps) {
       due.set(name, Date.now() + durationMs(list.minimumWaitDuration));
     });
     lastUpdate = Date.now();
-    save();
+    await save();
   }
 
   // Keeps the lists fresh while the setting is on: at each list's minimum wait, backing off on errors.
@@ -403,7 +427,7 @@ function createSafeBrowsing(deps) {
     if (!active()) return null;
     const c = canonicalize(url);
     if (!c || !/^https?:\/\//.test(c.url) || isLocal(c.host)) return null;
-    load();
+    await load();
     if (!lists.size) return null; // not downloaded yet
     const exprs = expressions(c);
     const full = exprs.map((e) => sha256(e));
@@ -509,7 +533,7 @@ function createSafeBrowsing(deps) {
   }
 
   function status() {
-    load();
+    load(); // starts reading in the background; onChange fires when the stored lists are in
     const entries = [...lists.values()].reduce((n, l) => n + l.prefixes.length, 0);
     return { enabled: enabled(), hasKey: Boolean(deps.apiKey()), active: active(), entries, lastUpdate, error: lastError, syncing: Boolean(syncing) };
   }
@@ -522,7 +546,7 @@ function createSafeBrowsing(deps) {
     return Promise.resolve();
   }
 
-  return { gate, check, warningUrl, attachTab, status, refresh, sync, stop: () => clearTimeout(timer) };
+  return { gate, check, warningUrl, attachTab, status, refresh, sync, ready: load, stop: () => clearTimeout(timer) };
 }
 
 function describe(threat) {
@@ -530,5 +554,5 @@ function describe(threat) {
 }
 
 module.exports = {
-  createSafeBrowsing, canonicalize, expressions, riceDecode, applyUpdate, checksum, backoffMs, durationMs, sha256, isLocal, LISTS,
+  createSafeBrowsing, canonicalize, expressions, riceDecode, applyUpdate, checksum, backoffMs, durationMs, prefixesToBytes, prefixesFromBytes, sha256, isLocal, LISTS,
 };

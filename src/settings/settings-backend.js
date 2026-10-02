@@ -144,8 +144,6 @@ const translate = require('../features/translate');
 const WS = require('../features/widget-system'); // the clock's steps and the search bar's width range
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
-const bool = (v) => v === true;
-const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || 0)));
 const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
 const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
 
