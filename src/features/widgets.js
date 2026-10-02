@@ -66,6 +66,7 @@ const TVW = require('./tradingview-view');
 const CW = require('./custom-widget');
 const LW = require('./local-widgets');
 const AS = require('./aistatus-view'); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
+const CS = require('./calendar-sources'); // the Calendar card's sources: one or several, merged
 const WCFG = require('./widget-config'); // the home page's own editor: what it may see, and its form laid over what is saved
 
 const ENDPOINTS = {
@@ -131,6 +132,18 @@ function httpsUrl(value, { allowWebcal = false } = {}) {
     if (u.protocol !== 'https:' || !u.hostname || u.username || u.password) return null;
     return u.href;
   } catch { return null; }
+}
+const CAL_TIMEOUT = 8e3; // one calendar's answer; a slow one must not hold up the others
+// One calendar source, read and parsed: shared for ten minutes by every card (a force refresh or a Test looks again), and the
+// last good answer is kept so a calendar that can't be reached for a while still shows what it showed, with a warning.
+async function calendarOf(x, s, { fresh = false } = {}) {
+  const key = `ics:${s.url}`;
+  const load = async () => {
+    const cal = ics.eventsBetween(await x.text(s.url, { max: 5e6, timeout: CAL_TIMEOUT }), { from: x.now(), days: 14, limit: 60 });
+    x.keep(key, cal);
+    return cal;
+  };
+  return fresh ? load() : x.memo(key, 10 * 60e3, load);
 }
 const LOCATE_SERVICE = 'ipapi.co';
 // Geocoding (Open-Meteo, keyless): a city or postal code -> [{ name, lat, lon }] with region and country.
@@ -250,32 +263,84 @@ const CONNECTORS = {
     },
   },
 
+  // One or several calendars (features/calendar-sources.js): c.cals = [{ name, url, color, enabled }]. An older
+  // card has only url and name and is read as one calendar. Each is fetched on its own (a slow or broken one
+  // costs only its own part of the card) and the events are merged into one timeline. The card gets
+  // { events: [{ ..., cal }], cals: [{ id, name, color, ok, error?, stale? }], multi, name, color } and never an address.
   calendar: {
     label: 'Calendar (ICS)',
-    ttl: 15 * 60e3,
+    ttl: (data) => (data?.cals?.some((c) => !c.ok) ? 2 * 60e3 : 15 * 60e3), // a calendar that couldn't be read is asked again soon
     clean: (c) => {
-      const url = httpsUrl(c.url, { allowWebcal: true });
-      return url ? { url, name: str(c.name, 80), count: Math.min(8, Math.max(3, Math.round(num(c.count, 3, 8) ?? 5))), colors: WC.cleanMode(c.colors) } : null;
+      const cals = CS.sourcesOf(c);
+      if (!cals.length) return null;
+      const name = cals.length === 1 ? cals[0].name || str(c.name, 80) : '';
+      return { cals, url: cals[0].url, name, count: Math.min(8, Math.max(3, Math.round(num(c.count, 3, 8) ?? 5))), colors: WC.cleanMode(c.colors) };
     },
     async resolve(input, x) {
-      const url = httpsUrl(input.url, { allowWebcal: true });
-      if (!url) throw new Error('Paste an https:// or webcal:// calendar address.');
-      const cal = ics.eventsBetween(await x.text(url, { max: 5e6 }), { days: 14 });
-      const upcoming = cal.events.filter((e) => e.allDay || e.end > Date.now());
-      const events = cal.total === 1 ? '1 event' : `${cal.total} events`;
+      const asked = CS.problem(input);
+      if (asked) throw new Error(asked);
+      const cals = CS.sourcesOf(input);
+      if (!cals.length) throw new Error('Paste an https:// or webcal:// calendar address.');
+      if (!cals.some((s) => s.enabled)) throw new Error('Turn on at least one calendar.');
+      const now = x.now();
+      const looked = await Promise.all(cals.map(async (s, i) => {
+        if (!s.enabled) return { s, i, off: true };
+        try { return { s, i, cal: await calendarOf(x, s, { fresh: input.fresh === true }) }; } catch (err) { return { s, i, error: String(err?.message || err).slice(0, 160) }; }
+      }));
+      const on = looked.filter((r) => !r.off);
+      const good = on.filter((r) => r.cal);
+      const countOf = (r) => {
+        const upcoming = r.cal.events.filter((e) => e.allDay || e.end > now).length;
+        return `${r.cal.total === 1 ? '1 event' : `${r.cal.total} events`}, ${upcoming} in the next two weeks`;
+      };
+      if (cals.length === 1) { // as it always was: a calendar that can't be read isn't saved
+        if (!good.length) throw new Error(on[0].error);
+        const cal = good[0].cal;
+        return { config: { cals: [cals[0]], url: cals[0].url, name: cals[0].name || cal.name, count: input.count ?? 5, colors: WC.cleanMode(input.colors) }, message: `${cal.name ? `${cal.name}: ` : ''}${countOf(good[0])}.` };
+      }
+      if (!good.length) throw new Error(`${CS.labelOf(on[0].s, '', on[0].i)}: ${on[0].error}`);
+      const lines = on.map((r) => `${CS.labelOf(r.s, r.cal?.name, r.i)}: ${r.cal ? countOf(r) : `can’t be read (${r.error.replace(/\.$/, '')})`}`);
+      const broken = on.length - good.length;
       return {
-        config: { url, name: cal.name, count: input.count ?? 5, colors: WC.cleanMode(input.colors) },
-        message: `${cal.name ? `${cal.name}: ` : ''}${events}, ${upcoming.length} in the next two weeks.`,
+        config: { cals, url: cals[0].url, name: '', count: input.count ?? 5, colors: WC.cleanMode(input.colors) },
+        message: `${lines.join('. ')}.${broken ? ` ${broken === 1 ? 'One calendar is' : `${broken} calendars are`} saved anyway; the card shows a warning until ${broken === 1 ? 'it works' : 'they work'}.` : ''}`,
       };
     },
     title: (c) => c.name || 'Calendar',
-    summary: (c) => hostOf(c.url),
+    summary: (c) => CS.summaryOf(c),
     async fetch(c, x) {
-      const now = Date.now();
-      const cal = ics.eventsBetween(await x.text(c.url, { max: 5e6 }), { from: now, days: 14, limit: 60 });
-      const events = cal.events.filter((e) => e.allDay || e.end > now).slice(0, 12)
-        .map(({ title, location, url, color, allDay, date, start, end }) => ({ title: title || 'Busy', location, url, color: color || '', allDay, date: date || null, start, end }));
-      return { events, name: cal.name, color: cal.color || '' };
+      const now = x.now();
+      const cals = CS.sourcesOf(c);
+      const on = cals.filter((s) => s.enabled);
+      const multi = on.length > 1;
+      const parts = await Promise.all(on.map(async (s, k) => {
+        const slot = cals.indexOf(s);
+        let cal;
+        let error = '';
+        let stale = false;
+        try {
+          cal = await calendarOf(x, s);
+        } catch (err) {
+          error = String(err?.message || err).slice(0, 160);
+          cal = x.kept(`ics:${s.url}`); // the last good answer: shown, with a warning, rather than nothing
+          stale = Boolean(cal);
+        }
+        const color = s.color || (multi ? cal?.color || CS.defaultColor(slot) : '');
+        return { id: s.id, name: CS.labelOf(s, cal?.name, k), color, ok: !error, error, stale, cal, events: cal ? cal.events : [] };
+      }));
+      if (parts.every((p) => !p.cal)) throw new Error(multi ? `${parts[0].name}: ${parts[0].error}` : parts[0].error);
+      const { events } = CS.merge(parts.map((p) => ({ id: p.id, events: p.events })), { limit: multi ? 24 : 12, now });
+      const colorOf = Object.fromEntries(parts.map((p) => [p.id, p.color]));
+      const shaped = events.map(({ title, location, url, color, allDay, date, start, end, cal, also }) => ({
+        title: title || 'Busy', location, url, color: (multi ? colorOf[cal] : color) || color || '', allDay, date: date || null, start, end,
+        ...(multi ? { cal, ...(also ? { also } : {}) } : {}),
+      }));
+      const single = parts[0].cal;
+      return {
+        events: shaped, multi,
+        name: multi ? '' : single?.name || '', color: multi ? '' : parts[0].color || single?.color || '',
+        cals: parts.map((p) => ({ id: p.id, name: p.name, color: p.color, ok: p.ok, ...(p.error ? { error: p.error } : {}), ...(p.stale ? { stale: true } : {}) })),
+      };
     },
   },
 
@@ -1103,7 +1168,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -1223,6 +1288,7 @@ function createWidgets(deps) {
     if (memoCache.size > 60) memoCache.delete(memoCache.keys().next().value);
     return value;
   }
+  const lastGood = new Map(); // key -> the last answer that worked (a calendar that is down for a while)
   const forget = (prefix) => { for (const k of [...memoCache.keys()]) if (k.startsWith(prefix)) memoCache.delete(k); };
 
   // ---- network helpers handed to connectors (x) ----
@@ -1350,6 +1416,8 @@ function createWidgets(deps) {
       },
       memo,
       forget,
+      keep(key, value) { lastGood.set(key, value); if (lastGood.size > 40) lastGood.delete(lastGood.keys().next().value); },
+      kept: (key) => lastGood.get(key) || null,
       get slack() { return (this._slack ||= slackHelpers(x)); },
       projects: () => todoistProjects(x, x.secret() || ''),
       // The user's TradingView watchlists, { signedIn, lists }: one read a minute at most, shared by every card.
@@ -1444,7 +1512,7 @@ function createWidgets(deps) {
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
     const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
     if (fresh && (!force || age < MIN_REFRESH)) return Promise.resolve(false);
-    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); }
+    if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
     entry.pending = Promise.resolve()
       .then(() => c.fetch(w, helpers(c.secret)))
       .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
@@ -1489,7 +1557,7 @@ function createWidgets(deps) {
   // "Check": look the input up without saving anything.
   async function test(input) {
     try {
-      const { message, ok } = await resolveInput(input);
+      const { message, ok } = await resolveInput({ ...(input && typeof input === 'object' ? input : {}), fresh: true });
       return { ok, message };
     } catch (err) {
       return { ok: false, error: true, message: String(err?.message || err) };
@@ -2152,8 +2220,9 @@ function createWidgets(deps) {
     const problem = WCFG.checkEdit(prev, input); // before anything is looked up
     if (problem) return { ok: false, message: problem };
     // A calendar edit that leaves the address alone is only a count (and a title): nothing to fetch, so it also works offline.
-    const known = WCFG.keepsAddress(prev, input) ? { config: { url: prev.url, name: prev.name, count: input.count, colors: prev.colors }, message: 'Saved.' } : null;
+    const keeps = WCFG.keepsAddress(prev, input);
     if (WCFG.KINDS.includes(input.type)) Object.assign(input, WCFG.mergeEdit(prev, input)); // the form's few fields over the saved settings
+    const known = keeps ? { config: { ...(input.cals ? { cals: input.cals } : {}), url: input.url || prev.url, name: prev.name, count: input.count, colors: prev.colors }, message: 'Saved.' } : null;
     try {
       const { widget, message } = await saveWidget(input, prev ? prev.id : null, known);
       if (prev) cfgTrash.hold({ id: prev.id, widget: prev }); // so the page can offer Undo
@@ -2179,7 +2248,7 @@ function createWidgets(deps) {
   const aiStatusSoon = () => { if (aiTimer) return; aiTimer = setTimeout(() => { aiTimer = null; try { aiStatusChanged(); } catch (err) { console.error('[lumen] AI status:', err.message); } }, 300); aiTimer.unref?.(); };
 
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
-  const flush = () => { epoch++; cache.clear(); memoCache.clear(); };
+  const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
   return { flush, aiStatusChanged, aiStatusSoon, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
 }
 

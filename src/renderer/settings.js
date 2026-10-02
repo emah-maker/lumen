@@ -884,6 +884,11 @@ async function buildWidgets(card) {
     // "Where do I get this?" under a row's muted line; opens one fixed page by name.
     const helpLink = (r, key, text) => { r.querySelector('.text').append(h('button', { type: 'button', class: 'linkish', text, onclick: () => S.widgets.help(key) })); return r; };
     let places = (existing?.type === 'weather' && existing.wx?.places ? existing.wx.places : []).map((p) => ({ ...p }));
+    const CAL_COLORS = ['#4f8ef7', '#e5604d', '#35a974', '#e0a030', '#9b6bd6', '#25a9b8', '#d6609a', '#7d8896']; // features/calendar-sources.js PALETTE
+    const MAX_CALS = 8;
+    // The calendars of a Calendar card: { name, url, color ('' = the calendar's own), enabled }. An older card has only its url.
+    let calRows = (existing?.type === 'calendar' ? (Array.isArray(existing.cals) && existing.cals.length ? existing.cals : [{ name: existing.name || '', url: existing.url || '' }]) : [{}])
+      .map((c) => ({ name: c.name || '', url: c.url || '', color: c.color || '', enabled: c.enabled !== false }));
     let projects = [];
     let clockPlaces = (existing?.type === 'worldclock' && existing.wc?.places ? existing.wc.places : []).map((p) => ({ ...p }));
     const colors = sel('widget-colors', 'Card colors', WIDGET_COLORS, existing?.colors || 'calendar');
@@ -1340,6 +1345,44 @@ async function buildWidgets(card) {
         ? [section('Watchlist', [listRow]), section('Paper portfolio', [cashRow]), advanced([keyRow, about], 'The key is stored encrypted by your system and never reaches the new-tab page.')]
         : [section('Account', [keyRow], 'Stored encrypted by your system. It never reaches the new-tab page.'), section('Watchlist', [listRow]), section('Paper portfolio', [cashRow]), advanced([about])]));
     }
+    // ---- calendar: one or several, shown together ----
+    function calendarFields() {
+      const box = h('div', { class: 'cal-edit-list', id: 'widget-cals' });
+      const addBtn = h('button', { type: 'button', id: 'widget-cal-add', text: 'Add another calendar', onclick: () => { calRows.push({ name: '', url: '', color: '', enabled: true }); draw(); box.lastElementChild?.querySelector('input[type="text"]')?.focus(); } });
+      const nameOf = (r, i) => r.name.trim() || (() => { try { return new URL(r.url.trim().replace(/^webcals?:/i, 'https:')).hostname.replace(/^www\./, ''); } catch { return ''; } })() || `Calendar ${i + 1}`;
+      const draw = (focusKey) => {
+        box.replaceChildren(...calRows.map((r, i) => {
+          const label = nameOf(r, i);
+          const result = h('span', { class: 'note cal-test', role: 'status' });
+          const test = h('button', { type: 'button', class: 'plain', text: 'Test', 'aria-label': `Test ${label}`, title: 'Try this calendar without saving', onclick: async () => {
+            if (!r.url.trim()) { flash(result, 'Paste its address first.', 'warn cal-test'); return; }
+            result.textContent = 'Testing…';
+            result.className = 'note cal-test';
+            const out = await S.widgets.test({ type: 'calendar', cals: [{ name: r.name, url: r.url, enabled: true }] }).catch((err) => ({ ok: false, error: true, message: clean(err) }));
+            flash(result, out.message, (out.ok ? 'ok' : out.error ? 'err' : 'warn') + ' cal-test');
+          } });
+          const up = h('button', { type: 'button', class: 'plain icon', text: '↑', 'data-k': `up${i}`, 'aria-label': `Move ${label} up`, title: 'Move up', disabled: i === 0, onclick: () => { [calRows[i - 1], calRows[i]] = [calRows[i], calRows[i - 1]]; draw(`up${i - 1}`); } });
+          const down = h('button', { type: 'button', class: 'plain icon', text: '↓', 'data-k': `down${i}`, 'aria-label': `Move ${label} down`, title: 'Move down', disabled: i === calRows.length - 1, onclick: () => { [calRows[i + 1], calRows[i]] = [calRows[i], calRows[i + 1]]; draw(`down${i + 1}`); } });
+          const gone = h('button', { type: 'button', class: 'danger', text: 'Remove', 'aria-label': `Remove ${label}`, disabled: calRows.length === 1, onclick: () => { calRows.splice(i, 1); draw('add'); } });
+          return h('div', { class: 'cal-edit', role: 'group', 'aria-label': `Calendar ${i + 1}: ${label}` },
+            h('input', { type: 'color', class: 'cal-color', value: r.color || CAL_COLORS[i % CAL_COLORS.length], 'aria-label': `Color for ${label}`, title: 'Color', oninput: (e) => { r.color = e.target.value; } }),
+            h('input', { type: 'text', class: 'cal-name', maxlength: '60', placeholder: i === 0 ? 'School' : 'Other', 'aria-label': `Name of calendar ${i + 1}`, value: r.name, oninput: (e) => { r.name = e.target.value; } }),
+            h('label', { class: 'check cal-on' }, h('input', { type: 'checkbox', checked: r.enabled, 'aria-label': `Show ${label} on the card`, onchange: (e) => { r.enabled = e.target.checked; } }), 'Show'),
+            h('input', { type: 'url', class: 'cal-url', maxlength: '2000', placeholder: 'webcal://… or https://….ics', spellcheck: 'false', autocomplete: 'off', 'aria-label': `Address of calendar ${i + 1} (ICS)`, value: r.url, oninput: (e) => { r.url = e.target.value; } }),
+            h('div', { class: 'cal-actions' }, test, up, down, gone, result));
+        }));
+        addBtn.disabled = calRows.length >= MAX_CALS;
+        addBtn.title = addBtn.disabled ? `Up to ${MAX_CALS} calendars.` : '';
+        if (focusKey) (focusKey === 'add' ? addBtn : box.querySelector(`[data-k="${focusKey}"]`) || addBtn).focus();
+      };
+      draw();
+      inputs.cals = box;
+      fields.replaceChildren(
+        section('Calendars', [
+          h('div', { class: 'row stack' }, box),
+          helpLink(block('Add a calendar', 'Up to 8. Paste the “subscribe” or “secret address in iCal format” link from Google Calendar, Outlook, iCloud, Fantastical or Muse. Events from every calendar that is turned on are merged into one list, soonest first, each with its calendar’s color. A color you don’t change follows the calendar’s own. Turn a calendar off to keep it but hide it.', addBtn), 'calendar', 'Where do I find the link?'),
+        ], 'Lumen fetches the calendars itself; the new-tab page never goes online. If one calendar can’t be reached, the others still show, with a note on the card.'));
+    }
     const renderFields = () => {
       for (const b of types.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.type === type));
       note.textContent = '';
@@ -1351,9 +1394,7 @@ async function buildWidgets(card) {
       } else if (type === 'worldclock') {
         clockFields(same);
       } else if (type === 'calendar') {
-        inputs.url = h('input', { type: 'url', id: 'widget-url', placeholder: 'webcal://… or https://….ics', 'aria-label': 'Calendar address (ICS)' });
-        inputs.url.value = same?.url || '';
-        fields.replaceChildren(section('Calendar', [helpLink(setting('Calendar link', inputs.url, 'The “subscribe” or “secret address in iCal format” link from Google Calendar, Outlook, iCloud, Fantastical or Muse. Today’s and upcoming events show.'), 'calendar', 'Where do I find it?')], 'Lumen fetches the calendar itself; the new-tab page never goes online.'));
+        calendarFields();
       } else if (type === 'todoist') {
         todoFields(same);
       } else if (type === 'spotify') {
@@ -1510,6 +1551,7 @@ async function buildWidgets(card) {
       if (type === 'github') {
         return { ...base, token: inputs.token.value, gh: { reviews: val(inputs.reviews), assigned: val(inputs.assigned), notifications: val(inputs.notifications), hideDrafts: val(inputs.hideDrafts), max: Number(inputs.max.value) } };
       }
+      if (type === 'calendar') return { ...base, cals: calRows.map((r) => ({ name: r.name, url: r.url, color: r.color, enabled: r.enabled })) };
       if (type === 'feed') return { ...base, feed: inputs.preset.value, url: inputs.url.value, count: Number(inputs.count.value) };
       if (type === 'stocks' || type === 'crypto') {
         return { ...base, token: inputs.token.value, mk: { [type === 'crypto' ? 'coins' : 'symbols']: inputs.list.value, startCash: Number(inputs.startCash.value) } };
@@ -1628,7 +1670,7 @@ async function buildWidgets(card) {
       leave.querySelector('button')?.focus();
     }
     renderList();
-    if (!existing) (inputs.city || inputs.url || inputs.list || inputs.symbol || inputs.label || inputs.recipe || inputs.token || inputs.clientId)?.focus();
+    if (!existing) (inputs.city || inputs.url || inputs.cals?.querySelector('.cal-url') || inputs.list || inputs.symbol || inputs.label || inputs.recipe || inputs.token || inputs.clientId)?.focus();
     window.scrollTo?.({ top: 0 });
   }
 

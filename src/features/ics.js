@@ -226,7 +226,7 @@ function* occurrenceDays(ev, lastDay) {
 }
 
 // The occurrences that overlap [from, from + days) in the computer's time zone, soonest first:
-// [{ title, location, url, allDay, date ('YYYY-MM-DD', all-day only), start, end (epoch ms) }]
+// [{ title, uid, location, url, allDay, date ('YYYY-MM-DD', all-day only), start, end (epoch ms) }]
 function eventsBetween(text, { from = Date.now(), days = 14, limit = 50 } = {}) {
   const { name, color, events } = readEvents(text);
   const firstDay = localDay(from);
@@ -257,14 +257,14 @@ function eventsBetween(text, { from = Date.now(), days = 14, limit = 50 } = {}) 
       if (!ev.recurrenceId && ev.rrule && ev.uid && overrides.has(`${ev.uid}|${key}`)) continue; // moved or edited: its override shows instead
       if (s.allDay) {
         if (n + spanDays <= firstDay || n >= lastDay) continue;
-        out.push({ title: ev.summary, location: ev.location, url: ev.url, color: ev.color || '', allDay: true, date: `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, days: spanDays, start: new Date(y, mo - 1, d).getTime(), end: new Date(y, mo - 1, d + spanDays).getTime() });
+        out.push({ title: ev.summary, uid: ev.uid || '', location: ev.location, url: ev.url, color: ev.color || '', allDay: true, date: `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, days: spanDays, start: new Date(y, mo - 1, d).getTime(), end: new Date(y, mo - 1, d + spanDays).getTime() });
       } else {
         const start = instant(occ, zone);
         const until = ev.rrule?.until;
         if (until && !until.allDay && start > instant(until, until.tz)) continue; // UNTIL is an instant, not just a day
         const end = endsAt(start);
         if (Math.max(end, start + 1) <= windowStart || start >= windowEnd || localDay(start) >= lastDay) continue;
-        out.push({ title: ev.summary, location: ev.location, url: ev.url, color: ev.color || '', allDay: false, start, end });
+        out.push({ title: ev.summary, uid: ev.uid || '', location: ev.location, url: ev.url, color: ev.color || '', allDay: false, start, end });
       }
     }
   }
