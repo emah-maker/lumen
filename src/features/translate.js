@@ -201,7 +201,11 @@ function asciiText(str) {
   return out;
 }
 const NUMBER_TOKEN = /\d{1,3}(?:[\s'’]\d{3})+(?:[.,]\d+)?|\d*[.,]\d+(?:[.,]\d+)*|\d+/g;
-const MINUS = new RegExp(`[-${String.fromCharCode(0x2212)}${String.fromCharCode(0xff0d)}]`);
+const MINUS = new RegExp(`[-${[0x2212, 0x2013, 0x2014, 0xfe63, 0xff0d].map((c) => String.fromCharCode(c)).join('')}]`); // hyphen-minus, minus, en and em dash, small and full-width hyphen-minus
+const DATE_LIKE = /(?<!\d)(?:\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})(?!\d)/; // 5.6.2024, 12/05/24, 2024-05-01
+const FRACTION = /[¼½¾⅐-⅞]|\d\s*\/\s*\d/; // ½, 1 1/2
+const RTL_LANGS = new Set(['ar', 'fa', 'he', 'ur', 'ps', 'ug', 'yi', 'dv', 'sd']);
+const isRtl = (code) => RTL_LANGS.has(String(code || '').toLowerCase().split(/[-_]/)[0]);
 // Languages that write the decimal mark as a comma (and group thousands with a point or a space); the rest write a point.
 const COMMA_DECIMAL = new Set(['de', 'fr', 'es', 'it', 'pt', 'ru', 'uk', 'pl', 'cs', 'sk', 'sl', 'hr', 'sr', 'bg', 'ro', 'hu', 'el', 'tr', 'nl', 'id', 'vi', 'da', 'sv', 'nb', 'no', 'fi', 'lt', 'lv', 'et', 'is', 'ca', 'gl', 'eu', 'mk', 'be', 'ka', 'hy', 'az', 'kk']);
 const POINT_DECIMAL = new Set(['en', 'ja', 'zh', 'ko', 'he', 'th', 'hi', 'ms', 'ar', 'fa', 'ur', 'bn', 'ta', 'te', 'mr', 'gu', 'kn', 'ml', 'si', 'my', 'km', 'lo', 'fil', 'sw']);
@@ -251,6 +255,11 @@ function checkNumber(was, now, locales = {}) {
   if (!digitsA) return /[\p{L}\p{N}]/u.test(b) ? 'keep' : 'ok'; // a symbol stays a symbol; "€" -> "euro" is left alone
   if (!digitsB) return 'keep'; // the number became a word
   if (/\p{L}/u.test(b)) return 'keep'; // words inside a number's own node belong to a neighbour: the number stays as it was
+  // A date (5.6.2024, 12.05.24, 2024-05-01) is never one number: the same groups in the same order are fine (any separator),
+  // anything else is a reformat the page keeps as it was. Never corruption, never counted.
+  if (DATE_LIKE.test(a) || DATE_LIKE.test(b)) return DATE_LIKE.test(a) && DATE_LIKE.test(b) && (a.match(/\d+/g) || []).join() === (b.match(/\d+/g) || []).join() ? 'ok' : 'keep';
+  if (FRACTION.test(a) || FRACTION.test(b)) return 'keep'; // 1½ -> 1,5, 1 1/2: a different way to write the same amount
+  if (isRtl(locales.target) && /\)[^()]*\d[^()]*\(/.test(b)) return 'keep'; // (5) written mirrored, )5(, for a right-to-left target
   const tokensA = a.match(NUMBER_TOKEN) || [];
   const tokensB = b.match(NUMBER_TOKEN) || [];
   const from = decimalStyle(locales.source);
@@ -262,6 +271,15 @@ function checkNumber(was, now, locales = {}) {
   if (tokensB.length !== 1) return 'corrupt';
   return signedValue(a, from) === signedValue(b, to) ? 'ok' : 'corrupt';
 }
+// Is this node's text one plain number (not a date, time, range or fraction)?
+function isPlainNumber(text) {
+  const a = asciiText(text);
+  if (a === null) return false;
+  const t = a.replace(/\p{Cf}/gu, '');
+  return (t.match(NUMBER_TOKEN) || []).length === 1 && !DATE_LIKE.test(t) && !FRACTION.test(t);
+}
+// The digit strings of the numbers in `text` (ASCII, in order).
+const numberDigits = (text) => ((asciiText(text) || '').match(NUMBER_TOKEN) || []).map((tok) => tok.replace(/\D/g, ''));
 // Items from the page: { id, text, v, g (block), l, t (space before / after), n (no letters: a number, price, symbol) }.
 // A letterless node is only worth sending as part of a sentence ("Showing <b>10</b> of <b>200</b> results");
 // alone it is left as written.
@@ -307,19 +325,23 @@ function splitSegment(segment, text, locales = {}) {
   const pairs = [];
   let mismatches = 0;
   let checked = 0;
-  let emptyWords = false;
-  let wordsInNumber = false; // the engine put words into a number's own part
+  let wordsInNumber = false; // the engine put words into a plain number's own part
+  const keptNumbers = []; // number nodes that stay as written: [index]
   for (let i = 0; i < k; i++) {
     const node = segment.nodes[i];
     // a part may come back empty: the engine moved that node's words into a neighbour ("worries farmers ⟦1⟧ ⟦2⟧").
     // A bare number or symbol that comes back empty is left as written.
-    if (node.n && !parts[i].trim()) continue;
-    if (!node.n && !parts[i].trim()) emptyWords = true; // a word node whose words went elsewhere
+    if (node.n && !parts[i].trim()) { keptNumbers.push(i); continue; }
     // A bare number may be re-formatted for the target (200 -> ٢٠٠, 1,000.5 -> 1.000,5, $5.99 -> 5,99 €) but must keep its
     // value. Anything else leaves the page as it was, and only real corruption counts against the pair.
     if (node.n) {
       const verdict = checkNumber(node.text, parts[i], locales);
-      if (verdict !== 'ok') { if (verdict === 'corrupt') mismatches++; if (/\p{L}/u.test(parts[i])) wordsInNumber = true; continue; }
+      if (verdict !== 'ok') {
+        if (verdict === 'corrupt') mismatches++;
+        if (/\p{L}/u.test(parts[i]) && isPlainNumber(node.text)) wordsInNumber = true; // words in a number's part would be lost
+        keptNumbers.push(i);
+        continue;
+      }
       checked++;
     }
     let out = parts[i];
@@ -330,8 +352,13 @@ function splitSegment(segment, text, locales = {}) {
       && /[\p{L}\p{N}]$/u.test(out) && /^[\p{L}\p{N}]/u.test(parts[i + 1]) && !UNSPACED.test(out.slice(-1)) && !UNSPACED.test(parts[i + 1].charAt(0))) out += ' ';
     pairs.push([node.id, out, segment.id]);
   }
-  // Words that went into a number's part while a word node came back empty would be lost: translate that block node by node instead.
-  pairs.redo = wordsInNumber && emptyWords;
+  // Would something be lost or shown twice? Words that went into a plain number's part, or a number the engine moved into a
+  // neighbouring part ("Zeige 10 von | 10 | von | 200 | Ergebnisse"), are not safe to apply: translate that block node by node instead.
+  const moved = keptNumbers.some((i) => {
+    const own = numberDigits(segment.nodes[i].text);
+    return own.length > 0 && parts.some((part, j) => { if (j === i) return false; const there = numberDigits(part); return own.every((d) => there.includes(d)); });
+  });
+  pairs.redo = wordsInNumber || moved;
   pairs.numberMismatches = mismatches; // bare numbers the engine corrupted (kept as written)
   pairs.numbersChecked = checked; // bare numbers that came back intact
   return pairs;

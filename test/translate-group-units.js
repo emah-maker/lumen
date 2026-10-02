@@ -479,13 +479,62 @@ const withSeams = (log) => log.flat().filter((t) => /⟦/.test(t));
     check('target locale: and the right style is applied', fine && fine.some((p) => p[0] === 2 && p[1] === '1.234') && fine.numberMismatches === 0, JSON.stringify(fine));
   }
 
+  // ---- a number the engine moved into a neighbouring part must not show twice ----
+  {
+    const seg5 = T.groupItems([{ id: 1, text: 'Showing', g: 1, l: false, t: true }, { id: 2, text: '10', g: 1, n: true, l: false, t: true }, { id: 3, text: 'of', g: 1, l: false, t: true }, { id: 4, text: '200', g: 1, n: true, l: false, t: true }, { id: 5, text: 'results', g: 1, l: false, t: false }])[0];
+    const moved = T.splitSegment(seg5, `Zeige 10 von${M(1)}${M(2)}von${M(3)}${M(4)}Ergebnisse`);
+    check('moved number: "Zeige 10 von | (empty) | von | (empty) | Ergebnisse" is flagged for a node-by-node redo (the 10 would show twice)', moved && moved.redo === true, JSON.stringify(moved));
+    const fine5 = T.splitSegment(seg5, `Zeige${M(1)}10${M(2)}von${M(3)}200${M(4)}Ergebnisse`);
+    check('moved number: the normal reply is applied, no redo', fine5 && fine5.redo === false && fine5.length === 5, JSON.stringify(fine5));
+    const engine = (t) => (/⟦/.test(t) ? `Zeige 10 von${M(1)}${M(2)}von${M(3)}${M(4)}Ergebnisse` : t.toUpperCase());
+    const r = await run([el('p', [text('Showing '), el('b', [text('10')]), text(' of '), el('b', [text('200')]), text(' results')])], engine);
+    check('moved number: through a run each number appears exactly once', r.state.phase === 'done' && r.snap.join('') === 'SHOWING 10 OF 200 RESULTS', r.snap.join('|'));
+  }
+
+  // ---- dates are never one number ----
+  {
+    const v = (a, b, loc) => T.checkNumber(a, b, loc);
+    check('dates: 5.6.2024 -> 5/6/2024 and 12.05.24 -> 12/05/24 are the same date (not corruption)', v('5.6.2024', '5/6/2024') === 'ok' && v('12.05.24', '12/05/24') === 'ok' && v('12.05.2024', '12-05-2024') === 'ok', `${v('5.6.2024', '5/6/2024')} ${v('12.05.24', '12/05/24')}`);
+    check('dates: a reordered or reworded date is kept as written, never corrupt', v('12.05.2024', '2024-05-12') === 'keep' && v('5.6.2024', 'June 5, 2024') === 'keep' && v('5.6.2024', '6/5/2024') === 'keep' && v('2024-05-01', '01.05.2024') === 'keep', `${v('12.05.2024', '2024-05-12')} ${v('5.6.2024', '6/5/2024')}`);
+    check('dates: a thousands-grouped number is still a number (1.234.567 -> 1,234,567)', v('1.234.567', '1,234,567') === 'ok' && v('1.234.567', '1,234,568') === 'corrupt', `${v('1.234.567', '1,234,567')}`);
+    // many dates reformatted: numbers stay in the pair's sentences
+    let clock = 70000;
+    const log = [];
+    const reformat = (t) => {
+      const marks = t.match(MARK);
+      if (!marks) return t.toUpperCase();
+      const parts = t.split(MARK).map((p) => (/^\d+\.\d+\.\d+$/.test(p) ? p.split('.').reverse().join('-') : p.toUpperCase()));
+      return parts.reduce((o, p, i) => o + (i ? marks[i - 1] : '') + p, '');
+    };
+    const api = newTr(fakeLocal(reformat, log), {}, { now: () => clock });
+    const dated = () => [0, 1, 2, 3, 4].map((i) => el('p', [text(`Posted on `), el('b', [text(`${i + 1}.6.2024`)]), text(' by Ann')]));
+    await run(dated(), 'x', { tr: api });
+    log.length = 0;
+    api.clearCache();
+    const r2 = await run(dated(), 'x', { tr: api });
+    check('dates: five reformatted dates do not switch numbers off (they are still sent with their sentences next time)', log.flat().some((t) => /\d/.test(t)) && r2.snap.join('').includes('1.6.2024'), JSON.stringify(log.flat().slice(0, 2)));
+  }
+
+  // ---- dashes, fractions and mirrored brackets ----
+  {
+    const v = (a, b, loc) => T.checkNumber(a, b, loc);
+    const EN = String.fromCharCode(0x2013);
+    const EM = String.fromCharCode(0x2014);
+    check('dashes: an en or em dash used as the minus sign is the same sign', v('-5', `${EN}5`) === 'ok' && v('- 6', `${EN} 6`) === 'ok' && v('5 -', `5 ${EN}`) === 'ok' && v('-5', `${EM}5`) === 'ok' && v(`${EN}5`, '-5') === 'ok', `${v('-5', `${EN}5`)} ${v('5 -', `5 ${EN}`)}`);
+    check('dashes: but losing the sign is still corruption, and ranges keep working', v('-5', '5') === 'corrupt' && v('5-10', `5${EN}10`) === 'ok' && v('5-10', `5${EM}10`) === 'ok' && v('5-10', '51-0') === 'corrupt', '');
+    check('fractions: 1½ -> 1,5 and 1 1/2 -> 1.5 are left as written, never corrupt', v('1½', '1,5') === 'keep' && v('1 1/2', '1.5') === 'keep' && v('¾', '0,75') === 'keep' && v('1.5', '1½') === 'keep', `${v('1½', '1,5')} ${v('1 1/2', '1.5')}`);
+    check('mirrored brackets: (5) written )5( for an Arabic, Persian, Hebrew or Urdu target is left alone; for other targets it is a lost sign', ['ar', 'fa', 'he', 'ur'].every((t) => v('(5)', ')5(', { source: 'en', target: t }) === 'keep') && v('(5)', ')5(', { source: 'en', target: 'de' }) === 'corrupt', '');
+  }
+
   // ---- words that landed in a number's part: the sentence is translated node by node, nothing is lost ----
   {
     const segW = T.groupItems([{ id: 1, text: 'Showing', g: 1, l: false, t: true }, { id: 2, text: '200', g: 1, n: true, l: false, t: true }, { id: 3, text: 'results', g: 1, l: false, t: false }])[0];
     const moved = T.splitSegment(segW, `Mostrando${M(1)}200 resultados${M(2)}`);
     check('words in a number: when the neighbour came back empty the segment is flagged for a node-by-node redo', moved && moved.redo === true && !moved.some((p) => p[0] === 2), JSON.stringify(moved));
     const fineW = T.splitSegment(segW, `Mostrando${M(1)}200 resultados${M(2)}resultados`);
-    check('words in a number: when every word node has its text the number node just stays (no redo)', fineW && fineW.redo === false && !fineW.some((p) => p[0] === 2) && fineW.length === 2, JSON.stringify(fineW));
+    check('words in a number: even when every word node has its text, words put into a plain number are not applied, and the block is redone node by node (nothing dropped silently)', fineW && fineW.redo === true && !fineW.some((p) => p[0] === 2), JSON.stringify(fineW));
+    const segT = T.groupItems([{ id: 1, text: 'Closes at', g: 1, l: false, t: true }, { id: 2, text: '22:30', g: 1, n: true, l: false, t: true }, { id: 3, text: 'today', g: 1, l: false, t: false }])[0];
+    check('words in a number: a time or date with words (10:30 PM, May 1) is not a plain number: it stays as written without a redo', T.splitSegment(segT, `Cierra a las${M(1)}10:30 PM${M(2)}hoy`).redo === false, '');
     const engine = (t) => {
       const marks = t.match(MARK);
       if (!marks) return t.toUpperCase(); // node by node
