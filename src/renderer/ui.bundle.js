@@ -2406,6 +2406,11 @@ window.assistant.onEvent((event) => {
     case 'error': {
       const errorEl = Object.assign(document.createElement('div'), { className: 'error', textContent: event.text });
       errorEl.setAttribute('role', 'alert');
+      if (event.details) { // the plain line first, the engine's own words behind a toggle
+        const more = Object.assign(document.createElement('details'), { className: 'error-details' });
+        more.append(Object.assign(document.createElement('summary'), { textContent: t('chat.errorDetails') }), Object.assign(document.createElement('pre'), { textContent: event.details }));
+        errorEl.append(more);
+      }
       const error = appendToTurn(errorEl);
       turn.failed = true;
       if (event.action === 'settings') {
@@ -3425,6 +3430,8 @@ function startChat() {
       const input = Object.assign(document.createElement('input'), { className: 'chat-rename-input', value: chat.title || '', maxLength: 120 });
       input.setAttribute('aria-label', tr('chats.name', 'Chat name'));
       openBtn.hidden = true;
+      const stopLink = li.querySelector('.chat-stop-wait');
+      if (stopLink) stopLink.hidden = true; // (the rename field has the row)
       li.insertBefore(input, openBtn);
       input.focus();
       input.select();
@@ -3442,6 +3449,13 @@ function startChat() {
       input.onblur = () => finish(true);
     }
 
+    // The tab strip's glyphs (app.js CHAT_MARKS), so a list row and its tab show the same mark.
+    const GLYPHS = {
+      running: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2"/><path class="cm-spin" d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><g class="cm-still"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="2" fill="currentColor"/></g></svg>',
+      queued: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+      unread: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M3.4 6.2l1.8 1.8 3.4-3.8"/></svg>',
+      approval: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M6 3v3.4M6 8.7v.1"/></svg>',
+    };
     return function item(chat, isCurrent) {
       const li = document.createElement('li');
       li.className = `chat-item${isCurrent ? ' current' : ''}`;
@@ -3453,8 +3467,10 @@ function startChat() {
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) : '';
-      const meta = Object.assign(document.createElement('span'), { className: 'chat-meta', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') });
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? '' : tr('chats.clickMoves', ' · click moves it here')) : '';
+      const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
+      const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
+      meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
@@ -3464,25 +3480,55 @@ function startChat() {
       if (chat.badge) {
         const label = { running: tr('chats.badge.running', 'Working'), queued: tr('chats.badge.queued', 'Waiting for its turn'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
         if (label) {
-          const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge}`, title: label });
-          badge.setAttribute('role', 'img');
-          badge.setAttribute('aria-label', label);
+          const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge === 'approval' ? 'needs-ok' : chat.badge}`, title: label });
+          badge.innerHTML = GLYPHS[chat.badge] || '';
+          badge.setAttribute('aria-hidden', 'true'); // the state word in the meta line says it for screen readers
           name.prepend(badge);
+          // The state in words as well (not colour or shape alone).
+          const word = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
+          if (word) meta.prepend(Object.assign(document.createElement('span'), { className: 'chat-state', textContent: word }), document.createTextNode(metaText.textContent ? ' \u00b7 ' : ''));
           li.classList.add(`has-${chat.badge}`);
         }
       }
       // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
       const working = ['running', 'queued', 'approval'].includes(chat.badge);
-      openBtn.onclick = () => (elsewhere && working && api.showTab ? api.showTab(chat.id).then(() => window.chatList?.close?.(false)) : onOpen(chat.id));
+      openBtn.onclick = async () => {
+        if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
+      };
 
       const actions = document.createElement('div');
       actions.className = 'chat-actions';
       const rename = iconButton('rename', tr('chats.rename', 'Rename'));
       rename.onclick = () => startRename(li, chat);
       const exportBtn = iconButton('export', tr('chats.export', 'Export as Markdown'));
+      const original = metaText.textContent;
+      let metaTimer = null;
+      const attached = () => li.isConnected !== false; // (a redrawn list leaves the old row behind: it is never written to)
+      const say = (text) => { if (!attached()) return; clearTimeout(metaTimer); metaText.textContent = text; metaTimer = setTimeout(() => { metaText.textContent = original; }, 2500); }; // a passing note, then the usual line
+      const unsay = () => { clearTimeout(metaTimer); if (attached()) metaText.textContent = original; };
+      // Opening the tab of a chat: main answers false when that tab is gone (it does not throw). The list closes only on success.
+      const goToTab = async () => {
+        try { if ((await api.showTab(chat.id)) === false) { say(tr('chats.tabFailed', 'Could not open the tab')); return; } window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); }
+      };
+      // Moving a chat into this tab (or opening it): the page's open answers false when the chat is gone.
+      let redrawTimer = null;
+      const moveHere = async () => {
+        let ok;
+        try { ok = (await onOpen(chat.id)) !== false; } catch { ok = false; }
+        if (!ok) {
+          say(tr('chats.openFailed', 'Could not open this chat'));
+          // The note is read, then the list is drawn again without it: one timer per row, and never over a rename field or an armed delete.
+          clearTimeout(redrawTimer);
+          redrawTimer = setTimeout(() => { if (attached() && !li.querySelector('.chat-rename-input') && !del.classList.contains('armed')) rerender(); }, 2600);
+        }
+      };
       exportBtn.onclick = async () => {
-        const out = await api.exportChat(chat.id);
-        if (out?.ok) meta.textContent = tr('chats.exported', 'Exported');
+        try {
+          const out = await api.exportChat(chat.id);
+          if (out?.ok) say(tr('chats.exported', 'Exported'));
+          else if (out?.reason === 'empty') say(tr('chats.exportEmpty', 'Nothing to export yet')); // (main.js chats:export: reason 'canceled' = the Save dialog was dismissed: no note)
+          else if (out?.reason !== 'canceled') say(tr('chats.exportFailed', 'Could not export'));
+        } catch { say(tr('chats.exportFailed', 'Could not export')); }
       };
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
       let armed = null;
@@ -3497,24 +3543,66 @@ function startChat() {
           return;
         }
         clearTimeout(armed);
-        const out = await api.remove(chat.id);
-        if (out?.cleared) cleared();
-        await rerender();
+        del.disabled = true; // pending: a second click cannot delete twice
+        try {
+          const out = await api.remove(chat.id);
+          if (out?.cleared) cleared();
+          await rerender();
+        } catch {
+          del.disabled = false;
+          armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete'));
+          say(tr('chats.deleteFailed', 'Could not delete'));
+        }
       };
+      // In another tab: a click on the row already goes there (a working chat) or moves it here (an idle one), so the narrow
+      // list drops that button: "open in its tab" for a working chat, "move here" for an idle one.
+      const dropsOne = Boolean(elsewhere && api.showTab);
+      if (dropsOne) li.classList.add('drops-one');
       const tabActions = [];
       if (elsewhere && api.showTab) {
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
-        show.onclick = async () => { await api.showTab(chat.id); window.chatList?.close?.(false); };
+        show.classList.add('chat-act-tab');
+        if (working) show.classList.add('chat-act-drop');
+        show.onclick = goToTab;
         const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
-        move.onclick = () => onOpen(chat.id);
+        move.classList.add('chat-act-move');
+        if (!working) move.classList.add('chat-act-drop');
+        move.onclick = moveHere;
         tabActions.push(show, move);
       }
       actions.append(...tabActions, rename, exportBtn, del);
+      li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
+      li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
       // Waiting for its turn: it can be taken out of the line from here.
       if (chat.badge === 'queued' && api.stopChat) {
         const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: tr('chats.stopWaiting', 'Stop waiting') });
-        stop.onclick = (e) => { e.stopPropagation(); api.stopChat(chat.id); };
+        const stopBack = () => { stop.disabled = false; stop.textContent = tr('chats.stopWaiting', 'Stop waiting'); };
+        let stopsOut = 0, stoppedOnce = false; // (a second click after a timeout must not be failed by an answer about the first)
+        stop.onclick = async (e) => {
+          e.stopPropagation();
+          stopsOut++;
+          stop.disabled = true;
+          stop.textContent = tr('chats.stopping', 'Stopping…');
+          const wait = window.chatItemsStopMs || 4000; // (a test shortens it)
+          let timedOut = false;
+          const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
+          const lost = setTimeout(() => { if (stoppedOnce) return; timedOut = true; fail(); }, wait); // slow main: the button comes back, but a late success takes that back
+          try {
+            const answer = await api.stopChat(chat.id);
+            stopsOut--;
+            if (answer === false) { clearTimeout(lost); if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
+            stoppedOnce = true;
+            clearTimeout(lost);
+            if (timedOut && attached()) { unsay(); stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } // it did stop, only slowly
+            // Stopped. The list redraws when the run leaves; if it cannot (a rename field is open, the panel is hidden) the
+            // button stays on "Stopping…" unless the chat is still waiting a while later.
+            setTimeout(async () => {
+              if (!attached() || !stop.disabled) return;
+              try { const now = await api.list?.(); if (attached() && now?.chats?.find((c) => c.id === chat.id)?.badge === 'queued') fail(); } catch { /* keep the note */ }
+            }, wait);
+          } catch { stopsOut--; clearTimeout(lost); fail(); }
+        };
         li.append(stop);
       }
       li.append(actions);
@@ -4769,8 +4857,8 @@ function faviconImg(el, key, urls, retried = false) {
 
 // [chat per tab] The glyph for each state (styles.css .tab-chat-mark): a spinner, a ring, a check, an exclamation mark.
 const CHAT_MARKS = {
-  running: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.6"/><path class="cm-spin" d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><g class="cm-still"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="2" fill="currentColor"/></g></svg>',
-  waiting: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  running: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2"/><path class="cm-spin" d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><g class="cm-still"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="2" fill="currentColor"/></g></svg>',
+  waiting: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   done: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M3.4 6.2l1.8 1.8 3.4-3.8"/></svg>',
   approval: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M6 3v3.4M6 8.7v.1"/></svg>',
 };
@@ -4788,7 +4876,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
     chatMark.dataset.state = tab.chat || '';
-    chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat}` : ''}`;
+    chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat === 'approval' ? 'needs-ok' : tab.chat}` : ''}`;
     chatMark.innerHTML = CHAT_MARKS[tab.chat] || '';
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
@@ -6301,7 +6389,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
   async function openChat(id) {
     const view = await api.open(id);
-    if (!view) { await render(); return false; } // gone (deleted, or unreadable on this machine)
+    if (!view) return false; // gone (deleted, or unreadable on this machine): the row says so, then the list redraws (chat-items.js moveHere)
     clearChatView();
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here

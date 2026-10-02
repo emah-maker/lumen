@@ -67,7 +67,7 @@
 
   async function openChat(id) {
     const view = await api.open(id);
-    if (!view) { await render(); return false; } // gone (deleted, or unreadable on this machine)
+    if (!view) return false; // gone (deleted, or unreadable on this machine): the row says so, then the list redraws (chat-items.js moveHere)
     clearChatView();
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here

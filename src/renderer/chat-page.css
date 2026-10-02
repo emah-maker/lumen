@@ -12,8 +12,6 @@ body.chat-page { flex-direction: row; background: var(--bg); }
 .cp-list-head h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
 .cp-list .chat-items { padding: 0 8px 16px; }
 .cp-list .chat-list-empty { margin: 8px 16px; }
-/* Row actions are always reachable on a page you sit in front of: show them for the open chat too. */
-.cp-list .chat-item.current .chat-actions { opacity: 1; }
 
 .cp-main { flex: 1; min-width: 0; display: flex; min-height: 0; background: var(--surface); }
 body.chat-page .sidebar { flex: 1; width: 100%; min-width: 0; background: var(--surface); animation: none; }
