@@ -556,6 +556,13 @@ contextBridge.exposeInMainWorld('assistant', {
   reset: () => ipcRenderer.send('agent:reset'),
   rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected), // Retry / Regenerate: the last exchange taken back
   // The chat history list (renderer/chats.js)
+  // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
+  images: {
+    data: (id) => ipcRenderer.invoke('images:data', id),
+    save: (id) => ipcRenderer.invoke('images:save', id),
+    copy: (id) => ipcRenderer.invoke('images:copy', id),
+    remote: (url) => ipcRenderer.invoke('images:remote', url),
+  },
   chats: {
     list: () => ipcRenderer.invoke('chats:list'),
     open: (id) => ipcRenderer.invoke('chats:open', id), // also "Move chat to this tab"

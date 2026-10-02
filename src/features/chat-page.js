@@ -29,6 +29,7 @@ const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(
 const CHAT_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo',
   'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:link', 'tabs:ask-list',

@@ -348,6 +348,21 @@
 
   const link = (href, label) => `<a href="${href}">${label}</a>`;
 
+  // The picture in ![alt](…) starting at `start` in escaped text: a data URL of a PNG, JPEG, GIF or WebP is drawn (the only
+  // picture markdown ever puts in an <img>); an https address becomes a placeholder the chat shows a "Show picture" button for
+  // (renderer/gen-images.js: web pictures load only when asked); anything else is not a picture here. { length, html(alt) } | null.
+  const DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+  function imageAt(s, start) {
+    if (s.startsWith('data:image/', start)) {
+      const end = s.indexOf(')', start);
+      const raw = end > start ? s.slice(start, end) : '';
+      return raw.length <= 11000000 && DATA_IMAGE.test(raw) ? { length: raw.length, html: (alt) => `<img class="md-img" src="${raw}" alt="${alt}">` } : null;
+    }
+    if (!s.startsWith('https://', start)) return null;
+    const url = scanUrl(s, start, true);
+    return url && s[start + url.length] === ')' ? { length: url.length, html: (alt) => `<span class="md-img-remote" data-src="${url}" data-alt="${alt}"></span>` } : null;
+  }
+
   // Links and emphasis for text outside code spans.
   function formatText(s) {
     let out = '';
@@ -355,6 +370,19 @@
     const flush = () => { out += emphasis(plain); plain = ''; };
     let i = 0;
     while (i < s.length) {
+      if (s[i] === '!' && s[i + 1] === '[') {
+        const close = s.indexOf('](', i + 2);
+        const alt = close > i ? s.slice(i + 2, close) : '';
+        if (close > i && !alt.includes('[') && !alt.includes(']') && alt.length <= 300) {
+          const image = imageAt(s, close + 2);
+          if (image) {
+            flush();
+            out += image.html(alt);
+            i = close + 3 + image.length;
+            continue;
+          }
+        }
+      }
       if (s[i] === '[') {
         const close = s.indexOf('](', i);
         const label = close > i ? s.slice(i + 1, close) : '';
@@ -1336,6 +1364,190 @@ explain describe list find give compare difference summarize summary write rewri
   window.highlightCode.test = highlight; // (unit tests)
 })();
 ;
+// ---- gen-images.js
+// Pictures in the chat that the AI made or returned (main saves them: features/gen-images.js), drawn in the reply:
+//   window.genImages.figure({ id, alt })  a <figure>: a "loading" line, then the picture (fit to the bubble) with Save and
+//                                         Copy; click (or Enter) to enlarge; right-click for the same actions; an error
+//                                         line with Try again when it can't be loaded
+//   window.genImages.decorate(root)       turns ![alt](https://…) the markdown renderer left as placeholders into a
+//                                         "Show picture" button: web pictures load only when the user asks (the address
+//                                         could carry a tracker or a leak), through main: https, no cookies, a real image
+// Only data URLs of PNG, JPEG, GIF or WebP that main sends are ever put in an <img>; nothing here builds markup from
+// text, and no remote address is ever an <img> source. (The page's CSP is the second wall.)
+(() => {
+  const tr = (key, vars) => window.t(key, vars);
+  const OK = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+  const api = () => window.assistant?.images;
+  const cache = new Map(); // id -> Promise<data URL | null>
+
+  function load(id) {
+    let p = cache.get(id);
+    if (!p) {
+      p = Promise.resolve().then(() => api().data(id)).then((url) => (typeof url === 'string' && OK.test(url) ? url : null)).catch(() => null);
+      cache.set(id, p);
+      p.then((url) => { if (!url) cache.delete(id); }); // a failure is tried again next time
+    }
+    return p;
+  }
+
+  const el = (tag, props = {}, ...kids) => {
+    const node = Object.assign(document.createElement(tag), props);
+    node.append(...kids);
+    return node;
+  };
+  const button = (label, onclick, className = 'gen-img-btn') => {
+    const b = el('button', { type: 'button', className, textContent: label });
+    b.onclick = onclick;
+    return b;
+  };
+
+  // A passing line under a picture ("Saved", "Couldn't copy"), read out politely.
+  function say(host, text) {
+    let status = host.querySelector(':scope > .gen-img-status');
+    if (!status) { status = el('div', { className: 'gen-img-status' }); status.setAttribute('role', 'status'); host.append(status); }
+    clearTimeout(status.timer);
+    status.textContent = text;
+    status.timer = setTimeout(() => { status.textContent = ''; }, 2600);
+  }
+
+  async function doSave(pic, host) {
+    const r = await Promise.resolve().then(() => api().save(pic.id)).catch(() => null);
+    if (r?.ok) say(host, tr('genimg.saved'));
+    else if (r?.reason !== 'canceled') say(host, tr('genimg.saveFailed'));
+  }
+  async function doCopy(pic, host) {
+    const ok = await Promise.resolve().then(() => api().copy(pic.id)).catch(() => false);
+    say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
+  }
+
+  // ---- enlarge: a layer over the chat (the sidebar's or the page's own)
+  function enlarge(pic, url, opener) {
+    const root = document.querySelector('[data-chat-root]') || document.body;
+    const box = el('div', { className: 'gen-lightbox' });
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', pic.alt || tr('genimg.alt'));
+    const img = el('img', { src: url, alt: pic.alt || tr('genimg.alt') });
+    const close = () => { box.remove(); document.removeEventListener('keydown', onKey, true); opener?.focus?.(); };
+    const closeBtn = button(tr('genimg.close'), close, 'gen-img-btn gen-lightbox-close');
+    const bar = el('div', { className: 'gen-lightbox-bar' }, ...(pic.id ? [button(tr('genimg.save'), () => doSave(pic, box)), button(tr('genimg.copy'), () => doCopy(pic, box))] : []), closeBtn);
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
+      if (e.key !== 'Tab') return;
+      const stops = [...box.querySelectorAll('button')];
+      const at = stops.indexOf(document.activeElement);
+      e.preventDefault();
+      stops[(at + (e.shiftKey ? -1 : 1) + stops.length) % stops.length].focus();
+    };
+    box.addEventListener('click', (e) => { if (e.target === box) close(); });
+    box.append(img, bar);
+    root.append(box);
+    document.addEventListener('keydown', onKey, true);
+    closeBtn.focus();
+  }
+
+  // ---- right-click: the same actions as the buttons
+  function menu(pic, host, x, y) {
+    document.querySelector('.gen-menu')?.remove();
+    const m = el('div', { className: 'gen-menu' });
+    m.setAttribute('role', 'menu');
+    m.setAttribute('aria-label', tr('genimg.menu'));
+    const done = () => { m.remove(); document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key, true); };
+    const item = (label, fn) => {
+      const b = el('button', { type: 'button', className: 'gen-menu-item', textContent: label });
+      b.setAttribute('role', 'menuitem');
+      b.onclick = () => { done(); fn(); };
+      return b;
+    };
+    const away = (e) => { if (!m.contains(e.target)) done(); };
+    const key = (e) => {
+      const items = [...m.querySelectorAll('button')];
+      const at = items.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); done(); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
+      else if (e.key === 'Tab') done();
+    };
+    m.append(item(tr('genimg.saveImage'), () => doSave(pic, host)), item(tr('genimg.copyImage'), () => doCopy(pic, host)));
+    const root = document.querySelector('[data-chat-root]') || document.body;
+    root.append(m);
+    const box = root.getBoundingClientRect();
+    m.style.left = `${Math.max(4, Math.min(x - box.left, box.width - m.offsetWidth - 4))}px`;
+    m.style.top = `${Math.max(4, Math.min(y - box.top, box.height - m.offsetHeight - 4))}px`;
+    document.addEventListener('pointerdown', away, true);
+    document.addEventListener('keydown', key, true);
+    m.querySelector('button').focus();
+  }
+
+  // pic: { id, alt }
+  function figure(pic) {
+    const fig = el('figure', { className: 'gen-img' });
+    fig.dataset.id = pic.id;
+    fig.setAttribute('aria-busy', 'true');
+    const wait = el('div', { className: 'gen-img-wait', textContent: tr('genimg.loading') });
+    wait.setAttribute('role', 'status');
+    fig.append(wait);
+
+    const fail = () => {
+      fig.removeAttribute('aria-busy');
+      const note = el('div', { className: 'gen-img-error' }, el('span', { textContent: tr('genimg.error') }), button(tr('genimg.retry'), () => { fig.replaceChildren(wait); fig.setAttribute('aria-busy', 'true'); start(); }));
+      note.setAttribute('role', 'alert');
+      fig.replaceChildren(note);
+    };
+    const show = (url) => {
+      fig.removeAttribute('aria-busy');
+      const img = el('img', { alt: pic.alt || tr('genimg.alt'), decoding: 'async' });
+      img.onerror = fail;
+      img.src = url;
+      const open = el('button', { type: 'button', className: 'gen-img-open' }, img);
+      open.setAttribute('aria-label', `${tr('genimg.enlarge')}: ${pic.alt || tr('genimg.alt')}`);
+      open.onclick = () => enlarge(pic, url, open);
+      open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
+      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
+      fig.replaceChildren(open, bar);
+    };
+    const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
+    start();
+    return fig;
+  }
+
+  // ---- web pictures a reply points at: shown only when asked for
+  function remote(span) {
+    const src = span.dataset.src || '';
+    let host = '';
+    try { const u = new URL(src); if (u.protocol === 'https:') host = u.hostname; } catch { /* below */ }
+    if (!host) return;
+    const alt = (span.dataset.alt || '').slice(0, 300);
+    const wrap = el('span', { className: 'gen-img-remote' });
+    const b = button(tr('genimg.remote', { host }), async () => {
+      b.disabled = true;
+      const got = await Promise.resolve().then(() => api().remote(src)).catch(() => null);
+      if (got?.id) { const fig = figure({ id: got.id, alt }); wrap.replaceWith(fig); } else { b.disabled = false; say(wrap, tr('genimg.remoteFail')); }
+    }, 'gen-img-btn gen-img-show');
+    b.title = tr('genimg.remoteWhy');
+    wrap.append(b);
+    if (alt) wrap.append(el('span', { className: 'gen-img-remote-alt', textContent: alt }));
+    span.replaceWith(wrap);
+  }
+
+  // The markdown renderer leaves `span.md-img-remote` for web pictures, and `img.md-img` for data URLs it checked.
+  function decorate(root) {
+    if (!root?.querySelectorAll || !api()) return;
+    for (const span of root.querySelectorAll('span.md-img-remote[data-src]')) remote(span);
+    for (const img of root.querySelectorAll('img.md-img:not(.md-img-ready)')) {
+      img.classList.add('md-img-ready');
+      if (!OK.test(img.getAttribute('src') || '')) { img.replaceWith(document.createTextNode(img.alt || '')); continue; }
+      img.tabIndex = 0;
+      img.setAttribute('role', 'button');
+      const pic = { id: '', alt: img.alt };
+      const open = () => enlarge(pic, img.src, img);
+      img.addEventListener('click', open);
+      img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    }
+  }
+
+  window.genImages = { figure, decorate, load };
+})();
+;
 // ---- chat-core.js
 // The chat itself, shared by the sidebar (index.html) and the full-page chat (chat-page.html): the
 // model picker, the "set up an AI" card, messages and streaming, image attachments, approval cards,
@@ -1813,13 +2025,23 @@ function updateSend() {
   send.disabled = !running && !prompt.value.trim() && attachments.length === 0;
 }
 
-// ---------- image attachments: paste or drop images into the sidebar ----------
+// ---------- image attachments: paste, drop or pick images for the message ----------
 
 const MAX_IMAGES = 5;
 const MAX_EDGE = 1568; // larger images are downscaled by the API anyway; resizing first saves upload time
-const MAX_BYTES = 3.5 * 1024 * 1024;
+const MAX_BYTES = 3.5 * 1024 * 1024; // a PNG/JPEG/GIF/WebP under this and within MAX_EDGE goes as it is
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // a bigger file is refused before it is read
+const MAX_SEND_CHARS = 6_500_000; // base64 characters of one image after conversion (main refuses 7 million)
 const PASSTHROUGH = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-let attachments = []; // { media_type, data (base64), url (data URL for previews) }
+const IMAGE_NAME = /\.(png|jpe?g|jfif|gif|webp|avif|bmp|svg|ico|tiff?|heic|heif)$/i;
+const HEIC_NAME = /\.(heic|heif)$/i;
+let attachments = []; // { media_type, data (base64), url (data URL for previews), name }
+let attachNoteTimer = null;
+
+// Some systems give a dropped photo no MIME type: the name decides then.
+const isImageFile = (f) => Boolean(f) && (String(f.type).startsWith('image/') || (!f.type && IMAGE_NAME.test(f.name || '')));
+const isHeic = (f) => /^image\/hei[cf]/.test(f.type) || HEIC_NAME.test(f.name || '');
+const imageLabel = (f) => f.name || t('chat.image');
 
 const readAsDataUrl = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -1828,36 +2050,95 @@ const readAsDataUrl = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
+// A reason an image could not be added (attachProblem says it in words).
+const imageError = (code) => Object.assign(new Error(code), { code });
+
+// Canvas -> { media_type, data, url } within the size main accepts, or null. Pictures with transparency keep it
+// as PNG; photos (and anything too big as PNG) become JPEG on white.
+function encodeCanvas(canvas, wantPng) {
+  let flat = null;
+  const onWhite = () => {
+    if (flat) return flat;
+    flat = document.createElement('canvas');
+    flat.width = canvas.width;
+    flat.height = canvas.height;
+    const ctx = flat.getContext('2d');
+    ctx.fillStyle = '#fff'; // (a JPEG has no transparent pixels: they would turn black)
+    ctx.fillRect(0, 0, flat.width, flat.height);
+    ctx.drawImage(canvas, 0, 0);
+    return flat;
+  };
+  const attempts = wantPng ? [['image/png'], ['image/jpeg', 0.85], ['image/jpeg', 0.7]] : [['image/jpeg', 0.9], ['image/jpeg', 0.75], ['image/jpeg', 0.6]];
+  for (const [type, quality] of attempts) {
+    const out = (type === 'image/png' ? canvas : onWhite()).toDataURL(type, quality);
+    const data = out.split(',')[1] || '';
+    if (data && data.length <= MAX_SEND_CHARS) return { media_type: type, data, url: out };
+  }
+  return null;
+}
+
 async function toAttachment(file) {
+  if (isHeic(file)) throw imageError('heic');
+  if (!file.size) throw imageError('empty');
+  if (file.size > MAX_FILE_BYTES) throw imageError('big');
   const url = await readAsDataUrl(file);
   const img = new Image();
   img.src = url;
-  await img.decode();
-  const edge = Math.max(img.naturalWidth, img.naturalHeight);
+  try { await img.decode(); } catch { throw imageError('unreadable'); }
+  const w = img.naturalWidth || 1024; // (an SVG without a size)
+  const h = img.naturalHeight || Math.round(w * 0.75);
+  const edge = Math.max(w, h);
+  const name = file.name || '';
   if (PASSTHROUGH.includes(file.type) && edge <= MAX_EDGE && file.size <= MAX_BYTES) {
-    return { media_type: file.type, data: url.split(',')[1], url };
+    return { media_type: file.type, data: url.split(',')[1], url, name };
   }
-  const scale = Math.min(1, MAX_EDGE / edge);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-  const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-  const out = canvas.toDataURL(type, 0.9);
-  return { media_type: type, data: out.split(',')[1], url: out };
+  let scale = Math.min(1, MAX_EDGE / edge);
+  const wantPng = file.type !== 'image/jpeg' && file.type !== 'image/bmp'; // (a JPEG has no transparency to keep)
+  for (let tries = 0; tries < 3; tries++, scale *= 0.7) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const encoded = encodeCanvas(canvas, wantPng);
+    if (encoded) return { ...encoded, name };
+  }
+  throw imageError('big');
 }
 
-async function addImages(files) {
-  const images = [...files].filter((f) => f.type.startsWith('image/'));
+function attachProblem(file, code) {
+  const key = { heic: 'composer.attach.heic', empty: 'composer.attach.empty', big: 'composer.attach.big', notImage: 'composer.attach.notImage' }[code] || 'composer.attach.unreadable';
+  return t(key, { name: imageLabel(file), max: 25 });
+}
+
+// What happened to the last pick, under the thumbnails (and read out): an image that couldn't be added is
+// always said, never skipped silently.
+function showAttachNote(lines) {
+  const el = $('attachment-note');
+  if (!el) return;
+  clearTimeout(attachNoteTimer);
+  el.replaceChildren(...lines.map((line) => Object.assign(document.createElement('div'), { textContent: line })));
+  el.hidden = lines.length === 0;
+  if (lines.length) attachNoteTimer = setTimeout(() => showAttachNote([]), 12000);
+}
+
+// Adds the images among `files`; returns whether there was any to add. Says what it left out.
+async function addImages(files, { announceOthers = true } = {}) {
+  const list = [...files];
+  const images = list.filter(isImageFile);
+  const problems = [];
+  if (announceOthers) for (const f of list.filter((x) => !isImageFile(x))) problems.push(attachProblem(f, 'notImage'));
+  let over = 0;
   for (const file of images) {
-    if (attachments.length >= MAX_IMAGES) break;
+    if (attachments.length >= MAX_IMAGES) { over++; continue; }
     try {
       attachments.push(await toAttachment(file));
-    } catch {
-      // Unreadable image (e.g. an unsupported format); skip it.
+    } catch (err) {
+      problems.push(attachProblem(file, err?.code));
     }
   }
+  if (over) problems.push(t('composer.attach.limit', { max: MAX_IMAGES, n: over }));
   renderAttachments();
+  showAttachNote(problems);
   return images.length > 0;
 }
 
@@ -1868,31 +2149,62 @@ function renderAttachments() {
   attachments.forEach((a, i) => {
     const chip = document.createElement('div');
     chip.className = 'attachment';
+    chip.setAttribute('role', 'listitem');
+    if (a.name) chip.title = a.name;
     const img = document.createElement('img');
     img.src = a.url;
-    img.alt = t('composer.attachedImage', { n: i + 1 });
+    img.alt = a.name ? t('composer.attachedNamed', { n: i + 1, name: a.name }) : t('composer.attachedImage', { n: i + 1 });
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'attachment-remove';
     remove.setAttribute('aria-label', t('composer.removeImage', { n: i + 1 }));
     remove.innerHTML = '<svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5"/></svg>';
-    remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); prompt.focus(); };
+    remove.onclick = () => { attachments.splice(i, 1); renderAttachments(); showAttachNote([]); prompt.focus(); };
     chip.append(img, remove);
     strip.append(chip);
   });
+  strip.setAttribute('role', 'list');
+  strip.setAttribute('aria-label', t('composer.attachments'));
+  const attachBtn = $('attach');
+  if (attachBtn) {
+    const full = attachments.length >= MAX_IMAGES;
+    attachBtn.disabled = full;
+    attachBtn.title = full ? t('composer.attach.full', { max: MAX_IMAGES }) : t('composer.attach.title', { max: MAX_IMAGES });
+  }
   updateSend();
+  document.dispatchEvent(new CustomEvent('lumen:attachments', { detail: { count: attachments.length } })); // (the background button can't carry images)
+}
+
+window.chatAttachments = { count: () => attachments.length, note: (lines) => showAttachNote(lines) }; // (renderer/tasks.js: a background task can't carry images)
+
+// The attach button: a file picker (Tab to it, then Enter or Space).
+{
+  const attachBtn = $('attach');
+  const picker = $('attach-input');
+  if (attachBtn && picker) {
+    attachBtn.onclick = () => picker.click();
+    picker.addEventListener('change', async () => {
+      const files = [...picker.files];
+      picker.value = ''; // (the same file can be picked again)
+      if (files.length) await addImages(files);
+      prompt.focus();
+    });
+    renderAttachments(); // (the tooltip states the limit)
+  }
 }
 
 prompt.addEventListener('paste', async (e) => {
   const files = [...(e.clipboardData?.files || [])];
-  if (files.some((f) => f.type.startsWith('image/'))) {
+  if (files.some(isImageFile)) {
     e.preventDefault(); // text paste stays untouched; only images are intercepted
-    await addImages(files);
+    await addImages(files, { announceOthers: false });
   }
 });
 const sidebarEl = chatRoot;
+// (Other files dropped here are left to the window, which opens them in a tab; a file with no type may be a photo.)
+const dragHasImages = (dt) => [...(dt?.items || [])].some((i) => i.kind === 'file' && (i.type === '' || i.type.startsWith('image/')));
 sidebarEl.addEventListener('dragover', (e) => {
-  if ([...e.dataTransfer.items].some((i) => i.type.startsWith('image/'))) {
+  if (dragHasImages(e.dataTransfer)) {
     e.preventDefault();
     sidebarEl.classList.add('dropping');
   }
@@ -1900,9 +2212,9 @@ sidebarEl.addEventListener('dragover', (e) => {
 sidebarEl.addEventListener('dragleave', (e) => { if (!sidebarEl.contains(e.relatedTarget)) sidebarEl.classList.remove('dropping'); });
 sidebarEl.addEventListener('drop', async (e) => {
   sidebarEl.classList.remove('dropping');
-  if (!e.dataTransfer.files.length) return;
+  if (![...e.dataTransfer.files].some(isImageFile)) return;
   e.preventDefault();
-  await addImages(e.dataTransfer.files);
+  await addImages(e.dataTransfer.files); // (a file that came with the images and is not one is named in the note)
   prompt.focus();
 });
 
@@ -1916,7 +2228,7 @@ function queueControls(entry) {
   edit.onclick = () => {
     drop();
     prompt.value = prompt.value.trim() ? `${prompt.value.replace(/\s+$/, '')}\n${entry.text}` : entry.text; // (a draft is kept)
-    if (entry.images?.length) { attachments = [...attachments, ...entry.images]; renderAttachments(); }
+    if (entry.images?.length) { attachments = [...attachments, ...entry.images].slice(0, MAX_IMAGES); renderAttachments(); }
     autosize();
     updateSend();
     prompt.focus();
@@ -2254,6 +2566,7 @@ function flushStreaming(el) {
 // Each code block in a finished reply: its language, and a Copy button for just that code.
 // `colour`: colour these blocks even while the reply streams (they're finished: the stable part of the reply).
 function decorateCode(root, { colour = false } = {}) {
+  window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -2311,6 +2624,18 @@ window.assistant.onEvent((event) => {
       }
       turn.thinking.textContent += event.text;
       moveWorkingToEnd();
+      break;
+    }
+    case 'image': { // a picture the AI made (or a tool returned): main saved it; drawn here below what was said
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      turn.text = null; // words after the picture start a new block under it
+      turn.textSource = '';
+      const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
+      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '' }));
+      appendToTurn(bubble);
+      turn.pics = bubble;
+      announce(t('genimg.made'));
       break;
     }
     case 'text': {
@@ -2525,9 +2850,11 @@ function regenButton() {
 
 function finishReply(bubble, source, { latest = false } = {}) {
   flushStreaming(bubble);
-  if (!bubble || !source || !source.trim() || bubble.querySelector('.reply-copy')) return;
+  const pictureOnly = Boolean(bubble) && !source?.trim() && Boolean(bubble.querySelector('.gen-img'));
+  if (!bubble || (!pictureOnly && (!source || !source.trim())) || bubble.querySelector('.reply-copy, .reply-regen')) return;
   // The latest reply can be asked for again (a different answer to the same message).
   if (latest && lastAsk) bubble.append(regenButton());
+  if (pictureOnly) return; // (nothing to copy as text: the picture has Save and Copy)
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'reply-copy';
@@ -2778,7 +3105,13 @@ function showHistory(items) {
       }
       if (item.text) bubble.append(document.createTextNode(item.text));
       bubbleAsks.set(bubble, { text: item.text || '', images: images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), tabs: null });
-    } else if (item.role === 'assistant' && item.text) {
+    } else if (item.role === 'assistant' && (item.text || item.generated?.length)) {
+      if (!item.text) { // only pictures
+        bubble.className = 'msg assistant gen-pics restored';
+        for (const pic of item.generated) bubble.append(window.genImages.figure(pic));
+        append(bubble);
+        continue;
+      }
       if (item.steps) {
         const summary = document.createElement('div');
         summary.className = 'step done restored';
@@ -2790,6 +3123,14 @@ function showHistory(items) {
       bubble.innerHTML = window.renderMarkdown(item.text);
       decorateCode(bubble);
       finishReply(bubble, item.text);
+      if (item.generated?.length) { // the words, then the pictures under them
+        bubble.classList.add('restored');
+        append(bubble);
+        const pics = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics restored' });
+        for (const pic of item.generated) pics.append(window.genImages.figure(pic));
+        append(pics);
+        continue;
+      }
     } else {
       continue;
     }
@@ -2801,7 +3142,10 @@ function showHistory(items) {
   let u = lastIndex - 1;
   while (u >= 0 && items[u].role !== 'user') u--;
   const lastUser = u >= 0 ? items[u] : null;
-  const lastReply = [...messages.querySelectorAll('.msg.assistant.restored')].pop();
+  // (A reply of only pictures is its own bubble; with words, the words' bubble is the reply and the pictures sit under it.)
+  const lastReply = items[lastIndex]?.role === 'assistant' && !items[lastIndex].text
+    ? [...messages.querySelectorAll('.msg.assistant.gen-pics.restored')].pop()
+    : [...messages.querySelectorAll('.msg.assistant.restored:not(.gen-pics)')].pop();
   if (lastUser && (lastUser.text || lastUser.images?.length) && lastReply && items[lastIndex]?.role === 'assistant') {
     const imgs = (lastUser.images || []).filter((src) => typeof src === 'string' && /^data:image\/[a-z+.-]+;base64,/.test(src)).map((src) => {
       const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/);
@@ -2907,6 +3251,7 @@ async function sendComposer() {
   const images = attachments;
   attachments = [];
   renderAttachments();
+  showAttachNote([]);
   prompt.value = '';
   autosize();
   const tabs = window.tabsAsk ? await window.tabsAsk.take() : null; // the "@" chips, resolved against the tabs open now
@@ -2961,7 +3306,7 @@ function clearChatView() {
     const texts = unsent.map((q) => q.text).filter(Boolean);
     if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
     const images = unsent.flatMap((q) => q.images || []);
-    if (images.length) { attachments = [...attachments, ...images]; renderAttachments(); }
+    if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_IMAGES); renderAttachments(); }
     autosize();
     updateSend();
   }
@@ -6616,7 +6961,15 @@ $('agent-stop')?.addEventListener('click', () => {
     }
     updateSendBg();
   }
-  function updateSendBg() { sendBg.disabled = !composerInput.value.trim(); }
+  // A background task is saved as words: it can't carry the images attached to the message, so the button waits
+  // (and says why) rather than running the task without them.
+  const attachedImages = () => window.chatAttachments?.count() || 0;
+  function updateSendBg() {
+    const images = attachedImages() > 0;
+    sendBg.disabled = !composerInput.value.trim() || images;
+    sendBg.title = images ? T('tasks.composer.noImages') : T('tasks.composer.run');
+  }
+  document.addEventListener('lumen:attachments', updateSendBg);
 
   async function refresh() {
     state = await api.state();
@@ -7025,6 +7378,7 @@ $('agent-stop')?.addEventListener('click', () => {
     e.preventDefault();
     e.stopImmediatePropagation();
     if (!state.settings.enabled) return;
+    if (bgCmd && attachedImages() > 0) { window.chatAttachments?.note([T('tasks.composer.noImages')]); return; } // (the request and the images stay in the box)
     composerInput.value = '';
     composerInput.dispatchEvent(new Event('input'));
     if (bgCmd) openCreate({ prompt: bgCmd[1].trim() });

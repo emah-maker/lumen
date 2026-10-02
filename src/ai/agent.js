@@ -12,6 +12,8 @@ const modelRoute = require('../features/model-route'); // [model route]
 const fallback = require('./fallback'); // [model fallback] a model out of usage or unreachable: the turn goes on another
 const { addUsage, contextTokensOf, setContext, contextView, shortCount, parseContextReport } = require('../features/chat-usage');
 const compactLib = require('../features/chat-compact'); // [context] /compact and /context
+const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
+const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion } = require('./loop-guard');
 const pdfText = require('../features/pdf-text');
 const { captureTab } = require('../features/tab-capture');
@@ -380,9 +382,16 @@ function portableContent(content) {
   return out.length ? out : [{ type: 'text', text: '(no visible reply)' }];
 }
 
+// A picture the AI made is kept with the chat as a { type: 'generated_image', id, mime, alt } reference. No API takes that
+// block, so a request carries a short note in its place (the model knows it made one; the picture itself stays local).
+const hasGenerated = (m) => Array.isArray(m?.content) && m.content.some((b) => b?.type === 'generated_image');
+const generatedNote = (b) => ({ type: 'text', text: `[A picture was generated and shown to the user${b.alt ? `: ${String(b.alt).slice(0, 200)}` : ''}]` });
+const withGeneratedNotes = (m) => (hasGenerated(m) ? { ...m, content: m.content.map((b) => (b?.type === 'generated_image' ? generatedNote(b) : b)) } : m);
+
 function historyFor(messages, model) {
-  return messages.map((m) => {
-    const author = producedBy.get(m);
+  return messages.map((original) => {
+    const author = producedBy.get(original);
+    const m = withGeneratedNotes(original);
     if (m.role !== 'assistant' || !author || author === model) return m;
     return { role: 'assistant', content: portableContent(m.content) };
   });
@@ -979,12 +988,17 @@ function transcriptFor(chatMessages, settings = chatMessages.settings) {
       acted ||= blocks.some((b) => b.type === 'tool_use' && ACTING_TOOL_NAMES.has(b.name));
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n').trim();
       const final = !blocks.some((b) => b.type === 'tool_use');
+      const generated = blocks.filter((b) => b.type === 'generated_image' && b.id).map((b) => ({ id: b.id, mime: b.mime, alt: b.alt || '' }));
+      const pictures = generated.length ? { generated } : {};
       if (text && final) {
-        items.push({ role: 'assistant', text, images: [], steps, ...(acted ? { acted: true } : {}) });
+        items.push({ role: 'assistant', text, images: [], ...pictures, steps, ...(acted ? { acted: true } : {}) });
         steps = 0;
         acted = false;
       } else if (text) {
-        items.push({ role: 'assistant', text, images: [] });
+        items.push({ role: 'assistant', text, images: [], ...pictures });
+      } else if (generated.length) {
+        items.push({ role: 'assistant', text: '', images: [], ...pictures, ...(final ? { steps, ...(acted ? { acted: true } : {}) } : {}) });
+        if (final) { steps = 0; acted = false; }
       }
     }
   }
@@ -1015,6 +1029,8 @@ class Agent {
     this.scopes = new Set(); // live task scopes (see taskScope), for usingTab()
     this.actionLogs = new Map(); // [ai controls] run id -> what that sidebar run changed (Undo)
     this.actionLogSeq = 0;
+    this.imageStore = null; // features/gen-images.js createImageStore, set by main.js: pictures the AI makes are saved there
+    this.fetchImpl = undefined; // fetch for a provider's picture address (default: Electron's net stack, no cookies)
   }
 
   // Is the open chat's reply running? (A chat the user left mid-run may still be running: busyCount.)
@@ -1461,6 +1477,9 @@ class Agent {
     else messages.push({ role: 'user', content: blocks });
     messages.simpleTurn = isSimpleQuestion(userText, images.length + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
 
+    // [generated images] "draw a cat", "/image a cat": made by the model's own image API when it has one, otherwise said.
+    if (!images.length && !wanted.length && !this.skillRun && await this.imageTurn(messages, userText, controller.signal, emit)) return;
+
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
     // Its tool calls arrive over MCP, outside this async context: engineScope() hands them this pin.
     // ---- [model fallback] One attempt per model. A model out of usage or unreachable hands the turn to the next
@@ -1751,6 +1770,14 @@ class Agent {
     return true;
   }
 
+  // The images a CLI engine's model can take: all of them, or none (with a notice) when the picked model is known to be
+  // text-only. The engines cap the size themselves and say so (capImages).
+  engineImages(engineName, pickedModel, images, emit) {
+    if (!images.length || fallback.capsOf(`x:${pickedModel}`).vision !== false) return images;
+    emit({ type: 'notice', text: chatImages.engineNotice(engineName, pickedModel, images.length) });
+    return [];
+  }
+
   async claudeCodeTurn(messages, prompt, images, signal, emit, hint = {}) {
     const settings = messages.settings;
     const { routed, spawn } = hint.plan || this.claudeCodePlan(messages, hint.userText ?? prompt, images.length, hint.tabCount || 0);
@@ -1805,7 +1832,7 @@ class Agent {
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, this.engines.claudecode, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -1833,9 +1860,10 @@ class Agent {
     }
     const fullAccess = this.browser.grokBuildFullAccess?.() === true; // [full access] Settings > AI (grok-build.js ARGS_FULL)
     emit({ type: 'turn_start' });
+    const sent = this.engineImages('Grok Build', picked, [...historyImages, ...images], emit);
     const out = await this.engines.grokbuild.run({
       prompt: text,
-      images: [...historyImages, ...images],
+      images: sent,
       sessionId: settings.gbSession || crypto.randomUUID(),
       resume,
       model: picked, // 'default' or one of `grok models`' ids
@@ -1859,7 +1887,7 @@ class Agent {
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.limit) emit({ type: 'notice', text: LIMIT_NOTICE, action: 'continue' });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, this.engines.grokbuild, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -1890,7 +1918,7 @@ class Agent {
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
     const out = await this.engines.antigravity.run({
       prompt: text,
-      images: [...historyImages, ...images],
+      images: this.engineImages('Antigravity', picked, [...historyImages, ...images], emit),
       sessionId: settings.agySession || null,
       model: picked, // 'default' or one of `agy models`' slugs
       systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
@@ -1903,12 +1931,100 @@ class Agent {
     else if (!out.failed && (!out.stopped || out.text)) { settings.agySession = out.sessionId; settings.agyModel = settings.model; }
     if (out.stopped) emit({ type: 'notice', text: 'Stopped.', stopped: true });
     if (out.text) {
-      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }] };
+      const turn = { role: 'assistant', content: [{ type: 'text', text: out.text }, ...(await this.enginePictures(out.text, this.engines.antigravity, emit))] };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
   }
   // ---- [/antigravity engine]
+
+  // ---- [generated images] Pictures the AI makes or returns (features/gen-images.js): saved with the chat (this.imageStore,
+  // encrypted like the chat) and shown in it. In the history they are { type: 'generated_image', id, mime, alt } blocks.
+
+  // Provider results ([{ data | url, alt }]) -> saved pictures: the blocks to keep, each told to the chat as an 'image' event.
+  async keepImages(entries, emit, { alt = '' } = {}) {
+    const store = this.imageStore;
+    if (!store || !entries?.length) return [];
+    const chatId = taskScope.getStore()?.chatId;
+    const fetchImpl = this.fetchImpl || require('../browser/net-fetch').netFetch();
+    const blocks = [];
+    for (const entry of entries.slice(0, genImages.MAX_PER_REPLY)) {
+      let got = null;
+      try { got = await genImages.resolveImage(entry, { fetchImpl }); } catch { /* skipped below */ }
+      const ref = got && store.save(chatId, got.buffer, { alt: entry.alt || alt });
+      if (!ref) continue;
+      blocks.push({ type: 'generated_image', id: ref.id, mime: ref.mime, alt: ref.alt, bytes: ref.bytes });
+      emit({ type: 'image', id: ref.id, mime: ref.mime, alt: ref.alt });
+    }
+    if (!blocks.length) emit({ type: 'notice', text: 'The AI sent a picture Lumen could not show (a type it does not display, damaged, or too large).' });
+    return blocks;
+  }
+
+  // Pictures an outside (MCP) tool returned during this step are shown, and kept on the turn that called the tool.
+  async flushToolImages(turn, emit) {
+    const scope = taskScope.getStore();
+    const entries = scope?.toolImages;
+    if (!entries?.length) return;
+    scope.toolImages = [];
+    const blocks = await this.keepImages(entries, emit);
+    if (blocks.length) turn.content = [...turn.content, ...blocks];
+  }
+
+  // Pictures a CLI engine's reply names by path ("Saved to C:\...\cat.png"), only from the engine's own folders.
+  async enginePictures(text, engine, emit) {
+    if (!this.imageStore || typeof engine?.imageRoots !== 'function') return [];
+    let found = [];
+    try { found = genImages.findLocalImages(text, engine.imageRoots()); } catch { return []; }
+    return this.keepImages(found.map((f) => ({ data: f.buffer.toString('base64'), alt: require('path').basename(f.file) })), emit);
+  }
+
+  // A message that asks for a picture. When the chosen model's provider has an image API, it is called and the picture is
+  // the reply (true). Otherwise the user is told this model can't make pictures: an explicit "/image …" is answered with
+  // that alone (true); "draw a cat" goes on to the model as text (false) after one notice per chat and model.
+  async imageTurn(messages, userText, signal, emit) {
+    const ask = genImages.imageRequest(userText);
+    if (!ask) return false;
+    const picked = String(messages.settings.model);
+    const viaEngine = /^(claudecode|grokbuild|antigravity):/.test(picked);
+    const { provider, model } = viaEngine ? { provider: null, model: picked } : providers.splitModel(picked);
+    const label = viaEngine ? ({ claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity' })[picked.split(':')[0]] : (providers.PROVIDERS[provider]?.label || 'Claude');
+    if (!viaEngine && provider === 'openrouter' && providers.canGenerateImages(provider, model)) return false; // it answers with the picture itself
+    if (viaEngine || !providers.canGenerateImages(provider, model)) {
+      const text = `${viaEngine ? label : (provider === 'openrouter' ? model : label)} can't make pictures here. Pick GPT, Grok or Gemini (with your own API key) in the model menu to generate images; this one can describe or write about the picture instead.`;
+      if (ask.explicit) {
+        emit({ type: 'turn_start' });
+        emit({ type: 'notice', text });
+        const reply = { role: 'assistant', content: [{ type: 'text', text }] };
+        producedBy.set(reply, picked);
+        messages.push(reply);
+        return true;
+      }
+      if (messages.noImageNoted !== picked) { messages.noImageNoted = picked; emit({ type: 'notice', text }); }
+      return false;
+    }
+    const apiKey = this.getKey(provider);
+    if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key to use this model.`);
+    emit({ type: 'turn_start' });
+    emit({ type: 'status', text: 'Making your picture…' });
+    let made;
+    try {
+      made = await providers.generateImage({ provider, apiKey, prompt: ask.prompt, signal, ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}) });
+    } catch (err) {
+      if (!err.__provider) err.__provider = provider;
+      throw err;
+    }
+    emit({ type: 'status', text: '' });
+    const blocks = await this.keepImages(made.images, emit, { alt: ask.prompt });
+    const content = [...(made.said ? [{ type: 'text', text: made.said }] : []), ...blocks];
+    if (made.said) emit({ type: 'text', text: made.said });
+    if (!blocks.length) return true; // (keepImages said why)
+    const reply = { role: 'assistant', content };
+    producedBy.set(reply, picked);
+    messages.push(reply);
+    return true;
+  }
+  // ---- [/generated images]
+
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
@@ -1942,6 +2058,13 @@ class Agent {
       messages.chatOnlyNoted = model;
       emit({ type: 'notice', text: `${model} is chat only: it can read the page you're on but can't click or type in your tabs. Pick a model without "(chat only)" for that.` });
     }
+    // A model known to be text-only gets the chat without its images: said once, not dropped silently.
+    const blind = fallback.capsOf(messages.settings.model, this.fallbackOptionsList()).vision === false;
+    const pictures = blind ? chatImages.userImageCount(messages) : 0;
+    if (pictures && messages.textOnlyNoted !== model) {
+      messages.textOnlyNoted = model;
+      emit({ type: 'notice', text: chatImages.textOnlyNotice(providers.openRouterName(model) || model, pictures) });
+    }
     return providers.streamTurn({
       provider,
       model,
@@ -1950,7 +2073,7 @@ class Agent {
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
-      messages: (fallback.capsOf(messages.settings.model, this.fallbackOptionsList()).vision === false ? withoutImages : (m) => m)(historyFor(fitContext(messages, budget), messages.settings.model)),
+      messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(messages, budget), messages.settings.model)),
       tools: toolsOk ? [...OTHER_TOOLS, ...(await this.externalToolDefs(emit))] : [], // [mcp client]
       signal,
       emit,
@@ -2036,7 +2159,8 @@ class Agent {
         return;
       }
 
-      const turn = { role: 'assistant', content: message.content };
+      const pictureBlocks = message.pictures?.length ? await this.keepImages(message.pictures, emit) : []; // [generated images]
+      const turn = { role: 'assistant', content: pictureBlocks.length ? [...message.content, ...pictureBlocks] : message.content };
       producedBy.set(turn, message.model || model); // a fallback model may have served it
       messages.push(turn);
 
@@ -2113,6 +2237,7 @@ class Agent {
           results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: withNote(withNote(text, repeats.record(use.name, use.input, false)), use.name === 'run_script' ? budget.scriptNote() : null) });
         }
       }
+      await this.flushToolImages(turn, emit); // [generated images] pictures an outside (MCP) tool returned
       if (signal.aborted) {
         messages.push({ role: 'user', content: results });
         throw stopError || new Error('Stopped');
@@ -2586,7 +2711,11 @@ class Agent {
   async runExternal(name, input) {
     if (this.externalGrant !== name) throw new Error(`Unknown tool: ${name}`);
     this.externalGrant = null;
-    return this.browser.externalTools.call(name, input);
+    const images = [];
+    const out = await this.browser.externalTools.call(name, input, { images });
+    const scope = taskScope.getStore();
+    if (images.length && scope) (scope.toolImages ||= []).push(...images.map((i) => ({ ...i, alt: `Image from ${name}` })));
+    return out;
   }
   // ---- [/mcp client]
 

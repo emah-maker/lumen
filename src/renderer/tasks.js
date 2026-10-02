@@ -101,7 +101,15 @@
     }
     updateSendBg();
   }
-  function updateSendBg() { sendBg.disabled = !composerInput.value.trim(); }
+  // A background task is saved as words: it can't carry the images attached to the message, so the button waits
+  // (and says why) rather than running the task without them.
+  const attachedImages = () => window.chatAttachments?.count() || 0;
+  function updateSendBg() {
+    const images = attachedImages() > 0;
+    sendBg.disabled = !composerInput.value.trim() || images;
+    sendBg.title = images ? T('tasks.composer.noImages') : T('tasks.composer.run');
+  }
+  document.addEventListener('lumen:attachments', updateSendBg);
 
   async function refresh() {
     state = await api.state();
@@ -510,6 +518,7 @@
     e.preventDefault();
     e.stopImmediatePropagation();
     if (!state.settings.enabled) return;
+    if (bgCmd && attachedImages() > 0) { window.chatAttachments?.note([T('tasks.composer.noImages')]); return; } // (the request and the images stay in the box)
     composerInput.value = '';
     composerInput.dispatchEvent(new Event('input'));
     if (bgCmd) openCreate({ prompt: bgCmd[1].trim() });

@@ -87,7 +87,12 @@
         <div class="tabs-confirm" id="tabs-confirm" role="alert" hidden></div>
         <div class="tab-chips" id="tab-chips" role="list" aria-label="Tabs attached to this message" data-i18n-aria-label="tabs.chips" hidden></div>
         <div class="attachments" id="attachments" hidden></div>
+        <div class="attachment-note" id="attachment-note" role="status" aria-live="polite" hidden></div>
         <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
+        <input type="file" id="attach-input" accept="image/*,.heic,.heif" multiple hidden tabindex="-1" aria-hidden="true" />
+        <button class="attach-btn" id="attach" type="button" title="Attach images (up to 5)" aria-label="Attach images" data-i18n-aria-label="composer.attach">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><circle cx="5.8" cy="6" r="1.1"/><path d="m2.5 12 3.3-3.3 2.4 2.4 2-2L13.5 12"/></svg>
+        </button>
         <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-title="composer.send.title" data-i18n-aria-label="composer.send" disabled>
           <svg viewBox="0 0 16 16"><path d="M8 12.5v-9M4 7.5 8 3.5l4 4"/></svg>
         </button>
@@ -101,6 +106,7 @@
   <script src="picker.js"></script>
   <script src="model-catalog.js"></script>
   <script src="highlight.js"></script>
+  <script src="gen-images.js"></script>
   <script src="chat-core.js"></script>
   <script src="tabs-ask-core.js"></script>
   <script src="tabs-ask.js"></script>

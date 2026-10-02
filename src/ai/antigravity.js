@@ -528,4 +528,6 @@ class AntigravityEngine {
   }
 }
 
+AntigravityEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
+
 module.exports = { AntigravityEngine, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
