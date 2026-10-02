@@ -217,10 +217,47 @@ const launch = (profile) => electron.launch({
   const chip = await waitFor(() => ui.evaluate(() => { const l = document.getElementById('hide-ai-tabs-label'); return l && !l.hidden && l.textContent.trim(); }));
   const nHidden = await app.evaluate(() => global.__windows.list()[0].tabs.filter((x) => global.__aiTabs.tab(x.id)?.openedBy && x.id !== global.__windows.list()[0].activeId).length);
   check('hiding says so in words in the strip ("N hidden")', chip === `${nHidden} hidden` && nHidden > 0, `${chip} / ${nHidden}`);
-  const shownIds = await ui.evaluate(() => [...document.querySelectorAll('#tabs .tab')].map((e) => Number(e.dataset.id)));
-  await app.evaluate(() => global.__aiTabs.cycle(1));
-  const cycled = await waitFor(async () => { const a = await active(); return a !== form && a; });
-  check('Ctrl+Tab skips the hidden AI tabs', shownIds.includes(cycled) && await app.evaluate((_e, i) => !global.__aiTabs.tab(i)?.openedBy, cycled), `${cycled} of ${shownIds}`);
+  // three or more tabs of the user's in the strip, hidden AI tabs among them: a full lap (both ways) never lands on a hidden one
+  await openUser(`${base}/u2`);
+  await openUser(`${base}/u3`);
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+  await waitFor(async () => (await ui.evaluate(() => document.querySelectorAll('#tabs .tab').length)) >= 3);
+  const landed = [];
+  for (const d of [1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1]) {
+    await app.evaluate((_e, dir) => global.__aiTabs.cycle(dir), d);
+    await sleep(120);
+    landed.push(await active());
+  }
+  const aiAmong = await app.evaluate((_e, ids) => ids.filter((i) => global.__aiTabs.tab(i)?.openedBy), landed);
+  check('Ctrl+Tab never lands on a hidden AI tab (3+ visible tabs, a full lap each way)', new Set(landed).size >= 3 && aiAmong.length === 0, JSON.stringify({ landed, aiAmong }));
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+
+  // layout: at 1200px the cue and the chip are single-line pills, and a toast never sits on the cue
+  await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.fromId(global.__windows.list()[0].windowId); w.setSize(1200, 800); });
+  await waitFor(() => ui.evaluate(() => innerWidth >= 1100));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
+  await waitFor(() => ui.evaluate(() => { const b = document.getElementById('hands-off-strip'); return !b.hidden && b.getBoundingClientRect().width > 0; }));
+  await app.evaluate(() => global.__chatPage.ui().send('tabs:organize-note', { text: 'Closed 3 tabs the AI opened.', undo: true, ttl: 9000, aiUndo: 0, undoLabel: 'Undo', undoTitle: 'Undo' }));
+  await waitFor(() => ui.evaluate(() => Boolean(document.querySelector('.organize-note'))));
+  const lay = await ui.evaluate(() => {
+    const r = (el) => { const b = el?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height, r: b.right, b: b.bottom }; };
+    const line = (el) => { const range = document.createRange(); range.selectNodeContents(el); return range.getClientRects().length; };
+    const cue = document.getElementById('hands-off-strip');
+    const chipEl = document.getElementById('hide-ai-tabs');
+    const toast = document.querySelector('.organize-note');
+    return {
+      width: innerWidth, cue: r(cue), chip: r(chipEl), toast: r(toast),
+      cueLabelLines: line(cue.querySelector('.hands-off-label')), chipLabelLines: line(document.getElementById('hide-ai-tabs-label')),
+      cueLabelShown: getComputedStyle(cue.querySelector('.hands-off-label')).display !== 'none',
+    };
+  });
+  const overlap = (a, b) => a && b && a.x < b.r && b.x < a.r && a.y < b.b && b.y < a.b;
+  check('1200px: the hands-off cue is one line, a pill no taller than 30px, with its words', lay.cueLabelShown && lay.cueLabelLines === 1 && lay.cue.h <= 30 && lay.cue.w > 60, JSON.stringify(lay));
+  check('1200px: the "N hidden" chip is one line and no taller than 30px', lay.chipLabelLines === 1 && lay.chip.h <= 30, JSON.stringify(lay));
+  check('1200px: the toast does not sit on the cue or the chip', !overlap(lay.toast, lay.cue) && !overlap(lay.toast, lay.chip), JSON.stringify(lay));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
   await app.evaluate(() => global.__settings.backend.set('hideAiTabs', false));
 
   // ---- 10. Undo puts a tab back in its group.

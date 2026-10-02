@@ -1,6 +1,15 @@
 // The UI preferences from lumen://settings (compact tabs, reduced motion, focus rings) and the accent
 // colour, applied to the page and kept current. Shared by the browser UI and the full-page chat.
 {
+  // The strip's hands-off cue says "Hands-off" in words in a wide window (styles.css), where a hover tip would only repeat it; icon-only, it keeps the tip.
+  const wide = matchMedia('(min-width: 700px)');
+  const cueTitle = () => {
+    const cue = document.getElementById('hands-off-strip');
+    if (!cue) return;
+    if (!cue.dataset.tip) cue.dataset.tip = cue.title;
+    if (wide.matches) cue.removeAttribute('title'); else cue.title = cue.dataset.tip;
+  };
+  wide.addEventListener('change', cueTitle);
   const applyPrefs = (p) => {
     if (!p) return;
     const root = document.documentElement;
@@ -12,7 +21,7 @@
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs
     if (badge) badge.hidden = !p.handsOff;
     const stripCue = document.getElementById('hands-off-strip'); // ...and the tab strip does too, whether or not a chat is open
-    if (stripCue) stripCue.hidden = !p.handsOff;
+    if (stripCue) { stripCue.hidden = !p.handsOff; cueTitle(); }
     const hide = p.hideAiTabs === true; // [ai manners] the strip leaves out the tabs the AI opened (app.js renderTabsNow)
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     accent = p.accent || null;
