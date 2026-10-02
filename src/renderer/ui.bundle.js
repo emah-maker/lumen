@@ -6289,12 +6289,30 @@ startChat();
 
 const mcpSteps = new Map(); // step id -> row
 let mcpPillText = null;
-// An outside agent opens and closes a session around each task, so the pill (not the chat) carries
-// the state: it holds "driving" for a moment after a session ends so a quick reconnect doesn't
-// flicker, and the chat gets one line the first time each agent connects in this window, never one per session.
+// The pill says an outside agent is acting: a tool call of an MCP agent is running, or a CDP client (Playwright)
+// is attached. A connected-but-idle MCP agent (Claude Code keeps its session open all day) and Lumen's own
+// engine sessions don't count. It holds for a moment after the last call so a run of calls doesn't flicker,
+// and the chat gets one line the first time each agent connects in this window, never one per session.
 const MCP_PILL_HOLD_MS = 1500;
 const mcpAnnounced = new Set();
+const mcpRunning = new Set(); // ids of the MCP tool calls in flight
+let mcpCdpActive = false;
+let mcpWho = '';
 let mcpPillTimer = null;
+
+function mcpPillRefresh() {
+  const driving = mcpCdpActive || mcpRunning.size > 0;
+  const showPill = () => {
+    document.body.classList.toggle('mcp-active', driving);
+    const text = document.querySelector('#agent-pill span:not(.agent-dot)');
+    if (!text) return;
+    if (mcpPillText === null) mcpPillText = text.textContent;
+    text.textContent = driving ? t('mcp.driving', { client: mcpWho }) : mcpPillText;
+  };
+  clearTimeout(mcpPillTimer);
+  if (driving) showPill();
+  else mcpPillTimer = setTimeout(showPill, MCP_PILL_HOLD_MS);
+}
 
 function mcpStepRow(event) {
   const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
@@ -6310,17 +6328,9 @@ function mcpStepRow(event) {
 window.assistant.onMcpEvent?.((event) => {
   switch (event.type) {
     case 'session': {
-      const driving = event.active || event.remaining > 0;
-      const showPill = () => {
-        document.body.classList.toggle('mcp-active', driving);
-        const text = document.querySelector('#agent-pill span:not(.agent-dot)');
-        if (!text) return;
-        if (mcpPillText === null) mcpPillText = text.textContent;
-        text.textContent = driving ? t('mcp.driving', { client: event.clientName }) : mcpPillText;
-      };
-      clearTimeout(mcpPillTimer);
-      if (driving) showPill();
-      else mcpPillTimer = setTimeout(showPill, MCP_PILL_HOLD_MS);
+      // MCP sessions carry `engine` (null for an outside agent) and only announce; the CDP proxy's don't and drive the pill.
+      if (!('engine' in event)) { mcpCdpActive = Boolean(event.active || event.remaining > 0); if (mcpCdpActive) mcpWho = event.clientName; mcpPillRefresh(); }
+      if (event.engine) break; // Lumen's own engine, not an outside agent
       if (event.active && !mcpAnnounced.has(event.clientName)) {
         mcpAnnounced.add(event.clientName);
         append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('mcp.connected', { client: event.clientName }) }));
@@ -6329,6 +6339,9 @@ window.assistant.onMcpEvent?.((event) => {
     }
     case 'tool':
       mcpStepRow(event);
+      mcpRunning.add(event.id);
+      mcpWho = event.clientName;
+      mcpPillRefresh();
       break;
     case 'tool_update': { // the specific label of a step already shown (an outside agent's usually came in its 'tool' event)
       const step = mcpSteps.get(event.id);
@@ -6338,6 +6351,8 @@ window.assistant.onMcpEvent?.((event) => {
       break;
     }
     case 'tool_done': {
+      mcpRunning.delete(event.id);
+      mcpPillRefresh();
       const step = mcpSteps.get(event.id);
       if (!step) break;
       step.className = `step mcp-step ${event.ok ? 'done' : 'failed'}`;
