@@ -328,13 +328,14 @@
     body.w-editing .w-card { touch-action: none; cursor: grab; user-select: none; }
     body.w-editing .w-card * { pointer-events: none; }
     body.w-editing .w-card .w-h, body.w-editing .w-card .w-resize, body.w-editing .w-card .w-remove, body.w-editing .w-card .w-gear, body.w-editing .w-card .w-presets, body.w-editing .w-card .w-presets *, body.w-editing .w-card .w-stack-edit { pointer-events: auto; }
-    /* Wiggle like a home screen; a plain outline instead with Reduce motion or Performance mode. */
+    /* Wiggle like a home screen; a plain outline instead only when the person asked for less motion (Lumen's Reduce motion = body.still, or the system's = the media query).
+       Performance mode (body.calm, which Auto can switch on and off by itself with battery saver or CPU throttling) does not take the wiggle away: it is one cheap compositor-only rotate, and the cards' backdrop blur is already off while editing. */
     @keyframes wiggle { from { rotate: -0.45deg; } to { rotate: 0.45deg; } }
     @media (prefers-reduced-motion: no-preference) {
-      body.w-editing:not(.calm) .w-card:not(.lifted):not(.resizing) { animation: wiggle 170ms ease-in-out infinite alternate; }
-      body.w-editing:not(.calm) .w-card:nth-child(2n):not(.lifted):not(.resizing) { animation-delay: -85ms; animation-direction: alternate-reverse; }
+      body.w-editing:not(.still) .w-card:not(.lifted):not(.resizing) { animation: wiggle 170ms ease-in-out infinite alternate; }
+      body.w-editing:not(.still) .w-card:nth-child(2n):not(.lifted):not(.resizing) { animation-delay: -85ms; animation-direction: alternate-reverse; }
     }
-    body.w-editing.calm .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+    body.w-editing.still .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
     @media (prefers-reduced-motion: reduce) { body.w-editing .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; } }
     .w-card.pressing { scale: 0.97; transition: scale 380ms ease-out, transform 260ms var(--ease); }
     body.w-dragging, body.w-dragging * { user-select: none; }
