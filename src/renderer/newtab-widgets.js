@@ -329,8 +329,25 @@ const WIDGET_RENDERERS = {
         signIn.classList.add('sp-web-signin');
         card.head.append(signIn);
       }
-      const slot = el('div', 'sp-web-slot', 'Loading Spotify…');
+      // What main knows about the view: it can't load (offline, Spotify down), or this Lumen has no Widevine, so Spotify
+      // can't play. Say so instead of leaving a blank frame.
+      const v = d.view && typeof d.view === 'object' ? d.view : {};
+      const down = v.state === 'offline' || v.state === 'failed';
+      if (v.drm === 'missing' && !down) {
+        const note = el('p', 'w-note sp-drm', 'Spotify can’t play sound here yet: Lumen’s Widevine component, which protected audio needs, isn’t available. It may still be installing; if this stays, restart Lumen. You can still browse Spotify.');
+        note.setAttribute('role', 'status');
+        card.body.append(note);
+      }
+      const slot = el('div', 'sp-web-slot', down ? '' : 'Loading Spotify…');
       slot.setAttribute('role', 'status');
+      if (down) {
+        slot.classList.add('sp-web-down');
+        slot.append(el('span', 'sp-web-msg', v.state === 'offline' ? 'Can’t reach Spotify. Check your internet connection.' : 'Spotify didn’t load.'));
+        const retry = el('button', 'w-btn', 'Try again');
+        retry.type = 'button';
+        retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
+        slot.append(retry);
+      }
       card.body.append(slot);
       return;
     }
@@ -374,8 +391,14 @@ const WIDGET_RENDERERS = {
       card.body.append(controls);
       return;
     }
-    controls.append(button('prev', 'Previous track', 'previous'), state === 'playing' ? button('pause', 'Pause', 'pause', 'sp-btn main') : button('play', 'Play', 'play', 'sp-btn main'), button('next', 'Next track', 'next'));
+    const prev = button('prev', 'Previous track', 'previous');
+    const next = button('next', 'Next track', 'next');
+    if (d.kind === 'ad') { // Spotify refuses skipping during an ad
+      for (const b of [prev, next]) { b.disabled = true; b.title = 'Not during an ad'; b.setAttribute('aria-label', `${b.getAttribute('aria-label')} (not during an ad)`); }
+    }
+    controls.append(prev, state === 'playing' ? button('pause', 'Pause', 'pause', 'sp-btn main') : button('play', 'Play', 'play', 'sp-btn main'), next);
     card.body.append(controls);
+    if (d.kind === 'ad' && state === 'playing') setTimeout(() => { if (controls.isConnected) widgetAct(w.id, 'refresh'); }, 16000); // an ad has no length: look again when it is likely over
     // Progress: main sends where the playhead was and when; this page moves it on once a second.
     const duration = Number.isFinite(d.durationMs) && d.durationMs > 0 ? d.durationMs : 0;
     if (duration) {
@@ -404,7 +427,13 @@ const WIDGET_RENDERERS = {
       if (state === 'playing') {
         const timer = setInterval(() => {
           if (!progress.isConnected) { clearInterval(timer); return; } // the card was redrawn or removed
-          if (!document.hidden && draw() >= duration) clearInterval(timer);
+          if (!document.hidden && draw() >= duration) {
+            clearInterval(timer);
+            // The track is over: Spotify has moved on to the next one (or stopped). Without this the card sat at the end
+            // of the old song until its next scheduled refresh, up to two minutes. The later asks cover Spotify still
+            // answering with the old song, or the first coming too soon after the last fetch (a Spotify card is fetched at most every 4 s).
+            for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (progress.isConnected) widgetAct(w.id, 'refresh'); }, wait);
+          }
         }, 1000);
       }
     }

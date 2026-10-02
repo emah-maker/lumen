@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('browser', {
   onAttachImage: on('attach-image'), // a screenshot for the sidebar composer (features/screenshot.js)
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
+  onAgentWindow: on('agent-window'), // this window belongs to an outside agent (or no longer does: null)
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
   openPageInfo: (point) => ipcRenderer.send('page-info:open', point), // the lock next to the address (features/page-info.js)
   openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items), // the extension icons that don't fit the toolbar

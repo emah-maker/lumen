@@ -240,6 +240,8 @@
   "mcp.connected": "{client} connected to Lumen.",
   "mcp.disconnected": "{client} disconnected.",
   "mcp.driving": "Lumen is being driven by {client}",
+  "agentWindow.badge": "{client}'s window",
+  "agentWindow.title": "This window belongs to {client}. Its pages are muted and ask nothing. Use it, or pin a tab, and it stays when {client} is done.",
   "menu.actualSize": "Actual Size",
   "menu.adBlocker": "Ad Blocker",
   "menu.addToGroup": "Add to Group",
