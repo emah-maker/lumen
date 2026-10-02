@@ -5825,7 +5825,10 @@ const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null
 const agentOpenTab = (url, opts = {}) => {
   const { ai = false, show: wantShow = false, ...rest } = opts || {};
   const fromPage = chatPageRt?.runTarget() != null;
-  const show = !fromPage && manners.showsTab({ show: wantShow === true, runTabId: runOwnTabId(), activeId });
+  // Only the AI's own tool call (`ai`, or an explicit `show`) is held to the manners; any other caller (a window
+  // opening a tab, the test hooks) gets a plain openTab: in front unless it asked for the background.
+  const governed = ai || (opts && 'show' in opts);
+  const show = !fromPage && (governed ? manners.showsTab({ show: wantShow === true, runTabId: runOwnTabId(), activeId }) : !rest.background);
   const tab = openTab(url, { ...rest, background: !show, ...(ai ? { openedBy: runOf() } : {}) });
   if (fromPage) chatPageRt.retarget(tab.id);
   else if (show) bindRunChatTo(tab.id);
