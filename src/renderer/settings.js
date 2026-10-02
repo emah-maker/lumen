@@ -97,7 +97,9 @@ function select(key, label, desc, options, { number = false, after } = {}) {
     options.map(([value, text]) => h('option', { value: String(value), text })));
   el.value = String(st.prefs[key]);
   el.addEventListener('change', async () => { await save(key, number ? Number(el.value) : el.value); after?.(el.value); });
-  return row(label, desc, el);
+  const r = row(label, desc, el);
+  r.dataset.search += ` ${options.map(([, text]) => text).join(' ')}`.toLowerCase(); // "dark" finds Theme
+  return r;
 }
 const status = (id) => h('span', { class: 'note', id });
 // Where each provider hands out API keys (Settings → AI and agents → API keys, "Get a key").
@@ -132,7 +134,7 @@ const CATEGORIES = [
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
   { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data']] },
   { id: 'search', title: 'Search engine', slots: [['search', 'Search engine']] },
-  { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-more', 'More']] },
+  { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-access', 'Full access (advanced)'], ['ai-more', 'More']] },
   { id: 'extensions', title: 'Extensions', slots: [['extensions', 'Installed']] },
   { id: 'downloads', title: 'Downloads', slots: [['downloads', 'Downloads']] },
   { id: 'updates', title: 'Updates', slots: [['about', 'Software update']] },
@@ -160,7 +162,7 @@ const ALIASES = {
   accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
   // Natural names people (and other pages) might use; additive, no id above changes.
-  proxy: { cat: 'advanced', focus: 'system' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
+  permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', focus: 'system' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
   engine: { cat: 'search' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
@@ -280,7 +282,7 @@ async function buildAi(card) {
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Off', ask: 'Ask', always: 'Always' }[v])])),
   );
   // Control of the whole computer is its own group, apart from the everyday switches above.
-  card.group(tr('settings.ai.fullAccessGroup', 'Full access (advanced)')).append(...cliAccessRows());
+  card.at('ai-access').append(...cliAccessRows());
   card.at('tabs-groups').append(
     row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, such as recipes or one trip, once 4 or more are loose. Tabs you group or move by hand stay put.', grouping),
     topicRow,
@@ -2332,6 +2334,8 @@ const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} 
 
 function show() {
   const words = query().split(/\s+/).filter(Boolean);
+  // A word matches where a word of the setting starts with it ("mode" finds Dark mode, not Model).
+  const hasWord = (text, w) => { for (let i = text.indexOf(w); i >= 0; i = text.indexOf(w, i + 1)) if (i === 0 || !/[a-z0-9]/.test(text[i - 1])) return true; return false; };
   const searching = words.length > 0;
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
@@ -2345,10 +2349,10 @@ function show() {
         g.hidden = false;
         continue;
       }
-      const titleHit = words.every((w) => `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase().includes(w));
+      const titleHit = words.every((w) => hasWord(`${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase(), w));
       let n = 0;
       for (const r of rows) {
-        const hit = titleHit || words.every((w) => `${r.dataset.search} ${catTitle(slot)}`.includes(w));
+        const hit = titleHit || words.every((w) => hasWord(`${r.dataset.search} ${catTitle(slot)}`, w));
         r.classList.toggle('filtered', !hit);
         if (hit) n++;
       }
@@ -2385,7 +2389,7 @@ function show() {
   }
   for (const slot of slots.values()) if (slot.isSub) slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id;
   $('no-results').hidden = !searching || any;
-  if (searching && !any) $('no-results-query').textContent = tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() });
+  $('no-results-query').textContent = searching && !any ? tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() }) : '';
 }
 
 function route() {
@@ -2397,7 +2401,7 @@ function route() {
   const sub = slots.get(id);
   if (sub?.isSub) view = { cat: sub.cat, sub: id };
   else if (categories.has(id)) view = { cat: id, sub: null };
-  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
+  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
   else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null };
   remember(view.cat);
   if (query()) $('search').value = '';

@@ -211,6 +211,8 @@ mark { background: var(--accent-soft); color: inherit; border-radius: 3px; }
   /* A row's controls (a 220px field, a picker) go under the label when both don't fit, instead of
      squeezing the label to a few characters a line. */
   .row { flex-wrap: wrap; row-gap: 8px; }
+  .row.stack { flex-wrap: nowrap; }
+  .row.stack .text { flex: none; }
   .row .text { flex: 1 1 180px; }
   .row .controls { flex: 0 1 auto; max-width: 100%; margin-left: auto; }
 }
