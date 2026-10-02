@@ -472,6 +472,7 @@ contextBridge.exposeInMainWorld('browser', {
   onTabMovedHere: on('tab:moved-here'), // tabs moved into this window from the tab menu: { ids, title } // this new window was just given dragged tabs ({ count }): announced
   dragTabMove: () => ipcRenderer.send('tab:dragmove'), // the pointer moved during a drag main.js drives
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
+  hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [ai manners] no argument: just read it
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   groupMenu: (id, point) => ipcRenderer.send('group:context-menu', id, point),
   toggleGroup: (id) => ipcRenderer.send('group:toggle', id),
@@ -480,7 +481,8 @@ contextBridge.exposeInMainWorld('browser', {
   organizeTabs: () => ipcRenderer.send('tabs:organize'),
   onOrganizing: on('tabs:organizing'),
   onOrganizeNote: on('tabs:organize-note'),
-  undoOrganize: () => ipcRenderer.send('tabs:undo-organize'),
+  undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token), // [ai manners]
+  undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
   translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg), // the translate infobar and button (features/translate.js)
@@ -562,6 +564,7 @@ contextBridge.exposeInMainWorld('assistant', {
     rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
     remove: (id) => ipcRenderer.invoke('chats:delete', id),
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
+    closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners] "Close this chat's tabs"
     onUsage: on('chats:usage'),
     onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
@@ -606,6 +609,8 @@ contextBridge.exposeInMainWorld('assistant', {
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
+  closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners] { runId } | { chatId }: close the tabs the AI opened
+  undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),

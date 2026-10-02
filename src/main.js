@@ -77,6 +77,7 @@ const { createPrivateWindows } = require('./features/private-window');
 const { t, i18n } = require('./features/i18n'); // UI strings (locales/)
 const chatRunsLib = require('./features/chat-runs'); // [background chats] when to notify, and what it says
 const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
+const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
 const { ACCOUNT_URL: TVW_ACCOUNT_URL } = require('./features/tradingview-view'); // [widgets] TradingView watchlist import
 const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
@@ -181,12 +182,12 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
   'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
-  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
-  'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export',
+  'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tabs:hide-ai', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   ...require('./features/background-runner').CHANNELS, // background tasks
 ]);
@@ -1441,6 +1442,7 @@ function tabState() {
           pinned: Boolean(t.pinned),
           sleeping: true,
           chat: tabChatMark(t.id),
+          aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab
           ...tabTools.state(t, false),
         };
       }
@@ -1468,6 +1470,7 @@ function tabState() {
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
+        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by AI" in its card)
         ...tabTools.state(t, true), // audible, muted
       };
     }),
@@ -1748,7 +1751,7 @@ function goBack(wc) {
 const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab));
 if (TEST) global.__warmTabs = { enable: (on = true) => { warmForTest = on; if (on) makeWarmTab(); else if (warmTab) { try { warmTab.view.webContents.close(); } catch {} warmTab = null; } }, ready: () => Boolean(warmTab && !warmTab.view.webContents.isLoading()), contentsId: () => warmTab?.view.webContents.id ?? null, forgetHistory: (id) => { const t = tabs.find((x) => x.id === id); if (t) t.sleepHistory = null; return Boolean(t?.sleeping); } };
 
-function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null } = {}) {
+function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null, openedBy = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
   const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
@@ -1772,6 +1775,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} }
   const id = nextTabId++;
   const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
+  if (openedBy) manners.markOpened(tab, openedBy); // [ai manners] a tab the AI opened
   tabs.push(tab);
   win.contentView.addChildView(view);
   view.setVisible(false);
@@ -1971,6 +1975,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     wc.on(event, sendTabsSoon);
   }
   wc.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && !manners.isAgentInput(wc)) { manners.userInput.key(wc); userTookOver(tab); } // [ai manners] the user typed here: the tab is theirs, and the AI waits for them
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
@@ -1978,7 +1983,11 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
   // A real click in the page is the user choosing it: the guard above must not take focus back.
-  wc.on('before-mouse-event', (_e, mouse) => { if (mouse.type === 'mouseDown') tab.showGuardUntil = 0; });
+  wc.on('before-mouse-event', (_e, mouse) => {
+    if (mouse.type !== 'mouseDown') return;
+    if (!manners.isAgentInput(wc)) { manners.userInput.click(wc); userTookOver(tab); } // [ai manners] a click of the AI's own tool is not the user's
+    tab.showGuardUntil = 0;
+  });
   // A page with a beforeunload handler: by default Electron blocks the close/navigation (this event
   // fires and, unless we call event.preventDefault() *now*, the unload stays prevented). We can't
   // await the user's answer inside this handler, so instead: let it stay blocked, ask "Leave site?",
@@ -1988,6 +1997,13 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   let allowNextUnload = false;
   wc.on('will-prevent-unload', (event) => {
     if (allowNextUnload || !tab.closing) { allowNextUnload = false; event.preventDefault(); return; }
+    if (tab.aiClosing) { // [ai manners] closing a tab the AI opened never asks "Leave site?" (that would pull the tab to the front): the page keeps it, the tab stays open
+      tab.aiCloseKept = true;
+      tab.closing = false;
+      event.preventDefault();
+      sendTabs();
+      return;
+    }
     tab.unloadAsked = true; // requestCloseTab's frozen-page timeout leaves this close to the user
     sendTabs(); // back in the strip while it asks
     dialogs.showMessageBox(win, {
@@ -2140,16 +2156,23 @@ function addRestoredTab(url, title, favicon = null) {
 // substitutes for it. Any doubt (a throw, a page that blocks the read) counts as "yes, has input".
 // Also: a reply still streaming in (an AI chat site: the page keeps changing with no load in progress, or
 // shows a Stop button), a playing media element, a chosen upload (tabSleep.pageBusyScript). Bounded to 5 s.
-async function hasUnsavedInput(wc) {
+const NO_ANSWER = Symbol('no answer');
+// 'yes' | 'no' | 'unknown': the page's own answer, or none (it hung, crashed or threw). Closing an AI tab tells these apart: a hung
+// page is not "holding text the user typed".
+async function unsavedInputState(wc) {
   try {
     const answer = await Promise.race([
       wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: tabSleep.pageBusyScript(1200) }]),
-      new Promise((resolve) => setTimeout(resolve, 5000)), // a page that won't answer: undefined, which counts as busy
+      new Promise((resolve) => setTimeout(() => resolve(NO_ANSWER), 5000)),
     ]);
-    return tabSleep.pageBusy(answer);
+    if (answer === NO_ANSWER) return 'unknown';
+    return tabSleep.pageBusy(answer) ? 'yes' : 'no';
   } catch {
-    return true;
+    return 'unknown';
   }
+}
+async function hasUnsavedInput(wc) {
+  return (await unsavedInputState(wc)) !== 'no'; // any doubt counts as "yes, has input"
 }
 
 // Never the active tab, never a tab an AI task is working in (it keeps its tab when the user switches
@@ -2280,6 +2303,14 @@ function onTabGone(id, fn) {
   return () => { if (!wc.isDestroyed()) wc.removeListener('destroyed', gone); };
 }
 
+// [ai manners] The user clicked or typed in a tab, or navigated, pinned or moved it: if the AI had opened it, it is theirs now
+// and "close the tabs the AI opened" leaves it alone.
+function userTookOver(tab) {
+  if (!manners.handOver(tab)) return;
+  const rec = tab.rec;
+  if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, sendTabs);
+}
+
 function closeTab(id, { destroyed = false, user = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
@@ -2332,7 +2363,7 @@ function requestCloseTab(id) {
   tab.closing = true;
   // The page answers the beforeunload check before the close finishes, which can take a moment:
   // the strip drops the tab now, and the next tab is shown now if this one was in front.
-  if (tab.id === activeId) {
+  if (tab.id === activeId && !tab.aiClosing) { // ([ai manners] a tab being closed for the AI stays in front until it is really gone: its page may keep it)
     const index = tabs.indexOf(tab);
     const next = [...tabs.slice(index + 1), ...tabs.slice(0, index).reverse()].find((t) => !t.closing);
     if (next) switchTab(next.id);
@@ -2346,6 +2377,16 @@ function requestCloseTab(id) {
   }, CLOSE_TIMEOUT_MS);
 }
 const CLOSE_TIMEOUT_MS = 3000;
+// [ai manners] The AI's close_tab: a page that asks "Leave site?" is not asked about (the question would bring the tab to the front
+// over what the user is doing): the tab simply stays open and the tool tells the AI the page blocked it.
+function agentRequestCloseTab(id) {
+  const tab = tabs.find((t) => t.id === id);
+  if (!alive(tab)) { requestCloseTab(id); return; }
+  tab.aiClosing = true;
+  requestCloseTab(id);
+  const done = setTimeout(() => { tab.aiClosing = false; }, CLOSE_TIMEOUT_MS + 1500);
+  done.unref?.();
+}
 
 function listTabs() {
   // Sleeping tabs stay listed (from their sleep snapshot) so the agent can still see and switch to
@@ -2768,6 +2809,7 @@ function keepPinnedFirst() {
 function pinTab(id, on) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab || Boolean(tab.pinned) === on) return;
+  manners.handOver(tab); // [ai manners] a tab the user pins is theirs
   if (on && tab.groupId) tabGroups.remove(id, { byUser: true });
   tab.pinned = on;
   tab.userRemoved = true; // pinned or unpinned by hand: automatic grouping leaves it alone
@@ -2818,6 +2860,7 @@ function tabMenuTemplate(id) {
     items.push({
       label: t('menu.addToNewGroup'),
       click: () => {
+        manners.handOver(tab); // [ai manners] a tab the user groups is theirs
         if (tab.groupId) tabGroups.remove(id, { byUser: true });
         // A sleeping tab has no webContents to read; its sleep snapshot has the same info.
         const title = alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '';
@@ -2826,8 +2869,8 @@ function tabMenuTemplate(id) {
         ui()?.send('group:rename-start', group.id);
       },
     });
-    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
-    if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { tabGroups.remove(id, { byUser: true }); sendTabs(); } });
+    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: g.name, click: () => { manners.handOver(tab); const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
+    if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { manners.handOver(tab); tabGroups.remove(id, { byUser: true }); sendTabs(); } });
     items.push({ label: t('menu.organizeByTopic'), click: organizeFromMenu });
     const dupCount = duplicateTabs().reduce((n, d) => n + d.close.length, 0);
     if (dupCount) items.push({ label: t('menu.closeDuplicates', { n: dupCount }), click: closeDuplicateTabs });
@@ -2850,6 +2893,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
     { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
     { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
+    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
     { type: 'separator' },
     { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
   );
@@ -3679,7 +3723,9 @@ function cycleTab(direction) {
 }
 
 function reloadActive({ ignoreCache = false } = {}) {
-  reloadTab(tabs.find((t) => t.id === activeId), { ignoreCache });
+  const tab = tabs.find((t) => t.id === activeId);
+  userTookOver(tab); // [ai manners] only the user's own reload reaches here (the AI's reload tool calls webContents.reload)
+  reloadTab(tab, { ignoreCache });
 }
 
 // ---------- saved chats (survive restarts; the sidebar's history list) ----------
@@ -3995,7 +4041,7 @@ function chatTabGone(id) {
     if (r.deleted) continue;
     if (r.queued && r.homeTab === id) r.homeTab = null;
     if (r.queued || agent.runTabIdFor(r.messages) !== id || !tabs.length) continue;
-    const tab = openTab(undefined, { background: true });
+    const tab = openTab(undefined, { background: true, openedBy: { chatId: r.chatId, runId: r.runId } }); // [ai manners] opened for the chat: it may work there
     agent.repinRun(r.messages, tab.id, { rec: curRec });
     r.rec = curRec;
     r.homeTab = tab.id;
@@ -4019,18 +4065,11 @@ function runHomeTab(run) {
   if (run.homeTab != null && tabAnywhere(run.homeTab)) return run.homeTab;
   const rec = run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec;
   if (!rec) return null;
-  const id = withWindow(rec, () => openTab(undefined, { background: true }).id);
+  const id = withWindow(rec, () => openTab(undefined, { background: true, openedBy: { chatId: run.chatId, runId: run.runId } }).id); // [ai manners] opened for the chat: it may work there
   run.homeTab = id;
   run.rec = rec;
   chatBind.bind(id, run.chatId);
   return id;
-}
-// open_tab / switch_tab may bring a tab to the front only when the user is looking at the run's own tab; a chat
-// working in a tab the user is not on never pulls them away from the tab they are in.
-function runWatched() {
-  const s = agent.currentScope();
-  if (!s || !s.chat) return true;
-  return tabChatsLib.mayTakeFront({ runTabId: s.tabId ?? activeId, activeId });
 }
 // The tab the user was watching the run in now shows the tab the run moved to: that tab shows this chat too.
 function bindRunChatTo(tabId) {
@@ -4039,6 +4078,122 @@ function bindRunChatTo(tabId) {
   if (id) chatBind.bind(tabId, id);
 }
 if (TEST) global.__tabChats = { bindings: chatBind, slots: runSlots, mark: tabChatMark, chatId: () => chatId, shown: () => (ui() ? shownChat.get(ui()) : null), runs: () => [...chatRuns.values()].map((r) => ({ chatId: r.chatId, queued: Boolean(r.queued), tab: r.queued ? r.homeTab : agent.runTabIdFor(r.messages), live: runIsLive(r) })) };
+
+// ---------- [ai manners] close the tabs the AI opened (features/ai-manners.js)
+// A tab the AI opened (agentOpenTab, a research tab, a tab Lumen opened for a chat) is marked `openedBy` the run and chat, shown
+// in the strip, and can be closed again: under the reply, from a tab's menu, from a chat's row, or by the setting (Off / Ask /
+// Always). The user's own tabs never are: a tab they clicked in, typed in, navigated, pinned or moved loses the mark, a pinned
+// tab and the tab a chat lives in are skipped, and an automatic close also leaves the tab in front and tabs holding typed text.
+const aiCloseUndo = new Map(); // token -> [{ url, partition, rec }]: what a close took, for Undo
+let aiCloseSeq = 0;
+const chatNotEmpty = (cid) => chatRuns.has(cid) || chats().list().some((c) => c.id === cid);
+// The tabs (of every window, or just `rec`'s) the AI opened that may be closed, as [{ rec, tab }]. `runId` / `chatId` narrow it
+// to that run's / chat's; neither: all of them.
+function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null } = {}) {
+  const found = [];
+  const own = new Set(chatId != null ? [chatId] : []);
+  if (runId != null) for (const r of winRecs) for (const x of rcAlive(r) ? tabsOf(r) : []) if (x.openedBy?.runId === runId && x.openedBy.chatId != null) own.add(x.openedBy.chatId);
+  const bound = new Set();
+  for (const [tabId, cid] of chatBind.entries()) if (own.size ? own.has(cid) : chatNotEmpty(cid)) bound.add(tabId);
+  const busy = agent.runTabIds();
+  for (const r of rec ? [rec] : [...winRecs]) {
+    if (!rcAlive(r)) continue;
+    for (const tab of manners.closeSelection(tabsOf(r), { runId, chatId, boundIds: [...bound], busyIds: busy, activeId: activeIdOf(r), auto })) found.push({ rec: r, tab });
+  }
+  return found;
+}
+// Closes them (each goes through requestCloseTab: a page's "Leave site?" is still asked). `auto`: also keeps a tab that holds
+// typed text. Returns { closed, token }; the token undoes it (aiTabsReopen).
+// A tab holding text typed into a form is never closed (by any path: the button, a menu, the chat row or the setting): the text
+// would be lost, and Undo only brings the address back. A page that asks "Leave site?" is kept open too, without the question being
+// shown (it would bring the tab to the front). Only tabs that really closed are recorded for Undo.
+// Returns { closed, kept, token }: `kept` tabs stayed open for one of those reasons.
+function closeAiTab(rec, tab) {
+  return new Promise((resolve) => {
+    tab.aiClosing = true;
+    tab.aiCloseKept = false;
+    withWindow(rec, () => requestCloseTab(tab.id));
+    const began = Date.now();
+    const poll = setInterval(() => {
+      const gone = !tabAnywhere(tab.id);
+      if (!gone && !tab.aiCloseKept && Date.now() - began < CLOSE_TIMEOUT_MS + 1500) return;
+      clearInterval(poll);
+      tab.aiClosing = false;
+      resolve(gone);
+    }, 50);
+  });
+}
+// The tab strip's toast after a close from the tab menu or a chat's row: what closed, what stayed (and why), with Undo.
+function aiCloseNote(rec, { closed = 0, kept = 0, token = 0 } = {}) {
+  const plural = (base, n) => t(`${base}.${n === 1 ? 'one' : 'other'}`, { count: n });
+  const text = [closed ? plural('chat.aiTabs.closed', closed) : kept ? '' : t('chat.aiTabs.none'), kept ? plural('chat.aiTabs.kept', kept) : ''].filter(Boolean).join(' ');
+  if (!rcAlive(rec) || !winRecs.has(rec)) return;
+  withWindow(rec, () => ui()?.send('tabs:organize-note', { text, undo: Boolean(closed && token), ttl: 9000, aiUndo: closed ? token : 0, undoLabel: t('chat.aiTabs.undo'), undoTitle: t('chat.aiTabs.undo') }));
+}
+// A tab that held back a close (typed text, or a page that asks before leaving) is the user's from now on: it shows in the strip
+// even with the "hide tabs the AI opened" toggle on, loses its mark, and is not offered for closing again.
+function keepTab(rec, tab) {
+  manners.handOver(tab);
+  withWindow(rec, () => sendTabs());
+  return { kept: true };
+}
+async function aiTabsClose(selector = {}, { auto = false } = {}) {
+  const picked = aiTabSelect({ ...selector, auto });
+  const results = await Promise.all(picked.map(async ({ rec, tab }) => {
+    if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
+    // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
+    if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
+    const item = { url: tabUrl(tab), partition: tab.isolated || null, rec };
+    return (await closeAiTab(rec, tab)) ? { item } : keepTab(rec, tab);
+  }));
+  const items = results.filter((r) => r.item).map((r) => r.item);
+  const token = items.length ? ++aiCloseSeq : 0;
+  if (token) {
+    aiCloseUndo.set(token, items);
+    while (aiCloseUndo.size > 20) aiCloseUndo.delete(aiCloseUndo.keys().next().value);
+  }
+  const result = { closed: items.length, kept: results.filter((r) => r.kept).length, token };
+  Object.defineProperty(result, 'rec', { value: items[0]?.rec || picked[0]?.rec || null }); // (not sent over IPC) the window holding the tabs: where a toast belongs
+  return result;
+}
+// Undo of a close: the tabs come back in the background, as the user's own tabs (they are theirs to keep now), and leave the
+// "Reopen Closed Tab" list again.
+function aiTabsReopen(token) {
+  const items = aiCloseUndo.get(token) || [];
+  aiCloseUndo.delete(token);
+  let reopened = 0;
+  for (const item of items) {
+    if (!isWebUrl(item.url)) continue;
+    const at = closedTabs.lastIndexOf(item.url);
+    if (at >= 0) closedTabs.splice(at, 1);
+    const rec = item.rec && winRecs.has(item.rec) && rcAlive(item.rec) ? item.rec : curRec;
+    withWindow(rec, () => openTab(item.url, { background: true, ...(item.partition ? { partition: item.partition } : {}) }));
+    reopened++;
+  }
+  return { reopened };
+}
+// What a finished run's 'done' event carries about its tabs: { n, mode } (mode: offer | ask | close), or null.
+function aiTabsAfterRun(runId) {
+  const setting = readSettings().closeAiTabs;
+  const mode = manners.closeAfterRun({ setting, n: aiTabSelect({ runId, auto: setting === 'always' }).length });
+  if (mode === 'none') return null;
+  return { n: aiTabSelect({ runId, auto: mode === 'close' }).length, mode };
+}
+// A close always names the run or the chat whose tabs it means: a call with neither closes nothing (it must never mean "every AI tab").
+const cleanSelector = (o) => ({ runId: Number.isFinite(Number(o?.runId)) && o?.runId !== null && o?.runId !== undefined ? Number(o.runId) : null, chatId: typeof o?.chatId === 'string' && o.chatId ? o.chatId : null });
+const aiTabsCloseFor = (o) => { const s = cleanSelector(o); return s.runId === null && s.chatId === null ? { closed: 0, kept: 0, token: 0 } : aiTabsClose(s); };
+ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsCloseFor(o));
+ipcMain.handle('agent:ai-tabs-undo', (_e, token) => aiTabsReopen(Number(token)));
+// The sidebar's "hide the tabs the AI opened" toggle: a saved setting (prefs:ui carries it to the strip). It only leaves them out of
+// the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close Tabs Opened by AI all still reach them).
+ipcMain.handle('tabs:hide-ai', async (_e, on) => {
+  if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
+  return readSettings().hideAiTabs === true;
+});
+ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
+ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
+if (TEST) global.__manners = manners;
+if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
 
 // Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
 // on in a tab behind another one (a screenshot, wait_for); back on once no run works there.
@@ -4436,9 +4591,9 @@ function moveBlock(ids, beforeId, groupId = null, join = undefined) {
     const prev = tabs[looseAt - 1], next = tabs[looseAt + looseMoving.length];
     const into = keep || (join !== undefined ? (join != null && tabGroups.groups.has(join) ? join : null)
       : (prev?.groupId && prev.groupId === next?.groupId ? prev.groupId : null) || (own && (prev?.groupId === own || next?.groupId === own) ? own : null));
-    for (const t of looseMoving) { t.groupId = into; t.userRemoved = !into; t.userMoved = true; }
+    for (const t of looseMoving) { t.groupId = into; t.userRemoved = !into; t.userMoved = true; manners.handOver(t); }
   }
-  for (const t of pinnedMoving) t.userMoved = true;
+  for (const t of pinnedMoving) { t.userMoved = true; manners.handOver(t); }
   tabGroups.cleanup();
   sendTabs();
   return true;
@@ -5661,17 +5816,24 @@ const agentActiveTab = () => {
 };
 // ...and its tabs open and switch out of sight, so the user stays on the chat page.
 // [chat per tab] ...and so do a chat's tabs when the user is looking at another tab than the one it works in.
-const agentOpenTab = (url, opts) => {
+// [ai manners] The tab the AI's tool opens stays behind the user's: it comes to the front only when the tool asked for it
+// ({ show: true }) and the user is looking at the run's own tab. Opening one never moves the omnibox caret or a field's focus.
+// `ai`: the AI is opening it for its work (marked openedBy the run, so it can be closed again and, in hands-off mode,
+// worked in); Undo reopening a tab it closed is not that.
+const runOwnTabId = () => { const s = agent.currentScope(); return s?.chat ? (s.tabId ?? activeId) : activeId; };
+const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null, runId: scope?.runId ?? null });
+const agentOpenTab = (url, opts = {}) => {
+  const { ai = false, show: wantShow = false, ...rest } = opts || {};
   const fromPage = chatPageRt?.runTarget() != null;
-  const watched = runWatched();
-  const tab = openTab(url, fromPage || !watched ? { ...opts, background: true } : opts);
+  const show = !fromPage && manners.showsTab({ show: wantShow === true, runTabId: runOwnTabId(), activeId });
+  const tab = openTab(url, { ...rest, background: !show, ...(ai ? { openedBy: runOf() } : {}) });
   if (fromPage) chatPageRt.retarget(tab.id);
-  else if (watched) bindRunChatTo(tab.id);
+  else if (show) bindRunChatTo(tab.id);
   return tab;
 };
-const agentSwitchTab = (id) => {
+const agentSwitchTab = (id, opts = {}) => {
   const fromPage = chatPageRt?.runTarget() != null;
-  if (!fromPage && runWatched()) {
+  if (!fromPage && manners.showsTab({ show: opts?.show === true, runTabId: runOwnTabId(), activeId })) {
     const ok = switchTab(id);
     if (ok) bindRunChatTo(id);
     return ok;
@@ -5742,7 +5904,7 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
   enabled: () => readSettings().researchTabs !== false,
   isAiOff: (url) => aiSites.isOff(url),
   searchUrl: (query) => searchUrlFor(readSettings().searchEngine, query),
-  openTab: inRun((url, opts) => openTab(url, { background: true, ...opts }).id),
+  openTab: inRun((url, opts) => openTab(url, { background: true, openedBy: runOf(), ...opts }).id), // [ai manners] research tabs are the AI's too
   navigateTab: inRun((id, url) => { const t = tabs.find((x) => x.id === id); if (alive(t)) t.view.webContents.loadURL(url).catch(() => {}); }),
   tabExists: inRun((id) => { const t = tabs.find((x) => x.id === id); return Boolean(t && !t.closing && (alive(t) || t.sleeping)); }),
   createGroup: inRun((name, ids) => { const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
@@ -5865,17 +6027,18 @@ const agent = new Agent({
   signedIn: signedInReader, // [signed-in sites]
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
-  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
+  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
+  handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -6322,6 +6485,7 @@ function moveTab(id, toIndex) {
     tab.userRemoved = !target;
   }
   tab.userMoved = true; // placed by hand: automatic grouping leaves it alone
+  manners.handOver(tab); // [ai manners] a tab the user moved is theirs
   tabGroups.cleanup();
   tabGroups.arrange();
   sendTabs();
@@ -6361,6 +6525,7 @@ ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
 ipcMain.on('nav:go', (_e, text) => {
   const wc = activeTab()?.webContents;
   if (!wc) return;
+  userTookOver(tabs.find((t) => t.id === activeId)); // [ai manners] the user navigated this tab
   // [settings] lumen://settings opens the settings tab (in place of a blank new tab); anything typed
   // into the settings tab opens in a normal tab in its place.
   const current = tabs.find((t) => t.id === activeId);
@@ -6382,8 +6547,8 @@ ipcMain.on('page:reader', () => { toggleReaderActive(); });
 ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
 if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
-ipcMain.on('nav:back', () => goBack(activeTab()?.webContents));
-ipcMain.on('nav:forward', () => activeTab()?.webContents.navigationHistory.goForward());
+ipcMain.on('nav:back', () => { userTookOver(tabs.find((t) => t.id === activeId)); goBack(activeTab()?.webContents); });
+ipcMain.on('nav:forward', () => { userTookOver(tabs.find((t) => t.id === activeId)); activeTab()?.webContents.navigationHistory.goForward(); });
 ipcMain.on('nav:reload', reloadActive);
 
 ipcMain.handle('suggest:query', async (_e, query) => { await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
@@ -6463,6 +6628,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     emit({ type: 'done' });
   };
   const emit = (msg) => {
+    let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
+    if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; }
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     if (msg.type === 'text') run.reply += msg.text;
@@ -6482,6 +6649,9 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
+      if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
+        aiTabsClose({ runId }, { auto: true }).then(({ closed, kept, token }) => chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: closed, kept, token })).catch(() => {});
+      }
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'context' && isOpen()) { ui()?.send('chats:context', msg.context); chatPageRt.broadcast('chats:context', msg.context, ui()); } // [context] the meter under the composer
@@ -6496,7 +6666,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     if (wasQueued) chatPageRt.emit(to(), 'agent:event', { type: 'status', text: '', runId }); // the waiting line goes
     const tabId = fromChatPage ? undefined : runHomeTab(run); // [chat per tab] where this chat is bound, not the tab in front now
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
-    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec } }, skillRun);
+    agent.run(askText, emit, valid, { tabs: tabsPicked, tabId, messages, hosts, meta: { rec: run.rec, chatId: runChat, runId } }, skillRun);
     pushAttention(); // the chat list shows it running
   };
   // [chat per tab] How many chats may work at once is a setting; the next waits its turn. Claude Code and Grok Build
@@ -6581,7 +6751,7 @@ ipcMain.handle('chats:list', (event) => {
       // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
       const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
         .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
-      return [...unsaved, ...saved].map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id) }));
+      return [...unsaved, ...saved].map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id), aiTabs: aiTabSelect({ chatId: c.id }).length }));
     })(),
   };
 });
@@ -6972,7 +7142,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 // ---------- AI agents over MCP and CDP, and the Claude Code engine (features/ai-agents.js) ----------
 
 const aiAgents = setupAiAgents({
-  app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab,
+  app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t),
   tools: EXTERNAL_TOOLS,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page

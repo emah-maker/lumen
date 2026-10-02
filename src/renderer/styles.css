@@ -259,6 +259,21 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.globe { color: var(--faint); stroke-width: 1.25; }
 .tab-favicon.page-icon { color: var(--muted); }
 .tab.ai-reading .tab-title { animation: ai-reading-pulse 1.4s ease-in-out infinite; }
+/* [ai manners] A tab the AI opened: a 10px sparkle after its title. No motion. It goes when the tab becomes yours (you click or type in it, pin it, move it). */
+.tab-ai-mark { display: none; flex: none; width: 10px; height: 10px; margin-left: 3px; pointer-events: none; color: var(--accent); opacity: 0.85; }
+.tab.ai-opened .tab-ai-mark { display: block; }
+.tab-ai-mark svg { display: block; width: 10px; height: 10px; fill: currentColor; }
+.tab.pinned .tab-ai-mark, .tab.sleeping .tab-ai-mark { opacity: 0.6; }
+@container tab (max-width: 60px) { .tab-ai-mark { display: none !important; } }
+/* [ai manners] The sidebar's "hide the tabs the AI opened" toggle: shown while the AI has tabs open (or the toggle is on), with their count. */
+.hide-ai-tabs { position: relative; width: 28px; height: 28px; flex: none; }
+.hide-ai-count { position: absolute; top: 0; right: -1px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 13px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; }
+.hide-ai-count[hidden] { display: none; }
+.hide-ai-tabs[hidden] { display: none; }
+.hide-ai-tabs .slash { opacity: 0; }
+.hide-ai-tabs[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.hide-ai-tabs[aria-pressed="true"] .slash { opacity: 1; }
+.hide-ai-tabs:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* [chat per tab] The chat in this tab: a 12px glyph between the icon and the title (never over the icon or the audio / state badges),
    one shape per state: spinner = working, ring = waiting its turn, check = finished and not viewed yet, "!" = needs your OK.
    Self-contained: everything it needs is under .tab-chat-mark. */

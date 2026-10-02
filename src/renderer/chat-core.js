@@ -941,10 +941,13 @@ function endStream() {
   if (turn?.text) decorateCode(turn.text); // its code blocks' colours, now that they are final
 }
 
+let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arrive after its 'done'
 window.assistant.onEvent((event) => {
   // An approval card answered or cancelled from an older run (after Stop or New chat) still has to
   // clear, or the toolbar's "waiting for approval" badge stayed on.
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok); return; }
+  // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
+  if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   if (!turn || event.runId !== runId) return;
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'status') { if (turn.working) { if (event.text) turn.working.dataset.status = event.text; else delete turn.working.dataset.status; } return; }
@@ -1101,6 +1104,8 @@ window.assistant.onEvent((event) => {
       for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
       turn.working.remove();
       if (event.undo) window.showRunUndo?.(append, event.undo); // [ai controls] extras.js
+      aiTabsRunId = event.runId;
+      if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
       turn = null;
       setRunning(false);
       setTimeout(sendQueued);

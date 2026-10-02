@@ -22,6 +22,11 @@
       <button class="icon-btn new-tab" id="new-tab" title="New tab (Ctrl+T)" aria-label="New tab" data-i18n-title="toolbar.newTab.title" data-i18n-aria-label="toolbar.newTab">
         <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
       </button>
+      <!-- [ai manners] hide / show the tabs the AI opened: shown only while there are some (or while hidden), with their count; the name stays, aria-pressed says the state -->
+      <button class="icon-btn hide-ai-tabs" id="hide-ai-tabs" type="button" title="Hide tabs the AI opened" aria-label="Hide tabs the AI opened" aria-pressed="false" data-i18n-aria-label="sidebar.hideAiTabs" hidden>
+        <svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path class="slash" d="M3 14L13 3"/></svg>
+        <span class="hide-ai-count" id="hide-ai-tabs-count" aria-hidden="true" hidden></span>
+      </button>
       <button class="organize-tabs" id="organize-tabs" type="button" hidden title="Group open tabs by topic" aria-label="Organize tabs" data-i18n-title="tabs.organize.title" data-i18n-aria-label="tabs.organize.label">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l1.3 3.2L12.5 7l-3.2 1.3L8 11.5 6.7 8.3 3.5 7l3.2-1.3z"/></svg>
         <span data-i18n="tabs.organize">Organize</span>
@@ -225,6 +230,7 @@
       </div>
 
       <form id="composer" class="composer">
+        <button type="button" class="hands-off-badge" id="hands-off" hidden title="Hands-off mode: the AI reads your tabs but won’t click, type or navigate in them. It works in tabs it opens itself. Change this in Settings." data-i18n-title="composer.handsOff.title"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 6V3.2a1 1 0 0 1 2 0V6M5 6V2.4a1 1 0 0 1 2 0V6M7 6V3a1 1 0 0 1 2 0v3.6c0 2-1.2 3.4-3 3.4S3 8.6 3 7.2V6"/></svg><span data-i18n="composer.handsOff">Hands-off</span></button>
         <button type="button" class="working-in" id="working-in" hidden></button>
         <div class="tabs-picker" id="tabs-picker" role="listbox" aria-label="Open tabs" data-i18n-aria-label="tabs.picker" hidden></div>
         <div class="tabs-confirm" id="tabs-confirm" role="alert" hidden></div>

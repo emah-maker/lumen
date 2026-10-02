@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- AI tab manners: tabs the AI opens are marked, open in the background and can be closed again in one step (with Undo); a setting keeps the AI from acting on your own pages (it also covers the Automation server, which then only reads); the AI no longer takes your focus or caret and waits while you type; a button in the tab strip hides the tabs the AI opened.
+
 ## 0.5.1 (2026-10-01)
 
 - Routines: save a request as a task the AI repeats on a schedule, like Comet's scheduled tasks: once, every day, weekdays, chosen days, every few hours or a cron schedule, in local time. Make one in Tasks → Routines (with templates for a morning news brief, checking a page for changes and a weekly site summary), with `/routine every weekday at 8am: …`, or with Save as routine on a reply. A run sends a notification and keeps its result in the routine's history (the last 20). Routines run while Lumen is open; a time missed while it was closed or asleep runs once when it is back, never two copies at once, and offline they wait for the connection. A scheduled run asks for the same approvals as any background task. See [Routines](docs/routines.md).

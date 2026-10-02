@@ -269,6 +269,94 @@ function setValue(id, text) {
   })()`;
 }
 
+// [ai manners] The field the user's caret is in (and where in it), kept in the AI's own world before a tool acts in
+// the page, and put back after (focusRestore): clicking or typing elsewhere moves the page's focus, and the user's
+// next key must still land where they were. Returns true when a field was kept (nothing is kept when the user is in
+// no field, so a page the user is not typing in is left exactly as the tool leaves it).
+function focusSave() {
+  return `(() => {
+    const deep = (doc) => {
+      let a = doc.activeElement;
+      for (let i = 0; i < 10 && a; i++) {
+        let inner = a.shadowRoot && a.shadowRoot.activeElement;
+        if (!inner && a.tagName === 'IFRAME') { try { inner = a.contentDocument && a.contentDocument.activeElement; } catch { inner = null; } }
+        if (!inner || inner === a) break;
+        a = inner;
+      }
+      return a;
+    };
+    const el = deep(document);
+    const plain = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'];
+    const typable = el && el !== document.body && el !== document.documentElement && (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !plain.includes(el.type)));
+    if (!typable) { window.__lumenKept = null; return false; }
+    const keep = { el };
+    try { if (typeof el.selectionStart === 'number') { keep.start = el.selectionStart; keep.end = el.selectionEnd; keep.dir = el.selectionDirection; } } catch {}
+    if (el.isContentEditable) { const sel = el.ownerDocument.getSelection(); if (sel && sel.rangeCount) keep.range = sel.getRangeAt(0).cloneRange(); }
+    window.__lumenKept = keep;
+    return true;
+  })()`;
+}
+
+// Is the field the user's caret is in the one a tool is about to type into? `id` null: whichever field has the page's focus (a key press
+// goes there). false when the user is in no text field, or in another one than element `id`.
+function userInField(id = null) {
+  return `(() => {
+    ${HELPERS}
+    let a = document.activeElement;
+    for (let i = 0; i < 10 && a; i++) {
+      let inner = a.shadowRoot && a.shadowRoot.activeElement;
+      if (!inner && a.tagName === 'IFRAME') { try { inner = a.contentDocument && a.contentDocument.activeElement; } catch { inner = null; } }
+      if (!inner || inner === a) break;
+      a = inner;
+    }
+    const plain = ['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'];
+    const typable = a && a !== document.body && a !== document.documentElement && (a.isContentEditable || a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !plain.includes(a.type)));
+    if (!typable) return false;
+    const target = ${id === null ? 'null' : `entryFor(${Number(id)})`};
+    return ${id === null ? 'true' : 'Boolean(target && target.el === a)'};
+  })()`;
+}
+
+// ...and back. `exceptId`: the element the tool just typed into (a tool that typed into the very field the user was in
+// has changed its text on purpose: its caret is left where the typing put it).
+function focusRestore(exceptId = null) {
+  return `(() => {
+    ${HELPERS}
+    const keep = window.__lumenKept;
+    window.__lumenKept = null;
+    if (!keep || !keep.el.isConnected) return false;
+    const el = keep.el;
+    const target = ${exceptId === null ? 'null' : `entryFor(${Number(exceptId)})`};
+    if (target && target.el === el) return false;
+    if (el.getRootNode().activeElement !== el) el.focus({ preventScroll: true });
+    try { if (keep.start != null) el.setSelectionRange(keep.start, keep.end, keep.dir || 'none'); } catch {}
+    if (keep.range) { const sel = el.ownerDocument.getSelection(); sel.removeAllRanges(); sel.addRange(keep.range); }
+    return true;
+  })()`;
+}
+
+// A click by position in a tab that is not on screen (no real mouse reaches it): the element under the point gets the
+// pointer and mouse events a click sends. x, y: CSS pixels. Returns { tag, label } or null.
+function domClickAt(x, y) {
+  return `(() => {
+    ${HELPERS}
+    let el = document.elementFromPoint(${Number(x)}, ${Number(y)});
+    if (!el) return null;
+    for (let i = 0; i < 10 && el.shadowRoot && el.shadowRoot.elementFromPoint; i++) {
+      const inner = el.shadowRoot.elementFromPoint(${Number(x)}, ${Number(y)});
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    const at = { bubbles: true, cancelable: true, view: window, clientX: ${Number(x)}, clientY: ${Number(y)}, button: 0 };
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+      el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, { ...at, pointerType: 'mouse' }) : new MouseEvent(type, at));
+    }
+    if (el.matches('input, textarea, select, [contenteditable], [contenteditable="true"]') && typeof el.focus === 'function') el.focus({ preventScroll: true }); // a click on a field puts the page's focus there (in the page only)
+    el.click();
+    return { tag: el.tagName.toLowerCase(), label: accessibleName(el) };
+  })()`;
+}
+
 // Scrolls the window, or the largest scrollable container if the window does not move.
 function scroll(pages) {
   return `(() => {
@@ -376,4 +464,4 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };

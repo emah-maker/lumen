@@ -9,6 +9,10 @@
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
     root.classList.toggle('pref-lite', Boolean(p.lite));
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
+    const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs
+    if (badge) badge.hidden = !p.handsOff;
+    const hide = p.hideAiTabs === true; // [ai manners] the strip leaves out the tabs the AI opened (app.js renderTabsNow)
+    if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     accent = p.accent || null;
     applyAccent();
   };
@@ -30,6 +34,7 @@
     style.setProperty('--accent-soft', `rgb(${r} ${g} ${b} / ${dark.matches ? 0.2 : 0.14})`);
   }
   dark.addEventListener('change', applyAccent);
+  document.getElementById('hands-off')?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('you-and-ai'));
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
 }
