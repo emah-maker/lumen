@@ -128,7 +128,7 @@
       const name = Object.assign(document.createElement('span'), { className: 'chat-title', textContent: chat.title || tr('chats.untitled', 'Chat') });
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? tr('chats.clickGoes', ' · click to go there') : tr('chats.clickMoves', ' · click moves it here')) : '';
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? ' · ' + tr('chats.clickGoes', 'click to go there') : ' · ' + tr('chats.clickMoves', 'click moves it here')) : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
       const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
@@ -260,14 +260,20 @@
           stopsOut++;
           stop.disabled = true;
           stop.textContent = tr('chats.stopping', 'Stopping…');
-          const wait = window.chatItemsStopMs || 4000; // (a test shortens it)
+          const wait = window.chatItemsStopMs || (chat.badge === 'running' ? 12000 : 4000); // (a test shortens it; a working chat can take a while to abort)
           let timedOut = false;
           const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
-          const lost = setTimeout(() => { if (stoppedOnce) return; timedOut = true; fail(); }, wait); // slow main: the button comes back, but a late success takes that back
+          const lost = setTimeout(async () => {
+            if (stoppedOnce) return;
+            if (chat.badge === 'running') { // a slow abort is not a failure: ask the run state before saying so
+              try { const now = await api.list?.(); if (!attached() || now?.chats?.find((c) => c.id === chat.id)?.badge !== 'running') return; } catch { /* fall through */ }
+            }
+            timedOut = true; fail();
+          }, wait); // slow main: the button comes back, but a late success takes that back
           try {
             const answer = await api.stopChat(chat.id);
             stopsOut--;
-            if (answer === false) { clearTimeout(lost); if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
+            if (answer === false) { clearTimeout(lost); if (chat.badge === 'running' && !stoppedOnce && stopsOut === 0) { rerender(); return; } if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
             stoppedOnce = true;
             clearTimeout(lost);
             if (timedOut && attached()) { unsay(); stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } // it did stop, only slowly

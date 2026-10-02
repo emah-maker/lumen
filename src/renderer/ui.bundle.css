@@ -1475,7 +1475,7 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-item:is(.has-queued, .has-running) { display: grid; grid-template-columns: 1fr; }
 .chat-item:is(.has-queued, .has-running) .chat-open { grid-column: 1; grid-row: 1; }
 .chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: -4px 0 4px 8px; padding: 4px 6px; border: 0; border-radius: 4px; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; text-decoration: underline; cursor: default; }
-.chat-stop-wait:hover { color: var(--text); background: var(--hover); }
+.chat-stop-wait:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, var(--hover)); }
 .chat-stop-wait:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .chat-stop-wait:disabled { opacity: 0.7; }
 @media (prefers-reduced-motion: reduce) { .chat-badge .cm-spin { animation: none; display: none; } .chat-badge .cm-still { display: block; } }
@@ -1485,7 +1485,6 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-item.has-running .chat-state { color: var(--accent); }
 .chat-item.has-approval .chat-state { color: color-mix(in srgb, var(--warning) 70%, var(--text)); }
 .chat-item.has-unread .chat-state { color: color-mix(in srgb, var(--success) 70%, var(--text)); }
-.chat-item:is(.has-queued, .has-running) .chat-actions { top: 3px; bottom: auto; }
 .chat-item:is(.has-running, .has-queued, .has-approval) .chat-place:not(.here)::after { content: " \203A"; } /* a chat working in another tab: clicking it goes there (an idle one is moved here instead) */
 /* The Chats button: another chat needs an OK or has a reply not seen yet. */
 #chat-history[data-attention] { position: relative; }
