@@ -41,7 +41,7 @@ const { installChromeWebStore, installExtension, uninstallExtension, loadAllExte
 const { extensionPermissionLines } = require('./browser/extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
-const { describeUsage } = require('./features/chat-usage');
+const { describeUsage, contextView } = require('./features/chat-usage');
 const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
@@ -3791,7 +3791,7 @@ function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
-  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), ...(live ? { live } : {}) };
+  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
 }
 
 // ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
@@ -5865,6 +5865,7 @@ const agent = new Agent({
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
+  autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
@@ -6466,6 +6467,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       setImmediate(pushAgentTarget);
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
+    else if (msg.type === 'context' && isOpen()) { ui()?.send('chats:context', msg.context); chatPageRt.broadcast('chats:context', msg.context, ui()); } // [context] the meter under the composer
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
   };
   const skillRun = skillsFeature.takeRun(askText);
@@ -6552,6 +6554,7 @@ ipcMain.handle('chats:list', (event) => {
   return {
     current: chatId,
     currentUsage: describeUsage(agent.messages.settings?.usage),
+    currentContext: contextView(agent.messages.settings?.context), // [context]
     maxRuns: runSlots.limit,
     chats: (() => {
       const badges = chatBadges();
@@ -6614,7 +6617,7 @@ function chatMarkdown(id) {
   if (!snapshot?.messages?.length) return null;
   const entry = chats().list().find((c) => c.id === id);
   const title = entry?.title || autoTitle(snapshot);
-  const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages));
+  const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages, snapshot.settings));
   return { title, markdown };
 }
 // Export: always the user's own click in the sidebar (a UI-only channel), and always through a

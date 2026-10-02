@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for t in units claudecode-full-units updates-units agentic-units catalog-units frames-units clock-style-units github-units gmail-units highlight-units local-custom-units markets-units math-units model-route-units password-units settings-async-units setup-units signing-units signed-in-units slack-units small-screen-units spotify-units tradingview-units whats-new-units widget-edit-units widget-summary-units widget-units; do
+          for t in units claudecode-full-units chat-context-units updates-units agentic-units catalog-units clock-style-units github-units gmail-units highlight-units local-custom-units markets-units math-units model-route-units password-units settings-async-units setup-units signing-units signed-in-units slack-units small-screen-units spotify-units tradingview-units whats-new-units widget-edit-units widget-summary-units widget-units frames-units; do
             echo "::group::$t"
             node "test/$t.js"
             echo "::endgroup::"

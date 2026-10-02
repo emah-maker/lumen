@@ -89,4 +89,55 @@ function describeUsage(u) {
   return parts.join(' · ');
 }
 
-module.exports = { PRICES, PRICES_UPDATED, addUsage, describeUsage, normalize, priceTurn, emptyUsage };
+// ---------- context: how full the chat's context window is ----------
+// A chat's settings.context is { tokens, window, at, estimated? }: what the model had in view on the chat's last
+// request (its whole input: fresh, cache reads and cache writes; not the turn's summed input, which counts a tool
+// loop's context once per call), and the window of the model that answered. `estimated`: worked out by Lumen (after
+// a /compact, before the next request reports the real figure). The meter under the composer shows it; /context
+// shows it in words.
+const DEFAULT_WINDOW = 200_000;
+
+// Tokens in context for one request, from its raw usage (an Anthropic message's or a Chat Completions chunk's).
+function contextTokensOf(raw) {
+  const t = normalize(raw);
+  return t ? t.input + t.cacheRead + t.cacheWrite : 0;
+}
+
+// The window to measure against: what the engine reported (Claude Code's modelUsage, Grok's catalog, the
+// fallback table for API models), else 1M for a `[1m]` model id and 200k for anything else.
+function windowFor(model, reported) {
+  if (Number(reported) > 0) return Number(reported);
+  return /\[1m\]/i.test(String(model || '')) ? 1_000_000 : DEFAULT_WINDOW;
+}
+
+// Records the chat's context on its settings; returns it (null when there is nothing real to record).
+function setContext(settings, { tokens, window, model, estimated = false, now = Date.now() } = {}) {
+  if (!settings || !(Number(tokens) >= 0) || !Number.isFinite(Number(tokens))) return null;
+  settings.context = { tokens: Math.round(Number(tokens)), window: windowFor(model, window), at: now, ...(estimated ? { estimated: true } : {}) };
+  return settings.context;
+}
+
+// What the renderer gets for a chat: { tokens, window, percent (0 to 100), estimated }, or null when unknown.
+function contextView(ctx) {
+  if (!ctx || !(ctx.window > 0) || !Number.isFinite(ctx.tokens)) return null;
+  return { tokens: ctx.tokens, window: ctx.window, percent: Math.max(0, Math.min(100, (ctx.tokens / ctx.window) * 100)), estimated: Boolean(ctx.estimated) };
+}
+
+// "18.1k" -> 18100, "1M" -> 1000000, "2,048" -> 2048.
+function parseCount(text) {
+  const m = /^([\d.,]+)\s*([kKmM]?)$/.exec(String(text || '').trim());
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ''));
+  return Number.isFinite(n) ? Math.round(n * (/k/i.test(m[2]) ? 1e3 : /m/i.test(m[2]) ? 1e6 : 1)) : null;
+}
+
+// Claude Code's /context report ("**Tokens:** 18.1k / 200k (9%)", checked against 2.1.287): { tokens, window } or null.
+function parseContextReport(text) {
+  const m = /Tokens:?\**:?\s*([\d.,]+\s*[kKmM]?)\s*\/\s*([\d.,]+\s*[kKmM]?)/.exec(String(text || ''));
+  if (!m) return null;
+  const tokens = parseCount(m[1]);
+  const window = parseCount(m[2]);
+  return tokens != null && window > 0 ? { tokens, window } : null;
+}
+
+module.exports = { PRICES, PRICES_UPDATED, addUsage, describeUsage, normalize, priceTurn, emptyUsage, contextTokensOf, windowFor, setContext, contextView, parseCount, parseContextReport, shortCount: compact, DEFAULT_WINDOW };
