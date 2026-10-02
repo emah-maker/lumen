@@ -269,7 +269,7 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-chat-mark .cm-still { display: none; }
 .tab-chat-mark.waiting { color: var(--muted); }
 .tab-chat-mark.done { color: var(--success); }
-.tab-chat-mark.approval { color: var(--warning); }
+.tab-chat-mark.needs-ok { color: var(--warning); } /* (not .approval: that is the approval card) */
 .tab-chat-mark .cm-on { fill: currentColor; stroke: none; }
 .tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 @media (prefers-reduced-motion: reduce) { .tab-chat-mark .cm-spin { animation: none; } .tab-chat-mark .cm-still { display: block; } }
@@ -700,6 +700,9 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .notice-action:hover { text-decoration: underline; }
 .notice-action:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .error { color: var(--danger); font-size: 12px; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--danger-soft); }
+.error-details { margin-top: 6px; color: var(--muted); }
+.error-details summary { cursor: default; font-size: 11.5px; }
+.error-details pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.4 ui-monospace, monospace; }
 .error .btn { display: block; margin-top: 8px; height: 26px; font-size: 12px; color: var(--text); background: var(--surface-raised); }
 
 /* Working: a thin line with light moving along it, instead of bouncing dots. */

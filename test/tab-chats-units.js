@@ -131,6 +131,23 @@ const J = (v) => JSON.stringify(v);
   check('watchdog: a run that comes back resets the count', J(s.sweep()) === '[]' && s.state('f') === 'running');
 }
 
+// ---- mark and badge styling: a state class must not match another component's rule (static check, no app needed)
+// The "needs OK" mark once carried the class "approval", which is also the approval card (padding, background, hover lift):
+// it drew as a 40px pill. The state classes of the tab marks and list badges are checked against every stylesheet.
+{
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname, '..', 'src', 'renderer');
+  const css = ['styles.css', 'chats.css', 'managers.css', 'private.css'].filter((n) => fs.existsSync(path.join(dir, n))).map((n) => fs.readFileSync(path.join(dir, n), 'utf8')).join('\n');
+  const app = fs.readFileSync(path.join(dir, 'app.js'), 'utf8');
+  const items = fs.readFileSync(path.join(dir, 'chat-items.js'), 'utf8');
+  const stateClasses = ['running', 'waiting', 'queued', 'unread', 'done', 'needs-ok'];
+  const loose = stateClasses.filter((c) => new RegExp('(^|[,}\\n])\\s*\\.' + c + '\\s*[{,:]').test(css.replace(/\/\*[\s\S]*?\*\//g, '')));
+  check('marks: no stylesheet has a bare rule for a mark state class (it would style the mark too)', loose.length === 0, J(loose));
+  check('marks: the needs-OK state uses its own class in the tab strip and the chat list, never "approval"', /'needs-ok'/.test(app) && /'needs-ok'/.test(items) && /\.tab-chat-mark\.needs-ok/.test(css) && /\.chat-badge\.needs-ok/.test(css) && !/\.(tab-chat-mark|chat-badge)\.approval/.test(css));
+  check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
+}
+
 // ---- tool target
 {
   const open = () => true;

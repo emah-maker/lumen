@@ -1185,7 +1185,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
     chatMark.dataset.state = tab.chat || '';
-    chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat}` : ''}`;
+    chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat === 'approval' ? 'needs-ok' : tab.chat}` : ''}`;
     chatMark.innerHTML = CHAT_MARKS[tab.chat] || '';
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.

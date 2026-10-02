@@ -1067,6 +1067,11 @@ window.assistant.onEvent((event) => {
     case 'error': {
       const errorEl = Object.assign(document.createElement('div'), { className: 'error', textContent: event.text });
       errorEl.setAttribute('role', 'alert');
+      if (event.details) { // the plain line first, the engine's own words behind a toggle
+        const more = Object.assign(document.createElement('details'), { className: 'error-details' });
+        more.append(Object.assign(document.createElement('summary'), { textContent: t('chat.errorDetails') }), Object.assign(document.createElement('pre'), { textContent: event.details }));
+        errorEl.append(more);
+      }
       const error = appendToTurn(errorEl);
       turn.failed = true;
       if (event.action === 'settings') {

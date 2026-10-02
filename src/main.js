@@ -6452,7 +6452,9 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   run.fail = (err) => {
     if (chatRuns.get(runChat) !== run) return;
     run.queued = false;
-    emit({ type: 'error', text: String(err?.message || err) });
+    const raw = String(err?.message || err);
+    const stale = raw === t('agent.engineStopped'); // (already plain words)
+    emit({ type: 'error', text: stale ? raw : t('agent.startFailed'), details: stale ? undefined : raw.slice(0, 600) });
     emit({ type: 'done' });
   };
   const emit = (msg) => {

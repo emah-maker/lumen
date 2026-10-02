@@ -2406,6 +2406,11 @@ window.assistant.onEvent((event) => {
     case 'error': {
       const errorEl = Object.assign(document.createElement('div'), { className: 'error', textContent: event.text });
       errorEl.setAttribute('role', 'alert');
+      if (event.details) { // the plain line first, the engine's own words behind a toggle
+        const more = Object.assign(document.createElement('details'), { className: 'error-details' });
+        more.append(Object.assign(document.createElement('summary'), { textContent: t('chat.errorDetails') }), Object.assign(document.createElement('pre'), { textContent: event.details }));
+        errorEl.append(more);
+      }
       const error = appendToTurn(errorEl);
       turn.failed = true;
       if (event.action === 'settings') {
@@ -3471,7 +3476,7 @@ function startChat() {
       if (chat.badge) {
         const label = { running: tr('chats.badge.running', 'Working'), queued: tr('chats.badge.queued', 'Waiting for its turn'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
         if (label) {
-          const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge}`, title: label });
+          const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge === 'approval' ? 'needs-ok' : chat.badge}`, title: label });
           badge.innerHTML = GLYPHS[chat.badge] || '';
           badge.setAttribute('role', 'img');
           badge.setAttribute('aria-label', label);
@@ -4799,7 +4804,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
     chatMark.dataset.state = tab.chat || '';
-    chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat}` : ''}`;
+    chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat === 'approval' ? 'needs-ok' : tab.chat}` : ''}`;
     chatMark.innerHTML = CHAT_MARKS[tab.chat] || '';
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.

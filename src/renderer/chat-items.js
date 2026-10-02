@@ -136,7 +136,7 @@
       if (chat.badge) {
         const label = { running: tr('chats.badge.running', 'Working'), queued: tr('chats.badge.queued', 'Waiting for its turn'), approval: tr('chats.badge.approval', 'Needs your OK'), unread: tr('chats.badge.unread', 'New reply') }[chat.badge];
         if (label) {
-          const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge}`, title: label });
+          const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge === 'approval' ? 'needs-ok' : chat.badge}`, title: label });
           badge.innerHTML = GLYPHS[chat.badge] || '';
           badge.setAttribute('role', 'img');
           badge.setAttribute('aria-label', label);
