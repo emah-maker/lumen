@@ -1646,25 +1646,38 @@ function aiHiddenTab(tab, state) {
   return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
 }
 const hideAiButton = $('hide-ai-tabs');
+// What the toggle reports, counted from the same rule the strip draws by: `hidden` tabs are out of the strip; `shown` are the AI's tabs that are
+// in it anyway (the one in front, one playing sound) while the toggle is on. A tab is in exactly one of the two, so the button never says
+// "hidden" about a tab the strip is showing, and never counts a shown tab as hidden.
+function hideAiSummary(state) {
+  const on = window.lumenHideAiTabs === true;
+  const ai = (state?.tabs || []).filter((x) => x.aiOpened);
+  const hidden = ai.filter((x) => aiHiddenTab(x, state)).length;
+  return { on, total: ai.length, hidden, shown: on ? ai.length - hidden : 0 };
+}
 function syncHideAiToggle(state) {
   if (!hideAiButton) return;
-  const on = window.lumenHideAiTabs === true;
-  const total = (state?.tabs || []).filter((x) => x.aiOpened).length;
-  const out = (state?.tabs || []).filter((x) => aiHiddenTab(x, state)).length;
+  const { on, total, hidden: out, shown } = hideAiSummary(state);
   const count = on ? out : total;
   hideAiButton.hidden = !on && total === 0; // nothing to hide: no button (it stays while the toggle is on, so it can be turned off)
   hideAiButton.setAttribute('aria-pressed', String(on));
-  const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
+  const plural = (n) => (n === 1 ? 'one' : 'other');
+  const label = !on ? t(`sidebar.hideAiTabs.off.${plural(total)}`, { count: total })
+    : out > 0 && shown > 0 ? t(`sidebar.hideAiTabs.more.${plural(out)}`, { count: out })
+      : out > 0 ? t(`sidebar.hideAiTabs.on.${plural(out)}`, { count: out })
+        : shown > 0 ? t(`sidebar.hideAiTabs.inView.${plural(shown)}`, { count: shown })
+          : t('sidebar.hideAiTabs.on.none');
   hideAiButton.title = label;
   const badge = $('hide-ai-tabs-count');
-  // While tabs are hidden the button says so in words ("2 hidden"), not just with a number: nothing in the strip says tabs went missing otherwise
+  // While the toggle is hiding or sparing tabs the button says so in words ("2 hidden", "2 more hidden" beside the AI tab in front, "1 in view"), not just with a number:
+  // nothing in the strip says tabs went missing otherwise
   const chip = $('hide-ai-tabs-label');
-  const words = on && out > 0;
+  const words = on && (out > 0 || shown > 0);
   chip.hidden = !words;
-  chip.textContent = words ? t('sidebar.hideAiTabs.chip', { count: out }) : '';
+  chip.textContent = !words ? '' : out > 0 ? t(shown > 0 ? 'sidebar.hideAiTabs.chipMore' : 'sidebar.hideAiTabs.chip', { count: out }) : t('sidebar.hideAiTabs.chipInView', { count: shown });
   hideAiButton.classList.toggle('has-label', words);
-  badge.hidden = count === 0; // (the stylesheet hides it while the words show, and brings it back in a narrow window)
-  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.hidden = count === 0 && !(on && shown > 0); // (the stylesheet hides it while the words show, and brings it back in a narrow window)
+  badge.textContent = count > 99 ? '99+' : String(count || shown);
 }
 hideAiButton?.addEventListener('click', async () => {
   const on = await Promise.resolve(window.browser.hideAiTabs?.(window.lumenHideAiTabs !== true)).catch(() => window.lumenHideAiTabs === true);

@@ -321,6 +321,94 @@ const launch = (profile) => electron.launch({
   check('1000px: Organize (when shown) is just its icon', !seven.orgShown || (seven.orgText === 'none' && seven.orgW <= 30), JSON.stringify(seven));
   await app2.close();
   fs.rmSync(profile2, { recursive: true, force: true });
+
+  // ---- 12. "Hide AI tabs" is on and a new session opens tabs: none appears in the strip (but the one in front, or one playing sound), and the
+  // button and its words always match what the strip shows: a tab shown because it is in front is not counted as hidden. Two windows; off and on.
+  {
+    const profile3 = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-aimanners3-'));
+    const app3 = await launch(profile3);
+    const w1 = await app3.firstWindow();
+    await w1.waitForSelector('.tab');
+    await w1.evaluate(() => document.getElementById('toggle-sidebar').click());
+    await app3.evaluate(() => global.__settings.backend.set('hideAiTabs', true));
+    const strip = (page) => page.evaluate(() => {
+      const b = document.getElementById('hide-ai-tabs');
+      const tabs = [...document.querySelectorAll('#tabs .tab')];
+      return { ids: tabs.map((e) => Number(e.dataset.id)), ai: tabs.filter((e) => e.classList.contains('ai-opened')).map((e) => Number(e.dataset.id)), front: Number(document.querySelector('#tabs .tab.active')?.dataset.id), pressed: b.getAttribute('aria-pressed'), gone: b.hidden, chip: document.getElementById('hide-ai-tabs-label').hidden ? '' : document.getElementById('hide-ai-tabs-label').textContent.trim(), title: b.title };
+    });
+    const aiIds = (winIndex = 0) => app3.evaluate((_e, n) => global.__windows.list()[n].tabs.map((x) => x.id).filter((i) => global.__aiTabs.tab(i)?.openedBy), winIndex);
+    // the invariant: the button's count and words are exactly what the strip shows
+    const matches = async (page, winIndex = 0) => {
+      await sleep(400);
+      const s = await strip(page);
+      const ai = await aiIds(winIndex);
+      const hidden = ai.filter((i) => !s.ids.includes(i)).length;
+      const shown = ai.filter((i) => s.ids.includes(i)).length;
+      const wantChip = hidden > 0 ? (shown > 0 ? `${hidden} more hidden` : `${hidden} hidden`) : shown > 0 ? `${shown} in view` : '';
+      const wantTitle = hidden > 0 && shown === 0 ? /is hidden|are hidden/ : hidden > 0 ? /more tabs? the AI opened (is|are) hidden/ : shown > 0 ? /stays? in the strip/ : /Tabs the AI opens are hidden/;
+      return { ok: s.pressed === 'true' && s.chip === wantChip && wantTitle.test(s.title) && !(hidden === 0 && /is hidden|are hidden/.test(s.title) && shown > 0), s, hidden, shown, wantChip };
+    };
+    const userTab = (await app3.evaluate(() => global.__windows.list()[0].activeId));
+    const aiOpen = (u, o = {}) => app3.evaluate((_e, a) => global.__agent.browser.openTab(a.u, { ai: true, ...a.o }).id, { u, o });
+    let m = await matches(w1);
+    check('hide on, nothing opened yet: the button says tabs the AI opens are hidden, with no tab claimed', m.ok && m.hidden === 0 && m.shown === 0, JSON.stringify(m));
+
+    // a new session: tabs behind the user's, an outside agent's tab, and a link an AI page opens
+    const n1 = await aiOpen(`${base}/s1`);
+    const n2 = await app3.evaluate((_e, u) => global.__agent.browser.openTab(u, { background: true, openedBy: {} }).id, `${base}/s2`); // (an outside agent: ai-agents.js)
+    await waitFor(() => app3.evaluate((_e, i) => /\/s1$/.test(global.__aiTabs.tab(i)?.view.webContents.getURL() || ''), n1));
+    await app3.evaluate((_e, i) => global.__aiTabs.tab(i).view.webContents.executeJavaScript("window.open('/s3', '_blank'); true", true), n1);
+    const n3 = await waitFor(() => app3.evaluate(() => global.__windows.list()[0].tabs.find((x) => /\/s3$/.test(x.url))?.id));
+    m = await matches(w1);
+    check('a new session\'s tabs open behind: the user stays on their tab', (await app3.evaluate(() => global.__windows.list()[0].activeId)) === userTab && m.s.front === userTab, JSON.stringify(m));
+    check('a link an AI page opened is the AI\'s too (marked, behind)', Boolean(n3) && (await app3.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)?.openedBy), n3)), String(n3));
+    check('none of them appears in the strip, and the chip says "3 hidden"', m.s.ids.length === 1 && m.s.ids[0] === userTab && m.hidden === 3 && m.s.chip === '3 hidden' && m.ok, JSON.stringify(m));
+
+    // one comes to the front (the AI shows it): it is shown, not counted as hidden, and the button says so
+    const n4 = await aiOpen(`${base}/s4`, { show: true });
+    await waitFor(async () => (await app3.evaluate(() => global.__windows.list()[0].activeId)) === n4);
+    m = await matches(w1);
+    check('the AI tab in front is in the strip with its mark, and the others stay out', m.s.ids.includes(n4) && m.s.ai.includes(n4) && m.s.front === n4 && m.s.ids.length === 2 && m.hidden === 3, JSON.stringify(m));
+    check('...the chip says "3 more hidden" (the one in front is not counted), and the button does not claim all are hidden', m.ok && m.s.chip === '3 more hidden' && !/^3 tabs the AI opened are hidden/.test(m.s.title), JSON.stringify(m));
+
+    // back to the user's tab: it goes out again; with only the front AI tab left over, the button says "in view" instead of "hidden"
+    await app3.evaluate((_e, i) => global.__aiTabs.switchTo(i), userTab);
+    m = await matches(w1);
+    check('leaving it hides it again and the chip says "4 hidden"', m.s.ids.length === 1 && m.hidden === 4 && m.s.chip === '4 hidden' && m.ok, JSON.stringify(m));
+    await app3.evaluate((_e, ids) => { for (const i of ids) global.__aiTabs.handOver(global.__aiTabs.tab(i)); }, [n1, n2, n3]); // (the user took three over)
+    await app3.evaluate((_e, i) => global.__aiTabs.switchTo(i), n4);
+    m = await matches(w1);
+    check('only the AI tab in front is left: the chip says "1 in view", the button never says "hidden"', m.shown === 1 && m.hidden === 0 && m.s.chip === '1 in view' && !/is hidden|are hidden/.test(m.s.title) && m.ok, JSON.stringify(m));
+    await app3.evaluate((_e, i) => global.__aiTabs.switchTo(i), userTab);
+
+    // a second window: the toggle state reaches it, a new session's tab there is hidden there, and its words match its own strip
+    const known = await app3.evaluate(() => global.__windows.list().map((w) => w.windowId));
+    await app3.evaluate(({ BrowserWindow }) => { const wc = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('index.html')).webContents; wc.sendInputEvent({ type: 'keyDown', keyCode: 'N', modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'N', modifiers: ['control'] }); });
+    const two = await waitFor(async () => { const w = await app3.evaluate(() => global.__windows.list()); return w.length === known.length + 1 && w.every((x) => x.tabs.length) && w; }, 12000);
+    const w2page = await waitFor(() => app3.windows().find((p) => p !== w1 && /index\.html/.test(p.url())), 12000);
+    check('a second window opens', Boolean(two) && Boolean(w2page), JSON.stringify(two));
+    const idx2 = two ? two.findIndex((w) => !known.includes(w.windowId)) : 1;
+    await w2page.waitForSelector('.tab');
+    await w2page.evaluate(() => { if (!document.getElementById('sidebar') || getComputedStyle(document.getElementById('sidebar')).display === 'none') document.getElementById('toggle-sidebar')?.click(); });
+    const pressed2 = await waitFor(async () => (await strip(w2page)).pressed === 'true');
+    check('the second window shows the toggle on', Boolean(pressed2), JSON.stringify(await strip(w2page)));
+    const bAi = await app3.evaluate((_e, u) => global.__agent.browser.openTab(u, { ai: true }).id, `${base}/b1`); // (the new window is the current one)
+    const bWin = await app3.evaluate((_e, i) => global.__windows.list().findIndex((w) => w.tabs.some((x) => x.id === i)), bAi);
+    m = await matches(w2page, bWin);
+    check('a new session\'s tab in the second window is hidden there, and its chip matches', bWin === idx2 && m.hidden === 1 && !m.s.ids.includes(bAi) && m.s.chip === '1 hidden' && m.ok, JSON.stringify({ m, bWin, idx2 }));
+
+    // off and on refresh every window at once
+    await app3.evaluate(() => global.__settings.backend.set('hideAiTabs', false));
+    const offBoth = await waitFor(async () => { const a = await strip(w1); const b = await strip(w2page); return a.pressed === 'false' && b.pressed === 'false' && a.ai.every((i) => a.ids.includes(i)) && b.ai.every((i) => b.ids.includes(i)) && b.ai.includes(bAi) && [a, b]; });
+    check('off: both windows show every AI tab again (marked), the chip is gone', Boolean(offBoth) && offBoth.every((s) => s.chip === ''), JSON.stringify(offBoth));
+    await app3.evaluate(() => global.__settings.backend.set('hideAiTabs', true));
+    const onBoth = await waitFor(async () => { const a = await strip(w1); const b = await strip(w2page); return a.pressed === 'true' && b.pressed === 'true' && !b.ids.includes(bAi) && [a, b]; });
+    check('on again: both windows hide them again at once', Boolean(onBoth), JSON.stringify(onBoth));
+    const mm = await matches(w2page, idx2);
+    check('...and the second window\'s chip still matches its strip', mm.ok, JSON.stringify(mm));
+    await app3.close();
+    fs.rmSync(profile3, { recursive: true, force: true });
+  }
   server.close();
   fs.rmSync(profile, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failed` : '\nall passed');

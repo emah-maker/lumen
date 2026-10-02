@@ -1863,7 +1863,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
         overrideBrowserWindowOptions: popupWindowOptions(),
         outlivesOpener: true,
         // No page yet means a person's Shift+click on a link, not a page's sign-in popup: it opens as a normal tab.
-        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tab.isolated, target, tab) : withWindow(tab.rec, () => openTab(target, { openerId: id, partition: tab.isolated, ...fromAiTab() })).webContents),
+        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tab.isolated, target, tab) : withWindow(tab.rec, () => openTab(target, { background: manners.isAiTab(tab), openerId: id, partition: tab.isolated, ...fromAiTab() })).webContents),
       };
     }
     // A tab. When a page's script asked for it (window.open), the page gets that new window back and it keeps
@@ -3521,7 +3521,8 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
   wc.setWindowOpenHandler(({ url, disposition }) => {
     if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
     if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url) };
-    withWindow(curRec, () => openTab(url, { background: disposition === 'background-tab', partition })); // a research tab's popup keeps to its session
+    const byAi = manners.isAiTab(openerTab); // [ai manners] a link from a window an AI tab's page opened is the AI's too: behind the user's tab, and kept out of the strip when hiding is on
+    withWindow(curRec, () => openTab(url, { background: disposition === 'background-tab' || byAi, partition, ...(byAi ? { openedBy: { chatId: openerTab.openedBy.chatId, runId: openerTab.openedBy.runId } } : {}) })); // a research tab's popup keeps to its session
     return { action: 'deny' };
   });
   return wc;
@@ -5998,7 +5999,7 @@ const signedInReader = {
   hasLogin: async (url) => require('./features/signed-in-sites').hasLoginCookies(await session.defaultSession.cookies.get({ url })),
   privateWindow: () => { const run = runRecNow(); const rec = run && winRecs.has(run) ? run : curRec; return !rec || !winRecs.has(rec); }, // private windows have no record, so never
   open: inRun((url) => {
-    const tab = openTab(url, { background: true }); // the user's default session: no partition
+    const tab = openTab(url, { background: true, openedBy: runOf() }); // the user's default session: no partition. [ai manners] the AI's tab, so "hide tabs the AI opened" covers it
     const t = tabs.find((x) => x.id === tab.id);
     if (t) {
       t.aiSignedIn = { openedAt: Date.now() };
