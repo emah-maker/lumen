@@ -65,13 +65,14 @@
   }
   async function openChat(id) {
     const view = await api.open(id);
-    if (!view) { await renderList(); return; } // gone (deleted, or unreadable on this machine)
+    if (!view) { await renderList(); return false; } // gone (deleted, or unreadable on this machine)
     clearChatView();
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);
     await renderList();
     prompt.focus();
+    return true;
   }
   tools.arrows(items); // Up/Down between chats, Home/End to the ends
   // New chat is the shared #new-chat button (chat-core.js resets the chat and empties the view).

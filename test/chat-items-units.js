@@ -29,7 +29,8 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'c
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
-  const make = (api, chat) => { const item = sandbox.window.createChatItems({ api, onOpen() {}, rerender: async () => {}, cleared() {} }); return item(chat, false); };
+  let opener = async () => true;
+  const make = (api, chat) => { const item = sandbox.window.createChatItems({ api, open: opener, rerender: async () => {}, cleared() {} }); return item(chat, false); };
   const base = { id: 'c1', title: 'Chat one', updated: Date.now(), usage: '' };
   const meta = (li) => li.find('chat-open')[0].find('chat-meta-text')[0];
 
@@ -85,6 +86,42 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   li = make(api, { ...base, badge: 'running', tab: { id: 2, title: 'Other', here: false } });
   await li.find('chat-open')[0].onclick();
   check('row click: opening the working chat\'s tab failing says so (no unhandled rejection)', /Could not open the tab/.test(meta(li).textContent), meta(li).textContent);
+
+  // showTab answers false when the chat's tab is gone (it does not throw): a note, and the list stays open
+  let closed = 0;
+  sandbox.window.chatList = { close: () => { closed++; } };
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => false, stopChat: async () => true, remove: async () => ({}) };
+  li = make(api, { ...base, badge: 'running', tab: { id: 2, title: 'Other', here: false } });
+  await li.find('chat-open')[0].onclick();
+  check('row click: showTab answering false says the tab is gone and the list is not closed', /Could not open the tab/.test(meta(li).textContent) && closed === 0, `${meta(li).textContent} ${closed}`);
+  await li.find('chat-actions')[0].children.find((b) => b.classList.contains('chat-act-tab')).onclick();
+  check('the open-in-tab button does the same', /Could not open the tab/.test(meta(li).textContent) && closed === 0);
+  api.showTab = async () => true;
+  await li.find('chat-open')[0].onclick();
+  check('showTab true closes the list', closed === 1, closed);
+  // an idle chat's row click moves it here: a false answer (gone) gets a note too
+  opener = async () => false;
+  li = make(api, base);
+  await li.find('chat-open')[0].onclick();
+  check('row click: an idle chat that cannot be opened says so', /Could not open this chat/.test(meta(li).textContent), meta(li).textContent);
+  opener = async () => true;
+  // a slow stop that then succeeds takes its failure note back
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => true, stopChat: async () => { await sleep(90); return true; }, remove: async () => ({}), list: async () => ({ chats: [] }) };
+  li = make(api, queued);
+  stop = li.find('chat-stop-wait')[0];
+  const slow = stop.onclick({ stopPropagation() {} });
+  await sleep(60);
+  check('stop: a slow answer first restores the button with a note', stop.disabled === false && /Could not stop/.test(meta(li).textContent));
+  await slow;
+  check('stop: ...and a late success takes the note back and shows "Stopping…"', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
+  // a row that has been redrawn away is never written to
+  api = { exportChat: async () => ({ ok: true }), showTab: async () => true, stopChat: async () => true, remove: async () => ({}), list: async () => ({ chats: [{ id: 'c1', badge: 'queued' }] }) };
+  li = make(api, queued);
+  stop = li.find('chat-stop-wait')[0];
+  await stop.onclick({ stopPropagation() {} });
+  li.isConnected = false; // the list was redrawn
+  await sleep(150);
+  check('stop: the follow-up leaves a detached row alone', stop.disabled === true && !/Could not stop/.test(meta(li).textContent));
 
   // which button a narrow list drops, and the inline sizes
   const idle = { ...base, tab: { id: 2, title: 'Other', here: false } };

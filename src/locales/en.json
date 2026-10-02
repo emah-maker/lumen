@@ -105,6 +105,7 @@
   "chats.stopFailed": "Could not stop it",
   "chats.stopping": "Stopping…",
   "chats.tabFailed": "Could not open the tab",
+  "chats.openFailed": "Could not open this chat",
   "chats.showTab": "Open chat in its tab",
   "chats.moveHere": "Move chat to this tab",
   "chats.thisTab": "This tab",

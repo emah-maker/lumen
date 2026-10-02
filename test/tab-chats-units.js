@@ -192,7 +192,7 @@ const J = (v) => JSON.stringify(v);
     const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-page.js'), 'utf8');
     check('stop: chats:stop is a handle that returns stopChat()\'s answer, listed as a UI-only channel for the window and the chat page', /ipcMain\.handle\('chats:stop'[^\n]*stopChat\(id\)/.test(mainSrc) && /'chats:stop'/.test(mainSrc.slice(0, mainSrc.indexOf('ipcMain.handle('))) && /'chats:stop'/.test(page));
     check('stop: both preloads invoke it', /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(pre) && /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(chatPre));
-    check('stop: a false answer or 4 seconds without one restores the button with a note', /\(await api\.stopChat\(chat\.id\)\) === false/.test(items) && /setTimeout\(fail, wait\)/.test(items) && /clearTimeout\(lost\);\s*setTimeout/.test(items)); // (behaviour: test/chat-items-units.js)
+    check('stop: a false answer or 4 seconds without one restores the button with a note', /\(await api\.stopChat\(chat\.id\)\) === false/.test(items) && /timedOut = true; fail\(\)/.test(items) && /clearTimeout\(lost\);/.test(items)); // (behaviour: test/chat-items-units.js)
   }
   { // the title-padding rules, in the order and with the specificity the cascade needs
     const spec = (sel) => { // [ids, classes+attrs+pseudo-classes, elements] (a :has()/:is() counts its most specific argument)

@@ -153,8 +153,7 @@
       // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
       const working = ['running', 'queued', 'approval'].includes(chat.badge);
       openBtn.onclick = async () => {
-        if (!(elsewhere && working && api.showTab)) { onOpen(chat.id); return; }
-        try { await api.showTab(chat.id); window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); }
+        if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
       };
 
       const actions = document.createElement('div');
@@ -164,7 +163,17 @@
       const exportBtn = iconButton('export', tr('chats.export', 'Export as Markdown'));
       const original = metaText.textContent;
       let metaTimer = null;
-      const say = (text) => { clearTimeout(metaTimer); metaText.textContent = text; metaTimer = setTimeout(() => { metaText.textContent = original; }, 2500); }; // a passing note, then the usual line
+      const attached = () => li.isConnected !== false; // (a redrawn list leaves the old row behind: it is never written to)
+      const say = (text) => { if (!attached()) return; clearTimeout(metaTimer); metaText.textContent = text; metaTimer = setTimeout(() => { metaText.textContent = original; }, 2500); }; // a passing note, then the usual line
+      const unsay = () => { clearTimeout(metaTimer); if (attached()) metaText.textContent = original; };
+      // Opening the tab of a chat: main answers false when that tab is gone (it does not throw). The list closes only on success.
+      const goToTab = async () => {
+        try { if ((await api.showTab(chat.id)) === false) { say(tr('chats.tabFailed', 'Could not open the tab')); return; } window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); }
+      };
+      // Moving a chat into this tab (or opening it): the page's open answers false when the chat is gone.
+      const moveHere = async () => {
+        try { if ((await onOpen(chat.id)) === false) say(tr('chats.openFailed', 'Could not open this chat')); } catch { say(tr('chats.openFailed', 'Could not open this chat')); }
+      };
       exportBtn.onclick = async () => {
         try {
           const out = await api.exportChat(chat.id);
@@ -206,11 +215,11 @@
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
         show.classList.add('chat-act-tab');
         if (working) show.classList.add('chat-act-drop');
-        show.onclick = async () => { try { await api.showTab(chat.id); window.chatList?.close?.(false); } catch { say(tr('chats.tabFailed', 'Could not open the tab')); } };
+        show.onclick = goToTab;
         const move = iconButton('movehere', tr('chats.moveHere', 'Move chat to this tab'));
         move.classList.add('chat-act-move');
         if (!working) move.classList.add('chat-act-drop');
-        move.onclick = () => onOpen(chat.id);
+        move.onclick = moveHere;
         tabActions.push(show, move);
       }
       actions.append(...tabActions, rename, exportBtn, del);
@@ -226,16 +235,18 @@
           stop.disabled = true;
           stop.textContent = tr('chats.stopping', 'Stopping…');
           const wait = window.chatItemsStopMs || 4000; // (a test shortens it)
+          let timedOut = false;
           const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
-          const lost = setTimeout(fail, wait); // no answer at all: never stuck on "Stopping…"
+          const lost = setTimeout(() => { timedOut = true; fail(); }, wait); // slow main: the button comes back, but a late success takes that back
           try {
             if ((await api.stopChat(chat.id)) === false) { clearTimeout(lost); fail(); return; } // (the chat had already moved on)
+            clearTimeout(lost);
+            if (timedOut && attached()) { unsay(); stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } // it did stop, only slowly
             // Stopped. The list redraws when the run leaves; if it cannot (a rename field is open, the panel is hidden) the
             // button stays on "Stopping…" unless the chat is still waiting a while later.
-            clearTimeout(lost);
             setTimeout(async () => {
-              if (!stop.disabled) return;
-              try { const now = await api.list?.(); if (now?.chats?.find((c) => c.id === chat.id)?.badge === 'queued') fail(); } catch { /* keep the note */ }
+              if (!attached() || !stop.disabled) return;
+              try { const now = await api.list?.(); if (attached() && now?.chats?.find((c) => c.id === chat.id)?.badge === 'queued') fail(); } catch { /* keep the note */ }
             }, wait);
           } catch { clearTimeout(lost); fail(); }
         };
