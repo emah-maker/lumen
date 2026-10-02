@@ -264,20 +264,25 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* [chat per tab] The chat in this tab: a 12px glyph between the icon and the title (never over the icon or the audio / state badges),
    one shape per state: spinner = working, ring = waiting its turn, check = finished and not viewed yet, "!" = needs your OK.
    Self-contained: everything it needs is under .tab-chat-mark. */
-.tab-chat-mark { display: none; flex: none; width: 12px; height: 12px; margin-left: -2px; pointer-events: none; color: var(--accent); }
+.tab-chat-mark { display: none; flex: none; width: 14px; height: 14px; margin-left: -2px; pointer-events: none; color: var(--accent); }
 .tab[data-chat]:not([data-chat=""]) .tab-chat-mark { display: block; }
-.tab-chat-mark svg { display: block; width: 12px; height: 12px; overflow: visible; }
+.tab-chat-mark svg { display: block; width: 14px; height: 14px; overflow: visible; }
 .tab-chat-mark .cm-spin { animation: spin 0.8s linear infinite; transform-origin: 6px 6px; }
 .tab-chat-mark .cm-still { display: none; }
 .tab-chat-mark.waiting { color: var(--muted); }
 .tab-chat-mark.done { color: var(--success); }
-.tab-chat-mark.approval { color: var(--warning); }
+.tab-chat-mark.needs-ok { color: var(--warning); } /* (not .approval: that is the approval card) */
 .tab-chat-mark .cm-on { fill: currentColor; stroke: none; }
-.tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 @media (prefers-reduced-motion: reduce) { .tab-chat-mark .cm-spin { animation: none; } .tab-chat-mark .cm-still { display: block; } }
 :root.pref-reduce-motion .tab-chat-mark .cm-spin { animation: none; }
 :root.pref-reduce-motion .tab-chat-mark .cm-still { display: block; }
 @container tab (max-width: 72px) { .tab-chat-mark { margin-left: 0; } }
+@media (forced-colors: active) {
+  .tab-chat-mark, .tab-chat-mark.waiting, .tab-chat-mark.done { color: CanvasText; forced-color-adjust: none; }
+  .tab-chat-mark.needs-ok, .tab-chat-mark.running { color: Highlight; forced-color-adjust: none; }
+  .tab-chat-mark .cm-glyph { stroke: Canvas; }
+}
 @keyframes ai-reading-pulse { 50% { opacity: 0.55; } }
 .tab-favicon.spinner { border: 1.5px solid var(--hairline); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; background: none; }
 /* The title runs to the tab's edge and fades out there; while the ✕ shows, the fade moves in ahead
@@ -702,6 +707,9 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .notice-action:hover { text-decoration: underline; }
 .notice-action:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .error { color: var(--danger); font-size: 12px; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--danger-soft); }
+.error-details { margin-top: 6px; color: var(--muted); }
+.error-details summary { cursor: default; font-size: 11.5px; }
+.error-details pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.4 ui-monospace, monospace; }
 .error .btn { display: block; margin-top: 8px; height: 26px; font-size: 12px; color: var(--text); background: var(--surface-raised); }
 
 /* Working: a thin line with light moving along it, instead of bouncing dots. */
@@ -1052,9 +1060,9 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 @keyframes setup-attention { 30% { box-shadow: 0 0 0 2px var(--accent); } }
 :root.pref-reduce-motion .setup.attention .setup-option { animation: none; }
 /* A passing status beside the working dots ("Starting Claude Code…"). */
-.working[data-status] { width: auto; height: auto; overflow: visible; background: none; }
+.working[data-status] { width: auto; max-width: 100%; height: auto; overflow: visible; background: none; }
 .working[data-status]::before { display: none; }
-.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: nowrap; animation: status-pulse 1.6s ease-in-out infinite; }
+.working[data-status]::after { content: attr(data-status); color: var(--muted); font-size: 12px; white-space: normal; overflow-wrap: anywhere; animation: status-pulse 1.6s ease-in-out infinite; }
 @keyframes status-pulse { 50% { opacity: 0.55; } }
 :root.pref-reduce-motion .working[data-status]::after { animation: none; }
 
@@ -1273,6 +1281,20 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .usage-meter.hint { cursor: default; }
 .pref-lite .usage-meter .um-bar i { transition: none; }
 .usage-meter .um-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* [context] the open chat's context-window ring, left of Send (chat-extras.js) */
+.context-meter { position: relative; flex: none; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted, #6e6e73); cursor: pointer; }
+.context-meter[hidden] { display: none; }
+.context-meter:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+.context-meter:focus-visible { outline: 2px solid var(--accent, #007aff); outline-offset: 1px; }
+.context-meter svg { width: 18px; height: 18px; transform: rotate(-90deg); }
+.context-meter circle { fill: none; stroke-width: 2.5; }
+.context-meter .cm-track { stroke: rgba(127, 127, 127, 0.25); }
+.context-meter .cm-fill { stroke: var(--accent, #007aff); stroke-linecap: round; transition: stroke-dasharray var(--t-smooth) cubic-bezier(0.16, 1, 0.3, 1); }
+.context-meter.warn .cm-fill { stroke: #ff9f0a; }
+.context-meter.high .cm-fill { stroke: #ff453a; }
+.pref-lite .context-meter .cm-fill { transition: none; }
+.notice.slash-help ul { margin: 4px 0; padding-left: 18px; text-align: left; }
+.notice.slash-help code { font-size: 11px; }
 /* ---- prefs.css */
 /* Browser-UI preferences from Settings (lumen://settings), set as classes on <html> by app.js.
    Kept out of styles.css so the preferences only add to the base look. */
@@ -1340,7 +1362,7 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 /* The sidebar's chat history list and usage line (renderer/chats.js). */
 
 .chat-usage {
-  padding: 0 20px 4px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums;
+  padding: 0 20px 4px; font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -1376,7 +1398,7 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   padding: 7px 4px 7px 12px; border: 0; background: none; color: inherit; font: inherit; border-radius: var(--radius); cursor: default;
 }
 .chat-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chat-meta { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-meta { font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
 
 .chat-rename-input {
   flex: 1; min-width: 0; margin: 4px 4px 4px 8px; padding: 5px 6px; font: inherit; font-size: 13px; color: var(--text);
@@ -1385,25 +1407,53 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-rename-input:focus-visible { box-shadow: var(--focus-ring); }
 
 /* Actions show on hover or keyboard focus, so the list reads as titles first. */
-.chat-actions { display: flex; opacity: 0; transition: opacity var(--t-fast) var(--ease-out); }
-.chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; }
-.chat-actions .icon-btn { width: 26px; height: 26px; }
+/* They float over the row's right edge, so the title keeps the whole row while they are hidden (still reachable by keyboard: focus shows them). */
+.chat-actions { position: absolute; right: 4px; top: 3px; display: flex; opacity: 0; pointer-events: none; border-radius: var(--radius); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)); transition: opacity var(--t-fast) var(--ease-out); }
+.chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
+.chat-actions .icon-btn { width: 24px; height: 22px; }
+/* The title gives way to the buttons (it never sits under them); the armed "Delete?" pill is wider. */
+.chat-title { transition: padding-right var(--t-fast) var(--ease-out); }
+.chat-item:hover .chat-title, .chat-item:focus-within .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } /* (the title always keeps some width) */
+.chat-item:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w, 100px) + 56px), 70%); }
+/* A narrow list: a chat in another tab drops one button (the row's own click does the same). */
+.chat-items { container: chatlist / inline-size; }
+@container chatlist (max-width: 240px) {
+  .chat-item.drops-one .chat-act-drop { display: none; }
+  .chat-item.drops-one:hover .chat-title, .chat-item.drops-one:focus-within .chat-title { padding-right: min(var(--actions-w-narrow), 55%); }
+  .chat-item.drops-one:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w-narrow) + 56px), 70%); }
+  @media (hover: none) { .chat-item.drops-one .chat-title { padding-right: min(var(--actions-w-narrow), 55%); } }
+}
+/* No hover (touch): the buttons are always there, and the title always leaves room. */
+@media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } }
 .chat-actions .chat-delete.armed { display: inline-flex; align-items: center; width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
 .chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
-.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; }
+.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; pointer-events: auto; }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
-.chat-badge { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: var(--accent); }
-.chat-badge.running { animation: chat-badge-pulse 1.4s ease-in-out infinite; }
-.chat-badge.approval { background: var(--warning); }
-.chat-place { font-size: 11.5px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* AA for small text on the row and the selected row */
+/* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
+.chat-badge { display: inline-block; width: 14px; height: 14px; margin-right: 6px; vertical-align: -2px; color: var(--accent); }
+.chat-badge svg { display: block; width: 14px; height: 14px; overflow: visible; }
+.chat-badge .cm-spin { animation: chat-spin 0.8s linear infinite; transform-origin: 6px 6px; }
+.chat-badge .cm-still { display: none; }
+.chat-badge.queued { color: var(--muted); }
+.chat-badge.unread { color: var(--success); }
+.chat-badge.needs-ok { color: var(--warning); } /* (not .approval: that is the approval card) */
+.chat-badge .cm-on { fill: currentColor; stroke: none; }
+.chat-badge .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+.chat-place { font-size: 11.5px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: normal; overflow-wrap: anywhere; } /* AA for small text on the row and the selected row */
 .chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
 .chat-open:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); } /* softer than the global ring: the row is already tinted */
-.chat-stop-wait { flex: none; margin-right: 4px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 11.5px; cursor: default; }
-.chat-stop-wait:hover { background: var(--hover); }
-.chat-badge.queued { background: none; box-shadow: inset 0 0 0 1.5px var(--faint); } /* in line: a hollow dot */
-@keyframes chat-badge-pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .chat-badge.running { animation: none; } }
+/* A waiting chat: "Stop waiting" is a small link on a line of its own, so the title keeps the whole row. */
+.chat-item.has-queued { display: grid; grid-template-columns: 1fr; }
+.chat-item.has-queued .chat-open { grid-column: 1; grid-row: 1; }
+.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: -2px 0 6px 12px; padding: 1px 2px; border: 0; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; text-decoration: underline; cursor: default; }
+.chat-stop-wait:hover { color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .chat-badge .cm-spin { animation: none; } .chat-badge .cm-still { display: block; } }
+:root.pref-reduce-motion .chat-badge .cm-spin { animation: none; }
+:root.pref-reduce-motion .chat-badge .cm-still { display: block; }
+.chat-state { font-weight: 600; color: var(--text); }
+.chat-item:is(.has-running, .has-queued, .has-approval) .chat-place:not(.here)::after { content: " \203A"; } /* a chat working in another tab: clicking it goes there (an idle one is moved here instead) */
 /* The Chats button: another chat needs an OK or has a reply not seen yet. */
 #chat-history[data-attention] { position: relative; }
 #chat-history[data-attention]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
@@ -1414,6 +1464,21 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-group:first-child { padding-top: 4px; }
 .chat-search { display: block; width: calc(100% - 16px); margin: 0 8px 6px; height: 30px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; }
 .chat-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+
+/* A finished chat not seen yet: a tint and a bar on the left (the hover and focus tint still show over it). */
+.chat-item.has-unread:not(.current):not(:hover):not(:focus-within) { background: color-mix(in srgb, var(--success) 11%, transparent); }
+.chat-item.has-unread { box-shadow: inset 2px 0 0 var(--success); }
+/* High-contrast mode drops colours and shadows: the glyphs take the system colours and the unread bar becomes a border. */
+@media (forced-colors: active) {
+  .chat-badge, .chat-badge.queued, .chat-badge.unread { color: CanvasText; forced-color-adjust: none; }
+  .chat-badge.running, .chat-badge.needs-ok { color: Highlight; forced-color-adjust: none; }
+  .chat-badge .cm-on { fill: currentColor; }
+  .chat-badge .cm-glyph { stroke: Canvas; }
+  .chat-item.has-unread { box-shadow: none; border-left: 3px solid Highlight; }
+  .chat-actions { background: Canvas; border: 1px solid CanvasText; }
+  .chat-actions .chat-delete.armed { border: 1px solid CanvasText; color: CanvasText; background: Canvas; forced-color-adjust: none; }
+  .chat-stop-wait { color: LinkText; forced-color-adjust: none; }
+}
 /* ---- translate.css */
 /* Translate infobar (under the toolbar) and the address bar button: renderer/translate.js */
 .infobar { display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; padding: 5px 6px 5px 12px; border-radius: 10px; background: var(--field); color: var(--text); font-size: 12.5px; }
@@ -1596,3 +1661,60 @@ p.task-live { white-space: normal; overflow-wrap: anywhere; margin: 2px 0 6px; }
 .task-pages { margin: 0; padding-left: 18px; font-size: 12px; overflow-wrap: anywhere; }
 .task-pages a { color: var(--accent); text-decoration: none; }
 .task-pages a:hover, .task-pages a:focus-visible { text-decoration: underline; }
+/* ---- routines.css */
+/* Routines (renderer/routines.js): the Tasks panel's tabs, the Routines list, the editor's schedule
+   fields, a routine's run history and "Save as routine" on a reply. Builds on tasks.css. */
+
+.task-tabs { display: flex; gap: 2px; margin: 0 16px 8px; padding: 2px; border-radius: 8px; background: var(--field); }
+.task-tab {
+  flex: 1; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default;
+  transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
+}
+.task-tab[aria-selected="true"] { background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 1px var(--hairline); }
+.task-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.routine-bar { display: flex; justify-content: flex-end; margin: 0 16px 6px; }
+.routine-item { display: flex; align-items: center; gap: 2px; padding-left: 12px; }
+.routine-item .task-row { flex: 1; min-width: 0; padding-left: 6px; }
+.routine-toggle { flex: none; margin: 0; accent-color: var(--accent); }
+.routine-run-now { flex: none; margin-right: 8px; padding: 2px 8px; font-size: 11px; }
+.routine-offline { margin: 0 20px 6px; font-size: 11px; }
+
+.routine-templates { margin: 8px 16px 4px; }
+.routine-templates h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.routine-templates, .routine-template-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.routine-templates h3 { flex-basis: 100%; }
+.routine-template { font-size: 11.5px; }
+.routine-template-row { margin: 0 0 8px; }
+
+.routine-days { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; padding: 0; border: 0; }
+.routine-days legend { margin-bottom: 4px; padding: 0; font-size: 12px; color: var(--muted); }
+.routine-day { position: relative; display: inline-flex; }
+.routine-day input { position: absolute; opacity: 0; inset: 0; margin: 0; }
+.routine-day span { padding: 3px 7px; border-radius: 6px; background: var(--field); font-size: 11.5px; color: var(--muted); }
+.routine-day input:checked + span { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.routine-day input:focus-visible + span { box-shadow: var(--focus-ring); }
+.task-field input[type="time"] {
+  flex: none; padding: 5px 8px; font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: 6px; outline: none;
+}
+.task-field input[type="time"]:focus-visible { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.routine-next { margin: 4px 0 2px; }
+.task-routine-link { margin-top: 8px; font-size: 11.5px; }
+
+.routine-history { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--muted); }
+.routine-run summary { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; cursor: default; list-style: none; }
+.routine-run summary::-webkit-details-marker { display: none; }
+.routine-run summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 4px; }
+.routine-run summary .task-dot { margin-top: 5px; }
+.routine-run[open] summary { color: var(--text); }
+.routine-result { margin: 4px 0 8px 16px; font-size: 12.5px; }
+
+/* "Save as routine": beside Copy (and Regenerate, on the latest reply), shown the same way. */
+.msg.assistant .reply-routine {
+  position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px;
+  background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out;
+}
+.msg.assistant:has(> .reply-regen) .reply-routine { right: 46px; opacity: 0.75; }
+.msg.assistant .reply-routine svg { width: 13px; height: 13px; }
+.msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
+.msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }

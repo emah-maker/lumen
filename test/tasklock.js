@@ -80,6 +80,10 @@ const path = require('path');
   // ---- A sidebar run keeps its tab while the user looks around (each case below switches tabs mid-run).
   const titlesNow = () => app.evaluate(() => global.__agent.browser.listTabs().map((t) => [t.url.replace(/^.*\//, '/'), t.title, t.active]));
   const tabIdOf = (suffix) => app.evaluate((_e, sfx) => global.__agent.browser.listTabs().find((t) => t.url.endsWith(sfx))?.id, suffix);
+  // [chat per tab] The user switching tabs is a real click on the strip (the agent's own switchTab moves the front
+  // tab only while the user watches the run's tab), and the sidebar then follows that tab's chat.
+  const clickTab = (id) => ui.click(`.tab[data-id="${id}"]`, { position: { x: 30, y: 12 } });
+  const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(150); } return v; };
   // A fake Claude that asks for one click on "Go", then finishes. Turn 1 waits for __release().
   const fakeClick = () => app.evaluate(() => {
     let turn = 0;
@@ -97,8 +101,9 @@ const path = require('path');
   const openBoth = async (pathA, pathB) => {
     await app.evaluate((_e, u) => global.__agent.execute('navigate', { url: u }), `${base}${pathA}`);
     await app.evaluate((_e, u) => { global.__agent.browser.openTab(u); }, `${base}${pathB}`);
-    await sleep(800);
-    await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), await tabIdOf(pathA));
+    await waitFor(() => tabIdOf(pathB));
+    await clickTab(await tabIdOf(pathA));
+    await sleep(300);
   };
   const runEnded = () => ui.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 8000 });
 
@@ -110,17 +115,25 @@ const path = require('path');
   const idW2 = await tabIdOf('/w2');
   const front = await ui.evaluate(() => document.getElementById('working-in').hidden === false && document.getElementById('working-in').textContent);
   check('while a run works in the tab in front, the sidebar names it', /Working in: Page \/w1/.test(front), front);
-  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), idW2); // the user looks at another tab
-  await sleep(500);
-  const away = await ui.evaluate(() => ({ text: document.getElementById('working-in').textContent, hidden: document.getElementById('working-in').hidden, away: document.body.classList.contains('agent-away'), sendStop: document.getElementById('send').classList.contains('stop'), pill: document.getElementById('agent-pill-text').textContent }));
-  check('after switching away it still names the tab the AI works in, and the run keeps going', /Working in: Page \/w1/.test(away.text) && !away.hidden && away.sendStop, JSON.stringify(away));
-  check('the accent frame and pill do not claim the tab in front', away.away && /another tab/.test(away.pill), JSON.stringify(away));
-  await ui.evaluate(() => document.getElementById('working-in').click());
-  await sleep(400);
-  check('clicking the line jumps to the AI\'s tab', (await titlesNow()).find(([u]) => u === '/w1')?.[2] === true, JSON.stringify(await titlesNow()));
-  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), idW2);
+  // [chat per tab] The user clicks another tab: the sidebar shows that tab's own chat, while the run goes on in
+  // its tab, which shows a "working" mark. Back on the run's tab, its chat is live again (features/tab-chats.js).
+  const idW1 = await tabIdOf('/w1');
+  await clickTab(idW2);
+  await sleep(600);
+  const away = await ui.evaluate((id) => ({ hidden: document.getElementById('working-in').hidden, sendStop: document.getElementById('send').classList.contains('stop'), mark: document.querySelector(`.tab[data-id="${id}"] .tab-chat-mark`)?.dataset.state || '' }), idW1);
+  const live = await app.evaluate(() => global.__tabChats.runs().filter((r) => r.live).length);
+  check('after switching to another tab the sidebar shows that tab\'s chat, and the run keeps going', away.hidden && !away.sendStop && live === 1, JSON.stringify({ away, live }));
+  check('the run\'s tab shows that its chat is working', /running|working/.test(away.mark), JSON.stringify(away));
+  await clickTab(idW1);
+  await sleep(600);
+  const back = await ui.evaluate(() => ({ text: document.getElementById('working-in').textContent, hidden: document.getElementById('working-in').hidden, sendStop: document.getElementById('send').classList.contains('stop') }));
+  check('back on the run\'s tab its chat is live again and names the tab', /Working in: Page \/w1/.test(back.text) && !back.hidden && back.sendStop, JSON.stringify(back));
+  await clickTab(idW2);
+  await sleep(300);
   await app.evaluate(() => global.__release?.());
-  await runEnded();
+  await waitFor(() => app.evaluate(() => global.__tabChats.runs().every((r) => !r.live)));
+  await clickTab(idW1);
+  await sleep(600);
   const after = await ui.evaluate(() => ({ hidden: document.getElementById('working-in').hidden, away: document.body.classList.contains('agent-away'), steps: document.querySelectorAll('.step').length, done: document.querySelectorAll('.step.done').length }));
   check('when the run ends the line and the away state go', after.hidden && !after.away, JSON.stringify(after));
   check('the step list survived the tab switches', after.steps >= 1 && after.done === after.steps, JSON.stringify(after));
@@ -131,11 +144,8 @@ const path = require('path');
   await openBoth('/l1', '/l2');
   const lt = await app.evaluate(async (_e, ids) => {
     const agent = global.__agent;
-    return agent.inTask(ids[0], new AbortController().signal, async () => {
-      agent.browser.switchTab(ids[1]);
-      return JSON.parse(await agent.execute('list_tabs', {}));
-    });
-  }, [await tabIdOf('/l1'), await tabIdOf('/l2')]);
+    return agent.inTask(ids[0], new AbortController().signal, async () => JSON.parse(await agent.execute('list_tabs', {})));
+  }, [await tabIdOf('/l1'), await (async () => { const id = await tabIdOf('/l2'); await clickTab(id); await sleep(300); return id; })()]);
   const ltA = lt.find((t) => t.url.endsWith('/l1'));
   const ltB = lt.find((t) => t.url.endsWith('/l2'));
   check('list_tabs in a task shows the task\'s tab as active and the one in front as in_front', ltA?.active === true && ltB?.active === false && ltB?.in_front === true, JSON.stringify(lt));

@@ -41,8 +41,9 @@ const { installChromeWebStore, installExtension, uninstallExtension, loadAllExte
 const { extensionPermissionLines } = require('./browser/extension-permissions');
 const { Agent, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
-const { describeUsage } = require('./features/chat-usage');
+const { describeUsage, contextView } = require('./features/chat-usage');
 const providers = require('./ai/providers');
+const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
 const { engineModel } = require('./ai/cli-utils');
@@ -199,7 +200,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
-  'chats:list', 'chats:open', 'chats:show-tab', 'chats:rename', 'chats:delete', 'chats:export',
+  'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
@@ -3499,6 +3500,7 @@ function applyChromeIdentity(wc) {
     return; // Another debugger (e.g. an extension) is attached; keep Electron's defaults.
   }
   identified.add(wc);
+  aiFrames.track(wc); // before the auto-attach below: every out-of-process frame's session is recorded
   const override = { userAgent: app.userAgentFallback, userAgentMetadata: UA_METADATA };
   const firefox = { userAgent: FIREFOX_PROFILE.userAgent, platform: FIREFOX_PROFILE.platform }; // no userAgentMetadata: Firefox has no client hints
   const basic = { userAgent: override.userAgent, userAgentMetadata: (({ wow64, formFactors, ...rest }) => rest)(UA_METADATA) }; // (if this DevTools rejects the newest metadata fields, the brands still apply)
@@ -3806,7 +3808,7 @@ function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
-  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), ...(live ? { live } : {}) };
+  return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), ...(live ? { live } : {}) };
 }
 
 // ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
@@ -3861,13 +3863,14 @@ function pushAttention() {
   chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
   refreshTabMarks(); // [chat per tab]
 }
-const chatBadges = () => new Map(chats().list().map((c) => {
-  const run = chatRuns.get(c.id);
-  return [c.id, chatRunsLib.chatBadge({ running: Boolean(run && !run.queued && agent.runningFor(run.messages)), queued: Boolean(run?.queued), approvals: run?.pending.size || 0, unread: unreadChats.has(c.id) })];
+const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRuns.keys()].map((id) => {
+  const run = chatRuns.get(id);
+  return [id, chatRunsLib.chatBadge({ running: Boolean(run && !run.queued && agent.runningFor(run.messages)), queued: Boolean(run?.queued), approvals: run?.pending.size || 0, unread: unreadChats.has(id) })];
 }));
 // Tells the user about a run: a system notification (clicking it brings the window and that chat
 // back), and the unread mark when the reply isn't in view.
 function tellUser(run, kind) {
+  if (run.deleted) { unreadChats.delete(run.chatId); pushAttention(); return; } // a chat deleted while it worked leaves no unread mark or notification behind
   const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...runView(run) });
   if (decided.unread && kind !== 'approval') unreadChats.add(run.chatId);
   pushAttention();
@@ -3897,12 +3900,18 @@ function tellUser(run, kind) {
 // sidebar remembers what it shows (shownChat) and is brought up to date when its tab or its focus changes,
 // and an IPC from a window first brings the open chat in line with that window's tab (syncToSender).
 const chatBind = tabChatsLib.createBindings();
-const runSlots = tabChatsLib.createRunSlots();
+// A start that throws, or a slot whose run vanished without a "done" (an engine process that exited), is finished with an
+// error and a done event so the chat never stays "running"; the slot goes to the next in line.
+const runSlots = tabChatsLib.createRunSlots({
+  onError: (id, err) => chatRuns.get(id)?.fail?.(err),
+  onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
+});
+setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
 onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
-const waitingText = (run) => t(run.waitReason === 'cli' ? 'agent.waitingCli' : 'agent.waiting');
+const waitingText = (run) => t((run.queued ? runSlots.reason(run.chatId) || run.waitReason : run.waitReason) === 'cli' ? 'agent.waitingCli' : 'agent.waiting'); // (why it waits is asked again each time: it can change while in line)
 // The chat of a running task that works in this tab, whichever chat that is.
 function pinnedChat(tabId) {
   for (const r of chatRuns.values()) if (!r.deleted && !r.queued && agent.runTabIdFor(r.messages) === tabId) return r.chatId;
@@ -5880,6 +5889,7 @@ const agent = new Agent({
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
+  autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
@@ -5950,6 +5960,7 @@ const bgTasks = require('./features/background-runner').create({
   cliEngine: (kind) => aiAgents.backgroundEngine(kind), cliStatus: () => aiAgents.cliStatus(), // Claude Code / Grok Build runs
   activeUrl: () => { const u = activeTab()?.webContents.getURL(); return isWebUrl(u) ? u : ''; },
   openTab: (url) => openTab(url), focusApp: () => focusWindow(),
+  isOnline: () => net.isOnline(), powerMonitor: () => require('electron').powerMonitor, // routines: skip while offline, catch up after sleep
 });
 bgTasks.register(ipcMain);
 app.on('will-quit', () => bgTasks.shutdown());
@@ -6461,6 +6472,15 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
     pushAttention();
   };
   run.cancelQueued = finishQueued;
+  // The run could not start, or is gone without a done: tell the chat, and leave the line.
+  run.fail = (err) => {
+    if (chatRuns.get(runChat) !== run) return;
+    run.queued = false;
+    const raw = String(err?.message || err);
+    const stale = raw === t('agent.engineStopped'); // (already plain words)
+    emit({ type: 'error', text: stale ? raw : t('agent.startFailed'), details: stale ? undefined : raw.slice(0, 600) });
+    emit({ type: 'done' });
+  };
   const emit = (msg) => {
     if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
     if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
@@ -6483,6 +6503,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       setImmediate(pushAgentTarget);
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
+    else if (msg.type === 'context' && isOpen()) { ui()?.send('chats:context', msg.context); chatPageRt.broadcast('chats:context', msg.context, ui()); } // [context] the meter under the composer
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; ui()?.send('models-updated'); }
   };
   const skillRun = skillsFeature.takeRun(askText);
@@ -6501,7 +6522,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
   // take turns one chat at a time (their tools reach Lumen through one connection that finds its run through one pin).
   runSlots.setMax(readSettings().maxChatRuns);
   const kind = tabChatsLib.slotKind(messages.settings?.model || effectiveModel());
-  if (runSlots.request(runChat, { kind, start }) === 'queued') {
+  if (runSlots.request(runChat, { kind, start, alive: () => run.queued || agent.runningFor(messages) || chatRuns.get(runChat) !== run }) === 'queued') {
     run.queued = true;
     run.waitReason = runSlots.reason(runChat);
     chatPageRt.emit(to(), 'agent:event', { type: 'status', text: waitingText(run), runId });
@@ -6524,6 +6545,8 @@ function stopChat(id) {
   else agent.stopFor(run.messages);
   return true;
 }
+// The chat list's "Stop waiting": answers whether a run was there to stop (the list shows a failure when not).
+ipcMain.handle('chats:stop', (_e, id) => (typeof id === 'string' && id ? stopChat(id) : false));
 ipcMain.on('agent:stop', (event, id) => {
   if (typeof id === 'string' && id) { stopChat(id); return; }
   syncToSender(event);
@@ -6569,10 +6592,15 @@ ipcMain.handle('chats:list', (event) => {
   return {
     current: chatId,
     currentUsage: describeUsage(agent.messages.settings?.usage),
+    currentContext: contextView(agent.messages.settings?.context), // [context]
     maxRuns: runSlots.limit,
     chats: (() => {
       const badges = chatBadges();
-      return chats().list().map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id) }));
+      const saved = chats().list();
+      // A chat that is working or waiting for a slot and has no file yet (its first reply is still coming) is listed too.
+      const unsaved = [...chatRuns.values()].filter((r) => runIsLive(r) && !saved.some((c) => c.id === r.chatId))
+        .map((r) => ({ id: r.chatId, title: String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 60), created: Date.now(), updated: Date.now() }));
+      return [...unsaved, ...saved].map((c) => ({ id: c.id, title: c.title, created: c.created, updated: c.updated, usage: describeUsage(c.usage), badge: badges.get(c.id) || null, tab: chatPlaceOf(c.id) }));
     })(),
   };
 });
@@ -6620,10 +6648,13 @@ ipcMain.handle('chats:delete', (event, id) => {
     chatId = chats().newId();
     chatBind.bind(activeId, chatId);
     chats().remove(id);
+    pushAttention(); // the Chats button, the list and the tab marks drop what this chat had (an unread mark, a binding)
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
     return { cleared: true, view: chatView() };
   }
-  return { cleared: false, removed: chats().remove(id) };
+  const removed = chats().remove(id);
+  pushAttention();
+  return { cleared: false, removed };
 });
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
 function chatMarkdown(id) {
@@ -6631,7 +6662,7 @@ function chatMarkdown(id) {
   if (!snapshot?.messages?.length) return null;
   const entry = chats().list().find((c) => c.id === id);
   const title = entry?.title || autoTitle(snapshot);
-  const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages));
+  const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages, snapshot.settings));
   return { title, markdown };
 }
 // Export: always the user's own click in the sidebar (a UI-only channel), and always through a

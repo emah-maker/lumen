@@ -1,7 +1,8 @@
 // The sidebar's Tasks panel: background tasks the AI does on its own (features/background-runner.js).
 // A list with status dots, a detail view (steps, result, approval cards), the "Run in the background?"
 // confirmation card, the composer's background button and the /background and /watch commands, and the
-// toast banner for a finished task. Loaded after chat-core.js and app.js (same page).
+// toast banner for a finished task. Loaded after chat-core.js and app.js (same page). The panel's Routines
+// view, and a routine's editor and history, are renderer/routines.js (window.lumenRoutines).
 
 (() => {
   const api = window.assistant?.tasks;
@@ -18,6 +19,7 @@
 
   let state = { tasks: [], badge: { running: 0, waiting: 0 }, unseen: 0, settings: { enabled: true, maxConcurrent: 2, notifications: true, notifyDone: true, timeoutMin: 30, approvalWaitMin: 60 } };
   let open = null; // task id whose detail is showing, or null for the list
+  let view = 'tasks'; // the list's tab: 'tasks' or 'routines'
   let detail = null;
   let previousStatus = new Map();
 
@@ -43,7 +45,8 @@
   const statusText = (s) => T(`tasks.status.${s}`);
   const scheduleText = (task) => {
     const s = task.schedule;
-    if (task.enabled === false && (s.type === 'every' || s.type === 'watch')) return T('tasks.schedule.paused');
+    if (task.enabled === false && (s.type === 'every' || s.type === 'watch' || s.type === 'routine')) return T('tasks.schedule.paused');
+    if (s.type === 'routine') return window.lumenRoutines?.scheduleText(s) || '';
     if (s.type === 'every') return T('tasks.schedule.every', { n: s.minutes });
     if (s.type === 'watch') return T('tasks.schedule.watch', { n: s.minutes });
     if (s.type === 'at') return T('tasks.schedule.at', { time: clock(s.at) });
@@ -110,9 +113,10 @@
   function showSidebar() {
     if (document.body.classList.contains('sidebar-hidden')) byId('toggle-sidebar').click();
   }
-  async function openPanel(id = null) {
+  async function openPanel(id = null, { tab } = {}) {
     showSidebar();
     open = id;
+    if (tab) view = tab;
     await refresh();
     panel.hidden = false;
     button.setAttribute('aria-expanded', 'true');
@@ -165,7 +169,8 @@
       return h('li', {}, row);
     });
     const list = h('ul', { className: 'chat-items task-items' }, rows);
-    const body = [head(T('tasks.title')), h('p', { className: 'task-note', textContent: state.settings.enabled ? T('tasks.note') : T('tasks.disabled') })];
+    if (view === 'routines' && window.lumenRoutines) { panel.replaceChildren(head(T('tasks.title')), tabs(), ...window.lumenRoutines.list(state)); return; }
+    const body = [head(T('tasks.title')), tabs(), h('p', { className: 'task-note', textContent: state.settings.enabled ? T('tasks.note') : T('tasks.disabled') })];
     // What is waiting for the user comes first, with the same card as in the task's page, so it can be answered from here.
     const waiting = state.tasks.filter((t) => t.pending.length);
     if (waiting.length) {
@@ -177,6 +182,26 @@
     else body.push(h('p', { className: 'chat-list-empty', textContent: T('tasks.empty') }));
     body.push(settingsBlock());
     panel.replaceChildren(...body);
+  }
+
+  // Tasks | Routines: a tab list (arrow keys move between the two).
+  function tabs() {
+    if (!window.lumenRoutines) return null;
+    const list = h('div', { className: 'task-tabs', role: 'tablist' });
+    list.setAttribute('aria-label', T('tasks.title'));
+    const tab = (key, label) => {
+      const b = h('button', { type: 'button', className: 'task-tab', id: `task-tab-${key}`, textContent: label, tabIndex: view === key ? 0 : -1, onclick: () => { view = key; render().then(() => byId(`task-tab-${key}`)?.focus()); } });
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(view === key));
+      return b;
+    };
+    list.append(tab('tasks', T('tasks.tab.tasks')), tab('routines', T('routines.title')));
+    list.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      list.querySelector('[aria-selected="false"]')?.click();
+    });
+    return list;
   }
 
   function settingsBlock() {
@@ -229,9 +254,11 @@
       actions.append(resume);
     }
     if (!active || task.status === 'queued') actions.append(btn(task.status === 'done' ? T('tasks.act.run') : (['failed', 'interrupted', 'stopped'].includes(task.status) ? T('tasks.act.retry') : T('tasks.act.run')), () => api.run(task.id).then(refresh), task.resumable ? 'btn' : 'btn primary'));
-    if (!active) actions.append(btn(T('tasks.act.edit'), () => editTask(task)));
-    if (task.schedule.type === 'every' || task.schedule.type === 'watch') actions.append(btn(task.enabled === false ? T('tasks.act.resume') : T('tasks.act.pause'), () => api.enable(task.id, task.enabled === false).then(refresh)));
-    actions.append(btn(T('tasks.act.schedule'), () => editSchedule(task)));
+    const routine = task.schedule.type === 'routine' && window.lumenRoutines;
+    if (routine && !active) actions.append(btn(T('routines.act.edit'), () => window.lumenRoutines.open({ task })));
+    if (!active && !routine) actions.append(btn(T('tasks.act.edit'), () => editTask(task)));
+    if (task.schedule.type === 'every' || task.schedule.type === 'watch' || task.schedule.type === 'routine') actions.append(btn(task.enabled === false ? T('tasks.act.resume') : T('tasks.act.pause'), () => api.enable(task.id, task.enabled === false).then(refresh)));
+    if (!routine) actions.append(btn(T('tasks.act.schedule'), () => editSchedule(task)));
     if (task.currentUrl) actions.append(btn(T('tasks.act.openPage'), () => api.openPage(task.id)));
     if (task.result) {
       actions.append(btn(T('tasks.act.continue'), () => continueInChat(task)));
@@ -255,6 +282,7 @@
       actions,
       task.engine && task.engine !== 'api' ? h('p', { className: 'task-meta', textContent: T('tasks.detail.engine', { engine: task.engine === 'grokbuild' ? 'Grok Build' : 'Claude Code' }) }) : null,
       h('h3', { textContent: T('tasks.detail.prompt') }), h('p', { className: 'task-prompt', textContent: task.prompt }),
+      task.routine?.startUrl ? h('p', { className: 'task-meta', textContent: T('routines.detail.start', { url: task.routine.startUrl }) }) : null,
       h('p', { className: 'task-meta', textContent: T('tasks.create.mayVisit', { sites: task.allowedSites.join(', ') || '-' }) }));
 
     body.append(h('h3', { textContent: T('tasks.detail.result') }));
@@ -276,7 +304,8 @@
       if (task.stepCount > task.steps.length) body.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.steps.more', { count: task.stepCount - task.steps.length }) }));
       body.append(h('ol', { className: 'task-steps' }, task.steps.map((s) => h('li', { className: s.ok === false ? 'failed' : s.ok ? 'ok' : 'pending', textContent: s.error ? `${s.label}: ${s.error}` : s.label }))));
     }
-    if (task.runs.length) {
+    if (routine) body.append(...window.lumenRoutines.history(task));
+    else if (task.runs.length) {
       body.append(h('h3', { textContent: T('tasks.detail.runs') }));
       body.append(h('ul', { className: 'task-runs' }, [...task.runs].reverse().map((r) => h('li', {}, h('span', { className: `task-dot ${r.status}`, 'aria-hidden': 'true' }), `${clock(r.endedAt || r.startedAt)} · ${statusText(r.status)}${r.summary ? ` · ${r.summary.slice(0, 90)}` : ''}`))));
     }
@@ -449,6 +478,7 @@
       pv.hasMcp ? mcpLabel : null,
       ...(pv.cli || []).filter((c) => c.state !== 'ready').map((c) => h('p', { className: 'task-meta', textContent: T(`tasks.create.cliNote.${c.state}`, { name: c.name }) })),
       error,
+      window.lumenRoutines && !watch ? btn(T('routines.fromTask'), () => { const text = prompt.value; close(); window.lumenRoutines.open({ prompt: text, fromComposer: spec.fromComposer }); }, 'btn task-routine-link') : null,
       h('div', { className: 'approval-actions' }, btn(T('tasks.create.cancel'), close), create));
     sidebar.append(overlay);
     creating = overlay;
@@ -494,5 +524,13 @@
   api.onToast(toast);
   api.onOpen(({ id } = {}) => openPanel(id || null));
   api.onPropose((spec) => openCreate(spec || {}));
+  // What renderer/routines.js builds the Routines view with (same page, loaded after this file).
+  window.lumenTasks = {
+    api, h, btn, iconBtn, clock, ago, statusText, showSidebar, refresh, closePanel,
+    state: () => state,
+    openPanel,
+    openTask: (id) => { open = id; return render(); },
+    announce: (text) => { live.textContent = text; },
+  };
   refresh();
 })();

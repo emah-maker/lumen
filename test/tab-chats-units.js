@@ -88,6 +88,154 @@ const J = (v) => JSON.stringify(v);
   s = mk(1);
   s.request('boom', { start: () => { throw new Error('x'); } });
   check('slots: a start that fails gives its place back', s.size() === 0 && s.state('boom') === null);
+
+  // a failing start tells the chat, and the line goes on
+  const errs = [];
+  s = TC.createRunSlots({ max: 1, onError: (id, e) => errs.push([id, e.message]) });
+  const order = [];
+  s.request('first', { start: () => order.push('first') });
+  s.request('bad', { start: () => { throw new Error('no engine'); } });
+  s.request('next', { start: () => order.push('next') });
+  check('slots: the line is waiting behind a running chat', s.state('bad') === 'queued' && s.state('next') === 'queued');
+  s.release('first');
+  check('slots: a start that throws is reported (an error for the chat), its slot is given back and the next in line goes', J(errs) === '[["bad","no engine"]]' && s.state('bad') === null && s.state('next') === 'running' && J(order) === '["first","next"]', J({ errs, order, st: s.state('next') }));
+  s = TC.createRunSlots({ max: 2, onError: (id, e) => errs.push([id, e.message]) });
+  errs.length = 0;
+  check('slots: a start that throws at once reports "failed" and holds no slot', s.request('x', { start: () => { throw new Error('boom'); } }) === 'failed' && s.size() === 0 && J(errs) === '[["x","boom"]]', J(errs));
+  check('slots: a chat that already holds a slot and fails to restart gives it up', (() => { s.request('y', { start() {} }); const r = s.request('y', { start: () => { throw new Error('again'); } }); return r === 'failed' && s.state('y') === null; })());
+
+  // a start that finishes inside start() (its done already released the slot) is 'started', never 'queued'
+  s = mk(2);
+  const quick = s.request('q', { start: () => { s.release('q'); } });
+  check('slots: a start that ends at once is reported as started (not queued on a finished chat)', quick === 'started' && s.state('q') === null, quick);
+  s = mk(1);
+  s.request('hold', { start() {} });
+  check('slots: a chat that really has to wait is still queued', s.request('late', { start() {} }) === 'queued');
+
+  // the cap raised starts every chat that now fits, at once
+  started.length = 0;
+  s = mk(1);
+  go(s, 'a'); go(s, 'b'); go(s, 'c');
+  check('slots: with the cap at one, two chats wait', s.state('a') === 'running' && J(s.waitingIds()) === '["b","c"]');
+  s.setMax(3);
+  check('cap change: raising the cap starts the waiting chats right away', s.state('b') === 'running' && s.state('c') === 'running' && s.waitingIds().length === 0 && J(started) === '["a","b","c"]', J(started));
+
+  // the watchdog: a slot whose run is gone without a done is released after two sweeps
+  const stale = [];
+  let engineAlive = true;
+  s = TC.createRunSlots({ max: 1, cliMax: 1, onStale: (id) => stale.push(id) });
+  started.length = 0;
+  s.request('cli1', { kind: 'cli', start: () => started.push('cli1'), alive: () => engineAlive });
+  s.request('cli2', { kind: 'cli', start: () => started.push('cli2'), alive: () => true });
+  check('watchdog: nothing is released while the run lives', J(s.sweep()) === '[]' && s.state('cli2') === 'queued');
+  engineAlive = false; // the engine process exited without ever saying done
+  check('watchdog: one missed sweep is not enough (a run is just starting)', J(s.sweep()) === '[]' && s.state('cli1') === 'running');
+  check('watchdog: the slot of a run that is gone is released, the chat is told, and the next CLI chat starts', J(s.sweep()) === '["cli1"]' && J(stale) === '["cli1"]' && s.state('cli1') === null && s.state('cli2') === 'running' && J(started) === '["cli1","cli2"]', J({ stale, started }));
+  engineAlive = true;
+  s = TC.createRunSlots({ max: 1 });
+  let flaky = false;
+  s.request('f', { start() {}, alive: () => !flaky });
+  flaky = true; s.sweep(); flaky = false;
+  check('watchdog: a run that comes back resets the count', J(s.sweep()) === '[]' && s.state('f') === 'running');
+}
+
+// ---- mark and badge styling: a state class must not match another component's rule (static check, no app needed)
+// The "needs OK" mark once carried the class "approval", which is also the approval card (padding, background, hover lift):
+// it drew as a 40px pill. The state classes of the tab marks and list badges are checked against every stylesheet.
+{
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname, '..', 'src', 'renderer');
+  const css = ['styles.css', 'chats.css', 'managers.css', 'private.css'].filter((n) => fs.existsSync(path.join(dir, n))).map((n) => fs.readFileSync(path.join(dir, n), 'utf8')).join('\n');
+  const app = fs.readFileSync(path.join(dir, 'app.js'), 'utf8');
+  const items = fs.readFileSync(path.join(dir, 'chat-items.js'), 'utf8');
+  const stateClasses = ['running', 'waiting', 'queued', 'unread', 'done', 'needs-ok'];
+  const loose = stateClasses.filter((c) => new RegExp('(^|[,}\\n])\\s*\\.' + c + '\\s*[{,:]').test(css.replace(/\/\*[\s\S]*?\*\//g, '')));
+  check('marks: no stylesheet has a bare rule for a mark state class (it would style the mark too)', loose.length === 0, J(loose));
+  check('marks: the needs-OK state uses its own class in the tab strip and the chat list, never "approval"', /'needs-ok'/.test(app) && /'needs-ok'/.test(items) && /\.tab-chat-mark\.needs-ok/.test(css) && /\.chat-badge\.needs-ok/.test(css) && !/\.(tab-chat-mark|chat-badge)\.approval/.test(css));
+  const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'locales', 'en.json'), 'utf8'));
+  check('marks: the four state words are in the locale table', ['running', 'queued', 'approval', 'unread'].every((k) => en['chats.state.' + k]), J(Object.keys(en).filter((k) => k.startsWith('chats.state'))));
+  check('marks: the finished-row tint does not beat the hover and focus tint', /has-unread:not\(\.current\):not\(:hover\):not\(:focus-within\)/.test(css));
+  check('marks: both the strip marks and the list badges have a forced-colors fallback', (css.match(/forced-colors: active[^]*?\.tab-chat-mark/) || [])[0] !== undefined && /forced-colors: active\) \{\s*\.chat-badge/.test(css));
+  check('marks: the row actions float (they take no width from the title)', /\.chat-actions \{ position: absolute/.test(css));
+  { // AA (4.5:1) for the small text on the row and the selected row, both themes: the colours as the sheets mix them
+    const hex = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    const mix = (a, b, p) => a.map((v, i) => v * p + b[i] * (1 - p));
+    const lum = (a) => a.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((t, v, i) => t + v * [0.2126, 0.7152, 0.0722][i], 0);
+    const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    const themes = { light: { bg: '#ffffff', text: '#1d1d1f', muted: '#6e6e73', accent: '#007aff', soft: [0, 122, 255, 0.14] }, dark: { bg: '#2c2c2e', text: '#f5f5f7', muted: '#98989d', accent: '#0a84ff', soft: [10, 132, 255, 0.2] } };
+    const worst = { meta: 99, stop: 99 };
+    for (const t of Object.values(themes)) {
+      const bg = hex(t.bg), sel = mix(t.soft.slice(0, 3), bg, t.soft[3]);
+      for (const under of [bg, sel]) {
+        worst.meta = Math.min(worst.meta, ratio(mix(hex(t.muted), hex(t.text), 0.55), under));
+        worst.stop = Math.min(worst.stop, ratio(mix(hex(t.accent), hex(t.text), 0.6), under));
+      }
+    }
+    check('marks: the meta line and "Stop waiting" are AA (4.5:1) in both themes', /\.chat-meta \{[^}]*color-mix\(in srgb, var\(--muted\) 55%, var\(--text\)\)/.test(css) && /\.chat-stop-wait \{[^}]*color-mix\(in srgb, var\(--accent\) 60%, var\(--text\)\)/.test(css) && worst.meta >= 4.5 && worst.stop >= 4.5, J(worst));
+  }
+  const cp = fs.readFileSync(path.join(dir, 'chat-page.css'), 'utf8');
+  check('list: the open chat on the chat page does not force its action bar visible over its title', !/chat-item\.current \.chat-actions/.test(cp));
+  check('list: touch devices (no hover) get the buttons always, with room left in the title', /@media \(hover: none\) \{ \.chat-actions \{ opacity: 1; pointer-events: auto; \}/.test(css) && /@media \(hover: none\)[^\n]*\.chat-title \{ padding-right: min\(var\(--actions-w/.test(css));
+  check('list: the title leaves room for the floating buttons, and for the armed Delete? pill', /chat-item:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w/.test(css) && /chat-delete\.armed\) \.chat-title \{ padding-right: min\(calc/.test(css) && /--actions-w/.test(items));
+  check('list: the "go there" arrow shows only on rows a click takes you to the tab of (working ones)', /is\(\.has-running, \.has-queued, \.has-approval\) \.chat-place:not\(\.here\)::after/.test(css) && !/\n\.chat-place:not\(\.here\)::after/.test(css));
+  check('list: forced-colors selectors are as specific as the state rules they override', /forced-colors: active\) \{\s*\.chat-badge, \.chat-badge\.queued, \.chat-badge\.unread/.test(css) && /\.tab-chat-mark, \.tab-chat-mark\.waiting, \.tab-chat-mark\.done \{ color: CanvasText/.test(css));
+  check('list: "Exported" goes in its own span (the state word stays) and the badge is hidden from screen readers', /say\(tr\('chats\.exported'/.test(items) && /metaText\.textContent = text/.test(items) && !/[^a-zA-Z]meta\.textContent =/.test(items) && /badge\.setAttribute\('aria-hidden', 'true'\)/.test(items) && !/badge\.setAttribute\('aria-label'/.test(items));
+  check('list: the usage line is AA like the meta line', /\.chat-usage \{[^}]*color-mix\(in srgb, var\(--muted\) 55%/.test(css));
+  check('list: a narrow list drops "move here" from an idle chat in another tab and the title padding follows', /@container chatlist \(max-width: 240px\)[^]*drops-one \.chat-act-drop \{ display: none/.test(css) && /drops-one:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w-narrow\)/.test(css) && /setProperty\('--actions-w-narrow'/.test(items) && /setProperty\('--actions-w',/.test(items) && /chat-act-drop/.test(items));
+  check('list: the title padding eases in with the bar (same --t-fast)', /\.chat-title \{ transition: padding-right var\(--t-fast\)/.test(css) && /\.chat-actions \{[^}]*top: 3px/.test(css));
+  check('list: the armed Delete? pill keeps a border under forced-colors', /forced-colors: active[^]*chat-delete\.armed \{ border: 1px solid CanvasText/.test(css));
+  check('list: export, delete, stop and open-tab report a failure instead of staying silent, and a passing note reverts', /exportFailed/.test(items) && /deleteFailed/.test(items) && /stopFailed/.test(items) && /tabFailed/.test(items) && /setTimeout\(\(\) => \{ metaText\.textContent = original/.test(items) && /stop\.disabled = true/.test(items) && /del\.disabled = true/.test(items));
+  check('list: an idle chat in another tab says that a click moves it here', /clickMoves/.test(items) && ['clickMoves', 'exportFailed', 'deleteFailed', 'stopFailed', 'stopping', 'tabFailed'].every((k) => en['chats.' + k]));
+  { // the real export handler's answers, and what the list does with each
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const handler = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:export'"), mainSrc.indexOf("if (TEST) global.__chats"));
+    check('export: main answers { ok:false, reason } for an empty chat and a dismissed Save dialog', /reason: 'empty'/.test(handler) && /reason: 'canceled'/.test(handler) && !/\bcancelled?\s*:/.test(handler.replace(/const \{ canceled/, '')));
+    check('export: the list stays quiet for reason "canceled", has its own words for "empty", and fails otherwise', /out\?\.reason === 'empty'/.test(items) && /out\?\.reason !== 'canceled'/.test(items) && !/out\.canceled/.test(items) && en['chats.exportEmpty']);
+  }
+  { // "Stop waiting" gets an answer from main (an invoke), and the button can never stay on "Stopping…"
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const pre = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'preload.js'), 'utf8');
+    const chatPre = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-preload.js'), 'utf8');
+    const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'chat-page.js'), 'utf8');
+    check('stop: chats:stop is a handle that returns stopChat()\'s answer, listed as a UI-only channel for the window and the chat page', /ipcMain\.handle\('chats:stop'[^\n]*stopChat\(id\)/.test(mainSrc) && /'chats:stop'/.test(mainSrc.slice(0, mainSrc.indexOf('ipcMain.handle('))) && /'chats:stop'/.test(page));
+    check('stop: both preloads invoke it', /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(pre) && /stopChat: \(id\) => ipcRenderer\.invoke\('chats:stop'/.test(chatPre));
+    check('stop: a false answer or 4 seconds without one restores the button with a note', /answer === false/.test(items) && /timedOut = true; fail\(\)/.test(items) && /clearTimeout\(lost\);/.test(items)); // (behaviour: test/chat-items-units.js)
+  }
+  { // the title-padding rules, in the order and with the specificity the cascade needs
+    const spec = (sel) => { // [ids, classes+attrs+pseudo-classes, elements] (a :has()/:is() counts its most specific argument)
+      let ids = 0, cls = 0, el = 0;
+      const rest = sel.replace(/:(has|is|not)\(([^()]*)\)/g, (_m, _n, arg) => { const inner = arg.split(',').map((x) => spec(x.trim())).sort((p, q) => q[0] - p[0] || q[1] - p[1] || q[2] - p[2])[0]; ids += inner[0]; cls += inner[1]; el += inner[2]; return ''; });
+      ids += (rest.match(/#[\w-]+/g) || []).length; cls += (rest.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g) || []).length; el += (rest.replace(/#[\w-]+|\.[\w-]+|\[[^\]]*\]|::?[\w-]+/g, ' ').match(/(^|[\s>+~])[a-z][\w-]*/gi) || []).length;
+      return [ids, cls, el];
+    };
+    const cmp = (p, q) => p[0] - q[0] || p[1] - q[1] || p[2] - q[2];
+    const flat = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = []; // { sel, at: order, spec } for each selector that sets the chat title's padding-right
+    const re = /([^{}@]+)\{([^{}]*)\}/g;
+    let m, n = 0;
+    while ((m = re.exec(flat))) {
+      n++;
+      if (!/padding-right/.test(m[2])) continue;
+      for (const sel of m[1].split(',').map((x) => x.trim()).filter((x) => /\.chat-title\b/.test(x))) rules.push({ sel, at: n, spec: spec(sel), val: (m[2].match(/padding-right:\s*([^;]+)/) || [])[1] });
+    }
+    const find = (needle, not) => rules.filter((r) => r.sel.includes(needle) && (!not || !r.sel.includes(not)));
+    const hover = find('.chat-item:hover .chat-title')[0], armed = find('.chat-delete.armed', 'drops-one')[0];
+    const nHover = find('.drops-one:hover .chat-title')[0], nArmed = find('.drops-one:has(.chat-delete.armed) .chat-title')[0], nTouch = find('.drops-one .chat-title', ':')[0];
+    check('padding rules: every one of them was found', [hover, armed, nHover, nArmed, nTouch].every(Boolean), J(rules.map((r) => r.sel)));
+    check('padding rules: the narrow hover rule outranks the plain hover rule, the armed rules come after their hover rules and are not weaker', cmp(nHover.spec, hover.spec) > 0 && armed.at > hover.at && cmp(armed.spec, hover.spec) >= 0 && nArmed.at > nHover.at && cmp(nArmed.spec, nHover.spec) >= 0, J({ hover: hover.spec, nHover: nHover.spec, armed: armed.spec, nArmed: nArmed.spec }));
+    check('padding rules: the narrow touch rule outranks the plain touch rule', cmp(nTouch.spec, find('.chat-title', ':').filter((r) => r.sel === '.chat-title')[0].spec) > 0);
+    check('padding rules: the narrow ones read --actions-w-narrow and the plain ones --actions-w', [nHover, nArmed, nTouch].every((r) => /--actions-w-narrow/.test(r.val)) && [hover, armed].every((r) => /--actions-w\b(?!-)/.test(r.val)));
+  }
+  { // deleting a chat refreshes the Chats button, the list and the tab marks (a stale green "done" mark otherwise)
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const del = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:delete'"), mainSrc.indexOf('// The chat as Markdown'));
+    check('delete: both branches (the open chat and another) push attention after the chat is gone', (del.match(/pushAttention\(\)/g) || []).length === 2 && del.indexOf('unbindChat') < del.indexOf('pushAttention()'), String((del.match(/pushAttention\(\)/g) || []).length));
+    const tell = mainSrc.slice(mainSrc.indexOf('function tellUser(run, kind)'), mainSrc.indexOf('function tellUser(run, kind)') + 400);
+    check('deleted chat: a run that ends after its chat was deleted adds no unread mark and sends no notification', /if \(run\.deleted\) \{ unreadChats\.delete\(run\.chatId\);[^}]*return; \}/.test(tell) && tell.indexOf('run.deleted') < tell.indexOf('unreadChats.add'));
+    check('queue: why a chat waits is asked again when its text is made', /const waitingText = \(run\) => t\(\(run\.queued \? runSlots\.reason\(run\.chatId\)/.test(mainSrc));
+  }
+  check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
 }
 
 // ---- tool target
