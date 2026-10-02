@@ -22,7 +22,8 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
 const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
-  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity'];
+  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
+  'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));

@@ -83,7 +83,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- nav and search ----
   const navCount = await inTab(sid, "document.querySelectorAll('#nav a').length");
-  const sectionCount = require('../src/settings/settings-backend').SECTIONS.length;
+  // (Search engine and Downloads are groups on the General page now; their ids still open it.)
+  const sectionCount = require('../src/settings/settings-backend').SECTIONS.length - 2;
   check(`left nav lists all ${sectionCount} categories`, navCount === sectionCount, navCount);
   await inTab(sid, "document.querySelector('#nav a[data-section=appearance]').click()");
   await waitFor(() => inTab(sid, "!document.getElementById('cat-appearance').hidden"));
@@ -97,7 +98,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('search “proxy” shows only the matching row (Advanced)', JSON.stringify(hits) === '["cat-advanced:1"]', JSON.stringify(hits));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'zzqxv'; s.dispatchEvent(new Event('input')); }");
   check('search with no match says so', (await inTab(sid, "!document.getElementById('no-results').hidden")) === true, await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden).map((r) => r.dataset.search).slice(0, 3).join(' | ')"));
+  await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'night'; s.dispatchEvent(new Event('input')); }");
+  const night = await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).map((r) => r.querySelector('.label')?.textContent)");
+  check('search “night” finds the Theme setting (synonym for dark)', night.includes('Theme'), JSON.stringify(night));
+  await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'steps'; s.dispatchEvent(new Event('input')); }");
+  check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "document.querySelector('details.adv-rows')?.open === true"));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); }");
+  check('the folded list closes again when the search is cleared', await inTab(sid, "document.querySelector('details.adv-rows')?.open === false"));
+  const stops = await inTab(sid, "[...document.querySelectorAll('#nav a')].filter((a) => a.tabIndex === 0).length");
+  check('the category list is a single Tab stop', stops === 1, stops);
+  await inTab(sid, "location.hash = '#downloads'");
+  await waitFor(() => inTab(sid, "!document.getElementById('cat-general').hidden"));
+  check('the old #downloads link opens General', await inTab(sid, "!document.getElementById('cat-general').hidden && Boolean(document.getElementById('download-dir'))"));
+  await inTab(sid, "location.hash = '#clock-greeting'");
+  await waitFor(() => inTab(sid, "!document.getElementById('sec-clock-greeting')?.closest('.pane')?.hidden"));
+  check('Home has a Clock and greeting page', await inTab(sid, "Boolean(document.getElementById('pref-newTabHeader')) && !document.getElementById('pref-newTabHeader').closest('.pane').hidden"));
+  await inTab(sid, "location.hash = '#appearance'");
 
   const setSelect = (id, value) => inTab(sid, `(async () => { const el = document.getElementById(${JSON.stringify(id)}); el.value = ${JSON.stringify(String(value))}; el.dispatchEvent(new Event('change')); await new Promise((r) => setTimeout(r, 300)); })()`);
   const clickEl = (selector) => inTab(sid, `(async () => { document.querySelector(${JSON.stringify(selector)}).click(); await new Promise((r) => setTimeout(r, 400)); })()`);

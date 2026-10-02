@@ -128,19 +128,19 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['languages', 'Language'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['import', 'Import'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
-  { id: 'home', title: 'Home', slots: [['home', 'Background'], ['widgets', 'Widgets']] },
+  { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
   { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data']] },
-  { id: 'search', title: 'Search engine', slots: [['search', 'Search engine']] },
   { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-access', 'Full access (advanced)'], ['ai-more', 'More']] },
   { id: 'extensions', title: 'Extensions', slots: [['extensions', 'Installed']] },
-  { id: 'downloads', title: 'Downloads', slots: [['downloads', 'Downloads']] },
   { id: 'updates', title: 'Updates', slots: [['about', 'Software update']] },
   { id: 'advanced', title: 'Advanced', slots: [['system', 'Performance'], ['experimental', 'Experimental'], ['automation', 'Automation'], ['advanced-more', 'Diagnostics'], ['reset', 'Reset']] },
 ];
 // Sidebar icon glyphs (16px, drawn white on a colored rounded square; the color is in settings.css).
+// The sidebar's headings: a category belongs to the group that starts at it.
+const NAV_GROUPS = { general: 'Browser', privacy: 'Safety and add-ons', ai: 'Assistant', updates: 'System' };
 const CATEGORY_ICONS = {
   general: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.7"/><circle cx="10.5" cy="11" r="1.7"/>',
   appearance: '<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8a5.2 5.2 0 0 0 0 10.4z" fill="currentColor"/>',
@@ -164,7 +164,7 @@ const ALIASES = {
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', focus: 'system' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'search' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -216,7 +216,12 @@ class Slot {
 }
 const visibleNow = (el) => el.offsetParent !== null; // on screen now (not in a hidden category or filtered out)
 
-let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
+// A summary line that folds a handful of rows away. Searching opens it when one of its rows matches (see show()).
+function collapsible(title, rows) {
+  const d = h('details', { class: 'adv-rows' }, h('summary', { text: title }), ...rows);
+  d.querySelector('summary').addEventListener('click', () => { d.dataset.pinned = d.open ? '' : '1'; });
+  return d;
+}let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
 let gmailWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
@@ -268,19 +273,25 @@ async function buildAi(card) {
   const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
   card.append(
     row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
-    select('maxSteps', tr('settings.ai.maxSteps', 'Max steps per task'), tr('settings.ai.maxStepsDesc', 'How many steps the assistant may take on one request before it wraps up with an answer. Unlimited still stops if it gets stuck in a loop, and you can always press Stop.'),
-      [[0, tr('settings.ai.maxSteps.unlimited', 'Unlimited')], ...[30, 60, 120, 250].map((n) => [n, String(n)])], { number: true }),
-    select('maxChatRuns', tr('settings.ai.maxChatRuns', 'Chats working at once'), tr('settings.ai.maxChatRunsDesc', 'Each tab has its own sidebar chat, and chats in different tabs can work at the same time. When this many are working, the next one waits its turn. Claude Code and Grok Build always take turns, one chat at a time.'),
-      [1, 2, 3, 4, 6, 8].map((n) => [n, String(n)]), { number: true }),
-    toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
-    toggle('autoCompact', tr('settings.ai.autoCompact', 'Compact long chats automatically'), tr('settings.ai.autoCompactDesc', 'When a chat with an API model (Claude, OpenAI, Grok, Gemini, OpenRouter) gets close to what the model can take in one request, its earlier part is summarized by the same model and the AI goes on from that summary, instead of the oldest messages being left out. The messages stay on screen. Type /compact to do it yourself at any time. Claude Code, Grok Build and Antigravity compact their own sessions.')),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
-    toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
+    toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
+  );
+  card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
     toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server. It doesn’t limit a command-line AI you gave full access to this computer: that AI’s own tools (shell, files) are not Lumen’s.')),
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'Close tabs the AI opened when it finishes'), tr('settings.ai.closeAiTabsDesc', 'Off leaves them open (the tab menu and the chat list can still close them). Ask puts the question under the reply. Always closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Off', ask: 'Ask', always: 'Always' }[v])])),
   );
+  // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
+  const advancedRows = [
+    select('maxSteps', tr('settings.ai.maxSteps', 'Max steps per task'), tr('settings.ai.maxStepsDesc', 'How many steps the assistant may take on one request before it wraps up with an answer. Unlimited still stops if it gets stuck in a loop, and you can always press Stop.'),
+      [[0, tr('settings.ai.maxSteps.unlimited', 'Unlimited')], ...[30, 60, 120, 250].map((n) => [n, String(n)])], { number: true }),
+    select('maxChatRuns', tr('settings.ai.maxChatRuns', 'Chats working at once'), tr('settings.ai.maxChatRunsDesc', 'Each tab has its own sidebar chat, and chats in different tabs can work at the same time. When this many are working, the next one waits its turn. Claude Code and Grok Build always take turns, one chat at a time.'),
+      [1, 2, 3, 4, 6, 8].map((n) => [n, String(n)]), { number: true }),
+    toggle('autoCompact', tr('settings.ai.autoCompact', 'Compact long chats automatically'), tr('settings.ai.autoCompactDesc', 'When a chat with an API model (Claude, OpenAI, Grok, Gemini, OpenRouter) gets close to what the model can take in one request, its earlier part is summarized by the same model and the AI goes on from that summary, instead of the oldest messages being left out. The messages stay on screen. Type /compact to do it yourself at any time. Claude Code, Grok Build and Antigravity compact their own sessions.')),
+    toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
+  ];
+  card.group(tr('settings.ai.groupLimits', 'Limits and housekeeping')).append(collapsible(tr('settings.ai.more', 'More options'), advancedRows));
   // Control of the whole computer is its own group, apart from the everyday switches above.
   card.at('ai-access').append(...cliAccessRows());
   card.at('tabs-groups').append(
@@ -704,25 +715,35 @@ async function buildHome(card) {
   card.append(select('newTabEffect', 'Animated effect', 'Moving particles over the background. Light on purpose: few particles, at most 30 frames a second, paused while the tab is hidden, and still with Reduce motion. It never covers the search box or the cards.',
     [['none', 'None'], ['particles', 'Particles'], ['stars', 'Stars'], ['bubbles', 'Bubbles'], ['snow', 'Snow']], { after: (v) => { effectOptions.hidden = v === 'none'; } }), effectOptions);
   effectOptions.hidden = st.prefs.newTabEffect === 'none';
-  card.group('Clock and greeting');
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
   name.addEventListener('change', () => save('newTabName', name.value));
   const clockStyle = buildClockStyle();
-  card.append(
-    toggle('newTabHeader', 'Show the clock, date and greeting', 'Turn off to hide the whole top of the page: the clock, the date and the “Good evening” line.'),
-    toggle('newTabClock', 'Show a clock on the new-tab page', null),
-    select('newTabClockSize', 'Clock size', 'How big the clock is. It grows into the space above it, so the search box and your cards stay put; where cards leave no room, it is drawn a step smaller. In Edit layout you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
-    ...clockStyle.clock, // [look]
-    row('Greeting', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
-    ...clockStyle.greeting, // [look]
+  // Clock and greeting: its own page. The header switch comes first; everything under it is greyed out while it is off.
+  const page = card.at('home-page');
+  const clockPage = page.subpage('clock-greeting', 'Clock and greeting', 'The clock, the date and the “Good evening” line at the top of the new-tab page.', 'clock time date seconds hours 12-hour 24-hour greeting name font header');
+  const dependents = [];
+  const syncHeader = (on) => { for (const r of dependents) { r.classList.toggle('off', !on); for (const el of r.querySelectorAll('input, select, button')) el.disabled = !on; } };
+  const dep = (...rows) => { dependents.push(...rows); return rows; };
+  clockPage.group('Header').append(
+    toggle('newTabHeader', 'Show the header', 'The clock, date and greeting at the top of the page. Turn off to hide all of it.', syncHeader),
+    ...dep(toggle('newTabClock', 'Show the clock', 'Off keeps the date and the greeting.')),
   );
-  card.group('Page contents').append(
-    select('newTabSearchWidth', 'Search bar width', 'The width of the search bar and the column it sits in. Automatic fills the column. A wider bar is drawn only as wide as the cards beside it allow (the setting is kept for wider windows). In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => (x === 640 ? -1 : y === 640 ? 1 : x - y)).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
+  clockPage.group('Clock').append(...dep(
+    select('newTabClockSize', 'Clock size', 'It grows into the space above the search box; where cards leave no room it is drawn a step smaller. In Edit layout you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
+    ...clockStyle.clock, // [look]
+  ));
+  clockPage.group('Greeting').append(...dep(
+    row('Name', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
+    ...clockStyle.greeting, // [look]
+  ));
+  syncHeader(Boolean(st.prefs.newTabHeader));
+  page.append(
+    select('newTabSearchWidth', 'Search bar width', 'Automatic fills the column. A wider bar is only drawn as wide as the cards beside it allow. In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => (x === 640 ? -1 : y === 640 ? 1 : x - y)).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
-    toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays exactly where you put it, in any row.'),
+    toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
   );
   renderTiles();
   const widgets = card.at('widgets');
@@ -2333,33 +2354,38 @@ const remembered = () => { try { const id = localStorage.getItem(REMEMBER); retu
 const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
 function show() {
-  const words = query().split(/\s+/).filter(Boolean);
-  // A word matches where a word of the setting starts with it ("mode" finds Dark mode, not Model).
-  const hasWord = (text, w) => { for (let i = text.indexOf(w); i >= 0; i = text.indexOf(w, i + 1)) if (i === 0 || !/[a-z0-9]/.test(text[i - 1])) return true; return false; };
+  const SS = window.settingsSearch;
+  const words = SS.parse(query());
   const searching = words.length > 0;
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
   const hitsBySlot = new Map();
   for (const slot of slots.values()) {
     let hits = 0;
+    let best = 0;
     for (const g of slot.groups) {
       const rows = [...g.querySelectorAll('.row')];
       if (!searching) {
-        for (const r of rows) r.classList.remove('filtered');
+        for (const r of rows) { r.classList.remove('filtered'); r.style.order = ''; }
+        for (const d of g.querySelectorAll('details.adv-rows')) d.open = d.dataset.pinned === '1';
         g.hidden = false;
         continue;
       }
-      const titleHit = words.every((w) => hasWord(`${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase(), w));
+      const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
+      const titleHit = SS.matchesAll(titles, words);
       let n = 0;
       for (const r of rows) {
-        const hit = titleHit || words.every((w) => hasWord(`${r.dataset.search} ${catTitle(slot)}`, w));
-        r.classList.toggle('filtered', !hit);
-        if (hit) n++;
+        const s = Math.max(titleHit ? 2 : 0, SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles, search: r.dataset.search }));
+        r.classList.toggle('filtered', s === 0);
+        r.style.order = String(-s); // best matches first inside a list
+        if (s) { n++; best = Math.max(best, s); }
       }
+      for (const d of g.querySelectorAll('details.adv-rows')) d.open = rows.some((r) => d.contains(r) && !r.classList.contains('filtered'));
       g.hidden = rows.length ? n === 0 : !titleHit;
       hits += rows.length ? n : (titleHit ? 1 : 0);
     }
     hitsBySlot.set(slot, hits);
+    slot.best = best;
   }
   // A sub-page's content shows in place while searching, so its link row is only needed when it matches by itself.
   if (searching) {
@@ -2376,10 +2402,11 @@ function show() {
     const subs = [...slots.values()].filter((s) => s.isSub && s.cat === id).reduce((sum, s) => sum + (hitsBySlot.get(s) || 0), 0);
     const hits = own + subs;
     c.pane.hidden = searching ? hits === 0 : id !== view.cat || Boolean(view.sub);
+    c.pane.style.order = searching ? String(-Math.max(0, ...c.slots.map(([sid]) => slots.get(sid)?.best || 0), ...[...slots.values()].filter((s) => s.isSub && s.cat === id).map((s) => s.best || 0))) : ''; // best-matching page first
     any ||= hits > 0;
     const dim = searching && hits === 0;
     c.link.classList.toggle('dim', dim);
-    if (dim) { c.link.setAttribute('aria-disabled', 'true'); c.link.tabIndex = -1; } else { c.link.removeAttribute('aria-disabled'); c.link.removeAttribute('tabindex'); }
+    if (dim) c.link.setAttribute('aria-disabled', 'true'); else c.link.removeAttribute('aria-disabled');
     let badge = c.link.querySelector('.hits');
     if (searching && hits > 0) {
       if (!badge) { badge = h('span', { class: 'hits', 'aria-hidden': 'true' }); c.link.append(badge); }
@@ -2388,8 +2415,41 @@ function show() {
     if (!searching && id === view.cat) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
   }
   for (const slot of slots.values()) if (slot.isSub) slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id;
+  syncNavStop();
   $('no-results').hidden = !searching || any;
   $('no-results-query').textContent = searching && !any ? tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() }) : '';
+}
+
+// The category list is one Tab stop (the current page, or the first that still matches a search); arrow keys move within it.
+function navLinks() { return [...$('nav').querySelectorAll('a')].filter((a) => a.getAttribute('aria-disabled') !== 'true'); }
+function syncNavStop() {
+  const nav = $('nav');
+  const usable = navLinks();
+  const stop = nav.contains(document.activeElement) && usable.includes(document.activeElement) ? document.activeElement : usable.find((a) => a.getAttribute('aria-current') === 'page') || usable[0];
+  for (const a of nav.querySelectorAll('a')) a.tabIndex = a === stop ? 0 : -1;
+  const cur = nav.querySelector('a[aria-current="page"]'); // (the narrow strip scrolls sideways: keep the current page in view)
+  if (cur && nav.scrollWidth > nav.clientWidth && (cur.offsetLeft < nav.scrollLeft || cur.offsetLeft + cur.offsetWidth > nav.scrollLeft + nav.clientWidth)) nav.scrollLeft = Math.max(0, cur.offsetLeft - 24);
+  edgeFade();
+}
+function edgeFade() { // the narrow strip fades out on a side where more categories are hidden
+  const nav = $('nav');
+  nav.classList.toggle('more-right', nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 2);
+  nav.classList.toggle('more-left', nav.scrollLeft > 2);
+}
+function initNavKeys() {
+  const nav = $('nav');
+  nav.addEventListener('keydown', (e) => {
+    const key = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+    const usable = navLinks();
+    const i = usable.indexOf(document.activeElement);
+    if (i < 0 || !(key || e.key === 'Home' || e.key === 'End')) return;
+    e.preventDefault();
+    const next = e.key === 'Home' ? usable[0] : e.key === 'End' ? usable[usable.length - 1] : usable[(i + key + usable.length) % usable.length];
+    next.focus();
+  });
+  nav.addEventListener('focusin', (e) => { if (e.target.tagName === 'A') for (const a of nav.querySelectorAll('a')) a.tabIndex = a === e.target ? 0 : -1; });
+  nav.addEventListener('scroll', edgeFade, { passive: true });
+  window.addEventListener('resize', edgeFade);
 }
 
 function route() {
@@ -2428,7 +2488,8 @@ async function init() {
     def.title = tr(`settings.section.${def.id}`, def.title);
     const icon = h('span', { class: `ic ic-${def.id}`, 'aria-hidden': 'true' });
     icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[def.id]}</svg>`; // constant markup
-    const link = h('a', { href: `#${def.id}`, 'data-section': def.id }, icon, h('span', { class: 'nav-label', text: def.title }));
+    const link = h('a', { href: `#${def.id}`, 'data-section': def.id, tabindex: '-1' }, icon, h('span', { class: 'nav-label', text: def.title }));
+    if (NAV_GROUPS[def.id]) $('nav').append(h('div', { class: 'nav-heading', 'aria-hidden': 'true', text: tr(`settings.navgroup.${def.id}`, NAV_GROUPS[def.id]) }));
     $('nav').append(link);
     const pane = h('div', { class: 'pane', id: `cat-${def.id}`, hidden: true }, h('h1', { class: 'pane-title', text: def.title }));
     categories.set(def.id, { ...def, pane, link });
@@ -2483,6 +2544,7 @@ async function init() {
       show();
     }
   });
+  initNavKeys();
   window.addEventListener('hashchange', route);
   route();
   document.body.dataset.ready = '1';

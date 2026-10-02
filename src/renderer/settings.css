@@ -419,4 +419,25 @@ details.disclosure > .list { margin-top: 8px; columns: 2; column-gap: 24px; }
 /* A checked switch keeps its focus ring (the checked rule above clears box-shadow). */
 input.switch:focus-visible, input.switch:checked:focus-visible, input.switch:indeterminate:focus-visible { box-shadow: var(--focus-ring); }
 main, .pane, .slot, .group, .card { min-width: 0; }
-.key-get { margin-left: 8px; font-size: 12px; font-weight: 400; }
+.key-get { margin-left: 8px; font-size: 12px; font-weight: 400; }.row.off { opacity: 0.5; }
+/* Search results: best matches first (settings.js sets each order). */
+.searching #sections { display: flex; flex-direction: column; }
+.searching .card { display: flex; flex-direction: column; }
+.searching .card > .row + .row { border-top: 1px solid var(--hairline); }
+/* Rows folded under a summary ("More options"). */
+details.adv-rows > summary { cursor: default; list-style: none; display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 46px; font-weight: 500; color: var(--muted); }
+details.adv-rows > summary::-webkit-details-marker { display: none; }
+details.adv-rows > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.6px solid var(--faint); border-top: 1.6px solid var(--faint); transform: rotate(45deg); transition: transform var(--t-fast) ease-out; }
+details.adv-rows[open] > summary::before { transform: rotate(135deg); }
+details.adv-rows > summary:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+details.adv-rows > .row { border-top: 1px solid var(--hairline); }
+
+/* Sidebar headings, and the narrow strip's edge fade. */
+.nav-heading { margin: 14px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.nav-heading:first-child { margin-top: 2px; }
+@media (max-width: 720px) {
+  .nav-heading { display: none; }
+  #nav.more-right { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+  #nav.more-left { mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+  #nav.more-left.more-right { mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+}
