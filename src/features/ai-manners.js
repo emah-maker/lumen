@@ -79,6 +79,27 @@ function handsOffCheck({ tool, handsOff = false, ownTab = false } = {}) {
   return handsOffRefusal(tool);
 }
 
+// The same rule for the opt-in Automation (CDP) server (automation/automation.js), which outside programs drive: the protocol commands
+// that click, type, navigate, run script, change the page or its storage, or close / front a tab. Reading ones (Page.captureScreenshot,
+// DOM.getDocument, Runtime.enable, Network.enable, ...) are not here.
+const AUTOMATION_ACTING = new RegExp('^(' + [
+  'Input\\.',
+  'Page\\.(navigate|navigateToHistoryEntry|reload|stopLoading|close|bringToFront|handleJavaScriptDialog|setDocumentContent|addScriptToEvaluateOnNewDocument|setInterceptFileChooserDialog|resetNavigationHistory)$',
+  'Runtime\\.(evaluate|callFunctionOn|compileScript|runScript)$',
+  'DOM\\.(setAttributeValue|setAttributesAsText|removeAttribute|setNodeValue|setNodeName|setOuterHTML|removeNode|moveTo|copyTo|setFileInputFiles|focus|scrollIntoViewIfNeeded|undo|redo|markUndoableState)$',
+  'Emulation\\.(setScriptExecutionDisabled|setGeolocationOverride|setTimezoneOverride|setLocaleOverride)$',
+  'Network\\.(setCookie|setCookies|deleteCookies|clearBrowserCookies)$',
+  'Storage\\.(clear|set|override|delete)', 'DOMStorage\\.(clear|set|remove)', 'IndexedDB\\.(clear|delete)',
+  'Fetch\\.(fulfillRequest|failRequest|continueRequest|continueWithAuth)$',
+  'CSS\\.set', 'Debugger\\.', 'Target\\.(closeTarget|activateTarget)$',
+].join('|') + ')');
+const isAutomationAction =(method) => AUTOMATION_ACTING.test(String(method || ''));
+// null when the command may go ahead, else the error text for the client.
+function automationRefusal({ method, handsOff = false, ownTab = false } = {}) {
+  if (!handsOff || ownTab || !isAutomationAction(method)) return null;
+  return `Hands-off mode is on in Lumen: ${method} acts on a tab the user did not let the AI open, so it was not run. Reading the page (screenshots, DOM, accessibility tree) still works; open your own tab (Target.createTarget) to act.`;
+}
+
 // One line for the system prompt, so the model plans around it instead of finding out by being refused.
 const HANDS_OFF_PROMPT = 'Hands-off mode is on: the user does not let you click, type, scroll or navigate in their own tabs. You can read them (read_page, find, screenshot, read_tabs, list_tabs). To act, open your own tab with open_tab (it opens in the background) and work there; those tabs are yours.';
 
@@ -119,17 +140,18 @@ function agentInput(wc, fn) {
 }
 const isAgentInput = (wc) => (agentDepth.get(wc) || 0) > 0;
 // The same for input sent over the tab's debugger (Input.dispatchMouseEvent): the page view may report such an event to
-// before-mouse-event a moment after the command returns, so the window stays open `graceMs` past the awaited commands.
-// Counted, so overlapping calls never close each other's window early.
-async function agentInputAsync(wc, fn, graceMs = 150) {
+// before-mouse-event, where the awaited command is the window: the browser process sees the event while it dispatches it to the
+// page, which is before the page's acknowledgement that resolves the command, so the flag is up for exactly the events the AI
+// sent. No grace period after it by default: a fixed delay would also swallow a real click the user makes right then (`graceMs`
+// exists only for a caller that knows it needs one). Counted, so overlapping calls never close each other's window.
+async function agentInputAsync(wc, fn, graceMs = 0) {
   agentDepth.set(wc, (agentDepth.get(wc) || 0) + 1);
   try { return await fn(); } finally {
     const release = () => {
       const left = (agentDepth.get(wc) || 1) - 1;
       if (left > 0) agentDepth.set(wc, left); else agentDepth.delete(wc);
     };
-    const timer = setTimeout(release, graceMs);
-    timer.unref?.();
+    if (graceMs > 0) setTimeout(release, graceMs).unref?.(); else release();
   }
 }
 
@@ -146,6 +168,6 @@ const userInput = {
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, handOver, isAiTab, takenOver, closeSelection, cleanCloseSetting, closeAfterRun,
-  isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
+  isAutomationAction, automationRefusal, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
   agentInput, agentInputAsync, isAgentInput, userInput,
 };

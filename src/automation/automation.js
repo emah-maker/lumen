@@ -372,6 +372,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       if (m) {
         const tabId = (await userTargets()).get(m[2]);
         if (!tabId) return send(404, { error: 'No such tab' });
+        if (hooks.handsOffRefusal?.(m[1] === 'close' ? 'Target.closeTarget' : 'Target.activateTarget', tabId)) return send(403, { error: 'Hands-off mode is on: the AI may not close or front a tab it did not open.' });
         if (m[1] === 'close') hooks.closeTab(tabId);
         else hooks.switchTab?.(tabId);
         return send(200, m[1] === 'close' ? 'Target is closing' : 'Target activated');
@@ -391,7 +392,8 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       await chromium.ready;
       if (routed.route === BROWSER_PATH) return browserClient(req, socket);
       const page = /^\/devtools\/page\/(.+)$/.exec(routed.route);
-      if (page && (await userTargets()).has(page[1])) return pageClient(req, socket, page[1]);
+      const pageTab = page ? (await userTargets()).get(page[1]) : undefined;
+      if (page && pageTab !== undefined) return pageClient(req, socket, page[1], pageTab);
       throw new Error('target');
     } catch {
       socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
@@ -401,7 +403,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
   const announce = () => hooks.onSession?.({ remaining: clients.size });
 
   // Page endpoints are one tab only: pass messages straight through.
-  function pageClient(req, socket, targetId) {
+  function pageClient(req, socket, targetId, tabId) {
     const upstream = chromium.open(targetId);
     let client;
     const entry = { close: () => client.close() };
@@ -409,7 +411,14 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
     upstream.onClose = () => client.close();
     upgrade(req, socket);
     client = serverSocket(socket, {
-      onMessage: (text) => upstream.send(text),
+      onMessage: (text) => {
+        // [ai manners] hands-off mode: an act on a tab the AI did not open is answered with an error instead of reaching the page
+        let msg = null;
+        try { msg = JSON.parse(text); } catch {}
+        const refusal = msg && typeof msg.method === 'string' ? hooks.handsOffRefusal?.(msg.method, tabId) : null;
+        if (refusal) { client.send(JSON.stringify({ id: msg.id, error: { code: -32000, message: refusal } })); return; }
+        upstream.send(text);
+      },
       onClose: () => { upstream.close(); if (clients.delete(entry)) announce(); },
     });
     clients.add(entry);
@@ -420,6 +429,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
   function browserClient(req, socket) {
     const upstream = chromium.open(null);
     const allowedSessions = new Set(); // sessions of user tabs (and their frames/workers)
+    const sessionTab = new Map(); // sessionId -> Lumen tab id (a frame or worker has its tab's)
     const heldSessions = new Map(); // sessionId -> messages waiting for the tab check
     const knownTargets = new Set(); // user targets this client was told about
     const attachWaiters = new Map(); // targetId -> resolve, for createTarget replies
@@ -442,6 +452,7 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       heldSessions.delete(sessionId);
       if (ok) {
         allowedSessions.add(sessionId);
+        sessionTab.set(sessionId, parentOk ? sessionTab.get(msg.sessionId) : (await userTargets()).get(targetInfo.targetId));
         knownTargets.add(targetInfo.targetId);
         client.send(JSON.stringify(msg));
         for (const m of held) client.send(m);
@@ -498,7 +509,11 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
       const { id, method, params = {}, sessionId } = msg;
       if (typeof id !== 'number' || id >= OWN_ID_BASE) return reply(id, sessionId, null, 'Invalid message id.');
       if (sessionId && !allowedSessions.has(sessionId)) return reply(id, sessionId, null, 'No such session.');
-      if (sessionId) return toUpstream(msg); // commands to a user tab go straight through
+      if (sessionId) { // commands to a user tab go straight through (unless hands-off mode refuses an act on a tab the AI did not open)
+        const refusal = hooks.handsOffRefusal?.(method, sessionTab.get(sessionId));
+        if (refusal) return reply(id, sessionId, null, refusal);
+        return toUpstream(msg);
+      }
       switch (method) {
         case 'Target.createTarget': {
           const tab = hooks.openTab(params.url || 'about:blank', { background: Boolean(params.background) });
@@ -517,12 +532,14 @@ function start({ port, pipeFd, file, inproc, token, hooks }) {
         case 'Target.closeTarget': {
           const tabId = (await userTargets()).get(params.targetId);
           if (!tabId) return reply(id, null, null, 'No target with given id found');
+          { const refusal = hooks.handsOffRefusal?.(method, tabId); if (refusal) return reply(id, null, null, refusal); }
           hooks.closeTab(tabId);
           return reply(id, null, { success: true });
         }
         case 'Target.activateTarget': {
           const tabId = (await userTargets()).get(params.targetId);
           if (!tabId) return reply(id, null, null, 'No target with given id found');
+          { const refusal = hooks.handsOffRefusal?.(method, tabId); if (refusal) return reply(id, null, null, refusal); }
           hooks.switchTab?.(tabId);
           return reply(id, null, {});
         }

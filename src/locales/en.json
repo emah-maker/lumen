@@ -1370,7 +1370,7 @@
   "welcome.default.ask": "Want links from other apps to open here?",
   "settings.default.button": "Make default",
   "settings.ai.handsOff": "Don’t let the AI act on my pages",
-  "settings.ai.handsOffDesc": "The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. This does not cover the separate Automation server (Settings → Advanced → Automation), which is off unless you turn it on, or programs connected through it. This setting covers the sidebar AI and its MCP tools only.",
+  "settings.ai.handsOffDesc": "The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server (Settings → Advanced → Automation), if you turn that on.",
   "settings.ai.closeAiTabs": "Close tabs the AI opened when it finishes",
   "settings.ai.closeAiTabsDesc": "Off leaves them open (the tab menu and the chat list can still close them). Ask puts the question under the reply. Always closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.",
   "settings.ai.closeAiTabs.off": "Off",

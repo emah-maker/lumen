@@ -2155,16 +2155,23 @@ function addRestoredTab(url, title, favicon = null) {
 // substitutes for it. Any doubt (a throw, a page that blocks the read) counts as "yes, has input".
 // Also: a reply still streaming in (an AI chat site: the page keeps changing with no load in progress, or
 // shows a Stop button), a playing media element, a chosen upload (tabSleep.pageBusyScript). Bounded to 5 s.
-async function hasUnsavedInput(wc) {
+const NO_ANSWER = Symbol('no answer');
+// 'yes' | 'no' | 'unknown': the page's own answer, or none (it hung, crashed or threw). Closing an AI tab tells these apart: a hung
+// page is not "holding text the user typed".
+async function unsavedInputState(wc) {
   try {
     const answer = await Promise.race([
       wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: tabSleep.pageBusyScript(1200) }]),
-      new Promise((resolve) => setTimeout(resolve, 5000)), // a page that won't answer: undefined, which counts as busy
+      new Promise((resolve) => setTimeout(() => resolve(NO_ANSWER), 5000)),
     ]);
-    return tabSleep.pageBusy(answer);
+    if (answer === NO_ANSWER) return 'unknown';
+    return tabSleep.pageBusy(answer) ? 'yes' : 'no';
   } catch {
-    return true;
+    return 'unknown';
   }
+}
+async function hasUnsavedInput(wc) {
+  return (await unsavedInputState(wc)) !== 'no'; // any doubt counts as "yes, has input"
 }
 
 // Never the active tab, never a tab an AI task is working in (it keeps its tab when the user switches
@@ -2369,6 +2376,16 @@ function requestCloseTab(id) {
   }, CLOSE_TIMEOUT_MS);
 }
 const CLOSE_TIMEOUT_MS = 3000;
+// [ai manners] The AI's close_tab: a page that asks "Leave site?" is not asked about (the question would bring the tab to the front
+// over what the user is doing): the tab simply stays open and the tool tells the AI the page blocked it.
+function agentRequestCloseTab(id) {
+  const tab = tabs.find((t) => t.id === id);
+  if (!alive(tab)) { requestCloseTab(id); return; }
+  tab.aiClosing = true;
+  requestCloseTab(id);
+  const done = setTimeout(() => { tab.aiClosing = false; }, CLOSE_TIMEOUT_MS + 1500);
+  done.unref?.();
+}
 
 function listTabs() {
   // Sleeping tabs stay listed (from their sleep snapshot) so the agent can still see and switch to
@@ -4114,7 +4131,7 @@ function keepTab(rec, tab) {
 async function aiTabsClose(selector = {}, { auto = false } = {}) {
   const picked = aiTabSelect({ ...selector, auto });
   const results = await Promise.all(picked.map(async ({ rec, tab }) => {
-    if (alive(tab) && (await hasUnsavedInput(tab.view.webContents).catch(() => false))) return keepTab(rec, tab);
+    if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
     if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
     const item = { url: tabUrl(tab), partition: tab.isolated || null, rec };
@@ -4126,7 +4143,9 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
     aiCloseUndo.set(token, items);
     while (aiCloseUndo.size > 20) aiCloseUndo.delete(aiCloseUndo.keys().next().value);
   }
-  return { closed: items.length, kept: results.filter((r) => r.kept).length, token };
+  const result = { closed: items.length, kept: results.filter((r) => r.kept).length, token };
+  Object.defineProperty(result, 'rec', { value: items[0]?.rec || picked[0]?.rec || null }); // (not sent over IPC) the window holding the tabs: where a toast belongs
+  return result;
 }
 // Undo of a close: the tabs come back in the background, as the user's own tabs (they are theirs to keep now), and leave the
 // "Reopen Closed Tab" list again.
@@ -4162,7 +4181,7 @@ ipcMain.handle('tabs:hide-ai', async (_e, on) => {
   if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
   return readSettings().hideAiTabs === true;
 });
-ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(curRec, r); return r; });
+ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
 if (TEST) global.__manners = manners;
 if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
@@ -5999,7 +6018,7 @@ const agent = new Agent({
   signedIn: signedInReader, // [signed-in sites]
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
-  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(requestCloseTab),
+  activeTab: inRun(agentActiveTab), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   aiOff: (url) => aiSites.isOff(url), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
@@ -7092,7 +7111,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 // ---------- AI agents over MCP and CDP, and the Claude Code engine (features/ai-agents.js) ----------
 
 const aiAgents = setupAiAgents({
-  app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab,
+  app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t),
   tools: EXTERNAL_TOOLS,
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page

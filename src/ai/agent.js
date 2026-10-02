@@ -2949,7 +2949,7 @@ ${same}
         // requestCloseTab finishes once the page lets go: wait for that, so the next step doesn't act
         // on a tab that is about to disappear.
         for (let i = 0; i < 30 && this.browser.listTabs().some((t) => t.id === id); i++) await sleep(100);
-        if (this.browser.listTabs().some((t) => t.id === id)) return `Tab ${id} is asking the user whether to leave the page (it may have unsaved changes). Wait for their answer; check list_tabs.`;
+        if (this.browser.listTabs().some((t) => t.id === id)) return `Tab ${id} did not close: the page blocked it (it may have unsaved changes), so it was left open and the user was not interrupted. Ask the user to close it; check list_tabs.`;
         return `Closed tab ${id}.`;
       }
       case 'scroll': {

@@ -115,18 +115,19 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('input: a key the AI sends is the AI\'s, not the user typing', M.agentInput(wc, () => { M.userInput.key(wc, 5000); return M.isAgentInput(wc); }) === true && M.userInput.typedAt(wc) === 0 && M.userInput.inputAt(wc) === 0);
     check('input: ...and the flag is gone after, even when sending throws', (() => { try { M.agentInput(wc, () => { throw new Error('x'); }); } catch {} return !M.isAgentInput(wc); })());
     {
-      // input sent over the debugger: marked as the AI's while the commands run and ~150 ms after, counted so overlaps are safe
+      // input sent over the debugger: marked as the AI's exactly while the awaited commands run (no lingering window that would
+      // swallow a real click right after), counted so overlapping calls are safe
       const dw = {};
       let during = null;
-      const p1 = M.agentInputAsync(dw, async () => { await sleep(20); during = M.isAgentInput(dw); M.userInput.click(dw, 7); }, 60);
-      const p2 = M.agentInputAsync(dw, async () => { await sleep(5); }, 60);
-      await Promise.all([p1, p2]);
+      let slowDuring = null;
+      const p1 = M.agentInputAsync(dw, async () => { await sleep(5); during = M.isAgentInput(dw); M.userInput.click(dw, 7); });
+      const p2 = M.agentInputAsync(dw, async () => { await sleep(40); slowDuring = M.isAgentInput(dw); });
+      await p1;
       check('input (debugger): marked while the commands run, and not counted as the user\'s', during === true && M.userInput.inputAt(dw) === 0);
-      check('input (debugger): still marked just after the commands return (a late mouse event is the AI\'s)', M.isAgentInput(dw) === true);
-      await sleep(120);
-      check('input (debugger): the window closes once both calls\' grace has passed', M.isAgentInput(dw) === false);
-      try { await M.agentInputAsync(dw, async () => { throw new Error('x'); }, 20); } catch {}
-      await sleep(50);
+      check('input (debugger): the first call returning does not close the second\'s window', M.isAgentInput(dw) === true);
+      await p2;
+      check('input (debugger): the window is closed the moment the commands are acknowledged', slowDuring === true && M.isAgentInput(dw) === false);
+      try { await M.agentInputAsync(dw, async () => { throw new Error('x'); }); } catch {}
       check('input (debugger): a failing command still closes its window', M.isAgentInput(dw) === false);
       M.userInput.click(dw, 9);
       check('input (debugger): the user\'s click after the window counts again', M.userInput.inputAt(dw) === 9);
@@ -190,7 +191,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     {
       const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
       const close = /async function aiTabsClose[\s\S]*?\n\}\n/.exec(main)?.[0] || '';
-      check('close: the unsaved-text guard runs on every path, not only the automatic one', /hasUnsavedInput\(tab\.view\.webContents\)/.test(close) && !/auto && alive\(tab\) && \(await hasUnsavedInput/.test(close));
+      check('close: the unsaved-text guard runs on every path, not only the automatic one', /unsavedInputState\(tab\.view\.webContents\)/.test(close) && !/auto && alive\(tab\) && \(await unsavedInputState/.test(close));
       check('close: busy / bound / user-owned is checked again after that wait', /aiTabSelect\(\{ \.\.\.selector, auto, rec \}\)\.some\(\(x\) => x\.tab === tab\)/.test(close));
       check('close: Undo is recorded only for tabs that really closed', /results\.filter\(\(r\) => r\.item\)/.test(close) && /await closeAiTab\(rec, tab\)\) \? \{ item \}/.test(close));
       const unload = /wc\.on\('will-prevent-unload'[\s\S]*?tab\.unloadAsked = true/.exec(main)?.[0] || '';
@@ -269,6 +270,33 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: its labels say the count, singular and plural', ['off', 'on'].every((k) => en[`sidebar.hideAiTabs.${k}.one`]?.includes('{count}') && en[`sidebar.hideAiTabs.${k}.other`]?.includes('{count}')));
     const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('hide toggle: it is separate from the close setting (its own channel and key)', /ipcMain\.handle\('tabs:hide-ai'/.test(mainSrc) && !/hideAiTabs/.test(/function aiTabsAfterRun[\s\S]*?\n\}/.exec(mainSrc)?.[0] || ''));
+  }
+
+  // ---- hands-off for the Automation (CDP) server
+  {
+    const acts = ['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Page.navigate', 'Page.reload', 'Page.close', 'Page.bringToFront', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'DOM.setOuterHTML', 'DOM.setFileInputFiles', 'DOM.removeNode', 'Network.setCookie', 'Storage.clearDataForOrigin', 'Fetch.fulfillRequest', 'Debugger.setBreakpointByUrl', 'Target.closeTarget', 'Target.activateTarget', 'Page.addScriptToEvaluateOnNewDocument'];
+    const reads = ['Page.captureScreenshot', 'Page.getFrameTree', 'DOM.getDocument', 'DOM.querySelector', 'DOM.getBoxModel', 'Runtime.enable', 'Network.enable', 'Accessibility.getFullAXTree', 'Page.enable', 'Target.createTarget', 'Target.attachToTarget', 'Runtime.getProperties'];
+    const R = (method, extra) => M.automationRefusal({ method, handsOff: true, ownTab: false, ...extra });
+    check('automation: every acting protocol command is refused on a tab the AI did not open', acts.every((m) => /Hands-off mode is on/.test(R(m) || '')), acts.filter((m) => !R(m)).join(','));
+    check('automation: reading commands still go through', reads.every((m) => R(m) === null), reads.filter((m) => R(m)).join(','));
+    check('automation: a tab the AI opened (Target.createTarget) can be acted in', acts.every((m) => R(m, { ownTab: true }) === null));
+    check('automation: off by default', acts.every((m) => R(m, { handsOff: false }) === null));
+    const au = fs.readFileSync(path.join(__dirname, '../src/automation/automation.js'), 'utf8').replace(/\r\n/g, '\n');
+    check('automation: the proxy checks session commands, closeTarget / activateTarget, /json/close|activate and direct page sockets', (au.match(/handsOffRefusal\?\./g) || []).length >= 5 && /sessionTab\.set\(sessionId/.test(au) && /function pageClient\(req, socket, targetId, tabId\)/.test(au));
+    const agents = fs.readFileSync(path.join(__dirname, '../src/features/ai-agents.js'), 'utf8').replace(/\r\n/g, '\n');
+    check('automation: the hook reads the setting and the tab\'s mark; tabs a client opens are the AI\'s', /handsOffRefusal: \(method, tabId\) =>/.test(agents) && /aiHandsOff === true/.test(agents) && /openedBy: \{\}/.test(agents));
+    const doc = fs.readFileSync(path.join(__dirname, '../docs/settings.md'), 'utf8') + fs.readFileSync(path.join(__dirname, '../SECURITY.md'), 'utf8');
+    check('automation: documented in docs/settings.md and SECURITY.md', /aiHandsOff/.test(doc) && /Don't let the AI act on my pages/.test(doc));
+    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+    check('automation: the setting text says it covers the Automation server', /Automation server/.test(en['settings.ai.handsOffDesc']));
+  }
+
+  // ---- closing: no answer is not "holds text"; the toast goes to the right window; the AI's close_tab never fronts a tab
+  {
+    const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+    check('close: a page that gave no answer (hung / crashed / threw) is told apart from one holding text', /return 'unknown'/.test(main) && /\(await unsavedInputState\(tab\.view\.webContents\)\) === 'yes'\) return keepTab/.test(main));
+    check('close: the toast of a chat-row close goes to the window holding the tabs', /aiCloseNote\(r\.rec \|\| curRec, r\)/.test(main) && /Object\.defineProperty\(result, 'rec'/.test(main));
+    check('close_tab: the AI path closes without the Leave-site question and says the page blocked it', /requestCloseTab: inRun\(agentRequestCloseTab\)/.test(main) && /function agentRequestCloseTab/.test(main) && /the page blocked it/.test(fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8')));
   }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');
