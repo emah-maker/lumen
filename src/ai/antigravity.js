@@ -61,12 +61,30 @@
 //   6. Images: no documented way, so they are written to files in the working folder and named in the prompt.
 //   7. settings.json keys toolPermission and trustedWorkspaces (from a third-party reference, not Google's docs).
 //   8. The stream-json event shapes (from the headless docs; parsed defensively).
+//
+// FULL ACCESS (Settings > AI > "Give Antigravity full access to this computer", antigravityFullAccess, off by default).
+// The user's own opt-in to run agy in the sidebar the way it runs in a terminal. With it on, and only then:
+//  - argv: --dangerously-skip-permissions replaces --sandbox (FULL_FLAGS). Both are listed by `agy --help` (1.2.14:
+//    "--dangerously-skip-permissions  Auto-approve all tool permission requests without prompting"; "--sandbox  Run in a
+//    sandbox with terminal restrictions enabled"). VERIFIED from the help text only: no model call was made with it. If an agy
+//    rejects the flag it exits with a usage error before doing anything ("flag provided but not defined") and the run says
+//    so plainly (cli-utils.js fullAccessRejected); it never carries on without it.
+//  - settings.json (settingsFor({ fullAccess })) has no deny rules, the terminal sandbox off and the user's home folder as the
+//    trusted workspace; the working folder is the user's home folder.
+//  - the hook (mcp-http.js agyDecision) lets agy's own tools through but still denies a tool named like one of Lumen's
+//    (mcp_lumen_..., lumen__...) that is not one of Lumen's real tools; Lumen's own tools go through the MCP server as always,
+//    so site approvals, the approval card and hands-off mode still apply to them. The stream check (offToolOf) is off.
+//  - the child gets the user's whole environment, and the inactivity watchdog allows FULL_WATCHDOG_MS (a silent shell command).
+//  - HOME / USERPROFILE stay Lumen's own folder, because agy has no flag for a config folder and Lumen's MCP server and hook live
+//    there: agy's own ~/.gemini config (servers, plugins, rules, skills) is not loaded, and a shell command that uses ~ sees
+//    that folder. The note agy gets (agent.js ANTIGRAVITY_FULL_NOTE) names the user's real home folder.
+// The first message of a conversation carries the system note (promptFor), so changing the setting starts a new conversation.
 const { spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree, validModel } = require('./cli-utils');
+const { exists, lookup, killTree, validModel, fullAccessRejected } = require('./cli-utils');
 const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
 const { isLimitText, limitOf } = require('../features/grok-limit');
 
@@ -101,8 +119,9 @@ async function findAgy() {
 }
 
 // What the user should do about a failure. `text` is the best failure string run() found (result.error, else stderr).
-function describeFailure(text, code) {
+function describeFailure(text, code, { fullAccess = false } = {}) {
   const t = String(text || '').trim();
+  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Antigravity', setting: 'Give Antigravity full access to this computer' }); if (rejected) return rejected; }
   if (/not (logged|signed) in|please (log|sign) ?in|sign[- ]?in required|unauthenticated|not authenticated|authentication (failed|required)|no (active )?session|login required|keyring/i.test(t)) {
     return { text: `Antigravity is not signed in. ${SIGN_IN_HINT} Lumen never sees your Google login.` };
   }
@@ -158,7 +177,11 @@ function hooksFor(gatePath, platform = process.platform) {
 
 // settings.json of Lumen's home (see "WHAT THE MODEL MAY DO" above). `provider`: the user's own modelProvider
 // ("gemini" for an API key), copied so that way of signing in keeps working. `folder`: the working folder.
-function settingsFor({ folder, provider = null }) {
+// [full access] fullAccess: no deny rules, no terminal sandbox, and `folder` (the user's home) trusted; --dangerously-skip-permissions does the approving.
+function settingsFor({ folder, provider = null, fullAccess = false }) {
+  if (fullAccess) {
+    return { ...(provider ? { modelProvider: provider } : {}), enableTelemetry: false, trustedWorkspaces: [folder], enableTerminalSandbox: false, permissions: { allow: ['mcp(lumen/*)'], ask: [], deny: [] } };
+  }
   return {
     ...(provider ? { modelProvider: provider } : {}), enableTelemetry: false, trustedWorkspaces: [folder],
     enableTerminalSandbox: true, toolPermission: 'request-review',
@@ -172,13 +195,17 @@ const PROMPT_ARG_MAX = 20000;
 
 // The argv for one message (exported for tests; never joined into a shell string).
 // prompt: the text for -p (promptFor's result, or the pointer to its file). model: an `agy models` slug or 'default'.
-function buildArgs({ prompt, conversation = null, model = 'default' }) {
+// [full access] fullAccess: FULL_FLAGS instead of --sandbox.
+const FULL_FLAGS = ['--dangerously-skip-permissions']; // "Auto-approve all tool permission requests without prompting" (agy --help)
+// A silent shell command prints nothing for a long time: with full access the watchdog waits this long.
+const FULL_WATCHDOG_MS = 15 * 60 * 1000;
+function buildArgs({ prompt, conversation = null, model = 'default', fullAccess = false }) {
   return [
     '-p', prompt,
     '--output-format', 'stream-json', // (no --print-timeout: agy waits for the turn by default; Lumen's watchdog and Stop end a run)
     ...(conversation ? ['--conversation', conversation] : []),
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
-    '--sandbox', // "Run in a sandbox with terminal restrictions enabled" (agy --help)
+    ...(fullAccess ? FULL_FLAGS : ['--sandbox']), // --sandbox: "Run in a sandbox with terminal restrictions enabled" (agy --help)
   ];
 }
 
@@ -202,8 +229,9 @@ const offToolOf = (name) => (name && !LUMEN_NAME.test(String(name)) && ACTING_NA
 // the API-key sign-in settings. Everything else of the user's shell environment stays behind.
 const ENV_KEEP = /^(GEMINI_API_KEY|GOOGLE_CLOUD_PROJECT|GOOGLE_GEMINI_BASE_URL|PATH|PATHEXT|SYSTEMROOT|WINDIR|SYSTEMDRIVE|COMSPEC|TEMP|TMP|TMPDIR|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|OS|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|USERNAME|USERDOMAIN|COMPUTERNAME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z]+|TZ|TERM|DISPLAY|WAYLAND_DISPLAY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|__CF_USER_TEXT_ENCODING|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
 // run: this run's { hookUrl } from Lumen's gate, which the hook's curl script reads from here.
-function buildEnv({ home, base = process.env, run = null }) {
-  const kept = Object.fromEntries(Object.entries(base).filter(([k]) => ENV_KEEP.test(k)));
+// [full access] fullAccess: the user's whole environment (as in a terminal, minus Electron's own switch).
+function buildEnv({ home, base = process.env, run = null, fullAccess = false }) {
+  const kept = Object.fromEntries(Object.entries(base).filter(([k, v]) => (fullAccess ? k !== 'ELECTRON_RUN_AS_NODE' && typeof v === 'string' : ENV_KEEP.test(k))));
   return { ...kept, ...(run ? { LUMEN_HOOK_URL: run.hookUrl } : {}), HOME: home, USERPROFILE: home, NO_COLOR: '1' };
 }
 
@@ -337,23 +365,24 @@ class AntigravityEngine {
 
   // One message. Resolves { text, sessionId (agy's conversation id), stopped?, failed?, planLimit?, usage?, model? }; errors are emitted, not thrown.
   // sessionId: the chat's saved conversation id, null on its first message.
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, fullAccess = false }) {
+    fullAccess = fullAccess === true; // [full access] (no background engine here: Antigravity is for sidebar chats only)
     const { bin, gate } = await this.prepare();
     if (!bin) {
       emit({ type: 'error', text: `Antigravity isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     }
     if (signal.aborted) return { text: '', sessionId, stopped: true };
-    const folder = this.dir;
+    const folder = fullAccess ? os.homedir() : this.dir; // [full access] the home folder, as in a terminal
     const { home } = this;
     await fs.promises.mkdir(home, { recursive: true, mode: 0o700 });
     await fs.promises.mkdir(this.dir, { recursive: true });
     const resume = Boolean(sessionId);
     const tag = crypto.randomBytes(18).toString('hex');
-    const gateRun = gate.open(tag, sessionId || tag, { agy: true });
+    const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess });
     const files = []; // everything written for this run, removed after it
     try {
-      await writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ folder, provider: userProvider() }), null, 2));
+      await writeIfChanged(path.join(home, '.gemini', 'antigravity-cli', 'settings.json'), JSON.stringify(settingsFor({ folder, provider: userProvider(), fullAccess }), null, 2));
       await fs.promises.mkdir(path.join(home, '.gemini', 'config'), { recursive: true });
       const gateFile = path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh');
       await writeIfChanged(gateFile, gateScript(), 0o700);
@@ -378,18 +407,18 @@ class AntigravityEngine {
         files.push(f);
         text = `Read the file ${f} completely: it is the user's message, with instructions from Lumen at its top. Then answer it.`;
       }
-      return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model }), folder, sessionId, resume, model, signal, emit, runAgent });
+      return await this.attempt({ bin, gate, gateRun, tag, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess }), folder, sessionId, resume, model, signal, emit, runAgent, fullAccess });
     } finally {
       await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {}))); // (the run's token file included)
     }
   }
 
-  async attempt({ bin, gate, gateRun, tag, argv, folder, sessionId, resume, model, signal, emit, runAgent }) {
+  async attempt({ bin, gate, gateRun, tag, argv, folder, sessionId, resume, model, signal, emit, runAgent, fullAccess = false }) {
     if (signal.aborted) { gate.close(tag); return { text: '', sessionId, stopped: true }; }
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
-    const watchdogMs = this.watchdogMs;
-    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home: this.home, run: gateRun }), cwd: folder });
+    const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
+    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home: this.home, run: gateRun, fullAccess }), cwd: folder });
     const active = { tag, emit, signal, child, agent: runAgent, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
     let over = false;
@@ -424,7 +453,7 @@ class AntigravityEngine {
         if (su.usage) usage = su.usage;
         const tool = su.tool_name || su.tool_info?.name || null;
         if (tool || su.step_type === 'tool') {
-          const bad = this.watch ? offToolOf(tool) : null;
+          const bad = this.watch && !fullAccess ? offToolOf(tool) : null; // [full access] agy's own tools are expected
           if (bad) { offTool = bad; this.kill(child); return; }
         } else if (su.step_type === 'agent_response' && su.text_delta) {
           // A new response step starts a new paragraph in the saved reply too (see claude-code.js).
@@ -487,14 +516,16 @@ class AntigravityEngine {
     }
     if (!result && code === 0 && text) { this.signedOut = false; return { text, sessionId: conversation, usage, model: served }; }
     if (status === 'CANCELED' || status === 'INTERRUPTED') return { text, sessionId: conversation, stopped: true, model: served };
-    const failText = status === 'WAITING'
+    const failText = status === 'WAITING' && fullAccess
+      ? 'Antigravity is still waiting for an approval it can\'t show in Lumen, even with full access on (--dangerously-skip-permissions did not cover it). Try again, or run it in a terminal.'
+      : status === 'WAITING'
       ? 'Antigravity is waiting for an approval it can\'t show in Lumen. Lumen gives it its browser tools only, so ask for something that reads or browses.'
       : result?.error || result?.response || stderr;
-    const failure = describeFailure(failText, code);
+    const failure = describeFailure(failText, code, { fullAccess });
     if (/not signed in/.test(failure.text)) { this.signedOut = true; this.statusCache = null; }
     emit({ type: 'error', ...failure });
     return { text, sessionId: /conversation.*not found|unknown conversation|no such conversation/i.test(`${failText}\n${stderr}`) ? null : conversation, failed: true, usage, planLimit: limitOf(failText), model: served };
   }
 }
 
-module.exports = { AntigravityEngine, findAgy, buildArgs, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
+module.exports = { AntigravityEngine, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };

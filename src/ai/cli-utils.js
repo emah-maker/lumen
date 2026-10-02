@@ -94,4 +94,13 @@ function perTurnResult(result, state) {
   return out;
 }
 
-module.exports = { exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult };
+// [full access] A CLI that does not know a flag Lumen's full-access mode passes says so on stderr (clap: "unexpected argument
+// '--x' found" / "invalid value 'x' for '--y'"; Go's flag package: "flag provided but not defined: -x"; others: "unknown option").
+// Full access must never quietly run without its flags while Settings says it is on, so that failure is told plainly.
+const FLAG_REJECTED = /unexpected argument|invalid value .* for '--|flag provided but not defined|unknown (flag|option|argument)|unrecognized (flag|option|argument)|no such option|bad option/i;
+function fullAccessRejected(text, { name, setting }) {
+  if (!FLAG_REJECTED.test(String(text || ''))) return null;
+  return { text: `${name} didn't accept the options Lumen uses to give it full access to this computer (${String(text).trim().split('\n')[0].slice(0, 160)}). Nothing ran. Update ${name}, or turn off "${setting}" in Settings > AI.` };
+}
+
+module.exports = { exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };
