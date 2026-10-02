@@ -135,7 +135,7 @@
       if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
-      const place = inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : '');
+      const place = inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
       if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
       // Still running (it was left mid-reply), waiting for an OK, or finished and not seen yet.
       if (chat.badge) {
