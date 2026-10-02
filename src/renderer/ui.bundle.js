@@ -5375,7 +5375,13 @@ function syncHideAiToggle(state) {
   const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
   hideAiButton.title = label;
   const badge = $('hide-ai-tabs-count');
-  badge.hidden = count === 0;
+  // While tabs are hidden the button says so in words ("2 hidden"), not just with a number: nothing in the strip says tabs went missing otherwise
+  const chip = $('hide-ai-tabs-label');
+  const words = on && out > 0;
+  chip.hidden = !words;
+  chip.textContent = words ? t('sidebar.hideAiTabs.chip', { count: out }) : '';
+  hideAiButton.classList.toggle('has-label', words);
+  badge.hidden = count === 0; // (the stylesheet hides it while the words show, and brings it back in a narrow window)
   badge.textContent = count > 99 ? '99+' : String(count);
 }
 hideAiButton?.addEventListener('click', async () => {
@@ -7389,7 +7395,7 @@ $('agent-stop')?.addEventListener('click', () => {
     undo.addEventListener('click', async () => {
       undo.disabled = true;
       const result = await window.assistant.undoCloseAiTabs(token).catch(() => null);
-      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.reopened', result?.reopened || 0, 'Reopened {count} tabs.') }));
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: result?.reopened ? plural('chat.aiTabs.reopened', result.reopened, 'Reopened {count} tabs.') : (window.t?.('chat.aiTabs.nothingReopened') || 'Nothing to reopen.') })); // (a second Undo of the same close finds nothing)
     });
     box.append(undo);
     if (kept > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') }));
@@ -8267,6 +8273,15 @@ $('agent-stop')?.addEventListener('click', () => {
 // The UI preferences from lumen://settings (compact tabs, reduced motion, focus rings) and the accent
 // colour, applied to the page and kept current. Shared by the browser UI and the full-page chat.
 {
+  // The strip's hands-off cue says "Hands-off" in words in a wide window (styles.css), where a hover tip would only repeat it; icon-only, it keeps the tip.
+  const wide = matchMedia('(min-width: 1100px)');
+  const cueTitle = () => {
+    const cue = document.getElementById('hands-off-strip');
+    if (!cue) return;
+    if (!cue.dataset.tip) cue.dataset.tip = cue.title;
+    if (wide.matches) cue.removeAttribute('title'); else cue.title = cue.dataset.tip;
+  };
+  wide.addEventListener('change', cueTitle);
   const applyPrefs = (p) => {
     if (!p) return;
     const root = document.documentElement;
@@ -8277,6 +8292,8 @@ $('agent-stop')?.addEventListener('click', () => {
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs
     if (badge) badge.hidden = !p.handsOff;
+    const stripCue = document.getElementById('hands-off-strip'); // ...and the tab strip does too, whether or not a chat is open
+    if (stripCue) { stripCue.hidden = !p.handsOff; cueTitle(); }
     const hide = p.hideAiTabs === true; // [ai manners] the strip leaves out the tabs the AI opened (app.js renderTabsNow)
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     accent = p.accent || null;
@@ -8300,7 +8317,7 @@ $('agent-stop')?.addEventListener('click', () => {
     style.setProperty('--accent-soft', `rgb(${r} ${g} ${b} / ${dark.matches ? 0.2 : 0.14})`);
   }
   dark.addEventListener('change', applyAccent);
-  document.getElementById('hands-off')?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('you-and-ai'));
+  for (const id of ['hands-off', 'hands-off-strip']) document.getElementById(id)?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('hands-off')); // (the one open Settings tab is reused, and the switch is focused)
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
 }

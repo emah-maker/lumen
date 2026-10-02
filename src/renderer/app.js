@@ -1657,7 +1657,13 @@ function syncHideAiToggle(state) {
   const label = on && out === 0 ? t('sidebar.hideAiTabs.on.none') : on ? t(out === 1 ? 'sidebar.hideAiTabs.on.one' : 'sidebar.hideAiTabs.on.other', { count: out }) : t(total === 1 ? 'sidebar.hideAiTabs.off.one' : 'sidebar.hideAiTabs.off.other', { count: total });
   hideAiButton.title = label;
   const badge = $('hide-ai-tabs-count');
-  badge.hidden = count === 0;
+  // While tabs are hidden the button says so in words ("2 hidden"), not just with a number: nothing in the strip says tabs went missing otherwise
+  const chip = $('hide-ai-tabs-label');
+  const words = on && out > 0;
+  chip.hidden = !words;
+  chip.textContent = words ? t('sidebar.hideAiTabs.chip', { count: out }) : '';
+  hideAiButton.classList.toggle('has-label', words);
+  badge.hidden = count === 0; // (the stylesheet hides it while the words show, and brings it back in a narrow window)
   badge.textContent = count > 99 ? '99+' : String(count);
 }
 hideAiButton?.addEventListener('click', async () => {

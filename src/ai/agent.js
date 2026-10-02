@@ -2293,7 +2293,7 @@ class Agent {
     try {
       if (name === 'group_tabs' || name === 'ungroup_tabs') ids = Array.isArray(input.tab_ids) ? input.tab_ids : []; // moving the user's tabs about is acting on them
       else ids = [name === 'close_tab' ? input.tab_id : (this.taskTab()?.id ?? null)];
-    } catch { return; } // (no tab / a closed one: the tool says so itself)
+    } catch { throw new Error(manners.handsOffRefusal(name)); } // (no tab at all is null, not a throw, and the tool says so itself; a lookup that fails is refused, never let through)
     for (const id of ids) {
       if (id === null || id === undefined) continue;
       const refusal = manners.handsOffCheck({ tool: name, handsOff: true, ownTab: Boolean(this.browser.isAiTab?.(id)) });

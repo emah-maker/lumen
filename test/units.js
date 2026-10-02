@@ -3521,7 +3521,7 @@ async function bgCliRuns() {
     check('research tabs: that partition is memory-only, and neither the private windows\' nor the hidden reader\'s', typeof R.RESEARCH_PARTITION === 'string' && R.RESEARCH_PARTITION.length > 0 && !R.RESEARCH_PARTITION.startsWith('persist:') && !/^(lumen-private|claude-reader)/.test(R.RESEARCH_PARTITION), R.RESEARCH_PARTITION);
     const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/main.js'), 'utf8');
     check('research tabs: main.js honours only that partition, keeps such tabs out of History, the saved session and Reopen, and passes it to links opened from them',
-      /isolatedPartition = \(p\) => \(p === RESEARCH_PARTITION \? p : null\)/.test(src) && /partition: tab\.isolated \}\)\); \/\/ a link from a research tab/.test(src) && /!t\.isolated && \(isWebUrl/.test(src) && /!isInternal\(url\) && !tab\.isolated/.test(src) && /if \(!tab\.isolated\) recordVisit/.test(src), 'main.js wiring changed');
+      /isolatedPartition = \(p\) => \(p === RESEARCH_PARTITION \? p : null\)/.test(src) && /partition: tab\.isolated, \.\.\.fromAiTab\(\) \}\)\); \/\/ a link from a research tab/.test(src) && /!t\.isolated && \(isWebUrl/.test(src) && /!isInternal\(url\) && !tab\.isolated/.test(src) && /if \(!tab\.isolated\) recordVisit/.test(src), 'main.js wiring changed');
   }
   {
     const { r, log } = make();

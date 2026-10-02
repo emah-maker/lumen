@@ -1843,6 +1843,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.once('did-stop-loading', () => setTimeout(markFirstTabLoaded, 200));
   bindContext(wc, () => tab.rec); // this tab's events run in the window that holds it, even a background one
   tabTools.wire(tab); // the tab's speaker icon, and its mute (kept across sleep)
+  // [ai manners] a page the AI opened that opens another (target=_blank, window.open) opens it behind and as the AI's own: it can be closed again and, in hands-off mode, worked in
+  const fromAiTab = () => (manners.isAiTab(tab) ? { openedBy: { chatId: tab.openedBy.chatId, runId: tab.openedBy.runId } } : {});
   wc.setWindowOpenHandler(({ url: target, disposition }) => {
     if (tab.aiLock) return { action: 'deny' }; // [signed-in sites] no popups while the AI reads it as the user
     if (!(isWebUrl(target) || target === 'about:blank' || target.startsWith('chrome-extension://'))) return { action: 'deny' };
@@ -1858,7 +1860,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
         overrideBrowserWindowOptions: popupWindowOptions(),
         outlivesOpener: true,
         // No page yet means a person's Shift+click on a link, not a page's sign-in popup: it opens as a normal tab.
-        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tab.isolated, target, tab) : withWindow(tab.rec, () => openTab(target, { openerId: id, partition: tab.isolated })).webContents),
+        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tab.isolated, target, tab) : withWindow(tab.rec, () => openTab(target, { openerId: id, partition: tab.isolated, ...fromAiTab() })).webContents),
       };
     }
     // A tab. When a page's script asked for it (window.open), the page gets that new window back and it keeps
@@ -1875,15 +1877,15 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
         // The user's page settings (font sizes, spell check, plugins for protected video), as every tab has.
         overrideBrowserWindowOptions: { webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) } },
         createWindow: (options) => {
-          const background = disposition === 'background-tab';
-          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id, partition: tab.isolated })).webContents;
+          const background = disposition === 'background-tab' || manners.isAiTab(tab);
+          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id, partition: tab.isolated, ...fromAiTab() })).webContents;
           const view = new WebContentsView({ webContents: options.webContents });
-          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view, partition: tab.isolated }));
+          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view, partition: tab.isolated, ...fromAiTab() }));
           return options.webContents;
         },
       };
     }
-    withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab', openerId: id, partition: tab.isolated })); // a link from a research tab stays in its session
+    withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab' || manners.isAiTab(tab), openerId: id, partition: tab.isolated, ...fromAiTab() })); // a link from a research tab stays in its session
     return { action: 'deny' };
   });
   wc.on('enter-html-full-screen', () => { tab.fullscreen = true; layout(); });
@@ -1998,7 +2000,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     wc.on(event, sendTabsSoon);
   }
   wc.on('before-input-event', (event, input) => {
-    if (input.type === 'keyDown' && !manners.isAgentInput(wc)) { manners.userInput.key(wc); userTookOver(tab); } // [ai manners] the user typed here: the tab is theirs, and the AI waits for them
+    if (input.type === 'keyDown' && !manners.isAgentInput(wc)) { manners.userInput.key(wc); if (!(input.control || input.meta || input.alt)) userTookOver(tab); } // (a shortcut such as Ctrl+Tab, Ctrl+W or Ctrl+L is not typing in the page) // [ai manners] the user typed here: the tab is theirs, and the AI waits for them
     // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
     // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
     if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
@@ -2370,7 +2372,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   }
   if (activeId === id) switchTab(tabs[Math.min(index, tabs.length - 1)].id);
   else sendTabs();
-  chatTabGone(id); // [chat per tab] a chat still working there goes on in a background tab
+  chatTabGone(id, tab.rec); // [chat per tab] a chat still working there goes on in a background tab
 }
 
 // The interactive "close this tab" entry points (the tab strip's ✕, Ctrl/Cmd+W, the tab menu) go
@@ -2916,7 +2918,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
     { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
     { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
-    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
+    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiClosingNote(rec); aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
     { type: 'separator' },
     { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
   );
@@ -3679,7 +3681,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 'tab') cycleTab(input.shift ? -1 : 1);
   else if (mod && input.shift && (key === 'pageup' || key === 'pagedown')) { const i = tabs.findIndex((t) => t.id === activeId); if (i !== -1) moveTab(activeId, i + (key === 'pageup' ? -1 : 1)); }
   else if (mod && (key === 'pageup' || key === 'pagedown')) cycleTab(key === 'pageup' ? -1 : 1);
-  else if (mod && /^[1-9]$/.test(key)) { const t = key === '9' ? tabs[tabs.length - 1] : tabs[Number(key) - 1]; if (t) switchTab(t.id); }
+  else if (mod && /^[1-9]$/.test(key)) { const shown = tabs.filter((x) => !aiTabHidden(x)); const t = key === '9' ? shown[shown.length - 1] : shown[Number(key) - 1]; if (t) switchTab(t.id); } // (Ctrl+N counts the tabs the strip shows)
   else if (mod && (key === '=' || key === '+')) zoomBy(wc, 0.5);
   else if (mod && key === '-') zoomBy(wc, -0.5);
   else if (mod && key === '0') zoomBy(wc, 0);
@@ -3722,9 +3724,12 @@ function focusAddress() {
   ui()?.send('focus-address');
 }
 
+// [ai manners] with "hide tabs the AI opened" on, the tabs it leaves out of the strip are skipped (the one in front, and one playing sound, stay)
+const aiTabHidden = (t) => readSettings().hideAiTabs === true && manners.isAiTab(t) && t.id !== activeId && !(alive(t) && t.view.webContents.isCurrentlyAudible?.());
 function cycleTab(direction) {
-  const index = tabs.findIndex((t) => t.id === activeId);
-  switchTab(tabs[(index + direction + tabs.length) % tabs.length].id);
+  const list = tabs.filter((t) => !aiTabHidden(t));
+  const index = list.findIndex((t) => t.id === activeId);
+  if (list.length) switchTab(list[(index + direction + list.length) % list.length].id);
 }
 
 function reloadActive({ ignoreCache = false } = {}) {
@@ -4044,15 +4049,16 @@ function bindOpenChatHere(sender) {
 // A tab closed. Its chat stays in the list. A chat still working there keeps going: its work moves to a fresh background
 // tab in the same window (no question asked: closing a tab must not silently kill a task, and it can be stopped from its
 // chat). When it was the window's last tab the window goes with it and the task ends with "the tab was closed".
-function chatTabGone(id) {
+function chatTabGone(id, goneRec = null) {
+  const rec = goneRec && winRecs.has(goneRec) && rcAlive(goneRec) ? goneRec : curRec; // the closed tab's own window, not whichever is in front
   chatBind.unbindTab(id);
   for (const r of chatRuns.values()) {
     if (r.deleted) continue;
     if (r.queued && r.homeTab === id) r.homeTab = null;
     if (r.queued || agent.runTabIdFor(r.messages) !== id || !tabs.length) continue;
-    const tab = openTab(undefined, { background: true, openedBy: { chatId: r.chatId, runId: r.runId } }); // [ai manners] opened for the chat: it may work there
-    agent.repinRun(r.messages, tab.id, { rec: curRec });
-    r.rec = curRec;
+    const tab = withWindow(rec, () => openTab(undefined, { background: true, openedBy: { chatId: r.chatId, runId: r.runId } })); // [ai manners] opened for the chat: it may work there
+    agent.repinRun(r.messages, tab.id, { rec });
+    r.rec = rec;
     r.homeTab = tab.id;
     chatBind.bind(tab.id, r.chatId);
   }
@@ -4132,8 +4138,13 @@ function closeAiTab(rec, tab) {
     }, 50);
   });
 }
+// The page check before a close can take a second: the strip says so at once, and aiCloseNote's toast replaces it.
+function aiClosingNote(rec) {
+  if (rcAlive(rec) && winRecs.has(rec)) withWindow(rec, () => ui()?.send('tabs:organize-note', { text: t('chat.aiTabs.closing'), undo: false, ttl: 6000 }));
+}
 // The tab strip's toast after a close from the tab menu or a chat's row: what closed, what stayed (and why), with Undo.
 function aiCloseNote(rec, { closed = 0, kept = 0, token = 0 } = {}) {
+  if (!rcAlive(rec) || !winRecs.has(rec)) rec = focusedRec(); // the window the tabs were in is gone: the toast (and its Undo) goes to the one the user is in
   const plural = (base, n) => t(`${base}.${n === 1 ? 'one' : 'other'}`, { count: n });
   const text = [closed ? plural('chat.aiTabs.closed', closed) : kept ? '' : t('chat.aiTabs.none'), kept ? plural('chat.aiTabs.kept', kept) : ''].filter(Boolean).join(' ');
   if (!rcAlive(rec) || !winRecs.has(rec)) return;
@@ -4152,7 +4163,7 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
     if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
     if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
-    const item = { url: tabUrl(tab), partition: tab.isolated || null, rec };
+    const item = { url: tabUrl(tab), partition: tab.isolated || null, rec, groupId: tab.groupId || null };
     return (await closeAiTab(rec, tab)) ? { item } : keepTab(rec, tab);
   }));
   const items = results.filter((r) => r.item).map((r) => r.item);
@@ -4176,7 +4187,7 @@ function aiTabsReopen(token) {
     const at = closedTabs.lastIndexOf(item.url);
     if (at >= 0) closedTabs.splice(at, 1);
     const rec = item.rec && winRecs.has(item.rec) && rcAlive(item.rec) ? item.rec : curRec;
-    withWindow(rec, () => openTab(item.url, { background: true, ...(item.partition ? { partition: item.partition } : {}) }));
+    withWindow(rec, () => openTab(item.url, { background: true, ...(item.partition ? { partition: item.partition } : {}), ...(item.groupId && tabGroups.groups.has(item.groupId) ? { groupId: item.groupId } : {}) })); // (back in its group, when the group is still there)
     reopened++;
   }
   return { reopened };
@@ -4199,7 +4210,7 @@ ipcMain.handle('tabs:hide-ai', async (_e, on) => {
   if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
   return readSettings().hideAiTabs === true;
 });
-ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
+ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
 // The taskbar's command (Jump List task, Dock menu) and the menus' "Close Tabs Opened by AI": every normal window's AI tabs, each
 // window's toast (counts, Undo) in the window that held them. It never raises or focuses a window (the click was on the taskbar).
@@ -4219,6 +4230,7 @@ async function closeAiTabsEverywhere() {
     let closed = 0;
     let kept = 0;
     for (const rec of recs) {
+      aiClosingNote(rec);
       const r = await aiTabsClose({ rec }).catch(() => null);
       if (!r) continue;
       closed += r.closed;
@@ -4232,7 +4244,7 @@ async function closeAiTabsEverywhere() {
 }
 if (TEST) global.__manners = manners;
 if (TEST) global.__taskbar = { closeAiTabs: closeAiTabsEverywhere, wants: taskbarTasks.wantsCloseAiTabs, secondInstance: (argv) => app.emit('second-instance', {}, argv) };
-if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
+if (TEST) global.__aiTabs = { cycle: (d) => cycleTab(d), switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
 
 // Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
 // on in a tab behind another one (a screenshot, wait_for); back on once no run works there.
@@ -6416,6 +6428,10 @@ const settingsBackend = settingsPage.create({
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
+  broadcastUi: (channel, payload) => { // [ai manners] every window's browser UI and the chat page, not just the one in front
+    const to = new Set([ui(), ...[...winRecs].filter(rcAlive).map((r) => r.win.webContents), ...(chatPageRt?.surfaces() || [])]);
+    for (const wc of to) if (wc && !wc.isDestroyed()) wc.send(channel, payload);
+  },
   win: () => win,
   tabContents: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => t.view.webContents),
   tabsInfo: () => tabs.filter(alive).map((t) => ({ id: t.id, title: t.view.webContents.getTitle(), wc: t.view.webContents, settings: Boolean(t.settings) })),
@@ -6755,7 +6771,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = []) => {
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
-        aiTabsClose({ runId }, { auto: true }).then(({ closed, kept, token }) => chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: closed, kept, token })).catch(() => {});
+        aiTabsClose({ runId }, { auto: true }).then((r) => { chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: r.closed, kept: r.kept, token: r.token }); if (r.closed) aiCloseNote(r.rec || curRec, r); }).catch(() => {}); // (the toast has Undo too, for when the row under the reply is gone)
       }
     } else if (msg.type === 'tool_done' && !run.deleted) (isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
