@@ -196,7 +196,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.
-function toMarkdown({ title, created, model, usageLine }, items) {
+// `pictureFile(picture)`: where an exported picture lies relative to the .md (null: only named).
+function toMarkdown({ title, created, model, usageLine }, items, { pictureFile = null } = {}) {
   const lines = [`# ${cleanTitle(title) || 'Chat'}`, ''];
   const meta = [];
   if (created) meta.push(new Date(created).toISOString().slice(0, 16).replace('T', ' '));
@@ -208,6 +209,11 @@ function toMarkdown({ title, created, model, usageLine }, items) {
     if (item.role === 'assistant' && item.steps) lines.push(`_Used ${item.steps} browser action${item.steps === 1 ? '' : 's'}_`, '');
     if (item.images?.length) lines.push(`_${item.images.length} image${item.images.length === 1 ? '' : 's'} attached (not included)_`, '');
     if (item.text) lines.push(item.text, '');
+    for (const picture of item.generated || []) {
+      const file = pictureFile ? pictureFile(picture) : null;
+      const alt = String(picture.alt || 'Generated picture').replace(/[[\]\n]/g, ' ').slice(0, 200);
+      lines.push(file ? `![${alt}](${file})` : `_Picture: ${alt} (not included)_`, '');
+    }
   }
   return `${lines.join('\n').trimEnd()}\n`;
 }

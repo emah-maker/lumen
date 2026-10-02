@@ -16,6 +16,13 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     stop: () => ipcRenderer.send('agent:stop'),
     reset: () => ipcRenderer.send('agent:reset'),
     rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),
+    // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
+    images: {
+      data: (id) => ipcRenderer.invoke('images:data', id),
+      save: (id) => ipcRenderer.invoke('images:save', id),
+      copy: (id) => ipcRenderer.invoke('images:copy', id),
+      remote: (url) => ipcRenderer.invoke('images:remote', url),
+    },
     chats: {
       list: () => ipcRenderer.invoke('chats:list'),
       open: (id) => ipcRenderer.invoke('chats:open', id),

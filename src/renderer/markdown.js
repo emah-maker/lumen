@@ -304,6 +304,21 @@
 
   const link = (href, label) => `<a href="${href}">${label}</a>`;
 
+  // The picture in ![alt](…) starting at `start` in escaped text: a data URL of a PNG, JPEG, GIF or WebP is drawn (the only
+  // picture markdown ever puts in an <img>); an https address becomes a placeholder the chat shows a "Show picture" button for
+  // (renderer/gen-images.js: web pictures load only when asked); anything else is not a picture here. { length, html(alt) } | null.
+  const DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+  function imageAt(s, start) {
+    if (s.startsWith('data:image/', start)) {
+      const end = s.indexOf(')', start);
+      const raw = end > start ? s.slice(start, end) : '';
+      return raw.length <= 11000000 && DATA_IMAGE.test(raw) ? { length: raw.length, html: (alt) => `<img class="md-img" src="${raw}" alt="${alt}">` } : null;
+    }
+    if (!s.startsWith('https://', start)) return null;
+    const url = scanUrl(s, start, true);
+    return url && s[start + url.length] === ')' ? { length: url.length, html: (alt) => `<span class="md-img-remote" data-src="${url}" data-alt="${alt}"></span>` } : null;
+  }
+
   // Links and emphasis for text outside code spans.
   function formatText(s) {
     let out = '';
@@ -311,6 +326,19 @@
     const flush = () => { out += emphasis(plain); plain = ''; };
     let i = 0;
     while (i < s.length) {
+      if (s[i] === '!' && s[i + 1] === '[') {
+        const close = s.indexOf('](', i + 2);
+        const alt = close > i ? s.slice(i + 2, close) : '';
+        if (close > i && !alt.includes('[') && !alt.includes(']') && alt.length <= 300) {
+          const image = imageAt(s, close + 2);
+          if (image) {
+            flush();
+            out += image.html(alt);
+            i = close + 3 + image.length;
+            continue;
+          }
+        }
+      }
       if (s[i] === '[') {
         const close = s.indexOf('](', i);
         const label = close > i ? s.slice(i + 1, close) : '';

@@ -1015,6 +1015,7 @@ function flushStreaming(el) {
 // Each code block in a finished reply: its language, and a Copy button for just that code.
 // `colour`: colour these blocks even while the reply streams (they're finished: the stable part of the reply).
 function decorateCode(root, { colour = false } = {}) {
+  window.genImages?.decorate(root); // ![](…) in a reply: data pictures drawn, web pictures offered
   for (const pre of root?.querySelectorAll?.('pre:not(.math-src):not(.code-ready)') || []) {
     pre.classList.add('code-ready');
     const box = Object.assign(document.createElement('div'), { className: 'code-block' });
@@ -1072,6 +1073,18 @@ window.assistant.onEvent((event) => {
       }
       turn.thinking.textContent += event.text;
       moveWorkingToEnd();
+      break;
+    }
+    case 'image': { // a picture the AI made (or a tool returned): main saved it; drawn here below what was said
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      turn.text = null; // words after the picture start a new block under it
+      turn.textSource = '';
+      const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
+      bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '' }));
+      appendToTurn(bubble);
+      turn.pics = bubble;
+      announce(t('genimg.made'));
       break;
     }
     case 'text': {
@@ -1286,9 +1299,11 @@ function regenButton() {
 
 function finishReply(bubble, source, { latest = false } = {}) {
   flushStreaming(bubble);
-  if (!bubble || !source || !source.trim() || bubble.querySelector('.reply-copy')) return;
+  const pictureOnly = Boolean(bubble) && !source?.trim() && Boolean(bubble.querySelector('.gen-img'));
+  if (!bubble || (!pictureOnly && (!source || !source.trim())) || bubble.querySelector('.reply-copy, .reply-regen')) return;
   // The latest reply can be asked for again (a different answer to the same message).
   if (latest && lastAsk) bubble.append(regenButton());
+  if (pictureOnly) return; // (nothing to copy as text: the picture has Save and Copy)
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'reply-copy';
@@ -1539,7 +1554,13 @@ function showHistory(items) {
       }
       if (item.text) bubble.append(document.createTextNode(item.text));
       bubbleAsks.set(bubble, { text: item.text || '', images: images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), tabs: null });
-    } else if (item.role === 'assistant' && item.text) {
+    } else if (item.role === 'assistant' && (item.text || item.generated?.length)) {
+      if (!item.text) { // only pictures
+        bubble.className = 'msg assistant gen-pics restored';
+        for (const pic of item.generated) bubble.append(window.genImages.figure(pic));
+        append(bubble);
+        continue;
+      }
       if (item.steps) {
         const summary = document.createElement('div');
         summary.className = 'step done restored';
@@ -1551,6 +1572,14 @@ function showHistory(items) {
       bubble.innerHTML = window.renderMarkdown(item.text);
       decorateCode(bubble);
       finishReply(bubble, item.text);
+      if (item.generated?.length) { // the words, then the pictures under them
+        bubble.classList.add('restored');
+        append(bubble);
+        const pics = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics restored' });
+        for (const pic of item.generated) pics.append(window.genImages.figure(pic));
+        append(pics);
+        continue;
+      }
     } else {
       continue;
     }
@@ -1562,7 +1591,10 @@ function showHistory(items) {
   let u = lastIndex - 1;
   while (u >= 0 && items[u].role !== 'user') u--;
   const lastUser = u >= 0 ? items[u] : null;
-  const lastReply = [...messages.querySelectorAll('.msg.assistant.restored')].pop();
+  // (A reply of only pictures is its own bubble; with words, the words' bubble is the reply and the pictures sit under it.)
+  const lastReply = items[lastIndex]?.role === 'assistant' && !items[lastIndex].text
+    ? [...messages.querySelectorAll('.msg.assistant.gen-pics.restored')].pop()
+    : [...messages.querySelectorAll('.msg.assistant.restored:not(.gen-pics)')].pop();
   if (lastUser && (lastUser.text || lastUser.images?.length) && lastReply && items[lastIndex]?.role === 'assistant') {
     const imgs = (lastUser.images || []).filter((src) => typeof src === 'string' && /^data:image\/[a-z+.-]+;base64,/.test(src)).map((src) => {
       const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/);

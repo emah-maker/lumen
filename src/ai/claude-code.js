@@ -305,6 +305,7 @@ class ClaudeCodeEngine {
     }
     if (!http) this.ensureServer();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cc-'));
+    (this.workDirs ||= new Set()).add(dir); // (imageRoots)
     const mcpConfig = path.join(dir, 'mcp.json');
     fs.writeFileSync(mcpConfig, JSON.stringify(mcpConfigFor({ http, bridge: http ? null : this.mcpCommand(), userData: this.userData, tag })), { mode: 0o600 });
     const argv = buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model, maxTurns, fullAccess });
@@ -707,5 +708,7 @@ class ClaudeCodeEngine {
     return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0 };
   }
 }
+
+ClaudeCodeEngine.prototype.imageRoots = function imageRoots() { return [...(this.workDirs || [])]; };
 
 module.exports = { ClaudeCodeEngine, findClaude, buildArgs, builtinLabel, slashCommand, MODELS, stdinMessage, describeFailure, killTree, INSTALL_HINT, parseAuthStatus, mcpConfigFor, procKey, lineReader, earlyLabel, IDLE_MS, EARLY_STEP_MS };

@@ -385,10 +385,12 @@ class Connection {
 }
 
 // A tool result as text for the model, marked as untrusted like page content.
-function resultText(result, source) {
+// `images`: when given, pictures in the result (valid PNG/JPEG/GIF/WebP only) are collected there to be shown in the chat.
+function resultText(result, source, images = null) {
   const parts = [];
   for (const c of Array.isArray(result?.content) ? result.content : []) {
     if (c?.type === 'text' && typeof c.text === 'string') parts.push(c.text);
+    else if (c?.type === 'image' && images && typeof c.data === 'string' && require('./gen-images').fromBase64(c.data)) { images.push({ data: c.data }); parts.push('[image shown to the user]'); }
     else if (c?.type === 'image' || c?.type === 'audio') parts.push(`[${c.type} (${c.mimeType || 'unknown type'}) not shown]`);
     else if (c?.type === 'resource') parts.push(typeof c.resource?.text === 'string' ? c.resource.text : `[resource ${c.resource?.uri || ''}]`);
     else if (c?.type === 'resource_link') parts.push(`[link: ${c.uri || ''}]`);
@@ -576,13 +578,13 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
     return { defs, failed };
   }
 
-  async function call(exposed, args) {
+  async function call(exposed, args, { images = null } = {}) {
     const found = lookupTool(exposed);
     if (!found) throw new Error(`Unknown tool: ${exposed}`);
     const s = byId(found.id);
     const c = conn(s);
     const result = await c.call(found.tool, args);
-    const text = resultText(result, `mcp:${found.server}/${found.tool}`);
+    const text = resultText(result, `mcp:${found.server}/${found.tool}`, images);
     if (result?.isError) {
       const err = new Error(`The tool reported an error:\n${text}`);
       err.toolText = err.message;

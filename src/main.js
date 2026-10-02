@@ -203,6 +203,7 @@ const UI_ONLY_IPC = new Set([
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
   'chats:list', 'chats:open', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:export', 'chats:close-tabs',
+  'images:data', 'images:save', 'images:copy', 'images:remote', // pictures the AI made (features/gen-images.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabs:hide-ai', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
@@ -6920,23 +6921,34 @@ ipcMain.handle('chats:delete', (event, id) => {
     chatId = chats().newId();
     chatBind.bind(activeId, chatId);
     chats().remove(id);
+    imageStore().removeChat(id);
     announceModelIfChanged();
     pushAttention(); // the Chats button, the list and the tab marks drop what this chat had (an unread mark, a binding)
     chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
     return { cleared: true, view: chatView() };
   }
   const removed = chats().remove(id);
+  imageStore().removeChat(id); // its pictures go with it
   pushAttention();
   return { cleared: false, removed };
 });
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
-function chatMarkdown(id) {
+// `folder`: the name of the folder next to the file that holds its pictures (see chats:export); null: they are only named.
+function chatMarkdown(id, folder = null) {
   const snapshot = id === chatId ? chatSnapshot() : chats().load(id);
   if (!snapshot?.messages?.length) return null;
   const entry = chats().list().find((c) => c.id === id);
   const title = entry?.title || autoTitle(snapshot);
-  const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages, snapshot.settings));
-  return { title, markdown };
+  const pictures = [];
+  const pictureFile = folder ? (p) => {
+    const found = imageStore().read(p.id);
+    if (!found) return null;
+    const name = `picture-${pictures.length + 1}.${found.mime === 'image/jpeg' ? 'jpg' : found.mime.slice(6)}`;
+    pictures.push({ name, buffer: found.buffer });
+    return `${encodeURIComponent(folder)}/${name}`;
+  } : null;
+  const markdown = toMarkdown({ title, created: entry?.created, model: snapshot.settings?.model, usageLine: describeUsage(snapshot.settings?.usage) }, transcriptFor(snapshot.messages, snapshot.settings), { pictureFile });
+  return { title, markdown, pictures };
 }
 // Export: always the user's own click in the sidebar (a UI-only channel), and always through a
 // save dialog, so nothing is written anywhere the user didn't pick.
@@ -6950,10 +6962,65 @@ ipcMain.handle('chats:export', async (_e, id) => {
     filters: [{ name: 'Markdown', extensions: ['md'] }],
   });
   if (canceled || !filePath) return { ok: false, reason: 'canceled' };
-  await fs.promises.writeFile(filePath, out.markdown, 'utf8');
+  // Pictures the AI made go in a folder beside the file, named in it (the Markdown links them).
+  const folder = `${path.basename(filePath, path.extname(filePath))} pictures`;
+  const withPictures = chatMarkdown(String(id), folder) || out;
+  await fs.promises.writeFile(filePath, withPictures.markdown, 'utf8');
+  if (withPictures.pictures?.length) {
+    const dir = path.join(path.dirname(filePath), folder);
+    await fs.promises.mkdir(dir, { recursive: true });
+    for (const picture of withPictures.pictures) await fs.promises.writeFile(path.join(dir, picture.name), picture.buffer);
+  }
   return { ok: true, filePath };
 });
 if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
+
+// ---------- pictures the AI made (features/gen-images.js) ----------
+// Saved one file each under <userData>/generated-images/<chat>/, encrypted with the keychain like the chat itself (no
+// keychain: kept in memory only, as chats are). They go when their chat is deleted; a folder whose chat is gone is pruned.
+const genImages = require('./features/gen-images');
+let imageStoreRef = null;
+const imageStore = () => (imageStoreRef ||= genImages.createImageStore({
+  dir: path.join(app.getPath('userData'), 'generated-images'),
+  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+  available: () => safeStorage.isEncryptionAvailable(),
+}));
+Object.defineProperty(agent, 'imageStore', { get: imageStore, set() {}, configurable: true });
+if (TEST) global.__imageStore = imageStore;
+setTimeout(() => {
+  try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
+}, 30000).unref?.();
+// The picture as a data URL for the chat to draw (null: gone). Ids are checked against a strict pattern in the store.
+ipcMain.handle('images:data', (_e, id) => imageStore().dataUrl(String(id)));
+// Save image: always through a save dialog.
+ipcMain.handle('images:save', async (_e, id) => {
+  const found = imageStore().read(String(id));
+  if (!found) return { ok: false, reason: 'gone' };
+  const ext = found.mime === 'image/jpeg' ? 'jpg' : found.mime.slice(6);
+  const { canceled, filePath } = await electronDialog.showSaveDialog(win, {
+    title: t('dialog.saveImage.title'),
+    defaultPath: path.join(app.getPath('pictures'), `lumen-picture.${ext}`),
+    filters: [{ name: 'Image', extensions: [ext] }],
+  });
+  if (canceled || !filePath) return { ok: false, reason: 'canceled' };
+  await fs.promises.writeFile(filePath, found.buffer);
+  return { ok: true, filePath };
+});
+ipcMain.handle('images:copy', (_e, id) => {
+  const found = imageStore().read(String(id));
+  const image = found && require('electron').nativeImage.createFromBuffer(found.buffer);
+  if (!image || image.isEmpty()) return false;
+  copyImage(image);
+  return true;
+});
+// A web picture in a reply ("![](https://…)") loads only when the user asks (a click): https, no cookies, no private
+// addresses, a real image of a known type. It is then kept with the open chat like a made one.
+ipcMain.handle('images:remote', async (_e, url) => {
+  const got = await genImages.fetchRemoteImage(String(url || ''), { fetchImpl: (u, init) => net.fetch(u, init) });
+  const ref = got && imageStore().save(chatId, got.buffer, { alt: '' });
+  return ref ? { id: ref.id, mime: ref.mime } : null;
+});
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
 // [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.
 ipcMain.handle('agent:undo', (_e, runId) => agent.undoRun(runId));

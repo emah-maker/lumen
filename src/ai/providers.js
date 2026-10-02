@@ -7,6 +7,7 @@
 let OpenAIModule = null;
 const OpenAISDK = () => (OpenAIModule ||= require('openai'));
 const { netFetch } = require('../browser/net-fetch');
+const genImages = require('../features/gen-images');
 
 const PROVIDERS = {
   openai: {
@@ -84,6 +85,7 @@ function parseOpenRouterModels(json) {
     .filter((m) => m?.id && (!String(m.id).includes(':') || /:free$/.test(String(m.id))) && /text/.test(m.architecture?.output_modalities?.join(' ') || 'text'))
     .map((m) => ({
       id: m.id, name: m.name || m.id, tools: Array.isArray(m.supported_parameters) && m.supported_parameters.includes('tools'), created: m.created || 0,
+      ...(Array.isArray(m.architecture?.output_modalities) && m.architecture.output_modalities.includes('image') ? { imageOut: true } : {}), // makes pictures: asked for them (streamTurn), shown in the chat
       ...(Array.isArray(m.architecture?.input_modalities) ? { vision: m.architecture.input_modalities.includes('image') } : {}), // images in: a text-only model is passed over when a chat holds some (ai/fallback.js)
       context: Number(m.context_length) || 0, // for the picker's detail line
       free: /:free$/.test(String(m.id)),
@@ -230,20 +232,22 @@ function usageOptions(provider) {
 const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Math.random().toString(36).slice(2, 12)}`);
 
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
-async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false }) {
-  const stream = await clientFor(provider, apiKey).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider) },
+async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null }) {
+  const stream = await (client || clientFor(provider, apiKey)).chat.completions.create(
+    { model, messages: toChatMessages(system, messages), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider) },
     { signal },
   );
   let text = '';
   let finish = null;
   const calls = [];
   let usage = null;
+  const pictures = []; // pictures the model made (OpenRouter image models: delta.images), shown in the chat by agent.js
   for await (const chunk of stream) {
     if (chunk.usage) usage = chunk.usage; // the last chunk, when the provider sends token counts
     const choice = chunk.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};
+    if (delta.images) pictures.push(...genImages.extractImages({ choices: [{ delta }] }));
     if (delta.content) {
       if (!text) emit({ type: 'text_block' });
       text += delta.content;
@@ -269,9 +273,9 @@ async function streamTurn({ provider, model, apiKey, system, messages, tools, si
     }
     content.push({ type: 'tool_use', id: safeId(call.id), name: call.name, input });
   }
-  if (!content.length) content.push({ type: 'text', text: '(no reply)' });
+  if (!content.length && !pictures.length) content.push({ type: 'text', text: '(no reply)' });
   const stopReason = calls.length ? 'tool_use' : finish === 'length' ? 'max_tokens' : finish === 'content_filter' ? 'refusal' : 'end_turn';
-  return { content, stop_reason: stopReason, model: `${provider}:${model}`, usage };
+  return { content, stop_reason: stopReason, model: `${provider}:${model}`, usage, ...(pictures.length ? { pictures } : {}) };
 }
 
 // One non-streaming request that must answer with a JSON object.
@@ -284,6 +288,64 @@ async function completeJSON({ provider, model, apiKey, system, user, maxTokens, 
     ...(temperature != null ? { temperature } : {}),
   }, signal ? { signal } : undefined);
   return JSON.parse(res.choices?.[0]?.message?.content || '{}');
+}
+
+// ---------- making a picture on purpose ("draw a cat") ----------
+// Which providers have an images API Lumen calls, and the model used when the account lists none better.
+const IMAGE_MODELS = {
+  openai: { fallback: 'gpt-image-1', pick: /^gpt-image/ },
+  xai: { fallback: 'grok-2-image', pick: /image|imagine/, skip: /video|edit/ },
+  gemini: { fallback: 'gemini-2.5-flash-image', pick: /flash-image|pro-image|image-preview/, skip: /imagen|live|tts/ },
+};
+// Can this model make pictures when asked? (OpenAI, Grok and Gemini: through their image models; OpenRouter: only
+// the models its catalog lists as making images, which answer in the chat itself.)
+function canGenerateImages(provider, model) {
+  if (provider === 'openrouter') return Boolean(openRouterInfo(model)?.imageOut);
+  return Boolean(IMAGE_MODELS[provider]);
+}
+async function imageModelFor(provider, apiKey) {
+  const cfg = IMAGE_MODELS[provider];
+  try {
+    const page = await clientFor(provider, apiKey).models.list();
+    const ids = [];
+    for await (const m of page) ids.push(String(m.id).replace(/^models\//, ''));
+    const found = ids.filter((id) => cfg.pick.test(id) && !(cfg.skip && cfg.skip.test(id))).sort().reverse()[0];
+    if (found) return found;
+  } catch { /* the default below */ }
+  return cfg.fallback;
+}
+
+// One picture for `prompt`: { images: [{ data (base64) | url, alt }], model, said } (see features/gen-images.js extractImages),
+// from the images API of OpenAI or xAI, or Gemini's generateContent. `fetchImpl` / `client` let tests pass fakes.
+async function generateImage({ provider, apiKey, prompt, model = null, signal, fetchImpl = netFetch(), client = null }) {
+  const cfg = IMAGE_MODELS[provider];
+  if (!cfg) throw new Error(`${PROVIDERS[provider]?.label || provider} has no image model Lumen can ask.`);
+  const id = model || await imageModelFor(provider, apiKey);
+  if (provider === 'gemini') {
+    const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(id)}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+      credentials: 'omit',
+      ...(signal ? { signal } : {}),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(json?.error?.message || `Gemini error ${res.status}`), { status: res.status, imageApi: true });
+    const parts = json?.candidates?.[0]?.content?.parts || [];
+    const said = parts.filter((p) => typeof p?.text === 'string').map((p) => p.text).join(' ').trim();
+    const found = genImages.extractImages(json).map((i) => ({ ...i, alt: i.alt || said.slice(0, 300) }));
+    if (!found.length) {
+      const blocked = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.finishReason;
+      throw Object.assign(new Error(said || `Gemini made no picture${blocked ? ` (${blocked})` : ''}.`), { imageApi: true });
+    }
+    return { images: found, model: id, said };
+  }
+  const api = client || clientFor(provider, apiKey);
+  const body = { model: id, prompt, n: 1, ...(/^dall-e|^grok/.test(id) ? { response_format: 'b64_json' } : {}) };
+  const res = await api.images.generate(body, signal ? { signal } : undefined);
+  const found = genImages.extractImages(res);
+  if (!found.length) throw Object.assign(new Error(`${PROVIDERS[provider].label} made no picture.`), { imageApi: true });
+  return { images: found.map((i) => ({ ...i, alt: i.alt || prompt.slice(0, 300) })), model: id, said: '' };
 }
 
 function describeProviderError(err, provider) {
@@ -309,7 +371,7 @@ function describeProviderError(err, provider) {
 // What the catalog knows of a model: its context size, price per million input tokens and whether it is free.
 function openRouterInfo(model) {
   const m = catalog?.models?.find((x) => x.id === model);
-  return m ? { context: m.context || 0, pricePerM: m.pricePerM, free: Boolean(m.free), ...(typeof m.vision === 'boolean' ? { vision: m.vision } : {}) } : null;
+  return m ? { context: m.context || 0, pricePerM: m.pricePerM, free: Boolean(m.free), ...(m.imageOut ? { imageOut: true } : {}), ...(typeof m.vision === 'boolean' ? { vision: m.vision } : {}) } : null;
 }
 function openRouterName(model) {
   const m = catalog?.models?.find((x) => x.id === model);
@@ -318,4 +380,4 @@ function openRouterName(model) {
   return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
 }
 
-module.exports = { imageUrl, clientFor, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+module.exports = { imageUrl, clientFor, canGenerateImages, generateImage, imageModelFor, IMAGE_MODELS, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

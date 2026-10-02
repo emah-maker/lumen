@@ -978,4 +978,6 @@ class GrokBuildEngine {
   }
 }
 
+GrokBuildEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
+
 module.exports = { GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
