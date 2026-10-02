@@ -6042,6 +6042,16 @@ address.addEventListener('mouseup', () => {
   if (selectOnMouseUp && address.selectionStart === address.selectionEnd) address.select();
   selectOnMouseUp = false;
 });
+// A click anywhere in the field (the padding around the text, the security label, the gaps by the buttons) opens the
+// address, not only a click on the text itself (the input is only as wide as its text while it isn't focused).
+$('omnibox').addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.target === address || e.target.closest('button, a, [role="button"]')) return;
+  e.preventDefault(); // the click would otherwise land on nothing and leave the page holding focus
+  const wasFocused = document.activeElement === address && document.hasFocus();
+  address.focus();
+  if (!wasFocused) address.select();
+  else address.setSelectionRange(address.value.length, address.value.length);
+});
 address.addEventListener('blur', () => {
   // When the page (another view) takes focus, activeElement stays on the address bar, so check
   // hasFocus too: otherwise the suggestion view stayed up over the page and swallowed clicks.
