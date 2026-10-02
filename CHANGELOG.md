@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The AI reads what's inside embedded content: a claude.ai artifact, a Google Docs, Notion or CodePen embed, a payment or chat widget, any iframe (cross-site ones too) and web components' shadow DOM. Their text goes with your message and into read_page, find and read_tabs, labelled by the frame's site ("[embedded frame: claude.site — Artifact]"), and the AI can click, type and press keys inside them. Each frame is read in its own isolated world, where the page can't see or change the read; tracking pixels, hidden frames and frames on sites where you turned AI off are skipped.
+
 ## 0.5.0 (2026-10-01)
 
 - Private windows have the protections of a normal window: Safe Browsing, the ad blocker, HTTPS-only, error and certificate pages, and the permission defaults from Settings. Zoom, permissions and "Continue" choices made in a private window stay in that window and are never saved. Private windows also get downloads (kept in memory only), find in page, more shortcuts, a fuller right-click menu, a redesigned tab strip and a new-tab page that says what is and isn't kept.
