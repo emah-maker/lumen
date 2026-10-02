@@ -560,12 +560,13 @@ contextBridge.exposeInMainWorld('assistant', {
     list: () => ipcRenderer.invoke('chats:list'),
     open: (id) => ipcRenderer.invoke('chats:open', id), // also "Move chat to this tab"
     showTab: (id) => ipcRenderer.invoke('chats:show-tab', id), // "Open chat in its tab"
-    stopChat: (id) => ipcRenderer.send('agent:stop', id), // "Stop waiting" (or stop) any chat, not only the open one
+    stopChat: (id) => ipcRenderer.invoke('chats:stop', id), // "Stop waiting" (or stop) any chat, not only the open one
     rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
     remove: (id) => ipcRenderer.invoke('chats:delete', id),
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
     closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners] "Close this chat's tabs"
     onUsage: on('chats:usage'),
+    onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
   },
   // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
@@ -587,6 +588,8 @@ contextBridge.exposeInMainWorld('assistant', {
     enable: (id, on) => ipcRenderer.invoke('tasks:enable', id, on),
     openPage: (id) => ipcRenderer.invoke('tasks:open-page', id),
     settings: (patch) => ipcRenderer.invoke('tasks:settings', patch),
+    saveRoutine: (spec) => ipcRenderer.invoke('routines:save', spec), // routines (renderer/routines.js)
+    routinePreview: (spec) => ipcRenderer.invoke('routines:preview', spec),
     onState: on('tasks:state'),
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),

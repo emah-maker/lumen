@@ -108,3 +108,17 @@
 .hands-off-badge:hover { color: var(--text); }
 .hands-off-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .hands-off-badge svg { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* [context] the open chat's context-window ring, left of Send (chat-extras.js) */
+.context-meter { position: relative; flex: none; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted, #6e6e73); cursor: pointer; }
+.context-meter[hidden] { display: none; }
+.context-meter:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+.context-meter:focus-visible { outline: 2px solid var(--accent, #007aff); outline-offset: 1px; }
+.context-meter svg { width: 18px; height: 18px; transform: rotate(-90deg); }
+.context-meter circle { fill: none; stroke-width: 2.5; }
+.context-meter .cm-track { stroke: rgba(127, 127, 127, 0.25); }
+.context-meter .cm-fill { stroke: var(--accent, #007aff); stroke-linecap: round; transition: stroke-dasharray var(--t-smooth) cubic-bezier(0.16, 1, 0.3, 1); }
+.context-meter.warn .cm-fill { stroke: #ff9f0a; }
+.context-meter.high .cm-fill { stroke: #ff453a; }
+.pref-lite .context-meter .cm-fill { transition: none; }
+.notice.slash-help ul { margin: 4px 0; padding-left: 18px; text-align: left; }
+.notice.slash-help code { font-size: 11px; }

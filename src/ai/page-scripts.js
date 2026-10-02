@@ -2,10 +2,44 @@
 // Every argument interpolated here is either a validated integer or passed through JSON.stringify.
 //
 // read_page stores the elements it lists in window.__claudeEls (index = id - 1) so later actions
-// can find them again, including elements inside open shadow roots and same-origin iframes.
+// can find them again, including elements inside open shadow roots and same-origin iframes. With
+// frames.js reading every embedded frame in its own isolated world (readPage(..., { frames: false })),
+// each frame keeps its own registry and the walk stops at iframes.
 
 const TEXT_CHUNK = 12000;
 const ELEMENT_PAGE = 150;
+
+// The page's visible text. document.body.innerText leaves out open shadow roots (web components), so
+// on a page that has them the text is put together from the rendered tree: the components' text
+// where they are, a slot's assigned nodes in place of the slot, hidden elements left out.
+const PAGE_TEXT = `
+  const pageText = (doc) => {
+    const body = doc.body;
+    if (!body) return '';
+    const hosts = [];
+    const findHosts = (root) => { for (const el of root.querySelectorAll('*')) if (el.shadowRoot) { hosts.push(el); findHosts(el.shadowRoot); } };
+    findHosts(doc);
+    if (!hosts.length) return body.innerText;
+    const holds = new Set(); // elements with a shadow host at or below them
+    for (const host of hosts) for (let el = host; el && !holds.has(el); el = el.parentElement || el.getRootNode().host) holds.add(el);
+    const view = doc.defaultView;
+    const textOf = (node) => {
+      if (node.nodeType === 3) return node.nodeValue.replace(/\\s+/g, ' ');
+      if (node.nodeType !== 1 || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(node.tagName)) return '';
+      const s = view.getComputedStyle(node);
+      if (s.display === 'none') return '';
+      let inner;
+      if (!holds.has(node)) inner = s.visibility === 'hidden' ? '' : node.innerText || '';
+      else {
+        const assigned = node.tagName === 'SLOT' ? node.assignedNodes({ flatten: true }) : [];
+        const kids = node.shadowRoot ? node.shadowRoot.childNodes : assigned.length ? assigned : node.childNodes;
+        inner = [...kids].map(textOf).join('');
+      }
+      return /^inline/.test(s.display) || s.display === 'contents' ? inner : '\\n' + inner + '\\n';
+    };
+    return textOf(body).replace(/[ \\t]*\\n[ \\t]*/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+  };
+`;
 
 const HELPERS = `
   const isVisible = (el) => {
@@ -51,9 +85,11 @@ const HELPERS = `
     const entry = (window.__claudeEls || [])[id - 1];
     return entry && entry.el.isConnected ? entry : null;
   };
+${PAGE_TEXT}
 `;
 
-function readPage(textOffset, elementOffset) {
+// frames: false leaves iframes to frames.js (each read in its own frame); they are only counted.
+function readPage(textOffset, elementOffset, { frames = true } = {}) {
   return `(() => {
     ${HELPERS}
     const selector = [
@@ -69,7 +105,7 @@ function readPage(textOffset, elementOffset) {
         if (el.shadowRoot) walk(el.shadowRoot, chain);
         if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
           let doc = null;
-          try { doc = el.contentDocument; } catch {}
+          try { doc = ${frames ? 'el.contentDocument' : 'null'}; } catch {}
           if (doc && doc.body) { if (isVisible(el)) walk(doc, [...chain, el]); }
           else if (isVisible(el)) crossOriginFrames++;
           continue;
@@ -103,7 +139,7 @@ function readPage(textOffset, elementOffset) {
     // Name the rest too, so step labels work for ids on later pages.
     registry.forEach((entry) => { if (entry.label === undefined) entry.label = accessibleName(entry.el).slice(0, 80); });
 
-    const text = (document.body ? document.body.innerText : '').replace(/\\n{3,}/g, '\\n\\n');
+    const text = pageText(document).replace(/\\n{3,}/g, '\\n\\n');
     const start = ${textOffset};
     const end = start + ${TEXT_CHUNK};
     return {
@@ -370,7 +406,7 @@ function findTarget(text, mode) {
       else if (score === bestScore) ties++;
     });
     if (best === null) return { error: 'not-found' };
-    return { id: best + 1, ambiguous: ties > 0 && bestScore < 3 };
+    return { id: best + 1, ambiguous: ties > 0 && bestScore < 3, score: bestScore };
   })()`;
 }
 
@@ -428,4 +464,4 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { readPage, locate, domClick, domHover, domClickAt, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };

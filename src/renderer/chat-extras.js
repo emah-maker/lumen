@@ -162,6 +162,51 @@
   });
   setTimeout(() => refreshUsage(false), 1500); // after the model list has loaded
 
+  // ---------- [context] how full the open chat's context window is ----------
+  // A ring left of Send, for every AI (features/chat-usage.js contextView: the last request's whole input against
+  // the model's window, kept per chat and saved with it). Its tooltip has the numbers; a click runs /context. Main
+  // pushes it after each request (chats:context); it is read again when another chat opens.
+  const chatsApi = window.assistant?.chats;
+  const SVG = 'http://www.w3.org/2000/svg';
+  const ring = Object.assign(document.createElement('button'), { type: 'button', id: 'context-meter', className: 'context-meter', hidden: true });
+  const ringSvg = document.createElementNS(SVG, 'svg');
+  ringSvg.setAttribute('viewBox', '0 0 20 20');
+  ringSvg.setAttribute('aria-hidden', 'true');
+  const circle = (cls) => { const c = document.createElementNS(SVG, 'circle'); c.setAttribute('class', cls); c.setAttribute('cx', '10'); c.setAttribute('cy', '10'); c.setAttribute('r', '7.5'); c.setAttribute('pathLength', '100'); return c; };
+  const ringFill = circle('cm-fill');
+  ringSvg.append(circle('cm-track'), ringFill);
+  ring.append(ringSvg);
+  ($('send-bg') || $('send'))?.before(ring);
+  function renderContext(view) {
+    const show = Boolean(view && view.window > 0 && view.tokens > 0);
+    ring.hidden = !show;
+    if (!show) return;
+    const percent = Math.round(view.percent);
+    ringFill.setAttribute('stroke-dasharray', `${Math.max(view.percent, 1.5)} 100`);
+    ring.classList.toggle('warn', percent >= 75 && percent < 90);
+    ring.classList.toggle('high', percent >= 90);
+    const vars = { percent, used: compact(view.tokens), total: compact(view.window) };
+    const label = window.t(view.estimated ? 'context.label.estimated' : 'context.label', vars);
+    ring.setAttribute('aria-label', label);
+    ring.title = `${window.t(view.estimated ? 'context.title.estimated' : 'context.title', vars)} ${window.t(percent >= 75 ? 'context.compact' : 'context.more')}`;
+  }
+  async function refreshContext() {
+    if (!chatsApi?.list) return;
+    try { renderContext((await chatsApi.list())?.currentContext || null); } catch { /* the chat list is busy: the next push or reply redraws it */ }
+  }
+  chatsApi?.onContext?.(renderContext);
+  ring.addEventListener('click', () => window.ask?.('/context'));
+  $('new-chat')?.addEventListener('click', () => { renderContext(null); setTimeout(refreshContext, 50); });
+  window.assistant?.onEvent?.((event) => { if (event.type === 'done') setTimeout(refreshContext, 300); });
+  // Another chat is shown (opened from the list, the other view switched, a tab with its own chat): chats.js and
+  // chat-page.js say so through chatList.refreshUsage and chatUsageMeter.refresh.
+  if (window.chatList?.refreshUsage) {
+    const base = window.chatList.refreshUsage;
+    window.chatList.refreshUsage = (...args) => { const out = base(...args); refreshContext(); return out; };
+  }
+  window.chatUsageMeter.refresh = () => { refreshUsage(false); refreshContext(); };
+  setTimeout(refreshContext, 1500);
+
   // ---------- [ai controls] "Undo" under a reply that changed your tabs ----------
   // `undo` ({ id, undoable, lasting }) comes with the run's 'done' event (agent.js undoSummary):
   // the tabs it opened, closed, moved to other pages or regrouped can be put back; what it did on

@@ -148,13 +148,15 @@ const path = require('path');
 
   // Long pages are cut to the per-tab cap and say so.
   const long = await openTab('long');
+  await sleep(300);
+  const userMsgs = await ui.evaluate(() => document.querySelectorAll('.msg.user').length); // [chat per tab] the new tab may have its own (empty) chat
   await ui.click('#prompt');
   await ui.keyboard.type('@long');
   await pickerOpen();
   await ui.keyboard.press('Enter');
   await ui.keyboard.type('summarize');
   await ui.keyboard.press('Enter');
-  await ui.waitForFunction(() => document.querySelectorAll('.msg.user').length === 4 && !document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 });
+  await ui.waitForFunction((n) => document.querySelectorAll('.msg.user').length === n + 1 && !document.getElementById('send').classList.contains('stop'), userMsgs, { timeout: 10000 });
   sent = await lastSent();
   const longBlock = sent.slice(sent.indexOf('[Tab: Long read'));
   check('a long tab is cut, with the note', /\[cut: showing the first 6000 of \d+ characters/.test(sent), sent.slice(0, 200));
@@ -207,13 +209,14 @@ const path = require('path');
   await ui.click('#tab-chips .tab-chip-remove');
 
   // The empty sidebar's quick actions attach all tabs (New chat brings the empty state back, and the confirm again).
+  // (The extra tabs go first: closing the tab in front would bring another tab, and its own chat, to the sidebar.)
+  await app.evaluate(() => { global.__closeExtras = true; });
+  for (const id of await app.evaluate(() => global.__agent.browser.listTabs().filter((t) => /extra\d/.test(t.url)).map((t) => t.id))) await app.evaluate((_e, i) => global.__agent.browser.closeTab(i), id);
+  await sleep(400);
   await ui.click('#new-chat');
   await sleep(300);
   const quick = await ui.evaluate(() => [...document.querySelectorAll('.chip[data-all-tabs]')].map((c) => c.textContent));
   check('the empty sidebar offers "Summarize my open tabs" and "Compare these tabs"', quick.includes('Summarize my open tabs') && quick.includes('Compare these tabs'), JSON.stringify(quick));
-  await app.evaluate(() => { global.__closeExtras = true; });
-  for (const id of await app.evaluate(() => global.__agent.browser.listTabs().filter((t) => /extra\d/.test(t.url)).map((t) => t.id))) await app.evaluate((_e, i) => global.__agent.browser.closeTab(i), id);
-  await sleep(400);
   await ui.click('.chip[data-all-tabs] >> nth=0');
   await ui.waitForFunction(() => document.querySelectorAll('.msg.user').length === 1 && !document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 });
   sent = await lastSent();
