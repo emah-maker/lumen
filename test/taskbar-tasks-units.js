@@ -52,7 +52,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').repla
   check('wiring: a second process with the flag does not ping (and so focus) the running window', /wantsCloseAiTabs\(process\.argv\)\) return false;[^\n]*\n[\s\S]{0,200}pingRunningInstance/.test(inst) || inst.indexOf('wantsCloseAiTabs(process.argv)') < inst.indexOf('if (pingRunningInstance(app))'));
   check('wiring: in the \u22ef menu and the macOS Tab menu', (main.match(/menu\.closeAiTabs'\), [^\n]*closeAiTabsEverywhere/g) || []).length === 2 && /enabled: aiTabSelect\(\{\}\)\.length > 0, click: \(\) => \{ closeAiTabsEverywhere/.test(main));
   check('strings: the taskbar label, its description and the empty note exist', ['taskbar.closeAiTabs', 'taskbar.closeAiTabsDesc', 'taskbar.noAiTabs', 'menu.closeAiTabs'].every((k) => typeof en[k] === 'string' && en[k]));
-  check('docs and changelog mention it', /taskbar/i.test(read('docs/settings.md')) && /taskbar/i.test(read('CHANGELOG.md').split('## 0.')[0]));
+  check('docs and changelog mention it', /taskbar/i.test(read('docs/settings.md')) && /taskbar/i.test(read('CHANGELOG.md'))); // anywhere in it: the entry moves from Unreleased into a version's section when that version is cut
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
