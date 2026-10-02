@@ -91,6 +91,9 @@ const os = require('os');
   const names = (list.result?.tools || []).map((t) => t.name);
   check('tools/list includes navigate, read_page, click, web_search', ['navigate', 'read_page', 'click', 'fill_form', 'web_search'].every((n) => names.includes(n)), JSON.stringify(names));
   check('tools have inputSchema', list.result.tools.every((t) => t.inputSchema?.type === 'object'), 'missing inputSchema');
+  // Connected but idle (an agent keeps its session open all day): the pill stays hidden until a tool call runs.
+  await ui.waitForTimeout(1800);
+  check('an idle connected agent does not show the "driven by" pill', !(await ui.evaluate(() => document.body.classList.contains('mcp-active'))), 'pill shown while idle');
 
   let r = await call('navigate', { url: 'https://example.com' });
   check('tools/call navigate', !r.result.isError && /Example Domain/.test(text(r)), JSON.stringify(r).slice(0, 300));

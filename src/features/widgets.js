@@ -689,9 +689,18 @@ const CONNECTORS = {
       // carries them: older saved data doesn't, and ttl() above refreshes it at once.
       const sections = tv.view === 'watchlist' ? TVW.sections(tv.symbols, tv.list?.name).length : 0;
       return {
-        symbol: tv.symbol, view: tv.view, theme: tv.theme, name: tv.list?.name || '', synced, note, fit: 1, sections, chart: tv.chart === true,
+        symbol: tv.symbol, view: tv.view, interval: tv.interval, theme: tv.theme, name: tv.list?.name || '', synced, note, fit: 1, sections, chart: tv.chart === true,
         light: TVW.embedUrl(tv, false), dark: TVW.embedUrl(tv, true), compactLight: TVW.embedUrl(tv, false, true), compactDark: TVW.embedUrl(tv, true, true),
       };
+    },
+    // The card's interval menu (tvinterval): the pick is the widget's stored Interval, the same one Settings edits.
+    // The page already shows the new address, so only the stored config and the cached copy change; nothing is fetched.
+    act(c, action, x, cached) {
+      if (action.do !== 'tvinterval' || !TVW.INTERVALS.includes(action.arg)) return false;
+      const tv = { ...c.tv, interval: action.arg };
+      for (const [key, dark, compact] of [['light', false, false], ['dark', true, false], ['compactLight', false, true], ['compactDark', true, true]]) if (cached[key]) cached[key] = TVW.embedUrl(tv, dark, compact) || cached[key];
+      cached.interval = action.arg;
+      return { config: { tv }, local: true };
     },
   },
 
@@ -1914,7 +1923,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -1938,6 +1947,10 @@ function createWidgets(deps) {
       action.create = id === 'wcreate';
     }
     if (action.do === 'note') action.text = (params.get('text') || '').slice(0, LW.MAX_NOTE); // may be empty: the note was cleared
+    if (action.do === 'tvinterval') {
+      action.arg = params.get('arg');
+      if (!TVW.INTERVALS.includes(action.arg)) return { invalid: true };
+    }
     if (action.do === 'timer') {
       action.arg = params.get('arg');
       if (!['start', 'pause', 'reset', 'skip'].includes(action.arg)) return { invalid: true };
