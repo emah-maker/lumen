@@ -12,6 +12,7 @@ const PAGES = {
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
+  routines: { title: 'Routines', file: 'docs/routines.md' },
   'mac-signing': { title: 'macOS signing', file: 'docs/mac-signing.md' },
   changelog: { title: 'Changelog', file: 'CHANGELOG.md' },
 };
