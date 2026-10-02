@@ -58,6 +58,7 @@ const cliAuth = lazy(() => require('./ai/cli-auth'));
 let anthropicSdk_ = null;
 const anthropicSdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const { createTabGroups, siteName, pathWords, siteHint } = require('./browser/tab-groups');
+const taskbarTasks = require('./features/taskbar-tasks'); // the taskbar's "Close tabs the AI opened" (Jump List task / Dock menu)
 const organizeAi = require('./features/organize-ai'); // Organize with AI: local first, the model refines
 const organizeLearn = require('./features/organize-learn'); // what Organize learns from the user, duplicate tabs, idle rule
 const pdfZoom = require('./features/pdf-zoom'); // Ctrl+Plus/Minus/0 and Ctrl+wheel drive the PDF viewer's own zoom
@@ -1207,6 +1208,7 @@ function showAppMenu({ x, y, right }) {
     [
       more([
         { label: t('menu.tabGroups'), submenu: tabGroupsMenu() },
+        { label: t('menu.closeAiTabs'), enabled: aiTabSelect({}).length > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } }, // [ai manners]
         { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
         { label: t('menu.import'), submenu: importMenu() },
         { label: t('menu.adBlocker'), submenu: adblock.menu() },
@@ -3883,6 +3885,8 @@ function runView(run) {
     onRunTab: runTab == null || runTab === activeIdOf(rec || curRec),
   };
 }
+// [widgets] The AI status card (features/aistatus-view.js) looks again when chats start, wait or end; set once the widgets exist.
+let aiStatusSoon = () => {};
 // The mark on each window's sidebar button, and the chat list's badges.
 function pushAttention() {
   const approvals = [...chatRuns.values()].reduce((n, r) => n + r.pending.size, 0);
@@ -3895,6 +3899,7 @@ function pushAttention() {
   }
   chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
   refreshTabMarks(); // [chat per tab]
+  aiStatusSoon();
 }
 const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRuns.keys()].map((id) => {
   const run = chatRuns.get(id);
@@ -3940,7 +3945,7 @@ const runSlots = tabChatsLib.createRunSlots({
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
 setInterval(() => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, 5000).unref?.();
-onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); };
+onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
@@ -4196,7 +4201,37 @@ ipcMain.handle('tabs:hide-ai', async (_e, on) => {
 });
 ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
+// The taskbar's command (Jump List task, Dock menu) and the menus' "Close Tabs Opened by AI": every normal window's AI tabs, each
+// window's toast (counts, Undo) in the window that held them. It never raises or focuses a window (the click was on the taskbar).
+// A private window has no AI tabs of this kind (it is in no window record). With none to close, a brief line shows in the
+// window in front, and only if one is visible.
+let closingAiEverywhere = false;
+async function closeAiTabsEverywhere() {
+  if (closingAiEverywhere || !uiReady) return { windows: 0, closed: 0, kept: 0 }; // (a second click while one runs, or Lumen still starting: nothing)
+  closingAiEverywhere = true;
+  try {
+    const recs = [...new Set(aiTabSelect({}).map((x) => x.rec))];
+    if (!recs.length) {
+      const rec = focusedRec();
+      if (rec && rcAlive(rec) && rec.win.isVisible() && !rec.win.isMinimized()) withWindow(rec, () => ui()?.send('tabs:organize-note', { text: t('taskbar.noAiTabs'), undo: false, ttl: 4000 }));
+      return { windows: 0, closed: 0, kept: 0 };
+    }
+    let closed = 0;
+    let kept = 0;
+    for (const rec of recs) {
+      const r = await aiTabsClose({ rec }).catch(() => null);
+      if (!r) continue;
+      closed += r.closed;
+      kept += r.kept;
+      aiCloseNote(rec, r);
+    }
+    return { windows: recs.length, closed, kept };
+  } finally {
+    closingAiEverywhere = false;
+  }
+}
 if (TEST) global.__manners = manners;
+if (TEST) global.__taskbar = { closeAiTabs: closeAiTabsEverywhere, wants: taskbarTasks.wantsCloseAiTabs, secondInstance: (argv) => app.emit('second-instance', {}, argv) };
 if (TEST) global.__aiTabs = { switchTo: (id) => switchTab(id), select: aiTabSelect, close: aiTabsClose, reopen: aiTabsReopen, tab: (id) => tabAnywhere(id)?.t, handOver: userTookOver, closedTabs: () => closedTabs.slice() };
 
 // Background throttling off for the tabs sidebar runs work in, so timers, animations and painting go
@@ -4384,6 +4419,8 @@ function macMenu() {
         { type: 'separator' },
         normal({ label: t('menu.newTabRight'), click: () => { if (activeId) newTabRightOf(activeId); } }),
         normal({ label: t('menu.duplicateTab'), click: () => { if (activeId) duplicateTab(activeId); } }),
+        { type: 'separator' },
+        normal({ label: t('menu.closeAiTabs'), click: () => { closeAiTabsEverywhere().catch(() => {}); } }),
       ],
     },
     { label: t('menu.downloads'), submenu: [normal({ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') })] },
@@ -6045,6 +6082,8 @@ const agent = new Agent({
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
+  grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
+  antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
@@ -6186,6 +6225,7 @@ function announceModelIfChanged() {
 function modelsChanged() {
   try { lastShownModel = shownModel().model; } catch { /* not set up yet */ }
   try { refreshNewTabs(); } catch { /* not set up yet (startup) */ } // the new-tab pages' Ask AI box says who it asks: it follows the pick at once, in every window
+  aiStatusSoon(); // the AI status widget's rows follow the same change
   for (const rec of winRecs) if (rcAlive(rec) && !isSpare(rec)) rec.win.webContents.send('models-updated');
   for (const wc of [...chatPageRt.everyChatTab().map((t) => t.view.webContents), ...allTabsEverywhere().filter((t) => t.settings && alive(t)).map((t) => t.view.webContents)]) if (wc && !wc.isDestroyed()) wc.send('models-updated');
 }
@@ -6256,6 +6296,37 @@ function refreshNewTabs() {
   const url = newTabUrl();
   for (const t of open) t.view.webContents.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange'))`).catch(() => {});
 }
+// [widgets] What the AI status card is built from (features/aistatus-view.js shapes it): which providers have a key and which CLIs are
+// installed and signed in, the model in use, the models being left alone after a limit, the usage Lumen counted, the chats running, the
+// tabs the AI opened. Names, states and counts only: no key, token or address leaves this function.
+const AI_FULL_ACCESS = { claudecode: 'claudeCodeFullAccess', grokbuild: 'grokBuildFullAccess', antigravity: 'antigravityFullAccess' }; // read generically: a setting that doesn't exist is simply not shown
+function aiStatusFacts() {
+  const s = readSettings();
+  const now = Date.now();
+  const apis = [];
+  if (anthropicUsable()) apis.push('anthropic');
+  for (const p of Object.keys(providers.PROVIDERS)) if (providerKey(p)) apis.push(p);
+  const cli = aiAgents.cliStatus();
+  const model = effectiveModel();
+  const provider = model ? aiFallback.providerOf(model) : null;
+  const bare = model ? String(model).replace(/^[a-z][a-z0-9]*:/, '') : '';
+  const cooling = {};
+  for (const [id, entry] of Object.entries(aiFallback.shared.snapshot(now))) cooling[id] = { ...entry, ...(entry.model ? { model: (MODELS[entry.model] && MODELS[entry.model].label) || modelNames.prettyModel(entry.model) || entry.model } : {}) };
+  const glance = usage.glance(now);
+  return {
+    apis,
+    engines: cli,
+    current: model ? { provider, label: (MODELS[bare] && MODELS[bare].label) || modelNames.prettyModel(bare) || bare } : null,
+    cooling,
+    meter: glance.meter,
+    grokLimit: glance.grokLimit,
+    today: glance.today,
+    fullAccess: Object.fromEntries(Object.entries(AI_FULL_ACCESS).map(([id, key]) => [id, s[key] === true ? true : s[key] === false ? false : undefined])),
+    runs: { working: runSlots.size(), waiting: runSlots.waitingIds().length, max: runSlots.limit },
+    aiTabs: [...winRecs].filter(rcAlive).reduce((n, rec) => n + tabsOf(rec).filter((tab) => manners.isAiTab(tab)).length, 0),
+    handsOff: s.aiHandsOff === true,
+  };
+}
 // [widgets] features/widgets.js: fresh data reaches open new-tab pages the same way (batched, as
 // several widgets often finish together).
 let widgetRefreshTimer = null;
@@ -6268,6 +6339,7 @@ const widgets = createWidgets({
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
     clearTimeout(widgetRefreshTimer);
@@ -6287,6 +6359,8 @@ const widgets = createWidgets({
   endpoints: () => (TEST && global.__widgetEndpoints) || {},
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
+aiStatusSoon = widgets.aiStatusSoon;
+setInterval(() => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, 15e3).unref?.(); // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
 
 // [widgets] The user's TradingView watchlists, for the TradingView widget's import and sync: one fixed
@@ -7208,7 +7282,24 @@ const singleInstance = process.argv.includes('--install-shortcuts') || instance.
 if (!singleInstance) app.quit();
 // Opening the shortcut again focuses the running browser (two copies would overwrite each other's
 // files); a link opened from another app while Lumen runs comes the same way, and opens in a tab.
-app.on('second-instance', (_e, argv) => { focusWindow(); openLinksFromOtherApps(linksIn(argv)); });
+// The taskbar's "Close tabs the AI opened" arrives the same way, with no link: it does its work in the background and does not
+// bring a window forward.
+app.on('second-instance', (_e, argv) => {
+  const closeAi = taskbarTasks.wantsCloseAiTabs(argv);
+  if (closeAi) closeAiTabsEverywhere().catch(() => {});
+  const links = linksIn(argv);
+  if (!closeAi || links.length) { focusWindow(); openLinksFromOtherApps(links); }
+});
+// The taskbar entry: a Jump List task on Windows (an installed Lumen only: from source or in a test the program would be the
+// wrong one, and the Jump List belongs to the installed app's identity), the Dock menu on macOS.
+function setupTaskbar() {
+  if (TEST) return;
+  if (process.platform === 'win32' && app.isPackaged) {
+    try { app.setUserTasks(taskbarTasks.jumpListTasks({ execPath: process.execPath, label: t('taskbar.closeAiTabs'), description: t('taskbar.closeAiTabsDesc') })); } catch {}
+  } else if (process.platform === 'darwin') {
+    try { app.dock?.setMenu(Menu.buildFromTemplate(taskbarTasks.dockMenuItems({ label: t('taskbar.closeAiTabs'), click: () => { closeAiTabsEverywhere().catch(() => {}); } }))); } catch {}
+  }
+}
 
 app.whenReady().then(async () => {
   perf.mark('ready');
@@ -7227,6 +7318,7 @@ app.whenReady().then(async () => {
     .then(() => { if (process.env.LUMEN_DEBUG) console.log('Widevine components status:', components.status()); })
     .catch((err) => console.error('Widevine component install failed (continuing without it):', err));
   instance.listenForSecondInstances(app, focusWindow);
+  setupTaskbar();
   setTimeout(() => instance.fixShortcutIcons(app, shell), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app); // Explorer says Lumen, not Electron
   aiAgents.start({ after: firstTabLoaded }); // MCP server, CDP automation (if on), Claude Code detection (once the first tab has loaded)

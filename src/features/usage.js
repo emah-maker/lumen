@@ -367,10 +367,25 @@ function createUsage(deps) {
     return result;
   }
 
+  // A quick, synchronous look for the home page's AI status card (no CLI is started): the 5-hour reading when it is still current,
+  // Grok's limit message, and what was counted today per engine.
+  function glance(now = clock()) {
+    const start = new Date(now).setHours(0, 0, 0, 0);
+    const today = {};
+    for (const r of records) {
+      if (r.at < start) continue;
+      const e = (today[r.engine] ||= { turns: 0, costUSD: 0 });
+      e.turns++;
+      e.costUSD += r.costUSD || 0;
+    }
+    const g = grokLimitNow(now);
+    return { meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt } : null, grokLimit: g ? { resetsAt: g.resetsAt } : null, today };
+  }
+
   function clear() { records = []; save(); }
   function setBudget(next) { budget = normalizeBudget(next); save(); return budget; }
 
-  return { load, record, summary, planUsage, clear, setBudget, budget: () => budget, meter: () => meter };
+  return { load, record, summary, planUsage, glance, clear, setBudget, budget: () => budget, meter: () => meter };
 }
 
 module.exports = { createUsage, parsePlan, fiveHourOf, barFor, otherClaudeActivity, normalizeBudget, periodStart, periodEnd, grokWindows, budgetStatus };

@@ -144,6 +144,7 @@ function listenForSecondInstances(app, focus) {
 function acquireInstanceLock(app) {
   if (app.requestSingleInstanceLock()) return true;
   if (require('../test-mode').isTest() && !process.env.CLAUDE_BROWSER_PROFILE) return false;
+  if (require('./taskbar-tasks').wantsCloseAiTabs(process.argv)) return false; // the taskbar's command: the running instance got it through 'second-instance'; the ping below would bring its window forward
   if (pingRunningInstance(app)) return false; // a live instance answered and brought itself forward
   if (!reclaimProfileLock()) return false;
   const deadline = Date.now() + 3000;

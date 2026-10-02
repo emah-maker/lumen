@@ -60,6 +60,36 @@ function toggle(key, label, desc, after) {
   r.querySelector('.label').addEventListener('click', () => input.click());
   return r;
 }
+// [full access] "Give all command-line AIs full access to this computer" and one switch per CLI (renderer/cli-access.js).
+// The master switch is derived from the three (never stored): half-way when they differ.
+const CLI_ACCESS_EXTRA = {
+  claudeCodeFullAccess: ', and use your own MCP servers, skills and slash commands',
+  grokBuildFullAccess: ', with its own tools and without the limits Lumen otherwise puts on them',
+  antigravityFullAccess: ', with its terminal sandbox off',
+};
+const cliAccessDesc = (name, extra) => `${name} in the sidebar works as it does in your terminal: it can run commands and read and change any of your files${extra}, all without asking first. Lumen’s approval cards and “Don’t let the AI act on my pages” still cover Lumen’s browser tools, but not ${name}’s own tools. This applies to ${name} only. Only turn it on if you trust it with your computer: a web page it reads could try to trick it. Off by default; applies from the next message.`;
+function syncCliAccess() {
+  const CA = window.cliAccess;
+  const state = CA.masterState(st.prefs);
+  const master = $('pref-cliFullAccess');
+  if (master) { master.checked = state === 'on'; master.indeterminate = state === 'mixed'; master.setAttribute('aria-checked', state === 'mixed' ? 'mixed' : String(state === 'on')); }
+  for (const key of CA.KEYS) { const input = $(`pref-${key}`); if (input) input.checked = st.prefs[key] === true; }
+}
+function cliAccessRows() {
+  const CA = window.cliAccess;
+  const label = tr('settings.ai.cliFullAccess', 'Give all command-line AIs full access to this computer');
+  const input = h('input', { type: 'checkbox', class: 'switch', id: 'pref-cliFullAccess', role: 'switch', 'aria-label': label });
+  input.addEventListener('change', async () => {
+    const value = CA.masterNext(CA.masterState(st.prefs)); // (a click on the half-way state clears all)
+    for (const key of CA.KEYS) await save(key, value);
+    syncCliAccess();
+  });
+  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build and Antigravity together (each is explained below). Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
+  master.querySelector('.label').addEventListener('click', () => input.click());
+  const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
+  queueMicrotask(syncCliAccess);
+  return [master, ...rows];
+}
 function select(key, label, desc, options, { number = false, after } = {}) {
   const el = h('select', { id: `pref-${key}`, 'aria-label': label },
     options.map(([value, text]) => h('option', { value: String(value), text })));
@@ -237,10 +267,10 @@ async function buildAi(card) {
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
     toggle('autoCompact', tr('settings.ai.autoCompact', 'Compact long chats automatically'), tr('settings.ai.autoCompactDesc', 'When a chat with an API model (Claude, OpenAI, Grok, Gemini, OpenRouter) gets close to what the model can take in one request, its earlier part is summarized by the same model and the AI goes on from that summary, instead of the oldest messages being left out. The messages stay on screen. Type /compact to do it yourself at any time. Claude Code, Grok Build and Antigravity compact their own sessions.')),
     toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
-    toggle('claudeCodeFullAccess', tr('settings.ai.claudeCodeFullAccess', 'Give Claude Code full access to this computer'), tr('settings.ai.claudeCodeFullAccessDesc', 'Claude Code in the sidebar works as it does in your terminal: it can run commands, read and change any of your files, and use your own MCP servers, skills and slash commands, all without asking first. Only turn this on if you trust it with your computer: a web page it reads could try to trick it. Off by default; applies from the next message.')),
+    ...cliAccessRows(),
     toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
-    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server.')),
+    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server. It doesn’t limit a command-line AI you gave full access to this computer: that AI’s own tools (shell, files) are not Lumen’s.')),
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'Close tabs the AI opened when it finishes'), tr('settings.ai.closeAiTabsDesc', 'Off leaves them open (the tab menu and the chat list can still close them). Ask puts the question under the reply. Always closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Off', ask: 'Ask', always: 'Always' }[v])])),
   );
@@ -685,7 +715,7 @@ async function buildHome(card) {
   );
   renderTiles();
   const widgets = card.at('widgets');
-  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro custom recipe embed');
+  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed');
   try { await buildWidgets(sub); } catch (err) { sub.append(row('Widgets', String(err?.message || err))); }
 }
 
@@ -709,6 +739,7 @@ const WIDGET_ICONS = {
   notes: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h7.5L13 5v8.5H3z"/><path d="M5.5 7h5M5.5 9.5h5M5.5 12h3"/></svg>',
   countdown: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1.8h6M5 14.2h6M5.5 1.8c0 3.4 5 3.8 5 6.2s-5 2.8-5 6.2M10.5 1.8c0 3.4-5 3.8-5 6.2s5 2.8 5 6.2"/></svg>',
   timer: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5.2"/><path d="M8 9V6.2M6.5 1.8h3M12.2 4.4l1-1"/></svg>',
+  aistatus: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4.5" r="1.3"/><circle cx="4" cy="11.5" r="1.3"/><path d="M7.5 4.5h6M7.5 11.5h6"/></svg>',
   custom: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 2 8l3.5 4.5M10.5 3.5 14 8l-3.5 4.5"/></svg>',
   tradingview: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M4 5.5h-1.2M4 10h1.2M8 2v12M8 4.5H6.8M8 11h1.2M12 4v8M12 6h-1.2M12 9.5h1.2"/></svg>',
   embed: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="11" rx="2.2"/><path d="M1.8 5.8h12.4M4 4.2h.01M5.6 4.2h.01"/></svg>',
@@ -1305,6 +1336,8 @@ async function buildWidgets(card) {
         marketFields(same);
       } else if (type === 'notes') {
         fields.replaceChildren(section('Note', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Type straight on the card. It saves as you go, stays on this computer and never goes online.' }))]));
+      } else if (type === 'aistatus') {
+        fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
         const cd = same?.cd || {};
         inputs.label = h('input', { type: 'text', id: 'widget-cd-label', maxlength: '60', placeholder: 'Vacation', 'aria-label': 'What it counts to', value: cd.label || '' });

@@ -328,13 +328,14 @@
     body.w-editing .w-card { touch-action: none; cursor: grab; user-select: none; }
     body.w-editing .w-card * { pointer-events: none; }
     body.w-editing .w-card .w-h, body.w-editing .w-card .w-resize, body.w-editing .w-card .w-remove, body.w-editing .w-card .w-gear, body.w-editing .w-card .w-presets, body.w-editing .w-card .w-presets *, body.w-editing .w-card .w-stack-edit { pointer-events: auto; }
-    /* Wiggle like a home screen; a plain outline instead with Reduce motion or Performance mode. */
+    /* Wiggle like a home screen; a plain outline instead only when the person asked for less motion (Lumen's Reduce motion = body.still, or the system's = the media query).
+       Performance mode (body.calm, which Auto can switch on and off by itself with battery saver or CPU throttling) does not take the wiggle away: it is one cheap compositor-only rotate, and the cards' backdrop blur is already off while editing. */
     @keyframes wiggle { from { rotate: -0.45deg; } to { rotate: 0.45deg; } }
     @media (prefers-reduced-motion: no-preference) {
-      body.w-editing:not(.calm) .w-card:not(.lifted):not(.resizing) { animation: wiggle 170ms ease-in-out infinite alternate; }
-      body.w-editing:not(.calm) .w-card:nth-child(2n):not(.lifted):not(.resizing) { animation-delay: -85ms; animation-direction: alternate-reverse; }
+      body.w-editing:not(.still) .w-card:not(.lifted):not(.resizing) { animation: wiggle 170ms ease-in-out infinite alternate; }
+      body.w-editing:not(.still) .w-card:nth-child(2n):not(.lifted):not(.resizing) { animation-delay: -85ms; animation-direction: alternate-reverse; }
     }
-    body.w-editing.calm .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+    body.w-editing.still .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
     @media (prefers-reduced-motion: reduce) { body.w-editing .w-card { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; } }
     .w-card.pressing { scale: 0.97; transition: scale 380ms ease-out, transform 260ms var(--ease); }
     body.w-dragging, body.w-dragging * { user-select: none; }
@@ -792,6 +793,55 @@
     .tm-btns .w-btn { margin: 0; }
     .w-card.tm-done .tm-phase { color: var(--accent); }
     @container card (max-height: 140px) { .tm-bar { display: none; } }
+    /* AI status: a summary line and a dot per AI on a small card, a row per AI on a bigger one, then the model and usage hint
+       and the live counts. The sizes are the content box's (features/aistatus-view.js THRESHOLDS; test/aistatus-units.js keeps the two the same).
+       State is always words as well as a shape and colour: ready is a filled dot, limit reached a half-filled one, unreachable a dashed ring,
+       signed out a ring, and off or not installed a dash. */
+    .w-card.aistatus { --ai-ok: #17772f; --ai-warn: #a85d00; --ai-bad: #c4262e; }
+    @media (prefers-color-scheme: dark) { .w-card.aistatus { --ai-ok: #4bd166; --ai-warn: #ffb454; --ai-bad: #ff7a72; } }
+    body.on-media .w-card.aistatus { --ai-ok: #6ce085; --ai-warn: #ffc46b; --ai-bad: #ff9a94; }
+    .w-card.aistatus .w-body { overflow: hidden; }
+    .ai-mark { display: block; flex: none; box-sizing: border-box; width: 10px; height: 10px; border-radius: 50%; background: var(--faint); }
+    .s-ready > .ai-mark { background: var(--ai-ok); }
+    .s-limited > .ai-mark { border: 1.5px solid var(--ai-warn); background: linear-gradient(90deg, var(--ai-warn) 50%, transparent 50%); }
+    .s-down > .ai-mark { border: 1.5px dashed var(--ai-bad); background: transparent; }
+    .s-out > .ai-mark { border: 1.5px solid var(--muted); background: transparent; }
+    .s-off > .ai-mark, .s-missing > .ai-mark { height: 2px; border-radius: 1px; background: var(--faint); }
+    .ai-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .ai-compact { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-height: 0; flex: 1 1 auto; }
+    .ai-sum > span { white-space: nowrap; }
+    .ai-sum { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.25; letter-spacing: -0.01em; }
+    .ai-dots { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0; padding: 0; list-style: none; }
+    .ai-dot { position: relative; display: flex; align-items: center; min-height: 8px; }
+    .ai-dot:not(.s-off):not(.s-missing) > .ai-mark { width: 8px; height: 8px; }
+    .ai-dot.s-off > .ai-mark, .ai-dot.s-missing > .ai-mark { width: 8px; }
+    .ai-sub { display: none; margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.3; }
+    .ai-sub:empty { display: none !important; }
+    @container card (min-height: 96px) { .ai-sub { display: block; } }
+    .ai-list { display: none; flex-direction: column; gap: 8px; min-height: 0; flex: 1 1 auto; }
+    @container card (min-width: 150px) and (min-height: 150px) { .ai-compact { display: none; } .ai-list { display: flex; } }
+    @container card (min-width: 210px) and (min-height: 112px) { .ai-compact { display: none; } .ai-list { display: flex; } }
+    .aistatus .w-body.ai-compact-only > .ai-compact { display: flex; }
+    .aistatus .w-body.ai-compact-only > .ai-list { display: none; }
+    .ai-rows { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .ai-row { display: grid; grid-template-columns: 10px minmax(0, 1fr); column-gap: 8px; row-gap: 1px; align-items: baseline; }
+    .ai-row > .ai-mark { grid-row: 1 / span 2; align-self: start; margin-top: 3px; }
+    .ai-name { min-width: 0; font-size: 12.5px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+    .ai-state { grid-column: 2; min-width: 0; color: var(--muted); font-size: 11.5px; line-height: 1.3; }
+    .s-limited .ai-state { color: var(--ai-warn); }
+    .s-down .ai-state { color: var(--ai-bad); }
+    .ai-detail { display: none; grid-column: 2; min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.3; }
+    .ai-more { margin: 0; color: var(--muted); font-size: 11px; }
+    .ai-live { display: none; flex-wrap: wrap; gap: 2px 10px; margin: auto 0 0; padding-top: 7px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; line-height: 1.3; }
+    .ai-live > span { white-space: nowrap; }
+    @container card (min-width: 210px) and (min-height: 112px) {
+      .ai-row { grid-template-columns: 10px minmax(0, 1fr) auto; }
+      .ai-row > .ai-mark { grid-row: 1; margin-top: 0; align-self: center; }
+      .ai-state { grid-column: 3; text-align: right; }
+      .ai-detail { grid-column: 2 / -1; grid-row: 2; }
+    }
+    @container card (min-width: 230px) and (min-height: 150px) { .ai-detail { display: block; } }
+    @container card (min-width: 150px) and (min-height: 160px) { .ai-live { display: flex; } }
     /* Stocks and Crypto: a price table and a simulated paper portfolio. Direction is always shown with ▲/▼ as well as colour. */
     .w-card.stocks, .w-card.crypto { --up: #17772f; --down: #c4262e; }
     @media (prefers-color-scheme: dark) { .w-card.stocks, .w-card.crypto { --up: #4bd166; --down: #ff7a72; } }
@@ -829,6 +879,9 @@
     /* A web page in a frame (no Lumen privileges: sandboxed, no referrer) fills its box, or a card that opens it. */
     .w-frame { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; border-radius: 10px; background: #fff; color-scheme: normal; }
     .w-card.embed { padding-bottom: 10px; }
+    /* TradingView's frame sits in a box that clips it: a small card shrinks the frame to fit (transform) instead of clipping it (tradingview-fit.js). */
+    .tv-fit { position: relative; flex: 1 1 0; min-height: 0; width: 100%; overflow: hidden; border-radius: 10px; }
+    .tv-fit .w-frame { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; }
     .w-card.tv-watchlist .w-frame { background: transparent; } /* TradingView draws it see-through (isTransparent), so it sits on the card like a home-screen widget */
     .tv-note { margin: 0 0 6px; font-size: 11.5px; opacity: .75; }
     .w-card.sp-web .w-body { overflow: hidden; }
@@ -916,6 +969,7 @@
   <script src="../features/clock-styles.js"></script>
   <script src="newtab-system.js"></script>
   <script src="../features/worldclock-view.js"></script>
+  <script src="../features/tradingview-fit.js"></script>
   <script src="newtab-widgets.js"></script>
   <script src="newtab-setup.js"></script>
   <script src="newtab-widgets-grid.js"></script>
