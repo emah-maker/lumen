@@ -260,6 +260,33 @@ const launch = (profile) => electron.launch({
   await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
   await app.evaluate(() => global.__settings.backend.set('hideAiTabs', false));
 
+  // crowded: 5+ tabs of the user's and 3+ of the AI's at 700px, hands-off on: the controls stay in view and apart, the tab in front stays readable
+  for (let i = 0; i < 3; i++) await openUser(`${base}/crowd${i}`);
+  for (let i = 0; i < 2; i++) await openAi(`${base}/crowdai${i}`);
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.fromId(global.__windows.list()[0].windowId).setSize(700, 800); });
+  await waitFor(() => ui.evaluate(() => innerWidth <= 720));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', true));
+  await app.evaluate((_e, i) => global.__aiTabs.switchTo(i), form);
+  await waitFor(async () => (await active()) === form);
+  await waitFor(() => ui.evaluate(() => document.querySelectorAll('#tabs .tab').length >= 8));
+  await sleep(400);
+  const crowd = await ui.evaluate(() => {
+    const r = (el) => { const b = el?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height, r: b.right, b: b.bottom, shown: !el.hidden && b.width > 0 }; };
+    const cue = r(document.getElementById('hands-off-strip'));
+    const organize = r(document.getElementById('organize-tabs'));
+    const search = r(document.getElementById('tab-search'));
+    const chipB = r(document.getElementById('hide-ai-tabs'));
+    const add = r(document.getElementById('new-tab'));
+    const act = r(document.querySelector('#tabs .tab.active'));
+    return { n: document.querySelectorAll('#tabs .tab').length, width: innerWidth, cue, organize, search, chipB, add, act, cueLabel: getComputedStyle(document.querySelector('#hands-off-strip .hands-off-label')).display };
+  });
+  const apart = (list) => list.filter((x) => x?.shown).every((a, i, all) => all.every((b, j) => i === j || !(a.x < b.r - 0.5 && b.x < a.r - 0.5 && a.y < b.b && b.y < a.b)));
+  check('crowded (700px, 8+ tabs): the cue is icon-only and the strip controls do not overlap', crowd.cueLabel === 'none' && apart([crowd.cue, crowd.organize, crowd.search, crowd.chipB, crowd.add]), JSON.stringify(crowd));
+  check('crowded: tab search stays inside the window and the tab in front is at least 60px wide', crowd.search.r <= crowd.width && crowd.act.w >= 60, JSON.stringify(crowd));
+  check('crowded: Organize (when shown) is as tall as the pills beside it', !crowd.organize.shown || crowd.organize.h === crowd.chipB.h, JSON.stringify(crowd));
+  await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.fromId(global.__windows.list()[0].windowId).setSize(1200, 800); });
+
   // ---- 10. Undo puts a tab back in its group.
   const gTab = await openAi(`${base}/grp`);
   await waitFor(() => app.evaluate((_e, i) => /\/grp$/.test(global.__aiTabs.tab(i)?.view.webContents.getURL() || ''), gTab));
