@@ -98,7 +98,7 @@ function select(key, label, desc, options, { number = false, after } = {}) {
   el.value = String(st.prefs[key]);
   el.addEventListener('change', async () => { await save(key, number ? Number(el.value) : el.value); after?.(el.value); });
   const r = row(label, desc, el);
-  r.dataset.search += ` ${options.map(([, text]) => text).join(' ')}`.toLowerCase(); // "dark" finds Theme
+  r.dataset.keywords = options.map(([, text]) => text).join(' ').toLowerCase(); // "dark" finds Theme (the names of its choices)
   return r;
 }
 const status = (id) => h('span', { class: 'note', id });
@@ -132,15 +132,14 @@ const CATEGORIES = [
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
-  { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data']] },
+  { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data'], ['extensions', 'Extensions']] },
   { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-access', 'Full access (advanced)'], ['ai-more', 'More']] },
-  { id: 'extensions', title: 'Extensions', slots: [['extensions', 'Installed']] },
   { id: 'updates', title: 'Updates', slots: [['about', 'Software update']] },
   { id: 'advanced', title: 'Advanced', slots: [['system', 'Performance'], ['experimental', 'Experimental'], ['automation', 'Automation'], ['advanced-more', 'Diagnostics'], ['reset', 'Reset']] },
 ];
 // Sidebar icon glyphs (16px, drawn white on a colored rounded square; the color is in settings.css).
 // The sidebar's headings: a category belongs to the group that starts at it.
-const NAV_GROUPS = { general: 'Browser', privacy: 'Safety and add-ons', ai: 'Assistant', updates: 'System' };
+const NAV_GROUPS = { general: 'Browser', ai: 'Assistant', updates: 'System' };
 const CATEGORY_ICONS = {
   general: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.7"/><circle cx="10.5" cy="11" r="1.7"/>',
   appearance: '<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8a5.2 5.2 0 0 0 0 10.4z" fill="currentColor"/>',
@@ -164,7 +163,7 @@ const ALIASES = {
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', focus: 'system' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', focus: 'extensions' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', focus: 'ai-accounts', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -291,7 +290,7 @@ async function buildAi(card) {
     toggle('autoCompact', tr('settings.ai.autoCompact', 'Compact long chats automatically'), tr('settings.ai.autoCompactDesc', 'When a chat with an API model (Claude, OpenAI, Grok, Gemini, OpenRouter) gets close to what the model can take in one request, its earlier part is summarized by the same model and the AI goes on from that summary, instead of the oldest messages being left out. The messages stay on screen. Type /compact to do it yourself at any time. Claude Code, Grok Build and Antigravity compact their own sessions.')),
     toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
   ];
-  card.group(tr('settings.ai.groupLimits', 'Limits and housekeeping')).append(collapsible(tr('settings.ai.more', 'More options'), advancedRows));
+  card.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows));
   // Control of the whole computer is its own group, apart from the everyday switches above.
   card.at('ai-access').append(...cliAccessRows());
   card.at('tabs-groups').append(
@@ -1764,7 +1763,7 @@ async function buildPrivacy(card) {
       h('button', { text: 'Revoke', class: 'revoke', onclick: async () => { await S.revokePermission(p.origin, p.permission); renderGranted(); } })))
       : [h('span', { class: 'note', text: 'No sites have asked yet.' })]));
   };
-  const permissions = card.group('Site permissions').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone location notifications revoke');
+  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone location notifications revoke');
   permissions.append(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults));
   permissions.append(stackRow('Site permissions', 'What you allowed or blocked. Revoke to be asked again.', granted));
   renderGranted();
@@ -1783,7 +1782,7 @@ async function buildPrivacy(card) {
   };
   filter.addEventListener('input', renderSites);
   const loadSites = async () => { siteList = await S.siteData(); renderSites(); };
-  const data = card.group('Site data').subpage('site-data', 'Site data', 'The sites that keep cookies on this computer, and removing one of them.', 'cookies storage website data remove manage');
+  const data = card.subpage('site-data', 'Site data', 'The sites that keep cookies on this computer, and removing one of them.', 'cookies storage website data remove manage');
   data.append(stackRow('Sites with cookies', 'Remove deletes a site’s cookies (you’ll be signed out of it) and what it stored on this computer. Clear browsing data removes everything at once.', filter, sites));
   loadSites();
 }
@@ -2110,16 +2109,20 @@ function buildTranslate(card) {
     return stackRow(title, null, list);
   };
   card.group('Translation').append(
-    toggle('translateOffer', tr('settings.translate.offer', 'Offer to translate pages'), tr('settings.translate.offerDesc', 'When a page is in another language than yours, show a translate button and a bar. Nothing is sent anywhere until you click Translate. Translating on this device never sends the page’s text anywhere; before Lumen sends it to your AI provider, or opens Google Translate, it asks.')),
+    toggle('translateOffer', tr('settings.translate.offer', 'Offer to translate pages'), tr('settings.translate.offerDesc', 'When a page is in another language than yours, show a translate button and a bar. Nothing is sent anywhere until you click Translate.')),
     select('translateTarget', tr('settings.translate.target', 'Translate pages into'), null,
       [['', tr('settings.translate.targetDefault', 'Lumen’s language')], ...TARGETS.map(([code, name]) => [code, `${langName(code)}` === code ? name : langName(code)])]),
-    select('translateEngine', tr('settings.translate.engine', 'Translate with'), tr('settings.translate.engineDesc', 'On this device uses Mozilla’s open-source translator (the one in Firefox): private, and works offline once a language pack is downloaded. Your connected AI is the other choice, and the fallback when there is no pack for a language.'),
+    select('translateEngine', tr('settings.translate.engine', 'Translate with'), tr('settings.translate.engineDesc', 'On this device is private and works offline once a language pack is downloaded. Your connected AI is the other choice, and the fallback when there is no pack.'),
       [['local', tr('settings.translate.engine.local', 'On this device')], ['ai', tr('settings.translate.engine.ai', 'My connected AI')]]),
+  );
+  // Packs, downloads and the site lists: rarely touched, folded away (search opens the fold on a match).
+  const rest = [
     toggle('translateLocalAuto', tr('settings.translate.auto', 'Download language packs without asking'), tr('settings.translate.autoDesc', 'On-device translation needs a language pack from Mozilla, about 20 to 55 MB for each direction, downloaded once. Off: Lumen asks before each download.')),
     listRow('translateNever', tr('settings.translate.never', 'Sites never offered translation'), tr('settings.translate.neverNone', 'No sites.')),
     listRow('translateConsent', tr('settings.translate.consent', 'Allowed to receive page text'), tr('settings.translate.consentNone', 'None yet: Lumen asks the first time you translate.'), (v) => (v === 'google' ? 'Google Translate' : v)),
-  );
-  buildTranslatePacks(card);
+  ];
+  buildTranslatePacks({ append: (...nodes) => rest.push(...nodes) });
+  card.append(collapsible(tr('settings.translate.more', 'Language packs and site lists'), rest));
 }
 
 // Settings → Translation → the language packs on this device (features/translate-local.js): what is
@@ -2360,6 +2363,14 @@ function show() {
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
   const hitsBySlot = new Map();
+  // Description-only hits are noise when something is named by the query: drop them once a label or title matches anywhere.
+  let floor = 1;
+  if (searching) {
+    for (const slot of slots.values()) for (const g of slot.groups) {
+      const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
+      for (const r of g.querySelectorAll('.row')) if (SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles: '', search: '' }) === 3 || SS.matchesAll(titles, words)) floor = 2;
+    }
+  }
   for (const slot of slots.values()) {
     let hits = 0;
     let best = 0;
@@ -2375,10 +2386,10 @@ function show() {
       const titleHit = SS.matchesAll(titles, words);
       let n = 0;
       for (const r of rows) {
-        const s = Math.max(titleHit ? 2 : 0, SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles, search: r.dataset.search }));
-        r.classList.toggle('filtered', s === 0);
+        const s = Math.max(titleHit ? 2 : 0, SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles, search: r.dataset.search, keywords: r.dataset.keywords || '' }));
+        r.classList.toggle('filtered', s < floor);
         r.style.order = String(-s); // best matches first inside a list
-        if (s) { n++; best = Math.max(best, s); }
+        if (s >= floor) { n++; best = Math.max(best, s); }
       }
       for (const d of g.querySelectorAll('details.adv-rows')) d.open = rows.some((r) => d.contains(r) && !r.classList.contains('filtered'));
       g.hidden = rows.length ? n === 0 : !titleHit;

@@ -23,7 +23,8 @@ const row = { label: 'Theme', titles: 'appearance', search: 'theme lumen follows
 check('score: label hit is 3', S.score(q('theme'), row) === 3);
 check('score: title hit is 2', S.score(q('lumen'), { label: 'Theme', titles: 'lumen appearance', search: 'theme' }) === 2);
 check('score: description or option hit is 1', S.score(q('follows'), row) === 1);
-check('score: a synonym ranks like the word it stands for (option hit)', S.score(q('night'), row) === 1);
+check('score: the names of a row\'s choices count as 2 (night -> dark)', S.score(q('night'), { ...row, keywords: 'system light dark' }) === 2);
+check('score: a synonym that is only in the helper text is 1', S.score(q('night'), row) === 1);
 check('score: no match is 0', S.score(q('zebra'), row) === 0);
 check('score: no words is 0', S.score([], row) === 0);
 check('ranking: label beats description', S.score(q('proxy'), { label: 'Proxy', titles: 'advanced', search: 'proxy' }) > S.score(q('proxy'), { label: 'Network', titles: 'advanced', search: 'network proxy rules' }));

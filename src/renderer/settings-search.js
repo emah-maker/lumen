@@ -34,13 +34,13 @@
   const matchesAll = (text, words) => words.every((w) => matchesWord(text, w));
   const parse = (query) => String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
 
-  // 0 = no match. A row: 3 when the label matches, 2 when its group or page title does, 1 when only its description
-  // or option names do. `titles` is the group title plus the page's, `label` the row's label.
-  function score(words, { label = '', titles = '', search = '' }) {
+  // 0 = no match. A row: 3 when the label matches, 2 when its group or page title or the names of its choices do
+  // (Theme: light, dark, system), 1 when only its description does. `titles` is the group title plus the page's, `label` the row's label.
+  function score(words, { label = '', titles = '', search = '', keywords = '' }) {
     if (!words.length) return 0;
     const l = label.toLowerCase();
     if (matchesAll(l, words)) return 3;
-    if (matchesAll(`${l} ${titles}`.toLowerCase(), words)) return 2;
+    if (matchesAll(`${l} ${titles} ${keywords}`.toLowerCase(), words)) return 2;
     return matchesAll(`${search} ${titles}`.toLowerCase(), words) ? 1 : 0;
   }
 

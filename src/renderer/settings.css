@@ -79,7 +79,7 @@ main { padding: 28px 40px 96px; max-width: calc(760px + 80px); width: 100%; marg
 .searching .pane-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 6px 4px 10px; }
 .searching .subhead { display: none; }
 
-.card { background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px var(--hairline); overflow: hidden; }
+.card { background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px var(--hairline), 0 1px 2px rgba(0, 0, 0, 0.04); overflow: hidden; }
 .row { display: flex; align-items: center; gap: 16px; padding: 10px 16px; min-height: 46px; }
 .row + .row { border-top: 1px solid var(--hairline); }
 .row.filtered { display: none; }
@@ -298,7 +298,7 @@ body.interstitial { display: block; }
 .note.error { color: var(--danger); }
 
 /* [widgets] Appearance → Widgets */
-.widget-list .widget-empty { padding: 4px 0; }
+.widget-list .widget-empty { padding: 12px 16px; }
 .widget-item { min-height: 46px; }
 .widget-text { display: flex; flex-direction: column; min-width: 0; }
 .widget-text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -417,7 +417,7 @@ details.disclosure > .list { margin-top: 8px; columns: 2; column-gap: 24px; }
 /* Switches that give a program control of the computer carry a thin warning edge. */
 .row.warn { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--danger) 70%, transparent); }
 /* A checked switch keeps its focus ring (the checked rule above clears box-shadow). */
-input.switch:focus-visible, input.switch:checked:focus-visible, input.switch:indeterminate:focus-visible { box-shadow: var(--focus-ring); }
+input.switch:focus-visible, input.switch:checked:focus-visible, input.switch:indeterminate:focus-visible { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); } /* (offset, so it shows against the same-coloured track) */
 main, .pane, .slot, .group, .card { min-width: 0; }
 .key-get { margin-left: 8px; font-size: 12px; font-weight: 400; }.row.off { opacity: 0.5; }
 /* Search results: best matches first (settings.js sets each order). */

@@ -83,8 +83,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- nav and search ----
   const navCount = await inTab(sid, "document.querySelectorAll('#nav a').length");
-  // (Search engine and Downloads are groups on the General page now; their ids still open it.)
-  const sectionCount = require('../src/settings/settings-backend').SECTIONS.length - 2;
+  // (Search engine and Downloads are groups on General and Extensions one on Privacy now; their ids still open it.)
+  const sectionCount = require('../src/settings/settings-backend').SECTIONS.length - 3;
   check(`left nav lists all ${sectionCount} categories`, navCount === sectionCount, navCount);
   await inTab(sid, "document.querySelector('#nav a[data-section=appearance]').click()");
   await waitFor(() => inTab(sid, "!document.getElementById('cat-appearance').hidden"));
@@ -102,9 +102,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const night = await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).map((r) => r.querySelector('.label')?.textContent)");
   check('search “night” finds the Theme setting (synonym for dark)', night.includes('Theme'), JSON.stringify(night));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'steps'; s.dispatchEvent(new Event('input')); }");
-  check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "document.querySelector('details.adv-rows')?.open === true"));
+  check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "document.querySelector('#cat-ai details.adv-rows')?.open === true"));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); }");
-  check('the folded list closes again when the search is cleared', await inTab(sid, "document.querySelector('details.adv-rows')?.open === false"));
+  check('the folded list closes again when the search is cleared', await inTab(sid, "document.querySelector('#cat-ai details.adv-rows')?.open === false"));
   const stops = await inTab(sid, "[...document.querySelectorAll('#nav a')].filter((a) => a.tabIndex === 0).length");
   check('the category list is a single Tab stop', stops === 1, stops);
   await inTab(sid, "location.hash = '#downloads'");
