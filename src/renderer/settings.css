@@ -443,3 +443,5 @@ details.adv-rows > .row { border-top: 1px solid var(--hairline); }
 }
 
 @media (max-width: 720px) { .clock-tiles, .bg-tiles { grid-template-columns: repeat(var(--cols-narrow, 3), minmax(0, 1fr)); } }
+
+@media (max-width: 720px) { .clock-tiles .last-tile, .bg-tiles .last-tile { grid-column: span var(--last-span, 1); } }

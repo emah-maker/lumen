@@ -132,7 +132,7 @@ const CATEGORIES = [
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
-  { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data'], ['extensions', 'Extensions']] },
+  { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data'], ['extensions', 'Add-ons']] },
   { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-access', 'Full access (advanced)'], ['ai-more', 'More']] },
   { id: 'updates', title: 'Updates', slots: [['about', 'Software update']] },
   { id: 'advanced', title: 'Advanced', slots: [['system', 'Performance'], ['experimental', 'Experimental'], ['automation', 'Automation'], ['advanced-more', 'Diagnostics'], ['reset', 'Reset']] },
@@ -640,8 +640,14 @@ function buildLook(card) {
 
 // Tiles in even rows: one row while they fit (7 across), else halves; on a narrow page 3 or 4 across.
 function evenRows(grid, n) {
+  const narrow = n <= 4 ? n : 4;
   grid.style.setProperty('--cols', String(n <= 7 ? n : Math.ceil(n / 2)));
-  grid.style.setProperty('--cols-narrow', String(n <= 4 ? n : Math.ceil(n / Math.ceil(n / 4))));
+  grid.style.setProperty('--cols-narrow', String(narrow));
+  // On a narrow page the last tile stretches over the free cells of its row (7 tiles: 4 + 2 + 1 wide).
+  const shown = [...grid.querySelectorAll('button:not([hidden])')];
+  for (const b of grid.querySelectorAll('button')) b.classList.remove('last-tile');
+  shown.at(-1)?.classList.add('last-tile');
+  grid.style.setProperty('--last-span', String(n % narrow === 0 ? 1 : narrow - (n % narrow) + 1));
 }
 // [look] A row of choices for one setting (radio buttons, arrow keys move between them), saved at once.
 // `content(value, label)` draws a choice; `after` runs once one is saved.
@@ -1911,7 +1917,7 @@ function buildAntigravity(slot, refreshModels) {
   const agyButtons = h('div', { class: 'controls' });
   const renderAgy = (s) => {
     agyNote.className = 'note';
-    agyNote.textContent = !s.installed ? tr('settings.ai.agyMissing', 'Not installed.') : s.enabled ? tr('settings.ai.agyOn', 'Installed and offered in the model menu. If it asks you to sign in, run agy in a terminal and sign in with your Google account.') : tr('settings.ai.agyFound', 'Installed. Not offered in the model menu yet.');
+    agyNote.textContent = !s.installed ? tr('settings.ai.agyMissing', 'Not installed. The install command is Google’s own and runs only when you click the button.') : s.enabled ? tr('settings.ai.agyOn', 'Installed and offered in the model menu. If it asks you to sign in, run agy in a terminal and sign in with your Google account.') : tr('settings.ai.agyFound', 'Installed. Not offered in the model menu yet.');
     agyCommand.textContent = s.installCommand || '';
     agyCommand.hidden = Boolean(s.installed);
     const buttons = [];
@@ -1934,7 +1940,7 @@ function buildAntigravity(slot, refreshModels) {
     buttons.push(h('button', { id: 'ai-agy-check', text: tr('settings.ai.agyCheck', 'Check again'), onclick: async () => { renderAgy(await S.ai.antigravityStatus(true)); await refreshModels(); } }));
     agyButtons.replaceChildren(...buttons);
   };
-  const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login. The install command below is Google’s own and runs only when you click the button.'), agyButtons);
+  const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
   slot.append(agyRow);
