@@ -141,7 +141,7 @@ function create(deps) {
     let pinned = null;
     if (fromChat) {
       pinned = pick();
-      if (pinned == null) pinned = deps.openTab(undefined, { background: true }).id;
+      if (pinned == null) pinned = deps.openTab(undefined, { background: true, openedBy: {} }).id; // [ai manners] the tab the run works in is the AI's (kept out of the strip when "hide tabs the AI opened" is on)
     }
     runs.start({ runId, text, fromChat, target: pinned });
     if (fromChat) pushTarget();

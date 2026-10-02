@@ -265,6 +265,31 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     ctx.drag = null;
     ctx.window.lumenHideAiTabs = false;
     check('hide toggle: off: every tab is shown again (and keeps its AI mark)', ctx.hidden({ id: 1, aiOpened: true }, state) === false);
+    // the button's report counts from the same rule as the strip: a tab is hidden or shown, never both, never "hidden" while drawn
+    const sumFn = /function hideAiSummary\(state\) \{[\s\S]*?\n\}/.exec(app)?.[0];
+    check('hide toggle: app.js sums the toggle from the strip\'s own rule', Boolean(sumFn) && /aiHiddenTab\(x, state\)/.test(sumFn));
+    const sctx = { window: { lumenHideAiTabs: true }, drag: null };
+    vm.createContext(sctx);
+    vm.runInContext(`${fn}; ${sumFn}; this.sum = hideAiSummary;`, sctx);
+    const sum = (...t) => JSON.stringify(sctx.sum({ activeId: 5, tabs: t }));
+    check('hide toggle: summary: AI tabs behind the user\'s are all hidden, none shown', sum({ id: 1 }, { id: 2, aiOpened: true }, { id: 3, aiOpened: true }) === JSON.stringify({ on: true, total: 2, hidden: 2, shown: 0 }));
+    check('hide toggle: summary: the AI tab in front is shown, not counted as hidden', sum({ id: 1 }, { id: 5, aiOpened: true }, { id: 3, aiOpened: true }) === JSON.stringify({ on: true, total: 2, hidden: 1, shown: 1 }), sum({ id: 1 }, { id: 5, aiOpened: true }, { id: 3, aiOpened: true }));
+    check('hide toggle: summary: only the tab in front: nothing hidden, one shown (the button must not say "hidden")', sum({ id: 5, aiOpened: true }) === JSON.stringify({ on: true, total: 1, hidden: 0, shown: 1 }));
+    check('hide toggle: summary: a tab playing sound is shown, not hidden', sum({ id: 1, aiOpened: true, audible: true }, { id: 2, aiOpened: true }) === JSON.stringify({ on: true, total: 2, hidden: 1, shown: 1 }));
+    check('hide toggle: summary: hidden + shown always equals the AI tabs while on', (() => { const o = JSON.parse(sum({ id: 1, aiOpened: true }, { id: 5, aiOpened: true }, { id: 7, aiOpened: true, audible: true })); return o.hidden + o.shown === o.total; })());
+    sctx.window.lumenHideAiTabs = false;
+    check('hide toggle: summary: off: nothing hidden or shown by the toggle, the total is what it would hide', sum({ id: 1, aiOpened: true }, { id: 5, aiOpened: true }) === JSON.stringify({ on: false, total: 2, hidden: 0, shown: 0 }));
+    const sync = /function syncHideAiToggle\(state\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';
+    check('hide toggle: the words: "N hidden", "N more hidden" beside a shown one, "N in view" when only shown ones remain', /sidebar\.hideAiTabs\.chipMore/.test(sync) && /sidebar\.hideAiTabs\.chipInView/.test(sync) && /sidebar\.hideAiTabs\.chip'/.test(sync));
+    const enLoc = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+    check('hide toggle: every string the button can show exists', ['chip', 'chipMore', 'chipInView', 'more.one', 'more.other', 'inView.one', 'inView.other', 'on.none', 'on.one', 'on.other', 'off.one', 'off.other'].every((k) => typeof enLoc[`sidebar.hideAiTabs.${k}`] === 'string'));
+    check('hide toggle: the "more hidden" tip says the tab in front stays, and the in-view tip does not claim hiding', /stays in the strip/.test(enLoc['sidebar.hideAiTabs.more.other']) && !/\bhidden\b/.test(enLoc['sidebar.hideAiTabs.inView.one']));
+    // every way a tab of the AI's opens carries the mark, or the toggle could not hide it
+    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+    check('AI tabs are marked: the signed-in reader\'s tab', /const tab = openTab\(url, \{ background: true, openedBy: runOf\(\) \}\);/.test(mainSrc));
+    check('AI tabs are marked: a link from a popup an AI tab opened', /const byAi = manners\.isAiTab\(openerTab\)/.test(mainSrc) && /\.\.\.\(byAi \? \{ openedBy:/.test(mainSrc));
+    check('AI tabs are marked: the tab a chat-page run opens for itself', /openTab\(undefined, \{ background: true, openedBy: \{\} \}\)/.test(fs.readFileSync(path.join(__dirname, '../src/features/chat-page.js'), 'utf8')));
+    check('AI tabs are marked: a Shift+click popup from an AI tab opens behind', /openTab\(target, \{ background: manners\.isAiTab\(tab\), openerId: id/.test(mainSrc));
     check('hide toggle: part of the strip\'s layout signature, so a toggle redraws it', /\$\{aiHiddenTab\(x, state\) \? 1 : 0\}/.test(app));
     check('hide toggle: a group left with no visible tab shows no label', /!aiHiddenTab\(t, state\)/.test(app) && /if \(aiHiddenTab\(tab, state\)\) continue;/.test(app));
 
@@ -275,7 +300,6 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: a real button with aria-pressed and a label, on the tab strip (not the crowded sidebar head)', /aria-pressed="false"/.test(button) && /aria-label=/.test(button) && /type="button"/.test(button) && html.indexOf('id="hide-ai-tabs"') < html.indexOf('id="sidebar"') && html.indexOf('id="hide-ai-tabs"') > html.indexOf('id="tabs"') && !app.includes("hideAiButton.setAttribute('aria-label'"));
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8').replace(/\r\n/g, '\n'));
     check('hide toggle: its labels say the count, singular and plural', ['off', 'on'].every((k) => en[`sidebar.hideAiTabs.${k}.one`]?.includes('{count}') && en[`sidebar.hideAiTabs.${k}.other`]?.includes('{count}')));
-    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('hide toggle: it is separate from the close setting (its own channel and key)', /ipcMain\.handle\('tabs:hide-ai'/.test(mainSrc) && !/hideAiTabs/.test(/function aiTabsAfterRun[\s\S]*?\n\}/.exec(mainSrc)?.[0] || ''));
   }
 
