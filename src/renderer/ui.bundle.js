@@ -8265,7 +8265,7 @@ $('agent-stop')?.addEventListener('click', () => {
 // colour, applied to the page and kept current. Shared by the browser UI and the full-page chat.
 {
   // The strip's hands-off cue says "Hands-off" in words in a wide window (styles.css), where a hover tip would only repeat it; icon-only, it keeps the tip.
-  const wide = matchMedia('(min-width: 900px)');
+  const wide = matchMedia('(min-width: 1100px)');
   const cueTitle = () => {
     const cue = document.getElementById('hands-off-strip');
     if (!cue) return;

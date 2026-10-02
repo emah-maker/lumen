@@ -283,12 +283,14 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .hands-off-label { display: none; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 /* (icon-only until the strip has room to spare: the tabs come first; the cue is information, so it is neutral, and the accent is the chip's) */
 .icon-btn.hands-off-strip { color: var(--muted); }
-@media (min-width: 900px) {
-  .icon-btn.hands-off-strip { padding: 0 10px 0 8px; border-radius: 14px; background: var(--field); color: var(--text); }
+@media (min-width: 1100px) { /* (the same look and words as the composer's badge: muted on --hover) */
+  .icon-btn.hands-off-strip { padding: 0 10px 0 8px; border-radius: 14px; background: var(--hover); color: var(--muted); }
+  .icon-btn.hands-off-strip:hover { color: var(--text); }
   .hands-off-label { display: inline; }
 }
 /* narrow window: the chip gives up its words and shows the count as a badge, so the tabs keep the room */
 @media (max-width: 450px) {
+  .organize-tabs { display: none !important; } /* (Organize Tabs is also in the tab menu and Tab Groups: the tabs get the room) */
   .hide-ai-tabs.has-label { width: 28px; padding: 0; }
   .hide-ai-tabs.has-label .hide-ai-label { display: none; }
   .hide-ai-tabs.has-label .hide-ai-count { display: block; }

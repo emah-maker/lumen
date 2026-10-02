@@ -282,7 +282,8 @@ const launch = (profile) => electron.launch({
   });
   const apart = (list) => list.filter((x) => x?.shown).every((a, i, all) => all.every((b, j) => i === j || !(a.x < b.r - 0.5 && b.x < a.r - 0.5 && a.y < b.b && b.y < a.b)));
   check('crowded (700px, 8+ tabs): the cue is icon-only and the strip controls do not overlap', crowd.cueLabel === 'none' && apart([crowd.cue, crowd.organize, crowd.search, crowd.chipB, crowd.add]), JSON.stringify(crowd));
-  check('crowded: tab search stays inside the window and the tab in front is at least 60px wide', crowd.search.r <= crowd.width && crowd.act.w >= 60, JSON.stringify(crowd));
+  check('crowded: tab search stays inside the window and the tab in front is at least 60px wide', crowd.search.r <= crowd.width && crowd.act.w >= 60, JSON.stringify({ act: crowd.act, n: crowd.n }));
+  console.log(`      (crowded: ${crowd.n} tabs at ${crowd.width}px, the tab in front is ${Math.round(crowd.act.w)}px wide)`);
   check('crowded: Organize (when shown) is as tall as the pills beside it', !crowd.organize.shown || crowd.organize.h === crowd.chipB.h, JSON.stringify(crowd));
   await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.fromId(global.__windows.list()[0].windowId).setSize(1200, 800); });
