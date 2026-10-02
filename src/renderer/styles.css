@@ -275,10 +275,12 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .hide-ai-tabs[aria-pressed="true"] .slash { opacity: 1; }
 .hide-ai-label { font-size: 11px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hide-ai-label[hidden] { display: none; }
-.hide-ai-tabs.has-label { width: auto; gap: 5px; padding: 0 9px 0 7px; border-radius: 14px; }
+.hide-ai-tabs.has-label { display: inline-flex; align-items: center; justify-content: center; width: auto; height: 28px; gap: 5px; padding: 0 10px 0 8px; border-radius: 14px; }
+.hide-ai-tabs.has-label .hide-ai-label { line-height: 1; }
+.hide-ai-tabs.has-label:hover { background: var(--accent-soft); }
 .hands-off-strip { width: 28px; height: 28px; flex: none; color: var(--accent); }
 .hands-off-strip[hidden] { display: none; }
-.hands-off-strip svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.hands-off-strip svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .hands-off-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .hide-ai-tabs:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* [chat per tab] The chat in this tab: a 12px glyph between the icon and the title (never over the icon or the audio / state badges),

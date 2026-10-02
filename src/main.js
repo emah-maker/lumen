@@ -2918,7 +2918,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.closeTab'), click: () => requestCloseTab(id) },
     { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
     { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
-    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
+    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiClosingNote(rec); aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
     { type: 'separator' },
     { label: t('menu.reopenTab'), enabled: closedTabs.length > 0, click: reopenLastClosed },
   );
@@ -4138,6 +4138,10 @@ function closeAiTab(rec, tab) {
     }, 50);
   });
 }
+// The page check before a close can take a second: the strip says so at once, and aiCloseNote's toast replaces it.
+function aiClosingNote(rec) {
+  if (rcAlive(rec) && winRecs.has(rec)) withWindow(rec, () => ui()?.send('tabs:organize-note', { text: t('chat.aiTabs.closing'), undo: false, ttl: 6000 }));
+}
 // The tab strip's toast after a close from the tab menu or a chat's row: what closed, what stayed (and why), with Undo.
 function aiCloseNote(rec, { closed = 0, kept = 0, token = 0 } = {}) {
   if (!rcAlive(rec) || !winRecs.has(rec)) rec = focusedRec(); // the window the tabs were in is gone: the toast (and its Undo) goes to the one the user is in
@@ -4206,7 +4210,7 @@ ipcMain.handle('tabs:hide-ai', async (_e, on) => {
   if (typeof on === 'boolean') await settingsBackend.set('hideAiTabs', on);
   return readSettings().hideAiTabs === true;
 });
-ipcMain.handle('chats:close-tabs', async (_e, id) => { const r = await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
+ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
 // The taskbar's command (Jump List task, Dock menu) and the menus' "Close Tabs Opened by AI": every normal window's AI tabs, each
 // window's toast (counts, Undo) in the window that held them. It never raises or focuses a window (the click was on the taskbar).
@@ -4226,6 +4230,7 @@ async function closeAiTabsEverywhere() {
     let closed = 0;
     let kept = 0;
     for (const rec of recs) {
+      aiClosingNote(rec);
       const r = await aiTabsClose({ rec }).catch(() => null);
       if (!r) continue;
       closed += r.closed;
