@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The AI reads what's inside embedded content: a claude.ai artifact, a Google Docs, Notion or CodePen embed, a payment or chat widget, any iframe (cross-site ones too) and web components' shadow DOM. Their text goes with your message and into read_page, find and read_tabs, labelled by the frame's site ("[embedded frame: claude.site — Artifact]"), and the AI can click, type and press keys inside them. Each frame is read in its own isolated world, where the page can't see or change the read; tracking pixels, hidden frames and frames on sites where you turned AI off are skipped.
 - New Window: `Ctrl+N` (`Cmd+N`) opens a normal window with a new tab, from the keyboard, the ⋯ menu or the File menu (on a Mac even with no window open). `Ctrl+Shift+W` (`Shift+Cmd+W`) closes the window in front.
 - Page info: click the lock (or "Not secure") next to the address, or ⋯ → This Page → Site Information…, to see the site's connection and choose Ask, Allow or Block for its location, camera and microphone, notifications and clipboard. It also shows how many cookies the site has, with **Clear Cookies and Site Data…** for that site only, and links to Site Settings.
 - The right-click menu has Open Link in New Window, Open Link in Private Window and Save Link As… on links, Save Image As… and Copy Image Address on images, and Print… on the page. Save … As always asks where to save.

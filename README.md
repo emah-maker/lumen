@@ -308,7 +308,7 @@ Everything that ships in the app is under `src/`; the repository root holds only
 src/                    the app (package.json "main": src/main.js)
 ├── main.js             windows, tabs (WebContentsView), shortcuts, menus, permissions, history, extensions, IPC
 ├── ai/                 the sidebar's agent loop (agent.js, default model claude-opus-5-5), its page tools
-│                       (snapshot.js, page-scripts.js, loop-guard.js), model adapters (providers.js) and the
+│                       (snapshot.js, page-scripts.js, frames.js, loop-guard.js), model adapters (providers.js) and the
 │                       Claude Code / Grok Build engines that run your own CLI (claude-code.js, grok-build.js, cli-*.js)
 ├── automation/         MCP server for outside agents (mcp.js, mcp-http.js) and the opt-in CDP endpoint for
 │                       Playwright (automation.js, cdp-inproc.js, launcher.js)
