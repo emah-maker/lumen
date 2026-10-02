@@ -3468,7 +3468,9 @@ function startChat() {
       // Which tab it lives in (every tab has its own chat), when that is not the tab in front.
       const elsewhere = chat.tab && !chat.tab.here ? chat.tab : null;
       const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) : '';
-      const meta = Object.assign(document.createElement('span'), { className: 'chat-meta', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') });
+      const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
+      const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
+      meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
       openBtn.append(name, meta);
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
@@ -3480,12 +3482,11 @@ function startChat() {
         if (label) {
           const badge = Object.assign(document.createElement('span'), { className: `chat-badge ${chat.badge === 'approval' ? 'needs-ok' : chat.badge}`, title: label });
           badge.innerHTML = GLYPHS[chat.badge] || '';
-          badge.setAttribute('role', 'img');
-          badge.setAttribute('aria-label', label);
+          badge.setAttribute('aria-hidden', 'true'); // the state word in the meta line says it for screen readers
           name.prepend(badge);
           // The state in words as well (not colour or shape alone).
           const word = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
-          if (word) meta.prepend(Object.assign(document.createElement('span'), { className: 'chat-state', textContent: word }), document.createTextNode(meta.textContent ? ' \u00b7 ' : ''));
+          if (word) meta.prepend(Object.assign(document.createElement('span'), { className: 'chat-state', textContent: word }), document.createTextNode(metaText.textContent ? ' \u00b7 ' : ''));
           li.classList.add(`has-${chat.badge}`);
         }
       }
@@ -3500,7 +3501,7 @@ function startChat() {
       const exportBtn = iconButton('export', tr('chats.export', 'Export as Markdown'));
       exportBtn.onclick = async () => {
         const out = await api.exportChat(chat.id);
-        if (out?.ok) meta.textContent = tr('chats.exported', 'Exported');
+        if (out?.ok) metaText.textContent = tr('chats.exported', 'Exported');
       };
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
       let armed = null;
@@ -3528,6 +3529,7 @@ function startChat() {
         tabActions.push(show, move);
       }
       actions.append(...tabActions, rename, exportBtn, del);
+      li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.append(openBtn);
       // Waiting for its turn: it can be taken out of the line from here.
       if (chat.badge === 'queued' && api.stopChat) {

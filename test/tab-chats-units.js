@@ -166,6 +166,14 @@ const J = (v) => JSON.stringify(v);
     }
     check('marks: the meta line and "Stop waiting" are AA (4.5:1) in both themes', /\.chat-meta \{[^}]*color-mix\(in srgb, var\(--muted\) 55%, var\(--text\)\)/.test(css) && /\.chat-stop-wait \{[^}]*color-mix\(in srgb, var\(--accent\) 60%, var\(--text\)\)/.test(css) && worst.meta >= 4.5 && worst.stop >= 4.5, J(worst));
   }
+  const cp = fs.readFileSync(path.join(dir, 'chat-page.css'), 'utf8');
+  check('list: the open chat on the chat page does not force its action bar visible over its title', !/chat-item\.current \.chat-actions/.test(cp));
+  check('list: touch devices (no hover) get the buttons always, with room left in the title', /@media \(hover: none\) \{ \.chat-actions \{ opacity: 1; pointer-events: auto; \}/.test(css) && /@media \(hover: none\)[^\n]*\.chat-title \{ padding-right: var\(--actions-w/.test(css));
+  check('list: the title leaves room for the floating buttons, and for the armed Delete? pill', /chat-item:hover \.chat-title[^{]*\{ padding-right: var\(--actions-w/.test(css) && /chat-delete\.armed\) \.chat-title \{ padding-right: calc/.test(css) && /--actions-w/.test(items));
+  check('list: the "go there" arrow shows only on rows a click takes you to the tab of (working ones)', /is\(\.has-running, \.has-queued, \.has-approval\) \.chat-place:not\(\.here\)::after/.test(css) && !/\n\.chat-place:not\(\.here\)::after/.test(css));
+  check('list: forced-colors selectors are as specific as the state rules they override', /forced-colors: active\) \{\s*\.chat-badge, \.chat-badge\.queued, \.chat-badge\.unread/.test(css) && /\.tab-chat-mark, \.tab-chat-mark\.waiting, \.tab-chat-mark\.done \{ color: CanvasText/.test(css));
+  check('list: "Exported" goes in its own span (the state word stays) and the badge is hidden from screen readers', /metaText\.textContent = tr\('chats\.exported'/.test(items) && !/meta\.textContent = tr\('chats\.exported'/.test(items) && /badge\.setAttribute\('aria-hidden', 'true'\)/.test(items) && !/badge\.setAttribute\('aria-label'/.test(items));
+  check('list: the usage line is AA like the meta line', /\.chat-usage \{[^}]*color-mix\(in srgb, var\(--muted\) 55%/.test(css));
   check('marks: the tab mark and the list badge are the same size (14px)', /\.tab-chat-mark \{[^}]*width: 14px; height: 14px/.test(css) && /\.chat-badge \{[^}]*width: 14px; height: 14px/.test(css));
 }
 

@@ -277,8 +277,8 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 :root.pref-reduce-motion .tab-chat-mark .cm-still { display: block; }
 @container tab (max-width: 72px) { .tab-chat-mark { margin-left: 0; } }
 @media (forced-colors: active) {
-  .tab-chat-mark { color: CanvasText; forced-color-adjust: none; }
-  .tab-chat-mark.needs-ok, .tab-chat-mark.running { color: Highlight; }
+  .tab-chat-mark, .tab-chat-mark.waiting, .tab-chat-mark.done { color: CanvasText; forced-color-adjust: none; }
+  .tab-chat-mark.needs-ok, .tab-chat-mark.running { color: Highlight; forced-color-adjust: none; }
   .tab-chat-mark .cm-glyph { stroke: Canvas; }
 }
 @keyframes ai-reading-pulse { 50% { opacity: 0.55; } }
