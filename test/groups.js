@@ -52,7 +52,8 @@ const os = require('os');
   check('no group was made from one opener + child', g.length === 0, JSON.stringify(g));
   // Put the opener in a group by hand; a link opened from it then joins that group.
   await app.evaluate((_e, ids) => global.__agent.execute('group_tabs', { name: 'Reading', tab_ids: ids }), [opener]);
-  await app.evaluate((_e, id) => global.__agent.execute('switch_tab', { tab_id: id }), opener);
+  // (the AI's switch_tab no longer brings a tab to the front, so the opener is fronted the way the user would)
+  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), opener);
   await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript("document.getElementById('blank').click()"));
   await waitFor(async () => { const id = (await groupsNow()).find((x) => x.name === 'Reading')?.id; return id && (await tabsNow()).filter((x) => x.groupId === id).length === 2; });
   t = await tabsNow();
