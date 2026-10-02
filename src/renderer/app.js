@@ -1,4 +1,5 @@
 // ($ and the chat itself live in chat-core.js, loaded before this file.)
+/* global snapshotArrival, freezeKeepAlive */ // renderer/snapshot-arrival.js and freeze-keepalive.js, loaded before this file
 
 // ---------- layout: tell main where tab content goes ----------
 
@@ -108,10 +109,13 @@ function setMarkup(el, html) {
 }
 
 // The indicator collapses to icon-only at narrow or zoomed widths, so it needs a name beyond its tooltip.
+// It is a button: it opens the site's page info (connection, permissions, cookies: features/page-info.js).
 function setSecurityName(el, name) {
-  el.title = name;
+  el.title = t('pageInfo.tooltip', { state: name });
   el.setAttribute('aria-label', name);
-  el.setAttribute('role', 'img');
+  el.setAttribute('role', 'button');
+  el.setAttribute('aria-haspopup', 'menu');
+  el.tabIndex = 0;
 }
 
 function showAddress() {
@@ -1032,6 +1036,12 @@ function animateTabs(before, container, landed = new Set()) {
     } else if (prev) {
       const dx = prev.rect.left - el.getBoundingClientRect().left;
       if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+    } else if (el.classList.contains('group-label')) {
+      // A new group's chip takes its room in the strip at once while the tabs around it are still sliding in from where they were: it stays
+      // invisible (and under them) until they have mostly settled, then fades in, so it never overlaps a tab's icon mid-slide.
+      el.style.zIndex = '0';
+      const fade = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 260, easing: 'ease-out', fill: 'backwards' });
+      fade.finished.then(() => { el.style.zIndex = ''; }, () => { el.style.zIndex = ''; });
     } else {
       el.animate([{ opacity: 0, transform: 'translateY(3px) scale(0.86)' }, { opacity: 1, transform: 'none' }], { duration: 480, easing: SPRING_SNAPPY });
     }
@@ -1114,8 +1124,8 @@ function createTabEl(id) {
   });
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
-  inner.append(globeIcon(), title, close);
-  el.append(inner, chatMark);
+  inner.append(globeIcon(), chatMark, title, close);
+  el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
   el.onmousedown = (e) => { if (e.button === 1) e.preventDefault(); };
@@ -1154,6 +1164,13 @@ function faviconImg(el, key, urls, retried = false) {
   return img;
 }
 
+// [chat per tab] The glyph for each state (styles.css .tab-chat-mark): a spinner, a ring, a check, an exclamation mark.
+const CHAT_MARKS = {
+  running: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.6"/><path class="cm-spin" d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><g class="cm-still"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="2" fill="currentColor"/></g></svg>',
+  waiting: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  done: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M3.4 6.2l1.8 1.8 3.4-3.8"/></svg>',
+  approval: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M6 3v3.4M6 8.7v.1"/></svg>',
+};
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
   el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '') + (tab.chat ? ` chat-${tab.chat}` : '')
@@ -1166,7 +1183,11 @@ function updateTabEl(el, tab, group, activeId) {
   el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote].filter(Boolean).join(', '));
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
-  if (chatMark) chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat}` : ''}`;
+  if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
+    chatMark.dataset.state = tab.chat || '';
+    chatMark.className = `tab-chat-mark${tab.chat ? ` ${tab.chat}` : ''}`;
+    chatMark.innerHTML = CHAT_MARKS[tab.chat] || '';
+  }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
   const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;
@@ -1929,6 +1950,13 @@ $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
+// The lock (or "Not secure") opens the site's page info under it.
+function openPageInfo() {
+  const r = $('security').getBoundingClientRect();
+  window.browser.openPageInfo?.({ x: Math.round(r.left), y: Math.round(r.bottom + 4) });
+}
+$('security').addEventListener('click', openPageInfo);
+$('security').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPageInfo(); } });
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
@@ -2486,7 +2514,7 @@ window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
-  button.title = `${who.name} (Ctrl+J)`;
+  button.title = `${who.name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
   button.dataset.assistant = who.name;
   button.setAttribute('aria-label', who.name);
   button.style.setProperty('--assistant-tint', who.tint);
@@ -2515,7 +2543,7 @@ window.assistant.onSidebar?.((visible) => {
 startChat();
 
 // ---------- AI agents over MCP (session B) ----------
-// External agents (Claude Code, Codex, Gemini CLI…) drive the browser; their calls show here.
+// External agents (Claude Code, Codex, Antigravity…) drive the browser; their calls show here.
 
 const mcpSteps = new Map(); // step id -> row
 let mcpPillText = null;

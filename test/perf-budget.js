@@ -52,7 +52,7 @@ const CEILING = { requireMs: 2500, modules: 250, preloadKB: 40, uiKB: 600, idleI
     const preloadKB = fs.statSync(path.join(root, 'src', 'preload', 'preload.bundle.js')).size / 1024;
     check(`preload.bundle.js <= ${CEILING.preloadKB} KB`, preloadKB <= CEILING.preloadKB, `${Math.round(preloadKB)} KB`);
     const files = await ui.evaluate(() => [...document.scripts].map((s) => s.src).concat([...document.querySelectorAll('link[rel=stylesheet]')].map((l) => l.href)).filter(Boolean));
-    const uiKB = files.reduce((sum, u) => sum + fs.statSync(decodeURIComponent(new URL(u).pathname.replace(/^\//, ''))).size / 1024, 0);
+    const uiKB = files.reduce((sum, u) => sum + fs.statSync(require('url').fileURLToPath(u)).size / 1024, 0);
     check(`browser UI scripts and styles <= ${CEILING.uiKB} KB`, uiKB <= CEILING.uiKB, `${Math.round(uiKB)} KB`);
     const intervals = await app.evaluate(() => global.__perf.intervals());
     check(`setInterval timers running when idle <= ${CEILING.idleIntervals}`, intervals.length <= CEILING.idleIntervals, JSON.stringify(intervals));

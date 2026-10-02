@@ -1180,7 +1180,7 @@ function createWidgets(deps) {
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.defaultSize(type); // a size the person used stays; a first card fits beside the centre column
   // A changed config invalidates its cached data; its size, place and paper trades don't.
-  const keyOf = ({ span, height, x, y, w, h, snap, stack, top, colors, pf, ...rest }) => JSON.stringify(rest);
+  const keyOf = ({ span, height, x, y, w, h, snap, stack, top, rotate, smart, colors, pf, ...rest }) => JSON.stringify(rest);
 
   let epoch = 0; // flush() bumps it: an answer that was in flight is not kept
   async function memo(key, ttl, fn) {
@@ -1436,7 +1436,7 @@ function createWidgets(deps) {
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
-      const stack = w.stack ? { stack: ST.membersOf(all, w.stack), top: Boolean(w.top) } : {}; // the page draws the hidden members too (a switch is instant)
+      const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}), ...(w.was ? { was: w.was } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
       return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
@@ -1885,7 +1885,7 @@ function createWidgets(deps) {
   // ---- page actions ----
   // The new-tab page asks by loading itself with ?widget=<id>&do=<action>[&task=<id>] (like its Ask
   // AI box): refresh, complete, undo (&task), add (&text), play, pause, next, previous (Spotify), signin (Gmail), place (&to=<index>), size (&span, &height),
-  // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure, and a stack's cycle (show this member), stack (&onto=<id>) and unstack. main.js cancels that navigation and passes
+  // layout (&l=<id:x,y,w,h[,snap];…>), remove, configure, and a stack's cycle (show this member), stack (&onto=<id>), unstack and restack (&s=<json>: the arrangement to put in place). main.js cancels that navigation and passes
   // the URL here. Null when it isn't one; { invalid: true } when it is one that is refused.
   function actionFrom(url) {
     let params;
@@ -1893,7 +1893,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|note|timer|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|setup)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
@@ -1949,6 +1949,24 @@ function createWidgets(deps) {
     if (action.do === 'stack') { // Edit layout: this widget (and its stack) dropped onto another of the same size
       action.onto = params.get('onto');
       if (!/^w[0-9a-z]{4,20}$/.test(action.onto || '') || action.onto === id) return { invalid: true };
+      const anchor = params.get('anchor');
+      if (anchor && anchor !== id) return { invalid: true }; // the card the stack takes its size from: the one being dragged or started from
+      if (anchor) action.anchor = anchor;
+    }
+    if (action.do === 'restack') { // a stack's panel (order, options) and Undo of a stack change: s=<json [{ id, x, y, w, h, snap?, stack?, top?, rotate?, smart? }]>
+      const raw = params.get('s') || '';
+      let entries;
+      try { entries = JSON.parse(raw); } catch { return { invalid: true }; }
+      if (raw.length > 8000 || !Array.isArray(entries) || !entries.length || entries.length > 2 * ST.MAX_STACK + 2) return { invalid: true };
+      const cell = (v) => Number.isInteger(v) && v >= 0 && v <= 99;
+      action.entries = [];
+      for (const e of entries) {
+        if (!e || typeof e.id !== 'string' || !/^w[0-9a-z]{4,20}$/.test(e.id)) return { invalid: true };
+        const out = { id: e.id };
+        if ([e.x, e.y, e.w, e.h].every(cell)) Object.assign(out, { x: e.x, y: e.y, w: e.w, h: e.h });
+        if (typeof e.snap === 'string' && e.snap.length <= 12) out.snap = e.snap;
+        action.entries.push(Object.assign(out, ST.cleanFields(e)));
+      }
     }
     if (action.do === 'create') { // the page's Add widget: open Settings' new-widget form for a kind
       action.type = Object.prototype.hasOwnProperty.call(CONNECTORS, params.get('type')) ? params.get('type') : null;
@@ -2008,13 +2026,35 @@ function createWidgets(deps) {
   // "Remove from stack" (unstack). The choice of what is shown is stored, so every new tab shows it.
   function stackAct(action) {
     const widgets = list();
-    const next = action.do === 'cycle' ? ST.select(widgets, action.id) : action.do === 'stack' ? ST.join(widgets, action.id, action.onto) : ST.leave(widgets, action.id, WL);
+    const next = action.do === 'cycle' ? ST.select(widgets, action.id) : action.do === 'stack' ? ST.join(widgets, action.id, action.onto, WL, action.anchor) : ST.leave(widgets, action.id, WL);
     if (!next) return false;
     save(next);
     deps.onUpdate?.();
     return true;
   }
+  // do=restack: a stack's order and options from its panel, or the earlier arrangement Undo sends back.
+  function restackAct(action) {
+    const next = ST.restack(list(), action.entries);
+    if (!next) return false;
+    save(next);
+    deps.onUpdate?.();
+    return true;
+  }
+  // do=smartstack (Add widget > Smart Stack, id wcreate): a stack with three starter widgets that need no account or
+  // network (a timer, a countdown to New Year, a note), at the first free spot, the timer shown. -> whether it was added.
+  async function starterStack() {
+    if (!ST.canStarter(list(), MAX_WIDGETS)) return false;
+    const made = [];
+    for (const input of ST.starterKinds(now(), ST.starterWeather(list(), savedPlaces()))) made.push((await resolveInput(input)).widget);
+    const out = ST.starter(list(), made, WL, null);
+    if (!out) return false;
+    save(out.list);
+    deps.onUpdate?.();
+    for (const id of out.ids) { const w = list().find((x) => x.id === id); if (w) refresh(w).catch(() => {}); }
+    return true;
+  }
   async function act(action) {
+    if (action.do === 'smartstack') return starterStack();
     if (action.do === 'create') { pendingEdit = { create: action.type }; deps.onConfigure?.(null); return true; }
     if (action.do === 'restore') return restore(action.id);
     if (action.do === 'look' && action.defaults) { deps.writeSettings({ ...deps.readSettings(), ...WCFG.LOOK_DEFAULTS }); deps.onUpdate?.(); return true; }
@@ -2030,6 +2070,7 @@ function createWidgets(deps) {
     if (action.do === 'layout') return layout(action.items, action.dock);
     if (action.do === 'remove') return removeFromPage(w);
     if (action.do === 'cycle' || action.do === 'stack' || action.do === 'unstack') return stackAct(action);
+    if (action.do === 'restack') return restackAct(action);
     if (action.do === 'consent') return setLocationConsent(action.arg);
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }

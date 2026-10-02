@@ -1,10 +1,13 @@
 const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components, systemPreferences } = require('electron');
+// The main process's ~4 MB of modules are compiled once and kept on disk (V8's code cache, keyed by each file's
+// contents): later launches skip most of the ~70 ms of parsing and compiling before the window can be made.
+try { require('module').enableCompileCache?.(require('path').join(require('os').tmpdir(), 'lumen-compile-cache')); } catch { /* compiled as before */ }
 // Test mode (CLAUDE_BROWSER_TEST), honoured only when not packaged: see test-mode.js.
 const TEST = require('./test-mode').isTest();
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
 if (TEST) global.__perf = perf;
 
-// `Lumen --mcp`: an AI agent (Claude Code, Codex, Gemini CLI…) started us as its MCP server. Run
+// `Lumen --mcp`: an AI agent (Claude Code, Codex, Antigravity…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
 if (process.argv.includes('--mcp')) {
   if (TEST && process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
@@ -28,6 +31,9 @@ if (!TEST && !process.argv.includes('--install-shortcuts')) {
   }
 }
 const path = require('path');
+// Every window's icon. Windows gets the .ico (its small sizes are ready to use): decoding the 1024 px PNG held up
+// each new window by ~45 ms, the first one included. (macOS ignores it; Linux takes the PNG.)
+const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
@@ -84,6 +90,7 @@ const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's
 let chatPageRt = null; // its runtime (created below, with the agent)
 // Save Page As, View Source, Reader mode and Picture in Picture (features/page-tools.js)
 const pageTools = require('./features/page-tools').createPageTools({
+  t,
   openTab: (...args) => openTab(...args),
   sendTabs: () => sendTabs(),
   downloadDir: () => settingsBackend.downloadDir(),
@@ -162,7 +169,7 @@ function isSettingsSender(event) {
 // Calls that change keys, sign-ins, what outside programs may do (MCP, the automation port) and
 // imports answer only Lumen's own UI and its settings page. Today nothing else has a preload that
 // could send them; this keeps it that way if a page or extension ever finds a way to.
-const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|skills):/;
+const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|skills):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
 // inside it. test/hardening.js checks this list against preload.js.
@@ -172,11 +179,11 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'find:start', 'find:stop',
-  'app-menu', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:approve', 'agent:auto-allow', 'agent:undo', 'agent:show-target', 'tabs:ask-list',
   'chat:sidebar-state',
-  'chats:list', 'chats:open', 'chats:rename', 'chats:delete', 'chats:export',
+  'chats:list', 'chats:open', 'chats:show-tab', 'chats:rename', 'chats:delete', 'chats:export',
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
@@ -264,8 +271,11 @@ let settingsGen = 0; // bumped by every write: an async write that is no longer 
 // Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
 // with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
 let settingsPending = false; // an async write not yet known to be on disk
+// [chat per tab] Set where the run slots exist: a changed cap acts at once (a higher one starts the chats waiting).
+let onSettingsWritten = null;
 function writeSettings(settings) {
   settingsCache = { ...settings };
+  onSettingsWritten?.(settingsCache);
   settingsPending = true;
   const gen = ++settingsGen;
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen)
@@ -277,6 +287,7 @@ if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache)
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   settingsCache = { ...settings };
+  onSettingsWritten?.(settingsCache);
   settingsPending = false;
   settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
@@ -522,12 +533,122 @@ if (TEST) global.__screenshot = { tool: screenshotTool, qr: qrTool, overlay: too
 const siteSecurity = createSiteSecurity({
   dialogs,
   win: () => win,
-  isTab: (wc) => Boolean(tabByContents(wc)),
+  isTab: (wc) => Boolean(tabByContents(wc)) || privateWindows.ownsTab(wc), // (a private window's tabs too)
   certUrl: CERT_URL,
-  onChange: () => { if (tabs.length) sendTabs(); },
+  onChange: (wc) => { if (tabs.length) sendTabs(); if (wc) privateWindows.refresh(wc); },
 });
 app.on('certificate-error', siteSecurity.onCertificateError);
 if (TEST) global.__siteSecurity = siteSecurity;
+
+// ---------- browser basics: new window, page info, Save … As, Picture in Picture, shortcuts, crash recovery ----------
+// Each lives in its own features/ file; these are the few lines that tie them to the window and tabs.
+
+// File → New Window (Ctrl+N / Cmd+N): a normal window with one new tab (or `url`), cascaded from the one in front.
+function openNewWindow(url = null) {
+  if (![...winRecs].some(rcAlive)) dropDeadWindowViews(); // macOS: Lumen kept running with no window
+  const src = [focusedRec(), curRec].find((r) => r && rcAlive(r) && winRecs.has(r) && !isSpare(r)) || null;
+  const opts = { restore: { urls: url ? [url] : [] } };
+  if (src) {
+    const b = src.win.isMaximized() ? src.win.getNormalBounds() : src.win.getBounds();
+    const area = screen.getDisplayMatching(b).workArea;
+    const fit = tabDragMath.fitToDisplay({ width: b.width, height: b.height }, area);
+    const at = tabDragMath.placeOnWorkArea({ ...cascadedWindowPoint(src.win), width: fit.width, height: fit.height }, area);
+    Object.assign(opts, { size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, boundsFrom: src });
+  }
+  return createWindow(opts);
+}
+// Ctrl+Shift+W / Cmd+Shift+W: closes the window in front, tabs and all (it is saved for a restart like any closed window).
+function closeCurrentWindow() {
+  const target = focusedRec() || curRec;
+  if (target && rcAlive(target)) target.win.close();
+}
+
+// Right-click → Save Link As… / Save Image As…: always asks where, whatever Settings → Downloads says (features/link-menu.js).
+const linkMenu = require('./features/link-menu');
+const saveAsMarks = linkMenu.createSaveAsMarks();
+function saveUrlAs(wc, url) {
+  if (!wc || wc.isDestroyed()) return;
+  saveAsMarks.mark(url);
+  wc.downloadURL(url);
+}
+const linkMenuDeps = (wc) => ({
+  t,
+  openInNewWindow: (url) => openNewWindow(url),
+  openInPrivateWindow: isolatedOf(wc) ? null : (url) => privateWindows.open(url), // (not from a research tab's own session)
+  saveAs: (url) => saveUrlAs(wc, url),
+  copy: (text) => clipboard.writeText(text),
+});
+
+// Picture in Picture for the page's video (⋯ → This Page, View menu): the one playing or the largest; a note when there is none.
+function togglePictureInPicture(wc) {
+  if (!wc || wc.isDestroyed() || !isWebUrl(wc.getURL())) return;
+  pageTools.togglePictureInPicture(wc.mainFrame, -1, -1)
+    .then((r) => { if (r === 'none') organizeNote(t('pip.noVideo')); })
+    .catch((err) => { console.error('[lumen] picture in picture:', err.message); organizeNote(t('pip.failed')); });
+}
+
+// The lock (or "Not secure") next to the address opens the site's page info (features/page-info.js).
+const pageInfo = require('./features/page-info').createPageInfo({
+  t,
+  decisions: () => permissionDecisions, // (declared further down)
+  savePermissions: () => settingsBackend.savePermissions(permissionDecisions),
+  permissionDefault: (p) => settingsBackend.permissionDefault(p),
+  confirm: async ({ message, detail, buttons }) => (await dialogs.showMessageBox(win, { type: 'question', message, detail, buttons, defaultId: 1, cancelId: 0 })).response === 1,
+  openSiteSettings: () => openSettingsPage('site-permissions'),
+  zoomOf: (host) => { const level = settingsBackend.siteZoom.levelFor(host); return level === null ? null : require('./features/site-zoom').percentOf(level); },
+  resetZoom: () => zoomBy(activeTab()?.webContents, 0),
+  popup: (template, point) => {
+    if (!win || win.isDestroyed() || (TEST && global.__pageInfoNoPopup)) return;
+    Menu.buildFromTemplate(template).popup({ window: win, ...(point && Number.isFinite(point.x) ? { x: Math.round(point.x), y: Math.round(point.y) } : {}) });
+  },
+});
+function openPageInfo(point = null) {
+  const wc = activeTab()?.webContents;
+  if (!wc || wc.isDestroyed()) return Promise.resolve(null);
+  return pageInfo.open({ url: realUrl(wc), ses: wc.session, security: siteSecurity.stateOf(wc), point });
+}
+ipcMain.on('page-info:open', (_e, point) => openPageInfo(point && typeof point === 'object' ? point : null)); // (UI-only: UI_ONLY_IPC)
+
+// Keyboard Shortcuts (⋯ menu, Help menu, Ctrl+Shift+/): the list in Lumen's own dialog (features/shortcuts-help.js).
+const shortcutsHelp = require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) });
+
+// "Lumen didn't shut down correctly": offers the last run's tabs when the startup setting wouldn't bring them back (features/crash-recovery.js).
+const crashRecovery = require('./features/crash-recovery').createCrashRecovery({
+  file: () => path.join(app.getPath('userData'), 'running'),
+  readSettings: () => readSettings(),
+});
+async function offerCrashRestore() {
+  const kept = crashRecovery.take();
+  const rec = curRec;
+  if (!kept || !rec) return false;
+  const { response } = await dialogs.showMessageBox(win, {
+    type: 'question',
+    message: t('recovery.title'),
+    detail: t(kept.tabs === 1 ? 'recovery.detail.one' : 'recovery.detail', { n: kept.tabs }),
+    buttons: [t('recovery.notNow'), t('recovery.restore')], defaultId: 1, cancelId: 0,
+  });
+  if (response !== 1 || !rcAlive(rec) || !winRecs.has(rec)) return false;
+  withWindow(rec, () => {
+    const blank = tabs.filter((x) => alive(x) && isNewTab(x.view.webContents.getURL())).map((x) => x.id); // the new tab Lumen started with
+    restoreTabsFrom(kept.saved);
+    for (const id of blank) if (tabs.length > 1) closeTab(id);
+  });
+  for (const more of (Array.isArray(kept.saved.more) ? kept.saved.more : []).slice(0, 9)) createWindow({ restore: more });
+  return true;
+}
+
+// macOS: Lumen → About Lumen shows the version and what it is built on, not Electron's defaults.
+function setAboutPanel() {
+  if (typeof app.setAboutPanelOptions !== 'function') return;
+  app.setAboutPanelOptions({
+    applicationName: 'Lumen',
+    applicationVersion: app.getVersion(),
+    version: `Electron ${process.versions.electron}, Chromium ${process.versions.chrome}`,
+    copyright: t('about.copyright'),
+    website: 'https://github.com/emah-maker/lumen',
+  });
+}
+if (TEST) global.__basics = { openNewWindow, closeCurrentWindow, saveAsMarks, linkMenu, linkMenuDeps, togglePictureInPicture, pageInfo, openPageInfo, shortcutsHelp, crashRecovery, offerCrashRestore };
 
 // Google Safe Browsing (features/safe-browsing.js): off unless the user turns it on and adds a key.
 // Its requests go through a separate in-memory session, so Google never gets the user's cookies.
@@ -536,7 +657,7 @@ const safeBrowsing = createSafeBrowsing({
   apiKey: () => safeBrowsingKey(),
   dir: () => path.join(app.getPath('userData'), 'safe-browsing'),
   fetch: (url) => session.fromPartition('lumen-safe-browsing').fetch(url, { cache: 'no-store' }),
-  isTab: (wc) => Boolean(tabByContents(wc)),
+  isTab: (wc) => Boolean(tabByContents(wc)) || privateWindows.ownsTab(wc), // (a private window's tabs too)
   dialogs,
   win: () => win,
   warnUrl: SAFE_BROWSING_URL,
@@ -689,14 +810,14 @@ function setupPermissions() {
 // run script, or are known to launch Windows tools with attacker-chosen input are never opened.
 const BLOCKED_SCHEMES = new Set(['file', 'javascript', 'vbscript', 'data', 'blob', 'filesystem', 'about', 'chrome', 'chrome-extension', 'devtools', 'view-source', 'jar', 'res', 'hcp', 'shell', 'search', 'search-ms', 'ms-msdt', 'ms-officecmd', 'ms-appinstaller', 'ms-cxh', 'ms-cxh-full', 'ms-settings', 'lumen']);
 const externalDecisions = new Map(); // `${origin}|${scheme}` -> true (allowed for this session)
-async function askOpenExternal(wc, details) {
+async function askOpenExternal(wc, details, decisions = externalDecisions) { // decisions: a private window keeps its own
   let scheme;
   let origin = '';
   try { scheme = new URL(details.externalURL).protocol.slice(0, -1).toLowerCase(); } catch { return false; }
   try { origin = new URL(details.requestingUrl || wc.getURL()).origin; } catch {}
   if (!/^[a-z][a-z0-9+.-]*$/.test(scheme) || BLOCKED_SCHEMES.has(scheme)) return false;
   const key = `${origin}|${scheme}`;
-  if (externalDecisions.get(key)) return true;
+  if (decisions.get(key)) return true;
   let host = '';
   try { host = new URL(origin).host; } catch {}
   const label = ['mailto', 'tel', 'sms'].includes(scheme) ? t(`external.${scheme}`) : t('external.other', { scheme });
@@ -710,22 +831,23 @@ async function askOpenExternal(wc, details) {
     owner: wc,
   });
   if (cancelled || response !== 1) return false;
-  externalDecisions.set(key, true);
+  decisions.set(key, true);
   return true;
 }
 
 // Screen sharing (Meet, Zoom, Teams on the web) failed outright: there was no handler for
 // getDisplayMedia. The user picks an entire screen or one window from a menu of thumbnails;
-// closing the menu shares nothing.
-async function pickScreenToShare(request, callback) {
+// closing the menu shares nothing. `owner`: the window asking, when it isn't the current one (a private window).
+async function pickScreenToShare(request, callback, owner = null) {
+  const shown = owner && !owner.isDestroyed() ? owner : win;
   let done = false;
   const answer = (streams) => { if (!done) { done = true; callback(streams); } };
   try {
     const { desktopCapturer, nativeImage } = require('electron');
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 96, height: 60 }, fetchWindowIcons: false });
-    const lumen = win && !win.isDestroyed() ? win.getMediaSourceId() : '';
+    const lumen = shown && !shown.isDestroyed() ? shown.getMediaSourceId() : '';
     const pickable = sources.filter((s) => s.id !== lumen);
-    if (!pickable.length || !win || win.isDestroyed()) return answer({});
+    if (!pickable.length || !shown || shown.isDestroyed()) return answer({});
     let host = '';
     try { host = new URL(request.securityOrigin || request.frame?.url || '').host; } catch {}
     let picked = null;
@@ -740,7 +862,7 @@ async function pickScreenToShare(request, callback) {
       { type: 'separator' },
       { label: t('menu.cancel') },
     ]).popup({
-      window: win,
+      window: shown,
       // The click runs just after the menu closes; give it a moment before answering.
       callback: () => setTimeout(() => answer(picked ? { video: picked, ...(request.audioRequested && process.platform === 'win32' && picked.id.startsWith('screen:') ? { audio: 'loopback' } : {}) } : {}), 50),
     });
@@ -824,14 +946,48 @@ const adblock = createAdblock({
 });
 
 // ---------- private windows (features/private-window.js) ----------
-// Native dialogs there: Lumen's in-window dialogs (features/dialogs.js) draw over the main window.
+// Native dialogs there for permissions and downloads; Safe Browsing and certificate warnings use Lumen's
+// own (features/dialogs.js draws them in the private window, the tab's own window).
 const privateWindows = createPrivateWindows({
-  BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl,
-  resolveInput: (text) => resolveInput(text), iconPath: path.join(__dirname, 'assets', 'icon.png'),
+  BrowserWindow, WebContentsView, session, ipcMain, dialog: electronDialog, isWebUrl, Menu, clipboard, shell,
+  resolveInput: (text) => resolveInput(text), iconPath: WINDOW_ICON,
+  t, strings: () => i18n().strings, locale: () => i18n().locale,
+  testBackground: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND), // (TEST_BACKGROUND is declared further down)
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
-  // Private sessions get the profile's proxy, Do Not Track / Global Privacy Control, languages and Chrome hints.
-  mirrorSession: (ses) => settingsBackend.mirrorSession(ses),
-  Menu,
+  // The protections a normal tab has: Safe Browsing (until the ad blocker takes over onBeforeRequest, which
+  // sends pages to the same gate), the ad blocker's filters, readable dropdowns, and the profile's proxy,
+  // Do Not Track / Global Privacy Control, languages and Chrome hints.
+  prepareSession: (ses) => {
+    ses.webRequest.onBeforeRequest((details, callback) => safeBrowsing.gate(details, callback));
+    ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
+    settingsBackend.mirrorSession(ses);
+    adblock.attachSession(ses);
+  },
+  releaseSession: (ses) => { adblock.detachSession(ses); settingsBackend.unmirrorSession(ses); },
+  // Each private tab: HTTPS-only and the default zoom, Safe Browsing's and the certificate warning's way past,
+  // mixed-content reports, and the error pages a normal tab shows (offline, unsafe, bad certificate, crashed).
+  prepareTab: (wc) => {
+    settingsBackend.attachTab(wc);
+    safeBrowsing.attachTab(wc);
+    siteSecurity.attachTab(wc);
+    tabFailPage(wc);
+  },
+  tabWebPreferences: () => settingsBackend.tabWebPreferences(false), // font sizes, spell check, plugins for protected video
+  // Permissions as in a normal window, except that answers are kept for the window only: Settings' "Block" defaults,
+  // the screen-sharing picker (over the private window), and "Open the app for mailto: links?".
+  permissionDefault: (permission) => settingsBackend.permissionDefault(permission),
+  pickScreen: (request, callback, owner) => pickScreenToShare(request, callback, owner),
+  askOpenExternal: (wc, details, decisions) => askOpenExternal(wc, details, decisions),
+  defaultZoom: () => settingsBackend.prefs().defaultZoom,
+  realUrl: (wc) => realUrl(wc),
+  securityState: (wc) => siteSecurity.stateOf(wc),
+  zoom: (wc, step) => zoomBy(wc, step),
+  searchFor: (text) => ({ engine: engineFor(readSettings().searchEngine).label, url: searchUrlFor(readSettings().searchEngine, text) }),
+  downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
+  askWhereToSave: () => settingsBackend.askWhereToSave(),
+  // Settings (Cmd+,) open in a normal window, as Chrome does from Incognito.
+  openSettings: () => { const rec = focusedRec(); if (!rec) return; enterWindow(rec); openSettingsPage(); rec.win.show(); rec.win.focus(); },
+  onFocusChange: () => refreshWindowMenu(), // the macOS menu bar's commands follow the focused window
   // Private tabs present themselves as Chrome too (the same identity and request headers as normal tabs), or
   // Google sign-in in a private window is refused as an unknown browser.
   chromeIdentity: (wc) => applyChromeIdentity(wc),
@@ -988,6 +1144,7 @@ function showAppMenu({ x, y, right }) {
     [
       chunk([
         { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
+        { label: t('menu.newWindow'), accelerator: 'CmdOrCtrl+N', click: () => openNewWindow() },
         { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
       ]),
       chunk([
@@ -1018,6 +1175,8 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.qrCode'), enabled: web, click: () => showQrCode(wc) },
         { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
         ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
+        { label: t('menu.pictureInPicture'), enabled: web, click: () => togglePictureInPicture(wc) },
+        { label: t('menu.siteInfo'), enabled: web, click: () => openPageInfo() },
       ], 'page', t('menu.thisPage'), 2),
     ],
     [
@@ -1037,7 +1196,7 @@ function showAppMenu({ x, y, right }) {
       ]),
       chunk([{ label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }]), // [settings]
       more(isDefaultBrowser() ? [] : [{ label: t('menu.makeDefault'), click: makeDefaultBrowser }]),
-      more([{ label: t('menu.whatsNew'), click: () => whatsNew.open() }]),
+      more([{ label: t('menu.keyboardShortcuts'), accelerator: 'CmdOrCtrl+Shift+/', click: () => shortcutsHelp.open() }, { label: t('menu.whatsNew'), click: () => whatsNew.open() }]),
     ],
     [more([{ label: t('menu.devTools'), accelerator: 'F12', click: () => wc?.toggleDevTools() }])],
   ];
@@ -1243,6 +1402,7 @@ ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event
 
 // The URL a tab is "really" on: error pages report the address that failed.
 function realUrl(wc) {
+  if (warmPending.has(wc)) return ''; // (still on the warm view's about:blank: no address yet, as a fresh view has none)
   const url = wc.getURL();
   if (isErrorPage(url) || url.startsWith(settingsPage.HTTPS_ONLY_URL)) return new URL(url).searchParams.get('url') || ''; // [settings] HTTPS-only warning too
   return url;
@@ -1289,7 +1449,7 @@ function tabState() {
       const url = realUrl(wc);
       return {
         id: t.id,
-        title: wc.getTitle() || 'New Tab',
+        title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
         url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>
         loading: wc.isLoading(),
         favicon: t.favicon || null,
@@ -1314,7 +1474,7 @@ function tabState() {
       };
     }),
     activeId,
-    canGoBack: history ? history.canGoBack() : false,
+    canGoBack: active ? canGoBack(active.webContents) : false,
     canGoForward: history ? history.canGoForward() : false,
   };
 }
@@ -1381,7 +1541,8 @@ function layout() {
   const uiHadFocus = Boolean(ui()?.isFocused());
   for (const tab of tabs.filter(alive)) {
     const visible = tab.id === activeId;
-    const show = visible && !viewFrozen && !tab.spareFilling && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
+    if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
+    const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
     tab.view.setVisible(show);
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
@@ -1461,28 +1622,144 @@ function makeSpareNewTab() {
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
+  try { view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
   view.webContents.loadURL(newTabUrl()).catch(() => {});
   spareNewTab = s;
 }
+// { view, ready }: one still loading is taken too (its renderer is up and its page part-way: sooner than a new one).
 function takeSpareNewTab() {
   const s = spareNewTab;
   if (!s) return null;
   spareNewTab = null;
-  const fresh = s.ready && !s.view.webContents.isDestroyed() && !s.view.webContents.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)); // (no age limit: its data comes with the tab)
+  const fresh = !s.view.webContents.isDestroyed() && !s.view.webContents.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)); // (no age limit: its data comes with the tab)
   if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
+  return { view: s.view, ready: s.ready };
+}
+// The next one is made right away: Ctrl+T pressed again a moment later finds
+// it, or one part-way through loading. (It used to wait 700 ms, and a quick second new tab started from nothing.)
+const spareSoon = () => setTimeout(makeSpareNewTab, 100).unref?.();
+
+// ---- a renderer kept ready for the next web page: Chrome's spare renderer process, which Electron doesn't keep.
+// A web page in a new view (a link opened in a new tab, a restored or sleeping tab woken, an address typed into the
+// new-tab page, whose own renderer is locked to Lumen's pages) waited ~70 ms for its renderer process to start. One
+// hidden view is kept on about:blank instead: its process is up and belongs to no site yet, so the next such page
+// loads in it at once. Another is made a moment later. (It costs a renderer's memory: not on a PC short of memory, nor
+// with Performance mode switched on by hand.)
+let warmTab = null; // { view, prefs }
+const warmPending = new WeakSet(); // a tab's page that hasn't left the warm view's about:blank yet (no address, no history)
+let warmForTest = false;
+const warmTabsOn = () => (!TEST || warmForTest) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
+function makeWarmTab() {
+  if (warmTab || !app.isReady() || !warmTabsOn() || quitting) return;
+  const prefs = settingsBackend.tabWebPreferences(false);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // a tab's size, not 0×0
+  applyChromeIdentity(view.webContents); // (in place well before its first page: its renderer is already running)
+  view.webContents.loadURL('about:blank').catch(() => {});
+  warmTab = { view, prefs: JSON.stringify(prefs) };
+}
+let warmTimer = null;
+const warmSoon = (ms = 600) => { clearTimeout(warmTimer); warmTimer = setTimeout(makeWarmTab, ms); warmTimer.unref?.(); }; // (after the page that took the last one has started)
+// The warm view, for a web page in the profile's session with no back/forward list to restore; null if there is none
+// ready (or its page settings changed since). The page's address comes from wireView's loadURL.
+function takeWarmTab() {
+  const s = warmTab;
+  if (!s) return null;
+  warmTab = null;
+  warmSoon();
+  const wc = s.view.webContents;
+  const ready = !wc.isDestroyed() && !wc.isCrashed() && !wc.isLoading() && wc.getURL() === 'about:blank' && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false));
+  if (!ready) { try { wc.close(); } catch {} return null; }
+  warmPending.add(wc);
+  // Its about:blank never shows in the tab's back list: gone once the page (or its error page) commits.
+  const committed = () => {
+    warmPending.delete(wc);
+    try { if (wc.navigationHistory.getEntryAtIndex(0)?.url === 'about:blank' && wc.navigationHistory.length() > 1) wc.navigationHistory.clear(); } catch {}
+  };
+  wc.once('did-navigate', committed);
   return s.view;
 }
-const spareSoon = () => setTimeout(makeSpareNewTab, 700).unref?.(); // (once this tab has drawn and the first keys are in)
+// The new-tab page's renderer is locked to Lumen's own pages, so a web address typed there (or a tile or search on
+// it) waited for a renderer process of its own. The page loads in the warm view instead, which takes the tab's place
+// once the page has drawn: the new-tab page stays on screen until then, as Chromium keeps the old page up until the
+// new one paints. If nothing commits (a download, a stopped load), the new-tab page simply stays. Back from the page
+// returns to a new-tab page (backToNewTab: the warm view's history starts at the page).
+function leaveNewTabFor(tab, url) {
+  if (!alive(tab) || tab.settings || tab.managerPage || tab.isolated || tab.outgoing || !isWebUrl(url) || !isNewTab(tab.view.webContents.getURL())) return false;
+  const view = takeWarmTab();
+  if (!view) return false;
+  const old = tab.view;
+  const oldWc = old.webContents;
+  const host = win;
+  oldWc.off('destroyed', tab.onViewDestroyed); // replaced, not closed: that handler would close the tab
+  tab.outgoing = { view: old, win: host, overlay: tab.overlay || null };
+  tab.view = view;
+  tab.overlay = null; // (the new-tab page's full-width layout was on the old view)
+  tab.backToNewTab = true;
+  host.contentView.addChildView(view);
+  host.contentView.addChildView(old); // the new-tab page stays on top until the page has drawn
+  const wc = wireView(tab, url);
+  layout();
+  let settled = false;
+  const reveal = () => { if (!settled) { settled = true; finishLeaving(tab, true); } };
+  const revert = () => { if (!settled) { settled = true; finishLeaving(tab, false); } };
+  wc.once('did-navigate', () => {
+    setTimeout(reveal, 500).unref?.(); // (a page that never paints still takes its place)
+    wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: `new Promise((done) => { try { new PerformanceObserver(done).observe({ type: 'paint', buffered: true }); } catch { done(); } })` }])
+      .then(() => setTimeout(reveal, 16), reveal);
+  });
+  wc.on('did-stop-loading', () => { if (warmPending.has(wc)) revert(); }); // nothing committed: back to the new-tab page
+  wc.once('destroyed', revert);
+  if (tab.id === activeId) syncExtensions(() => extensions?.selectTab(wc));
+  sendTabs();
+  return true;
+}
+// The swap above, ended: `keep` puts the page in the tab for good (the new-tab page goes, Back returns to one);
+// otherwise the new-tab page is the tab's again. Also called when the tab is closed, put to sleep, moved to another
+// window or left for another tab before the page has drawn.
+function finishLeaving(tab, keep = true) {
+  const out = tab.outgoing;
+  if (!out) return;
+  tab.outgoing = null;
+  const host = out.win && !out.win.isDestroyed() ? out.win : null;
+  if (keep || !alive(tab) || !warmPending.has(tab.view.webContents)) {
+    try { host?.contentView.removeChildView(out.view); } catch {}
+    try { out.view.webContents.close(); } catch {}
+    return;
+  }
+  const failed = tab.view;
+  tab.backToNewTab = false;
+  failed.webContents.off('destroyed', tab.onViewDestroyed);
+  tab.view = out.view;
+  tab.overlay = out.overlay;
+  tab.onViewDestroyed = () => closeTab(tab.id, { destroyed: true });
+  out.view.webContents.once('destroyed', tab.onViewDestroyed);
+  try { host?.contentView.removeChildView(failed); } catch {}
+  try { failed.webContents.close(); } catch {}
+  if (host && rcAlive(tab.rec) && tab.rec.win === host) withWindow(tab.rec, () => { if (tab.id === activeId) syncExtensions(() => extensions?.selectTab(out.view.webContents)); layout(); sendTabs(); });
+}
+// Back, and whether there is one: past the first page of a tab that left the new-tab page (above), a new-tab page.
+function goBack(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  if (wc.navigationHistory.canGoBack()) { wc.navigationHistory.goBack(); return; }
+  const tab = tabByContents(wc);
+  if (tab?.backToNewTab) { tab.backToNewTab = false; wc.loadURL(newTabUrl()).catch(() => {}); }
+}
+const canGoBack = (wc) => Boolean(wc && !wc.isDestroyed() && (wc.navigationHistory.canGoBack() || tabByContents(wc)?.backToNewTab));
+if (TEST) global.__warmTabs = { enable: (on = true) => { warmForTest = on; if (on) makeWarmTab(); else if (warmTab) { try { warmTab.view.webContents.close(); } catch {} warmTab = null; } }, ready: () => Boolean(warmTab && !warmTab.view.webContents.isLoading()), contentsId: () => warmTab?.view.webContents.id ?? null, forgetHistory: (id) => { const t = tabs.find((x) => x.id === id); if (t) t.sleepHistory = null; return Boolean(t?.sleeping); } };
 
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null, openedBy = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
   const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
-  const spare = plainNewTab ? takeSpareNewTab() : null;
+  const spared = plainNewTab ? takeSpareNewTab() : null;
+  const spare = spared?.view || null;
   if (plainNewTab) spareSoon();
-  const view = adopted || spare || new WebContentsView({
+  const webPage = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && isWebUrl(url);
+  const warm = webPage ? takeWarmTab() : null; // (its process is already up: see makeWarmTab)
+  const view = adopted || spare || warm || new WebContentsView({
     // [settings] font sizes and spell check from Settings; only the settings tab gets its preload,
     // and only the History page gets history-preload.js
     webPreferences: {
@@ -1502,14 +1779,18 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   win.contentView.addChildView(view);
   view.setVisible(false);
   const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare) }); // `history`: Duplicate's copy of back/forward
-  // The spare page gets this tab's data in place (no reload, no extra history entry).
-  if (spare) {
-    // Hidden until it has drawn this tab's data (a frame of the old data would flash otherwise): ~2 ms.
+  // The spare page gets this tab's data in place (no reload, no extra history entry): hidden until it has drawn it (a
+  // frame of the old data would flash otherwise). Usually it already shows the same data (its address says so) and is
+  // shown at once: a hidden page's renderer runs at background priority, and even a no-op script there took ~45 ms.
+  // A spare still loading finishes first (its page reads the data then).
+  if (spare && !(spared.ready && wc.getURL() === url)) {
     tab.spareFilling = true;
-    // (At most 100 ms: an occluded or minimized window draws no frames, and the tab must not stay blank.)
-    const filled = wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); true`, true)
-      .catch(() => wc.loadURL(url).catch(() => {}));
-    Promise.race([filled, new Promise((r) => setTimeout(r, 100))])
+    const fill = () => wc.executeJavaScript(`history.replaceState(null, '', ${JSON.stringify(url)}); dispatchEvent(new HashChangeEvent('hashchange')); true`, true)
+      .catch(() => { if (!wc.isDestroyed()) wc.loadURL(url).catch(() => {}); });
+    const loaded = spared.ready ? Promise.resolve() : new Promise((r) => { wc.once('did-finish-load', r); setTimeout(r, 1500); });
+    const filled = loaded.then(() => (wc.isDestroyed() || wc.getURL() === url ? null : fill()));
+    // (At most 100 ms past its load: an occluded or minimized window draws no frames, and the tab must not stay blank.)
+    Promise.race([filled, loaded.then(() => new Promise((r) => setTimeout(r, 100)))])
       .finally(() => { tab.spareFilling = false; if (tab.id === activeId && alive(tab)) withWindow(tab.rec, () => layout()); });
   }
 
@@ -1617,17 +1898,13 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
     tab.favicon = tab.favicons[0] || null;
   });
-  wc.on('will-navigate', (event, url) => { askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc); });
-  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
-    if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
-    const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
-    if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
-    if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
-    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
-    if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
-    const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
-    wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
+  wc.on('will-navigate', (event, url) => {
+    if (askFromHome(event, event.url || url, tab.id) || widgetAction(event, event.url || url, wc)) return;
+    // A tile or a search on the new-tab page: the page loads in the warm view (leaveNewTabFor), as a typed address does.
+    if (event.isMainFrame !== false && alive(tab) && tab.view.webContents === wc && isNewTab(wc.getURL()) && isWebUrl(event.url || url)
+      && withWindow(tab.rec, () => leaveNewTabFor(tab, event.url || url))) event.preventDefault();
   });
+  tabFailPage(wc);
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) adblock.resetCount(wc.id);
   });
@@ -1698,6 +1975,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   }
   wc.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && !manners.isAgentInput(wc)) { manners.userInput.key(wc); userTookOver(tab); } // [ai manners] the user typed here: the tab is theirs, and the AI waits for them
+    // Esc while the page itself is still loading stops it, as in Chrome (the reload button shows Stop meanwhile).
+    // Only the main frame counts: a loaded page whose iframes are still busy gets its Esc (closing its own dialogs).
+    if (input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.meta && !input.alt && !input.shift && wc.isLoadingMainFrame() && isWebUrl(wc.getURL())) { wc.stop(); event.preventDefault(); return; }
     handleShortcut(event, input);
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now()) ui()?.focus(); }); // see layout()
@@ -1800,6 +2080,7 @@ function memoryPressure() {
 }
 
 function sleepTab(tab) {
+  finishLeaving(tab); // (a page that just left the new-tab page: the new-tab page goes now)
   const wc = tab.view.webContents;
   tab.sleepUrl = realUrl(wc) || wc.getURL();
   tab.sleepTitle = wc.getTitle() || 'New Tab';
@@ -1819,7 +2100,9 @@ function sleepTab(tab) {
 
 function wakeTab(tab) {
   if (!tab.sleeping) return;
-  const view = new WebContentsView({
+  // A web page with no back/forward list to bring back (a tab restored from the last session) wakes in the warm view.
+  const warm = !tab.managerPage && !tab.isolated && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
+  const view = warm || new WebContentsView({
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
       ...(tab.managerPage ? { preload: managers.preloadFor(tab.managerPage) } : {}),
@@ -1936,7 +2219,9 @@ let addressTouchedAt = 0;
 // kept its blinking caret while you typed somewhere else.
 ipcMain.on('address:touched', () => {
   addressTouchedAt = ++uiEventSeq;
-  if (!suggestView && win && !win.isDestroyed()) createSuggestView(); // (typing is coming: ready before the first key's list)
+  // (Typing is coming: ready before the first key's list. Not while the first tab is still loading at start-up: the
+  // new-tab page's address-bar focus lands here then, and the dropdown's renderer is made once that tab has loaded.)
+  if (!suggestView && firstTabDone && win && !win.isDestroyed()) createSuggestView();
   if (!ui()?.isFocused()) ui()?.focus();
   const wc = activeTab()?.webContents;
   if (wc && isNewTab(wc.getURL())) wc.executeJavaScript('document.activeElement?.blur()').catch(() => {});
@@ -2017,6 +2302,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   if (chatFullTab === id) chatFullTab = null;
   const [tab] = tabs.splice(index, 1);
   chatBind.unbindTab(id); // [chat per tab]
+  finishLeaving(tab);
   tabGroups.cleanup();
   // `pendingCloseUrl` (set by requestCloseTab) covers the case where this runs from the 'destroyed'
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
@@ -2082,7 +2368,7 @@ function listTabs() {
   // them; switch_tab wakes one up like any other tab click would (see switchTab).
   return tabs.filter((t) => alive(t) || t.sleeping).map((t) => ({
     id: t.id,
-    title: t.sleeping ? (t.sleepTitle || 'New Tab') : t.view.webContents.getTitle(),
+    title: t.sleeping ? (t.sleepTitle || 'New Tab') : warmPending.has(t.view.webContents) ? '' : t.view.webContents.getTitle(),
     url: t.sleeping ? (t.sleepUrl || '') : realUrl(t.view.webContents),
     active: t.id === activeId,
     group: t.groupId ? tabGroups.groups.get(t.groupId)?.name || null : null,
@@ -2109,8 +2395,9 @@ function zoomPage(wc, step) {
   // site follows that default again; zooming by hand makes the default leave this site alone.
   if (step === 0) settingsBackend.resetZoom(wc);
   else {
-    settingsBackend.noteUserZoom(wc);
-    wc.setZoomLevel(Math.min(Math.max(wc.getZoomLevel() + step, -3), 5));
+    const level = Math.min(Math.max(wc.getZoomLevel() + step, -3), 5);
+    settingsBackend.noteUserZoom(wc, level); // (kept for the site across restarts: features/site-zoom.js)
+    wc.setZoomLevel(level);
   }
   sendTabs();
 }
@@ -2135,10 +2422,11 @@ const ORGANIZE_SCHEMA = {
 };
 const ORGANIZE_PROMPT = 'Group these browser tabs by topic or task. Each tab has an id, title, host and path words; "group" is the name of the group it is in now; "hint" is what its site is nearly always used for (School for Canvas or Gradescope, Job search for Indeed). Tabs of one host, and tabs with the same hint, usually belong in one group: keep them together unless their titles are clearly different topics (two courses, two projects), and when such a group has no better name, the hint is a good one. Where tabs already belong together in a group, reuse that exact group name for them. The tab marked "active" is what the user is doing right now: keep it with its related tabs. Make 2 to 8 groups of at least 2 tabs each. Name each group specifically in 1-3 words (Title Case), like "Flights to Tokyo" or "React docs", never just a website. A tab belongs to at most one group; leave out tabs that fit nowhere. Use only the ids given. Reply with JSON only: {"groups":[{"name":"...","tab_ids":[1,2]}]}.';
 
-// Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' picks) answer
+// Where a grouping request goes. The user's own CLIs ('claudecode:…' / 'grokbuild:…' / 'antigravity:…' picks) answer
 // it as a one-shot, tool-less run (cli-json.js), so no API key is needed. An API model without a
 // key goes to Claude Code instead, when it's installed and not known to be signed out.
-const LOCAL_ENGINE = /^(claudecode|grokbuild):/;
+const LOCAL_ENGINE = /^(claudecode|grokbuild|antigravity):/;
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity' };
 // [model fallback] The same rules for the one-shot AI calls outside the chat (topic naming, Organize's refine, a skill's
 // proposal, page translation). standInOf: the model to start on while `model` cools down. withFallback: a call that
 // fails on a usage limit or a lost connection is asked once more on the next usable model (never on other failures,
@@ -2179,7 +2467,7 @@ async function groupingRoute(model) {
 // the chat's own Claude Code model is tried once.
 async function proposeGroupsLocal({ engine, model }, list) {
   const bin = await agent.engines[engine].detect();
-  if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+  if (!bin) throw new Error(`${ENGINE_NAMES[engine]} isn’t installed.`);
   const ask = (m) => cliJson.completeJSON({ engine, bin, model: m, system: ORGANIZE_PROMPT, user: `Tabs:\n${JSON.stringify(list)}`, schema: ORGANIZE_SCHEMA, userData: app.getPath('userData') });
   const fast = engine === 'claudecode' ? 'haiku' : model;
   try {
@@ -2261,7 +2549,7 @@ async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_
   if (route.engine) {
     const { engine, model: engineModelId } = route;
     const bin = await agent.engines[engine].detect();
-    if (!bin) throw new Error(engine === 'claudecode' ? 'Claude Code isn’t installed.' : 'Grok Build isn’t installed.');
+    if (!bin) throw new Error(`${ENGINE_NAMES[engine]} isn’t installed.`);
     // The whole answer has `timeoutMs` (organize-ai's wait, minus a little): a fast model first (Claude Code: Haiku)
     // gets most of it, and the chat's own model is tried only with what is left, never after a timeout.
     const deadline = Date.now() + Math.max(5000, timeoutMs - 2000);
@@ -2312,6 +2600,7 @@ async function organizeTabs() {
   const rec = curRec;
   const back = (fn) => withWindow(rec, fn);
   const inWin = (groups) => Object.fromEntries(['organizeByTopic', 'organizeSeq', 'organizeView', 'applyRefinement', 'layoutSignature'].map((k) => [k, (...a) => back(() => groups[k](...a))]));
+  const groupsBefore = back(() => tabGroups.layoutSignature().groups); // groups that exist before this click (automatic grouping may have made some)
   ui()?.send('tabs:organizing', true); // at once: the button shows "Organizing…" before any work
   try {
     await cliJson.whenIdle(); // a CLI still being stopped after a cancel must be gone before the next run starts one
@@ -2355,7 +2644,9 @@ async function organizeTabs() {
       back(() => organizeNote(`${t('organize.cancelled')}.`, { undo: true }));
     } else {
       const how = stats.reason === 'local' ? t('organize.local') : stats.reason === 'refined' ? t('organize.refined') : stats.reason === 'confident' || stats.reason === 'cached' ? t('organize.noAi') : failed ? aiFailureNote(failed, false) : t('organize.localOnly');
-      const what = Number.isInteger(stats.finalGroups) ? ` ${organizeSummary(stats.finalGroups, stats.loose)}` : '';
+      // Groups the automatic grouping had already made are not this click's work: with some before, the note says what THIS click added.
+      const added = stats.groups > 0 && groupsBefore > 0 && stats.finalGroups > stats.groups ? stats.groups : 0;
+      const what = !Number.isInteger(stats.finalGroups) ? '' : added ? ` ${t(added === 1 ? 'organize.summaryAdded.one' : 'organize.summaryAdded', { added, groups: stats.finalGroups, loose: stats.loose })}` : ` ${organizeSummary(stats.finalGroups, stats.loose)}`;
       back(() => organizeNote(`${how}.${what}`, { undo: true }));
     }
   } catch (err) {
@@ -2947,6 +3238,7 @@ function homeAssistant() {
   const modelId = options.some((o) => o.id === saved) ? saved : options[0].id;
   if (String(modelId).startsWith('claudecode:')) return { name: 'Claude', agentUsable: true };
   if (String(modelId).startsWith('grokbuild:')) return { name: 'Grok', agentUsable: true };
+  if (String(modelId).startsWith('antigravity:')) return { name: 'Antigravity', agentUsable: true };
   const { provider } = providers.splitModel(modelId);
   return { name: ASSISTANT_NAMES[provider] || 'AI', agentUsable: true };
 }
@@ -3062,6 +3354,7 @@ const downloads = createDownloads({
   fallbackIcon: () => require('electron').nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 32 }),
   downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
   askWhereToSave: () => settingsBackend.askWhereToSave(),
+  askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   onChange: () => managers?.pushDownloads(),
 });
 
@@ -3112,7 +3405,7 @@ const uaHighEntropyHeaders = (hints) => CHROME_IDENTITY.highEntropyHeaders(UA_ME
 const popupWindowOptions = () => ({
   autoHideMenuBar: true,
   backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
-  icon: path.join(__dirname, 'assets', 'icon.png'),
+  icon: WINDOW_ICON,
   webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) },
 });
 // Google's "This browser or app may not be secure" page: what to try, instead of a dead end. For tabs a note in the
@@ -3144,6 +3437,20 @@ function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
   };
   wc.on('did-navigate', check);
   wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads
+}
+// A tab's page that fails to load: the Safe Browsing warning, the HTTPS-only page, the certificate warning or the
+// error page, in that order (normal tabs and private ones).
+function tabFailPage(wc) {
+  wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
+    const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
+    if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
+    if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
+    const certWarning = siteSecurity.warningUrl(failedUrl, code, description);
+    if (certWarning) { wc.loadURL(certWarning).catch(() => {}); return; }
+    const params = new URLSearchParams({ url: failedUrl, code: String(code), desc: description });
+    wc.loadURL(`${ERROR_URL}?${params}`).catch(() => {});
+  });
 }
 // A popup that fails to load (offline, a certificate problem) says so, as a tab does, instead of staying white.
 function popupFailPage(wc) {
@@ -3249,15 +3556,20 @@ function showContextMenu(wc, p) {
   const items = [...settingsBackend.spellingItems(wc, p)]; // [settings] spelling suggestions first
   const selection = p.selectionText.trim();
   if (p.linkURL && isWebUrl(p.linkURL)) {
+    const link = linkMenu.linkItems(p, linkMenuDeps(wc));
     items.push(
       { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) },
+      ...link.open, // Open Link in New Window, … in Private Window
+      { type: 'separator' },
+      ...link.save, // Save Link As…
       { label: t('menu.copyLink'), click: () => clipboard.writeText(p.linkURL) },
       { type: 'separator' },
     );
   }
   if (p.mediaType === 'image' && p.srcURL) {
     if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) });
-    items.push({ label: t('menu.copyImage'), click: () => wc.copyImageAt(p.x, p.y) }, { type: 'separator' });
+    const image = linkMenu.imageItems(p, linkMenuDeps(wc));
+    items.push(...image.save, { label: t('menu.copyImage'), click: () => wc.copyImageAt(p.x, p.y) }, ...image.copy, { type: 'separator' }); // Save Image As…, Copy Image, Copy Image Address
   }
   items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
@@ -3276,15 +3588,16 @@ function showContextMenu(wc, p) {
   }
   if (items.length === 0) {
     items.push(
-      { label: t('menu.back'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
+      { label: t('menu.back'), enabled: canGoBack(wc), click: () => goBack(wc) },
       { label: t('menu.forward'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
       { label: t('menu.reload'), click: () => wc.reload() },
       { type: 'separator' },
     );
     if (isWebUrl(wc.getURL())) {
       items.push(
-        { label: 'Save Page As…', click: () => pageTools.savePage(wc).catch(() => {}) },
-        { label: 'View Page Source', click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
+        { label: t('menu.savePageAs'), click: () => pageTools.savePage(wc).catch(() => {}) },
+        { label: t('menu.print'), click: () => wc.print({}, () => {}) },
+        { label: t('menu.viewSource'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), click: () => takeScreenshot(wc) },
         { label: t('menu.qrCode'), click: () => showQrCode(wc) },
         ...translate.pageMenuItem(tabByContents(wc)),
@@ -3295,6 +3608,7 @@ function showContextMenu(wc, p) {
   const extensionItems = extensions ? extensions.getContextMenuItems(wc, p) : [];
   if (extensionItems.length) items.push(...extensionItems, { type: 'separator' });
   items.push({ label: t('menu.inspect'), click: () => wc.inspectElement(p.x, p.y) });
+  if (TEST && global.__captureContextMenu) { global.__captureContextMenu(items); return; } // (tests read the menu instead of popping it)
   Menu.buildFromTemplate(items).popup({ window: win });
 }
 
@@ -3311,6 +3625,10 @@ function handleShortcut(event, input) {
   else if (mod && input.shift && key === 'a') openTabSearch();
   else if (mod && input.shift && !input.alt && key === 'm') mergeWindows(focusedRec() || curRec); // Merge All Windows, into the focused window as the menu does (this window takes the others; the toast says why when it can't)
   else if (mod && input.shift && !input.alt && key === 'l') toggleChatPage(); // the sidebar's chat as a full page, and back
+  else if (mod && input.shift && !input.alt && key === 'w') closeCurrentWindow();
+  else if (mod && input.shift && (key === '/' || key === '?')) shortcutsHelp.open().catch((err) => console.error('[lumen] shortcuts:', err.message)); // Ctrl+? : the Keyboard Shortcuts sheet
+  else if (mod && input.shift && (key === 'delete' || key === 'backspace')) openSettingsPage('privacy'); // Clear browsing data, as in Chrome
+  else if (mod && !input.shift && !input.alt && key === 'n') openNewWindow();
   else if (mod && key === 't') openTab();
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
@@ -3342,10 +3660,10 @@ function handleShortcut(event, input) {
   else if (mod && key === 's') { if (wc) pageTools.savePage(wc).catch(() => {}); }
   else if (mod && key === 'u') { if (wc) pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }); }
   else if (mod && key === ',') openSettingsPage(); // [settings]
-  else if (process.platform === 'darwin' && input.meta && key === '[') wc?.navigationHistory.goBack();
+  else if (process.platform === 'darwin' && input.meta && key === '[') goBack(wc);
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
-  else if (input.alt && key === 'arrowleft') wc?.navigationHistory.goBack();
+  else if (input.alt && key === 'arrowleft') goBack(wc);
   else if (input.alt && key === 'arrowright') wc?.navigationHistory.goForward();
   else if (key === 'f5') reloadActive({ ignoreCache: input.shift || input.control });
   else if (key === 'f11' && process.platform !== 'darwin') win?.setFullScreen(!win.isFullScreen());
@@ -3368,6 +3686,7 @@ function toggleChatPage() {
 
 function focusAddress() {
   ui()?.focus();
+  if (curRec && !curRec.uiLoaded) curRec.focusAddressPending = true; // (sent again once the UI has loaded: createWindow)
   ui()?.send('focus-address');
 }
 
@@ -3461,7 +3780,7 @@ function loadChat() {
 // A running reply is not stopped: it keeps working in its own tab and chat (chatRuns), and opening
 // that chat again shows it live. Returns what the sidebar needs to show the chat.
 // `ensure` (a tab's own chat that has no file yet: it is still empty): shown as an empty chat under that id.
-function switchChat(id, { ensure = false } = {}) {
+function switchChat(id, { ensure = false, quiet = false } = {}) {
   if (id && id === chatId) return chatView();
   const live = id ? chatRuns.get(id) : null; // still running (or waiting for a slot): its live messages, not the file
   const snapshot = id && !live ? chats().load(id) : null;
@@ -3477,7 +3796,8 @@ function switchChat(id, { ensure = false } = {}) {
   chatId = id || chats().newId();
   if (!live) agent.approvedHosts = approvedByChat.get(chatId) || agent.approvedHosts;
   unreadChats.delete(chatId);
-  chats().setCurrent(id && (snapshot || live) ? id : null);
+  if (id && (snapshot || live)) chats().setCurrent(id);
+  else if (!quiet) chats().setCurrent(null); // (a tab's own empty chat, quiet: the last chat with a history stays the one a restart opens)
   pushAttention();
   lastAgentTarget = ''; // the "Working in" line follows the chat now open
   setImmediate(pushAgentTarget);
@@ -3489,7 +3809,7 @@ function switchChat(id, { ensure = false } = {}) {
 function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run) } }
-    : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo() } : null;
+    : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
   return { id: chatId, items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), ...(live ? { live } : {}) };
 }
 
@@ -3582,6 +3902,7 @@ function tellUser(run, kind) {
 // and an IPC from a window first brings the open chat in line with that window's tab (syncToSender).
 const chatBind = tabChatsLib.createBindings();
 const runSlots = tabChatsLib.createRunSlots();
+onSettingsWritten = (s) => { if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 const runIsLive = (r) => Boolean(r && !r.deleted && (r.queued || agent.runningFor(r.messages)));
 const chatBusy = (id) => runIsLive(chatRuns.get(id));
@@ -3632,13 +3953,13 @@ function followTabChat(tab, { push = true } = {}) {
   if (plan.chat) {
     chatBind.bind(tab.id, plan.chat);
     const keep = unseen(plan.chat);
-    if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true });
+    if (plan.chat !== chatId) switchChat(plan.chat, { ensure: true, quiet: true });
     if (keep) unreadChats.add(chatId);
     else if (sidebarOpen) unreadChats.delete(chatId);
   } else if (plan.adopt) {
     chatBind.bind(tab.id, plan.adopt);
   } else {
-    switchChat(null);
+    switchChat(null, { quiet: true });
     chatBind.bind(tab.id, chatId);
   }
   const wc = ui();
@@ -3908,45 +4229,54 @@ function refreshWindowMenu() {
 function macMenu() {
   const shown = (accelerator) => ({ accelerator, registerAccelerator: false });
   const wc = () => activeTab()?.webContents;
+  // A private window in front: a command it has goes to it (features/private-window.js); one it lacks is
+  // greyed out (and does nothing), never sent to the normal window behind it.
+  const priv = privateWindows.focused();
+  const pv = (name, fn) => () => { if (!privateWindows.command(name)) fn(); };
+  const normal = (item) => ({ ...item, enabled: !priv && item.enabled !== false, ...(item.click ? { click: (...args) => { if (!privateWindows.focused()) item.click(...args); } } : {}) });
   return Menu.buildFromTemplate([
     { role: 'appMenu' },
     {
       label: t('menu.file'),
       submenu: [
-        { label: t('menu.newTab'), ...shown('Cmd+T'), click: () => openTab() },
+        { label: t('menu.newTab'), ...shown('Cmd+T'), click: pv('newTab', () => openTab()) },
+        { label: t('menu.newWindow'), accelerator: 'Cmd+N', click: () => openNewWindow() }, // (registered: it must work with no window open too)
         { label: t('menu.newPrivateWindow'), ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
-        { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: reopenLastClosed },
-        { label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch },
-        { label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog },
-        { label: t('menu.openLocation'), ...shown('Cmd+L'), click: focusAddress },
+        { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: pv('reopenTab', reopenLastClosed) },
+        normal({ label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch }),
+        normal({ label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog }),
+        { label: t('menu.openLocation'), ...shown('Cmd+L'), click: pv('focusAddress', focusAddress) },
         { type: 'separator' },
-        { label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } },
-        { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: () => takeScreenshot(wc()) },
-        { label: t('menu.qrCode'), click: () => showQrCode(wc()) },
-        { label: t('menu.print'), ...shown('Cmd+P'), click: () => wc()?.print({}, () => {}) },
+        normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),
+        { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: pv('screenshot', () => takeScreenshot(wc())) },
+        normal({ label: t('menu.qrCode'), click: () => showQrCode(wc()) }),
+        { label: t('menu.print'), ...shown('Cmd+P'), click: pv('print', () => wc()?.print({}, () => {})) },
         { type: 'separator' },
-        { label: t('menu.closeTab'), ...shown('Cmd+W'), click: () => { if (activeId) requestCloseTab(activeId); } },
+        { label: t('menu.closeTab'), ...shown('Cmd+W'), click: pv('closeTab', () => { if (activeId) requestCloseTab(activeId); }) },
+        { label: t('menu.closeWindow'), ...shown('Shift+Cmd+W'), click: pv('closeWindow', closeCurrentWindow) },
       ],
     },
     { role: 'editMenu' },
     {
       label: t('menu.view'),
       submenu: [
-        { label: t('menu.reload'), ...shown('Cmd+R'), click: () => reloadActive() },
-        { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: () => reloadActive({ ignoreCache: true }) },
-        { label: t('menu.find'), ...shown('Cmd+F'), click: () => { ui()?.focus(); ui()?.send('find:open'); } },
-        { label: t('menu.readerMode'), click: () => toggleReaderActive() },
-        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
-        { label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } },
+        { label: t('menu.reload'), ...shown('Cmd+R'), click: pv('reload', () => reloadActive()) },
+        { label: t('menu.forceReload'), ...shown('Shift+Cmd+R'), click: pv('forceReload', () => reloadActive({ ignoreCache: true })) },
+        { label: t('menu.find'), ...shown('Cmd+F'), click: pv('find', () => { ui()?.focus(); ui()?.send('find:open'); }) },
+        normal({ label: t('menu.readerMode'), click: () => toggleReaderActive() }),
+        ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))).map(normal),
+        { label: t('menu.pictureInPicture'), click: pv('pictureInPicture', () => togglePictureInPicture(wc())) },
+        normal({ label: t('menu.siteInfo'), click: () => openPageInfo() }),
+        normal({ label: t('menu.viewSource'), ...shown('Cmd+U'), click: () => { if (wc()) pageTools.viewSource(wc().getURL(), { session: wc().session, openerId: activeId }); } }),
         { type: 'separator' },
-        { label: t('menu.zoomIn'), ...shown('Cmd+='), click: () => zoomBy(wc(), 0.5) },
-        { label: t('menu.zoomOut'), ...shown('Cmd+-'), click: () => zoomBy(wc(), -0.5) },
-        { label: t('menu.actualSize'), ...shown('Cmd+0'), click: () => zoomBy(wc(), 0) },
+        { label: t('menu.zoomIn'), ...shown('Cmd+='), click: pv('zoomIn', () => zoomBy(wc(), 0.5)) },
+        { label: t('menu.zoomOut'), ...shown('Cmd+-'), click: pv('zoomOut', () => zoomBy(wc(), -0.5)) },
+        { label: t('menu.actualSize'), ...shown('Cmd+0'), click: pv('actualSize', () => zoomBy(wc(), 0)) },
         { type: 'separator' },
-        { label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') },
-        { label: t('menu.newSidebarChat'), ...shown('Shift+Cmd+K'), click: newSidebarChat },
-        { label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage },
-        { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: () => wc()?.toggleDevTools() },
+        normal({ label: t('menu.toggleSidebar'), ...shown('Cmd+J'), click: () => ui()?.send('toggle-sidebar') }),
+        normal({ label: t('menu.newSidebarChat'), ...shown('Shift+Cmd+K'), click: newSidebarChat }),
+        normal({ label: t('menu.openChatPage'), ...shown('Shift+Cmd+L'), click: toggleChatPage }),
+        { label: t('menu.devTools'), accelerator: 'Alt+Cmd+I', click: pv('devTools', () => wc()?.toggleDevTools()) },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],
@@ -3954,34 +4284,34 @@ function macMenu() {
     {
       label: t('menu.history'),
       submenu: [
-        { label: t('menu.back'), ...shown('Cmd+['), click: () => wc()?.navigationHistory.goBack() },
-        { label: t('menu.forward'), ...shown('Cmd+]'), click: () => wc()?.navigationHistory.goForward() },
-        { label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage },
+        { label: t('menu.back'), ...shown('Cmd+['), click: pv('back', () => goBack(wc())) },
+        { label: t('menu.forward'), ...shown('Cmd+]'), click: pv('forward', () => wc()?.navigationHistory.goForward()) },
+        normal({ label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage }),
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [{ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }, { label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }, { label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }] },
+    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') })] },
     // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
     {
       label: t('menu.tab'),
       submenu: [
-        { label: t('menu.nextTab'), ...shown('Alt+Cmd+Right'), click: () => cycleTab(1) },
-        { label: t('menu.previousTab'), ...shown('Alt+Cmd+Left'), click: () => cycleTab(-1) },
+        { label: t('menu.nextTab'), ...shown('Alt+Cmd+Right'), click: pv('nextTab', () => cycleTab(1)) },
+        { label: t('menu.previousTab'), ...shown('Alt+Cmd+Left'), click: pv('previousTab', () => cycleTab(-1)) },
         { type: 'separator' },
-        { label: t('menu.newTabRight'), click: () => { if (activeId) newTabRightOf(activeId); } },
-        { label: t('menu.duplicateTab'), click: () => { if (activeId) duplicateTab(activeId); } },
+        normal({ label: t('menu.newTabRight'), click: () => { if (activeId) newTabRightOf(activeId); } }),
+        normal({ label: t('menu.duplicateTab'), click: () => { if (activeId) duplicateTab(activeId); } }),
       ],
     },
-    { label: t('menu.downloads'), submenu: [{ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') }] },
+    { label: t('menu.downloads'), submenu: [normal({ label: t('menu.showAllDownloads'), ...shown('Alt+Cmd+L'), click: () => managers.open('downloads') })] },
     // The standard Window menu, written out (a role's own submenu can't take an extra item); macOS adds the window list to the menu with this role.
     { role: 'window', label: t('menu.window'), submenu: [
       { role: 'minimize' }, { role: 'zoom' },
-      { label: t('menu.closeWindow'), click: () => BrowserWindow.getFocusedWindow()?.close() }, // (Cmd+W closes a tab: no accelerator here)
+      { label: t('menu.closeWindow'), click: () => BrowserWindow.getFocusedWindow()?.close() }, // (Cmd+W closes a tab: no accelerator here; File → Close Window shows Shift+Cmd+W)
       { type: 'separator' },
       mergeAllItem(),
       { type: 'separator' },
       { role: 'front' },
     ] },
-    { role: 'help', submenu: [{ label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
+    { role: 'help', submenu: [{ label: t('menu.keyboardShortcuts'), ...shown('Shift+Cmd+/'), click: () => shortcutsHelp.open() }, { label: t('menu.whatsNew'), click: () => whatsNew.open() }, { label: t('menu.github'), click: () => shell.openExternal('https://github.com/emah-maker/lumen') }] },
   ]);
 }
 
@@ -4054,6 +4384,7 @@ const activeIdOf = (rec) => (rec === curRec ? activeId : rec.activeId);
 function releaseTab(tab, { keepFlags = false } = {}) {
   const index = tabs.indexOf(tab);
   if (index === -1) return false;
+  finishLeaving(tab);
   if (chatFullTab === tab.id) chatFullTab = null;
   tabs.splice(index, 1);
   Object.assign(tab, windowMerge.releaseFlags(tab, { keep: keepFlags })); // leaves its group; placed by hand (automatic grouping leaves it alone), unless a merge: the tab keeps the flag it had
@@ -5084,14 +5415,16 @@ const TEST_BACKGROUND = TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND);
 // `prepared`: a hidden window for a tear-off that may come (prepareDragWindow): it loads its UI and waits.
 // `boundsFrom`: a window of the same size whose page area this one starts with, so the tab's page is at
 // its place from the first frame instead of jumping there once this window's UI reports its own.
-// Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
-let tabsGateOpen = false;
 // The first tab (restored or new) has finished loading, or 8 s have passed: the spare new-tab page, the
 // suggestions renderer, the CLI checks and the extension update check start then, not while it loads.
 let markFirstTabLoaded = () => {};
 const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
+let firstTabDone = false;
+firstTabLoaded.then(() => { firstTabDone = true; });
+// Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
-const tabsGate = new Promise((resolve) => { openTabsGate = () => { tabsGateOpen = true; resolve(); }; });
+const GUESS_TOOLBAR_HEIGHT = 82; // the tab strip and toolbar: where a first tab's page goes before the UI has said (content-bounds)
+const tabsGate = new Promise((resolve) => { openTabsGate = resolve; });
 function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
@@ -5103,7 +5436,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     minWidth: 800,
     minHeight: 500,
     title: 'Lumen',
-    icon: path.join(__dirname, 'assets', 'icon.png'),
+    icon: WINDOW_ICON,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
@@ -5197,7 +5530,21 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   w.on('blur', hideSuggestions);
   w.loadFile(UI_HTML);
+  // A window's first tabs open as soon as extensions and the filter lists are ready (tabsGate), while its UI is still
+  // loading: the first page's renderer starts and its page loads alongside the UI instead of after it (~150 ms sooner
+  // on screen). Its view stays hidden until the UI has said where pages go (content-bounds), and the UI is brought up
+  // to date once it has loaded (finishSettle).
+  // (Not before the UI's page has committed: its renderer is then the window's first, which is what tools driving
+  // Lumen, like the test suites' firstWindow(), take as the window.)
+  let uiLoaded = false;
+  let tabsOpened = false;
+  if (!adopt && !prepared) {
+    const committed = new Promise((resolve) => { w.webContents.once('did-navigate', resolve); w.webContents.once('did-finish-load', resolve); });
+    Promise.all([tabsGate, committed]).then(() => { if (rcAlive(rec)) withWindow(rec, openFirstTabs); });
+  }
   w.webContents.once('did-finish-load', () => {
+    uiLoaded = true;
+    rec.uiLoaded = true;
     firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); });
     if (rec.prepared) {
       // Ready for a tear-off (takeSpare); no tabs until then.
@@ -5210,29 +5557,52 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     }
     // A window's first tabs wait for extensions and the filter lists (every tab is registered with chrome.tabs and
     // filtered from its first request); the window and its UI load meanwhile (see tabsGate at start-up).
-    if (!adopt && !tabsGateOpen) { tabsGate.then(() => { if (rcAlive(rec)) withWindow(rec, () => settle()); }); return; }
+    if (!adopt) { if (tabsOpened) finishSettle(); return; } // (else openFirstTabs finishes once the gate opens)
     settle();
   });
-  function settle() {
-    if (adopt) {
-      // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
-      const adopted = moveTabsBetween(adopt.src, rec, adopt.ids || [adopt.tabId], 0, { focus: adopt.focus !== false, active: adopt.tabId, group: adopt.group || null });
-      if (!adopted) {
-        // The tab is gone (closed, or its window closed) while this window was loading. It isn't wanted then,
-        // unless it is the only window left: that one gets a new tab rather than leaving no window at all.
-        const others = [...winRecs].some((r) => r !== rec && rcAlive(r) && !isSpare(r));
-        adopt.done?.(false);
-        if (others) { setImmediate(() => { if (rcAlive(rec)) rec.win.close(); }); return; }
-        if (!tabs.length) openTab();
-        if (!rec.win.isVisible()) rec.win.show();
-      } else {
-        adopt.done?.(true);
+  function openFirstTabs() {
+    if (tabsOpened) return;
+    tabsOpened = true;
+    if (!uiLoaded && !rec.boundsReported) {
+      rec.holdViews = true; // (layout() keeps tab views hidden until the UI reports where they go)
+      if (!seedBounds) { // laid out at about the size it will have, so the page isn't laid out twice
+        const [width, height] = w.getContentSize();
+        contentBounds = { x: 0, y: GUESS_TOOLBAR_HEIGHT, width, height: Math.max(0, height - GUESS_TOOLBAR_HEIGHT) };
       }
+    }
+    restoreSession(restore);
+    rec.pendingRestore = false;
+    refreshWindowMenu(); // its tabs are back: it may take part in a merge now
+    if (uiLoaded) finishSettle();
+  }
+  // The UI has loaded and the window's tabs are open: the UI gets their state (anything sent while it was
+  // still loading went nowhere), the new-tab page's address bar its focus, then the rest of a window's start.
+  function finishSettle() {
+    if (rec.holdViews) { rec.holdViews = false; layout(); }
+    sendTabs();
+    if (rec.focusAddressPending) { rec.focusAddressPending = false; focusAddress(); } // a new tab asked for it while the UI loaded
+    afterSettle();
+  }
+  // A torn-off tab's window (adopt): its tab moves in once its UI has loaded.
+  function settle() {
+    // The torn-off tab moves in now that this window can show it; if it is gone by now, a blank tab.
+    const adopted = moveTabsBetween(adopt.src, rec, adopt.ids || [adopt.tabId], 0, { focus: adopt.focus !== false, active: adopt.tabId, group: adopt.group || null });
+    if (!adopted) {
+      // The tab is gone (closed, or its window closed) while this window was loading. It isn't wanted then,
+      // unless it is the only window left: that one gets a new tab rather than leaving no window at all.
+      const others = [...winRecs].some((r) => r !== rec && rcAlive(r) && !isSpare(r));
+      adopt.done?.(false);
+      if (others) { setImmediate(() => { if (rcAlive(rec)) rec.win.close(); }); return; }
+      if (!tabs.length) openTab();
+      if (!rec.win.isVisible()) rec.win.show();
     } else {
-      restoreSession(restore);
+      adopt.done?.(true);
     }
     rec.pendingRestore = false;
     refreshWindowMenu(); // its tabs are back: it may take part in a merge now
+    afterSettle();
+  }
+  function afterSettle() {
     // [chat per tab] Restoring the tabs (or the tab that moved in) brought the open chat to the front tab's. A chat still working
     // there (a tab that moved here mid-task) shows live, and its events come to this window from now on.
     if (ui() && runIsLive(chatRuns.get(chatId))) pushChatView(ui());
@@ -5250,6 +5620,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (firstWindow) setTimeout(() => { if (!w.isDestroyed()) whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message)); }, 1200);
     // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
     if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
+    if (firstWindow && crashRecovery.pending()) setTimeout(() => { offerCrashRestore().catch((err) => console.error('[lumen] crash recovery:', err.message)); }, 600); // the last run crashed and the startup setting wouldn't bring its tabs back
     if (firstWindow) setTimeout(() => setup.isDefault().catch(() => {}), 2000).unref?.(); // (for the app menu's item)
   }
   return rec;
@@ -5257,6 +5628,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
 let quitting = false; // the app is shutting down: the session was saved by before-quit
 app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
+  crashRecovery.end(); // a normal quit: the next start offers nothing
   if (settingsPending && settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
   if (historyDirty && historyLoaded) { // (visits from the last two seconds land now, once the past is merged in)
     clearTimeout(historySaveTimer);
@@ -5305,9 +5677,9 @@ const OPENABLE = ['html', 'htm', 'xhtml', 'shtml', 'mhtml', 'svg', 'pdf', 'txt',
 async function openFileDialog() {
   if (!win || win.isDestroyed()) return;
   const { canceled, filePaths } = await electronDialog.showOpenDialog(win, {
-    title: 'Open File',
+    title: t('dialog.openFile.title'),
     properties: ['openFile', 'multiSelections'],
-    filters: [{ name: 'Web pages, PDFs, images and media', extensions: OPENABLE }, { name: 'All Files', extensions: ['*'] }],
+    filters: [{ name: t('dialog.openFile.filter'), extensions: OPENABLE }, { name: t('dialog.openFile.all'), extensions: ['*'] }],
   });
   if (!canceled) openLinksFromOtherApps(fileUrlsFor(filePaths));
 }
@@ -5580,7 +5952,9 @@ const agent = new Agent({
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
+  takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
+  claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, model: effectiveModel() || DEFAULT_MODEL }), providerKey);
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
@@ -5917,6 +6291,7 @@ ipcMain.on('content-bounds', (_e, bounds) => {
     height: Math.max(0, Math.round(bounds.height)),
     fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
+  if (curRec) { curRec.boundsReported = true; curRec.holdViews = false; } // (a first tab opened while the UI loaded shows now)
   layout();
 });
 
@@ -6077,7 +6452,9 @@ ipcMain.on('nav:go', (_e, text) => {
   if (current?.settings || current?.managerPage === 'chat') { replaceTab(activeId, resolveInput(text)); return; } // the chat page is locked like Settings
   const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
   if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }
-  wc.loadURL(resolveInput(text)).catch(() => {});
+  const target = resolveInput(text);
+  if (leaveNewTabFor(current, target)) { activeTab()?.webContents.focus(); return; } // (a new-tab page: the page loads in the warm view)
+  wc.loadURL(target).catch(() => {});
   wc.focus();
 });
 function toggleReaderActive() {
@@ -6087,7 +6464,7 @@ ipcMain.on('page:reader', () => { toggleReaderActive(); });
 ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
 if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };
 if (TEST) global.__pageTools = { tools: pageTools, toggleReader: toggleReaderActive, tab: (id) => tabs.find((t) => t.id === id), handleShortcut: (input) => handleShortcut({ preventDefault() {} }, { type: 'keyDown', control: false, meta: false, shift: false, alt: false, ...input }), contextMenuItems: (wc, p) => pageTools.videoMenuItems(wc, p, { openTab: () => {}, copy: () => {} }) };
-ipcMain.on('nav:back', () => { userTookOver(tabs.find((t) => t.id === activeId)); activeTab()?.webContents.navigationHistory.goBack(); });
+ipcMain.on('nav:back', () => { userTookOver(tabs.find((t) => t.id === activeId)); goBack(activeTab()?.webContents); });
 ipcMain.on('nav:forward', () => { userTookOver(tabs.find((t) => t.id === activeId)); activeTab()?.webContents.navigationHistory.goForward(); });
 ipcMain.on('nav:reload', reloadActive);
 
@@ -6212,7 +6589,17 @@ ipcMain.handle('tabs:ask-list', (event) => {
     .filter((t) => tabsAsk.ineligible({ ...t, aiOff: aiSites.isOff(t.url) }) === null)
     .map((t) => ({ id: t.id, title: t.title, host: hostOf(t.url) || t.url, favicon: t.favicon, active: t.active, sleeping: t.sleeping }));
 });
-ipcMain.on('agent:stop', (event) => {
+// Stops a chat's run: one waiting for a slot leaves the line, one working is aborted. `id`: any chat (the chat list's
+// "Stop waiting"); none: the open chat (the Stop button).
+function stopChat(id) {
+  const run = chatRuns.get(id);
+  if (!run || run.deleted) return false;
+  if (run.queued) run.cancelQueued();
+  else agent.stopFor(run.messages);
+  return true;
+}
+ipcMain.on('agent:stop', (event, id) => {
+  if (typeof id === 'string' && id) { stopChat(id); return; }
   syncToSender(event);
   const run = chatRuns.get(chatId);
   if (run?.queued) run.cancelQueued(); // it never started: leaves the waiting line
@@ -6328,7 +6715,7 @@ ipcMain.handle('chats:export', async (_e, id) => {
   if (!out) return { ok: false, reason: 'empty' };
   const fileName = `${cleanTitle(out.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 60).trim() || 'Chat'}.md`;
   const { canceled, filePath } = await electronDialog.showSaveDialog(win, {
-    title: 'Export chat',
+    title: t('dialog.exportChat.title'),
     defaultPath: path.join(app.getPath('documents'), fileName),
     filters: [{ name: 'Markdown', extensions: ['md'] }],
   });
@@ -6352,7 +6739,15 @@ ipcMain.handle('agent:auto-allow', (_e, on) => {
 // model that isn't connected anymore (key removed, CLI gone) falls back to the first connected
 // option, or none (null) — never a model the user can't use. A saved Claude Code / Grok Build pick
 // is kept while Lumen is still looking for that CLI at startup.
+// Gemini CLI was replaced by Antigravity (Google's own successor to it): a saved pick of the old CLI moves to Antigravity once, and the
+// first Antigravity reply says so (agent.js antigravityTurn, via takeNotice).
+function migrateGeminiCli(model) {
+  if (!/^(geminicli|gemini-cli|gemini_cli):/.test(String(model))) return model;
+  writeSettings({ ...readSettings(), model: 'antigravity:default', antigravitySidebar: true, antigravityNotice: true });
+  return 'antigravity:default';
+}
 function effectiveModel(preferred = readSettings().model) {
+  preferred = migrateGeminiCli(preferred);
   const options = modelOptions().filter((o) => o.id !== 'openrouter:__more');
   // Any OpenRouter model counts once there is a key: "More models…" can pick ones not in the short list.
   const openRouterPick = /^openrouter:[\w.-]+\/[\w.:-]+$/.test(String(preferred)) && Boolean(providerKey('openrouter'));
@@ -6391,9 +6786,11 @@ ipcMain.handle('settings:get', () => {
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
     grokBuild: aiAgents.cliStatus().grokbuild, // { installed, signedIn, enabled }: the setup card offers it once found
+    antigravity: aiAgents.cliStatus().antigravity, // same, for Antigravity (which replaces Gemini CLI)
   };
 });
 ipcMain.handle('settings:use-grok-build', () => aiAgents.useGrokBuild());
+ipcMain.handle('settings:use-antigravity', () => aiAgents.useAntigravity());
 // A key is checked with the provider before it's saved, so a typo shows up here, not as an error on
 // the first message. Offline (can't check), it's saved anyway, and the caller is told so.
 // Safe Browsing's status and key, for the settings page's Privacy section. The key is kept
@@ -6640,6 +7037,7 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab,
   tools: EXTERNAL_TOOLS,
   validateToolInput,
+  isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   // Not the settings tab: its page API manages keys and saved passwords ([passwords]).
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
 });
@@ -6705,6 +7103,8 @@ app.whenReady().then(async () => {
   // Extensions must be ready before tabs exist so every tab is registered with chrome.tabs; the window itself
   // (its UI, ~0.5 MB of scripts) loads meanwhile, and its tabs come once both are ready (tabsGate).
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
+  crashRecovery.begin({ mode: settingsBackend.startupPlan().mode }); // (before the first window saves a session over the last run's)
+  setAboutPanel();
   createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
   const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   const blocking = adblock.setup().catch((err) => console.error('Ad blocker failed to start:', err));
@@ -6715,7 +7115,7 @@ app.whenReady().then(async () => {
   openTabsGate();
   perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }); // model lists: nothing waits for them
   setTimeout(markFirstTabLoaded, 8000).unref?.(); // (a first tab that never finishes doesn't hold these back)
-  firstTabLoaded.then(() => makeSpareNewTab()); // a new-tab page ready for the first Ctrl+T, once the first tab has loaded
+  firstTabLoaded.then(() => { makeSpareNewTab(); warmSoon(400); }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page, once the first tab has loaded
   perfMode.start(); // Performance mode: power events, and whether the GPU really draws
   setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); // the GPU process has reported by now
   updates.start(); // first check after a short delay (longer in Performance mode), then every few hours

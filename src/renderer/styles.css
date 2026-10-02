@@ -259,15 +259,23 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.globe { color: var(--faint); stroke-width: 1.25; }
 .tab-favicon.page-icon { color: var(--muted); }
 .tab.ai-reading .tab-title { animation: ai-reading-pulse 1.4s ease-in-out infinite; }
-/* [chat per tab] The chat in this tab: a small mark on its icon. Working turns, waiting is hollow, an OK needed is amber, a finished reply not yet seen stays solid. */
-.tab-chat-mark { display: none; position: absolute; left: 21px; bottom: 4px; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; pointer-events: none; background: var(--accent); box-shadow: 0 0 0 1.5px var(--surface-raised, var(--bg)); }
+/* [chat per tab] The chat in this tab: a 12px glyph between the icon and the title (never over the icon or the audio / state badges),
+   one shape per state: spinner = working, ring = waiting its turn, check = finished and not viewed yet, "!" = needs your OK.
+   Self-contained: everything it needs is under .tab-chat-mark. */
+.tab-chat-mark { display: none; flex: none; width: 12px; height: 12px; margin-left: -2px; pointer-events: none; color: var(--accent); }
 .tab[data-chat]:not([data-chat=""]) .tab-chat-mark { display: block; }
-@container tab (max-width: 72px) { .tab-chat-mark { left: calc(50% + 3px); } }
-.tab-chat-mark.running { background: none; border: 1.5px solid var(--hairline); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
-.tab-chat-mark.waiting { background: none; border: 1.5px solid var(--faint); }
-.tab-chat-mark.approval { background: var(--warning); }
-.tab-chat-mark.done { background: var(--success); }
-
+.tab-chat-mark svg { display: block; width: 12px; height: 12px; overflow: visible; }
+.tab-chat-mark .cm-spin { animation: spin 0.8s linear infinite; transform-origin: 6px 6px; }
+.tab-chat-mark .cm-still { display: none; }
+.tab-chat-mark.waiting { color: var(--muted); }
+.tab-chat-mark.done { color: var(--success); }
+.tab-chat-mark.approval { color: var(--warning); }
+.tab-chat-mark .cm-on { fill: currentColor; stroke: none; }
+.tab-chat-mark .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+@media (prefers-reduced-motion: reduce) { .tab-chat-mark .cm-spin { animation: none; } .tab-chat-mark .cm-still { display: block; } }
+:root.pref-reduce-motion .tab-chat-mark .cm-spin { animation: none; }
+:root.pref-reduce-motion .tab-chat-mark .cm-still { display: block; }
+@container tab (max-width: 72px) { .tab-chat-mark { margin-left: 0; } }
 @keyframes ai-reading-pulse { 50% { opacity: 0.55; } }
 .tab-favicon.spinner { border: 1.5px solid var(--hairline); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; background: none; }
 /* The title runs to the tab's edge and fades out there; while the ✕ shows, the fade moves in ahead
@@ -364,7 +372,9 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
 @media (max-width: 1000px) {
   .omnibox:not(:has(input:focus)), body.zoomed .omnibox:not(:has(input:focus)) { justify-content: flex-start; padding-left: 12px; }
 }
-.security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; }
+.security { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font-size: 12px; animation: fade-in var(--t-base) ease-out; cursor: pointer; border-radius: 6px; padding: 2px 3px; margin: -2px -3px; }
+.security:hover { background: var(--hover); }
+.security:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .security svg { width: 11px; height: 11px; }
 .security.insecure { color: var(--warning); }
 .security.danger { color: var(--danger); }
@@ -1062,3 +1072,14 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .link-btn { padding: 0; border: none; background: none; color: var(--accent); font: inherit; cursor: pointer; text-align: left; }
 .link-btn:hover { text-decoration: underline; }
 .link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* Windows high contrast (forced colors): the system flattens backgrounds and shadows to its own colors,
+   so state shown only by a background (the active and selected tabs, a pressed toolbar button) is
+   drawn as an outline in the system's highlight color instead, and the address field keeps an edge. */
+@media (forced-colors: active) {
+  .tab.active { outline: 2px solid Highlight; outline-offset: -3px; }
+  .tab.selected { outline: 1px dashed Highlight; outline-offset: -3px; }
+  .icon-btn[aria-pressed="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
+  .omnibox { border: 1px solid CanvasText; }
+  :focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
+}

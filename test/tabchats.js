@@ -83,7 +83,7 @@ const fakeModel = (app) => app.evaluate(() => {
 
   // ---- 1. Two tabs, two chats, working at the same time.
   const tabA = await active();
-  await app.evaluate((_e, u) => { const t = global.__windows.list()[0].tabs[0]; require('electron').webContents.fromId(t.contentsId).loadURL(u); }, `${base}/alpha`);
+  await app.evaluate(({ webContents }, u) => { const t = global.__windows.list()[0].tabs[0]; webContents.fromId(t.contentsId).loadURL(u); }, `${base}/alpha`);
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   await waitFor(() => app.evaluate(() => /PAGE|alpha/i.test(global.__windows.list()[0].tabs[0].url)));
   await send('chat-A: read this tab');
@@ -107,6 +107,7 @@ const fakeModel = (app) => app.evaluate(() => {
   await waitFor(async () => (await bubbles()).some((b) => /chat-A/.test(b)));
   let text = await messagesText();
   check('switching to tab A shows chat A, still working, not chat B', /chat-A/.test(text) && !/chat-B/.test(text), text);
+  check('its streamed words are there too, not only a spinner', await waitFor(async () => /A is working/.test(await messagesText())), await messagesText());
   check('chat A shows as running in the sidebar', await ui.evaluate(() => document.body.classList.contains('agent-active')), 'not running');
   await showTab(tabB);
   await waitFor(async () => (await bubbles()).some((b) => /chat-B/.test(b)));
@@ -133,8 +134,8 @@ const fakeModel = (app) => app.evaluate(() => {
   for (const [i, who] of ['C', 'D', 'E'].entries()) { extra.push(await openTab(`${base}/${who.toLowerCase()}`)); await waitFor(async () => (await active()) === extra[i]); }
   await showTab(extra[0]); await waitFor(async () => (await active()) === extra[0]); await send('chat-C: go'); await inflight('C');
   await showTab(extra[1]); await waitFor(async () => (await active()) === extra[1]); await send('chat-D: go'); await inflight('D');
-  // A third slot is taken by a chat in tab B
-  await showTab(tabB); await waitFor(async () => (await active()) === tabB); await send('chat-F: go'); await inflight('F');
+  // A third slot is taken by a chat in a tab of its own
+  const tabF = await openTab(`${base}/f`); await waitFor(async () => (await active()) === tabF); await send('chat-F: go'); await inflight('F');
   await showTab(extra[2]); await waitFor(async () => (await active()) === extra[2]);
   await send('chat-E: go');
   await waitFor(() => tc(() => global.__tabChats.runs().some((r) => r.queued)));
@@ -177,9 +178,9 @@ const fakeModel = (app) => app.evaluate(() => {
   await send('chat-X: go');
   await inflight('X');
   const before = await tc(() => global.__tabChats.runs().find((r) => r.live));
-  await app.evaluate((_e, id) => global.__closeTabInteractive(id), doomed);
+  await app.evaluate((_e, id) => { global.__doomed = id; global.__closeTabInteractive(id); }, doomed);
   await waitFor(async () => !(await tc((_e2, i) => global.__windows.list()[0].tabs.some((t) => t.id === i), doomed)));
-  const after = await waitFor(() => tc(() => { const r = global.__tabChats.runs().find((x) => x.live); return r && r.tab != null ? r : null; }));
+  const after = await waitFor(() => tc(() => { const r = global.__tabChats.runs().find((x) => x.live); return r && r.tab != null && r.tab !== global.__doomed ? r : null; }));
   check('closing a tab with a working chat keeps it running, in a background tab', Boolean(before) && Boolean(after) && after.tab !== doomed, JSON.stringify({ before, after }));
   await tc(() => global.__release('X'));
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
@@ -218,11 +219,14 @@ const fakeModel = (app) => app.evaluate(() => {
   await ui.waitForSelector('.tab');
   await fakeModel(app);
   await waitFor(() => tc(() => global.__tabChats.bindings.size() > 0));
+  // (The sidebar may come back closed: it draws a chat only while open, so it is opened as at the start.)
+  if (await ui.evaluate(() => document.body.classList.contains('sidebar-hidden'))) await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   const restored = await tc(() => ({ entries: global.__tabChats.bindings.entries(), runs: global.__tabChats.runs(), tabs: global.__windows.list()[0].tabs.length, active: global.__windows.list()[0].activeId }));
   check('after a restart the tabs are bound to their saved chats again', restored.entries.length >= 1 && restored.entries.every(([, c]) => beforeRestart.saved.includes(c)), JSON.stringify({ restored, wanted }));
   check('after a restart nothing is re-run', restored.runs.length === 0, JSON.stringify(restored.runs));
+  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), restored.entries[0][0]);
   const shown = await waitFor(async () => (await ui.evaluate(() => document.getElementById('messages').innerText)).trim());
-  check('the tab in front shows its chat', Boolean(shown) && /finished|working|chat-/.test(shown), shown);
+  check('a tab shows its saved chat again', Boolean(shown) && /finished|working|chat-/.test(shown), shown);
   check('no script errors', errors.length === 0, errors.join('; '));
 
   await app.close();

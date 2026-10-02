@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('browser', {
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
+  openPageInfo: (point) => ipcRenderer.send('page-info:open', point), // the lock next to the address (features/page-info.js)
   openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items), // the extension icons that don't fit the toolbar
   onActionsOverflowPick: on('actions:overflow-pick'),
   suggest: (query) => ipcRenderer.invoke('suggest:query', query),
@@ -133,6 +134,7 @@ contextBridge.exposeInMainWorld('assistant', {
     list: () => ipcRenderer.invoke('chats:list'),
     open: (id) => ipcRenderer.invoke('chats:open', id), // also "Move chat to this tab"
     showTab: (id) => ipcRenderer.invoke('chats:show-tab', id), // "Open chat in its tab"
+    stopChat: (id) => ipcRenderer.send('agent:stop', id), // "Stop waiting" (or stop) any chat, not only the open one
     rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
     remove: (id) => ipcRenderer.invoke('chats:delete', id),
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
@@ -181,6 +183,7 @@ contextBridge.exposeInMainWorld('assistant', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
   useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card
+  useAntigravity: () => ipcRenderer.invoke('settings:use-antigravity'), // the setup card (Antigravity replaces Gemini CLI)
   openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
   openRouterSignIn: () => ipcRenderer.invoke('openrouter:sign-in'),
   cancelOpenRouterSignIn: () => ipcRenderer.invoke('openrouter:cancel'),
